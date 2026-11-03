@@ -1,5 +1,12 @@
 # mitto
 
+A Python library whose HTTP traffic matches real Chrome, built on Chromium's own network stack. Read `CONTEXT.md` for the vocabulary, `docs/adr/` for decisions and `docs/roadmap.md` for the plan.
+
+## Project rules
+
+- C++ follows the Chromium C++ style guide and `styleguide/c++/c++-features.md` (ADR-0002). Generic C++ guidelines that conflict with them do not apply.
+- Python targets 3.12+, uses ruff for linting and formatting, and type-checks strictly.
+
 ## Agent skills
 
 ### Issue tracker
