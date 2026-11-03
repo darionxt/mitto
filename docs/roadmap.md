@@ -16,7 +16,7 @@ Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). Architectural deci
 | Python versions | 3.12 and later |
 | Licence and distribution | Apache-2.0, public on GitHub, published on PyPI as `mitto` |
 | Build resources | CI runs only on GitHub-hosted runners. Anything outside CI, such as producing source exports and recording Baselines, is done by hand. |
-| First Engine Release | Chrome 156, the stable release when the project started |
+| First Engine Release | Chrome 157, the stable release when the project started |
 
 ## Milestones
 
@@ -64,7 +64,7 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
 
 - Release builds on the same GitHub-hosted runners as CI.
 - Wheels: `py3-none` for manylinux x86_64 (the glibc floor follows Chromium's Linux sysroot) and for macOS arm64. Symbols are stripped and shipped as a separate symbols archive. The target is about 5 MB per wheel.
-- A release routine every four weeks: move the Engine Release to the new stable, refresh Persona data, re-record Baselines, rebuild and publish.
+- A release routine every two weeks, following Chrome's stable milestones: move the Engine Release to the new stable, refresh Persona data, re-record Baselines, rebuild and publish.
 - **Exit:** `pip install mitto` works on both Hosts, and 0.1.0 is on PyPI.
 
 ### Later phase: Runtime
@@ -83,4 +83,4 @@ The headless JavaScript **Runtime** gets its own planning once M3 ships. The dir
 - **Randomized handshakes.** Chrome randomizes TLS extension order and GREASE values, so Parity Checks compare normalized forms rather than raw bytes.
 - **Build cost.** Chromium builds are slow on ordinary developer machines. Building only the native core's targets, never the browser, keeps iteration usable.
 - **Hosted runner limits.** GitHub-hosted runners have little disk space and a six-hour job limit, and their minutes are free only for public repositories. The trimmed export and build caching must keep a CI build inside those limits.
-- **Maintenance cadence.** Falling behind Chrome stable makes the Persona stale. The four-week routine has to be cheap and scripted.
+- **Maintenance cadence.** Chrome ships a new stable milestone every two weeks, and falling behind makes the Persona stale. The routine, including its manual steps, has to be cheap and scripted.

@@ -13,5 +13,5 @@ The Wire Fingerprint is mitto's core value, so the networking is Chromium's own 
 
 ## Consequences
 
-- The build is heavy, and every Chrome stable release (about every four weeks) requires an engine update.
+- The build is heavy, and every Chrome stable milestone (every two weeks) requires an engine update.
 - Chrome ships some behavior through server-controlled field trials that a source build does not see. The configuration must state those features explicitly, and Parity Checks against Baselines from real Chrome are the only proof of parity.

@@ -11,7 +11,7 @@ The browser identity mitto presents to servers: one Chrome Release on one operat
 _Avoid_: profile, fingerprint, identity, user agent
 
 **Chrome Release**:
-A Chrome stable milestone (for example 156) whose observable behavior a Persona reproduces.
+A Chrome stable milestone (for example 157) whose observable behavior a Persona reproduces.
 _Avoid_: version, build
 
 **Supported Window**:
