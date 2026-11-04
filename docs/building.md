@@ -5,9 +5,9 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 ## Requirements
 
 - A macOS arm64 or Linux x86_64 Host.
-- About 30 GiB of free disk space for the workspace, plus room for build output (see [Disk usage](#disk-usage)), on a path without spaces.
+- About 31 GiB of free disk space for the workspace, plus room for compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
 - `git`, `curl` and `bash`.
-- On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work.
+- On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. `gn gen` also succeeds with Xcode 27.2 and its macOS 27.2 SDK, but the native core has not been compiled with it yet. `xcode-select -p` must point into Xcode.
 
 Linux x86_64 has not been tried yet. Linux-specific steps will be added here when it is.
 
@@ -54,16 +54,17 @@ Change GN arguments in `tools/workspace/args.gn` and rerun the script; the copy 
 
 ## Disk usage
 
-Measured for Chromium 157.0.8103.27 on macOS arm64, before any build:
+Measured for Chromium 157.0.8103.27 on macOS arm64, after `gn gen` and before any compilation:
 
 | Path under `$MITTO_WORKSPACE` | Size |
 | --- | --- |
-| `chromium-<tag>/src` | 28.6 GiB |
+| `chromium-<tag>/src`, without `out` | 28.6 GiB |
+| `chromium-<tag>/src/out/mitto` | 0.5 GiB |
 | `depot_tools` | 0.8 GiB |
 | `.cache` | 0.6 GiB |
-| Total | 30.0 GiB |
+| Total | 30.5 GiB |
 
-Of `src`, 3.6 GiB is the `.git` directories of `src` and its 143 git dependencies. Build output in `out/mitto` comes on top of this and has not been measured yet. Each additional release kept in the workspace needs its own `chromium-<tag>` directory.
+Of `src`, 3.6 GiB is the `.git` directories of `src` and its 143 git dependencies. Compiled output in `out/mitto` comes on top of this and has not been measured yet. Each additional release kept in the workspace needs its own `chromium-<tag>` directory.
 
 ## Move to a new Engine Release
 
