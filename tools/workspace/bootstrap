@@ -67,7 +67,9 @@ if [[ ! -d "${depot_tools}/.git" ]]; then
   git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \
     "${depot_tools}"
 fi
-export PATH="${PATH}:${depot_tools}"
+# First on PATH: the depot_tools wrappers find vpython3 through PATH, so another
+# installation earlier on it would run in place of this one.
+export PATH="${depot_tools}:${PATH}"
 export DEPOT_TOOLS_METRICS=0
 
 # Keep the Python environments that depot_tools creates, and gsutil's state,

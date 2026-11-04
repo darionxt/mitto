@@ -47,7 +47,7 @@ $MITTO_WORKSPACE/
 To use the Chromium tools by hand, put depot_tools on your `PATH`:
 
 ```bash
-export PATH="$PATH:$MITTO_WORKSPACE/depot_tools"
+export PATH="$MITTO_WORKSPACE/depot_tools:$PATH"
 ```
 
 Change GN arguments in `tools/workspace/args.gn` and rerun the script; the copy in `out/mitto` is overwritten on every run. For experiments, create another build directory under `out/` instead.
