@@ -86,6 +86,40 @@ status 200 over h2
 
 A first build took about 5 minutes on a 10-core Mac, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. Size has not been worked on yet.
 
+## Work on the Python package
+
+The Python package is in [`src/mitto`](../src/mitto). Working on it needs [uv](https://docs.astral.sh/uv/) but no Chromium checkout. This command, run from the repository root, creates `.venv` with Python 3.12, the lowest version mitto supports, and the locked development tools:
+
+```bash
+uv sync
+```
+
+Run the checks:
+
+```bash
+uv run ruff check
+uv run ruff format --check
+uv run pyright
+uv run pytest
+```
+
+To run the tests on another Python version:
+
+```bash
+uv run --python 3.14 --isolated pytest
+```
+
+Tests that call the real native core are skipped when there is no native library. They need no network connection, because they only talk to a local server. To run them against a local build, name the library in `MITTO_NATIVE_LIBRARY`:
+
+```bash
+export MITTO_NATIVE_LIBRARY="$MITTO_WORKSPACE/chromium-<tag>/src/out/mitto/libmitto_core.dylib"
+uv run pytest
+```
+
+Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler.
+
+The loader in [`src/mitto/_native.py`](../src/mitto/_native.py) uses `MITTO_NATIVE_LIBRARY` if it is set, and otherwise `libmitto_core.dylib` (`.so` on Linux) next to that file in the installed package. If the variable names something that is not a file, loading fails rather than falling back to the installed library. The loader refuses a library whose ABI version differs from its own `ABI_VERSION`, and a test keeps that constant equal to `MITTO_ABI_VERSION` in the C header.
+
 ## Disk usage
 
 Measured for Chromium 157.0.8103.27 on macOS arm64, after building the native core:
