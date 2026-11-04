@@ -4,3 +4,13 @@
 is_debug = false
 is_component_build = false
 symbol_level = 1
+
+# The library runs inside other programs, such as Python. It must not replace
+# their allocator, and a failed DCHECK must not abort them.
+use_allocator_shim = false
+enable_backup_ref_ptr_support = false
+dcheck_always_on = false
+
+# Links ICU's data into the library, so that no data file has to ship with it.
+# //url needs that data for hostnames that are not ASCII.
+icu_use_data_file = false

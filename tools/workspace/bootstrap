@@ -133,12 +133,7 @@ note "on that run, the server prepares src for several minutes before any data a
 
 # Expose the repository's native sources to GN as //mitto. The link stays out
 # of the Chromium checkout's git status.
-link="${src}/mitto"
-if [[ -d "${repo_root}/native" ]]; then
-  ln -sfn "${repo_root}/native" "${link}"
-elif [[ -L "${link}" ]]; then
-  rm "${link}"
-fi
+ln -sfn "${repo_root}/native" "${src}/mitto"
 exclude="${src}/.git/info/exclude"
 grep -qxF "/mitto" "${exclude}" 2> /dev/null || echo "/mitto" >> "${exclude}"
 
@@ -152,5 +147,9 @@ if [[ "${host}" == mac ]]; then
       "and xcode-select points to '${developer_dir}'; see docs/building.md"
 fi
 
-(cd "${src}" && gn gen out/mitto)
+# Nothing in the Chromium tree refers to //mitto, so make it the root of the
+# build graph. That also leaves out the browser and everything else that the
+# native core does not depend on.
+(cd "${src}" &&
+  gn gen out/mitto --root-target=//mitto '--root-pattern=//mitto:*')
 note "done: ${src}/out/mitto is ready"

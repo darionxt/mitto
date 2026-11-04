@@ -1,0 +1,58 @@
+# The native core: a shared library that links //net and exports only the C API
+# in include/mitto/mitto.h. tools/workspace/bootstrap links this directory into
+# the Chromium checkout as //mitto.
+
+config("public_api") {
+  include_dirs = [ "include" ]
+}
+
+shared_library("mitto_core") {
+  public = [ "include/mitto/mitto.h" ]
+  sources = [ "mitto_core.cc" ]
+  public_configs = [ ":public_api" ]
+  deps = [
+    "//base",
+    "//net",
+    "//url",
+  ]
+
+  # Hidden visibility is not enough. Some code in the tree, such as the
+  # allocation functions, is exported regardless, and an exported C++ symbol
+  # could clash with one in the process that loads the library.
+  if (is_mac) {
+    inputs = [ "mitto_core.exports" ]
+    ldflags = [
+      "-Wl,-exported_symbols_list," + rebase_path(inputs[0], root_build_dir),
+      "-Wl,-install_name,@rpath/libmitto_core.dylib",
+    ]
+  } else {
+    inputs = [ "mitto_core.lds" ]
+    ldflags =
+        [ "-Wl,--version-script=" + rebase_path(inputs[0], root_build_dir) ]
+  }
+}
+
+executable("mitto_core_test") {
+  sources = [ "test/mitto_core_test.c" ]
+  deps = [ ":mitto_core" ]
+
+  # This program stands in for an outside caller of the C API. Chromium's rules
+  # for its own C++ do not apply to it or to the header as C sees it.
+  configs -= [
+    "//build/config/clang:find_bad_constructs",
+    "//build/config/clang:unsafe_buffers",
+  ]
+
+  if (is_mac) {
+    ldflags = [ "-Wl,-rpath,@loader_path" ]
+  } else {
+    configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
+  }
+}
+
+group("mitto") {
+  deps = [
+    ":mitto_core",
+    ":mitto_core_test",
+  ]
+}
