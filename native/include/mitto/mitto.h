@@ -1,6 +1,9 @@
 // The native core's public C API, the contract between the native core and its
 // callers, such as the Python package. Increase MITTO_ABI_VERSION on any
 // incompatible change, including a change to the layout of MittoResponse.
+//
+// Once loaded, the library stays in memory until the process exits, because its
+// network thread never stops. dlclose() does not unload it.
 
 #ifndef MITTO_MITTO_H_
 #define MITTO_MITTO_H_

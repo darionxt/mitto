@@ -27,8 +27,13 @@ shared_library("mitto_core") {
     ]
   } else {
     inputs = [ "mitto_core.lds" ]
-    ldflags =
-        [ "-Wl,--version-script=" + rebase_path(inputs[0], root_build_dir) ]
+    ldflags = [
+      "-Wl,--version-script=" + rebase_path(inputs[0], root_build_dir),
+
+      # The network thread never stops, so dlclose() must not unload its code.
+      # macOS has no such flag, and dyld keeps this library loaded without one.
+      "-Wl,-z,nodelete",
+    ]
   }
 }
 

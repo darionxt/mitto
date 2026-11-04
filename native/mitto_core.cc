@@ -167,7 +167,7 @@ class GetJob final : public net::URLRequest::Delegate {
 // Process-wide state: what //base needs before //net can run, the network
 // thread, and the request context that lives on it. It is never destroyed,
 // because the library cannot know when the process that loaded it stops using
-// it, so the library must not be unloaded once it has been used.
+// it. That is why the library is built to stay loaded until the process exits.
 class NetworkCore {
  public:
   static NetworkCore& Get() {
