@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+#
+# Compares Chromium source between two release tags without a full checkout.
+# Older Chrome Releases are reproduced as Persona data and never built, so the
+# comparison only has to show where their TLS, HTTP/2 and QUIC differences may
+# lie. Baselines recorded from real Chrome remain the ground truth.
+#
+# Usage: MITTO_WORKSPACE=/absolute/path tools/workspace/compare \
+#          <old-tag> <new-tag> [path...]
+#
+# For chromium/src it prints the size of the whole change and a per-file
+# summary of the given paths, or of the default paths below. TLS and QUIC code
+# lives in dependencies, so it prints the same for all of BoringSSL and QUICHE
+# at the revisions each tag's DEPS names.
+#
+# Shallow repositories under $MITTO_WORKSPACE/compare keep what was fetched. A
+# rerun only fetches the tags and commits they do not hold yet.
+
+set -euo pipefail
+
+die() {
+  echo "compare: error: $*" >&2
+  exit 1
+}
+
+note() {
+  echo "compare: $*" >&2
+}
+
+usage="usage: MITTO_WORKSPACE=/absolute/path tools/workspace/compare"
+usage+=" <old-tag> <new-tag> [path...]"
+
+[[ $# -ge 2 ]] || die "${usage}"
+old_tag="$1"
+new_tag="$2"
+shift 2
+
+for tag in "${old_tag}" "${new_tag}"; do
+  [[ "${tag}" =~ ^[0-9]+\.0\.[0-9]+\.[0-9]+$ ]] ||
+    die "'${tag}' is not a Chromium version; ${usage}"
+done
+
+# What a server can observe, as far as chromium/src decides it: the network
+# stack and service, the HTTP/2 and QUIC settings Chrome hands them, Chrome's
+# network context setup, the user agent and client hints, the default headers
+# and priority per Request Kind, and the BoringSSL build glue.
+if [[ $# -eq 0 ]]; then
+  set -- \
+    net \
+    services/network \
+    components/network_session_configurator \
+    chrome/browser/net \
+    components/embedder_support \
+    third_party/blink/renderer/platform/loader/fetch \
+    third_party/boringssl
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+
+[[ -n "${MITTO_WORKSPACE:-}" ]] ||
+  die "set MITTO_WORKSPACE to an absolute path outside the repository"
+[[ "${MITTO_WORKSPACE}" == /* ]] || die "MITTO_WORKSPACE must be an absolute path"
+[[ "${MITTO_WORKSPACE}" != *[[:space:]]* ]] ||
+  die "MITTO_WORKSPACE must not contain spaces; Chromium does not support them"
+
+inside_repo() {
+  case "$1/" in
+    "${repo_root}/"*) return 0 ;;
+  esac
+  return 1
+}
+
+! inside_repo "${MITTO_WORKSPACE%/}" ||
+  die "MITTO_WORKSPACE must be outside the repository"
+mkdir -p "${MITTO_WORKSPACE}"
+workspace="$(cd "${MITTO_WORKSPACE}" && pwd -P)"
+! inside_repo "${workspace}" ||
+  die "MITTO_WORKSPACE must be outside the repository"
+
+compare="${workspace}/compare"
+src="${compare}/src"
+
+# The repositories are only fetched into and never checked out. Each one gets
+# a .git directory of its own, so git never picks up a repository around the
+# workspace.
+prepare_repo() {
+  local repo="$1" url="$2"
+  git init --quiet "${repo}"
+  git -C "${repo}" config remote.origin.url "${url}"
+}
+
+fetch_tag() {
+  local tag="$1"
+  if git -C "${src}" rev-parse --verify --quiet "refs/tags/${tag}^{commit}" > /dev/null; then
+    return 0
+  fi
+  note "fetching src ${tag}; this can take minutes, most of them waiting for the server"
+  git -C "${src}" fetch --depth=1 --no-tags origin "refs/tags/${tag}:refs/tags/${tag}"
+}
+
+# Prints the string that a tag's DEPS assigns to a variable, as in
+#   'boringssl_revision': '5b83e5d1abf0ae0033ae52ab579d906b67633b2c',
+deps_var() {
+  local tag="$1" name="$2" deps
+  deps="$(git -C "${src}" show "${tag}:DEPS")"
+  local pattern="'${name}':[[:space:]]*'([^']+)'"
+  [[ "${deps}" =~ ${pattern} ]] || die "the DEPS of ${tag} does not set ${name}"
+  echo "${BASH_REMATCH[1]}"
+}
+
+# Prints the URL of the dependency that a tag's DEPS pins to a revision
+# variable. The entry reads
+#   Var('boringssl_git') + '/boringssl.git' + '@' +  Var('boringssl_revision'),
+deps_url() {
+  local tag="$1" revision_var="$2" deps
+  deps="$(git -C "${src}" show "${tag}:DEPS")"
+  local plus='[[:space:]]*\+[[:space:]]*'
+  local pattern="Var\('([a-z_]+)'\)${plus}'(/[^']+)'${plus}'@'${plus}Var\('${revision_var}'\)"
+  [[ "${deps}" =~ ${pattern} ]] ||
+    die "the DEPS of ${tag} has no dependency pinned to ${revision_var}"
+  local base_var="${BASH_REMATCH[1]}" path="${BASH_REMATCH[2]}" base
+  base="$(deps_var "${tag}" "${base_var}")"
+  echo "${base}${path}"
+}
+
+# Fetches the commit of a dependency that a tag's DEPS names and prints its
+# hash. Every commit gets a ref, so that git keeps it.
+fetch_dep() {
+  local name="$1" tag="$2" repo="${compare}/$1" revision url
+  revision="$(deps_var "${tag}" "${name}_revision")"
+  [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] ||
+    die "the DEPS of ${tag} sets ${name}_revision to '${revision}', not a commit"
+  url="$(deps_url "${tag}" "${name}_revision")"
+  [[ "${url}" == https://* ]] ||
+    die "the DEPS of ${tag} has '${url}' as the URL of ${name}, not an https URL"
+
+  prepare_repo "${repo}" "${url}"
+  local ref="refs/compare/${revision}"
+  if ! git -C "${repo}" rev-parse --verify --quiet "${ref}^{commit}" > /dev/null; then
+    note "fetching ${name} ${revision} for ${tag}"
+    git -C "${repo}" fetch --depth=1 --no-tags origin "${revision}:${ref}" >&2
+  fi
+  echo "${revision}"
+}
+
+# Runs git diff and says so when there is no difference, because git then
+# prints nothing.
+print_diff() {
+  local repo="$1" output
+  shift
+  output="$(git -C "${repo}" diff "$@")"
+  if [[ -n "${output}" ]]; then
+    echo "${output}"
+  else
+    echo " no changes"
+  fi
+}
+
+# Prints the size of the whole change and a per-file summary, limited to the
+# given paths if there are any. Over a whole tree, rename detection is slow and
+# warns about its limit, so the overall size counts a rename as a deletion and
+# an addition. The stat options keep paths whole, even when the output is not
+# going to a terminal.
+show_diff() {
+  local name="$1" repo="$2" old="$3" new="$4"
+  shift 4
+  echo "== ${name}: ${old} -> ${new}"
+  if [[ "${old}" == "${new}" ]]; then
+    printf ' same commit\n\n'
+    return 0
+  fi
+  print_diff "${repo}" --shortstat --no-renames "${old}" "${new}"
+  echo
+  if [[ $# -gt 0 ]]; then
+    echo "Limited to: $*"
+  fi
+  print_diff "${repo}" --stat=160 --stat-graph-width=20 "${old}" "${new}" -- "$@"
+  echo
+}
+
+prepare_repo "${src}" https://chromium.googlesource.com/chromium/src.git
+fetch_tag "${old_tag}"
+fetch_tag "${new_tag}"
+
+# A mistyped path looks just like a path without changes, so point it out.
+for path in "$@"; do
+  git -C "${src}" cat-file -e "${old_tag}:${path}" 2> /dev/null ||
+    git -C "${src}" cat-file -e "${new_tag}:${path}" 2> /dev/null ||
+    note "warning: neither ${old_tag} nor ${new_tag} has ${path}"
+done
+
+show_diff src "${src}" "${old_tag}" "${new_tag}" "$@"
+
+for dep in boringssl quiche; do
+  old_revision="$(fetch_dep "${dep}" "${old_tag}")"
+  new_revision="$(fetch_dep "${dep}" "${new_tag}")"
+  show_diff "${dep}" "${compare}/${dep}" "${old_revision}" "${new_revision}"
+done
