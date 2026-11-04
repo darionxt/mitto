@@ -35,10 +35,9 @@ old_tag="$1"
 new_tag="$2"
 shift 2
 
-tag_pattern='^[0-9]+\.0\.[0-9]+\.[0-9]+$'
 for tag in "${old_tag}" "${new_tag}"; do
-  [[ "${tag}" =~ ${tag_pattern} ]] ||
-    die "'${tag}' is not a Chromium release tag; ${usage}"
+  [[ "${tag}" =~ ^[0-9]+\.0\.[0-9]+\.[0-9]+$ ]] ||
+    die "'${tag}' is not a Chromium version; ${usage}"
 done
 
 # What a server can observe, as far as chromium/src decides it: the network
