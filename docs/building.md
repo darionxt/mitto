@@ -118,6 +118,14 @@ uv run pytest
 
 Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler.
 
+To check the whole path from Python through the native core to a real server, with `MITTO_NATIVE_LIBRARY` set as above and a network connection:
+
+```bash
+uv run python -c "import mitto; print(mitto.get('https://example.com/').status)"
+```
+
+It prints `200`.
+
 The loader in [`src/mitto/_native.py`](../src/mitto/_native.py) uses `MITTO_NATIVE_LIBRARY` if it is set, and otherwise `libmitto_core.dylib` (`.so` on Linux) next to that file in the installed package. If the variable names something that is not a file, loading fails rather than falling back to the installed library. The loader refuses a library whose ABI version differs from its own `ABI_VERSION`, and a test keeps that constant equal to `MITTO_ABI_VERSION` in the C header.
 
 ## Disk usage

@@ -45,14 +45,6 @@ class StubServerHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-@pytest.fixture(autouse=True)
-def fresh_load_library() -> Iterator[None]:
-    """Make each test load the library for itself."""
-    _native.load_library.cache_clear()
-    yield
-    _native.load_library.cache_clear()
-
-
 @pytest.fixture
 def package_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Make the loader see an empty directory as the installed package, with no local build named."""
@@ -78,14 +70,6 @@ def build_stub(tmp_path: Path) -> Callable[[str], Path]:
         return library
 
     return build
-
-
-@pytest.fixture
-def native_library() -> ctypes.CDLL:
-    """Return the real native core, or skip if this machine has none."""
-    if _native.find_library() is None:
-        pytest.skip(f"no native library; set {_native.LIBRARY_ENV_VAR} to run this test")
-    return _native.load_library()
 
 
 @pytest.fixture
