@@ -42,6 +42,7 @@ $MITTO_WORKSPACE/
     src/               Chromium at the pinned tag
       mitto/           link to the repository's native/
       out/mitto/       build directory for the native core
+  compare/             shallow repositories for tools/workspace/compare, if used
 ```
 
 To use the Chromium tools by hand, put depot_tools on your `PATH`:
@@ -65,6 +66,35 @@ Measured for Chromium 157.0.8103.27 on macOS arm64, after `gn gen` and before an
 | Total | 30.5 GiB |
 
 Of `src`, 3.6 GiB is the `.git` directories of `src` and its 143 git dependencies. Compiled output in `out/mitto` comes on top of this and has not been measured yet. Each additional release kept in the workspace needs its own `chromium-<tag>` directory.
+
+## Compare two releases
+
+Older Chrome Releases are reproduced as **Persona** data and never built ([ADR-0005](adr/0005-older-releases-as-data.md)), so they only need comparing. `tools/workspace/compare` shows where their TLS, HTTP/2 and QUIC differences may lie, without a full checkout. **Baselines** recorded from real Chrome remain the ground truth.
+
+```bash
+export MITTO_WORKSPACE=/absolute/path/to/mitto-workspace
+tools/workspace/compare 156.0.8078.80 157.0.8103.27
+```
+
+The script:
+
+1. fetches each tag of `chromium/src` at depth 1 into `$MITTO_WORKSPACE/compare/src`, which is independent of the `chromium-<tag>` checkouts;
+2. prints the size of the whole change in `src` and a per-file summary of its default network paths, or of the paths given after the two tags;
+3. reads the BoringSSL and QUICHE revisions and URLs from each tag's `DEPS`, fetches those commits into `compare/boringssl` and `compare/quiche`, and prints the same for each whole repository, because TLS and QUIC code lives there and a diff of `src` alone misses it.
+
+Diffs go to stdout, and progress and warnings go to stderr. Tags and commits the repositories already hold are not fetched again, so a rerun needs no network.
+
+These costs come on top of the [disk usage](#disk-usage) above. They were measured on macOS arm64 with 156.0.8078.80 and 157.0.8103.27, and the times depend on the connection:
+
+| Step | Time | Disk |
+| --- | --- | --- |
+| First tag | about 8.5 minutes, most of it the server preparing the pack | 1.35 GiB |
+| Tag from another milestone | about 2 minutes | about 200 MiB |
+| Tag from the same milestone | seconds | under 1 MiB |
+| BoringSSL and QUICHE, two commits each | seconds | under 100 MiB |
+| Diff | about 15 seconds | none |
+
+The repositories keep every tag and commit they fetch. Delete `$MITTO_WORKSPACE/compare` to free the space; the next run fetches what it needs again.
 
 ## Move to a new Engine Release
 
