@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+#
+# Sets up the mitto build workspace: depot_tools, a shallow Chromium checkout
+# pinned to the tag in tools/workspace/chromium_tag, and the out/mitto build
+# directory for the native core.
+#
+# Usage: MITTO_WORKSPACE=/absolute/path tools/workspace/bootstrap [gclient args]
+#
+# Extra arguments, such as --verbose, are passed to gclient sync. Safe to
+# rerun. Each release in chromium_tag gets its own checkout directory.
+
+set -euo pipefail
+
+die() {
+  echo "bootstrap: error: $*" >&2
+  exit 1
+}
+
+note() {
+  echo "bootstrap: $*" >&2
+}
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+tag="$(tr -d '[:space:]' < "${repo_root}/tools/workspace/chromium_tag")"
+[[ "${tag}" =~ ^[0-9]+\.0\.[0-9]+\.[0-9]+$ ]] ||
+  die "tools/workspace/chromium_tag holds '${tag}', not a Chromium version"
+
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64) host=mac ;;
+  Linux/x86_64) host=linux ;;
+  *) die "unsupported host $(uname -s)/$(uname -m); use macOS arm64 or Linux x86_64" ;;
+esac
+
+[[ -n "${MITTO_WORKSPACE:-}" ]] ||
+  die "set MITTO_WORKSPACE to an absolute path outside the repository"
+[[ "${MITTO_WORKSPACE}" == /* ]] || die "MITTO_WORKSPACE must be an absolute path"
+[[ "${MITTO_WORKSPACE}" != *[[:space:]]* ]] ||
+  die "MITTO_WORKSPACE must not contain spaces; Chromium does not support them"
+
+inside_repo() {
+  case "$1/" in
+    "${repo_root}/"*) return 0 ;;
+  esac
+  return 1
+}
+
+! inside_repo "${MITTO_WORKSPACE%/}" ||
+  die "MITTO_WORKSPACE must be outside the repository"
+mkdir -p "${MITTO_WORKSPACE}"
+workspace="$(cd "${MITTO_WORKSPACE}" && pwd -P)"
+! inside_repo "${workspace}" ||
+  die "MITTO_WORKSPACE must be outside the repository"
+
+# Keeps a Mac from sleeping during long downloads.
+run_awake() {
+  if [[ "${host}" == mac ]]; then
+    caffeinate -i "$@"
+  else
+    "$@"
+  fi
+}
+
+# depot_tools updates itself whenever gclient runs, so a clone is enough.
+depot_tools="${workspace}/depot_tools"
+if [[ ! -d "${depot_tools}/.git" ]]; then
+  note "installing depot_tools"
+  git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \
+    "${depot_tools}"
+fi
+export PATH="${PATH}:${depot_tools}"
+export DEPOT_TOOLS_METRICS=0
+
+# Keep the Python environments that depot_tools creates, and gsutil's state,
+# inside the workspace instead of the user's home directory. gsutil reads its
+# state_dir from a boto file; BOTO_PATH names one without making gsutil.py
+# wrap every call in luci-auth, as BOTO_CONFIG would.
+export VPYTHON_VIRTUALENV_ROOT="${workspace}/.cache/vpython"
+export UV_CACHE_DIR="${workspace}/.cache/uv"
+mkdir -p "${workspace}/.cache"
+export BOTO_PATH="${workspace}/.cache/boto.cfg"
+printf '[GSUtil]\nstate_dir = %s\n' "${workspace}/.cache/gsutil" > "${BOTO_PATH}"
+
+chromium="${workspace}/chromium-${tag}"
+src="${chromium}/src"
+mkdir -p "${chromium}"
+
+# A first clone that was interrupted leaves a repository without a commit,
+# which gclient would then fetch with full history. Start that clone over.
+if [[ -d "${src}/.git" ]] &&
+  ! git -C "${src}" rev-parse --verify --quiet HEAD > /dev/null; then
+  note "removing the unfinished first clone of src"
+  rm -rf "${src}"
+fi
+
+# gclient fetches every branch without a depth limit whenever the revision it
+# is given is not a commit the checkout already has. So each release gets its
+# own checkout, and only its first sync, which is shallow, names the tag; later
+# syncs name the commit it checked out.
+revision="refs/tags/${tag}"
+if [[ -d "${src}/.git" ]]; then
+  revision="$(git -C "${src}" rev-parse HEAD)"
+fi
+
+cat > "${chromium}/.gclient" << EOF
+# Written by mitto's tools/workspace/bootstrap; local edits are overwritten.
+solutions = [
+  {
+    "name": "src",
+    "url": "https://chromium.googlesource.com/chromium/src.git@${revision}",
+    "managed": True,
+    "custom_deps": {},
+    "custom_vars": {
+      # Skip dependencies that only Chromium's own bots and tests need.
+      "checkout_configuration": "small",
+      "checkout_js_coverage_modules": False,
+      "generate_location_tags": False,
+    },
+  },
+]
+EOF
+
+# gclient downloads Google Storage objects in parallel, and each download
+# waits only 30 seconds for another one to finish installing gsutil. Install
+# it first so that a slow connection does not fail the sync.
+"${depot_tools}/gsutil.py" version > /dev/null
+
+note "syncing Chromium ${tag}; the first run downloads about 10 GB"
+note "on that run, the server prepares src for several minutes before any data arrives"
+(cd "${chromium}" &&
+  run_awake gclient sync --no-history --delete_unversioned_trees "$@")
+
+# Expose the repository's native sources to GN as //mitto. The link stays out
+# of the Chromium checkout's git status.
+link="${src}/mitto"
+if [[ -d "${repo_root}/native" ]]; then
+  ln -sfn "${repo_root}/native" "${link}"
+elif [[ -L "${link}" ]]; then
+  rm "${link}"
+fi
+exclude="${src}/.git/info/exclude"
+grep -qxF "/mitto" "${exclude}" 2> /dev/null || echo "/mitto" >> "${exclude}"
+
+mkdir -p "${src}/out/mitto"
+cp "${repo_root}/tools/workspace/args.gn" "${src}/out/mitto/args.gn"
+
+if [[ "${host}" == mac ]]; then
+  developer_dir="$(xcode-select -p 2> /dev/null || true)"
+  [[ -d "${developer_dir}/Platforms/MacOSX.platform/Developer/SDKs" ]] ||
+    die "the checkout is ready, but gn gen needs a full Xcode installation" \
+      "and xcode-select points to '${developer_dir}'; see docs/building.md"
+fi
+
+(cd "${src}" && gn gen out/mitto)
+note "done: ${src}/out/mitto is ready"
