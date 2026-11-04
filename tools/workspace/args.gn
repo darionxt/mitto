@@ -1,0 +1,6 @@
+# GN args for the native core's build directory, out/mitto. The bootstrap
+# script copies this file there; edit it here, not in the workspace.
+
+is_debug = false
+is_component_build = false
+symbol_level = 1
