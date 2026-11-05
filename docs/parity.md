@@ -77,9 +77,9 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 
 | File | States | Upstream |
 |---|---|---|
-| `native/network_session_configurator.cc` | HTTP/2 connection settings, and with `enable_http2` the ALPN list | `components/network_session_configurator` |
+| `native/network_session_configurator.cc` | HTTP/2 connection settings, and with `enable_http2` the ALPN list. QUIC parameters, and the origins that a field trial tells Chrome speak QUIC | `components/network_session_configurator`, and the hints in `net/http/http_server_properties.cc` |
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
-| `native/feature_list.cc` | Features that the ClientHello depends on, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
+| `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
 
 A value stated here stays when a new **Engine Release** changes a default, so a Parity Check fails instead of mitto moving with the engine. That matters because an older **Chrome Release** must keep sending what it sent.
 

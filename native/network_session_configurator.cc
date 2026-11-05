@@ -102,11 +102,7 @@ void ConfigureQuicParams(net::HttpNetworkSessionParams* params,
   quic_params->retry_without_alt_svc_on_quic_errors = true;
 
   // connection_options. The ORIG in tests/baselines/157/http3.json does not
-  // come from here. QuicSessionPool adds the parameter quic_options of the
-  // feature TryQuicByDefault, which is on by default with the default value
-  // ORIG, and that default is what most Chrome installations run. The field
-  // trial IncreaseAmplificationFactor changes it in about 3% of them. See
-  // docs/baselines.md.
+  // come from here. QuicSessionPool adds it, as feature_list.cc says.
   quic_params->connection_options = {};
 
   // client_connection_options.
