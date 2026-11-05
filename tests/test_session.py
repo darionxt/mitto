@@ -30,6 +30,7 @@ import pytest
 
 import mitto
 from mitto._native import Priority, RequestError, Session
+from tests.local_server import LocalHTTPServer
 
 pytestmark = pytest.mark.usefixtures("native_library")
 
@@ -50,7 +51,7 @@ class ReceivedRequest:
     headers: list[tuple[str, str]]
 
 
-class RecordingServer(http.server.ThreadingHTTPServer):
+class RecordingServer(LocalHTTPServer):
     """An HTTP/1.1 server that keeps connections open and records each request."""
 
     # A Session opens up to six connections to a host at once, and the default queue holds five. macOS makes room in a

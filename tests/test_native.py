@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from mitto import _native
+from tests.local_server import LocalHTTPServer
 
 HEADER = Path(__file__).parents[1] / "native" / "include" / "mitto" / "mitto.h"
 
@@ -98,7 +99,7 @@ def build_stub(tmp_path: Path) -> Callable[[str], Path]:
 @pytest.fixture
 def server_url() -> Iterator[str]:
     """Run a local HTTP server and return its URL."""
-    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), StubServerHandler) as server:
+    with LocalHTTPServer(("127.0.0.1", 0), StubServerHandler) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         yield f"http://127.0.0.1:{server.server_port}/"
         server.shutdown()
