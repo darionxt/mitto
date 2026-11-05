@@ -17,6 +17,7 @@ and PRIVATE_CERTIFICATE_SPKI_HASH with:
 
 import concurrent.futures
 import http.server
+import socket
 import socketserver
 import ssl
 import threading
@@ -51,6 +52,10 @@ class ReceivedRequest:
 
 class RecordingServer(http.server.ThreadingHTTPServer):
     """An HTTP/1.1 server that keeps connections open and records each request."""
+
+    # A Session opens up to six connections to a host at once, and the default queue holds five. macOS makes room in a
+    # full queue by dropping a half-open connection, which the client sees as a reset.
+    request_queue_size = socket.SOMAXCONN
 
     def __init__(self, server_address: tuple[str, int]) -> None:
         super().__init__(server_address, RecordingHandler)
