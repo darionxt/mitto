@@ -3,7 +3,9 @@
 import base64
 import hashlib
 import io
+import json
 import os
+import re
 import stat
 import struct
 import subprocess
@@ -26,6 +28,13 @@ def write(root: Path, path: str, content: str | bytes = "") -> Path:
     else:
         file.write_bytes(content)
     return file
+
+
+def test_the_published_export_is_of_the_engine_release() -> None:
+    pin = json.loads(export.PIN_FILE.read_text())
+
+    assert f"/download/chromium-{export.read_tag()}/" in pin["url"]
+    assert re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])
 
 
 def test_project_lists_what_gn_read_and_what_targets_declare() -> None:
