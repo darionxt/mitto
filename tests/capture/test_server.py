@@ -1,6 +1,7 @@
 """Tests of the capture server through real sockets and real TLS, with Python's own TLS as the client."""
 
 import base64
+import contextlib
 import errno
 import hashlib
 import json
@@ -210,6 +211,7 @@ def test_records_http3() -> None:
     assert connection.cipher is not None
     assert connection.cipher.startswith("TLS_")
     assert connection.ip_version == 4
+    assert connection.peer == "127.0.0.1"
     assert connection.error is None
     assert [request.target for request in connection.requests] == ["/fetch", "/missing"]
     assert connection.requests[0].headers[-1] == ("x-mitto", "test")
@@ -240,7 +242,9 @@ def test_records_http3_over_ipv6() -> None:
             pytest.skip("no IPv6 loopback here")
     with CaptureServer() as server, Http3Client(server.port(HTTP3), address="::1") as client:
         assert client.get("/fetch") == (b"200", b"fetched\n")
-        assert only_quic_connection(server).ip_version == 6
+        connection = only_quic_connection(server)
+        assert connection.ip_version == 6
+        assert connection.peer == "::1"
 
 
 def test_an_http3_client_gets_the_same_page_as_the_others() -> None:
@@ -459,6 +463,10 @@ def test_records_a_protocol_error_and_closes_the_connection() -> None:
     with CaptureServer() as server:
         with connect(server.port(HTTP2)) as sock:
             sock.sendall(b"this is no HTTP/2 preface")
+            # Closing with data unread resets the connection on Windows, which can reach the server before the preface.
+            with contextlib.suppress(OSError):
+                while sock.recv(1 << 16):
+                    pass
         connection = wait_for_ended_connection(server, HTTP2)
 
     assert connection.error is not None
@@ -554,6 +562,7 @@ def test_command_line_writes_all_recordings(tmp_path: Path) -> None:
         assert list(form["requests"]) == ["navigation", "fetch", "script", "image"]
         raw_form = json.loads((tmp_path / f"{stem}.raw.json").read_text(encoding="utf-8"))
         assert raw_form["connections"][0]["client_hello"].startswith(client_hello_start)
+        assert raw_form["connections"][0]["peer"] == "127.0.0.1"
 
 
 def test_command_line_explains_a_port_in_use(tmp_path: Path) -> None:

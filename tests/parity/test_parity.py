@@ -3,6 +3,7 @@
 Tests that take the native_library fixture are skipped when this machine has no native library.
 """
 
+import itertools
 import json
 import os
 import subprocess
@@ -14,7 +15,7 @@ import pytest
 
 from mitto._native import LIBRARY_ENV_VAR, Session
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
-from tools.capture import HTTP1, HTTP2, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
+from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
 from tools.parity import (
     BASELINES_DIRECTORY,
     KNOWN_GAPS_FILE_NAME,
@@ -60,6 +61,22 @@ def test_the_known_gaps_list_is_written_the_way_the_command_writes_it() -> None:
     text = (BASELINES_DIRECTORY / KNOWN_GAPS_FILE_NAME).read_text()
 
     assert dumps_known_gaps(loads_known_gaps(text)) == text
+
+
+def test_each_release_has_every_main_request_kind_over_every_protocol() -> None:
+    found = {(baseline.release, baseline.kind, baseline.protocol) for baseline in load_baselines(BASELINES_DIRECTORY)}
+
+    releases = {release for release, _, _ in found}
+    assert releases
+    assert found == set(itertools.product(releases, RequestKind, (HTTP1, HTTP2, HTTP3)))
+
+
+def test_each_release_says_which_chrome_recorded_it() -> None:
+    releases = {baseline.release for baseline in load_baselines(BASELINES_DIRECTORY)}
+
+    for release in releases:
+        note = (BASELINES_DIRECTORY / release / "chrome.txt").read_text()
+        assert f"Chrome: {release}." in note
 
 
 @pytest.mark.usefixtures("native_library")

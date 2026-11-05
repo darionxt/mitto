@@ -28,13 +28,9 @@ There is no **Persona** data yet, so a request holds only what `//net` adds by i
 
 ## Baselines
 
-A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json`, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Request Kind in it, and the protocol comes from the file's `protocol` key. Recording into the right directory gives the right names:
+A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json`, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Request Kind in it, and the protocol comes from the file's `protocol` key. [baselines.md](baselines.md) is how to record them.
 
-```bash
-uv run python -m tools.capture --out tests/baselines/157
-```
-
-Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as notes on where a Baseline came from.
+Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
 
 ## Gaps
 

@@ -58,9 +58,10 @@ class _ConnectionClosedError(Exception):
 class _LiveConnection:
     """A connection in progress. Only touch it while holding the server's lock."""
 
-    def __init__(self, connection_id: int, client_hello: ClientHelloRecords) -> None:
+    def __init__(self, connection_id: int, client_hello: ClientHelloRecords, peer: str) -> None:
         self.id = connection_id
         self.client_hello = client_hello
+        self.peer = peer
         self.tls_version: str | None = None
         self.cipher: str | None = None
         self.alpn: str | None = None
@@ -76,7 +77,15 @@ class _LiveConnection:
         elif isinstance(self.http, Http1Connection):
             requests = tuple(self.http.requests)
         return ConnectionRecord(
-            self.id, self.client_hello, self.tls_version, self.cipher, self.alpn, frames, requests, self.error
+            self.id,
+            self.client_hello,
+            self.tls_version,
+            self.cipher,
+            self.alpn,
+            frames,
+            requests,
+            self.error,
+            self.peer,
         )
 
 
@@ -316,14 +325,14 @@ class CaptureServer:
 
     def _accept(self, listener: _Listener) -> None:
         try:
-            sock, _ = listener.sock.accept()
+            sock, address = listener.sock.accept()
         except OSError:
             return
         sock.setblocking(True)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         with self._lock:
             self._open_sockets.add(sock)
-        thread = threading.Thread(target=self._serve, args=(sock, listener), daemon=True)
+        thread = threading.Thread(target=self._serve, args=(sock, address[0], listener), daemon=True)
         self._connection_threads.append(thread)
         thread.start()
 
@@ -359,11 +368,11 @@ class CaptureServer:
             with contextlib.suppress(OSError):
                 self._quic_sockets[family].sendto(data, address)
 
-    def _serve(self, sock: socket.socket, listener: _Listener) -> None:
+    def _serve(self, sock: socket.socket, peer: str, listener: _Listener) -> None:
         live: _LiveConnection | None = None
         try:
             stream = _TlsStream(sock, listener.context)
-            live = self._read_client_hello(sock, stream, listener.endpoint)
+            live = self._read_client_hello(sock, peer, stream, listener.endpoint)
             stream.handshake()
             http = self._start_http(live, stream, listener.endpoint)
             stream.write(http.start())
@@ -387,7 +396,9 @@ class CaptureServer:
                 self._open_sockets.discard(sock)
             sock.close()
 
-    def _read_client_hello(self, sock: socket.socket, stream: _TlsStream, endpoint: _Endpoint) -> _LiveConnection:
+    def _read_client_hello(
+        self, sock: socket.socket, peer: str, stream: _TlsStream, endpoint: _Endpoint
+    ) -> _LiveConnection:
         assembler = ClientHelloAssembler()
         while True:
             data = sock.recv(_READ_SIZE)
@@ -397,7 +408,7 @@ class CaptureServer:
             client_hello = assembler.feed(data)
             if client_hello is not None:
                 with self._lock:
-                    live = _LiveConnection(next(self._connection_ids), client_hello)
+                    live = _LiveConnection(next(self._connection_ids), client_hello, peer)
                     endpoint.connections.append(live)
                 return live
 

@@ -32,7 +32,7 @@ Open each address in a Chrome started that way. Chrome ignores `--ignore-certifi
 | File | Holds |
 |---|---|
 | `recordings/http1.json`, `recordings/http2.json`, `recordings/http3.json` | The normal form |
-| `recordings/http1.raw.json`, `recordings/http2.raw.json`, `recordings/http3.raw.json` | The raw recording: every connection, with its ClientHello bytes, its Initial packets over QUIC, every frame and every request |
+| `recordings/http1.raw.json`, `recordings/http2.raw.json`, `recordings/http3.raw.json` | The raw recording: every connection, with the client's address, its ClientHello bytes, its Initial packets over QUIC, every frame and every request |
 
 To check that a client records the same twice, record it into two directories and compare the files.
 
@@ -203,7 +203,7 @@ Only connections that carried a request of a Request Kind count. Chrome also ope
 
 ### What can differ between Chrome installations
 
-A fresh user data directory has no variations seed, so it shows no field trials. Chrome's trust anchors, in the `trust_anchors` extension, start from its compiled-in root store, and a component update can change them without a new Chrome Release.
+A fresh user data directory has no variations seed, so it shows no field trials. [baselines.md](baselines.md) is how Baselines get one. Chrome's trust anchors, in the `trust_anchors` extension, start from its compiled-in root store, and a component update can change them without a new Chrome Release.
 
 ## From Python
 

@@ -42,11 +42,12 @@ class LiveQuicConnection:
         id: The connection's number among the server's connections. Whoever keeps it on record sets it.
     """
 
-    def __init__(self, quic: QuicConnection, respond: Responder, ip_version: int) -> None:
+    def __init__(self, quic: QuicConnection, respond: Responder, peer: str) -> None:
         self.id = 0
         self.quic = quic
         self.http = Http3Connection(respond)
-        self.ip_version = ip_version
+        self.peer = peer
+        self.ip_version = 6 if ":" in peer else 4
         self.assembler = InitialAssembler()
         self.client_hello: QuicClientHello | None = None
         self.routes = {quic.original_destination_connection_id, quic.host_cid}
@@ -68,6 +69,7 @@ class LiveQuicConnection:
             tuple(self.http.frames),
             tuple(self.http.requests),
             self.error,
+            self.peer,
         )
 
 
@@ -137,7 +139,7 @@ class QuicDispatcher:
         quic = QuicConnection(
             configuration=self._configuration, original_destination_connection_id=destination_connection_id
         )
-        connection = LiveQuicConnection(quic, self._respond, 6 if ":" in address[0] else 4)
+        connection = LiveQuicConnection(quic, self._respond, address[0])
         try:
             self._feed_assembler(connection, data)
         except ParseError as error:
