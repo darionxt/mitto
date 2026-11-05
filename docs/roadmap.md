@@ -33,7 +33,7 @@ Goal: prove the whole pipeline end to end before investing in features.
 
 Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's core value, so it comes before features.
 
-- Trimmed source export per Engine Release. It is produced by hand on a Linux machine and published as a release asset, so that GitHub-hosted runners can build the native core within their disk and time limits.
+- Trimmed source export per Engine Release. It is produced by hand on a Linux machine and published as a release asset, so that GitHub-hosted runners can build the native core within their disk and time limits. It includes the patches in `tools/workspace/patches` ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
 - CI on GitHub-hosted Linux x86_64 and macOS arm64 runners, building from that export.
 - Capture kit: a local server that records the raw TLS ClientHello, HTTP/2 frames, QUIC transport parameters and HTTP headers. It comes with a procedure for recording real Windows Chrome as **Baselines**, one per Chrome Release in the **Supported Window** and per main **Request Kind**. Baselines are recorded by hand on a Windows machine and committed as data.
 - Network stack configuration that mirrors Chrome's network service: enabled features, HTTP/2 settings, QUIC, ALPS, encrypted ClientHello (ECH) GREASE and post-quantum key shares. Each item is checked against the Baselines.
@@ -55,7 +55,7 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
   - responses as bytes, text, JSON or a stream;
   - a typed error hierarchy.
 - Cookies (optionally persisted), redirects, an optional HTTP cache, and proxies: HTTP, HTTPS and SOCKS5, with authentication.
-- DNS and certificate verification as Chrome does them, including the Chrome Root Store.
+- DNS and certificate verification as Chrome does them, including the Chrome Root Store. Also an option to add trust anchors, because on Linux the Chrome Root Store is otherwise the only source of trust ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
 - Headers that follow the **Initiator**: `Sec-Fetch-Site`, `Referer`, `Origin` and same-site cookie rules.
 - An asyncio API that shares the same Session machinery.
 - **Exit:** feature tests and Parity Checks pass, and the API reference is written.

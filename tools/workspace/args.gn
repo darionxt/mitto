@@ -14,3 +14,16 @@ dcheck_always_on = false
 # Links ICU's data into the library, so that no data file has to ship with it.
 # //url needs that data for hostnames that are not ASCII.
 icu_use_data_file = false
+
+# On Linux, //net uses these desktop libraries only for GNOME's proxy settings
+# and the desktop portal's metered-network state, and mitto uses neither. A
+# machine that installs the library may not have them. They do nothing on macOS.
+use_glib = false
+use_gio = false
+use_dbus = false
+
+# Leaves out NSS and NSPR too, so that the Chrome Root Store is the only source
+# of trust on Linux. This needs the //net patch in tools/workspace/patches. They
+# do nothing on macOS.
+use_nss_client_certs = false
+use_nss_server_certs = false
