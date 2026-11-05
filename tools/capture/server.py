@@ -173,11 +173,7 @@ class CaptureServer:
         self._open_sockets: set[socket.socket] = set()
 
     def __enter__(self) -> Self:
-        try:
-            self._start()
-        except BaseException:
-            self.close()
-            raise
+        self.start()
         return self
 
     def __exit__(
@@ -214,6 +210,21 @@ class CaptureServer:
     def wait_for_page(self, protocol: str, timeout: float) -> bool:
         """Wait until the test page has finished loading on the port for protocol. Returns whether it has."""
         return self._endpoints[protocol].page_done.wait(timeout)
+
+    def start(self) -> None:
+        """Start listening. A server starts only once.
+
+        Raises:
+            OSError: A port is not free.
+            RuntimeError: The server has started before.
+        """
+        if self._certificate is not None:
+            raise RuntimeError("the server has started before")
+        try:
+            self._start()
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         """Stop serving and end all connections. Recordings stay readable."""

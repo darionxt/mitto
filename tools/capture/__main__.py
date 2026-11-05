@@ -25,34 +25,43 @@ def main() -> int:
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
     try:
-        server = CaptureServer(args.host, http1_port=args.http1_port, http2_port=args.http2_port).__enter__()
+        server = CaptureServer(args.host, http1_port=args.http1_port, http2_port=args.http2_port)
     except ValueError as error:
         parser.error(str(error))
+    try:
+        server.start()
     except OSError as error:
         print(f"Cannot listen on the ports: {error}. --http1-port and --http2-port choose others.", file=sys.stderr)
         return 1
-    with server:
-        print(f"SPKI hash: {server.spki_hash}")
-        print(f"HTTP/1.1:  {server.url(HTTP1)}")
-        print(f"HTTP/2:    {server.url(HTTP2)}")
-        print()
-        print("Start each recording from a new, empty user data directory:")
-        print(
-            f'  chrome --user-data-dir="NEW_EMPTY_DIRECTORY" --ignore-certificate-errors-spki-list={server.spki_hash}'
-            " --no-first-run --no-default-browser-check URL"
-        )
-        print()
-        print("Waiting for the test page to finish on both ports. Ctrl-C stops early.", flush=True)
-        pending = dict(_FILE_STEMS)
-        failed = False
-        try:
-            while pending:
-                for protocol, stem in list(pending.items()):
-                    if server.wait_for_page(protocol, _POLL_SECONDS):
-                        failed = not _write(server, protocol, out, stem) or failed
-                        del pending[protocol]
-        except KeyboardInterrupt:
-            return 130
+    try:
+        return _record(server, out)
+    finally:
+        server.close()
+
+
+def _record(server: CaptureServer, out: Path) -> int:
+    """Say how to reach the server, and write what each port records. Returns the exit code."""
+    print(f"SPKI hash: {server.spki_hash}")
+    print(f"HTTP/1.1:  {server.url(HTTP1)}")
+    print(f"HTTP/2:    {server.url(HTTP2)}")
+    print()
+    print("Start each recording from a new, empty user data directory:")
+    print(
+        f'  chrome --user-data-dir="NEW_EMPTY_DIRECTORY" --ignore-certificate-errors-spki-list={server.spki_hash}'
+        " --no-first-run --no-default-browser-check URL"
+    )
+    print()
+    print("Waiting for the test page to finish on both ports. Ctrl-C stops early.", flush=True)
+    pending = dict(_FILE_STEMS)
+    failed = False
+    try:
+        while pending:
+            for protocol, stem in list(pending.items()):
+                if server.wait_for_page(protocol, _POLL_SECONDS):
+                    failed = not _write(server, protocol, out, stem) or failed
+                    del pending[protocol]
+    except KeyboardInterrupt:
+        return 130
     return 1 if failed else 0
 
 

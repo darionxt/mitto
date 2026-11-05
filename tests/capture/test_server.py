@@ -28,6 +28,15 @@ _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
 
 
+def free_ports(count: int) -> list[int]:
+    """Return ports that are free now. Holding them all at once keeps them different from each other."""
+    sockets = [socket.create_server(("127.0.0.1", 0)) for _ in range(count)]
+    ports = [sock.getsockname()[1] for sock in sockets]
+    for sock in sockets:
+        sock.close()
+    return ports
+
+
 def client_context(offered: tuple[str, ...] = ("h2", "http/1.1")) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False
@@ -250,6 +259,11 @@ def test_records_a_protocol_error_and_closes_the_connection() -> None:
     assert "preface" in connection.error
 
 
+def test_starts_only_once() -> None:
+    with CaptureServer() as server, pytest.raises(RuntimeError, match="started before"):
+        server.start()
+
+
 def test_refuses_a_port_in_use() -> None:
     with CaptureServer() as first:
         taken = CaptureServer(http1_port=first.port(HTTP1))
@@ -260,7 +274,19 @@ def test_refuses_a_port_in_use() -> None:
 
 
 def test_command_line_writes_both_recordings(tmp_path: Path) -> None:
-    command = [sys.executable, "-m", "tools.capture", "--out", str(tmp_path), "--http1-port", "0", "--http2-port", "0"]
+    # Named ports, as by default: a server that starts twice gets away with it on port 0.
+    http1_port, http2_port = free_ports(2)
+    command = [
+        sys.executable,
+        "-m",
+        "tools.capture",
+        "--out",
+        str(tmp_path),
+        "--http1-port",
+        str(http1_port),
+        "--http2-port",
+        str(http2_port),
+    ]
     with subprocess.Popen(
         command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     ) as process:
@@ -274,6 +300,7 @@ def test_command_line_writes_both_recordings(tmp_path: Path) -> None:
             if match is not None:
                 ports[match.group(1)] = int(match.group(2))
             assert line, "".join(printed)
+        assert ports == {"HTTP/1.1": http1_port, "HTTP/2": http2_port}
         for port_name, port in ports.items():
             with connect(port) as sock:
                 if port_name == "HTTP/1.1":
