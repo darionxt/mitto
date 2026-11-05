@@ -50,6 +50,10 @@ _Avoid_: TLS fingerprint, JA3, JA4
 A recorded Wire Fingerprint of real Chrome for one Persona and Request Kind, used as ground truth.
 _Avoid_: golden file, reference capture
 
+**Normal Form**:
+A Wire Fingerprint written so that two recordings of the same client compare equal: what the client randomizes drops out or becomes a placeholder, and only what it decides stays.
+_Avoid_: canonical form, normalized capture
+
 **Parity Check**:
 An automated comparison of mitto's Wire Fingerprint against a Baseline.
 _Avoid_: fingerprint test, diff
