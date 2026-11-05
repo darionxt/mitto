@@ -35,7 +35,7 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
 
 - Trimmed source export per Engine Release. It is produced by hand on a Linux machine and published as a release asset, so that GitHub-hosted runners can build the native core within their disk and time limits. It includes the patches in `tools/workspace/patches` ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
 - CI on GitHub-hosted Linux x86_64 and macOS arm64 runners, building from that export.
-- Capture kit: a local server that records the raw TLS ClientHello, HTTP/2 frames, QUIC transport parameters and HTTP headers. It comes with a procedure for recording real Windows Chrome as **Baselines**, one per Chrome Release in the **Supported Window** and per main **Request Kind**. Baselines are recorded by hand on a Windows machine and committed as data.
+- Capture kit: a local server that records the raw TLS ClientHello, HTTP/2 frames, QUIC transport parameters and HTTP headers. It comes with a procedure for recording real Windows Chrome as **Baselines**, one per Chrome Release in the **Supported Window** and per main **Request Kind**. Baselines are recorded by hand on a Windows machine and committed as data. See [capture.md](capture.md).
 - Network stack configuration that mirrors Chrome's network service: enabled features, HTTP/2 settings, QUIC, ALPS, encrypted ClientHello (ECH) GREASE and post-quantum key shares. Each item is checked against the Baselines.
 - Windows **Persona** data for each Chrome Release:
   - user agent and client hints;
