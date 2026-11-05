@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
@@ -27,10 +26,12 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
+#include "mitto/feature_list.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
 #include "mitto/network_session_configurator.h"
 #include "mitto/session_settings.h"
+#include "mitto/ssl_config_service_mojo.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_handle.h"
@@ -230,6 +231,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
         net::CertVerifier::CreateDefault(/*cert_net_fetcher=*/nullptr),
         std::move(settings.ignore_certificate_errors_spki_list)));
   }
+  builder.set_ssl_config_service(
+      std::make_unique<SSLConfigServiceMojo>(GetNewSSLConfig()));
 
   net::HttpNetworkSessionParams session_params;
   auto quic_context = std::make_unique<net::QuicContext>();
@@ -266,7 +269,7 @@ class NetworkCore {
     // //net reads the command line, but the arguments of the process that
     // loaded the library are not meant for it.
     base::CommandLine::Init(0, nullptr);
-    base::FeatureList::InitInstance(std::string(), std::string());
+    InitFeatureList();
     base::ThreadPoolInstance::CreateAndStartWithDefaultParams("mitto");
     CHECK(network_thread_.StartWithOptions(
         base::Thread::Options(base::MessagePumpType::IO, 0)));
