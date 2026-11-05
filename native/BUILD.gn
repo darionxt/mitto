@@ -9,6 +9,8 @@ config("public_api") {
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
   sources = [
+    "feature_list.cc",
+    "feature_list.h",
     "ignore_errors_cert_verifier.cc",
     "ignore_errors_cert_verifier.h",
     "mitto_core.cc",
@@ -16,12 +18,15 @@ shared_library("mitto_core") {
     "network_session_configurator.h",
     "session_settings.cc",
     "session_settings.h",
+    "ssl_config_service_mojo.cc",
+    "ssl_config_service_mojo.h",
   ]
   public_configs = [ ":public_api" ]
   deps = [
     "//base",
     "//crypto",
     "//net",
+    "//third_party/boringssl",
     "//url",
   ]
 

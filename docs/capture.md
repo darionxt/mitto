@@ -203,7 +203,9 @@ Only connections that carried a request of a Request Kind count. Chrome also ope
 
 ### What can differ between Chrome installations
 
-A fresh user data directory has no variations seed, so it shows no field trials. [baselines.md](baselines.md) is how Baselines get one. Chrome's trust anchors, in the `trust_anchors` extension, start from its compiled-in root store, and a component update can change them without a new Chrome Release.
+A fresh user data directory has no variations seed, so it shows no field trials. [baselines.md](baselines.md) is how Baselines get one.
+
+Chrome's trust anchors, in the `trust_anchors` extension, start from its compiled-in root store. When the PKI metadata component brings a root store with a higher version, Chrome takes the list from that, without a new Chrome Release. A recording is over before the component arrives, so Baselines hold the compiled-in list and cannot show what a Chrome that has run for a while sends.
 
 ## From Python
 
