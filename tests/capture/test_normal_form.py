@@ -7,8 +7,10 @@ import pytest
 from hpack import Encoder
 from hypothesis import given
 from hypothesis import strategies as st
+from pylsqpack import Encoder as PylsqpackEncoder
 
 from tests.capture import samples
+from tools.capture import http3
 from tools.capture.client_hello import ClientHelloAssembler
 from tools.capture.http2 import (
     DATA,
@@ -22,9 +24,10 @@ from tools.capture.http2 import (
     Http2Connection,
     serialize_frame,
 )
+from tools.capture.http3 import serialize_varint
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_client_hello, normal_form
 from tools.capture.page import respond
-from tools.capture.recording import ConnectionRecord, Json, Recording, raw_form
+from tools.capture.recording import ConnectionRecord, Json, QuicConnectionRecord, Recording, raw_form
 from tools.capture.wire import ParseError
 
 
@@ -477,3 +480,434 @@ def test_dumped_form_is_stable_readable_json() -> None:
     assert '\n  "protocol": "http/1.1",\n' in text
     assert json.loads(text) == form
     assert dumps_normal_form(json.loads(text)) == text
+
+
+QUIC_TRANSPORT_PARAMETERS = 57
+_GREASE_PARAMETER_A = 27
+_GREASE_PARAMETER_B = 31 * 1000 + 27
+_GREASE_VERSION_A = 0x0A0A0A0A
+_GREASE_VERSION_B = 0x3A5A7A5A
+_GREASE_FRAME = 0x21 + 0x1F * 3
+_GREASE_FRAME_B = 0x21 + 0x1F * 900
+_GREASE_SETTING = 0x21 + 0x1F * 7
+_GREASE_SETTING_B = 0x21 + 0x1F * 800
+_QPACK_HEADERS = [(b":method", b"GET"), (b":authority", samples.AUTHORITY.encode()), (b":path", b"/fetch")]
+
+
+def transport_parameters_form(*parameters: bytes) -> dict[str, Json]:
+    extension = samples.extension(QUIC_TRANSPORT_PARAMETERS, b"".join(parameters))
+    return extension_named(normalize(samples.client_hello_records([extension])), "quic_transport_parameters")
+
+
+def http3_request_frame(stream_id: int = 0, headers: list[tuple[bytes, bytes]] = _QPACK_HEADERS) -> bytes:
+    return http3.serialize_frame(http3.HEADERS, PylsqpackEncoder().encode(stream_id, headers)[1])
+
+
+def control_stream(*frames: bytes) -> bytes:
+    return serialize_varint(http3.CONTROL_STREAM) + b"".join(frames)
+
+
+def priority_update(stream_id: int, priority: bytes) -> bytes:
+    return http3.serialize_frame(http3.PRIORITY_UPDATE_REQUEST, serialize_varint(stream_id) + priority)
+
+
+def quic_connection(
+    streams: list[tuple[int, bytes]],
+    *,
+    connection_id: int = 1,
+    destination: bytes = samples.CONNECTION_ID,
+    source: bytes = b"",
+    extensions: list[bytes] | None = None,
+    ip_version: int = 6,
+    datagram_size: int = 1200,
+) -> QuicConnectionRecord:
+    message = samples.client_hello_message([samples.server_name(), *(extensions or [])])
+    payload = samples.crypto_frame(0, message)
+    # The rest of the packet: its fixed fields, a one-byte packet number, and the AEAD tag.
+    padding = datagram_size - len(destination) - len(source) - 27
+    packet = samples.initial_packet(payload.ljust(padding, b"\x00"), destination=destination, source=source)
+    return samples.replay_quic_connection(connection_id, [packet], streams, ip_version=ip_version)
+
+
+def quic_recording(*connections: QuicConnectionRecord) -> Recording:
+    return Recording(samples.HOST, samples.AUTHORITY, connections)
+
+
+def test_real_chrome_over_quic_gives_the_recorded_normal_form() -> None:
+    chrome = samples.real_chrome_http3()
+
+    assert normal_form(chrome.recording) == chrome.normal_form
+
+
+def test_real_chrome_over_quic_has_every_request_kind() -> None:
+    form = normal_form(samples.real_chrome_http3().recording)
+
+    assert form["protocol"] == "h3"
+    requests = form["requests"]
+    assert isinstance(requests, dict)
+    assert list(requests) == ["navigation", "fetch", "script", "image"]
+
+
+def test_real_chrome_over_quic_has_a_raw_form_that_loses_nothing() -> None:
+    chrome = samples.real_chrome_http3()
+
+    raw = raw_form(chrome.recording)
+
+    assert isinstance(raw, dict)
+    connections = raw["connections"]
+    assert isinstance(connections, list)
+    first = connections[0]
+    assert isinstance(first, dict)
+    json.dumps(raw)
+    assert first["datagrams"] == [datagram.hex() for datagram in chrome.datagrams[0]]
+    assert first["ip_version"] == 6
+    packets = first["packets"]
+    assert isinstance(packets, list)
+    packet = packets[0]
+    assert isinstance(packet, dict)
+    assert packet["version"] == "QUIC v1"
+    frames = first["frames"]
+    assert isinstance(frames, list)
+    frame_types = [frame["type"] for frame in frames if isinstance(frame, dict)]
+    assert "SETTINGS" in frame_types
+    assert "GREASE" in frame_types
+    settings = next(frame for frame in frames if isinstance(frame, dict) and frame["type"] == "SETTINGS")
+    assert isinstance(settings, dict)
+    assert "QPACK_BLOCKED_STREAMS: 100" in str(settings["settings"])
+
+
+@given(
+    st.lists(st.sampled_from(range(1, 12)), unique=True, min_size=2),
+    st.sampled_from([_GREASE_PARAMETER_A, _GREASE_PARAMETER_B]),
+    st.binary(max_size=15),
+)
+def test_transport_parameters_in_any_order_compare_equal(
+    identifiers: list[int], grease: int, grease_value: bytes
+) -> None:
+    plain = [samples.varint_parameter(identifier, 7) for identifier in identifiers]
+    first = [samples.transport_parameter(_GREASE_PARAMETER_A, b"a"), *plain]
+    second = [*reversed(plain), samples.transport_parameter(grease, grease_value)]
+
+    assert transport_parameters_form(*first) == transport_parameters_form(*second)
+
+
+def test_transport_parameters_are_decoded_and_sorted() -> None:
+    form = transport_parameters_form(
+        samples.varint_parameter(0x0E, 2),
+        samples.varint_parameter(0x01, 30000),
+        samples.transport_parameter(_GREASE_PARAMETER_B, b"random"),
+        samples.transport_parameter(0x3128, b"ORIGRVCM"),
+        samples.transport_parameter(0x0C),
+        samples.transport_parameter(0xABCD, b"\x12\x34"),
+        samples.transport_parameter(0xABCE),
+    )
+
+    assert form["parameters"] == [
+        {"type": "GREASE"},
+        {"type": "max_idle_timeout", "value": 30000},
+        {"type": "disable_active_migration"},
+        {"type": "active_connection_id_limit", "value": 2},
+        {"type": "google_connection_options", "options": ["ORIG", "RVCM"]},
+        {"type": "0xabcd", "data": "1234"},
+        {"type": "0xabce"},
+    ]
+
+
+def test_connection_ids_in_transport_parameters_keep_only_their_length() -> None:
+    first = transport_parameters_form(samples.transport_parameter(0x0F, b"abcd"))
+    second = transport_parameters_form(samples.transport_parameter(0x0F, b"wxyz"))
+
+    assert first == second
+    assert first["parameters"] == [{"type": "initial_source_connection_id", "length": 4}]
+
+
+def test_a_measured_round_trip_time_drops_out() -> None:
+    measured = samples.varint_parameter(0x3127, 12345)
+
+    assert transport_parameters_form(measured, samples.varint_parameter(1, 5)) == transport_parameters_form(
+        samples.varint_parameter(1, 5)
+    )
+
+
+@pytest.mark.parametrize("identifier", [0x173E, 0x219BBCD0], ids=["discard", "debugging_sni"])
+def test_parameters_that_hold_a_name_or_random_bytes_keep_only_their_presence(identifier: int) -> None:
+    form = transport_parameters_form(samples.transport_parameter(identifier, b"anything"))
+
+    parameters = form["parameters"]
+    assert isinstance(parameters, list)
+    assert parameters[0] == {"type": {0x173E: "discard", 0x219BBCD0: "debugging_sni"}[identifier]}
+
+
+def test_version_information_keeps_its_versions_with_grease_first() -> None:
+    def information(*versions: int) -> bytes:
+        return samples.transport_parameter(0x11, b"".join(version.to_bytes(4) for version in versions))
+
+    first = transport_parameters_form(information(1, 1, _GREASE_VERSION_A))
+    second = transport_parameters_form(information(1, _GREASE_VERSION_B, 1))
+
+    assert first == second
+    assert first["parameters"] == [
+        {"type": "version_information", "chosen": "QUIC v1", "others": ["GREASE", "QUIC v1"]}
+    ]
+
+
+def test_an_unknown_version_stays_as_hexadecimal() -> None:
+    form = transport_parameters_form(samples.transport_parameter(0x11, (0x12345678).to_bytes(4)))
+
+    assert form["parameters"] == [{"type": "version_information", "chosen": "0x12345678", "others": []}]
+
+
+@pytest.mark.parametrize(
+    ("identifier", "value", "name"),
+    [
+        (0x01, b"\x40", "max_idle_timeout"),
+        (0x01, b"\x01\x02", "max_idle_timeout"),
+        (0x11, b"\x00", "version_information"),
+        (0x3128, b"abc", "google_connection_options"),
+    ],
+)
+def test_a_malformed_transport_parameter_shows_instead_of_failing(identifier: int, value: bytes, name: str) -> None:
+    form = transport_parameters_form(samples.transport_parameter(identifier, value))
+
+    assert form["parameters"] == [{"type": name, "malformed": value.hex()}]
+
+
+def test_transport_parameters_that_do_not_parse_show_as_malformed() -> None:
+    extension = samples.extension(QUIC_TRANSPORT_PARAMETERS, b"\x01\x05ab")
+
+    form = extension_named(normalize(samples.client_hello_records([extension])), "quic_transport_parameters")
+
+    assert form == {"type": "quic_transport_parameters", "malformed": "01056162"}
+
+
+def test_quic_form_keeps_lengths_but_not_connection_ids() -> None:
+    streams = [(0, http3_request_frame())]
+    first = normal_form(quic_recording(quic_connection(streams, destination=b"12345678", source=b"abcd")))
+    second = normal_form(quic_recording(quic_connection(streams, destination=b"87654321", source=b"wxyz")))
+
+    assert first == second
+    assert first["quic"] == {
+        "version": "QUIC v1",
+        "destination_connection_id_length": 8,
+        "source_connection_id_length": 4,
+        "token_length": 0,
+        "first_packet_number": 0,
+        "first_packet_number_length": 1,
+        "first_datagram_ip_size": 1248,
+    }
+
+
+def test_quic_form_does_not_depend_on_the_ip_version() -> None:
+    streams = [(0, http3_request_frame())]
+    # Chrome makes its first datagrams 20 bytes larger on IPv4, whose header is 20 bytes smaller.
+    on_ipv6 = quic_connection(streams, ip_version=6, datagram_size=1230)
+    on_ipv4 = quic_connection(streams, ip_version=4, datagram_size=1250)
+
+    assert normal_form(quic_recording(on_ipv6)) == normal_form(quic_recording(on_ipv4))
+
+
+def test_quic_tls_has_no_record_version() -> None:
+    tls = normal_form(quic_recording(quic_connection([(0, http3_request_frame())])))["tls"]
+
+    assert isinstance(tls, dict)
+    assert "record_version" not in tls
+    assert tls["legacy_version"] == "TLS 1.2"
+
+
+def test_http3_form_holds_settings_and_grease_placeholders() -> None:
+    def control(grease_frame: int, grease_setting: int, grease_value: int, payload: bytes) -> bytes:
+        settings = (
+            serialize_varint(1)
+            + serialize_varint(65536)
+            + serialize_varint(grease_setting)
+            + serialize_varint(grease_value)
+        )
+        return control_stream(
+            http3.serialize_frame(http3.SETTINGS, settings), http3.serialize_frame(grease_frame, payload)
+        )
+
+    request = (0, http3_request_frame())
+    first = normal_form(
+        quic_recording(quic_connection([(2, control(_GREASE_FRAME, _GREASE_SETTING, 1, b"x")), request]))
+    )
+    second = normal_form(
+        quic_recording(quic_connection([(2, control(_GREASE_FRAME_B, _GREASE_SETTING_B, 99, b"yz")), request]))
+    )
+
+    assert first == second
+    assert first["http3"] == {
+        "streams": [{"type": "control", "stream": 2}],
+        "control": [
+            {"type": "SETTINGS", "settings": ["QPACK_MAX_TABLE_CAPACITY: 65536", "GREASE"]},
+            {"type": "GREASE"},
+        ],
+    }
+
+
+def test_http3_form_says_which_stream_each_type_got() -> None:
+    connection = quic_connection(
+        [
+            (2, control_stream()),
+            (6, serialize_varint(0x21 + 0x1F * 9) + b"abc"),
+            (10, serialize_varint(http3.QPACK_ENCODER_STREAM)),
+            (14, serialize_varint(0x12345)),
+            (0, http3_request_frame()),
+        ]
+    )
+
+    section = normal_form(quic_recording(connection))["http3"]
+
+    assert isinstance(section, dict)
+    assert section["streams"] == [
+        {"type": "control", "stream": 2},
+        {"type": "GREASE"},
+        {"type": "qpack_encoder", "stream": 10},
+        {"type": "0x12345", "stream": 14},
+    ]
+
+
+def test_http3_control_leaves_out_what_follows_from_requests_or_leaving() -> None:
+    connection = quic_connection(
+        [
+            (
+                2,
+                control_stream(
+                    http3.serialize_frame(http3.SETTINGS),
+                    priority_update(0, b"u=1"),
+                    http3.serialize_frame(http3.GOAWAY, b"\x00"),
+                    http3.serialize_frame(0x7F00, b"\xab"),
+                ),
+            ),
+            (0, http3_request_frame()),
+        ]
+    )
+
+    form = normal_form(quic_recording(connection))
+
+    section = form["http3"]
+    assert isinstance(section, dict)
+    assert section["control"] == [{"type": "SETTINGS", "settings": []}, {"type": "0x7f00", "payload": "ab"}]
+
+
+def test_http3_requests_keep_their_headers_and_priority_updates() -> None:
+    connection = quic_connection(
+        [
+            (2, control_stream(priority_update(0, b"u=1, i"), priority_update(4, b"u=4"), priority_update(0, b"u=2"))),
+            (0, http3_request_frame(headers=[(b":path", b"/fetch"), (b"z", samples.AUTHORITY.encode()), (b"a", b"1")])),
+            (4, http3_request_frame(4, [(b":path", b"/image.png")])),
+        ]
+    )
+
+    requests = normal_form(quic_recording(connection))["requests"]
+
+    assert requests == {
+        "fetch": {"headers": [":path: /fetch", "z: <authority>", "a: 1"], "priority_updates": ["u=1, i", "u=2"]},
+        "image": {"headers": [":path: /image.png"], "priority_updates": ["u=4"]},
+    }
+
+
+def test_http3_stream_ids_drop_out_of_requests() -> None:
+    def recording(stream_id: int) -> Recording:
+        return quic_recording(
+            quic_connection(
+                [(2, control_stream(priority_update(stream_id, b"i"))), (stream_id, http3_request_frame(stream_id))]
+            )
+        )
+
+    assert normal_form(recording(0)) == normal_form(recording(8))
+
+
+def test_http3_frames_around_a_request_stay_with_it() -> None:
+    stream = (
+        http3.serialize_frame(_GREASE_FRAME, b"first")
+        + http3_request_frame()
+        + http3.serialize_frame(_GREASE_FRAME_B, b"second")
+        + http3.serialize_frame(http3.DATA, b"body")
+        + http3_request_frame(headers=[(b"trailer", b"1")])
+        + http3.serialize_frame(0x7F00, b"\xab")
+    )
+
+    requests = normal_form(quic_recording(quic_connection([(0, stream)])))["requests"]
+
+    assert isinstance(requests, dict)
+    fetch = requests["fetch"]
+    assert isinstance(fetch, dict)
+    assert fetch["earlier_frames"] == [{"type": "GREASE"}]
+    assert fetch["later_frames"] == [
+        {"type": "GREASE"},
+        {"type": "DATA"},
+        {"type": "HEADERS"},
+        {"type": "0x7f00", "payload": "ab"},
+    ]
+
+
+def test_a_malformed_priority_update_does_not_count_for_a_request() -> None:
+    connection = quic_connection(
+        [
+            (2, control_stream(http3.serialize_frame(http3.PRIORITY_UPDATE_REQUEST, b"\x40"))),
+            (0, http3_request_frame()),
+        ]
+    )
+
+    requests = normal_form(quic_recording(connection))["requests"]
+
+    assert requests == {"fetch": {"headers": [":method: GET", ":authority: <authority>", ":path: /fetch"]}}
+
+
+def test_a_quic_connection_without_a_request_kind_does_not_count() -> None:
+    idle = quic_connection([(2, control_stream())], connection_id=1, extensions=[samples.extension(23)])
+    used = quic_connection([(0, http3_request_frame())], connection_id=2)
+
+    form = normal_form(quic_recording(idle, used))
+
+    assert form == normal_form(quic_recording(used))
+
+
+def test_quic_connections_that_look_different_have_no_single_normal_form() -> None:
+    first = quic_connection([(0, http3_request_frame())], connection_id=1)
+    second = quic_connection([(0, http3_request_frame())], connection_id=2, extensions=[samples.extension(23)])
+
+    with pytest.raises(RecordingError, match="connections 1 and 2"):
+        normal_form(quic_recording(first, second))
+
+
+def test_a_quic_connection_shows_in_the_raw_form_with_what_it_could_not_decode() -> None:
+    record = quic_connection(
+        [
+            (2, control_stream(http3.serialize_frame(http3.SETTINGS, b"\x01\x02"))),
+            (6, serialize_varint(http3.QPACK_ENCODER_STREAM)),
+        ],
+        source=b"abcd",
+    )
+
+    raw = raw_form(quic_recording(record))
+
+    assert isinstance(raw, dict)
+    connections = raw["connections"]
+    assert isinstance(connections, list)
+    connection = connections[0]
+    assert isinstance(connection, dict)
+    assert connection["streams"] == [
+        {"stream": 2, "type": "control", "type_id": 0, "data": "04020102"},
+        {"stream": 6, "type": "qpack_encoder", "type_id": 2, "data": ""},
+    ]
+    frames = connection["frames"]
+    assert isinstance(frames, list)
+    assert frames[0] == {
+        "stream": 2,
+        "type": "SETTINGS",
+        "type_id": 4,
+        "payload": "0102",
+        "settings": ["QPACK_MAX_TABLE_CAPACITY: 2"],
+    }
+    packets = connection["packets"]
+    assert isinstance(packets, list)
+    packet = packets[0]
+    assert isinstance(packet, dict)
+    assert packet["source_connection_id"] == "61626364"
+    packet_frames = packet["frames"]
+    assert isinstance(packet_frames, list)
+    crypto = packet_frames[0]
+    assert isinstance(crypto, dict)
+    assert crypto["type"] == "CRYPTO"
+    assert crypto["offset"] == 0

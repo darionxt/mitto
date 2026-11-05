@@ -71,6 +71,20 @@ def parse_client_hello(message: bytes) -> ClientHello:
     return ClientHello(legacy_version, random, session_id, cipher_suites, compression_methods, tuple(extensions))
 
 
+def handshake_message_size(prefix: bytes | bytearray) -> int | None:
+    """Return the size of the handshake message that starts with prefix, or None if prefix is too short to tell.
+
+    Raises:
+        ParseError: The message would be over the size this kit accepts.
+    """
+    if len(prefix) < _MESSAGE_HEADER_SIZE:
+        return None
+    size = _MESSAGE_HEADER_SIZE + int.from_bytes(prefix[1:_MESSAGE_HEADER_SIZE])
+    if size > _MAX_MESSAGE_SIZE:
+        raise ParseError(f"ClientHello of {size} bytes")
+    return size
+
+
 class ClientHelloAssembler:
     """Collects TLS records from a TCP stream until they hold a whole ClientHello.
 
@@ -106,12 +120,8 @@ class ClientHelloAssembler:
                 self._record_version = version
             self._message += self._buffer[self._consumed + _RECORD_HEADER_SIZE : end]
             self._consumed = end
-            if len(self._message) < _MESSAGE_HEADER_SIZE:
-                continue
-            message_size = _MESSAGE_HEADER_SIZE + int.from_bytes(self._message[1:_MESSAGE_HEADER_SIZE])
-            if message_size > _MAX_MESSAGE_SIZE:
-                raise ParseError(f"ClientHello of {message_size} bytes")
-            if len(self._message) >= message_size:
+            message_size = handshake_message_size(self._message)
+            if message_size is not None and len(self._message) >= message_size:
                 hello = parse_client_hello(bytes(self._message[:message_size]))
                 return ClientHelloRecords(self._record_version, bytes(self._buffer[: self._consumed]), hello)
         return None

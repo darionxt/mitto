@@ -1,4 +1,4 @@
-"""Names for the numbers in a ClientHello and in HTTP/2 frames, so that a normal form reads without a registry at hand.
+"""Names for the numbers in a ClientHello, QUIC and HTTP frames, so that a normal form reads without a registry at hand.
 
 A number with no name here keeps its hexadecimal form. Giving one a name later changes the normal forms that hold it,
 so those have to be recorded again.
@@ -158,6 +158,83 @@ FRAME_FLAGS = {
 }
 
 
+QUIC_VERSIONS = {0x00000001: "QUIC v1", 0x6B3343CF: "QUIC v2"}
+
+INITIAL_FRAME_TYPES = {
+    0x00: "PADDING",
+    0x01: "PING",
+    0x02: "ACK",
+    0x03: "ACK_ECN",
+    0x06: "CRYPTO",
+    0x1C: "CONNECTION_CLOSE",
+}
+
+TRANSPORT_PARAMETERS = {
+    0x00: "original_destination_connection_id",
+    0x01: "max_idle_timeout",
+    0x02: "stateless_reset_token",
+    0x03: "max_udp_payload_size",
+    0x04: "initial_max_data",
+    0x05: "initial_max_stream_data_bidi_local",
+    0x06: "initial_max_stream_data_bidi_remote",
+    0x07: "initial_max_stream_data_uni",
+    0x08: "initial_max_streams_bidi",
+    0x09: "initial_max_streams_uni",
+    0x0A: "ack_delay_exponent",
+    0x0B: "max_ack_delay",
+    0x0C: "disable_active_migration",
+    0x0D: "preferred_address",
+    0x0E: "active_connection_id_limit",
+    0x0F: "initial_source_connection_id",
+    0x10: "retry_source_connection_id",
+    0x11: "version_information",
+    0x20: "max_datagram_frame_size",
+    0x173E: "discard",
+    0x219E: "scone_supported",
+    0x26AB: "google_handshake_message",
+    0x2AB2: "grease_quic_bit",
+    0x3127: "initial_round_trip_time",
+    0x3128: "google_connection_options",
+    0x219BBCD0: "debugging_sni",
+    0xFF04DE1B: "min_ack_delay",
+    0x17F7586D2CB571: "reliable_stream_reset",
+}
+
+HTTP3_FRAME_TYPES = {
+    0x0: "DATA",
+    0x1: "HEADERS",
+    0x3: "CANCEL_PUSH",
+    0x4: "SETTINGS",
+    0x5: "PUSH_PROMISE",
+    0x7: "GOAWAY",
+    0xC: "ORIGIN",
+    0xD: "MAX_PUSH_ID",
+    0x89: "ACCEPT_CH",
+    0xF0700: "PRIORITY_UPDATE",
+    0xF0701: "PRIORITY_UPDATE_PUSH",
+}
+
+HTTP3_SETTINGS = {
+    0x1: "QPACK_MAX_TABLE_CAPACITY",
+    0x6: "MAX_FIELD_SECTION_SIZE",
+    0x7: "QPACK_BLOCKED_STREAMS",
+    0x8: "ENABLE_CONNECT_PROTOCOL",
+    0x33: "H3_DATAGRAM",
+    0x4D44: "ENABLE_METADATA",
+    0xFFD277: "H3_DATAGRAM_DRAFT04",
+    0x2B603742: "WEBTRANSPORT_DRAFT00",
+    0xC671706A: "WEBTRANSPORT_MAX_SESSIONS_DRAFT07",
+}
+
+HTTP3_STREAM_TYPES = {
+    0x0: "control",
+    0x1: "push",
+    0x2: "qpack_encoder",
+    0x3: "qpack_decoder",
+    0x54: "webtransport",
+}
+
+
 def version_name(value: int) -> str:
     return _named_u16(VERSIONS, value)
 
@@ -213,3 +290,44 @@ def frame_flag_names(frame_type: int, flags: int) -> list[str]:
     """Name a frame's flags, lowest bit first. A flag this frame type does not define keeps its hexadecimal form."""
     names = FRAME_FLAGS.get(frame_type, {})
     return [names.get(1 << bit, f"0x{1 << bit:02x}") for bit in range(8) if flags & (1 << bit)]
+
+
+def quic_version_name(value: int) -> str:
+    """Name a QUIC version. Reserved versions, which clients offer as GREASE, end in the digit A in all four bytes."""
+    if value & 0x0F0F0F0F == 0x0A0A0A0A:
+        return GREASE
+    return QUIC_VERSIONS.get(value, f"0x{value:08x}")
+
+
+def initial_frame_type_name(value: int) -> str:
+    return INITIAL_FRAME_TYPES.get(value, f"0x{value:02x}")
+
+
+def transport_parameter_name(value: int) -> str:
+    """Name a QUIC transport parameter. GREASE ones are 27 and every 31 after it."""
+    if value % 31 == 27:
+        return GREASE
+    return TRANSPORT_PARAMETERS.get(value, f"0x{value:x}")
+
+
+def _is_grease_http3(value: int) -> bool:
+    """Whether value is one of the numbers HTTP/3 reserves as GREASE: 0x21 and every 0x1f after it."""
+    return value >= 0x21 and (value - 0x21) % 0x1F == 0
+
+
+def _named_http3(names: dict[int, str], value: int) -> str:
+    if value in names:
+        return names[value]
+    return GREASE if _is_grease_http3(value) else f"0x{value:x}"
+
+
+def http3_frame_type_name(value: int) -> str:
+    return _named_http3(HTTP3_FRAME_TYPES, value)
+
+
+def http3_setting_name(value: int) -> str:
+    return _named_http3(HTTP3_SETTINGS, value)
+
+
+def http3_stream_type_name(value: int) -> str:
+    return _named_http3(HTTP3_STREAM_TYPES, value)

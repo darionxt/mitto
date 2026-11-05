@@ -57,7 +57,7 @@ Chrome 157, navigation, h2, request.headers.accept-encoding
 
 The request's own fields come under `request`. If several items have the same `type` or name, the later ones get a number, such as `tls.extensions.GREASE#2`. If the items both sides have are in a different order, that is one more gap, in a field such as `request.headers.<order>`, whose values are the names in each order.
 
-A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error.
+A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error. An `h3` Baseline gives that gap for each Request Kind for now, because the check does not yet tell the native core to force QUIC on the capture server, so it tries TCP on a UDP port.
 
 ## The known-gaps list
 

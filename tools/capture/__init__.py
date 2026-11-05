@@ -2,13 +2,14 @@
 
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
 from tools.capture.page import KIND_PATHS, RequestKind
-from tools.capture.recording import HTTP1, HTTP2, Recording, raw_form
+from tools.capture.recording import HTTP1, HTTP2, HTTP3, Recording, raw_form
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
 __all__ = [
     "DEFAULT_HOST",
     "HTTP1",
     "HTTP2",
+    "HTTP3",
     "KIND_PATHS",
     "CaptureServer",
     "Recording",
