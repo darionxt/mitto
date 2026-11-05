@@ -8,10 +8,17 @@ config("public_api") {
 
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
-  sources = [ "mitto_core.cc" ]
+  sources = [
+    "ignore_errors_cert_verifier.cc",
+    "ignore_errors_cert_verifier.h",
+    "mitto_core.cc",
+    "session_settings.cc",
+    "session_settings.h",
+  ]
   public_configs = [ ":public_api" ]
   deps = [
     "//base",
+    "//crypto",
     "//net",
     "//url",
   ]

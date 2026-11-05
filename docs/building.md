@@ -73,7 +73,7 @@ autoninja -C out/mitto mitto
 This builds two targets from [`native/`](../native), about 4,200 steps in all:
 
 - `mitto_core`, the shared library `out/mitto/libmitto_core.dylib` (`.so` on Linux). It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h).
-- `mitto_core_test`, a small C program that fetches one URL through the library and prints the result.
+- `mitto_core_test`, a small C program that creates a Session, fetches one URL through it and prints the result.
 
 Run the test program, which needs a network connection:
 

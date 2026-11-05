@@ -1,8 +1,10 @@
 {
   global:
     mitto_abi_version;
-    mitto_get;
     mitto_response_free;
+    mitto_session_create;
+    mitto_session_destroy;
+    mitto_session_request;
   local:
     *;
 };

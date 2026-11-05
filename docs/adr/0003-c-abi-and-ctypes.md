@@ -13,4 +13,5 @@ The native core exports a small C API: opaque handles, byte buffers and completi
 ## Consequences
 
 - The C header is the contract between the two halves and must stay versioned and minimal.
+- A Session's engine settings cross the boundary as a versioned JSON buffer, so a new setting does not change the ABI. The native core refuses what it does not know, so that a mistake cannot quietly change what goes on the wire.
 - Thread and GIL handoff is done on the Python side; the native core never calls Python on its own network thread except through registered callbacks.
