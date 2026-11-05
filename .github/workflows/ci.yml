@@ -32,3 +32,46 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run pyright
       - run: uv run pytest
+
+  native:
+    name: Native core on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            library: libmitto_core.so
+          # The one hosted macOS image with the macOS SDK that Chromium's bots use.
+          - runner: xcode-27
+            library: libmitto_core.dylib
+    env:
+      UV_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      # tools/workspace holds the pin of the source export, so this key covers it too.
+      - id: cached-library
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/native-core
+          key: native-core-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
+      - name: Build the native core
+        if: steps.cached-library.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          uv run tools/workspace/export.py build "$RUNNER_TEMP/export" | tee "$RUNNER_TEMP/build.log"
+          mkdir "$RUNNER_TEMP/native-core"
+          cp "$(tail -n 1 "$RUNNER_TEMP/build.log")" "$RUNNER_TEMP/native-core"
+      # Before the tests, so that a test that fails does not waste the build.
+      - if: steps.cached-library.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/native-core
+          key: ${{ steps.cached-library.outputs.cache-primary-key }}
+      - run: uv run pytest -rs
+        env:
+          MITTO_NATIVE_LIBRARY: ${{ runner.temp }}/native-core/${{ matrix.library }}

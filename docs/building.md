@@ -138,6 +138,24 @@ Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.
 
 These packages come from Google Storage and CIPD, Chromium's package store, rather than from a release asset of ours. `DEPS` pins each of them for a Chromium release, they are the very packages Chromium's bots build with, and they stay available for old releases. An asset for each Host would fit within GitHub's 2 GiB limit, but it would only copy 300 to 400 MiB per Host and per **Engine Release** for no gain in what is checked: `export.json` records each package's SHA-256, and the build refuses anything else. If a package ever disappears from Chromium's storage, an asset can take over by changing its URL in `export.json`.
 
+### In CI
+
+A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command and then `pytest` with `MITTO_NATIVE_LIBRARY` set. Times are from two runs from a cold cache for Chromium 157.0.8103.27, and disk use is from the first:
+
+| | Linux x86_64 | macOS arm64 |
+| --- | --- | --- |
+| Runner | `ubuntu-latest`, 4 cores, 16 GB of memory | `xcode-27`, 3 cores, 7 GB of memory |
+| Build | 13 to 15 minutes, under one of them for the downloads | 16 to 23 minutes, under one of them for the downloads |
+| Tests | 25 seconds | 70 seconds |
+| Peak disk use of the job | 4.3 GiB, of which 4.1 GiB is the build's directory | 3.5 GiB, of which 3.2 GiB is the build's directory |
+| Disk free when the job starts | 86 GiB | 37 GiB |
+| Whole job | 14 to 15 minutes | 18 to 24 minutes |
+| Whole job with a cached library | 40 seconds | 80 seconds |
+
+The job keeps only the library, in the Actions cache: 28 MB on Linux and 12 MB on macOS, compressed. The key is the runner's name and a hash of `native/` and `tools/workspace/`, which holds the pin of the export. When none of that has changed, the job skips the build. A pull request can read the caches of `main` and its own, so one that changes neither directory uses the library that `main` built. One that changes either builds once, and `main` builds again after the merge.
+
+`xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use.
+
 ## Work on the Python package
 
 The Python package is in [`src/mitto`](../src/mitto). Working on it needs [uv](https://docs.astral.sh/uv/) but no Chromium checkout. This command, run from the repository root, creates `.venv` with Python 3.12, the lowest version mitto supports, and the locked development tools:
