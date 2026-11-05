@@ -11,7 +11,7 @@ import tempfile
 
 import pytest
 
-from tools.capture import HTTP1, HTTP2, CaptureServer, normal_form
+from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer, normal_form
 from tools.capture.recording import Json
 
 _CHROME_ENV_VAR = "MITTO_CHROME"
@@ -33,12 +33,14 @@ def record(chrome: str, protocol: str) -> dict[str, Json]:
         CaptureServer() as server,
         tempfile.TemporaryDirectory(prefix="mitto-capture-", ignore_cleanup_errors=True) as user_data,
     ):
+        force_quic = [f"--origin-to-force-quic-on={server.authority(HTTP3)}"] if protocol == HTTP3 else []
         process = subprocess.Popen(
             [
                 chrome,
                 "--headless=new",
                 f"--user-data-dir={user_data}",
                 f"--ignore-certificate-errors-spki-list={server.spki_hash}",
+                *force_quic,
                 "--no-first-run",
                 "--no-default-browser-check",
                 server.url(protocol),
@@ -58,7 +60,7 @@ def record(chrome: str, protocol: str) -> dict[str, Json]:
         return normal_form(server.recording(protocol))
 
 
-@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
 def test_two_recordings_have_the_same_normal_form(chrome: str, protocol: str) -> None:
     first = record(chrome, protocol)
     second = record(chrome, protocol)

@@ -18,6 +18,11 @@ class Reader:
     def empty(self) -> bool:
         return self._position == len(self._data)
 
+    @property
+    def left(self) -> int:
+        """How many bytes of input are left."""
+        return len(self._data) - self._position
+
     def take(self, count: int) -> bytes:
         end = self._position + count
         if end > len(self._data):
@@ -33,6 +38,11 @@ class Reader:
     def uint(self, size: int) -> int:
         """Read a big-endian unsigned integer of size bytes."""
         return int.from_bytes(self.take(size))
+
+    def varint(self) -> int:
+        """Read a QUIC variable-length integer: its first two bits say whether it takes 1, 2, 4 or 8 bytes."""
+        first = self.uint(1)
+        return int.from_bytes(bytes((first & 0x3F,)) + self.take((1 << (first >> 6)) - 1))
 
     def vector(self, length_size: int) -> "Reader":
         """Read a length-prefixed vector, whose length takes length_size bytes, as its own Reader."""

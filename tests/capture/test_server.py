@@ -11,26 +11,34 @@ import ssl
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from aioquic.h3.connection import H3_ALPN, H3Connection
+from aioquic.h3.events import DataReceived, HeadersReceived
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.connection import QuicConnection
+from aioquic.quic.events import ConnectionTerminated
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from hpack import Decoder, Encoder
 
 from tests.capture import samples
-from tools.capture import DEFAULT_HOST, HTTP1, HTTP2, KIND_PATHS, CaptureServer, RequestKind, normal_form
+from tools.capture import DEFAULT_HOST, HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_form
 from tools.capture.http2 import DATA, END_STREAM, HEADERS, PREFACE, SETTINGS, FrameParser, serialize_frame
 from tools.capture.page import DONE_PATH
-from tools.capture.recording import ConnectionRecord
+from tools.capture.recording import ConnectionRecord, QuicConnectionRecord
 
 _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
 
 
-def free_ports(count: int) -> list[int]:
+def free_ports(count: int, kind: int = socket.SOCK_STREAM) -> list[int]:
     """Return ports that are free now. Holding them all at once keeps them different from each other."""
-    sockets = [socket.create_server(("127.0.0.1", 0)) for _ in range(count)]
+    sockets = [socket.socket(socket.AF_INET, kind) for _ in range(count)]
+    for sock in sockets:
+        sock.bind(("127.0.0.1", 0))
     ports = [sock.getsockname()[1] for sock in sockets]
     for sock in sockets:
         sock.close()
@@ -95,15 +103,115 @@ class Http2Client:
                         return status, bytes(body)
 
 
+class Http3Client:
+    """Just enough of an HTTP/3 client to send GETs and read the answers, over a real UDP socket."""
+
+    def __init__(self, port: int, *, address: str = "127.0.0.1", alpn: list[str] | None = None) -> None:
+        configuration = QuicConfiguration(
+            is_client=True,
+            alpn_protocols=H3_ALPN if alpn is None else alpn,
+            server_name=DEFAULT_HOST,
+            verify_mode=ssl.CERT_NONE,
+        )
+        self.quic = QuicConnection(configuration=configuration)
+        on_ipv6 = ":" in address
+        self.sock = socket.socket(socket.AF_INET6 if on_ipv6 else socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.settimeout(0.05)
+        # aioquic drops datagrams from any address but this one, and an IPv6 socket reports four fields.
+        self.address = (address, port, 0, 0) if on_ipv6 else (address, port)
+        self.quic.connect(self.address, time.monotonic())
+        self.http = H3Connection(self.quic)
+        self.statuses: dict[int, bytes] = {}
+        self.bodies: dict[int, bytearray] = {}
+        self.finished: set[int] = set()
+        self.terminated: ConnectionTerminated | None = None
+        self.flush()
+
+    def __enter__(self) -> "Http3Client":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.quic.close()
+        self.flush()
+        self.sock.close()
+
+    def flush(self) -> None:
+        for data, address in self.quic.datagrams_to_send(time.monotonic()):
+            self.sock.sendto(data, address)
+
+    def pump(self) -> None:
+        """Send and receive for one round."""
+        try:
+            data, address = self.sock.recvfrom(1 << 16)
+        except TimeoutError:
+            pass
+        else:
+            self.quic.receive_datagram(data, address, time.monotonic())
+        timer = self.quic.get_timer()
+        if timer is not None and timer <= time.monotonic():
+            self.quic.handle_timer(time.monotonic())
+        while (event := self.quic.next_event()) is not None:
+            if isinstance(event, ConnectionTerminated):
+                self.terminated = event
+            for http_event in self.http.handle_event(event):
+                if isinstance(http_event, HeadersReceived):
+                    self.statuses[http_event.stream_id] = dict(http_event.headers)[b":status"]
+                    if http_event.stream_ended:
+                        self.finished.add(http_event.stream_id)
+                elif isinstance(http_event, DataReceived):
+                    self.bodies.setdefault(http_event.stream_id, bytearray()).extend(http_event.data)
+                    if http_event.stream_ended:
+                        self.finished.add(http_event.stream_id)
+        self.flush()
+
+    def get(self, target: str) -> tuple[bytes, bytes]:
+        """Send a GET and return the status and the body."""
+        stream_id = self.quic.get_next_available_stream_id()
+        self.http.send_headers(
+            stream_id,
+            [
+                (b":method", b"GET"),
+                (b":scheme", b"https"),
+                (b":authority", f"{DEFAULT_HOST}:{self.address[1]}".encode()),
+                (b":path", target.encode()),
+                (b"x-mitto", b"test"),
+            ],
+            end_stream=True,
+        )
+        self.flush()
+        deadline = time.monotonic() + _TIMEOUT_SECONDS
+        while stream_id not in self.finished:
+            assert time.monotonic() < deadline, "no answer"
+            self.pump()
+        return self.statuses[stream_id], bytes(self.bodies.get(stream_id, b""))
+
+
 def wait_for_ended_connection(server: CaptureServer, protocol: str) -> ConnectionRecord:
     """Wait until the first connection on a port has ended in an error, which a real client's close does."""
     deadline = time.monotonic() + _TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         connections = server.recording(protocol).connections
         if connections and connections[0].error is not None:
-            return connections[0]
+            connection = connections[0]
+            assert isinstance(connection, ConnectionRecord)
+            return connection
         time.sleep(0.01)
     raise AssertionError("the connection did not end")
+
+
+def wait_for_condition(condition: Callable[[], bool], *, what: str) -> None:
+    deadline = time.monotonic() + _TIMEOUT_SECONDS
+    while not condition():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.01)
+
+
+def only_quic_connection(server: CaptureServer) -> QuicConnectionRecord:
+    connections = server.recording(HTTP3).connections
+    assert len(connections) == 1
+    connection = connections[0]
+    assert isinstance(connection, QuicConnectionRecord)
+    return connection
 
 
 def test_a_host_must_be_a_localhost_name() -> None:
@@ -175,6 +283,177 @@ def test_records_http2() -> None:
     assert form["http2"] == {"preface": [{"type": "SETTINGS", "settings": ["INITIAL_WINDOW_SIZE: 65536"]}]}
 
 
+def test_records_http3() -> None:
+    with CaptureServer() as server, Http3Client(server.port(HTTP3)) as client:
+        assert client.get("/fetch") == (b"200", b"fetched\n")
+        assert client.get("/missing") == (b"404", b"not found\n")
+        recording = server.recording(HTTP3)
+
+    assert recording.authority == server.authority(HTTP3)
+    connection = recording.connections[0]
+    assert isinstance(connection, QuicConnectionRecord)
+    assert connection.alpn == "h3"
+    assert connection.tls_version == "TLSv1.3"
+    assert connection.cipher is not None
+    assert connection.cipher.startswith("TLS_")
+    assert connection.ip_version == 4
+    assert connection.error is None
+    assert [request.target for request in connection.requests] == ["/fetch", "/missing"]
+    assert connection.requests[0].headers[-1] == ("x-mitto", "test")
+    assert connection.client_hello.hello.cipher_suites
+    form = normal_form(recording)
+    assert form["protocol"] == "h3"
+    assert form["requests"] == {
+        "fetch": {
+            "headers": [
+                ":method: GET",
+                ":scheme: https",
+                ":authority: <authority>",
+                ":path: /fetch",
+                "x-mitto: test",
+            ]
+        }
+    }
+    quic = form["quic"]
+    assert isinstance(quic, dict)
+    assert quic["version"] == "QUIC v1"
+
+
+def test_records_http3_over_ipv6() -> None:
+    with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.bind(("::1", 0))
+        except OSError:
+            pytest.skip("no IPv6 loopback here")
+    with CaptureServer() as server, Http3Client(server.port(HTTP3), address="::1") as client:
+        assert client.get("/fetch") == (b"200", b"fetched\n")
+        assert only_quic_connection(server).ip_version == 6
+
+
+def test_an_http3_client_gets_the_same_page_as_the_others() -> None:
+    with CaptureServer() as server, Http3Client(server.port(HTTP3)) as client:
+        status, body = client.get("/")
+
+    assert status == b"200"
+    assert b"mitto capture" in body
+
+
+def test_http3_serves_more_than_one_client() -> None:
+    with (
+        CaptureServer() as server,
+        Http3Client(server.port(HTTP3)) as first,
+        Http3Client(server.port(HTTP3)) as second,
+    ):
+        assert first.get("/fetch")[0] == b"200"
+        assert second.get("/image.png")[0] == b"200"
+        assert first.get("/script.js")[0] == b"200"
+        connections = server.recording(HTTP3).connections
+
+    assert [[request.target for request in connection.requests] for connection in connections] == [
+        ["/fetch", "/script.js"],
+        ["/image.png"],
+    ]
+
+
+def test_connections_are_numbered_across_ports() -> None:
+    with CaptureServer() as server:
+        with connect(server.port(HTTP1)) as sock:
+            http1_get(sock, "/")
+        with Http3Client(server.port(HTTP3)) as client:
+            client.get("/")
+            connections = server.recording(HTTP3).connections
+        with connect(server.port(HTTP2)) as sock:
+            Http2Client(sock).get("/")
+
+        assert [connection.id for connection in server.recording(HTTP1).connections] == [1]
+        assert [connection.id for connection in connections] == [2]
+        assert [connection.id for connection in server.recording(HTTP2).connections] == [3]
+
+
+def test_http3_needs_h3_through_alpn() -> None:
+    with CaptureServer() as server, Http3Client(server.port(HTTP3), alpn=["hq-interop"]) as client:
+        deadline = time.monotonic() + _TIMEOUT_SECONDS
+        while client.terminated is None:
+            assert time.monotonic() < deadline
+            client.pump()
+        connection = only_quic_connection(server)
+
+    assert connection.alpn is None
+    assert connection.requests == ()
+
+
+def test_quic_keeps_the_client_hello_of_a_connection_that_stopped_there() -> None:
+    datagrams = samples.initial_datagrams(samples.client_hello_message([samples.server_name()]))
+    with CaptureServer() as server, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        for datagram in datagrams:
+            sock.sendto(datagram, ("127.0.0.1", server.port(HTTP3)))
+        wait_for_condition(lambda: bool(server.recording(HTTP3).connections), what="no connection recorded")
+        connection = only_quic_connection(server)
+
+    assert connection.client_hello.datagrams == tuple(datagrams)
+    assert connection.requests == ()
+
+
+def test_survives_datagrams_that_are_not_quic(caplog: pytest.LogCaptureFixture) -> None:
+    undecryptable = samples.initial_packet(bytes(1200), keys_from=b"other keys")
+    with (
+        caplog.at_level(logging.WARNING),
+        CaptureServer() as server,
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock,
+    ):
+        address = ("127.0.0.1", server.port(HTTP3))
+        for garbage in (b"", b"\x00", b"this is no QUIC packet", b"\xc0" + bytes(32), undecryptable):
+            sock.sendto(garbage, address)
+        with Http3Client(server.port(HTTP3)) as client:
+            assert client.get("/fetch")[0] == b"200"
+        assert len(server.recording(HTTP3).connections) == 1
+
+    assert "opened no connection" in caplog.text
+
+
+def test_tells_a_client_of_another_version_what_it_speaks() -> None:
+    with (
+        CaptureServer() as server,
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock,
+    ):
+        sock.settimeout(_TIMEOUT_SECONDS)
+        probe = b"\xc0" + (0x1A2A3A4A).to_bytes(4) + b"\x01a\x01b" + bytes(1200)
+        sock.sendto(probe, ("127.0.0.1", server.port(HTTP3)))
+        reply = sock.recv(1 << 16)
+
+    assert reply[1:5] == bytes(4)
+    assert reply[-4:] == (1).to_bytes(4)
+
+
+def test_records_an_http3_protocol_error_and_closes_the_connection() -> None:
+    with CaptureServer() as server, Http3Client(server.port(HTTP3)) as client:
+        assert client.get("/fetch")[0] == b"200"
+        stream_id = client.quic.get_next_available_stream_id()
+        client.quic.send_stream_data(stream_id, b"\x01\x03\xff\xff\xff", end_stream=True)
+        client.flush()
+        deadline = time.monotonic() + _TIMEOUT_SECONDS
+        while client.terminated is None:
+            assert time.monotonic() < deadline
+            client.pump()
+        connection = only_quic_connection(server)
+
+    assert connection.error is not None
+    assert "header section" in connection.error
+    assert client.terminated.error_code == 0x101
+
+
+def test_records_how_a_quic_client_left() -> None:
+    with CaptureServer() as server, Http3Client(server.port(HTTP3)) as client:
+        assert client.get("/fetch")[0] == b"200"
+        client.quic.close(error_code=0x123, reason_phrase="tired")
+        client.flush()
+        wait_for_condition(lambda: only_quic_connection(server).error is not None, what="the connection did not end")
+        connection = only_quic_connection(server)
+
+    assert connection.error is not None
+    assert "0x123" in connection.error
+
+
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
 def test_the_test_page_ends_with_the_done_path(protocol: str) -> None:
     with CaptureServer() as server, connect(server.port(protocol)) as sock:
@@ -195,6 +474,20 @@ def test_the_test_page_ends_with_the_done_path(protocol: str) -> None:
         assert not server.wait_for_page(other, 0)
 
         requests = normal_form(server.recording(protocol))["requests"]
+        assert isinstance(requests, dict)
+        assert list(requests) == ["navigation", "fetch", "script", "image"]
+
+
+def test_the_test_page_ends_with_the_done_path_over_http3() -> None:
+    with CaptureServer() as server, Http3Client(server.port(HTTP3)) as client:
+        for kind in RequestKind:
+            client.get(KIND_PATHS[kind])
+        assert not server.wait_for_page(HTTP3, 0)
+        client.get(DONE_PATH)
+        assert server.wait_for_page(HTTP3, _TIMEOUT_SECONDS)
+        assert not server.wait_for_page(HTTP2, 0)
+
+        requests = normal_form(server.recording(HTTP3))["requests"]
         assert isinstance(requests, dict)
         assert list(requests) == ["navigation", "fetch", "script", "image"]
 
@@ -264,18 +557,29 @@ def test_starts_only_once() -> None:
         server.start()
 
 
-def test_refuses_a_port_in_use() -> None:
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP3])
+def test_refuses_a_port_in_use(protocol: str) -> None:
     with CaptureServer() as first:
-        taken = CaptureServer(http1_port=first.port(HTTP1))
+        port = first.port(protocol)
+        taken = CaptureServer(http1_port=port) if protocol == HTTP1 else CaptureServer(http3_port=port)
         with pytest.raises(OSError) as caught:  # noqa: PT011
             taken.__enter__()
 
     assert caught.value.errno == errno.EADDRINUSE
 
 
-def test_command_line_writes_both_recordings(tmp_path: Path) -> None:
+def test_a_named_http3_port_serves_there() -> None:
+    port = free_ports(1, socket.SOCK_DGRAM)[0]
+    with CaptureServer(http3_port=port) as server, Http3Client(port) as client:
+        assert server.port(HTTP3) == port
+        assert server.url(HTTP3) == f"https://{DEFAULT_HOST}:{port}/"
+        assert client.get("/fetch")[0] == b"200"
+
+
+def test_command_line_writes_all_recordings(tmp_path: Path) -> None:
     # Named ports, as by default: a server that starts twice gets away with it on port 0.
     http1_port, http2_port = free_ports(2)
+    http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
     command = [
         sys.executable,
         "-m",
@@ -286,6 +590,8 @@ def test_command_line_writes_both_recordings(tmp_path: Path) -> None:
         str(http1_port),
         "--http2-port",
         str(http2_port),
+        "--http3-port",
+        str(http3_port),
     ]
     with subprocess.Popen(
         command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -293,15 +599,25 @@ def test_command_line_writes_both_recordings(tmp_path: Path) -> None:
         assert process.stdout is not None
         ports: dict[str, int] = {}
         printed: list[str] = []
-        while len(ports) < 2:
+        while len(ports) < 3:
             line = process.stdout.readline()
             printed.append(line)
-            match = re.match(r"(HTTP/1\.1|HTTP/2): +https://capture\.localhost:(\d+)/", line)
+            match = re.match(r"(HTTP/1\.1|HTTP/2|HTTP/3): +https://capture\.localhost:(\d+)/", line)
             if match is not None:
                 ports[match.group(1)] = int(match.group(2))
             assert line, "".join(printed)
-        assert ports == {"HTTP/1.1": http1_port, "HTTP/2": http2_port}
+        assert ports == {"HTTP/1.1": http1_port, "HTTP/2": http2_port, "HTTP/3": http3_port}
+        while "--origin-to-force-quic-on" not in "".join(printed):
+            printed.append(process.stdout.readline())
+            assert printed[-1], "".join(printed)
+        assert f"--origin-to-force-quic-on=capture.localhost:{http3_port}" in "".join(printed)
+        with Http3Client(http3_port) as http3_client:
+            for kind in RequestKind:
+                http3_client.get(KIND_PATHS[kind])
+            http3_client.get(DONE_PATH)
         for port_name, port in ports.items():
+            if port_name == "HTTP/3":
+                continue
             with connect(port) as sock:
                 if port_name == "HTTP/1.1":
                     for kind in RequestKind:
@@ -315,12 +631,16 @@ def test_command_line_writes_both_recordings(tmp_path: Path) -> None:
         output = process.stdout.read()
         assert process.wait(_TIMEOUT_SECONDS) == 0, output
 
-    for stem, protocol in (("http1", "http/1.1"), ("http2", "h2")):
+    for stem, protocol, client_hello_start in (
+        ("http1", "http/1.1", "1603"),
+        ("http2", "h2", "1603"),
+        ("http3", "h3", "01"),
+    ):
         form = json.loads((tmp_path / f"{stem}.json").read_text(encoding="utf-8"))
         assert form["protocol"] == protocol
         assert list(form["requests"]) == ["navigation", "fetch", "script", "image"]
         raw_form = json.loads((tmp_path / f"{stem}.raw.json").read_text(encoding="utf-8"))
-        assert raw_form["connections"][0]["client_hello"].startswith("1603")
+        assert raw_form["connections"][0]["client_hello"].startswith(client_hello_start)
 
 
 def test_command_line_explains_a_port_in_use(tmp_path: Path) -> None:
@@ -338,6 +658,28 @@ def test_command_line_explains_a_port_in_use(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "--http1-port" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_command_line_explains_a_udp_port_in_use(tmp_path: Path) -> None:
+    with CaptureServer() as server:
+        command = [
+            sys.executable,
+            "-m",
+            "tools.capture",
+            "--out",
+            str(tmp_path),
+            "--http3-port",
+            str(server.port(HTTP3)),
+            "--http1-port",
+            str(free_ports(1)[0]),
+            "--http2-port",
+            str(free_ports(1)[0]),
+        ]
+        result = subprocess.run(command, cwd=_REPOSITORY, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "--http3-port" in result.stderr
     assert "Traceback" not in result.stderr
 
 
