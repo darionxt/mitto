@@ -21,6 +21,7 @@
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
@@ -81,12 +82,17 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
 // network thread runs the request. The results may be read once Wait() returns.
 class RequestJob final : public net::URLRequest::Delegate {
  public:
+  // An empty `referrer` means that the request has none.
   RequestJob(const char* url,
              net::HttpRequestHeaders headers,
-             net::RequestPriority priority)
+             net::RequestPriority priority,
+             bool priority_incremental,
+             GURL referrer)
       : url_(url),
         request_headers_(std::move(headers)),
         priority_(priority),
+        priority_incremental_(priority_incremental),
+        referrer_(std::move(referrer)),
         read_buffer_(
             base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize)) {}
 
@@ -103,6 +109,8 @@ class RequestJob final : public net::URLRequest::Delegate {
     // from one request would be sent on later ones.
     request_->set_disallow_credentials();
     request_->SetExtraRequestHeaders(request_headers_);
+    request_->SetPriorityIncremental(priority_incremental_);
+    request_->SetReferrer(referrer_.spec());
     request_->Start();
   }
 
@@ -187,6 +195,8 @@ class RequestJob final : public net::URLRequest::Delegate {
   const GURL url_;
   const net::HttpRequestHeaders request_headers_;
   const net::RequestPriority priority_;
+  const bool priority_incremental_;
+  const GURL referrer_;
   const scoped_refptr<net::IOBufferWithSize> read_buffer_;
   std::unique_ptr<net::URLRequest> request_;
   base::WaitableEvent done_;
@@ -203,6 +213,11 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     SessionSettings settings) {
   net::URLRequestContextBuilder builder;
   builder.DisableHttpCache();
+  // Chrome's network service turns these on. They add to what //net puts in
+  // Accept-Encoding, over HTTPS and to localhost only.
+  builder.set_enable_brotli(true);
+  builder.set_enable_zstd(true);
+  builder.set_accept_language(settings.accept_language);
   // Proxies are not supported yet, so ignore the system's settings.
   builder.set_proxy_config_service(
       std::make_unique<net::ProxyConfigServiceFixed>(
@@ -295,10 +310,13 @@ std::optional<net::HttpRequestHeaders> ToRequestHeaders(
     const std::string_view value =
         UNSAFE_BUFFERS(std::string_view(header.value, header.value_size));
     // SetHeader() CHECKs that both are valid, and a name it already holds would
-    // silently take the new value at the old position.
+    // silently take the new value at the old position. //net would silently
+    // drop a Referer, because it only sends the one from SetReferrer().
     if (!net::HttpUtil::IsValidHeaderName(name) ||
         !net::HttpUtil::IsValidHeaderValue(value) ||
-        request_headers.HasHeader(name)) {
+        request_headers.HasHeader(name) ||
+        base::EqualsCaseInsensitiveASCII(name,
+                                         net::HttpRequestHeaders::kReferer)) {
       return std::nullopt;
     }
     request_headers.SetHeader(name, value);
@@ -360,6 +378,8 @@ int32_t mitto_session_request(MittoSession* session,
                               const MittoHeader* headers,
                               size_t header_count,
                               int32_t priority,
+                              bool priority_incremental,
+                              const char* referrer,
                               MittoResponse* response) {
   if (!response) {
     return net::ERR_INVALID_ARGUMENT;
@@ -377,9 +397,18 @@ int32_t mitto_session_request(MittoSession* session,
   if (!request_headers) {
     return net::ERR_INVALID_ARGUMENT;
   }
+  // //net would silently send no Referer for a URL that it cannot send as one.
+  GURL referrer_url;
+  if (referrer) {
+    referrer_url = GURL(referrer).GetAsReferrer();
+    if (!referrer_url.is_valid()) {
+      return net::ERR_INVALID_ARGUMENT;
+    }
+  }
 
   mitto::RequestJob job(url, std::move(*request_headers),
-                        static_cast<net::RequestPriority>(priority));
+                        static_cast<net::RequestPriority>(priority),
+                        priority_incremental, std::move(referrer_url));
   mitto::NetworkCore::Get().RunRequest(*session, job);
   if (job.net_error() != net::OK) {
     return job.net_error();

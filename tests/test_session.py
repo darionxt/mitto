@@ -30,10 +30,14 @@ import pytest
 
 import mitto
 from mitto._native import Priority, RequestError, Session
+from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
 from tests.local_server import LocalHTTPServer
+from tools.capture import HTTP2, KIND_PATHS, CaptureServer, normal_form
+from tools.capture import RequestKind as CaptureRequestKind
 
 pytestmark = pytest.mark.usefixtures("native_library")
 
+ERR_INVALID_ARGUMENT = -4
 ERR_CERT_AUTHORITY_INVALID = -202
 
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
@@ -41,6 +45,16 @@ PRIVATE_CERTIFICATE_SPKI_HASH = "nVtNMMWlVAx2QAb+AXEK53cS8Fm8sDeKSomcP5jydFk="
 
 # A valid hash of some other key: the Base64 form of 32 bytes.
 OTHER_SPKI_HASH = "A" * 43 + "="
+
+# What //net advertises over HTTPS and to localhost, which is where the test servers are.
+ACCEPT_ENCODING = ("Accept-Encoding", "gzip, deflate, br, zstd")
+
+# The word "hello" in each encoding. The Brotli stream is a metablock of uncompressed data. The Zstandard frame is one
+# raw block, with no checksum.
+ENCODED_HELLO = {
+    "br": bytes.fromhex("0b028068656c6c6f03"),
+    "zstd": bytes.fromhex("28b52ffd200529000068656c6c6f"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,7 +270,7 @@ def test_headers_arrive_in_the_given_order(http_server: RecordingServer) -> None
         ("Connection", "keep-alive"),
         *given,
         ("User-Agent", ""),
-        ("Accept-Encoding", "gzip, deflate"),
+        ACCEPT_ENCODING,
     ]
 
 
@@ -285,6 +299,120 @@ def test_a_header_that_net_would_add_stays_where_it_was_given(http_server: Recor
 def test_a_header_that_cannot_be_encoded_is_refused(http_server: RecordingServer) -> None:
     with Session() as session, pytest.raises(ValueError, match="latin-1"):
         session.request(f"http://{http_server.base_url}", headers=[("X-Name", "€")])
+
+
+def test_the_accept_language_setting_comes_after_what_else_net_adds(http_server: RecordingServer) -> None:
+    with Session(accept_language="en-GB,en;q=0.9") as session:
+        session.request(f"http://{http_server.base_url}", headers=[("User-Agent", "test")])
+
+    assert http_server.received[0].headers == [
+        ("Host", http_server.base_url.rstrip("/")),
+        ("Connection", "keep-alive"),
+        ("User-Agent", "test"),
+        ACCEPT_ENCODING,
+        ("Accept-Language", "en-GB,en;q=0.9"),
+    ]
+
+
+def test_an_accept_language_among_the_headers_replaces_the_setting(http_server: RecordingServer) -> None:
+    with Session(accept_language="en-GB") as session:
+        session.request(f"http://{http_server.base_url}", headers=[("Accept-Language", "fr")])
+
+    assert ("Accept-Language", "fr") in http_server.received[0].headers
+    assert ("Accept-Language", "en-GB") not in http_server.received[0].headers
+
+
+def test_an_invalid_accept_language_is_refused() -> None:
+    with pytest.raises(ValueError, match="refused"):
+        Session(accept_language="a\r\nX-Injected: b")
+
+
+def test_the_referrer_comes_after_the_headers_and_before_what_net_adds(http_server: RecordingServer) -> None:
+    referrer = f"http://{http_server.base_url}page"
+
+    with Session(accept_language="en") as session:
+        session.request(f"http://{http_server.base_url}", headers=[("User-Agent", "test")], referrer=referrer)
+
+    assert http_server.received[0].headers == [
+        ("Host", http_server.base_url.rstrip("/")),
+        ("Connection", "keep-alive"),
+        ("User-Agent", "test"),
+        ("Referer", referrer),
+        ACCEPT_ENCODING,
+        ("Accept-Language", "en"),
+    ]
+
+
+def test_the_referrer_leaves_out_a_username_a_password_and_a_fragment(http_server: RecordingServer) -> None:
+    with Session() as session:
+        session.request(
+            f"http://{http_server.base_url}", referrer=f"http://user:secret@{http_server.base_url}page#fragment"
+        )
+
+    assert ("Referer", f"http://{http_server.base_url}page") in http_server.received[0].headers
+
+
+def test_a_referer_among_the_headers_is_refused(http_server: RecordingServer) -> None:
+    with Session() as session, pytest.raises(RequestError) as caught:
+        session.request(f"http://{http_server.base_url}", headers=[("referer", "http://127.0.0.1/")])
+
+    assert caught.value.net_error == ERR_INVALID_ARGUMENT
+    assert http_server.received == []
+
+
+def test_a_referrer_that_net_cannot_send_is_refused(http_server: RecordingServer) -> None:
+    with Session() as session, pytest.raises(RequestError) as caught:
+        session.request(f"http://{http_server.base_url}", referrer="not a url")
+
+    assert caught.value.net_error == ERR_INVALID_ARGUMENT
+    assert http_server.received == []
+
+
+def test_a_referrer_with_a_nul_is_refused(http_server: RecordingServer) -> None:
+    with Session() as session, pytest.raises(ValueError, match="NUL"):
+        session.request(f"http://{http_server.base_url}", referrer="http://127.0.0.1/\0")
+
+
+class EncodedHelloHandler(http.server.BaseHTTPRequestHandler):
+    """Answers /br and /zstd with the word "hello" in that encoding."""
+
+    def do_GET(self) -> None:
+        encoding = self.path.removeprefix("/")
+        self.send_response(200)
+        self.send_header("Content-Encoding", encoding)
+        self.send_header("Content-Length", str(len(ENCODED_HELLO[encoding])))
+        self.end_headers()
+        self.wfile.write(ENCODED_HELLO[encoding])
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+@pytest.mark.parametrize("encoding", ENCODED_HELLO)
+def test_a_session_decodes_what_it_advertises(encoding: str) -> None:
+    with LocalHTTPServer(("127.0.0.1", 0), EncodedHelloHandler) as server, Session() as session:
+        serve(server)
+        response = session.request(f"http://127.0.0.1:{server.server_port}/{encoding}")
+        server.shutdown()
+
+    assert response.body == b"hello"
+
+
+def test_get_presents_chrome_157_with_the_navigation_request_kind(http_server: RecordingServer) -> None:
+    persona = load_persona(CHROME_157_WINDOWS)
+
+    mitto.get(f"http://{http_server.base_url}")
+
+    headers = http_server.received[0].headers
+    assert headers == [
+        ("Host", http_server.base_url.rstrip("/")),
+        ("Connection", "keep-alive"),
+        *persona.request_defaults(RequestKind.NAVIGATION, "http://127.0.0.1/")["headers"],
+        ACCEPT_ENCODING,
+        ("Accept-Language", persona.accept_language),
+    ]
+    assert ("Sec-Fetch-Mode", "navigate") in headers
+    assert dict(headers)["User-Agent"].endswith("Chrome/157.0.0.0 Safari/537.36")
 
 
 # Frame types and flags from RFC 9113.
@@ -365,3 +493,29 @@ def test_the_priority_reaches_the_wire(http2_server: Http2Server, priority: Prio
 
     assert response.protocol == "h2"
     assert http2_server.weights == [weight]
+
+
+@pytest.mark.parametrize(
+    ("priority", "priority_incremental", "line"),
+    [
+        (Priority.HIGHEST, True, "priority: u=0, i"),
+        (Priority.HIGHEST, False, "priority: u=0"),
+        (Priority.MEDIUM, True, "priority: u=1, i"),
+        (Priority.MEDIUM, False, "priority: u=1"),
+        (Priority.LOWEST, True, "priority: i"),
+    ],
+)
+def test_the_priority_and_whether_it_is_incremental_reach_the_priority_header(
+    priority: Priority, priority_incremental: bool, line: str
+) -> None:
+    kind = CaptureRequestKind.FETCH
+
+    with CaptureServer() as server, Session(ignore_certificate_errors_spki_list=[server.spki_hash]) as session:
+        session.request(
+            f"https://{server.authority(HTTP2)}{KIND_PATHS[kind]}",
+            priority=priority,
+            priority_incremental=priority_incremental,
+        )
+
+    form = cast(dict[str, Any], normal_form(server.recording(HTTP2)))
+    assert line in form["requests"][kind.value]["headers"]

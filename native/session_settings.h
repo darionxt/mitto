@@ -2,6 +2,7 @@
 #define MITTO_SESSION_SETTINGS_H_
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "mitto/ignore_errors_cert_verifier.h"
@@ -18,6 +19,10 @@ struct SessionSettings {
   // Certificate chains that hold one of these keys are accepted without being
   // verified.
   SPKIHashSet ignore_certificate_errors_spki_list;
+
+  // The value of the Accept-Language header that //net adds to a request that
+  // has none. Empty adds no header.
+  std::string accept_language;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns

@@ -18,13 +18,13 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new native Session that accepts the server's private certificate;
-3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol;
+2. creates a new native Session that accepts the server's private certificate and has the **Persona**'s settings;
+3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol, with what the Persona sends for that kind ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
 Each comparison covers what the connection looks like and the one request. So a difference in the connection, such as in the ClientHello, shows up once for each Request Kind.
 
-There is no **Persona** data yet, so a request holds only what `//net` adds by itself.
+Chrome 157 on Windows is the only Persona so far, so a check of any Baseline presents that one.
 
 ## Baselines
 

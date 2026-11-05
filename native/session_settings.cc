@@ -7,6 +7,7 @@
 #include "base/values.h"
 #include "mitto/mitto.h"
 #include "net/base/hash_value.h"
+#include "net/http/http_util.h"
 
 namespace mitto {
 namespace {
@@ -14,6 +15,7 @@ namespace {
 constexpr std::string_view kVersionKey = "version";
 constexpr std::string_view kIgnoreCertificateErrorsSPKIListKey =
     "ignore_certificate_errors_spki_list";
+constexpr std::string_view kAcceptLanguageKey = "accept_language";
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -51,6 +53,15 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
   SessionSettings settings;
   for (const auto [key, value] : *dict) {
     if (key == kVersionKey) {
+      continue;
+    }
+    if (key == kAcceptLanguageKey) {
+      // //net CHECKs the value of each header it adds.
+      if (!value.is_string() ||
+          !net::HttpUtil::IsValidHeaderValue(value.GetString())) {
+        return std::nullopt;
+      }
+      settings.accept_language = value.GetString();
       continue;
     }
     if (key != kIgnoreCertificateErrorsSPKIListKey) {

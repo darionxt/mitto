@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 2
+ABI_VERSION = 3
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -165,6 +165,8 @@ def load_library() -> ctypes.CDLL:
             ctypes.POINTER(MittoHeader),
             ctypes.c_size_t,
             ctypes.c_int32,
+            ctypes.c_bool,
+            ctypes.c_char_p,
             ctypes.POINTER(MittoResponse),
         )
         library.mitto_session_request.restype = ctypes.c_int32
@@ -214,13 +216,15 @@ class Session:
     One Session may run requests from several threads at once, but must not be closed while one is running.
     """
 
-    def __init__(self, *, ignore_certificate_errors_spki_list: Sequence[str] = ()) -> None:
+    def __init__(self, *, ignore_certificate_errors_spki_list: Sequence[str] = (), accept_language: str = "") -> None:
         """Create the Session.
 
         Args:
             ignore_certificate_errors_spki_list: Accept any certificate chain that holds one of these keys, with the
                 meaning of Chrome's --ignore-certificate-errors-spki-list. Each entry is the Base64 form of the SHA-256
                 hash of a DER-encoded SubjectPublicKeyInfo.
+            accept_language: The value of the Accept-Language header that //net adds to each request whose headers do not
+                hold one. An empty string adds no header.
 
         Raises:
             ValueError: If the native core refuses the settings.
@@ -231,6 +235,7 @@ class Session:
             {
                 "version": SETTINGS_VERSION,
                 "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
+                "accept_language": accept_language,
             }
         ).encode()
         self._handle = ctypes.POINTER(MittoSession)()
@@ -257,6 +262,9 @@ class Session:
         headers: Sequence[tuple[str, str]] = (),
         # The value of DEFAULT_PRIORITY in //net.
         priority: Priority = Priority.LOWEST,
+        # The value of kDefaultPriorityIncremental in //net.
+        priority_incremental: bool = True,
+        referrer: str | None = None,
     ) -> NativeResponse:
         """Fetch `url` and block until the whole response has arrived.
 
@@ -264,16 +272,22 @@ class Session:
             url: The URL to fetch.
             headers: The (name, value) pairs to send, in the order they are to reach the wire, encoded as Latin-1. A
                 name may appear only once, ignoring case. //net adds its own headers as it does in Chrome, such as Host
-                before these and Accept-Encoding after them, unless they are among these.
+                before these and Accept-Encoding after them, unless they are among these. Referer cannot be among these,
+                because //net only sends `referrer`.
             priority: The priority of the request.
+            priority_incremental: Whether the response can be used as it arrives. With `priority`, this decides the
+                HTTP/2 weight, the priority header and the HTTP/3 PRIORITY_UPDATE.
+            referrer: The URL to send as the Referer header, or None to send none. //net puts it after `headers` and
+                before the headers it adds, and leaves out any username, password and fragment.
 
         Raises:
-            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be encoded as
-                Latin-1.
+            ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
+                encoded as Latin-1.
             RequestError: If the request ends without a response. An HTTP error status such as 404 is a response. An
-                invalid header ends the request with ERR_INVALID_ARGUMENT.
+                invalid header, or a `referrer` that //net cannot send, ends the request with ERR_INVALID_ARGUMENT.
         """
         encoded_url = encode_url(url)
+        encoded_referrer = None if referrer is None else encode_url(referrer)
         # This list keeps the bytes alive during the call, since the structs only point to them.
         encoded_headers = [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers]
         native_headers = (MittoHeader * len(encoded_headers))(
@@ -282,7 +296,14 @@ class Session:
 
         native = MittoResponse()
         net_error: int = self._library.mitto_session_request(
-            self._handle, encoded_url, native_headers, len(native_headers), priority, ctypes.byref(native)
+            self._handle,
+            encoded_url,
+            native_headers,
+            len(native_headers),
+            priority,
+            priority_incremental,
+            encoded_referrer,
+            ctypes.byref(native),
         )
         if net_error != 0:
             raise RequestError(url, net_error)
