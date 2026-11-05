@@ -58,6 +58,10 @@ _Avoid_: canonical form, normalized capture
 An automated comparison of mitto's Wire Fingerprint against a Baseline.
 _Avoid_: fingerprint test, diff
 
+**Known Gap**:
+A difference from a Baseline that is written down in the repository, so that a Parity Check accepts it until the difference is fixed.
+_Avoid_: exception, allowlist, expected failure
+
 ### Later phase
 
 **Runtime**:
