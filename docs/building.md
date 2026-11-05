@@ -8,8 +8,7 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 - About 31 GiB of free disk space for the workspace, including compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
 - `git`, `curl` and `bash`.
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
-
-Linux x86_64 has not been tried yet. Linux-specific steps will be added here when it is.
+- On Linux, nothing more. A new Ubuntu 26.04 desktop install only needs `sudo apt-get install git curl`, and other distributions have not been tried. The checkout brings its own compiler, linker and sysroot, so the native core builds without a system C compiler. It also builds without Chromium's `build/install-build-deps.sh`, which installs hundreds of packages for the rest of Chromium.
 
 ## Set up the workspace
 
@@ -84,7 +83,9 @@ It fetches `https://example.com/` unless given another URL. The first line of it
 status 200 over h2
 ```
 
-A first build took about 5 minutes on a 10-core Mac, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. Size has not been worked on yet.
+A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machine, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. On Linux x86_64 it is 123 MB, 27 MB once stripped and 12 MB compressed. Size has not been worked on yet.
+
+On Linux the library loads GLib, NSS and NSPR from the system at run time, as `ldd` shows. A new Ubuntu 26.04 desktop install already has them, in the packages `libglib2.0-0t64`, `libnss3` and `libnspr4`.
 
 ## Work on the Python package
 
@@ -116,7 +117,9 @@ export MITTO_NATIVE_LIBRARY="$MITTO_WORKSPACE/chromium-<tag>/src/out/mitto/libmi
 uv run pytest
 ```
 
-Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler.
+On Linux the file is `libmitto_core.so`.
+
+Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler. A new Ubuntu install has none, and the native core's build does not need one. Install `gcc` to run these tests.
 
 To check the whole path from Python through the native core to a real server, with `MITTO_NATIVE_LIBRARY` set as above and a network connection:
 
@@ -141,6 +144,8 @@ Measured for Chromium 157.0.8103.27 on macOS arm64, after building the native co
 | Total | 31.0 GiB |
 
 Of `src`, 3.6 GiB is the `.git` directories of `src` and its 143 git dependencies. Each additional release kept in the workspace needs its own `chromium-<tag>` directory.
+
+On Linux x86_64 the same workspace takes 29.7 GiB, of which 1.4 GiB is `out/mitto`.
 
 ## Compare two releases
 
