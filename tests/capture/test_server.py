@@ -497,6 +497,58 @@ def test_a_named_http3_port_serves_there() -> None:
         assert client.get("/fetch")[0] == b"200"
 
 
+def steer_first_bind(
+    monkeypatch: pytest.MonkeyPatch, kind: socket.SocketKind, number: Callable[[list[int]], int]
+) -> None:
+    """Send the first bind to port 0 of a socket of kind to a number, as the kernel may by chance.
+
+    Args:
+        monkeypatch: Undoes this when the test ends.
+        kind: The kind of socket to steer.
+        number: Returns the number, given the TCP ports bound so far.
+    """
+    real_bind = socket.socket.bind
+    tcp_ports: list[int] = []
+    pending = [number]
+
+    def bind(sock: socket.socket, address: tuple[str, int]) -> None:
+        host, port = address
+        if sock.type == kind and port == 0 and pending:
+            port = pending.pop()(tcp_ports)
+        real_bind(sock, (host, port))
+        if sock.type == socket.SOCK_STREAM:
+            tcp_ports.append(sock.getsockname()[1])
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+
+
+@pytest.mark.parametrize(("protocol", "index"), [(HTTP1, 0), (HTTP2, -1)])
+def test_a_chosen_http3_port_does_not_take_the_number_of_a_tcp_port(
+    monkeypatch: pytest.MonkeyPatch, protocol: str, index: int
+) -> None:
+    """TCP to the HTTP/3 port must be refused, not reach another port's listener and get a response."""
+    steer_first_bind(monkeypatch, socket.SOCK_DGRAM, lambda tcp_ports: tcp_ports[index])
+
+    with CaptureServer() as server:
+        assert server.port(HTTP3) != server.port(protocol)
+
+
+def test_a_chosen_tcp_port_does_not_take_the_number_of_a_named_http3_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    named = free_ports(1, socket.SOCK_DGRAM)[0]
+    steer_first_bind(monkeypatch, socket.SOCK_STREAM, lambda _: named)
+
+    with CaptureServer(http3_port=named) as server:
+        assert server.port(HTTP3) == named
+        assert named not in (server.port(HTTP1), server.port(HTTP2))
+
+
+def test_named_ports_may_share_a_number_across_tcp_and_udp() -> None:
+    port = free_ports(1)[0]
+
+    with CaptureServer(http1_port=port, http3_port=port) as server:
+        assert server.port(HTTP1) == server.port(HTTP3) == port
+
+
 def test_command_line_writes_all_recordings(tmp_path: Path) -> None:
     # Named ports, as by default: a server that starts twice gets away with it on port 0.
     http1_port, http2_port = free_ports(2)

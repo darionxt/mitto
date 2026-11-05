@@ -91,11 +91,13 @@ def test_a_regenerated_list_makes_the_run_pass(sample_baselines: Path) -> None:
 
 @pytest.mark.usefixtures("native_library")
 def test_regenerating_twice_writes_the_same_text(sample_baselines: Path) -> None:
-    assert regenerate(sample_baselines).returncode == 0
+    result = regenerate(sample_baselines)
+    assert result.returncode == 0, result.stderr
     first = (sample_baselines / KNOWN_GAPS_FILE_NAME).read_text()
 
     result = regenerate(sample_baselines)
 
+    assert result.returncode == 0, result.stderr
     assert ": 0 new, 0 gone." in result.stdout
     assert (sample_baselines / KNOWN_GAPS_FILE_NAME).read_text() == first
 

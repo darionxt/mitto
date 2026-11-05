@@ -177,7 +177,11 @@ class CaptureServer:
     def __init__(
         self, host: str = DEFAULT_HOST, *, http1_port: int = 0, http2_port: int = 0, http3_port: int = 0
     ) -> None:
-        """Prepare a server at host, which must end in .localhost. A port of 0 means any free port."""
+        """Prepare a server at host, which must end in .localhost.
+
+        A port of 0 means any free port whose number no other port of this server has. Named ports may share a number
+        across TCP and UDP.
+        """
         if not host.endswith(".localhost"):
             raise ValueError(f"{host!r} does not end in .localhost")
         self.host = host
@@ -298,6 +302,9 @@ class CaptureServer:
     def _bind(
         self, endpoint: _Endpoint, open_socket: Callable[[socket.AddressFamily, str, int], socket.socket]
     ) -> list[socket.socket]:
+        # TCP and UDP number their ports apart, so port 0 may pick the number of a port of the other kind. A client
+        # speaking TCP to the HTTP/3 port would then reach another port's listener instead of being refused.
+        others = {other.port or other.requested_port for other in self._endpoints.values() if other is not endpoint}
         for _ in range(_BIND_ATTEMPTS):
             try:
                 sockets = _bind_loopback(endpoint.requested_port, open_socket)
@@ -306,7 +313,12 @@ class CaptureServer:
                 if endpoint.requested_port == 0 and error.errno == errno.EADDRINUSE:
                     continue
                 raise
-            endpoint.port = sockets[0].getsockname()[1]
+            port = sockets[0].getsockname()[1]
+            if endpoint.requested_port == 0 and port in others:
+                for sock in sockets:
+                    sock.close()
+                continue
+            endpoint.port = port
             for sock in sockets:
                 sock.setblocking(False)
             self._listeners += sockets
