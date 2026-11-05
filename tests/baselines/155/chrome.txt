@@ -1,0 +1,178 @@
+Which Chrome recorded the Baselines in this directory. See docs/baselines.md.
+
+Recorded: 2026-11-06
+Product: Google Chrome
+Chrome: 155.0.8059.85
+Flags: --user-data-dir=<new directory> --no-first-run --no-default-browser-check --lang=en-US --variations-override-country=us --ignore-certificate-errors-spki-list=<hash> --remote-debugging-port=0
+Flags for HTTP/3 only: --origin-to-force-quic-on=<authority>
+Variations seed: SMChYyMDI2MTEwNS0wMTAwMzMuNTU1MDAwEgsIABADGJsBIAAoARoQCggxNzkzODk4MBIECAEQAQ==#Q6TPPT1Lw68=
+Version: 155.0.8059.85 (Official Build) (64-bit)
+System: Windows 11 Version 26H2 (Build 26300.9711)
+User agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+
+http1.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
+--force-fieldtrials:
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
+  CdmServicePriorityElevation/ProcessAndThreadPriorityLaunch
+  ContextualTasksDesktop/Launched
+  EnforceP2PSocketPortRestrictionsKillSwitch/Disabled_EmergencyKillSwitch
+  EnhancedSecurityEventFieldsWin24H2KillSwitch/Disabled_EmergencyKillSwitch
+  HttpCacheZstdCompression/Control_20261006
+  HttpsFirstBalancedModeAutoEnableDesktop/EnabledLaunch
+  IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
+  IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
+  KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
+  OptimisticDnsForTcp/Control_STABLE_30_20261019
+  PageActionsPrioritySelector/Default
+  PervasiveSharedDictionaries/Default
+  PreconnectManagerDirectFastPath/Default
+  PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
+  ReduceMojoURLLoaderFactoryCloning/Default
+  SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  StructuredHeadersInRust/EnabledLaunch
+  VariationsFeatureAccessLogging/Enabled_20261026
+  WebRTC-MediaTaskQueuePriorities/Enabled_Launch
+  WinSboxCsrssLockdown/Default
+--force-fieldtrial-params:
+  ContextualTasksDesktop.Launched:allow-signed-out/true
+  IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
+  VariationsFeatureAccessLogging.Enabled_20261026:histogram_denylist/%22%22
+--enable-features:
+  AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
+  CdmProcessPriorityElevation<CdmServicePriorityElevation
+  CdmThreadPriorityElevation<CdmServicePriorityElevation
+  ConfigureQuicHints<IncreaseHttp3Usage
+  HistogramDenylist<VariationsFeatureAccessLogging
+  HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
+  IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
+  PageActionsPrioritySelector<PageActionsPrioritySelector
+  PervasiveSharedDictionaries<PervasiveSharedDictionaries
+  PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
+  SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  StructuredHeadersInRust<StructuredHeadersInRust
+  UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
+  WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
+  WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
+--disable-features:
+  AdjustIPv6FallbackTime<OptimisticDnsForTcp
+  ContextualTasksCookiePrefetch<ContextualTasksDesktop
+  EnableIntermediateDnsResults<OptimisticDnsForTcp
+  EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
+  EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
+  HttpCacheZstdCompression<HttpCacheZstdCompression
+  HttpCacheZstdDecompression<HttpCacheZstdCompression
+  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
+  OptimisticDnsForTcp<OptimisticDnsForTcp
+  SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
+
+http2.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
+--force-fieldtrials:
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
+  CdmServicePriorityElevation/ProcessAndThreadPriorityLaunch
+  ContextualTasksDesktop/Launched
+  EnforceP2PSocketPortRestrictionsKillSwitch/Disabled_EmergencyKillSwitch
+  EnhancedSecurityEventFieldsWin24H2KillSwitch/Disabled_EmergencyKillSwitch
+  HttpCacheZstdCompression/Control_20261006
+  HttpsFirstBalancedModeAutoEnableDesktop/EnabledLaunch
+  IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
+  IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
+  KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
+  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
+  PageActionsPrioritySelector/Default
+  PervasiveSharedDictionaries/Default
+  PreconnectManagerDirectFastPath/Default
+  PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
+  ReduceMojoURLLoaderFactoryCloning/Default
+  SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  StructuredHeadersInRust/EnabledLaunch
+  VariationsFeatureAccessLogging/Enabled_20261026
+  WebRTC-MediaTaskQueuePriorities/Enabled_Launch
+  WinSboxCsrssLockdown/Default
+--force-fieldtrial-params:
+  ContextualTasksDesktop.Launched:allow-signed-out/true
+  IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
+  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
+  VariationsFeatureAccessLogging.Enabled_20261026:histogram_denylist/%22%22
+--enable-features:
+  AdjustIPv6FallbackTime<OptimisticDnsForTcp
+  AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
+  CdmProcessPriorityElevation<CdmServicePriorityElevation
+  CdmThreadPriorityElevation<CdmServicePriorityElevation
+  ConfigureQuicHints<IncreaseHttp3Usage
+  EnableIntermediateDnsResults<OptimisticDnsForTcp
+  HistogramDenylist<VariationsFeatureAccessLogging
+  HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
+  IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
+  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
+  OptimisticDnsForTcp<OptimisticDnsForTcp
+  PageActionsPrioritySelector<PageActionsPrioritySelector
+  PervasiveSharedDictionaries<PervasiveSharedDictionaries
+  PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
+  SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  StructuredHeadersInRust<StructuredHeadersInRust
+  UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
+  WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
+  WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
+--disable-features:
+  ContextualTasksCookiePrefetch<ContextualTasksDesktop
+  EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
+  EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
+  HttpCacheZstdCompression<HttpCacheZstdCompression
+  HttpCacheZstdDecompression<HttpCacheZstdCompression
+  SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
+
+http3.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
+--force-fieldtrials:
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
+  CdmServicePriorityElevation/ProcessAndThreadPriorityLaunch
+  ContextualTasksDesktop/Launched
+  EnforceP2PSocketPortRestrictionsKillSwitch/Disabled_EmergencyKillSwitch
+  EnhancedSecurityEventFieldsWin24H2KillSwitch/Disabled_EmergencyKillSwitch
+  HttpCacheZstdCompression/Control_20261006
+  HttpsFirstBalancedModeAutoEnableDesktop/EnabledLaunch
+  IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
+  IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
+  KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
+  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
+  PageActionsPrioritySelector/Default
+  PervasiveSharedDictionaries/Default
+  PreconnectManagerDirectFastPath/Default
+  PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
+  ReduceMojoURLLoaderFactoryCloning/Default
+  SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  StructuredHeadersInRust/EnabledLaunch
+  VariationsFeatureAccessLogging/Enabled_20261026
+  WebRTC-MediaTaskQueuePriorities/Enabled_Launch
+  WinSboxCsrssLockdown/Default
+--force-fieldtrial-params:
+  ContextualTasksDesktop.Launched:allow-signed-out/true
+  IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
+  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
+  VariationsFeatureAccessLogging.Enabled_20261026:histogram_denylist/%22%22
+--enable-features:
+  AdjustIPv6FallbackTime<OptimisticDnsForTcp
+  AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
+  CdmProcessPriorityElevation<CdmServicePriorityElevation
+  CdmThreadPriorityElevation<CdmServicePriorityElevation
+  ConfigureQuicHints<IncreaseHttp3Usage
+  EnableIntermediateDnsResults<OptimisticDnsForTcp
+  HistogramDenylist<VariationsFeatureAccessLogging
+  HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
+  IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
+  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
+  OptimisticDnsForTcp<OptimisticDnsForTcp
+  PageActionsPrioritySelector<PageActionsPrioritySelector
+  PervasiveSharedDictionaries<PervasiveSharedDictionaries
+  PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
+  SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  StructuredHeadersInRust<StructuredHeadersInRust
+  UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
+  WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
+  WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
+--disable-features:
+  ContextualTasksCookiePrefetch<ContextualTasksDesktop
+  EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
+  EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
+  HttpCacheZstdCompression<HttpCacheZstdCompression
+  HttpCacheZstdDecompression<HttpCacheZstdCompression
+  SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch

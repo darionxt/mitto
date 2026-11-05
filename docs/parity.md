@@ -24,7 +24,7 @@ For each Baseline, it:
 
 Each comparison covers what the connection looks like and the one request. So a difference in the connection, such as in the ClientHello, shows up once for each Request Kind.
 
-Chrome 157 on Windows is the only Persona so far, so a check of any Baseline presents that one.
+Chrome 157 on Windows is the only Persona so far, so a check of any Baseline presents that one. So the Baselines of Chrome 155 and 156 have Known Gaps in `sec-ch-ua` and the User-Agent, which are the only fields in which [they differ from Chrome 157](baselines.md#what-differs-from-chrome-157).
 
 ## Baselines
 
