@@ -18,7 +18,7 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new native Session that accepts the server's private certificate and has the **Persona**'s settings;
+2. creates a new native Session that accepts the server's private certificate and has the **Persona**'s settings. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origin, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
 3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol, with what the Persona sends for that kind ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
@@ -53,7 +53,7 @@ Chrome 157, navigation, h2, request.headers.accept-encoding
 
 The request's own fields come under `request`. If several items have the same `type` or name, the later ones get a number, such as `tls.extensions.GREASE#2`. If the items both sides have are in a different order, that is one more gap, in a field such as `request.headers.<order>`, whose values are the names in each order.
 
-A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error. An `h3` Baseline gives that gap for each Request Kind for now, because the check does not yet tell the native core to force QUIC on the capture server, so it tries TCP on a UDP port.
+A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error.
 
 ## The known-gaps list
 
@@ -77,9 +77,9 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 
 | File | States | Upstream |
 |---|---|---|
-| `native/network_session_configurator.cc` | HTTP/2 connection settings, and with `enable_http2` the ALPN list | `components/network_session_configurator` |
+| `native/network_session_configurator.cc` | HTTP/2 connection settings, and with `enable_http2` the ALPN list. QUIC parameters, and the origins that a field trial tells Chrome speak QUIC | `components/network_session_configurator`, and the hints in `net/http/http_server_properties.cc` |
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
-| `native/feature_list.cc` | Features that the ClientHello depends on, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
+| `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
 
 A value stated here stays when a new **Engine Release** changes a default, so a Parity Check fails instead of mitto moving with the engine. That matters because an older **Chrome Release** must keep sending what it sent.
 

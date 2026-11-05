@@ -19,7 +19,8 @@ void InitFeatureList() {
       // chrome.txt beside them shows. A source build has the first two off. No
       // Parity Check can see these four, because they are about what a server
       // sends back and the HTTP cache, which a Session does not have yet.
-      // QUIC's features belong with the rest of QUIC.
+      // ConfigureQuicHints is the one more that chrome.txt has on. It is stated
+      // per Session instead, by the function of that name.
       net::features::kLogicalClearHttpCache.name,
       net::structured_headers::kStructuredHeadersInRust.name,
       net::features::kHttpCacheZstdCompression.name,
@@ -35,11 +36,18 @@ void InitFeatureList() {
       net::features::kTlsGreaseSigalgs.name,
       net::features::kTLSTrustAnchorIDs.name,
       net::features::kNonMtcTrustAnchorIDs.name,
+
+      // The same for QUIC's handshake. QuicSessionPool adds this feature's
+      // parameter quic_options, whose default is the ORIG in
+      // google_connection_options. A study changes that parameter for about 3%
+      // of Chrome installations. See docs/baselines.md.
+      net::features::kTryQuicByDefault.name,
   };
   const std::vector<std::string_view> disable_features = {
       // More that decide what the ClientHello holds, in the same way.
       net::features::kVerifyMTCs.name,
       net::features::kAddTLSServerHandshakePadding.name,
+      net::features::kIgnoreIpMatching.name,
 
       // No Parity Check can see this one, because the capture server gives out
       // no session tickets, and early data needs a resumed connection.

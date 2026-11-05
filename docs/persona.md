@@ -40,7 +40,7 @@ So a line for `Referer`, `Accept-Encoding`, `Accept-Language` or `priority` does
 
 Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three.
 
-[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of its Chrome Release, including HTTP/3, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` really does, as far as the native core reaches each protocol.
+[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of its Chrome Release, including HTTP/3, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` really does.
 
 ## What no Baseline covers
 

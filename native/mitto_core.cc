@@ -45,6 +45,7 @@
 #include "net/http/http_util.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
+#include "net/quic/quic_context.h"
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
@@ -234,11 +235,19 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
       std::make_unique<SSLConfigServiceMojo>(GetNewSSLConfig()));
 
   net::HttpNetworkSessionParams session_params;
+  auto quic_context = std::make_unique<net::QuicContext>();
+  ConfigureQuicParams(&session_params, quic_context->params());
   ConfigureHttp2Params(&session_params);
+  quic_context->params()->origins_to_force_quic_on =
+      std::move(settings.origins_to_force_quic_on);
+  quic_context->params()->force_quic_everywhere =
+      settings.force_quic_everywhere;
   builder.set_http_network_session_params(session_params);
+  builder.set_quic_context(std::move(quic_context));
 
   auto session = std::make_unique<MittoSession>();
   session->context = builder.Build();
+  ConfigureQuicHints(session->context->http_server_properties());
   return session;
 }
 
