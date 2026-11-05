@@ -1,0 +1,322 @@
+{
+  "format": 1,
+  "protocol": "h3",
+  "quic": {
+    "version": "QUIC v1",
+    "destination_connection_id_length": 8,
+    "source_connection_id_length": 0,
+    "token_length": 0,
+    "first_packet_number": 1,
+    "first_packet_number_length": 1,
+    "first_datagram_ip_size": 1278
+  },
+  "tls": {
+    "legacy_version": "TLS 1.2",
+    "session_id_length": 0,
+    "cipher_suites": [
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ],
+    "compression_methods": [
+      "null"
+    ],
+    "extensions": [
+      {
+        "type": "server_name",
+        "names": [
+          "<host>"
+        ]
+      },
+      {
+        "type": "supported_groups",
+        "groups": [
+          "X25519MLKEM768",
+          "x25519",
+          "secp256r1",
+          "secp384r1"
+        ]
+      },
+      {
+        "type": "signature_algorithms",
+        "algorithms": [
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256",
+          "ecdsa_secp384r1_sha384",
+          "rsa_pss_rsae_sha384",
+          "rsa_pkcs1_sha384",
+          "rsa_pss_rsae_sha512",
+          "rsa_pkcs1_sha512",
+          "rsa_pkcs1_sha1"
+        ]
+      },
+      {
+        "type": "application_layer_protocol_negotiation",
+        "protocols": [
+          "h3"
+        ]
+      },
+      {
+        "type": "compress_certificate",
+        "algorithms": [
+          "brotli"
+        ]
+      },
+      {
+        "type": "supported_versions",
+        "versions": [
+          "TLS 1.3"
+        ]
+      },
+      {
+        "type": "psk_key_exchange_modes",
+        "modes": [
+          "psk_dhe_ke"
+        ]
+      },
+      {
+        "type": "key_share",
+        "shares": [
+          {
+            "group": "X25519MLKEM768",
+            "key_length": 1216
+          },
+          {
+            "group": "x25519",
+            "key_length": 32
+          }
+        ]
+      },
+      {
+        "type": "quic_transport_parameters",
+        "parameters": [
+          {
+            "type": "GREASE"
+          },
+          {
+            "type": "max_idle_timeout",
+            "value": 30000
+          },
+          {
+            "type": "max_udp_payload_size",
+            "value": 1472
+          },
+          {
+            "type": "initial_max_data",
+            "value": 15728640
+          },
+          {
+            "type": "initial_max_stream_data_bidi_local",
+            "value": 6291456
+          },
+          {
+            "type": "initial_max_stream_data_bidi_remote",
+            "value": 6291456
+          },
+          {
+            "type": "initial_max_stream_data_uni",
+            "value": 6291456
+          },
+          {
+            "type": "initial_max_streams_bidi",
+            "value": 100
+          },
+          {
+            "type": "initial_max_streams_uni",
+            "value": 103
+          },
+          {
+            "type": "initial_source_connection_id",
+            "length": 0
+          },
+          {
+            "type": "version_information",
+            "chosen": "QUIC v1",
+            "others": [
+              "GREASE",
+              "QUIC v1"
+            ]
+          },
+          {
+            "type": "max_datagram_frame_size",
+            "value": 65536
+          },
+          {
+            "type": "google_connection_options",
+            "options": [
+              "ORIG"
+            ]
+          }
+        ]
+      },
+      {
+        "type": "application_settings",
+        "protocols": [
+          "h3"
+        ]
+      },
+      {
+        "type": "trust_anchors",
+        "anchors": [
+          "82df130201",
+          "82df130206",
+          "82df13020d",
+          "82df13020e",
+          "82df13020f",
+          "82df130212",
+          "82df130213",
+          "82df130214",
+          "839a648c9b2d0107",
+          "839a648c9b2d0108",
+          "839a648c9b2d0109",
+          "839a648c9b2d010a",
+          "839a648c9b2d010b",
+          "839a648c9b2d010c",
+          "839a648c9b2d010d",
+          "839a648c9b2d0112",
+          "839a648c9b2d0113",
+          "d6790901",
+          "d6790904",
+          "d6790905",
+          "d6790906",
+          "d6790907",
+          "d6790908",
+          "d679090a",
+          "d679090b",
+          "d679090c",
+          "d679090d",
+          "d679090f"
+        ]
+      },
+      {
+        "type": "encrypted_client_hello",
+        "client_hello": "outer",
+        "kdf": "HKDF-SHA256",
+        "aead": "AES-128-GCM"
+      }
+    ]
+  },
+  "http3": {
+    "streams": [
+      {
+        "type": "control",
+        "stream": 2
+      },
+      {
+        "type": "qpack_encoder",
+        "stream": 10
+      }
+    ],
+    "control": [
+      {
+        "type": "SETTINGS",
+        "settings": [
+          "QPACK_MAX_TABLE_CAPACITY: 65536",
+          "MAX_FIELD_SECTION_SIZE: 262144",
+          "QPACK_BLOCKED_STREAMS: 100",
+          "H3_DATAGRAM: 1",
+          "GREASE"
+        ]
+      },
+      {
+        "type": "GREASE"
+      }
+    ]
+  },
+  "requests": {
+    "navigation": {
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: none",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-user: ?1",
+        "sec-fetch-dest: document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ],
+      "priority_updates": [
+        "u=0, i"
+      ]
+    },
+    "fetch": {
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /fetch",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ],
+      "priority_updates": [
+        "u=1, i"
+      ]
+    },
+    "script": {
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /script.js",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ],
+      "priority_updates": [
+        "u=1"
+      ]
+    },
+    "image": {
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /image.png",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: image",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: i"
+      ],
+      "priority_updates": [
+        "i"
+      ]
+    }
+  }
+}

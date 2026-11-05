@@ -165,9 +165,9 @@ It takes about a minute, and ends with `Done:` or with an error. Windows of Chro
 | 156 | [Google's update server](#an-older-chrome-release), unpacked | 156.0.8078.80 | `43cca215206b634b89d226ed71522c7f58c5430b8559b92e782dd7bd77add7cc` | None |
 | 157 | [Google's update server](#install-chrome), installed | 157.0.8103.39 | `389b9e21de9a520a6e24ba807ee8760409ccc837457bbcc460d2fdce0d5e8df5` | None |
 
-All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06: hash, signature, version, that Chrome starts and that it gets a seed. They were not recorded yet.
+All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06 for hash, signature and version, and [recorded](#chrome-155-and-156) that day.
 
-A recording of an older Chrome Release gets the seed of the day it is recorded, as every installation of that Chrome Release does on that day.
+A recording of an older Chrome Release gets the seed of the day it is recorded, as every installation of that Chrome Release does on that day. Each Chrome Release gets [its own cut](#their-variations-seeds) of that seed.
 
 [Chrome for Testing](#chrome-for-testing) is only the fallback, for a Chrome Release the server no longer answers for.
 
@@ -191,6 +191,64 @@ One field trial does reach the wire: `IncreaseAmplificationFactor`, with the fea
 A Baseline holds what most installations send. So if a session's HTTP/3 normal form has such an option, and `chrome.txt` shows that group under `http3.json`, record another session and leave that one out. The study applies from 146.0.7680.71, so this goes for Chrome 155 and 156 too.
 
 What can still move without a new Chrome Release is in [capture.md](capture.md#what-can-differ-between-chrome-installations).
+
+## Chrome 155 and 156
+
+Builds 155.0.8059.85 and 156.0.8078.80, [unpacked](#an-older-chrome-release), recorded on 2026-11-06 on the same Windows machine as Chrome 157. The files in `tests/baselines/155` and `tests/baselines/156` come from the first session of each.
+
+Five sessions of each Chrome Release, from new user data directories, gave identical normal forms for all four **Request Kinds** over all three protocols. None of the ten drew [the field trial that reaches the wire](#chrome-157).
+
+### What differs from Chrome 157
+
+Only `sec-ch-ua` and `User-Agent`, in every Request Kind over every protocol. That is 24 fields per Chrome Release. Everything else in the normal form is the same, including the ClientHello with `trust_anchors`, the HTTP/2 preface, the QUIC parameters and the order of the headers.
+
+| Chrome | `sec-ch-ua` | `User-Agent` has |
+|---|---|---|
+| 155 | `"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"` | `Chrome/155.0.0.0` |
+| 156 | `"Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"` | `Chrome/156.0.0.0` |
+| 157 | `"Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157"` | `Chrome/157.0.0.0` |
+
+### Their variations seeds
+
+Each Chrome Release gets its own seed. The server cuts them from one seed by milestone. All three carry the version `20261105-010033.555000-production`:
+
+| Chrome | Studies | Bytes |
+|---|---|---|
+| 155 | 632 | About 237,880 |
+| 156 | 620 | 229,296 |
+| 157 | 586 | 209,169 |
+
+Every study in a newer seed is in the older seeds, byte for byte, and all three have the same layers. What an older seed has on top are the studies with a `max_version` below the next Chrome Release, so the server drops a study once a Chrome Release is past it. It does not drop a study for its `min_version`, which Chrome itself applies: 70 studies in 155's seed start after 155.
+
+So what Chrome 157 showed does not simply carry over, because the older seeds have 46 and 34 more studies. Those whose names have to do with the network are in `chrome.txt` and [below](#their-field-trials). Of the others, two come near the network: `RestrictLinkHeaderOnSubresource`, about `Link` response headers, which the capture server does not send, and `PqcCupSigning`, about signing update checks, which do not go to the capture server.
+
+`IncreaseAmplificationFactor` is one of the shared studies, so what [Chrome 157](#chrome-157) shows about it holds here too. It has the same groups, the same `quic_options` and the same slots of its layer.
+
+The serial number in `chrome.txt` can differ between sessions of one Chrome Release, in the part before the `#`. The studies stay the same when it does.
+
+### Their field trials
+
+Sessions differ in the same way as those of Chrome 157, with no effect on the normal form:
+
+| Field trials | Differ between | Chrome Release |
+|---|---|---|
+| `OptimisticDnsForTcp`, `ReduceMojoURLLoaderFactoryCloning` | Any two starts of Chrome | Both |
+| `PervasiveSharedDictionaries`, `SafeBrowsingWaitForDnsForRealTimeLookup`, `ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite` | User data directories | Both |
+| `HttpCacheZstdCompression`, `VariationsFeatureAccessLogging` | User data directories | 155 |
+| `PageActionsPrioritySelector`, `PrioritizeResizeTaskRunnerOnStartupStudy` | User data directories | 156 |
+
+These apply to the older Chrome Releases and never appeared in the 10 sessions of stable Chrome 157 whose `chrome.txt` we compared, because their `max_version` comes before 157.0.8103.39 or before the 156 build. The normal form shows no trace of them, since it is Chrome 157's but for the two headers:
+
+| Field trial | `max_version` | Chrome Release |
+|---|---|---|
+| `CdmServicePriorityElevation` | 157.0.8096.0 | 155 and 156 |
+| `HttpsFirstBalancedModeAutoEnableDesktop` | 157.0.8093.0 | 155 and 156 |
+| `IgnoreQuicCryptoConfigMemoryPressure` | 157.0.8089.0 | 155 and 156 |
+| `EnforceP2PSocketPortRestrictionsKillSwitch` | 156.0.8061.0 | 155 |
+| `KillSwitch_SearchNavigationPrefetch` | 156.0.8076.0 | 155 |
+| `WebRTC-MediaTaskQueuePriorities` | 156.0.8073.999 | 155 |
+
+Five directories are few for a field trial as rare as `IncreaseAmplificationFactor`, so another rare one could still be there. The check on each session's HTTP/3 normal form stays.
 
 ## Chrome for Testing
 
