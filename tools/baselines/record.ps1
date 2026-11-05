@@ -19,11 +19,18 @@
     The country Chrome evaluates its field trials for.
 
 .PARAMETER Chrome
-    The Chrome executable.
+    The Chrome executable: the installed one, or one that tools/baselines/unpack.ps1 unpacked.
 
 .PARAMETER NoDebuggingPort
     Starts Chrome without a debugging port, so that it holds nothing but the flags of the procedure. This script reads
     chrome://version through that port, so chrome.txt then has no field trials or features.
+
+.PARAMETER NoVariationsSeed
+    For a Chrome that fetches no variations seed, such as Chrome for Testing as it comes. The first start lasts as long
+    as a seed usually takes, and Chrome may list no active variations. What this records is a comparison, not a Baseline.
+
+.PARAMETER ExtraFlags
+    More flags for every start of Chrome, for a comparison. chrome.txt lists them. What this records is not a Baseline.
 #>
 [CmdletBinding()]
 param(
@@ -31,7 +38,9 @@ param(
     [Parameter(Mandatory)][string]$UserDataDir,
     [string]$Country = 'us',
     [string]$Chrome = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe'),
-    [switch]$NoDebuggingPort
+    [switch]$NoDebuggingPort,
+    [switch]$NoVariationsSeed,
+    [string[]]$ExtraFlags = @()
 )
 
 Set-StrictMode -Version Latest
@@ -40,7 +49,7 @@ Add-Type -AssemblyName System.Web.Extensions
 
 # What decides whether a field trial or feature goes into chrome.txt, by its name. It casts a wide net on purpose: a
 # name too many costs one line, and a name too few hides what changed the wire.
-$NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|socket|cert|alps|mlkem|kyber|tcp|ipv[46]' +
+$NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|socket|cert|alps|mlkem|kyber|tcp|ipv[46]|ipmatching' +
     '|preconnect|proxy|priorit|urlloader|structuredheaders|shareddictionar|zstd|brotli|clienthint|acceptlang|useragent' +
     '|reduceua|connection|preload|prefetch|prerender|hsts|(?-i:ECH|H2|H3)'
 
@@ -51,6 +60,7 @@ $Protocols = @(
 )
 $TaskPrefix = 'mitto-baselines'
 $SeedTimeoutSeconds = 360
+$FirstStartWithoutSeedSeconds = 15
 $PageTimeoutSeconds = 120
 $CloseTimeoutSeconds = 60
 
@@ -127,6 +137,14 @@ function Test-SeedArrived {
     # The value does not matter: it follows the network, and --variations-override-country decides what counts.
     return ($null -ne $state) -and ($state.PSObject.Properties.Name -contains 'variations_country') -and
         [bool]$state.variations_country
+}
+
+function Get-SeedSerialNumber {
+    $state = Read-LocalState
+    if (($null -ne $state) -and ($state.PSObject.Properties.Name -contains 'variations_seed_serial_number')) {
+        return $state.variations_seed_serial_number
+    }
+    return 'none'
 }
 
 function Invoke-PageScript([string]$WebSocketUrl, [string]$Expression) {
@@ -236,6 +254,7 @@ $repository = Split-Path (Split-Path $PSScriptRoot)
 # Chrome starts in another directory, so a relative path would mean something else to it.
 $UserDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($UserDataDir)
 if (-not (Test-Path $Chrome)) { throw "No Chrome at $Chrome." }
+$Chrome = (Resolve-Path $Chrome).Path
 if (Test-Path $UserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
 foreach ($protocol in $Protocols) {
     if (Test-Path (Join-Path $Out "$($protocol.Stem).json")) { throw "$Out already holds a recording." }
@@ -243,7 +262,9 @@ foreach ($protocol in $Protocols) {
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $installed = (Get-Item $Chrome).VersionInfo.ProductVersion
-Write-Step "Chrome $installed"
+$product = (Get-Item $Chrome).VersionInfo.ProductName
+$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0)
+Write-Step "$product $installed"
 
 $BaseFlags = @(
     "--user-data-dir=`"$UserDataDir`""
@@ -251,17 +272,24 @@ $BaseFlags = @(
     '--no-default-browser-check'
     '--lang=en-US'
     "--variations-override-country=$Country"
-)
+) + $ExtraFlags
 $RecordingFlags = @('--ignore-certificate-errors-spki-list=<hash>')
 if (-not $NoDebuggingPort) { $RecordingFlags += '--remote-debugging-port=0' }
 $server = $null
 $pages = @{}
 try {
-    Write-Step 'Waiting for the variations seed'
-    Start-Chrome @() 'about:blank'
-    Wait-Until 'the variations seed' $SeedTimeoutSeconds { Test-SeedArrived }
-    Stop-Chrome
-    if (-not (Test-SeedArrived)) { throw 'Local State lost variations_country when Chrome closed.' }
+    if ($NoVariationsSeed) {
+        Write-Step 'First start, with no variations seed to wait for'
+        Start-Chrome @() 'about:blank'
+        Start-Sleep -Seconds $FirstStartWithoutSeedSeconds
+        Stop-Chrome
+    } else {
+        Write-Step 'Waiting for the variations seed'
+        Start-Chrome @() 'about:blank'
+        Wait-Until 'the variations seed' $SeedTimeoutSeconds { Test-SeedArrived }
+        Stop-Chrome
+        if (-not (Test-SeedArrived)) { throw 'Local State lost variations_country when Chrome closed.' }
+    }
 
     $serverOutput = Join-Path $Out 'server.log'
     $serverErrors = Join-Path $Out 'server-errors.log'
@@ -305,14 +333,17 @@ try {
     if ((Get-Item $Chrome).VersionInfo.ProductVersion -ne $installed) { throw 'Chrome changed version during the session.' }
 
     $flags = @($BaseFlags | Select-Object -Skip 1) + $RecordingFlags
+    $purpose = 'Which Chrome recorded the Baselines in this directory. See docs/baselines.md.'
+    if (-not $isBaseline) { $purpose = 'Which Chrome recorded this comparison, which is not a Baseline. See docs/baselines.md.' }
     $note = @(
-        'Which Chrome recorded the Baselines in this directory. See docs/baselines.md.'
+        $purpose
         ''
         "Recorded: $(Get-Date -Format 'yyyy-MM-dd')"
+        "Product: $product"
         "Chrome: $installed"
         "Flags: --user-data-dir=<new directory> $($flags -join ' ')"
         'Flags for HTTP/3 only: --origin-to-force-quic-on=<authority>'
-        "Variations seed: $((Read-LocalState).variations_seed_serial_number)"
+        "Variations seed: $(Get-SeedSerialNumber)"
     )
     if ($pages.Count -gt 0) {
         $first = $pages['http1']
@@ -322,7 +353,9 @@ try {
         if (-not $pages.ContainsKey($protocol.Stem)) { continue }
         $page = $pages[$protocol.Stem]
         if (-not $page.version.StartsWith($installed)) { throw "chrome://version says $($page.version), not $installed." }
-        if (-not $page.active) { throw "chrome://version lists no active variations for $($protocol.Stem), so the seed did not apply." }
+        if (-not $NoVariationsSeed -and -not $page.active) {
+            throw "chrome://version lists no active variations for $($protocol.Stem), so the seed did not apply."
+        }
         $note += @('', "$($protocol.Stem).json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it")
         $note += Format-NetworkPart $page
     }
