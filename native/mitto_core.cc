@@ -28,6 +28,7 @@
 #include "base/threading/thread.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
+#include "mitto/network_session_configurator.h"
 #include "mitto/session_settings.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -35,6 +36,7 @@
 #include "net/base/request_priority.h"
 #include "net/cert/cert_verifier.h"
 #include "net/http/http_connection_info.h"
+#include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
@@ -212,6 +214,10 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
         net::CertVerifier::CreateDefault(/*cert_net_fetcher=*/nullptr),
         std::move(settings.ignore_certificate_errors_spki_list)));
   }
+
+  net::HttpNetworkSessionParams session_params;
+  ConfigureHttp2Params(&session_params);
+  builder.set_http_network_session_params(session_params);
 
   auto session = std::make_unique<MittoSession>();
   session->context = builder.Build();
