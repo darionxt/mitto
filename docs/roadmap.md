@@ -43,7 +43,7 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
   - `Accept-Language`;
   - header order;
   - TLS, HTTP/2 and QUIC deltas for the older releases.
-- **Parity Checks** that run offline against the capture server and gate CI.
+- **Parity Checks** that run offline against the capture server and gate CI. See [parity.md](parity.md).
 - **Exit:** Parity Checks pass for all three Chrome Releases and the main Request Kinds, over HTTP/1.1, HTTP/2 and HTTP/3.
 
 ### M2: HTTP client features
