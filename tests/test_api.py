@@ -18,6 +18,7 @@ import pytest
 
 import mitto
 from mitto import _native
+from tests.local_server import LocalHTTPServer
 
 ERR_INVALID_URL = -300
 
@@ -48,7 +49,7 @@ class RawResponseHandler(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def server_url() -> Iterator[str]:
     """Run a local HTTP server and return its URL."""
-    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), RawResponseHandler) as server:
+    with LocalHTTPServer(("127.0.0.1", 0), RawResponseHandler) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         yield f"http://127.0.0.1:{server.server_port}/"
         server.shutdown()
