@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import cast
 
 from mitto._native import RequestError, Session
+from mitto._persona import CHROME_157_WINDOWS, load_persona
+from mitto._persona import RequestKind as PersonaRequestKind
 from tools.capture import KIND_PATHS, CaptureServer, RequestKind, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
@@ -99,7 +101,7 @@ def _read_baselines(path: Path) -> list[Baseline]:
 def record(protocol: str, kind: RequestKind) -> dict[str, Json]:
     """Make one request of a Request Kind through a new native Session to a new capture server.
 
-    Persona data does not exist yet, so the request holds only what //net adds by itself.
+    The request presents the Chrome 157 Persona, the only one so far, whichever Chrome Release the Baseline is from.
 
     Returns:
         The fingerprint of what the capture server received.
@@ -108,8 +110,15 @@ def record(protocol: str, kind: RequestKind) -> dict[str, Json]:
         RequestError: The request got no response.
         NativeLibraryError: The native library cannot be used.
     """
-    with CaptureServer() as server, Session(ignore_certificate_errors_spki_list=[server.spki_hash]) as session:
-        session.request(f"https://{server.authority(protocol)}{KIND_PATHS[kind]}")
+    persona = load_persona(CHROME_157_WINDOWS)
+    with (
+        CaptureServer() as server,
+        Session(
+            ignore_certificate_errors_spki_list=[server.spki_hash], accept_language=persona.accept_language
+        ) as session,
+    ):
+        url = f"https://{server.authority(protocol)}{KIND_PATHS[kind]}"
+        session.request(url, **persona.request_defaults(PersonaRequestKind(kind.value), url))
     return fingerprint(normal_form(server.recording(protocol)), kind)
 
 

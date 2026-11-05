@@ -4,6 +4,7 @@ import functools
 from dataclasses import dataclass, field
 
 from mitto._native import RequestError, Session, encode_url
+from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
 
 __all__ = ["RequestError", "Response", "get"]
 
@@ -31,11 +32,11 @@ def default_session() -> Session:
 
     Threads that race here may each create one. The ones that lose stay open unused, which does no harm.
     """
-    return Session()
+    return Session(accept_language=load_persona(CHROME_157_WINDOWS).accept_language)
 
 
 def get(url: str) -> Response:
-    """Fetch `url` and block until the whole response has arrived.
+    """Fetch `url` the way Chrome 157 on Windows navigates to it, and block until the whole response has arrived.
 
     Raises:
         ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8.
@@ -44,5 +45,6 @@ def get(url: str) -> Response:
     """
     # An invalid URL is reported before anything else, whether or not there is a native library.
     encode_url(url)
-    native = default_session().request(url)
+    defaults = load_persona(CHROME_157_WINDOWS).request_defaults(RequestKind.NAVIGATION, url)
+    native = default_session().request(url, **defaults)
     return Response(status=native.status, headers=native.headers, body=native.body)

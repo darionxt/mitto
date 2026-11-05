@@ -14,6 +14,8 @@ from typing import Any
 import pytest
 
 from mitto._native import LIBRARY_ENV_VAR, Session
+from mitto._persona import CHROME_157_WINDOWS, load_persona
+from mitto._persona import RequestKind as PersonaRequestKind
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
 from tools.parity import (
@@ -164,9 +166,16 @@ def test_a_listed_gap_that_no_longer_exists_fails_the_run(
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize(("protocol", "stem"), [(HTTP1, "http1"), (HTTP2, "http2")])
 def test_a_baseline_recorded_from_the_native_core_has_no_gaps(tmp_path: Path, protocol: str, stem: str) -> None:
-    with CaptureServer() as server, Session(ignore_certificate_errors_spki_list=[server.spki_hash]) as session:
+    persona = load_persona(CHROME_157_WINDOWS)
+    with (
+        CaptureServer() as server,
+        Session(
+            ignore_certificate_errors_spki_list=[server.spki_hash], accept_language=persona.accept_language
+        ) as session,
+    ):
         for kind in RequestKind:
-            session.request(f"https://{server.authority(protocol)}{KIND_PATHS[kind]}")
+            url = f"https://{server.authority(protocol)}{KIND_PATHS[kind]}"
+            session.request(url, **persona.request_defaults(PersonaRequestKind(kind.value), url))
     release = tmp_path / "mitto"
     release.mkdir()
     (release / f"{stem}.json").write_text(dumps_normal_form(normal_form(server.recording(protocol))))

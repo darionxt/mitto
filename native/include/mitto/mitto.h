@@ -9,10 +9,11 @@
 #ifndef MITTO_MITTO_H_
 #define MITTO_MITTO_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 2
+#define MITTO_ABI_VERSION 3
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -75,7 +76,8 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //
 //   {
 //     "version": 1,
-//     "ignore_certificate_errors_spki_list": ["<SPKI hash>"]
+//     "ignore_certificate_errors_spki_list": ["<SPKI hash>"],
+//     "accept_language": "en-US,en;q=0.9"
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -84,6 +86,9 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //   --ignore-certificate-errors-spki-list. Each entry is the Base64 form of the
 //   SHA-256 hash of a DER-encoded SubjectPublicKeyInfo. The default is an empty
 //   list.
+// - "accept_language" is the value of the Accept-Language header that //net adds
+//   to each request whose headers do not hold one. The default is an empty
+//   string, which adds no header.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.
@@ -108,7 +113,16 @@ MITTO_EXPORT void mitto_session_destroy(MittoSession* session);
 // the wire, and may be null if the count is 0. A name may appear only once,
 // ignoring case. //net adds its own headers as it does in Chrome, such as Host
 // before these and Accept-Encoding after them, unless they are among these.
-// `priority` is one of the MITTO_PRIORITY values.
+// Referer cannot be among these, because //net only sends `referrer`.
+//
+// `priority` is one of the MITTO_PRIORITY values, and `priority_incremental`
+// has the meaning of net::URLRequest::SetPriorityIncremental(). Together they
+// decide the HTTP/2 weight, the priority header and the HTTP/3 PRIORITY_UPDATE.
+//
+// `referrer` is a NUL-terminated UTF-8 URL to send as the Referer header, or
+// null to send none. //net puts it after `headers` and before the headers it
+// adds, and leaves out any username, password and fragment. A URL that //net
+// cannot send as a referrer, such as one that is not valid, is refused.
 //
 // Returns 0 on success and fills `response`, which the caller then passes to
 // mitto_response_free(). An HTTP error status such as 404 counts as success. On
@@ -120,6 +134,8 @@ MITTO_EXPORT int32_t mitto_session_request(MittoSession* session,
                                            const MittoHeader* headers,
                                            size_t header_count,
                                            int32_t priority,
+                                           bool priority_incremental,
+                                           const char* referrer,
                                            MittoResponse* response);
 
 // Releases the buffers of a response filled by mitto_session_request() and

@@ -39,7 +39,9 @@ int main(int argc, char** argv) {
   MittoResponse response;
   error = mitto_session_request(session, url, kHeaders,
                                 sizeof(kHeaders) / sizeof(kHeaders[0]),
-                                MITTO_PRIORITY_MEDIUM, &response);
+                                MITTO_PRIORITY_MEDIUM,
+                                /*priority_incremental=*/true,
+                                /*referrer=*/NULL, &response);
   if (error != 0) {
     fprintf(stderr, "GET %s failed with net error %" PRId32 "\n", url, error);
     mitto_session_destroy(session);

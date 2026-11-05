@@ -28,7 +28,8 @@ uint32_t mitto_abi_version(void) {{ return {abi_version}; }}
 int32_t mitto_session_create(const char* settings, unsigned long size, void** session) {{ return -2; }}
 void mitto_session_destroy(void* session) {{}}
 int32_t mitto_session_request(void* session, const char* url, const void* headers, unsigned long header_count,
-                              int32_t priority, void* response) {{ return -2; }}
+                              int32_t priority, _Bool priority_incremental, const char* referrer,
+                              void* response) {{ return -2; }}
 void mitto_response_free(void* response) {{}}
 """
 
@@ -264,6 +265,13 @@ def test_session_create_accepts_an_spki_hash(native_library: ctypes.CDLL) -> Non
     native_library.mitto_session_destroy(handle)
 
 
+def test_session_create_accepts_an_accept_language(native_library: ctypes.CDLL) -> None:
+    error, handle = create_session(native_library, b'{"version": 1, "accept_language": "en-US,en;q=0.9"}')
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
 def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.CDLL) -> None:
     handle = ctypes.POINTER(_native.MittoSession)()
 
@@ -288,6 +296,9 @@ def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.
         pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": [1]}', id="entry-is-a-number"),
         pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": ["!"]}', id="entry-is-not-base64"),
         pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": ["AAAA"]}', id="entry-is-too-short"),
+        pytest.param(b'{"version": 1, "accept_language": 1}', id="accept-language-is-a-number"),
+        pytest.param(b'{"version": 1, "accept_language": "a\\r\\nb"}', id="crlf-in-accept-language"),
+        pytest.param(b'{"version": 1, "accept_language": "a\\u0000b"}', id="nul-in-accept-language"),
     ],
 )
 def test_session_create_refuses_invalid_settings(native_library: ctypes.CDLL, settings: bytes) -> None:
@@ -310,7 +321,7 @@ def test_request_fills_the_response_and_free_zeroes_it(
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        session_handle, server_url.encode(), None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+        session_handle, server_url.encode(), None, 0, _native.Priority.LOWEST, True, None, ctypes.byref(response)
     )
 
     assert error == 0
@@ -335,7 +346,7 @@ def test_request_failure_returns_the_net_error_and_leaves_the_response_zeroed(
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        session_handle, b"not a url", None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+        session_handle, b"not a url", None, 0, _native.Priority.LOWEST, True, None, ctypes.byref(response)
     )
 
     assert error == ERR_INVALID_URL
@@ -350,7 +361,7 @@ def test_request_takes_the_url_as_bytes(native_library: ctypes.CDLL, session_han
 
     with pytest.raises(ctypes.ArgumentError):
         native_library.mitto_session_request(
-            session_handle, "http://127.0.0.1/", None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+            session_handle, "http://127.0.0.1/", None, 0, _native.Priority.LOWEST, True, None, ctypes.byref(response)
         )
 
 
@@ -358,7 +369,7 @@ def test_request_refuses_a_null_session(native_library: ctypes.CDLL, server_url:
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        None, server_url.encode(), None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+        None, server_url.encode(), None, 0, _native.Priority.LOWEST, True, None, ctypes.byref(response)
     )
 
     assert error == ERR_INVALID_ARGUMENT
@@ -368,7 +379,7 @@ def test_request_refuses_a_null_url(native_library: ctypes.CDLL, session_handle:
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        session_handle, None, None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+        session_handle, None, None, 0, _native.Priority.LOWEST, True, None, ctypes.byref(response)
     )
 
     assert error == ERR_INVALID_ARGUMENT
@@ -380,7 +391,7 @@ def test_request_refuses_null_headers_with_a_count(
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        session_handle, server_url.encode(), None, 1, _native.Priority.LOWEST, ctypes.byref(response)
+        session_handle, server_url.encode(), None, 1, _native.Priority.LOWEST, True, None, ctypes.byref(response)
     )
 
     assert error == ERR_INVALID_ARGUMENT
@@ -393,7 +404,7 @@ def test_request_refuses_an_unknown_priority(
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        session_handle, server_url.encode(), None, 0, priority, ctypes.byref(response)
+        session_handle, server_url.encode(), None, 0, priority, True, None, ctypes.byref(response)
     )
 
     assert error == ERR_INVALID_ARGUMENT
@@ -408,6 +419,8 @@ def test_request_refuses_an_unknown_priority(
         pytest.param([(b"X-Name", b"a\0b")], id="nul-in-value"),
         pytest.param([(b"X-Name", b"a\r\nX-Injected: b")], id="crlf-in-value"),
         pytest.param([(b"X-Name", b"1"), (b"x-name", b"2")], id="repeated-name"),
+        pytest.param([(b"Referer", b"http://127.0.0.1/")], id="referer"),
+        pytest.param([(b"rEFERER", b"http://127.0.0.1/")], id="referer-in-another-case"),
     ],
 )
 def test_request_refuses_invalid_headers(
@@ -424,7 +437,29 @@ def test_request_refuses_invalid_headers(
         native_headers,
         len(native_headers),
         _native.Priority.LOWEST,
+        True,
+        None,
         ctypes.byref(response),
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
+
+
+@pytest.mark.parametrize(
+    "referrer",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"not a url", id="not-a-url"),
+        pytest.param(b"about:blank", id="not-a-referrer-scheme"),
+    ],
+)
+def test_request_refuses_a_referrer_that_net_cannot_send(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str, referrer: bytes
+) -> None:
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        session_handle, server_url.encode(), None, 0, _native.Priority.LOWEST, True, referrer, ctypes.byref(response)
     )
 
     assert error == ERR_INVALID_ARGUMENT
@@ -435,7 +470,14 @@ def test_request_refuses_a_null_header_name(native_library: ctypes.CDLL, session
     response = _native.MittoResponse()
 
     error = native_library.mitto_session_request(
-        session_handle, server_url.encode(), native_headers, 1, _native.Priority.LOWEST, ctypes.byref(response)
+        session_handle,
+        server_url.encode(),
+        native_headers,
+        1,
+        _native.Priority.LOWEST,
+        True,
+        None,
+        ctypes.byref(response),
     )
 
     assert error == ERR_INVALID_ARGUMENT
