@@ -574,6 +574,111 @@ def test_any_other_file_is_fingerprinted_whole(tmp_path: Path) -> None:
     assert export.library_fingerprint(library) == hashlib.sha256(b"\x7fELF and the rest").hexdigest()
 
 
+def tar_of(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
+    archive = tmp_path / name
+    with tarfile.open(archive, "w:xz") as tar:
+        for path, content in files.items():
+            info = tarfile.TarInfo(path)
+            info.size = len(content.encode())
+            tar.addfile(info, io.BytesIO(content.encode()))
+    return archive
+
+
+def test_an_export_unpacks_whole(tmp_path: Path) -> None:
+    archive = tar_of(tmp_path, "a.tar.xz", {"chromium-1/export.json": "{}", "chromium-1/src/a.h": "a"})
+    root = tmp_path / "build"
+    root.mkdir()
+
+    export.unpack_export(archive, root / "chromium-1")
+
+    assert (root / "chromium-1/src/a.h").read_text() == "a"
+    assert [path.name for path in root.iterdir()] == ["chromium-1"]
+
+
+def test_the_same_export_is_not_unpacked_again(tmp_path: Path) -> None:
+    archive = tar_of(tmp_path, "a.tar.xz", {"chromium-1/export.json": "{}", "chromium-1/src/a.h": "a"})
+    root = tmp_path / "build"
+    root.mkdir()
+    export.unpack_export(archive, root / "chromium-1")
+    (root / "chromium-1/src/a.h").write_text("changed by the build")
+
+    export.unpack_export(archive, root / "chromium-1")
+
+    assert (root / "chromium-1/src/a.h").read_text() == "changed by the build"
+
+
+def test_another_export_of_the_same_release_is_refused(tmp_path: Path) -> None:
+    first = tar_of(tmp_path, "a.tar.xz", {"chromium-1/export.json": "{}", "chromium-1/src/a.h": "a"})
+    second = tar_of(tmp_path, "b.tar.xz", {"chromium-1/export.json": "{}", "chromium-1/src/a.h": "b"})
+    root = tmp_path / "build"
+    root.mkdir()
+    export.unpack_export(first, root / "chromium-1")
+
+    with pytest.raises(export.ExportError, match="another export"):
+        export.unpack_export(second, root / "chromium-1")
+
+    assert (root / "chromium-1/src/a.h").read_text() == "a"
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"chromium-1/src/a.h": "no metadata"},
+        {"chromium-2/export.json": "{}", "chromium-2/src/a.h": "another release"},
+    ],
+)
+def test_an_archive_that_is_not_the_export_of_the_release_leaves_nothing(tmp_path: Path, files: dict[str, str]) -> None:
+    archive = tar_of(tmp_path, "a.tar.xz", files)
+    root = tmp_path / "build"
+    root.mkdir()
+
+    with pytest.raises(export.ExportError, match="not the export"):
+        export.unpack_export(archive, root / "chromium-1")
+
+    assert list(root.iterdir()) == []
+
+
+def toolchain_metadata(tmp_path: Path) -> dict[str, dict[str, list[dict[str, str]]]]:
+    package = tar_of(tmp_path, "package.tar.xz", {"bin/tool": "tool"})
+    pin = {
+        "path": "third_party/tool",
+        "url": package.as_uri(),
+        "sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+        "format": "tar",
+    }
+    return {"toolchain": {"linux": [pin]}}
+
+
+def test_checkouts_that_share_downloads_each_get_the_toolchain(tmp_path: Path) -> None:
+    metadata = toolchain_metadata(tmp_path)
+    downloads = tmp_path / "downloads"
+    first = tmp_path / "chromium-1"
+    second = tmp_path / "chromium-2"
+    first.mkdir()
+    second.mkdir()
+
+    export.fetch_toolchain(metadata, export.LINUX, first, downloads)
+    export.fetch_toolchain(metadata, export.LINUX, second, downloads)
+
+    assert (first / "src/third_party/tool/bin/tool").read_text() == "tool"
+    assert (second / "src/third_party/tool/bin/tool").read_text() == "tool"
+
+
+def test_a_toolchain_already_in_a_checkout_is_left_alone(tmp_path: Path) -> None:
+    metadata = toolchain_metadata(tmp_path)
+    downloads = tmp_path / "downloads"
+    checkout = tmp_path / "chromium-1"
+    checkout.mkdir()
+    export.fetch_toolchain(metadata, export.LINUX, checkout, downloads)
+    (checkout / "src/third_party/tool/bin/tool").write_text("left alone")
+    for file in downloads.iterdir():
+        file.unlink()
+
+    export.fetch_toolchain(metadata, export.LINUX, checkout, downloads)
+
+    assert (checkout / "src/third_party/tool/bin/tool").read_text() == "left alone"
+
+
 def test_a_tree_with_another_file_or_content_is_not_the_same(tmp_path: Path) -> None:
     write(tmp_path, "a/x", "same")
     write(tmp_path, "a/dir/y", "same")

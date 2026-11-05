@@ -875,13 +875,16 @@ def extract_zip(archive: Path, destination: Path) -> None:
                 target.chmod(0o755 if mode & stat.S_IXUSR else 0o644)
 
 
-def fetch_toolchain(metadata: Mapping[str, Any], host: Host, src: Path, downloads: Path) -> None:
+def fetch_toolchain(metadata: Mapping[str, Any], host: Host, checkout: Path, downloads: Path) -> None:
+    """Puts this Host's toolchain in a checkout. Checkouts can share their downloads."""
+    stamps = checkout / "toolchain-unpacked"
+    stamps.mkdir(exist_ok=True)
     for pin in metadata["toolchain"][host.name]:
-        stamp = downloads / f"{pin['sha256']}.unpacked"
+        stamp = stamps / pin["sha256"]
         if stamp.is_file():
             continue
         file = download(pin["url"], pin["sha256"], downloads)
-        destination = src / pin["path"]
+        destination = checkout / "src" / pin["path"]
         destination.mkdir(parents=True, exist_ok=True)
         if pin["format"] == "zip":
             extract_zip(file, destination)
@@ -905,6 +908,28 @@ def archive_from_pin(directory: Path) -> Path:
     return download(pin["url"], pin["sha256"], directory / "downloads")
 
 
+def unpack_export(archive: Path, checkout: Path) -> None:
+    """Unpacks an archive as the checkout, unless that checkout already is that archive.
+
+    A checkout only appears once it is whole, so a run that stopped starts over.
+    An export replaced under the same release must not build with the old sources.
+    """
+    identity = sha256_of(archive)
+    stamp = checkout / "archive.sha256"
+    if stamp.is_file():
+        if stamp.read_text().strip() != identity:
+            die(f"{checkout} holds another export of this release; use a new directory")
+        return
+    note(f"unpacking {archive}")
+    with tempfile.TemporaryDirectory(dir=checkout.parent, prefix=".unpacking-") as temporary:
+        check_call(["tar", "-xf", archive, "-C", temporary])
+        unpacked = Path(temporary) / checkout.name
+        if not (unpacked / "export.json").is_file():
+            die(f"{archive} has no {checkout.name}/export.json; it is not the export of that release")
+        (unpacked / stamp.name).write_text(identity + "\n")
+        unpacked.rename(checkout)
+
+
 def build_from_export(directory: Path, archive: Path | None) -> Path:
     tag = read_tag()
     host = current_host()
@@ -916,18 +941,12 @@ def build_from_export(directory: Path, archive: Path | None) -> Path:
         check_xcode()
 
     checkout = directory / f"chromium-{tag}"
-    metadata_file = checkout / "export.json"
-    if not metadata_file.is_file():
-        source = archive.resolve() if archive else archive_from_pin(directory)
-        note(f"unpacking {source}")
-        check_call(["tar", "-xf", source, "-C", directory])
-    if not metadata_file.is_file():
-        die(f"the archive has no chromium-{tag}/export.json; it is not an export of Chromium {tag}")
-    metadata = json.loads(metadata_file.read_text())
-    src = checkout / "src"
-    fetch_toolchain(metadata, host, src, directory / "downloads")
+    unpack_export(archive.resolve() if archive else archive_from_pin(directory), checkout)
+    metadata = json.loads((checkout / "export.json").read_text())
+    fetch_toolchain(metadata, host, checkout, directory / "downloads")
 
     # What a pull request changes comes from the repository, not the export.
+    src = checkout / "src"
     link = src / "mitto"
     link.unlink(missing_ok=True)
     link.symlink_to(NATIVE)

@@ -110,7 +110,7 @@ The command:
 4. links the repository's `native/` in as `//mitto` and copies [`tools/workspace/args.gn`](../tools/workspace/args.gn), so that these two come from the repository and not from the export;
 5. runs `gn gen` and `ninja`, says whether the library is the same as the one the export's slice built, as it is until `native/` changes, and prints the library's path.
 
-Running it again continues where it stopped, and rebuilds what changed in `native/`. To run the tests against the library:
+Running it again continues where it stopped, and rebuilds what changed in `native/`. It refuses a directory that holds another export of the same release, so a new export needs a new directory. To run the tests against the library:
 
 ```bash
 export MITTO_NATIVE_LIBRARY=/absolute/path/to/new/directory/chromium-<tag>/src/out/mitto/libmitto_core.so
