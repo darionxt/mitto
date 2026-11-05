@@ -1,6 +1,6 @@
 # Recording Baselines
 
-A **Baseline** is ground truth: what real Chrome sent. This page is how to record the Baselines of a **Chrome Release** on Windows, because the **Persona** is Windows Chrome. They end up in `tests/baselines/RELEASE/`, where [Parity Checks](parity.md) compare with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md), and [capture.md](capture.md) explains the capture kit.
+A **Baseline** is ground truth: what real Chrome sent. This page is how to record the Baselines of a **Chrome Release** on Windows, because the **Persona** is Windows Chrome, and [where each Chrome Release comes from](#where-each-chrome-release-comes-from). They end up in `tests/baselines/RELEASE/`, where [Parity Checks](parity.md) compare with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md), and [capture.md](capture.md) explains the capture kit.
 
 ## What it takes
 
@@ -76,6 +76,24 @@ To remove Chrome afterwards, with the version it has:
 & "$env:LOCALAPPDATA\Google\Chrome\Application\157.0.8103.39\Installer\setup.exe" --uninstall --channel=stable --force-uninstall
 ```
 
+### An older Chrome Release
+
+The update server also answers for older Chrome Releases, so ask it the same way with `155.` or `156.` in `targetversionprefix`. A build that stopped serving is not in the release feed's list above. To check an older build, ask the feed for the builds of that Chrome Release that can be pinned. The server's answer must be the newest of them:
+
+```text
+https://versionhistory.googleapis.com/v1/chrome/platforms/win64/channels/stable/versions/all/releases?filter=version>=155,version<156,pinnable=true
+```
+
+Download and check the installer as above, then unpack it instead of installing it. A user can only have one build installed, and this leaves that one as it is:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\baselines\unpack.ps1 -Installer chrome_installer.exe -Out $env:USERPROFILE\mitto-chrome-bin\155
+```
+
+It needs no administrator and no updater can reach the result. Name `Chrome-bin\chrome.exe` in that directory with `-Chrome` when you record. It gets a variations seed like an installed Chrome, and [on the wire it is the same](#chrome-157).
+
+Google does not say how long the server keeps answering. On 2026-11-06 it answered for every Chrome Release from 145 to 157, and not for 144 or older. So keep the installer until the Chrome Release leaves the **Supported Window**.
+
 ## The variations seed and the country
 
 Chrome fetches a variations seed, and field trials from it apply from the next start. Without it, Chrome looks fine and runs with no field trials, so a recording session waits for the seed, restarts Chrome and checks that `chrome://version` lists active variations.
@@ -93,6 +111,8 @@ From the repository's root on the Windows machine, with a new directory for both
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\baselines\record.ps1 -Out recordings\a -UserDataDir $env:USERPROFILE\mitto-chrome\a
 ```
+
+For an unpacked Chrome, add `-Chrome` with its `chrome.exe`.
 
 Over SSH, a dropped connection would end it, so start it outside the SSH session and read its log. An SSH exit of 255 says nothing about the job:
 
@@ -112,7 +132,7 @@ It takes about a minute, and ends with `Done:` or with an error. Windows of Chro
 2. It starts the capture server, `uv run python -m tools.capture --out recordings\a`, which prints the hash and the three addresses.
 3. For each address, it starts Chrome again with the flags and the address, in the order HTTP/1.1, HTTP/2, HTTP/3. It waits until the server has written that protocol's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. The server exits after the third.
 4. It checks that every client's address is loopback, that `Accept-Language` is `en-US`, that Chrome lists active variations, and that Chrome's version did not change.
-5. It writes `chrome.txt`: the build, the system, the flags, the seed's serial number and, for each protocol, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list.
+5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each protocol, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list.
 
 | Flag | On | Why |
 |---|---|---|
@@ -137,19 +157,98 @@ It takes about a minute, and ends with `Done:` or with an error. Windows of Chro
 3. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`. Leave out the raw recordings and logs, which are not Baselines.
 4. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
 
+## Where each Chrome Release comes from
+
+| Chrome Release | Source | Build | SHA-256 of the installer | Corrections |
+|---|---|---|---|---|
+| 155 | [Google's update server](#an-older-chrome-release), unpacked | 155.0.8059.85 | `2a9b18526096b614fbfda4324280fc69316e42dcb0668301f2cd8a4524054664` | None |
+| 156 | [Google's update server](#an-older-chrome-release), unpacked | 156.0.8078.80 | `43cca215206b634b89d226ed71522c7f58c5430b8559b92e782dd7bd77add7cc` | None |
+| 157 | [Google's update server](#install-chrome), installed | 157.0.8103.39 | `389b9e21de9a520a6e24ba807ee8760409ccc837457bbcc460d2fdce0d5e8df5` | None |
+
+All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06: hash, signature, version, that Chrome starts and that it gets a seed. They were not recorded yet.
+
+A recording of an older Chrome Release gets the seed of the day it is recorded, as every installation of that Chrome Release does on that day.
+
+[Chrome for Testing](#chrome-for-testing) is only the fallback, for a Chrome Release the server no longer answers for.
+
 ## Chrome 157
 
 Build 157.0.8103.39, recorded on 2026-11-05 and 2026-11-06 on Windows 11 build 26300, with a Windows display language other than English. The files in `tests/baselines/157` come from the first session.
 
 Five sessions from new user data directories gave identical normal forms for all four **Request Kinds** over all three protocols. One of them used `-NoDebuggingPort`, so the debugging port leaves no trace on the wire.
 
-Their field trials do differ, with no effect on the normal form:
+On 2026-11-06, with the same seed, four sessions from a Chrome [unpacked](#an-older-chrome-release) from the same installer gave those normal forms too, so unpacking changes nothing on the wire. So did three of four more from the installed Chrome. The fourth drew the field trial below.
+
+The field trials of the first five do differ, with no effect on the normal form:
 
 | Field trials | Differ between | Why |
 |---|---|---|
 | `HttpCacheZstdCompression`, `PervasiveSharedDictionaries`, `PrioritizeMainFrameNavigationNetworkResponse`, `PrioritizeResizeTaskRunnerOnStartupStudy`, `PrivateAiCloudflareProxy`, `ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite`, `VariationsFeatureAccessLogging` | User data directories | Permanent consistency: a new directory is a new client |
 | `OptimisticDnsForTcp`, `ReduceMojoURLLoaderFactoryCloning` | Any two starts of Chrome | Session consistency: Chrome draws them at each start, which is why `chrome.txt` has one list per protocol |
 
-The same seed has one study of QUIC with session consistency that no recording here drew, `IncreaseAmplificationFactor`, with the feature `TryQuicByDefault`. If a later HTTP/3 recording differs in its transport parameters, look at its entry in `chrome.txt` first.
+One field trial does reach the wire: `IncreaseAmplificationFactor`, with the feature `TryQuicByDefault`. It takes 3 of the 100 slots of a layer, so about 3% of user data directories have it, and then each start of Chrome draws one of three groups. Those set `google_connection_options` to `["8AFF", "ORIG"]`, `["5AFF", "ORIG"]` or the usual `["ORIG"]`. One directory of the 13 here had it, and its HTTP/3 start drew `8AFF`.
+
+A Baseline holds what most installations send. So if a session's HTTP/3 normal form has such an option, and `chrome.txt` shows that group under `http3.json`, record another session and leave that one out. The study applies from 146.0.7680.71, so this goes for Chrome 155 and 156 too.
 
 What can still move without a new Chrome Release is in [capture.md](capture.md#what-can-differ-between-chrome-installations).
+
+## Chrome for Testing
+
+Chrome for Testing keeps Windows builds of older Chrome Releases, so we checked whether it can stand in for stable Chrome. As it comes, it cannot. With two flags, it matches apart from one header. That makes it a usable fallback, but a Baseline from it holds a value we wrote ourselves, so stable Chrome stays the source as long as the update server has it.
+
+The comparison is build 157.0.8103.39 against `tests/baselines/157`, recorded on 2026-11-06 with the procedure above. Sessions of each kind below gave identical normal forms. It says nothing about what the normal form [does not capture](capture.md#what-it-does-not-capture-yet), and builds of Chrome for Testing at 155 and 156 were not recorded.
+
+### The build
+
+- **Where it comes from.** `https://storage.googleapis.com/chrome-for-testing-public/VERSION/win64/chrome-win64.zip`. The bucket holds more than [its index](https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json) lists. On 2026-11-06 the index stopped at 155.0.8059.84, 156.0.8078.80 and 157.0.8103.38, and the bucket also had 155.0.8059.85, 156.0.8078.82 and 157.0.8103.39.
+- **Whether it matches stable.** In version and source, yes: `chrome://version` gives both the same revision (`9a31f0ac`, `branch-heads/8103@{#1035}`) and V8. It is still a different build, without Google Chrome's branding. Build 157.0.8103.38 differs from it by one commit, the version number, and gave the same normal forms.
+- **Whether it is signed.** No. `chrome.exe` and `chrome.dll` are `NotSigned`, so only the bucket's `x-goog-hash` header says a download arrived whole.
+
+### Its variations seed and field trials
+
+It fetches no seed by itself: only builds with Google Chrome's branding do, as `IsFetchingEnabled` in `components/variations/service/variations_service.cc` shows. In six minutes, a net log has no request for a seed, and `Local State` gets no `variations_country`. Stable Chrome asks within seconds.
+
+It still has field trials. Builds without that branding apply the testing config in `testing/variations/fieldtrial_testing_config.json`, and `chrome://version` says `Variations Source: field-trial-config`. That is why [`record.ps1`](../tools/baselines/record.ps1) would find active variations even with no seed.
+
+| Started with | Seed | Field trials | Normal form differs from stable in |
+|---|---|---|---|
+| The procedure's flags | None | The testing config, with experiments stable Chrome does not have | `sec-ch-ua`, extension `0x12e0`, `NOIP` |
+| `--disable-field-trial-config` too | None | None | `sec-ch-ua` |
+| `--variations-server-url=https://clientservices.googleapis.com/chrome-variations/seed --fake-variations-channel=stable` too | The same as stable's | Drawn from that seed | `sec-ch-ua` |
+
+With those two flags it fetches the seed, and the testing config goes away. The seed is the one stable Chrome got, byte for byte. The second flag is there because Chrome for Testing has no channel, and studies filter on it. Without that flag the server sends another seed, and no network-related field trial applies. No filter in a study can see the branding. Its network-related field trials differ from stable's only as two stable user data directories differ from each other: the same seed, with other groups drawn. For example, `SafeBrowsingWaitForDnsForRealTimeLookup/Enabled_20260720` has a weight of 1 in 100 in it.
+
+The two differences that come from the testing config, on top of `sec-ch-ua`:
+
+| Field | Stable | Testing config | Study and feature |
+|---|---|---|---|
+| Extension `0x12e0` (`server_padding`), over all three protocols | Not sent | `{"type": "0x12e0", "data": "0000"}` | `PqcBandwidthExperiment`, `AddTLSServerHandshakePadding` |
+| `google_connection_options`, over HTTP/3 | `["ORIG"]` | `["ORIG", "NOIP"]` | `IgnoreIPMatching`, `IgnoreIpMatching` |
+
+Neither study nor feature is in stable's seed of that day. Sessions with no field trials and the four sessions with that seed also gave identical normal forms. None of those four drew the one field trial [that reaches the wire](#chrome-157).
+
+### What needs correcting
+
+Only `sec-ch-ua`, in every Request Kind over every protocol. That is 12 fields per Chrome Release:
+
+| Chrome | `sec-ch-ua` |
+|---|---|
+| Chrome for Testing 157 | `"Chromium";v="157", "Not-A.Brand";v="99"` |
+| Stable 157 | `"Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157"` |
+| Stable 156 | `"Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"` |
+| Stable 155 | `"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"` |
+
+It lacks the brand, and adding the brand is not enough. `GenerateBrandVersionList` in `components/embedder_support/user_agent_utils.cc` shuffles the list by major version and by how many brands it holds, so take the value from real Chrome.
+
+### If the fallback is needed
+
+1. Repeat this comparison with the newest Chrome Release, where stable Chrome is still there to compare with. Anything but `sec-ch-ua` that differs comes back to the map as a decision.
+2. Take the older build from the bucket, and record it with both flags. `-Chrome` names it and `-ExtraFlags` takes the flags, which is a list, so this needs `-Command` and not `-File`:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -Command "& tools\baselines\record.ps1 -Out recordings\a -UserDataDir $env:USERPROFILE\mitto-chrome\a -Chrome chrome-win64\chrome.exe -ExtraFlags '--variations-server-url=https://clientservices.googleapis.com/chrome-variations/seed','--fake-variations-channel=stable'"
+   ```
+
+3. Replace `sec-ch-ua` in the normal forms, and say so under that Chrome Release on this page.
+
+For a session with no seed, `-NoVariationsSeed` takes the place of waiting for one. Whenever the Chrome is not Google Chrome, or either option is there, `chrome.txt` says that it describes a comparison and not a Baseline.
