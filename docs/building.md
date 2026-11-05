@@ -83,9 +83,11 @@ It fetches `https://example.com/` unless given another URL. The first line of it
 status 200 over h2
 ```
 
-A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machine, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. On Linux x86_64 it is 123 MB, 27 MB once stripped and 12 MB compressed. Size has not been worked on yet.
+A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machine, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. On Linux x86_64 it is 121 MB, 27 MB once stripped and 12 MB compressed. Size has not been worked on yet.
 
-On Linux the library loads GLib, NSS and NSPR from the system at run time, as `ldd` shows. A new Ubuntu 26.04 desktop install already has them, in the packages `libglib2.0-0t64`, `libnss3` and `libnspr4`.
+On Linux the library loads NSS and NSPR from the system at run time, as `ldd` shows. A new Ubuntu 26.04 desktop install already has them, in the packages `libnss3` and `libnspr4`. `//net` uses them to trust certificates the user has added to an NSS database. The first HTTPS request creates that database in `~/.local/share/pki/nssdb`, or uses `~/.pki/nssdb` if that exists. GN arguments alone cannot turn them off: with `use_nss_server_certs = false`, `net/cert/cert_verify_proc.cc` does not compile. auditwheel's manylinux policy does not allow them, so the wheels planned in the [roadmap](roadmap.md) still have to solve this.
+
+The library does not load GLib, GIO or D-Bus, which [`tools/workspace/args.gn`](../tools/workspace/args.gn) turns off. `//net` needs them only for GNOME's proxy settings and the desktop portal's metered-network state, and mitto uses neither.
 
 ## Work on the Python package
 
