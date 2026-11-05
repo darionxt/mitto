@@ -1,7 +1,8 @@
-"""The capture server: TLS and HTTP on local ports, with a recording of each port's traffic."""
+"""The capture server: TLS and HTTP on local TCP ports, QUIC on a local UDP port, and a recording of each port."""
 
 import contextlib
 import errno
+import itertools
 import logging
 import selectors
 import socket
@@ -9,6 +10,7 @@ import ssl
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -19,14 +21,16 @@ from tools.capture.client_hello import ClientHelloAssembler, ClientHelloRecords
 from tools.capture.http1 import Http1Connection, Http1Request
 from tools.capture.http2 import Frame, Http2Connection, Http2Request
 from tools.capture.page import DONE_PATH, Responder, Response, respond
-from tools.capture.recording import HTTP1, HTTP2, ConnectionRecord, Recording
+from tools.capture.quic_server import Datagram, LiveQuicConnection, QuicDispatcher
+from tools.capture.recording import HTTP1, HTTP2, HTTP3, ConnectionRecord, Recording
 from tools.capture.wire import ParseError
 
 DEFAULT_HOST = "capture.localhost"
 """Chrome and the network stack resolve *.localhost to loopback themselves, and, unlike an IP address, it gets SNI."""
 
 _READ_SIZE = 1 << 16
-_ACCEPT_POLL_SECONDS = 0.05
+_MAX_DATAGRAM_SIZE = 1 << 16
+_POLL_SECONDS = 0.05
 _CLOSE_TIMEOUT_SECONDS = 5.0
 _LOOPBACKS = ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1"))
 _NO_IPV6_ERRORS = (errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT)
@@ -83,7 +87,7 @@ class _Endpoint:
         self.protocol = protocol
         self.requested_port = requested_port
         self.port = 0
-        self.connections: list[_LiveConnection] = []
+        self.connections: list[_LiveConnection | LiveQuicConnection] = []
         self.page_done = threading.Event()
 
 
@@ -92,6 +96,11 @@ class _Listener:
     sock: socket.socket
     endpoint: _Endpoint
     context: ssl.SSLContext
+
+
+@dataclass(frozen=True, slots=True)
+class _QuicListener:
+    sock: socket.socket
 
 
 class _TlsStream:
@@ -150,25 +159,33 @@ class _TlsStream:
 
 
 class CaptureServer:
-    """Serves the test page over HTTP/1.1 and HTTP/2, one port each, and records what clients send to each port.
+    """Serves the test page over HTTP/1.1, HTTP/2 and HTTP/3, one port each, and records what clients send to each port.
 
     Use it as a context manager. Clients must connect by name, so that they send SNI. Connections never get session
     tickets, so every ClientHello is that of a fresh connection and has no pre_shared_key.
     """
 
-    def __init__(self, host: str = DEFAULT_HOST, *, http1_port: int = 0, http2_port: int = 0) -> None:
+    def __init__(
+        self, host: str = DEFAULT_HOST, *, http1_port: int = 0, http2_port: int = 0, http3_port: int = 0
+    ) -> None:
         """Prepare a server at host, which must end in .localhost. A port of 0 means any free port."""
         if not host.endswith(".localhost"):
             raise ValueError(f"{host!r} does not end in .localhost")
         self.host = host
         self._certificate: Certificate | None = None
-        self._endpoints = {HTTP1: _Endpoint(HTTP1, http1_port), HTTP2: _Endpoint(HTTP2, http2_port)}
+        self._endpoints = {
+            HTTP1: _Endpoint(HTTP1, http1_port),
+            HTTP2: _Endpoint(HTTP2, http2_port),
+            HTTP3: _Endpoint(HTTP3, http3_port),
+        }
         self._lock = threading.Lock()
-        self._next_connection_id = 1
+        self._connection_ids = itertools.count(1)
         self._selector = selectors.DefaultSelector()
         self._listeners: list[socket.socket] = []
+        self._quic: QuicDispatcher | None = None
+        self._quic_sockets: dict[int, socket.socket] = {}
         self._stopping = threading.Event()
-        self._accept_thread: threading.Thread | None = None
+        self._listen_thread: threading.Thread | None = None
         self._connection_threads: list[threading.Thread] = []
         self._open_sockets: set[socket.socket] = set()
 
@@ -230,9 +247,9 @@ class CaptureServer:
         """Stop serving and end all connections. Recordings stay readable."""
         self._stopping.set()
         deadline = time.monotonic() + _CLOSE_TIMEOUT_SECONDS
-        if self._accept_thread is not None:
-            self._accept_thread.join(_CLOSE_TIMEOUT_SECONDS)
-            self._accept_thread = None
+        if self._listen_thread is not None:
+            self._listen_thread.join(_CLOSE_TIMEOUT_SECONDS)
+            self._listen_thread = None
         with self._lock:
             open_sockets = list(self._open_sockets)
         for sock in open_sockets:
@@ -249,15 +266,32 @@ class CaptureServer:
 
     def _start(self) -> None:
         self._certificate = generate_certificate(self.host)
-        for endpoint in self._endpoints.values():
-            self._listen(endpoint, _server_context(self._certificate, endpoint.protocol))
-        self._accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
-        self._accept_thread.start()
+        for protocol in (HTTP1, HTTP2):
+            self._listen(self._endpoints[protocol], _server_context(self._certificate, protocol))
+        self._listen_quic(self._endpoints[HTTP3], self._certificate)
+        self._listen_thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self._listen_thread.start()
 
     def _listen(self, endpoint: _Endpoint, context: ssl.SSLContext) -> None:
+        for sock in self._bind(endpoint, _open_tcp):
+            self._selector.register(sock, selectors.EVENT_READ, _Listener(sock, endpoint, context))
+
+    def _listen_quic(self, endpoint: _Endpoint, certificate: Certificate) -> None:
+        def record(connection: LiveQuicConnection) -> None:
+            connection.id = next(self._connection_ids)
+            endpoint.connections.append(connection)
+
+        self._quic = QuicDispatcher(certificate, _page_responder(endpoint), record)
+        for sock in self._bind(endpoint, _open_udp):
+            self._quic_sockets[sock.family] = sock
+            self._selector.register(sock, selectors.EVENT_READ, _QuicListener(sock))
+
+    def _bind(
+        self, endpoint: _Endpoint, open_socket: Callable[[socket.AddressFamily, str, int], socket.socket]
+    ) -> list[socket.socket]:
         for _ in range(_BIND_ATTEMPTS):
             try:
-                sockets = _bind_loopback(endpoint.requested_port)
+                sockets = _bind_loopback(endpoint.requested_port, open_socket)
             except OSError as error:
                 # Port 0 may pick a port that is free on one loopback address only.
                 if endpoint.requested_port == 0 and error.errno == errno.EADDRINUSE:
@@ -266,26 +300,64 @@ class CaptureServer:
             endpoint.port = sockets[0].getsockname()[1]
             for sock in sockets:
                 sock.setblocking(False)
-                self._selector.register(sock, selectors.EVENT_READ, _Listener(sock, endpoint, context))
             self._listeners += sockets
-            return
+            return sockets
         raise OSError(errno.EADDRINUSE, "no port free on all loopback addresses")
 
-    def _accept_loop(self) -> None:
+    def _listen_loop(self) -> None:
         while not self._stopping.is_set():
-            for key, _ in self._selector.select(_ACCEPT_POLL_SECONDS):
-                listener: _Listener = key.data
-                try:
-                    sock, _ = listener.sock.accept()
-                except OSError:
-                    continue
-                sock.setblocking(True)
-                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                with self._lock:
-                    self._open_sockets.add(sock)
-                thread = threading.Thread(target=self._serve, args=(sock, listener), daemon=True)
-                self._connection_threads.append(thread)
-                thread.start()
+            for key, _ in self._selector.select(self._poll_seconds()):
+                listener: _Listener | _QuicListener = key.data
+                if isinstance(listener, _QuicListener):
+                    self._receive_datagram(listener.sock)
+                else:
+                    self._accept(listener)
+            self._handle_quic_timers()
+
+    def _accept(self, listener: _Listener) -> None:
+        try:
+            sock, _ = listener.sock.accept()
+        except OSError:
+            return
+        sock.setblocking(True)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        with self._lock:
+            self._open_sockets.add(sock)
+        thread = threading.Thread(target=self._serve, args=(sock, listener), daemon=True)
+        self._connection_threads.append(thread)
+        thread.start()
+
+    def _poll_seconds(self) -> float:
+        assert self._quic is not None
+        with self._lock:
+            wakeup = self._quic.next_wakeup()
+        if wakeup is None:
+            return _POLL_SECONDS
+        return min(_POLL_SECONDS, max(0.0, wakeup - time.monotonic()))
+
+    def _receive_datagram(self, sock: socket.socket) -> None:
+        assert self._quic is not None
+        try:
+            data, address = sock.recvfrom(_MAX_DATAGRAM_SIZE)
+        except OSError:
+            # Windows reports here that an earlier datagram found nobody listening. This one is not lost.
+            return
+        with self._lock:
+            output = self._quic.receive(data, address, time.monotonic())
+        self._send_datagrams(output)
+
+    def _handle_quic_timers(self) -> None:
+        assert self._quic is not None
+        with self._lock:
+            output = self._quic.handle_timers(time.monotonic())
+        self._send_datagrams(output)
+
+    def _send_datagrams(self, datagrams: list[Datagram]) -> None:
+        for data, address in datagrams:
+            family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
+            # A datagram that goes nowhere is the same as one that gets lost, which QUIC handles.
+            with contextlib.suppress(OSError):
+                self._quic_sockets[family].sendto(data, address)
 
     def _serve(self, sock: socket.socket, listener: _Listener) -> None:
         live: _LiveConnection | None = None
@@ -325,8 +397,7 @@ class CaptureServer:
             client_hello = assembler.feed(data)
             if client_hello is not None:
                 with self._lock:
-                    live = _LiveConnection(self._next_connection_id, client_hello)
-                    self._next_connection_id += 1
+                    live = _LiveConnection(next(self._connection_ids), client_hello)
                     endpoint.connections.append(live)
                 return live
 
@@ -368,13 +439,29 @@ def _server_context(certificate: Certificate, protocol: str) -> ssl.SSLContext:
     return context
 
 
-def _bind_loopback(port: int) -> list[socket.socket]:
+def _open_tcp(family: socket.AddressFamily, address: str, port: int) -> socket.socket:
+    return socket.create_server((address, port), family=family)
+
+
+def _open_udp(family: socket.AddressFamily, address: str, port: int) -> socket.socket:
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    try:
+        sock.bind((address, port))
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
+def _bind_loopback(
+    port: int, open_socket: Callable[[socket.AddressFamily, str, int], socket.socket]
+) -> list[socket.socket]:
     """Listen on port on each loopback address the machine has, the first one choosing the port if port is 0."""
     sockets: list[socket.socket] = []
     try:
         for family, address in _LOOPBACKS:
             try:
-                sock = socket.create_server((address, port), family=family)
+                sock = open_socket(family, address, port)
             except OSError as error:
                 if family == socket.AF_INET6 and error.errno in _NO_IPV6_ERRORS:
                     continue

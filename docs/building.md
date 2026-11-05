@@ -170,6 +170,8 @@ uv run pytest
 
 On Linux the file is `libmitto_core.so`.
 
+Those tests include the **Parity Checks**, described in [parity.md](parity.md).
+
 Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler. A new Ubuntu install has none, and the native core's build does not need one. Install `gcc` to run these tests.
 
 To check the whole path from Python through the native core to a real server, with `MITTO_NATIVE_LIBRARY` set as above and a network connection:
