@@ -1,0 +1,599 @@
+"""Tests of the script that makes the source export, none of which need Chromium."""
+
+import base64
+import hashlib
+import io
+import os
+import stat
+import struct
+import subprocess
+import sys
+import tarfile
+import textwrap
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from tools.workspace import export
+
+
+def write(root: Path, path: str, content: str | bytes = "") -> Path:
+    file = root / path
+    file.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, str):
+        file.write_text(content)
+    else:
+        file.write_bytes(content)
+    return file
+
+
+def test_project_lists_what_gn_read_and_what_targets_declare() -> None:
+    project = {
+        "build_settings": {"gen_input_files": ["//BUILD.gn", "//build/config/BUILDCONFIG.gn"]},
+        "targets": {
+            "//net:net": {"sources": ["//net/a.cc", "//out/mitto/gen/b.cc"], "public": ["//net/a.h"]},
+            # A target that does not restrict its public headers says so with a string.
+            "//base:base": {"sources": ["//base/c.cc"], "public": "*"},
+            "//tools:action": {"script": "//tools/d.py", "inputs": ["//tools/e.txt", "/usr/include/f.h"]},
+        },
+    }
+
+    assert export.paths_in_project(project) == {
+        "BUILD.gn",
+        "build/config/BUILDCONFIG.gn",
+        "net/a.cc",
+        "out/mitto/gen/b.cc",
+        "net/a.h",
+        "base/c.cc",
+        "tools/d.py",
+        "tools/e.txt",
+    }
+
+
+def test_ninja_deps_gives_the_indented_lines() -> None:
+    text = textwrap.dedent("""\
+        obj/a.o: #deps 2, deps mtime 123 (VALID)
+            ../../a.cc
+            gen/a.h
+
+        obj/b.o: #deps 0, deps mtime 123 (STALE)
+
+    """)
+
+    assert export.paths_in_ninja_deps(text) == {"../../a.cc", "gen/a.h"}
+
+
+def test_depfile_handles_continuation_lines_and_escapes() -> None:
+    text = "gen/out.h: ../../a.py \\\n  ../../b\\ c.py\ngen/other.h: ../../d$$.py\nnot a rule\n"
+
+    assert export.paths_in_depfile(text) == {"../../a.py", "../../b c.py", "../../d$.py"}
+
+
+def test_commands_give_the_paths_in_flags() -> None:
+    text = (
+        '../../tools/clang -I../../third_party/foo --suppress=../../build/list.txt "../../quoted.py" '
+        "-Wl,--script=../../native.lds,--other gen/out.o\n"
+    )
+
+    assert export.paths_in_commands(text) == {
+        "../../tools/clang",
+        "../../third_party/foo",
+        "../../build/list.txt",
+        "../../quoted.py",
+        "../../native.lds",
+    }
+
+
+def test_commands_give_the_system_include_directories() -> None:
+    text = "clang++ -isystem../../third_party/libc++/src/include -isystem ../../other -I../../not_system\n"
+
+    assert export.system_include_dirs(text) == {"../../third_party/libc++/src/include", "../../other"}
+
+
+def test_source_relative_leaves_out_what_lies_elsewhere() -> None:
+    src = Path("/w/src")
+    build_dir = src / "out/x"
+
+    assert export.source_relative("../../net/a.cc", src, build_dir) == "net/a.cc"
+    assert export.source_relative("gen/a.h", src, build_dir) == "out/x/gen/a.h"
+    assert export.source_relative("/w/src/net/a.cc", src, build_dir) == "net/a.cc"
+    assert export.source_relative("/usr/include/a.h", src, build_dir) is None
+    assert export.source_relative("/w/src-other/a.h", src, build_dir) is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "net/a.cc",
+        "buildtools/third_party/libc++/__config_site",
+        "buildtools/third_party/mold/BUILD.gn",
+        "build/linux/BUILD.gn",
+        "third_party/llvm-libc/src/LICENSE.TXT",
+    ],
+)
+def test_source_files_can_be_kept(path: str) -> None:
+    assert export.is_kept_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "out/mitto/gen/a.h",
+        "mitto/BUILD.gn",
+        "third_party/llvm-build/Release+Asserts/bin/clang",
+        "third_party/rust-toolchain/bin/rustc",
+        "third_party/cpython3/host/bin/python3",
+        "buildtools/linux64/gn",
+        "buildtools/mac/gn",
+        "buildtools/third_party/mold/cipd/mold",
+        "build/linux/debian_bullseye_amd64-sysroot/usr/include/stdio.h",
+        "build/__pycache__/a.pyc",
+        "third_party/foo/.git/HEAD",
+    ],
+)
+def test_output_and_toolchain_cannot_be_kept(path: str) -> None:
+    assert not export.is_kept_path(path)
+
+
+def test_a_path_through_a_symlink_keeps_the_link_and_the_target(tmp_path: Path) -> None:
+    write(tmp_path, "real/dir/a.h")
+    (tmp_path / "link").symlink_to("real/dir")
+
+    assert export.with_symlinks(tmp_path, "link/a.h") == {"link", "real/dir/a.h"}
+    assert export.with_symlinks(tmp_path, "real/dir/a.h") == {"real/dir/a.h"}
+
+
+def test_a_symlink_out_of_the_tree_stops_the_export(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/link").symlink_to("..")
+
+    with pytest.raises(export.ExportError, match="leaves the source tree"):
+        export.with_symlinks(tmp_path / "src", "link/a.h")
+
+
+def test_licences_on_the_way_to_a_kept_file_are_kept(tmp_path: Path) -> None:
+    write(tmp_path, "LICENSE")
+    write(tmp_path, "AUTHORS")
+    write(tmp_path, "third_party/foo/COPYING.LESSER")
+    write(tmp_path, "third_party/foo/src/a.c")
+    write(tmp_path, "third_party/foo/src/LICENSE-MIT")
+    write(tmp_path, "third_party/foo/src/other/LICENSE")
+    write(tmp_path, "third_party/foo/not_a_licence.txt")
+    write(tmp_path, "third_party/bar/LICENSE")
+
+    assert export.licence_files(tmp_path, ["third_party/foo/src/a.c"]) == {
+        "LICENSE",
+        "AUTHORS",
+        "third_party/foo/COPYING.LESSER",
+        "third_party/foo/src/LICENSE-MIT",
+    }
+
+
+def test_readme_chromium_names_a_licence_with_an_unusual_name_or_place(tmp_path: Path) -> None:
+    write(
+        tmp_path,
+        "third_party/foo/README.chromium",
+        "Name: foo\nLicense File: terms.txt, sub/more.txt, //elsewhere/crate.txt, NOT_SHIPPED\nLicense: MIT\n",
+    )
+    write(tmp_path, "third_party/foo/a.c")
+    write(tmp_path, "third_party/foo/terms.txt")
+    write(tmp_path, "third_party/foo/sub/more.txt")
+    write(tmp_path, "elsewhere/crate.txt")
+
+    assert export.licence_files(tmp_path, ["third_party/foo/a.c"]) == {
+        "third_party/foo/README.chromium",
+        "third_party/foo/terms.txt",
+        "third_party/foo/sub/more.txt",
+        "elsewhere/crate.txt",
+    }
+
+
+def test_a_project_without_a_licence_is_found() -> None:
+    files = [
+        "LICENSE",
+        "net/a.cc",
+        "third_party/covered/LICENSE",
+        "third_party/covered/a.c",
+        "third_party/covered/third_party/inner/b.c",
+        "third_party/deep/src/LICENSE.TXT",
+        "third_party/deep/a.c",
+        "third_party/bare/a.c",
+        "third_party/rust/chromium_crates_io/vendor/good/LICENSE-MIT",
+        "third_party/rust/chromium_crates_io/vendor/good/src/lib.rs",
+        "third_party/rust/chromium_crates_io/vendor/bad/src/lib.rs",
+        "third_party/single_file.h",
+        "buildtools/third_party/libc++/__config_site",
+    ]
+
+    assert export.third_party_without_licence(files) == [
+        "third_party/bare",
+        "third_party/rust/chromium_crates_io/vendor/bad",
+    ]
+
+
+def test_a_prebuilt_program_stops_the_export(tmp_path: Path) -> None:
+    write(tmp_path, "tools/prebuilt", b"\x7fELF and the rest")
+    write(tmp_path, "DEPS")
+
+    with pytest.raises(export.ExportError, match="prebuilt program"):
+        export.files_to_keep(tmp_path, ["tools/prebuilt"])
+
+
+def test_files_to_keep_drops_directories_and_missing_files_and_adds_what_gn_only_checks(tmp_path: Path) -> None:
+    write(tmp_path, "DEPS")
+    write(tmp_path, "LICENSE")
+    write(tmp_path, "build/modules/linux/BUILD.gn")
+    write(tmp_path, "net/a.cc")
+    (tmp_path / "net/dir").mkdir()
+
+    assert export.files_to_keep(tmp_path, ["net/a.cc", "net/dir", "net/missing.h", "out/x/gen.h"]) == {
+        "DEPS",
+        "LICENSE",
+        "build/modules/linux/BUILD.gn",
+        "net/a.cc",
+    }
+
+
+def test_the_trace_hook_sees_imports_and_reads(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    write(site, "sitecustomize.py", export.TRACE_HOOK)
+    src = tmp_path / "src"
+    write(src, "module_used_by_script.py", "VALUE = 1\n")
+    write(src, "data.txt", "data\n")
+    write(src, "unread.txt", "unread\n")
+    write(src, "argument.txt", "only stat it\n")
+    write(src, "flag_value.txt", "only stat it\n")
+    script = write(src, "script.py", "import module_used_by_script\nopen('data.txt').read()\n")
+    env = {
+        **os.environ,
+        "MITTO_EXPORT_TRACE": str(logs),
+        "PYTHONPATH": str(site),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPYCACHEPREFIX": str(tmp_path / "pycache"),
+    }
+
+    command = [sys.executable, script, "argument.txt", "--input=flag_value.txt", "not_a_file.txt"]
+    subprocess.run(command, cwd=src, env=env, check=True)
+
+    read = export.paths_read_by_python(logs, src.resolve())
+    assert {"module_used_by_script.py", "data.txt", "argument.txt", "flag_value.txt"} <= read
+    assert "unread.txt" not in read
+    assert "not_a_file.txt" not in read
+
+
+SAMPLE_DEPS = """\
+vars = {
+  'host_git': Str('https://example.com'),
+  'gn_version': 'git_revision:abc',
+  'ninja_package': 'infra/ninja/',
+}
+deps = {
+  'src/third_party/llvm-build/Release+Asserts': {
+    'dep_type': 'gcs',
+    'bucket': 'clang-bucket',
+    'objects': [
+      {'object_name': 'Linux_x64/clang-llvmorg-1.tar.xz', 'sha256sum': 'aa', 'size_bytes': 1},
+      {'object_name': 'Linux_x64/clang-tidy-llvmorg-1.tar.xz', 'sha256sum': 'bb', 'size_bytes': 1},
+      {'object_name': 'Mac_arm64/clang-llvmorg-1.tar.xz', 'sha256sum': 'cc', 'size_bytes': 1},
+      {'object_name': 'Mac_arm64/llvmobjdump-llvmorg-1.tar.xz', 'sha256sum': 'c0', 'size_bytes': 1},
+    ],
+  },
+  'src/third_party/rust-toolchain': {
+    'dep_type': 'gcs',
+    'bucket': 'clang-bucket',
+    'objects': [
+      {'object_name': 'Linux_x64/rust-toolchain-1.tar.xz', 'sha256sum': 'dd', 'size_bytes': 1},
+      {'object_name': 'Mac_arm64/rust-toolchain-1.tar.xz', 'sha256sum': 'ee', 'size_bytes': 1},
+    ],
+  },
+  'src/build/linux/debian_bullseye_amd64-sysroot': {
+    'dep_type': 'gcs',
+    'bucket': 'sysroot-bucket',
+    'objects': [{'object_name': 'ff', 'sha256sum': 'ff', 'size_bytes': 1}],
+  },
+  'src/buildtools/linux64': {
+    'packages': [{'package': 'gn/gn/linux-${{arch}}', 'version': Var('gn_version')}],
+  },
+  'src/buildtools/mac': {
+    'packages': [{'package': 'gn/gn/mac-${{arch}}', 'version': Var('gn_version')}],
+  },
+  'src/buildtools/third_party/mold/cipd': {
+    'packages': [{'package': 'mold/mold', 'version': 'instance-id'}],
+  },
+  'src/third_party/ninja': {
+    'packages': [{'package': Var('ninja_package') + '${{platform}}', 'version': 'version:1'}],
+  },
+  'src/third_party/cpython3/host': {
+    'packages': [{'package': 'cpython3/${{platform}}', 'version': 'version:3'}],
+  },
+  'src/other': Var('host_git') + '/other.git' + '@' + 'abc',
+}
+hooks = [{'name': 'not read', 'action': ['python3', Unknown('anything')]}]
+"""
+
+CIPD_DIGEST = hashlib.sha256(b"package").digest()
+CIPD_INSTANCE = base64.urlsafe_b64encode(CIPD_DIGEST + b"\x02").decode().rstrip("=")
+
+
+def test_deps_evaluates_vars_and_concatenation() -> None:
+    deps = export.evaluate_deps(SAMPLE_DEPS)
+
+    assert deps["vars"]["host_git"] == "https://example.com"
+    assert deps["deps"]["src/other"] == "https://example.com/other.git@abc"
+    assert deps["deps"]["src/buildtools/linux64"]["packages"][0]["version"] == "git_revision:abc"
+
+
+def test_deps_refuses_what_it_cannot_read() -> None:
+    with pytest.raises(export.ExportError, match="cannot read"):
+        export.evaluate_deps("vars = {'a': os.system('x')}\n")
+
+
+def test_cipd_instance_gives_its_hash() -> None:
+    assert export.sha256_of_cipd_instance(CIPD_INSTANCE) == CIPD_DIGEST.hex()
+
+
+def test_cipd_instance_with_another_hash_is_refused() -> None:
+    other = base64.urlsafe_b64encode(CIPD_DIGEST + b"\x01").decode().rstrip("=")
+
+    with pytest.raises(export.ExportError, match="SHA-256"):
+        export.sha256_of_cipd_instance(other)
+
+
+def test_pins_follow_the_host() -> None:
+    resolved: list[tuple[str, str]] = []
+
+    def resolve(package: str, version: str) -> str:
+        resolved.append((package, version))
+        return CIPD_INSTANCE
+
+    deps = export.evaluate_deps(SAMPLE_DEPS)
+    linux = export.toolchain_pins(deps, export.LINUX, resolve)
+    mac = export.toolchain_pins(deps, export.MAC, resolve)
+
+    assert {pin["path"] for pin in mac} == {
+        "third_party/llvm-build/Release+Asserts",
+        "third_party/rust-toolchain",
+        "buildtools/mac",
+        "third_party/ninja",
+        "third_party/cpython3/host",
+    }
+    assert {pin["path"] for pin in linux} == {pin["path"] for pin in mac} - {"buildtools/mac"} | {
+        "buildtools/linux64",
+        "buildtools/third_party/mold/cipd",
+        "build/linux/debian_bullseye_amd64-sysroot",
+    }
+    clang = linux[0]
+    assert clang == {
+        "path": "third_party/llvm-build/Release+Asserts",
+        "url": "https://storage.googleapis.com/clang-bucket/Linux_x64/clang-llvmorg-1.tar.xz",
+        "sha256": "aa",
+        "format": "tar",
+    }
+    assert ("gn/gn/linux-amd64", "git_revision:abc") in resolved
+    assert ("gn/gn/mac-arm64", "git_revision:abc") in resolved
+    assert ("infra/ninja/mac-arm64", "version:1") in resolved
+    gn = next(pin for pin in mac if pin["path"] == "buildtools/mac")
+    assert gn == {
+        "path": "buildtools/mac",
+        "url": f"https://chrome-infra-packages.appspot.com/dl/gn/gn/mac-arm64/+/{CIPD_INSTANCE}",
+        "sha256": CIPD_DIGEST.hex(),
+        "format": "zip",
+    }
+
+
+def test_a_missing_package_stops_the_pins() -> None:
+    deps = export.evaluate_deps(SAMPLE_DEPS)
+    del deps["deps"]["src/third_party/ninja"]
+
+    with pytest.raises(export.ExportError, match="src/third_party/ninja"):
+        export.toolchain_pins(deps, export.LINUX, lambda _package, _version: CIPD_INSTANCE)
+
+
+def test_an_ambiguous_object_stops_the_pins() -> None:
+    deps = export.evaluate_deps(SAMPLE_DEPS)
+    objects = deps["deps"]["src/third_party/rust-toolchain"]["objects"]
+    objects.append({"object_name": "Linux_x64/rust-toolchain-2.tar.xz", "sha256sum": "00"})
+
+    with pytest.raises(export.ExportError, match="2 objects"):
+        export.toolchain_pins(deps, export.LINUX, lambda _package, _version: CIPD_INSTANCE)
+
+
+def test_merge_is_the_union_of_the_slices(tmp_path: Path) -> None:
+    first = tmp_path / "linux"
+    second = tmp_path / "mac"
+    write(first, "src/shared.h", "same")
+    write(first, "src/base/linux.cc")
+    write(second, "src/shared.h", "same")
+    write(second, "src/base/mac.mm")
+    (second / "src/link").symlink_to("base")
+
+    merged = export.merge_slices([first, second])
+
+    assert set(merged) == {"shared.h", "base/linux.cc", "base/mac.mm", "link"}
+    assert merged["base/mac.mm"] == second / "src/base/mac.mm"
+
+
+def test_merge_stops_when_the_same_path_differs(tmp_path: Path) -> None:
+    write(tmp_path, "linux/src/shared.h", "one")
+    write(tmp_path, "mac/src/shared.h", "two")
+
+    with pytest.raises(export.ExportError, match=r"shared\.h differs"):
+        export.merge_slices([tmp_path / "linux", tmp_path / "mac"])
+
+
+def test_merge_stops_when_a_file_and_a_link_differ(tmp_path: Path) -> None:
+    write(tmp_path, "linux/src/shared.h", "one")
+    write(tmp_path, "mac/src/other.h", "one")
+    (tmp_path / "mac/src/shared.h").symlink_to("other.h")
+
+    with pytest.raises(export.ExportError, match=r"shared\.h differs"):
+        export.merge_slices([tmp_path / "linux", tmp_path / "mac"])
+
+
+def test_merge_takes_the_first_copy_of_a_per_host_file(tmp_path: Path) -> None:
+    write(tmp_path, "linux/src/build/config/gclient_args.gni", "checkout_openxr = true\n")
+    write(tmp_path, "mac/src/build/config/gclient_args.gni", "checkout_openxr = false\n")
+
+    merged = export.merge_slices([tmp_path / "linux", tmp_path / "mac"])
+
+    assert merged["build/config/gclient_args.gni"].read_text() == "checkout_openxr = true\n"
+
+
+def test_archive_is_reproducible_and_keeps_modes_and_links(tmp_path: Path) -> None:
+    tool = write(tmp_path, "slice/tool.py", "#!/usr/bin/env python3\n")
+    tool.chmod(0o755)
+    header = write(tmp_path, "slice/dir/a.h", "header\n")
+    header.chmod(0o640)
+    link = tmp_path / "slice/link.h"
+    link.symlink_to("dir/a.h")
+    files = {"dir/a.h": header, "tool.py": tool, "link.h": link}
+    first = tmp_path / "first.tar.xz"
+    second = tmp_path / "second.tar.xz"
+
+    extras = {"export.json": b"{}\n", "patches/a.patch": b"patch\n"}
+    export.write_archive(first, "chromium-1", files, extras, 1000)
+    os.utime(header, (5000, 5000))
+    export.write_archive(second, "chromium-1", files, extras, 1000)
+
+    assert first.read_bytes() == second.read_bytes()
+    with tarfile.open(first) as tar:
+        members = {member.name: member for member in tar.getmembers()}
+        assert list(members) == [
+            "chromium-1/export.json",
+            "chromium-1/patches/a.patch",
+            "chromium-1/src/dir/a.h",
+            "chromium-1/src/link.h",
+            "chromium-1/src/tool.py",
+        ]
+        assert stat.S_IMODE(members["chromium-1/src/tool.py"].mode) == 0o755
+        assert stat.S_IMODE(members["chromium-1/src/dir/a.h"].mode) == 0o644
+        assert members["chromium-1/src/link.h"].issym()
+        assert members["chromium-1/src/link.h"].linkname == "dir/a.h"
+        assert {member.mtime for member in members.values()} == {1000}
+        assert {(member.uid, member.gid, member.uname, member.gname) for member in members.values()} == {(0, 0, "", "")}
+        metadata = tar.extractfile("chromium-1/export.json")
+        assert metadata is not None
+        assert metadata.read() == b"{}\n"
+    assert not (tmp_path / "first.tar.xz.partial").exists()
+
+
+def zip_entry(name: str, mode: int) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(name)
+    info.external_attr = mode << 16
+    return info
+
+
+def test_a_cipd_package_keeps_modes_and_links(tmp_path: Path) -> None:
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w") as archive:
+        archive.writestr(zip_entry("bin/python3.11", stat.S_IFREG | 0o755), "program")
+        archive.writestr(zip_entry("bin/python3", stat.S_IFLNK | 0o777), "python3.11")
+        archive.writestr(zip_entry("lib/data.txt", stat.S_IFREG | 0o644), "data")
+        archive.writestr(zip_entry(".cipdpkg/manifest.json", stat.S_IFREG | 0o644), "{}")
+    archive_file = write(tmp_path, "package.zip", packed.getvalue())
+    destination = tmp_path / "out"
+
+    export.extract_zip(archive_file, destination)
+
+    assert (destination / "bin/python3").is_symlink()
+    assert (destination / "bin/python3").readlink() == Path("python3.11")
+    assert stat.S_IMODE((destination / "bin/python3.11").stat().st_mode) == 0o755
+    assert stat.S_IMODE((destination / "lib/data.txt").stat().st_mode) == 0o644
+    assert not (destination / ".cipdpkg").exists()
+
+
+def test_download_checks_the_hash(tmp_path: Path) -> None:
+    source = write(tmp_path, "source/package", "package")
+    digest = hashlib.sha256(b"package").hexdigest()
+    downloads = tmp_path / "downloads"
+
+    file = export.download(source.as_uri(), digest, downloads)
+
+    assert file.read_text() == "package"
+    # It is there now, so a rerun does not need the source.
+    source.unlink()
+    assert export.download(source.as_uri(), digest, downloads) == file
+
+
+def test_download_with_the_wrong_hash_leaves_nothing_behind(tmp_path: Path) -> None:
+    source = write(tmp_path, "source/package", "package")
+    downloads = tmp_path / "downloads"
+    wrong = "0" * 64
+
+    with pytest.raises(export.ExportError, match="has SHA-256"):
+        export.download(source.as_uri(), wrong, downloads)
+
+    assert list(downloads.iterdir()) == []
+
+
+def mach_o(text: bytes, build_path: bytes, identity: bytes, zero_fill_size: int = 16) -> bytes:
+    """Returns a small Mach-O file with a code section, an empty data section and a symbol table."""
+    header_size = 32
+    commands_size = 72 + 2 * 80 + len(identity)
+    text_offset = header_size + commands_size
+
+    def section(name: bytes, size: int, offset: int, flags: int) -> bytes:
+        names = name.ljust(16, b"\0") + b"__TEXT".ljust(16, b"\0")
+        return names + struct.pack("<QQIIIIIIII", 0x1000, size, offset, 0, 0, 0, flags, 0, 0, 0)
+
+    segment = struct.pack("<II16sQQQQIIII", 0x19, 72 + 2 * 80, b"__TEXT", 0, 0, 0, 0, 7, 5, 2, 0)
+    sections = section(b"__text", len(text), text_offset, 0) + section(b"__bss", zero_fill_size, 0, 0x1)
+    other_command = struct.pack("<II", 0x1B, len(identity)) + identity[8:]
+    header = export.MACH_O_MAGIC + struct.pack("<IIIIIII", 0, 0, 6, 2, commands_size, 0, 0)
+    return header + segment + sections + other_command + text + build_path
+
+
+def test_a_mach_o_fingerprint_ignores_where_it_was_built(tmp_path: Path) -> None:
+    first = write(tmp_path, "first", mach_o(b"code", b"/first/out/a.o", b"identity" + b"1" * 8))
+    second = write(tmp_path, "second", mach_o(b"code", b"/a/longer/second/out/a.o", b"identity" + b"2" * 8))
+
+    assert first.read_bytes() != second.read_bytes()
+    assert export.library_fingerprint(first) == export.library_fingerprint(second)
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        mach_o(b"CODE", b"/out/a.o", b"identity" + b"1" * 8),
+        mach_o(b"code", b"/out/a.o", b"identity" + b"1" * 8, zero_fill_size=32),
+    ],
+)
+def test_a_mach_o_fingerprint_follows_its_sections(tmp_path: Path, other: bytes) -> None:
+    first = write(tmp_path, "first", mach_o(b"code", b"/out/a.o", b"identity" + b"1" * 8))
+    second = write(tmp_path, "second", other)
+
+    assert export.library_fingerprint(first) != export.library_fingerprint(second)
+
+
+def test_any_other_file_is_fingerprinted_whole(tmp_path: Path) -> None:
+    library = write(tmp_path, "libmitto_core.so", b"\x7fELF and the rest")
+
+    assert export.library_fingerprint(library) == hashlib.sha256(b"\x7fELF and the rest").hexdigest()
+
+
+def test_a_tree_with_another_file_or_content_is_not_the_same(tmp_path: Path) -> None:
+    write(tmp_path, "a/x", "same")
+    write(tmp_path, "a/dir/y", "same")
+    write(tmp_path, "b/x", "same")
+    write(tmp_path, "b/dir/y", "same")
+    assert export.same_tree(tmp_path / "a", tmp_path / "b")
+
+    write(tmp_path, "b/dir/y", "diff")
+    assert not export.same_tree(tmp_path / "a", tmp_path / "b")
+
+    write(tmp_path, "b/dir/y", "same")
+    write(tmp_path, "b/extra", "")
+    assert not export.same_tree(tmp_path / "a", tmp_path / "b")
+
+
+def test_the_environment_of_a_build_has_no_depot_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", os.pathsep.join(["/w/depot_tools", "/usr/bin", "/w/depot_tools_not"]))
+    monkeypatch.setenv("PYTHONPATH", "/somewhere")
+
+    env = export.build_environment()
+
+    assert env["PATH"].split(os.pathsep) == ["/usr/bin", "/w/depot_tools_not"]
+    assert "PYTHONPATH" not in env
