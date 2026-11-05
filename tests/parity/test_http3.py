@@ -173,10 +173,11 @@ def test_a_regenerated_list_holds_those_gaps_and_stays_the_same(http3_baselines:
     command = [sys.executable, "-m", "tools.parity", "--baselines", str(http3_baselines)]
 
     first = subprocess.run(command, cwd=_REPOSITORY, capture_output=True, text=True, check=False)
+    assert first.returncode == 0, first.stderr
     text = (http3_baselines / KNOWN_GAPS_FILE_NAME).read_text()
     second = subprocess.run(command, cwd=_REPOSITORY, capture_output=True, text=True, check=False)
+    assert second.returncode == 0, second.stderr
 
-    assert first.returncode == 0, first.stderr
     assert "Wrote 4 gaps" in first.stdout
     assert len(loads_known_gaps(text)) == 4
     assert ": 0 new, 0 gone." in second.stdout
