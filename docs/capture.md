@@ -42,6 +42,7 @@ To check that a client records the same twice, record it into two directories an
 - It serves HTTP/1.1 and HTTP/2 on separate ports. Each port offers one protocol through ALPN. A client that does not take it is served HTTP/1.1, and the normal form shows that.
 - It gives out no session tickets. Every connection is therefore a fresh one, with no `pre_shared_key`, including the later connections of one page load.
 - Its private certificate is new on every start, so the hash changes too.
+- Its HTTP/2 side does only what the test page needs. Responses use no HPACK dynamic table and ignore flow control, because they are far smaller than the windows Chrome opens. A client whose window is smaller than a response is not served correctly.
 
 Each main **Request Kind** has a path, and the test page requests all of them from one same-origin **Initiator**:
 

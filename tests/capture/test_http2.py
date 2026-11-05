@@ -165,6 +165,18 @@ def test_answers_a_request() -> None:
     assert decoded[b"content-length"] == b"8"
 
 
+def test_answers_fit_a_client_that_allows_no_header_table() -> None:
+    connection = open_connection()
+    connection.receive(serialize_frame(SETTINGS, 0, 0, (1).to_bytes(2) + bytes(4)))
+    decoder = Decoder()
+    decoder.header_table_size = 0
+    decoder.max_allowed_table_size = 0
+
+    for stream_id in (1, 3):
+        output = frames_of(connection.receive(samples.http2_request_frame("/fetch", stream_id=stream_id)))
+        assert dict(decoder.decode(output[0].payload, raw=True))[b":status"] == b"200"
+
+
 def test_keeps_header_order_and_flags() -> None:
     connection = open_connection()
     block = Encoder().encode([(":path", "/fetch"), ("b", "1"), ("a", "2"), ("b", "3")])

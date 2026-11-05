@@ -189,6 +189,8 @@ class Http2Connection:
         self._parser = FrameParser()
         self._decoder = Decoder(max_header_list_size=_MAX_HEADER_LIST_SIZE)
         self._encoder = Encoder()
+        # With no table, responses stay within any limit a client's SETTINGS can set, whatever it sets.
+        self._encoder.header_table_size = 0
         # The header block being received: its first frame, and the fragments so far.
         self._block_start: Frame | None = None
         self._block = bytearray()
@@ -297,7 +299,7 @@ class Http2Connection:
         )
         output = bytearray(serialize_frame(HEADERS, END_HEADERS, stream_id, block))
         body = response.body
-        # The test page's responses all fit the flow control window every client starts with.
+        # Flow control is not enforced: these responses are far smaller than the windows real clients open.
         while len(body) > _MAX_FRAME_SIZE:
             output += serialize_frame(DATA, 0, stream_id, body[:_MAX_FRAME_SIZE])
             body = body[_MAX_FRAME_SIZE:]
