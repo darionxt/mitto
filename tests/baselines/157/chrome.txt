@@ -1,0 +1,134 @@
+Which Chrome recorded the Baselines in this directory. See docs/baselines.md.
+
+Recorded: 2026-11-05
+Chrome: 157.0.8103.39
+Flags: --user-data-dir=<new directory> --no-first-run --no-default-browser-check --lang=en-US --variations-override-country=us --ignore-certificate-errors-spki-list=<hash> --remote-debugging-port=0
+Flags for HTTP/3 only: --origin-to-force-quic-on=<authority>
+Variations seed: SMChYyMDI2MTEwNS0wMTAwMzMuNTU1MDAwEgsIABADGJ0BIAAoAQ==#oxppD2kS8SU=
+Version: 157.0.8103.39 (Official Build) (64-bit)
+System: Windows 11 Version 26H2 (Build 26300.9711)
+User agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36
+
+http1.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
+--force-fieldtrials:
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
+  ContextualTasksDesktop/Launched
+  EnhancedSecurityEventFieldsWin24H2KillSwitch/Disabled_EmergencyKillSwitch
+  HttpCacheZstdCompression/Default
+  IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
+  OptimizeWebRequestProxyForServiceWorkerAutoPreload/Default
+  PageActionsPrioritySelector/Default
+  PervasiveSharedDictionaries/Enabled_20261026
+  PreconnectManagerDirectFastPath/Default
+  PrioritizeMainFrameNavigationNetworkResponse/Enabled
+  PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
+  PrivateAiCloudflareProxy/Control_20261005
+  ReduceMojoURLLoaderFactoryCloning/Control_20261019
+  SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  SpeedUpClearSiteDataCacheDeletion/Default
+  StructuredHeadersInRust/EnabledLaunch
+  VariationsFeatureAccessLogging/Default
+  WinSboxCsrssLockdown/Default
+--force-fieldtrial-params:
+  ContextualTasksDesktop.Launched:allow-signed-out/true
+  IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
+--enable-features:
+  ConfigureQuicHints<IncreaseHttp3Usage
+  HistogramDenylist<VariationsFeatureAccessLogging
+  HttpCacheZstdCompression<HttpCacheZstdCompression
+  HttpCacheZstdDecompression<HttpCacheZstdCompression
+  LogicalClearHttpCache<SpeedUpClearSiteDataCacheDeletion
+  OptimizeWebRequestProxyForServiceWorkerAutoPreload<OptimizeWebRequestProxyForServiceWorkerAutoPreload
+  PageActionsPrioritySelector<PageActionsPrioritySelector
+  PervasiveSharedDictionaries<PervasiveSharedDictionaries
+  PrioritizeMainFrameNavigationNetworkResponse<PrioritizeMainFrameNavigationNetworkResponse
+  PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
+  PrivateAi<PrivateAiCloudflareProxy
+  SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  StructuredHeadersInRust<StructuredHeadersInRust
+--disable-features:
+  ContextualTasksCookiePrefetch<ContextualTasksDesktop
+  EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
+  ReduceMojoURLLoaderFactoryCloning<ReduceMojoURLLoaderFactoryCloning
+
+http2.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
+--force-fieldtrials:
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
+  ContextualTasksDesktop/Launched
+  EnhancedSecurityEventFieldsWin24H2KillSwitch/Disabled_EmergencyKillSwitch
+  HttpCacheZstdCompression/Default
+  IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
+  OptimizeWebRequestProxyForServiceWorkerAutoPreload/Default
+  PageActionsPrioritySelector/Default
+  PervasiveSharedDictionaries/Enabled_20261026
+  PreconnectManagerDirectFastPath/Default
+  PrioritizeMainFrameNavigationNetworkResponse/Enabled
+  PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
+  PrivateAiCloudflareProxy/Control_20261005
+  ReduceMojoURLLoaderFactoryCloning/Default
+  SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  SpeedUpClearSiteDataCacheDeletion/Default
+  StructuredHeadersInRust/EnabledLaunch
+  VariationsFeatureAccessLogging/Default
+  WinSboxCsrssLockdown/Default
+--force-fieldtrial-params:
+  ContextualTasksDesktop.Launched:allow-signed-out/true
+  IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
+--enable-features:
+  ConfigureQuicHints<IncreaseHttp3Usage
+  HistogramDenylist<VariationsFeatureAccessLogging
+  HttpCacheZstdCompression<HttpCacheZstdCompression
+  HttpCacheZstdDecompression<HttpCacheZstdCompression
+  LogicalClearHttpCache<SpeedUpClearSiteDataCacheDeletion
+  OptimizeWebRequestProxyForServiceWorkerAutoPreload<OptimizeWebRequestProxyForServiceWorkerAutoPreload
+  PageActionsPrioritySelector<PageActionsPrioritySelector
+  PervasiveSharedDictionaries<PervasiveSharedDictionaries
+  PrioritizeMainFrameNavigationNetworkResponse<PrioritizeMainFrameNavigationNetworkResponse
+  PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
+  PrivateAi<PrivateAiCloudflareProxy
+  SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  StructuredHeadersInRust<StructuredHeadersInRust
+--disable-features:
+  ContextualTasksCookiePrefetch<ContextualTasksDesktop
+  EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
+
+http3.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
+--force-fieldtrials:
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
+  ContextualTasksDesktop/Launched
+  EnhancedSecurityEventFieldsWin24H2KillSwitch/Disabled_EmergencyKillSwitch
+  HttpCacheZstdCompression/Default
+  IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
+  OptimizeWebRequestProxyForServiceWorkerAutoPreload/Default
+  PageActionsPrioritySelector/Default
+  PervasiveSharedDictionaries/Enabled_20261026
+  PreconnectManagerDirectFastPath/Default
+  PrioritizeMainFrameNavigationNetworkResponse/Enabled
+  PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
+  PrivateAiCloudflareProxy/Control_20261005
+  ReduceMojoURLLoaderFactoryCloning/Default
+  SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  SpeedUpClearSiteDataCacheDeletion/Default
+  StructuredHeadersInRust/EnabledLaunch
+  VariationsFeatureAccessLogging/Default
+  WinSboxCsrssLockdown/Default
+--force-fieldtrial-params:
+  ContextualTasksDesktop.Launched:allow-signed-out/true
+  IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
+--enable-features:
+  ConfigureQuicHints<IncreaseHttp3Usage
+  HistogramDenylist<VariationsFeatureAccessLogging
+  HttpCacheZstdCompression<HttpCacheZstdCompression
+  HttpCacheZstdDecompression<HttpCacheZstdCompression
+  LogicalClearHttpCache<SpeedUpClearSiteDataCacheDeletion
+  OptimizeWebRequestProxyForServiceWorkerAutoPreload<OptimizeWebRequestProxyForServiceWorkerAutoPreload
+  PageActionsPrioritySelector<PageActionsPrioritySelector
+  PervasiveSharedDictionaries<PervasiveSharedDictionaries
+  PrioritizeMainFrameNavigationNetworkResponse<PrioritizeMainFrameNavigationNetworkResponse
+  PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
+  PrivateAi<PrivateAiCloudflareProxy
+  SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  StructuredHeadersInRust<StructuredHeadersInRust
+--disable-features:
+  ContextualTasksCookiePrefetch<ContextualTasksDesktop
+  EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch

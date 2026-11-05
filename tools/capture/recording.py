@@ -54,6 +54,7 @@ class ConnectionRecord:
         frames: Every HTTP/2 frame received, in order.
         requests: Every request received, in order.
         error: Why the server gave up on the connection, if it did.
+        peer: The client's address, without its port, if known.
     """
 
     id: int
@@ -64,6 +65,7 @@ class ConnectionRecord:
     frames: tuple[Frame, ...]
     requests: tuple[Http1Request | Http2Request, ...]
     error: str | None
+    peer: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +83,7 @@ class QuicConnectionRecord:
         frames: Every HTTP/3 frame received on the control and request streams, in the order they arrived.
         requests: Every request received, in order.
         error: Why the connection ended, if it was not for a good reason.
+        peer: The client's address, without its port, if known.
     """
 
     id: int
@@ -93,6 +96,7 @@ class QuicConnectionRecord:
     frames: tuple[Http3Frame, ...]
     requests: tuple[Http3Request, ...]
     error: str | None
+    peer: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +133,7 @@ def _raw_connection(connection: ConnectionRecord | QuicConnectionRecord) -> Json
         return _raw_quic_connection(connection)
     return {
         "id": connection.id,
+        "peer": connection.peer,
         "tls_version": connection.tls_version,
         "cipher": connection.cipher,
         "alpn": connection.alpn,
@@ -142,6 +147,7 @@ def _raw_connection(connection: ConnectionRecord | QuicConnectionRecord) -> Json
 def _raw_quic_connection(connection: QuicConnectionRecord) -> Json:
     return {
         "id": connection.id,
+        "peer": connection.peer,
         "ip_version": connection.ip_version,
         "tls_version": connection.tls_version,
         "cipher": connection.cipher,
