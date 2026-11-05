@@ -100,7 +100,7 @@ A normal form is JSON. Its keys are always in the same order, and a Baseline fil
 | `http2` | Only for `h2`. `preface` holds the frames the client sent before its first request, without acknowledgements of what the server sent. |
 | `requests` | One entry per Request Kind recorded, always in the order navigation, fetch, script, image. If a Request Kind was requested twice, the first request counts. |
 
-An HTTP/1.1 request has `request_line` and `headers`. An HTTP/2 request has the `flags` of its HEADERS frame, the frame's `priority` if it has any, `headers` and, if there were any, `later_frames`: what the client sent on the stream after the headers. Headers are written `name: value`, in the order sent and with the case sent, and repeated headers stay separate.
+An HTTP/1.1 request has `request_line` and `headers`. An HTTP/2 request has the `flags` of its HEADERS frame, the frame's `priority` if it has any, `headers` and, if there were any, `later_frames`: what the client sent on the stream after the headers, without bodies or encoded header blocks. Headers are written `name: value`, in the order sent and with the case sent, and repeated headers stay separate.
 
 ### What stays, and what does not
 
@@ -117,7 +117,7 @@ Whatever a server can observe and a client decides stays as it was sent, in the 
 | `pre_shared_key`, `session_ticket`, `cookie`, `early_data`, `padding` | Presence only | Their content changes between connections, or follows from the rest of the ClientHello |
 | Server name | The placeholder `<host>` | It says where the server is, not who the client is |
 | The server's name and port in header values | The placeholders `<authority>` and, with `https://`, `<origin>` | The same |
-| HTTP/2 stream IDs and stream dependencies | Dropped | They depend on which requests happened to be open |
+| HTTP/2 stream IDs and stream dependencies of requests and `later_frames` | Dropped | They depend on which requests happened to be open. In `preface` they stay, because no request has started yet |
 
 A number with a known name is written as that name, such as `TLS_AES_128_GCM_SHA256`. Any other number stays in hexadecimal, such as `0x1234`, and an extension with no known structure keeps its content in hexadecimal too. If a known extension is malformed, its content shows under `malformed`. Naming another number later changes the normal forms that hold it, so those need recording again.
 

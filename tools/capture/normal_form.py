@@ -12,6 +12,7 @@ from tools.capture.http1 import Http1Request
 from tools.capture.http2 import (
     ACK,
     CONTINUATION,
+    DATA,
     HEADERS,
     PING,
     PRIORITY,
@@ -315,9 +316,20 @@ def _later_frames(frames: Iterable[Frame], stream_id: int) -> list[Json]:
         if frame.stream_id != stream_id:
             continue
         if headers_seen and frame.type != CONTINUATION:
-            later.append(_normal_frame(frame))
+            later.append(_later_frame(frame))
         headers_seen = headers_seen or frame.type == HEADERS
     return later
+
+
+def _later_frame(frame: Frame) -> dict[str, Json]:
+    form = _normal_frame(frame)
+    # Which stream this is, and which it depends on, follows from what happened to be open.
+    form.pop("stream", None)
+    form.pop("dependency", None)
+    # A body is the application's, and how a header block is encoded depends on the requests before it.
+    if frame.type in {DATA, HEADERS}:
+        form.pop("payload", None)
+    return form
 
 
 def _placeholders(value: str, recording: Recording) -> str:

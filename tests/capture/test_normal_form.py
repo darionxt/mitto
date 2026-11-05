@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 from tests.capture import samples
 from tools.capture.client_hello import ClientHelloAssembler
 from tools.capture.http2 import (
+    DATA,
     END_HEADERS,
     END_STREAM,
     HEADERS,
@@ -359,6 +360,31 @@ def test_frames_after_a_request_stay_with_it() -> None:
     assert fetch["later_frames"] == [{"type": "GREASE"}]
 
 
+def test_later_frames_do_not_say_which_stream_or_hold_what_the_application_sent() -> None:
+    def later_frames_on(stream_id: int, dependency: int) -> Json:
+        block = Encoder().encode([(":method", "POST"), (":path", "/fetch")])
+        form = normal_form(
+            _http2_recording(
+                serialize_frame(HEADERS, END_HEADERS, stream_id, block),
+                serialize_frame(PRIORITY, 0, stream_id, dependency.to_bytes(4) + b"\xc8"),
+                serialize_frame(DATA, 0, stream_id, b"body"),
+                serialize_frame(HEADERS, END_HEADERS | END_STREAM, stream_id, Encoder().encode([("name", "value")])),
+            )
+        )
+        requests = form["requests"]
+        assert isinstance(requests, dict)
+        fetch = requests["fetch"]
+        assert isinstance(fetch, dict)
+        return fetch["later_frames"]
+
+    assert later_frames_on(1, 0) == later_frames_on(3, 1)
+    assert later_frames_on(1, 0) == [
+        {"type": "PRIORITY", "exclusive": False, "weight": 201},
+        {"type": "DATA", "flags": []},
+        {"type": "HEADERS", "flags": ["END_STREAM", "END_HEADERS"]},
+    ]
+
+
 @pytest.mark.parametrize(
     ("frame_type", "name"),
     [(WINDOW_UPDATE, "WINDOW_UPDATE"), (PRIORITY, "PRIORITY"), (SETTINGS, "SETTINGS")],
@@ -384,7 +410,7 @@ def test_a_refused_frame_after_a_request_shows_as_malformed(frame_type: int, nam
     assert isinstance(requests, dict)
     fetch = requests["fetch"]
     assert isinstance(fetch, dict)
-    assert fetch["later_frames"] == [{"type": name, "stream": 1, "malformed": "ff"}]
+    assert fetch["later_frames"] == [{"type": name, "malformed": "ff"}]
     assert json.dumps(raw_form(recording))
 
 
