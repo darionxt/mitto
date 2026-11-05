@@ -104,6 +104,8 @@ To see that the flag works, read the field trials in `chrome://version/?show-var
 
 Capture traffic stays out of all this. Chrome resolves `*.localhost` itself and never sends it through a proxy, and the capture server only listens on loopback. The raw recording holds each client's address as `peer`, so that this can be checked.
 
+`chrome.txt` shows what one session drew, and only names that look network-related. The seed holds every study. To read it, take `VariationsSafeSeedV2` from the user data directory: zstd over a protocol buffer whose field 1 is the `VariationsSeed` of `components/variations/proto/variations_seed.proto`, with the serial number that `chrome.txt` names. In the seed of 2026-11-05, no study names a feature that decides the ClientHello over TCP.
+
 ## Record a session
 
 From the repository's root on the Windows machine, with a new directory for both paths. `recordings` is ignored by Git:
