@@ -14,7 +14,7 @@ SAMPLE_RELEASE = "156"
 
 
 def sample_form(stem: str) -> dict[str, Any]:
-    """Return a new copy of a real normal form of Chrome 156 on macOS. The stem is http1 or http2."""
+    """Return a new copy of a real normal form of Chrome 156 on macOS. The stem is http1, http2 or http3."""
     return json.loads((samples.DATA / f"chrome_{stem}.normal.json").read_text())
 
 
