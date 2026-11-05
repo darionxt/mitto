@@ -24,11 +24,20 @@ HEADER = Path(__file__).parents[1] / "native" / "include" / "mitto" / "mitto.h"
 COMPLETE_STUB = """
 #include <stdint.h>
 uint32_t mitto_abi_version(void) {{ return {abi_version}; }}
-int32_t mitto_get(const char* url, void* response) {{ return -2; }}
+int32_t mitto_session_create(const char* settings, unsigned long size, void** session) {{ return -2; }}
+void mitto_session_destroy(void* session) {{}}
+int32_t mitto_session_request(void* session, const char* url, const void* headers, unsigned long header_count,
+                              int32_t priority, void* response) {{ return -2; }}
 void mitto_response_free(void* response) {{}}
 """
 
+ERR_INVALID_ARGUMENT = -4
 ERR_INVALID_URL = -300
+
+NO_SETTINGS = f'{{"version": {_native.SETTINGS_VERSION}}}'.encode()
+
+# The Base64 form of 32 bytes, the size of a SHA-256 hash.
+SPKI_HASH = "A" * 43 + "="
 
 # Parts of glibc, and libgcc. A manylinux wheel may depend on these, and a machine that runs it has them.
 LINUX_SYSTEM_LIBRARIES = {
@@ -95,11 +104,40 @@ def server_url() -> Iterator[str]:
         server.shutdown()
 
 
-def test_abi_version_matches_the_c_header() -> None:
-    match = re.search(r"^#define MITTO_ABI_VERSION (\d+)$", HEADER.read_text(), re.MULTILINE)
+def header_constant(name: str) -> int:
+    """Return the value of a #define in the C header."""
+    match = re.search(rf"^#define {name} (\d+)$", HEADER.read_text(), re.MULTILINE)
+    assert match is not None, name
+    return int(match[1])
 
-    assert match is not None
-    assert int(match[1]) == _native.ABI_VERSION
+
+def create_session(library: ctypes.CDLL, settings: bytes) -> tuple[int, Any]:
+    """Call mitto_session_create and return its result and the handle it stored."""
+    handle = ctypes.POINTER(_native.MittoSession)()
+    error: int = library.mitto_session_create(settings, len(settings), ctypes.byref(handle))
+    return error, handle
+
+
+@pytest.fixture
+def session_handle(native_library: ctypes.CDLL) -> Iterator[Any]:
+    """Create a real Session and return its handle."""
+    error, handle = create_session(native_library, NO_SETTINGS)
+    assert error == 0
+    yield handle
+    native_library.mitto_session_destroy(handle)
+
+
+def test_abi_version_matches_the_c_header() -> None:
+    assert header_constant("MITTO_ABI_VERSION") == _native.ABI_VERSION
+
+
+def test_settings_version_matches_the_c_header() -> None:
+    assert header_constant("MITTO_SETTINGS_VERSION") == _native.SETTINGS_VERSION
+
+
+@pytest.mark.parametrize("priority", _native.Priority)
+def test_priority_matches_the_c_header(priority: _native.Priority) -> None:
+    assert header_constant(f"MITTO_PRIORITY_{priority.name}") == priority
 
 
 def test_find_library_returns_none_without_a_library(package_dir: Path) -> None:
@@ -208,10 +246,71 @@ def test_native_library_needs_only_glibc_and_libgcc_on_linux() -> None:
     assert {Path(line.split()[0]).name for line in ldd.splitlines()} <= LINUX_SYSTEM_LIBRARIES
 
 
-def test_get_fills_the_response_and_free_zeroes_it(native_library: ctypes.CDLL, server_url: str) -> None:
+def test_session_create_accepts_settings_with_only_a_version(native_library: ctypes.CDLL) -> None:
+    error, handle = create_session(native_library, NO_SETTINGS)
+
+    assert error == 0
+    assert handle
+    native_library.mitto_session_destroy(handle)
+
+
+def test_session_create_accepts_an_spki_hash(native_library: ctypes.CDLL) -> None:
+    settings = f'{{"version": 1, "ignore_certificate_errors_spki_list": ["{SPKI_HASH}"]}}'.encode()
+
+    error, handle = create_session(native_library, settings)
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
+def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.CDLL) -> None:
+    handle = ctypes.POINTER(_native.MittoSession)()
+
+    error = native_library.mitto_session_create(NO_SETTINGS + b"not json", len(NO_SETTINGS), ctypes.byref(handle))
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"not json", id="not-json"),
+        pytest.param(b"[]", id="not-an-object"),
+        pytest.param(b"{}", id="no-version"),
+        pytest.param(b'{"version": 0}', id="another-version"),
+        pytest.param(b'{"version": 1.5}', id="version-is-not-an-integer"),
+        pytest.param(b'{"version": "1"}', id="version-is-a-string"),
+        pytest.param(b'{"version": 1, "unknown": true}', id="unknown-key"),
+        pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": "x"}', id="list-is-a-string"),
+        pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": [1]}', id="entry-is-a-number"),
+        pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": ["!"]}', id="entry-is-not-base64"),
+        pytest.param(b'{"version": 1, "ignore_certificate_errors_spki_list": ["AAAA"]}', id="entry-is-too-short"),
+    ],
+)
+def test_session_create_refuses_invalid_settings(native_library: ctypes.CDLL, settings: bytes) -> None:
+    # The handle starts out as something other than null, to show that the call stores null.
+    handle = ctypes.pointer(_native.MittoSession())
+
+    error = native_library.mitto_session_create(settings, len(settings), ctypes.byref(handle))
+
+    assert error == ERR_INVALID_ARGUMENT
+    assert not handle
+
+
+def test_session_destroy_accepts_null(native_library: ctypes.CDLL) -> None:
+    native_library.mitto_session_destroy(None)
+
+
+def test_request_fills_the_response_and_free_zeroes_it(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str
+) -> None:
     response = _native.MittoResponse()
 
-    error = native_library.mitto_get(server_url.encode(), ctypes.byref(response))
+    error = native_library.mitto_session_request(
+        session_handle, server_url.encode(), None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+    )
 
     assert error == 0
     try:
@@ -229,10 +328,14 @@ def test_get_fills_the_response_and_free_zeroes_it(native_library: ctypes.CDLL, 
     assert response.body_size == 0
 
 
-def test_get_failure_returns_the_net_error_and_leaves_the_response_zeroed(native_library: ctypes.CDLL) -> None:
+def test_request_failure_returns_the_net_error_and_leaves_the_response_zeroed(
+    native_library: ctypes.CDLL, session_handle: Any
+) -> None:
     response = _native.MittoResponse()
 
-    error = native_library.mitto_get(b"not a url", ctypes.byref(response))
+    error = native_library.mitto_session_request(
+        session_handle, b"not a url", None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+    )
 
     assert error == ERR_INVALID_URL
     assert response.status == 0
@@ -241,11 +344,100 @@ def test_get_failure_returns_the_net_error_and_leaves_the_response_zeroed(native
     assert not response.body
 
 
-def test_get_takes_the_url_as_bytes(native_library: ctypes.CDLL) -> None:
+def test_request_takes_the_url_as_bytes(native_library: ctypes.CDLL, session_handle: Any) -> None:
     response = _native.MittoResponse()
 
     with pytest.raises(ctypes.ArgumentError):
-        native_library.mitto_get("http://127.0.0.1/", ctypes.byref(response))
+        native_library.mitto_session_request(
+            session_handle, "http://127.0.0.1/", None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+        )
+
+
+def test_request_refuses_a_null_session(native_library: ctypes.CDLL, server_url: str) -> None:
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        None, server_url.encode(), None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
+
+
+def test_request_refuses_a_null_url(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        session_handle, None, None, 0, _native.Priority.LOWEST, ctypes.byref(response)
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
+
+
+def test_request_refuses_null_headers_with_a_count(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str
+) -> None:
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        session_handle, server_url.encode(), None, 1, _native.Priority.LOWEST, ctypes.byref(response)
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
+
+
+@pytest.mark.parametrize("priority", [-1, 6])
+def test_request_refuses_an_unknown_priority(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str, priority: int
+) -> None:
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        session_handle, server_url.encode(), None, 0, priority, ctypes.byref(response)
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        pytest.param([(b"", b"value")], id="empty-name"),
+        pytest.param([(b"Bad Name", b"value")], id="space-in-name"),
+        pytest.param([(b"X-Name\0", b"value")], id="nul-in-name"),
+        pytest.param([(b"X-Name", b"a\0b")], id="nul-in-value"),
+        pytest.param([(b"X-Name", b"a\r\nX-Injected: b")], id="crlf-in-value"),
+        pytest.param([(b"X-Name", b"1"), (b"x-name", b"2")], id="repeated-name"),
+    ],
+)
+def test_request_refuses_invalid_headers(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str, headers: list[tuple[bytes, bytes]]
+) -> None:
+    native_headers = (_native.MittoHeader * len(headers))(
+        *(_native.MittoHeader(name, len(name), value, len(value)) for name, value in headers)
+    )
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        session_handle,
+        server_url.encode(),
+        native_headers,
+        len(native_headers),
+        _native.Priority.LOWEST,
+        ctypes.byref(response),
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
+
+
+def test_request_refuses_a_null_header_name(native_library: ctypes.CDLL, session_handle: Any, server_url: str) -> None:
+    native_headers = (_native.MittoHeader * 1)(_native.MittoHeader(None, 0, b"value", 5))
+    response = _native.MittoResponse()
+
+    error = native_library.mitto_session_request(
+        session_handle, server_url.encode(), native_headers, 1, _native.Priority.LOWEST, ctypes.byref(response)
+    )
+
+    assert error == ERR_INVALID_ARGUMENT
 
 
 def test_free_accepts_null_and_a_zeroed_response(native_library: ctypes.CDLL) -> None:

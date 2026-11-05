@@ -1,8 +1,10 @@
 #include <stdlib.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "base/at_exit.h"
 #include "base/check.h"
@@ -11,8 +13,10 @@
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
@@ -22,14 +26,19 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
+#include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
+#include "mitto/session_settings.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
+#include "net/cert/cert_verifier.h"
 #include "net/http/http_connection_info.h"
+#include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/http/http_util.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/ssl/ssl_info.h"
@@ -39,6 +48,25 @@
 #include "net/url_request/url_request_context_builder.h"
 #include "url/gurl.h"
 
+static_assert(MITTO_PRIORITY_THROTTLED == net::THROTTLED);
+static_assert(MITTO_PRIORITY_IDLE == net::IDLE);
+static_assert(MITTO_PRIORITY_LOWEST == net::LOWEST);
+static_assert(MITTO_PRIORITY_LOW == net::LOW);
+static_assert(MITTO_PRIORITY_MEDIUM == net::MEDIUM);
+static_assert(MITTO_PRIORITY_HIGHEST == net::HIGHEST);
+
+// The handle the C API hands out. It is created, used and destroyed only on the
+// network thread. Other threads just hold the pointer.
+struct MittoSession {
+  MittoSession();
+  ~MittoSession();
+
+  std::unique_ptr<net::URLRequestContext> context;
+};
+
+MittoSession::MittoSession() = default;
+MittoSession::~MittoSession() = default;
+
 namespace mitto {
 namespace {
 
@@ -46,31 +74,35 @@ constexpr int kReadBufferSize = 64 * 1024;
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation(
-        "mitto_get",
+        "mitto_session_request",
         "A GET requested by the application that loaded the library.");
 
 // One GET. The calling thread owns the job and blocks in Wait() while the
 // network thread runs the request. The results may be read once Wait() returns.
-class GetJob final : public net::URLRequest::Delegate {
+class RequestJob final : public net::URLRequest::Delegate {
  public:
-  explicit GetJob(const char* url)
+  RequestJob(const char* url,
+             net::HttpRequestHeaders headers,
+             net::RequestPriority priority)
       : url_(url),
+        request_headers_(std::move(headers)),
+        priority_(priority),
         read_buffer_(
             base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize)) {}
 
-  GetJob(const GetJob&) = delete;
-  GetJob& operator=(const GetJob&) = delete;
+  RequestJob(const RequestJob&) = delete;
+  RequestJob& operator=(const RequestJob&) = delete;
 
-  ~GetJob() override = default;
+  ~RequestJob() override = default;
 
   // Called on the network thread.
   void Start(const net::URLRequestContext& context) {
-    request_ = context.CreateRequest(url_, net::DEFAULT_PRIORITY, this,
-                                     kTrafficAnnotation,
+    request_ = context.CreateRequest(url_, priority_, this, kTrafficAnnotation,
                                      net::handles::kInvalidNetworkHandle);
-    // Cookies and credentials belong to a Session, which does not exist yet.
-    // Without this, cookies from one call would be sent on later ones.
+    // A Session does not hold cookies or credentials yet. Without this, cookies
+    // from one request would be sent on later ones.
     request_->set_disallow_credentials();
+    request_->SetExtraRequestHeaders(request_headers_);
     request_->Start();
   }
 
@@ -153,6 +185,8 @@ class GetJob final : public net::URLRequest::Delegate {
   }
 
   const GURL url_;
+  const net::HttpRequestHeaders request_headers_;
+  const net::RequestPriority priority_;
   const scoped_refptr<net::IOBufferWithSize> read_buffer_;
   std::unique_ptr<net::URLRequest> request_;
   base::WaitableEvent done_;
@@ -164,10 +198,30 @@ class GetJob final : public net::URLRequest::Delegate {
   std::string body_;
 };
 
-// Process-wide state: what //base needs before //net can run, the network
-// thread, and the request context that lives on it. It is never destroyed,
-// because the library cannot know when the process that loaded it stops using
-// it. That is why the library is built to stay loaded until the process exits.
+// Called on the network thread.
+std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
+    SessionSettings settings) {
+  net::URLRequestContextBuilder builder;
+  builder.DisableHttpCache();
+  // Proxies are not supported yet, so ignore the system's settings.
+  builder.set_proxy_config_service(
+      std::make_unique<net::ProxyConfigServiceFixed>(
+          net::ProxyConfigWithAnnotation::CreateDirect()));
+  if (!settings.ignore_certificate_errors_spki_list.empty()) {
+    builder.SetCertVerifier(std::make_unique<IgnoreErrorsCertVerifier>(
+        net::CertVerifier::CreateDefault(/*cert_net_fetcher=*/nullptr),
+        std::move(settings.ignore_certificate_errors_spki_list)));
+  }
+
+  auto session = std::make_unique<MittoSession>();
+  session->context = builder.Build();
+  return session;
+}
+
+// Process-wide state: what //base needs before //net can run, and the network
+// thread that all Sessions live on. It is never destroyed, because the library
+// cannot know when the process that loaded it stops using it. That is why the
+// library is built to stay loaded until the process exits.
 class NetworkCore {
  public:
   static NetworkCore& Get() {
@@ -186,38 +240,71 @@ class NetworkCore {
     base::ThreadPoolInstance::CreateAndStartWithDefaultParams("mitto");
     CHECK(network_thread_.StartWithOptions(
         base::Thread::Options(base::MessagePumpType::IO, 0)));
-    network_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&NetworkCore::CreateContext, base::Unretained(this)));
+  }
+
+  std::unique_ptr<MittoSession> CreateSession(SessionSettings settings) {
+    std::unique_ptr<MittoSession> session;
+    RunAndWait(base::BindOnce(
+        [](SessionSettings settings, std::unique_ptr<MittoSession>* session) {
+          *session = CreateSessionOnNetworkThread(std::move(settings));
+        },
+        std::move(settings), base::Unretained(&session)));
+    return session;
+  }
+
+  void DestroySession(std::unique_ptr<MittoSession> session) {
+    RunAndWait(base::BindOnce([](std::unique_ptr<MittoSession> session) {},
+                              std::move(session)));
   }
 
   // Runs `job` on the network thread and blocks until it finishes.
-  void Run(GetJob& job) {
+  void RunRequest(MittoSession& session, RequestJob& job) {
     network_thread_.task_runner()->PostTask(
         FROM_HERE,
-        base::BindOnce(&NetworkCore::StartJob, base::Unretained(this),
-                       base::Unretained(&job)));
+        base::BindOnce([](MittoSession* session,
+                          RequestJob* job) { job->Start(*session->context); },
+                       base::Unretained(&session), base::Unretained(&job)));
     job.Wait();
   }
 
  private:
-  void CreateContext() {
-    net::URLRequestContextBuilder builder;
-    builder.DisableHttpCache();
-    // Proxies are not supported yet, so ignore the system's settings.
-    builder.set_proxy_config_service(
-        std::make_unique<net::ProxyConfigServiceFixed>(
-            net::ProxyConfigWithAnnotation::CreateDirect()));
-    context_ = builder.Build();
+  void RunAndWait(base::OnceClosure task) {
+    base::WaitableEvent done;
+    network_thread_.task_runner()->PostTask(
+        FROM_HERE, std::move(task).Then(base::BindOnce(
+                       &base::WaitableEvent::Signal, base::Unretained(&done))));
+    done.Wait();
   }
-
-  void StartJob(GetJob* job) { job->Start(*context_); }
 
   base::AtExitManager at_exit_manager_;
   base::Thread network_thread_;
-  // Used only on the network thread.
-  std::unique_ptr<net::URLRequestContext> context_;
 };
+
+// Returns `headers` in the same order, or nullopt if they cannot be sent as
+// given.
+std::optional<net::HttpRequestHeaders> ToRequestHeaders(
+    base::span<const MittoHeader> headers) {
+  net::HttpRequestHeaders request_headers;
+  for (const MittoHeader& header : headers) {
+    if (!header.name || !header.value) {
+      return std::nullopt;
+    }
+    // SAFETY: The C API says each string holds the size that goes with it.
+    const std::string_view name =
+        UNSAFE_BUFFERS(std::string_view(header.name, header.name_size));
+    const std::string_view value =
+        UNSAFE_BUFFERS(std::string_view(header.value, header.value_size));
+    // SetHeader() CHECKs that both are valid, and a name it already holds would
+    // silently take the new value at the old position.
+    if (!net::HttpUtil::IsValidHeaderName(name) ||
+        !net::HttpUtil::IsValidHeaderValue(value) ||
+        request_headers.HasHeader(name)) {
+      return std::nullopt;
+    }
+    request_headers.SetHeader(name, value);
+  }
+  return request_headers;
+}
 
 // Copies `data` into a malloc'd buffer with a trailing NUL byte.
 char* CopyToNewBuffer(std::string_view data) {
@@ -240,17 +327,60 @@ uint32_t mitto_abi_version(void) {
   return MITTO_ABI_VERSION;
 }
 
-int32_t mitto_get(const char* url, MittoResponse* response) {
+int32_t mitto_session_create(const char* settings,
+                             size_t settings_size,
+                             MittoSession** session) {
+  if (!session) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *session = nullptr;
+  if (!settings) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+
+  mitto::NetworkCore& core = mitto::NetworkCore::Get();
+  // SAFETY: The C API says `settings` holds `settings_size` bytes.
+  std::optional<mitto::SessionSettings> parsed = mitto::ParseSessionSettings(
+      UNSAFE_BUFFERS(std::string_view(settings, settings_size)));
+  if (!parsed) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *session = core.CreateSession(std::move(*parsed)).release();
+  return net::OK;
+}
+
+void mitto_session_destroy(MittoSession* session) {
+  if (session) {
+    mitto::NetworkCore::Get().DestroySession(base::WrapUnique(session));
+  }
+}
+
+int32_t mitto_session_request(MittoSession* session,
+                              const char* url,
+                              const MittoHeader* headers,
+                              size_t header_count,
+                              int32_t priority,
+                              MittoResponse* response) {
   if (!response) {
     return net::ERR_INVALID_ARGUMENT;
   }
   *response = {};
-  if (!url) {
+  if (!session || !url || (!headers && header_count != 0) ||
+      priority < net::MINIMUM_PRIORITY || priority > net::MAXIMUM_PRIORITY) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  // SAFETY: The C API says `headers` holds `header_count` elements. A span can
+  // be null only if it is empty, which the check above makes sure of.
+  std::optional<net::HttpRequestHeaders> request_headers =
+      mitto::ToRequestHeaders(
+          UNSAFE_BUFFERS(base::span(headers, header_count)));
+  if (!request_headers) {
     return net::ERR_INVALID_ARGUMENT;
   }
 
-  mitto::GetJob job(url);
-  mitto::NetworkCore::Get().Run(job);
+  mitto::RequestJob job(url, std::move(*request_headers),
+                        static_cast<net::RequestPriority>(priority));
+  mitto::NetworkCore::Get().RunRequest(*session, job);
   if (job.net_error() != net::OK) {
     return job.net_error();
   }

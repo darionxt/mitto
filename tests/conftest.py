@@ -5,15 +5,17 @@ from collections.abc import Iterator
 
 import pytest
 
-from mitto import _native
+from mitto import _api, _native
 
 
 @pytest.fixture(autouse=True)
 def fresh_load_library() -> Iterator[None]:
-    """Make each test load the library for itself."""
+    """Make each test load the library and create the default Session for itself."""
     _native.load_library.cache_clear()
+    _api.default_session.cache_clear()
     yield
     _native.load_library.cache_clear()
+    _api.default_session.cache_clear()
 
 
 @pytest.fixture

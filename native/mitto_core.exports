@@ -1,3 +1,5 @@
 _mitto_abi_version
-_mitto_get
 _mitto_response_free
+_mitto_session_create
+_mitto_session_destroy
+_mitto_session_request
