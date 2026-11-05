@@ -23,12 +23,15 @@ The script:
 
 1. clones depot_tools into the workspace;
 2. writes a `.gclient` file pinned to the tag in [`tools/workspace/chromium_tag`](../tools/workspace/chromium_tag) and runs `gclient sync --no-history`, which fetches `src` and its dependencies at that tag without history, skips those that only Chromium's own bots need and runs Chromium's hooks;
-3. links the repository's `native/` directory into the checkout as `//mitto`;
-4. copies [`tools/workspace/args.gn`](../tools/workspace/args.gn) into the `out/mitto` build directory and runs `gn gen`, with `//mitto` as the root of the build graph.
+3. applies the patches in [`tools/workspace/patches`](../tools/workspace/patches) to `src`, the only changes to Chromium's source ([ADR-0006](adr/0006-linux-library-without-system-libraries.md));
+4. links the repository's `native/` directory into the checkout as `//mitto`;
+5. copies [`tools/workspace/args.gn`](../tools/workspace/args.gn) into the `out/mitto` build directory and runs `gn gen`, with `//mitto` as the root of the build graph.
 
 The first run downloads about 10 GB and can take hours on a slow connection. The server spends several minutes, sometimes more than ten, preparing `src` before any data arrives, and gclient shows no progress during that time. Arguments to the script, such as `--verbose`, are passed to `gclient sync`.
 
 Running the script again is safe and quick when nothing has changed. After an interrupted run it continues the sync, but a fetch of `src` that did not finish starts over. The script keeps depot_tools' Python environments and gsutil's state in `$MITTO_WORKSPACE/.cache` and turns off depot_tools metrics collection with `DEPOT_TOOLS_METRICS=0`.
+
+gclient refuses to sync a checkout with local changes, so each run takes the patches out before it syncs and applies them again afterwards. The next build therefore recompiles the patched files. If you have also changed those files in `src`, the script stops until you undo those changes.
 
 The workspace then looks like this:
 
@@ -38,7 +41,8 @@ $MITTO_WORKSPACE/
   depot_tools/
   chromium-<tag>/      Chromium checkout of one release
     .gclient           written by the script
-    src/               Chromium at the pinned tag
+    applied-patches/   copies of the patches applied to src
+    src/               Chromium at the pinned tag, with the patches applied
       mitto/           link to the repository's native/
       out/mitto/       build directory for the native core
   compare/             shallow repositories for tools/workspace/compare, if used
@@ -83,11 +87,9 @@ It fetches `https://example.com/` unless given another URL. The first line of it
 status 200 over h2
 ```
 
-A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machine, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. On Linux x86_64 it is 121 MB, 27 MB once stripped and 12 MB compressed. Size has not been worked on yet.
+A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machine, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 31 MB, 24 MB once stripped with `strip -x` and 11 MB compressed with gzip. On Linux x86_64 it is 120 MB, 27 MB once stripped and 12 MB compressed. Size has not been worked on yet.
 
-On Linux the library loads NSS and NSPR from the system at run time, as `ldd` shows. A new Ubuntu 26.04 desktop install already has them, in the packages `libnss3` and `libnspr4`. `//net` uses them to trust certificates the user has added to an NSS database. The first HTTPS request creates that database in `~/.local/share/pki/nssdb`, or uses `~/.pki/nssdb` if that exists. GN arguments alone cannot turn them off: with `use_nss_server_certs = false`, `net/cert/cert_verify_proc.cc` does not compile. auditwheel's manylinux policy does not allow them, so the wheels planned in the [roadmap](roadmap.md) still have to solve this.
-
-The library does not load GLib, GIO or D-Bus, which [`tools/workspace/args.gn`](../tools/workspace/args.gn) turns off. `//net` needs them only for GNOME's proxy settings and the desktop portal's metered-network state, and mitto uses neither.
+On Linux the library needs only glibc and libgcc from the system at run time, as `ldd` shows, and a test checks this. [`tools/workspace/args.gn`](../tools/workspace/args.gn) turns off GLib, GIO, D-Bus, NSS and NSPR, and a patch to `//net` makes that possible for NSS and NSPR. So on Linux the Chrome Root Store is the only source of trust: certificates added to an NSS database are ignored ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
 
 ## Work on the Python package
 
@@ -184,7 +186,7 @@ Chrome ships a new stable milestone every two weeks, and the Engine Release foll
 
 1. On [Chromium Dash](https://chromiumdash.appspot.com/releases?platform=Windows), find the newest Windows stable build of the new milestone. Windows is used because the Persona is Windows Chrome.
 2. Write that version into `tools/workspace/chromium_tag`.
-3. Rerun `tools/workspace/bootstrap`. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`.
+3. Rerun `tools/workspace/bootstrap`. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`. If a patch no longer applies, the script stops after the sync. Update the patch against the new checkout and rerun the script. Delete a patch the new release no longer needs.
 4. [Build the native core](#build-the-native-core) in the new checkout.
 5. Once the new release works, delete the old release's `chromium-<tag>` directory.
 

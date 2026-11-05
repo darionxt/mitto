@@ -1,0 +1,21 @@
+Let //net build on Linux without NSS.
+
+With use_nss_server_certs = false, Linux has no platform trust store and
+CreateSslSystemTrustStoreChromeRoot() does not exist, so this file does not
+compile. Take the path ChromeOS takes, which trusts the Chrome Root Store alone.
+On a build with NSS, and on every other platform, this changes nothing.
+
+diff --git a/net/cert/cert_verify_proc.cc b/net/cert/cert_verify_proc.cc
+index 042b35bec9..8db837d669 100644
+--- a/net/cert/cert_verify_proc.cc
++++ b/net/cert/cert_verify_proc.cc
+@@ -419,7 +419,8 @@ scoped_refptr<CertVerifyProc> CertVerifyProc::CreateBuiltinWithChromeRootStore(
+   return CreateCertVerifyProcBuiltin(
+       std::move(cert_net_fetcher), std::move(crl_set), std::move(ct_verifier),
+       std::move(ct_policy_enforcer),
+-#if BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_CHROMEOS) || \
++    (BUILDFLAG(IS_LINUX) && !BUILDFLAG(USE_NSS_SERVER_CERTS))
+       CreateChromeOnlySystemTrustStore(std::move(chrome_root)),
+ #else
+       CreateSslSystemTrustStoreChromeRoot(std::move(chrome_root)),

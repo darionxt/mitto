@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Sets up the mitto build workspace: depot_tools, a shallow Chromium checkout
-# pinned to the tag in tools/workspace/chromium_tag, and the out/mitto build
-# directory for the native core.
+# pinned to the tag in tools/workspace/chromium_tag with the patches in
+# tools/workspace/patches applied, and the out/mitto build directory for the
+# native core.
 #
 # Usage: MITTO_WORKSPACE=/absolute/path tools/workspace/bootstrap [gclient args]
 #
@@ -10,6 +11,8 @@
 # rerun. Each release in chromium_tag gets its own checkout directory.
 
 set -euo pipefail
+# A glob that matches nothing expands to nothing, not to itself.
+shopt -s nullglob
 
 die() {
   echo "bootstrap: error: $*" >&2
@@ -84,6 +87,7 @@ printf '[GSUtil]\nstate_dir = %s\n' "${workspace}/.cache/gsutil" > "${BOTO_PATH}
 
 chromium="${workspace}/chromium-${tag}"
 src="${chromium}/src"
+applied_patches="${chromium}/applied-patches"
 mkdir -p "${chromium}"
 
 # A first clone that was interrupted leaves a repository without a commit,
@@ -126,10 +130,33 @@ EOF
 # it first so that a slow connection does not fail the sync.
 "${depot_tools}/gsutil.py" version > /dev/null
 
+# gclient refuses to sync a checkout with local changes, so take out what the
+# last run applied. It left copies because the patches in the repository may
+# have changed since.
+if [[ -d "${src}/.git" ]]; then
+  previous_patches=("${applied_patches}"/*.patch)
+  for ((i = ${#previous_patches[@]} - 1; i >= 0; i--)); do
+    patch="${previous_patches[i]}"
+    git -C "${src}" apply --reverse "${patch}" ||
+      die "cannot take ${patch##*/} out of ${src}; undo other changes to the files it touches"
+    rm "${patch}"
+  done
+fi
+
 note "syncing Chromium ${tag}; the first run downloads about 10 GB"
 note "on that run, the server prepares src for several minutes before any data arrives"
 (cd "${chromium}" &&
   run_awake gclient sync --no-history --delete_unversioned_trees "$@")
+
+# These are the only changes to Chromium's source. Each file starts with its
+# reason.
+mkdir -p "${applied_patches}"
+for patch in "${repo_root}"/tools/workspace/patches/*.patch; do
+  note "applying ${patch##*/}"
+  git -C "${src}" apply "${patch}" ||
+    die "${patch##*/} does not apply to Chromium ${tag}; see docs/building.md"
+  cp "${patch}" "${applied_patches}/"
+done
 
 # Expose the repository's native sources to GN as //mitto. The link stays out
 # of the Chromium checkout's git status.

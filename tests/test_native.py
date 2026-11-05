@@ -9,6 +9,7 @@ import http.server
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -28,6 +29,19 @@ void mitto_response_free(void* response) {{}}
 """
 
 ERR_INVALID_URL = -300
+
+# Parts of glibc, and libgcc. A manylinux wheel may depend on these, and a machine that runs it has them.
+LINUX_SYSTEM_LIBRARIES = {
+    "ld-linux-x86-64.so.2",
+    "libc.so.6",
+    "libdl.so.2",
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libpthread.so.0",
+    "libresolv.so.2",
+    "librt.so.1",
+    "linux-vdso.so.1",
+}
 
 # The NUL shows that the body is read by its size, not as a C string.
 BODY = b"a body with a \x00 inside"
@@ -183,6 +197,15 @@ def test_load_library_loads_the_library_once(
 
 def test_native_library_has_the_expected_abi_version(native_library: ctypes.CDLL) -> None:
     assert native_library.mitto_abi_version() == _native.ABI_VERSION
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="only Linux wheels have to avoid other system libraries")
+@pytest.mark.usefixtures("native_library")
+def test_native_library_needs_only_glibc_and_libgcc_on_linux() -> None:
+    library = _native.find_library()
+    assert library is not None
+    ldd = subprocess.run(["ldd", library], check=True, capture_output=True, text=True).stdout
+    assert {Path(line.split()[0]).name for line in ldd.splitlines()} <= LINUX_SYSTEM_LIBRARIES
 
 
 def test_get_fills_the_response_and_free_zeroes_it(native_library: ctypes.CDLL, server_url: str) -> None:
