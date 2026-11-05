@@ -166,13 +166,15 @@ def test_a_listed_gap_that_no_longer_exists_fails_the_run(
 
 
 @pytest.mark.usefixtures("native_library")
-@pytest.mark.parametrize(("protocol", "stem"), [(HTTP1, "http1"), (HTTP2, "http2")])
+@pytest.mark.parametrize(("protocol", "stem"), [(HTTP1, "http1"), (HTTP2, "http2"), (HTTP3, "http3")])
 def test_a_baseline_recorded_from_the_native_core_has_no_gaps(tmp_path: Path, protocol: str, stem: str) -> None:
     persona = load_persona(CHROME_157_WINDOWS)
     with (
         CaptureServer() as server,
         Session(
-            ignore_certificate_errors_spki_list=[server.spki_hash], accept_language=persona.accept_language
+            ignore_certificate_errors_spki_list=[server.spki_hash],
+            accept_language=persona.accept_language,
+            origins_to_force_quic_on=[server.authority(HTTP3)],
         ) as session,
     ):
         for kind in RequestKind:

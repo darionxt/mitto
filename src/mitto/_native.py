@@ -216,7 +216,13 @@ class Session:
     One Session may run requests from several threads at once, but must not be closed while one is running.
     """
 
-    def __init__(self, *, ignore_certificate_errors_spki_list: Sequence[str] = (), accept_language: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        ignore_certificate_errors_spki_list: Sequence[str] = (),
+        accept_language: str = "",
+        origins_to_force_quic_on: Sequence[str] = (),
+    ) -> None:
         """Create the Session.
 
         Args:
@@ -225,6 +231,10 @@ class Session:
                 hash of a DER-encoded SubjectPublicKeyInfo.
             accept_language: The value of the Accept-Language header that //net adds to each request whose headers do not
                 hold one. An empty string adds no header.
+            origins_to_force_quic_on: Reach these HTTPS origins, each written "host:port", over QUIC and nothing else,
+                with the meaning of Chrome's --origin-to-force-quic-on. It also lifts //net's refusal of QUIC to a
+                certificate from an unknown root, for each of their hosts. The certificate still has to verify. "*"
+                stands for every origin. Without any, a request learns of QUIC from Alt-Svc.
 
         Raises:
             ValueError: If the native core refuses the settings.
@@ -236,6 +246,7 @@ class Session:
                 "version": SETTINGS_VERSION,
                 "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
                 "accept_language": accept_language,
+                "origins_to_force_quic_on": list(origins_to_force_quic_on),
             }
         ).encode()
         self._handle = ctypes.POINTER(MittoSession)()

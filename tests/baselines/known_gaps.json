@@ -1,6 +1,1 @@
-[
-{"release": "157", "kind": "navigation", "protocol": "h3", "field": "response", "baseline": "a response", "mitto": "net error -102"},
-{"release": "157", "kind": "fetch", "protocol": "h3", "field": "response", "baseline": "a response", "mitto": "net error -102"},
-{"release": "157", "kind": "script", "protocol": "h3", "field": "response", "baseline": "a response", "mitto": "net error -102"},
-{"release": "157", "kind": "image", "protocol": "h3", "field": "response", "baseline": "a response", "mitto": "net error -102"}
-]
+[]

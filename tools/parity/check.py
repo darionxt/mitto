@@ -9,7 +9,7 @@ from typing import cast
 from mitto._native import RequestError, Session
 from mitto._persona import CHROME_157_WINDOWS, load_persona
 from mitto._persona import RequestKind as PersonaRequestKind
-from tools.capture import KIND_PATHS, CaptureServer, RequestKind, normal_form
+from tools.capture import HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
 
@@ -102,6 +102,8 @@ def record(protocol: str, kind: RequestKind) -> dict[str, Json]:
     """Make one request of a Request Kind through a new native Session to a new capture server.
 
     The request presents the Chrome 157 Persona, the only one so far, whichever Chrome Release the Baseline is from.
+    Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, like the Chrome that recorded the Baselines, because
+    //net refuses QUIC to the server's private certificate otherwise.
 
     Returns:
         The fingerprint of what the capture server received.
@@ -114,7 +116,9 @@ def record(protocol: str, kind: RequestKind) -> dict[str, Json]:
     with (
         CaptureServer() as server,
         Session(
-            ignore_certificate_errors_spki_list=[server.spki_hash], accept_language=persona.accept_language
+            ignore_certificate_errors_spki_list=[server.spki_hash],
+            accept_language=persona.accept_language,
+            origins_to_force_quic_on=[server.authority(HTTP3)] if protocol == HTTP3 else [],
         ) as session,
     ):
         url = f"https://{server.authority(protocol)}{KIND_PATHS[kind]}"

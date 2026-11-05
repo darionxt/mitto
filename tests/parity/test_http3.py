@@ -1,7 +1,7 @@
-"""Parity Checks over HTTP/3, as far as they go before the native core can reach HTTP/3.
+"""Parity Checks over HTTP/3.
 
 The comparison and the capture server's HTTP/3 meet here with aioquic standing in for the native core, so this runs on
-every machine. The tests that take the native_library fixture say what the native core itself does today.
+every machine. The tests that take the native_library fixture go through the native core itself.
 """
 
 import shutil
@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from mitto._native import RequestError
+from mitto._native import RequestError, Session
 from tests.capture import samples
 from tests.capture.http3_client import Http3Client
 from tests.parity.conftest import SAMPLE_RELEASE, sample_form
@@ -27,11 +27,11 @@ from tools.parity import (
     load_baselines,
     loads_known_gaps,
 )
-from tools.parity.check import record
 
 _REPOSITORY = Path(__file__).parents[2]
 _ALL_KINDS = ["navigation", "fetch", "script", "image"]
 _CONNECTION_REFUSED = -102
+_QUIC_PROTOCOL_ERROR = -356
 
 
 @pytest.fixture
@@ -151,25 +151,68 @@ def test_what_the_capture_server_records_over_http3_goes_through_the_comparison(
 
 
 @pytest.mark.usefixtures("native_library")
-def test_the_native_core_gets_no_response_over_http3_yet() -> None:
-    """The native core asks for TCP on the UDP port. Forcing QUIC on the origin comes with QUIC parity."""
-    with pytest.raises(RequestError) as caught:
-        record(HTTP3, RequestKind.FETCH)
+def test_a_session_learns_of_quic_from_alt_svc_unless_it_is_told_to_force_it() -> None:
+    """Without the setting, the native core asks for TCP on the UDP port, as Chrome does without the flag."""
+    with CaptureServer() as server, Session(ignore_certificate_errors_spki_list=[server.spki_hash]) as session:
+        url = f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}"
+        with pytest.raises(RequestError) as caught:
+            session.request(url)
 
     assert caught.value.net_error == _CONNECTION_REFUSED
 
 
 @pytest.mark.usefixtures("native_library")
-def test_an_http3_baseline_is_one_gap_per_request_kind_for_now(http3_baselines: Path) -> None:
-    gaps = find_gaps(load_baselines(http3_baselines))
+def test_a_session_reaches_a_forced_origin_over_http3() -> None:
+    with (
+        CaptureServer() as server,
+        Session(
+            ignore_certificate_errors_spki_list=[server.spki_hash], origins_to_force_quic_on=[server.authority(HTTP3)]
+        ) as session,
+    ):
+        response = session.request(f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}")
 
-    assert [(gap.kind, gap.protocol, gap.field, gap.mitto) for gap in gaps] == [
-        (kind, "h3", "response", f"net error {_CONNECTION_REFUSED}") for kind in _ALL_KINDS
-    ]
+    assert (response.status, response.protocol) == (200, "h3")
 
 
 @pytest.mark.usefixtures("native_library")
-def test_a_regenerated_list_holds_those_gaps_and_stays_the_same(http3_baselines: Path) -> None:
+def test_a_session_that_forces_every_origin_reaches_the_server_over_http3() -> None:
+    with (
+        CaptureServer() as server,
+        Session(ignore_certificate_errors_spki_list=[server.spki_hash], origins_to_force_quic_on=["*"]) as session,
+    ):
+        response = session.request(f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}")
+
+    assert (response.status, response.protocol) == (200, "h3")
+
+
+@pytest.mark.usefixtures("native_library")
+def test_forcing_quic_does_not_skip_the_check_of_the_certificate() -> None:
+    with (
+        CaptureServer() as server,
+        Session(origins_to_force_quic_on=[server.authority(HTTP3)]) as session,
+        pytest.raises(RequestError) as caught,
+    ):
+        session.request(f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}")
+
+    # QUIC reports a certificate it does not accept as this one error.
+    assert caught.value.net_error == _QUIC_PROTOCOL_ERROR
+
+
+@pytest.mark.usefixtures("native_library")
+def test_the_native_core_differs_from_chrome_in_no_quic_or_http3_field(http3_baselines: Path) -> None:
+    """The sample is Chrome on macOS, so the Persona's headers and the trust anchors can differ, and nothing below them."""
+    fields = {gap.field for gap in find_gaps(load_baselines(http3_baselines))}
+
+    assert not {
+        field
+        for field in fields
+        if field in ("protocol", "response")
+        or field.startswith(("quic.", "http3.", "tls.extensions.quic_transport_parameters"))
+    }
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_regenerated_list_stays_the_same_over_http3(http3_baselines: Path) -> None:
     command = [sys.executable, "-m", "tools.parity", "--baselines", str(http3_baselines)]
 
     first = subprocess.run(command, cwd=_REPOSITORY, capture_output=True, text=True, check=False)
@@ -178,7 +221,5 @@ def test_a_regenerated_list_holds_those_gaps_and_stays_the_same(http3_baselines:
     second = subprocess.run(command, cwd=_REPOSITORY, capture_output=True, text=True, check=False)
     assert second.returncode == 0, second.stderr
 
-    assert "Wrote 4 gaps" in first.stdout
-    assert len(loads_known_gaps(text)) == 4
     assert ": 0 new, 0 gone." in second.stdout
     assert (http3_baselines / KNOWN_GAPS_FILE_NAME).read_text() == text
