@@ -7,6 +7,7 @@
 #include "base/values.h"
 #include "mitto/mitto.h"
 #include "net/base/hash_value.h"
+#include "net/base/host_port_pair.h"
 #include "net/http/http_util.h"
 
 namespace mitto {
@@ -16,6 +17,9 @@ constexpr std::string_view kVersionKey = "version";
 constexpr std::string_view kIgnoreCertificateErrorsSPKIListKey =
     "ignore_certificate_errors_spki_list";
 constexpr std::string_view kAcceptLanguageKey = "accept_language";
+constexpr std::string_view kOriginsToForceQuicOnKey =
+    "origins_to_force_quic_on";
+constexpr std::string_view kEveryOrigin = "*";
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -34,6 +38,35 @@ std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
     hashes.insert(hash->sha256hashvalue());
   }
   return hashes;
+}
+
+// Reads the origins the way Chrome reads --origin-to-force-quic-on in
+// network_session_configurator::ParseCommandLineAndFieldTrials(), except that
+// an entry that names no valid origin is refused. Chrome would keep it, and
+// //net would then accept unknown roots for every host.
+bool ReadOriginsToForceQuicOn(const base::Value& value,
+                              SessionSettings& settings) {
+  if (!value.is_list()) {
+    return false;
+  }
+  for (const base::Value& entry : value.GetList()) {
+    if (!entry.is_string()) {
+      return false;
+    }
+    if (entry.GetString() == kEveryOrigin) {
+      settings.force_quic_everywhere = true;
+      continue;
+    }
+    const net::HostPortPair host_port =
+        net::HostPortPair::FromString(entry.GetString());
+    url::SchemeHostPort origin(url::kHttpsScheme, host_port.host(),
+                               host_port.port());
+    if (!origin.IsValid()) {
+      return false;
+    }
+    settings.origins_to_force_quic_on.insert(std::move(origin));
+  }
+  return true;
 }
 
 }  // namespace
@@ -62,6 +95,12 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
         return std::nullopt;
       }
       settings.accept_language = value.GetString();
+      continue;
+    }
+    if (key == kOriginsToForceQuicOnKey) {
+      if (!ReadOriginsToForceQuicOn(value, settings)) {
+        return std::nullopt;
+      }
       continue;
     }
     if (key != kIgnoreCertificateErrorsSPKIListKey) {

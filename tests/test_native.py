@@ -272,6 +272,16 @@ def test_session_create_accepts_an_accept_language(native_library: ctypes.CDLL) 
     native_library.mitto_session_destroy(handle)
 
 
+@pytest.mark.parametrize("origin", ["example.com:443", "capture.localhost:8445", "127.0.0.1:8445", "*"])
+def test_session_create_accepts_an_origin_to_force_quic_on(native_library: ctypes.CDLL, origin: str) -> None:
+    settings = f'{{"version": 1, "origins_to_force_quic_on": ["{origin}"]}}'.encode()
+
+    error, handle = create_session(native_library, settings)
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
 def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.CDLL) -> None:
     handle = ctypes.POINTER(_native.MittoSession)()
 
@@ -299,6 +309,15 @@ def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.
         pytest.param(b'{"version": 1, "accept_language": 1}', id="accept-language-is-a-number"),
         pytest.param(b'{"version": 1, "accept_language": "a\\r\\nb"}', id="crlf-in-accept-language"),
         pytest.param(b'{"version": 1, "accept_language": "a\\u0000b"}', id="nul-in-accept-language"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": "a.test:443"}', id="origins-is-a-string"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": [1]}', id="origin-is-a-number"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": [""]}', id="origin-is-empty"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["a.test"]}', id="origin-has-no-port"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["a.test:65536"]}', id="origin-has-a-large-port"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["https://a.test:443"]}', id="origin-has-a-scheme"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["A.test:443"]}', id="origin-is-not-canonical"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["[::1]:443"]}', id="origin-is-ipv6"),
+        pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["a\\u0000.test:443"]}', id="nul-in-origin"),
     ],
 )
 def test_session_create_refuses_invalid_settings(native_library: ctypes.CDLL, settings: bytes) -> None:

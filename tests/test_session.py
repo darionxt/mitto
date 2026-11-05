@@ -21,6 +21,7 @@ import socket
 import socketserver
 import ssl
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +33,7 @@ import mitto
 from mitto._native import Priority, RequestError, Session
 from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
 from tests.local_server import LocalHTTPServer
-from tools.capture import HTTP2, KIND_PATHS, CaptureServer, normal_form
+from tools.capture import HTTP2, HTTP3, KIND_PATHS, CaptureServer, normal_form
 from tools.capture import RequestKind as CaptureRequestKind
 
 pytestmark = pytest.mark.usefixtures("native_library")
@@ -42,6 +43,10 @@ ERR_CERT_AUTHORITY_INVALID = -202
 
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
 PRIVATE_CERTIFICATE_SPKI_HASH = "nVtNMMWlVAx2QAb+AXEK53cS8Fm8sDeKSomcP5jydFk="
+
+# How long a Session may take to move to HTTP/3 once Alt-Svc has advertised it. A slow CI runner needs more than a local
+# handshake does.
+ALT_SVC_TIMEOUT_SECONDS = 30.0
 
 # A valid hash of some other key: the Base64 form of 32 bytes.
 OTHER_SPKI_HASH = "A" * 43 + "="
@@ -75,6 +80,7 @@ class RecordingServer(LocalHTTPServer):
     def __init__(self, server_address: tuple[str, int]) -> None:
         super().__init__(server_address, RecordingHandler)
         self.received: list[ReceivedRequest] = []
+        self.response_headers: list[tuple[str, str]] = []
         self.connection_closed = threading.Event()
 
     @property
@@ -91,6 +97,8 @@ class RecordingHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Length", "0")
         self.send_header("Set-Cookie", "a=1")
+        for name, value in server.response_headers:
+            self.send_header(name, value)
         self.end_headers()
 
     def finish(self) -> None:
@@ -178,6 +186,34 @@ def test_get_refuses_a_private_certificate(tls_server: RecordingServer) -> None:
 def test_an_invalid_spki_hash_is_refused() -> None:
     with pytest.raises(ValueError, match="refused"):
         Session(ignore_certificate_errors_spki_list=["not a hash"])
+
+
+def test_an_invalid_origin_to_force_quic_on_is_refused() -> None:
+    with pytest.raises(ValueError, match="refused"):
+        Session(origins_to_force_quic_on=["no port"])
+
+
+def test_a_session_moves_to_http3_through_alt_svc(tls_server: RecordingServer) -> None:
+    with CaptureServer() as quic_server:
+        tls_server.response_headers = [("Alt-Svc", f'h3=":{quic_server.port(HTTP3)}"')]
+        # The origin here is the TCP one, so this forces nothing. It only lifts //net's refusal of QUIC to a private
+        # certificate for the host, which a public server does not need.
+        with Session(
+            ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH, quic_server.spki_hash],
+            origins_to_force_quic_on=[quic_server.authority(HTTP3)],
+        ) as session:
+            url = f"https://{quic_server.host}:{tls_server.server_port}{KIND_PATHS[CaptureRequestKind.FETCH]}"
+            first = session.request(url)
+            # //net starts QUIC beside a connection that can serve the request at once, so a later request gets h3 once
+            # the handshake has finished.
+            deadline = time.monotonic() + ALT_SVC_TIMEOUT_SECONDS
+            protocol = session.request(url).protocol
+            while protocol != "h3" and time.monotonic() < deadline:
+                time.sleep(0.01)
+                protocol = session.request(url).protocol
+
+    assert first.protocol == "http/1.1"
+    assert protocol == "h3"
 
 
 def test_a_session_reuses_its_connection(http_server: RecordingServer) -> None:

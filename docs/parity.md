@@ -18,7 +18,7 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new native Session that accepts the server's private certificate and has the **Persona**'s settings;
+2. creates a new native Session that accepts the server's private certificate and has the **Persona**'s settings. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origin, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
 3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol, with what the Persona sends for that kind ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
@@ -53,7 +53,7 @@ Chrome 157, navigation, h2, request.headers.accept-encoding
 
 The request's own fields come under `request`. If several items have the same `type` or name, the later ones get a number, such as `tls.extensions.GREASE#2`. If the items both sides have are in a different order, that is one more gap, in a field such as `request.headers.<order>`, whose values are the names in each order.
 
-A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error. An `h3` Baseline gives that gap for each Request Kind for now, because the check does not yet tell the native core to force QUIC on the capture server, so it tries TCP on a UDP port.
+A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error.
 
 ## The known-gaps list
 

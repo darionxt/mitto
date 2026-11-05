@@ -77,7 +77,8 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //   {
 //     "version": 1,
 //     "ignore_certificate_errors_spki_list": ["<SPKI hash>"],
-//     "accept_language": "en-US,en;q=0.9"
+//     "accept_language": "en-US,en;q=0.9",
+//     "origins_to_force_quic_on": ["<host>:<port>"]
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -89,6 +90,12 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 // - "accept_language" is the value of the Accept-Language header that //net adds
 //   to each request whose headers do not hold one. The default is an empty
 //   string, which adds no header.
+// - "origins_to_force_quic_on" reaches the listed HTTPS origins over QUIC and
+//   nothing else, with the meaning of Chrome's --origin-to-force-quic-on. It
+//   also lifts //net's refusal of QUIC to a certificate from an unknown root,
+//   for each of their hosts. The certificate still has to verify. "*" stands
+//   for every origin. The default is an empty list, so that a request learns of
+//   QUIC from Alt-Svc.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.

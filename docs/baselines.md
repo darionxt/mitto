@@ -186,9 +186,11 @@ The field trials of the first five do differ, with no effect on the normal form:
 | `HttpCacheZstdCompression`, `PervasiveSharedDictionaries`, `PrioritizeMainFrameNavigationNetworkResponse`, `PrioritizeResizeTaskRunnerOnStartupStudy`, `PrivateAiCloudflareProxy`, `ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite`, `VariationsFeatureAccessLogging` | User data directories | Permanent consistency: a new directory is a new client |
 | `OptimisticDnsForTcp`, `ReduceMojoURLLoaderFactoryCloning` | Any two starts of Chrome | Session consistency: Chrome draws them at each start, which is why `chrome.txt` has one list per protocol |
 
-One field trial does reach the wire: `IncreaseAmplificationFactor`, with the feature `TryQuicByDefault`. It takes 3 of the 100 slots of a layer, so about 3% of user data directories have it, and then each start of Chrome draws one of three groups. Those set `google_connection_options` to `["8AFF", "ORIG"]`, `["5AFF", "ORIG"]` or the usual `["ORIG"]`. One directory of the 13 here had it, and its HTTP/3 start drew `8AFF`.
+One field trial does reach the normal form: `IncreaseAmplificationFactor`, with the feature `TryQuicByDefault`. It takes 3 of the 100 slots of a layer, so about 3% of user data directories have it, and then each start of Chrome draws one of three groups. Those set `google_connection_options` to `["8AFF", "ORIG"]`, `["5AFF", "ORIG"]` or the usual `["ORIG"]`. One directory of the 13 here had it, and its HTTP/3 start drew `8AFF`.
 
 A Baseline holds what most installations send. So if a session's HTTP/3 normal form has such an option, and `chrome.txt` shows that group under `http3.json`, record another session and leave that one out. The study applies from 146.0.7680.71, so this goes for Chrome 155 and 156 too.
+
+Another reaches the wire where no normal form can show it. `IncreaseHttp3Usage`, with the feature `ConfigureQuicHints`, is in every `chrome.txt` here, and it tells Chrome that `google.com` and `www.google.com` speak QUIC before either has sent an Alt-Svc. The capture server is neither of them, so [`native/network_session_configurator.cc`](../native/network_session_configurator.cc) states this by hand.
 
 What can still move without a new Chrome Release is in [capture.md](capture.md#what-can-differ-between-chrome-installations).
 
