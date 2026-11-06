@@ -287,6 +287,23 @@ Version `20261106-010110.492000-production`, a day newer than [the one above](#t
 
 Field trials differ between sessions as they did before, with no effect on the normal form. These are new in that list: `PrioritizeResizeTaskRunnerOnStartupStudy` and `WinSboxCsrssLockdown` between user data directories and `CacheGurlSchemeIsHttpOrHttpsResult` between starts in Chrome 155, `SearchPrefetchHighPriorityPrefetches` between user data directories in Chrome 156, and `PreconnectManagerDirectFastPath` between starts in Chrome 157.
 
+## A Chrome that has run for a while
+
+A Baseline comes from a new user data directory, so it cannot show what a directory gains over time. [capture.md](capture.md#what-can-differ-between-chrome-installations) has the comparison for the trust anchors. To repeat it:
+
+1. Start Chrome from a new directory with [the first five flags](#what-it-does), and leave it until `PKIMetadata\VERSION\crs.pb` is in that directory. That took 335 seconds on 2026-11-06. Close it through its window.
+2. Record from the same directory, which takes about 4 minutes:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File tools\baselines\record.ps1 -Out recordings\settled -UserDataDir $env:USERPROFILE\mitto-chrome\a -ExistingUserDataDir -SettleSeconds 20
+   ```
+
+3. Compare the normal forms with the Baselines, as in [Check and commit](#check-and-commit). What this records is a comparison, `chrome.txt` says so, and it does not go under `tests/baselines`.
+
+`-ExistingUserDataDir` takes a directory that holds a variations seed. `-SettleSeconds` lets each start of Chrome run on an empty tab before the page opens. Chrome loads its components about two seconds after a start, and without the wait a recording is over by then, so it shows the compiled-in root store.
+
+To read a list without recording, `crs.pb` is a `RootStore` from `net/cert/root_store.proto`. Chrome sends the `trust_anchor_id` of each entry in `trust_anchors`, and of each entry in `additional_certs` that has `tls_trust_anchor`.
+
 ## Chrome for Testing
 
 Chrome for Testing keeps Windows builds of older Chrome Releases, so we checked whether it can stand in for stable Chrome. As it comes, it cannot. With two flags, it matches apart from one header. That makes it a usable fallback, but a Baseline from it holds a value we wrote ourselves, so stable Chrome stays the source as long as the update server has it.
@@ -346,4 +363,4 @@ It lacks the brand, and adding the brand is not enough. `GenerateBrandVersionLis
 
 3. Replace `sec-ch-ua` in the normal forms, and say so under that Chrome Release on this page.
 
-For a session with no seed, `-NoVariationsSeed` takes the place of waiting for one. Whenever the Chrome is not Google Chrome, or either option is there, `chrome.txt` says that it describes a comparison and not a Baseline.
+For a session with no seed, `-NoVariationsSeed` takes the place of waiting for one. Whenever the Chrome is not Google Chrome, or `-NoVariationsSeed`, `-ExtraFlags`, `-ExistingUserDataDir` or `-SettleSeconds` is there, `chrome.txt` says that it describes a comparison and not a Baseline.

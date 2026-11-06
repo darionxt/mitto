@@ -14,7 +14,7 @@
     Where the recordings go. It must not hold a recording yet.
 
 .PARAMETER UserDataDir
-    The user data directory. It must not exist yet.
+    The user data directory. It must not exist yet, unless -ExistingUserDataDir is there.
 
 .PARAMETER Country
     The country Chrome evaluates its field trials for.
@@ -33,6 +33,14 @@
 
 .PARAMETER ExtraFlags
     More flags for every start of Chrome, for a comparison. chrome.txt lists them. What this records is not a Baseline.
+
+.PARAMETER ExistingUserDataDir
+    Records with a user data directory that has run before and holds a variations seed, to see what a Chrome that has
+    been running for a while sends. Close its Chrome first. What this records is a comparison, not a Baseline.
+
+.PARAMETER SettleSeconds
+    Lets each start of Chrome run this long on an empty tab before the page opens. In its first seconds, Chrome has not
+    loaded its components yet and a recording is over by then. What this records is a comparison, not a Baseline.
 #>
 [CmdletBinding()]
 param(
@@ -42,7 +50,9 @@ param(
     [string]$Chrome = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe'),
     [switch]$NoDebuggingPort,
     [switch]$NoVariationsSeed,
-    [string[]]$ExtraFlags = @()
+    [string[]]$ExtraFlags = @(),
+    [switch]$ExistingUserDataDir,
+    [int]$SettleSeconds = 0
 )
 
 Set-StrictMode -Version Latest
@@ -274,7 +284,12 @@ $repository = Split-Path (Split-Path $PSScriptRoot)
 $UserDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($UserDataDir)
 if (-not (Test-Path $Chrome)) { throw "No Chrome at $Chrome." }
 $Chrome = (Resolve-Path $Chrome).Path
-if (Test-Path $UserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
+if ((Test-Path $UserDataDir) -and -not $ExistingUserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
+if ($ExistingUserDataDir) {
+    # Before the try below, whose cleanup closes every Chrome on this directory.
+    if (@(Get-OurChromeProcesses).Count -gt 0) { throw "A Chrome is still running from $UserDataDir." }
+    if (-not (Test-SeedArrived)) { throw "$UserDataDir holds no variations seed." }
+}
 # A file that is there already would count as that run's recording, with nothing recorded.
 if ((Test-Path $Out) -and @(Get-ChildItem $Out -Recurse -File -Filter '*.json').Count -gt 0) {
     throw "$Out already holds a recording."
@@ -283,7 +298,7 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $installed = (Get-Item $Chrome).VersionInfo.ProductVersion
 $product = (Get-Item $Chrome).VersionInfo.ProductName
-$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0)
+$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0) -and (-not $ExistingUserDataDir) -and ($SettleSeconds -eq 0)
 Write-Step "$product $installed"
 
 $BaseFlags = @(
@@ -298,7 +313,9 @@ if (-not $NoDebuggingPort) { $RecordingFlags += '--remote-debugging-port=0' }
 $server = $null
 $pages = @{}
 try {
-    if ($NoVariationsSeed) {
+    if ($ExistingUserDataDir) {
+        Write-Step 'The directory holds a variations seed already'
+    } elseif ($NoVariationsSeed) {
         Write-Step 'First start, with no variations seed to wait for'
         Start-Chrome @() 'about:blank'
         Start-Sleep -Seconds $FirstStartWithoutSeedSeconds
@@ -333,6 +350,11 @@ try {
         Write-Step "Recording $($run.label)"
         $flags = @($run.flags | ForEach-Object { Format-Flag $_ }) + $RecordingFlags
         Remove-Item (Join-Path $UserDataDir 'DevToolsActivePort') -ErrorAction SilentlyContinue
+        if ($SettleSeconds -gt 0) {
+            # The second start only hands the address to the Chrome that is running.
+            Start-Chrome $flags 'about:blank'
+            Start-Sleep -Seconds $SettleSeconds
+        }
         Start-Chrome $flags $run.url
         $written = Join-Path $Out "$($run.name).json"
         Wait-Until "the page at $($run.url)" $PageTimeoutSeconds {
@@ -353,6 +375,7 @@ try {
     if ((Get-Item $Chrome).VersionInfo.ProductVersion -ne $installed) { throw 'Chrome changed version during the session.' }
 
     $flags = @($BaseFlags | Select-Object -Skip 1) + "$CertificateFlag=<hash>" + $RecordingFlags
+    $directory = if ($ExistingUserDataDir) { '<directory that has run before>' } else { '<new directory>' }
     $purpose = 'Which Chrome recorded the Baselines in this directory. See docs/baselines.md.'
     if (-not $isBaseline) { $purpose = 'Which Chrome recorded this comparison, which is not a Baseline. See docs/baselines.md.' }
     $note = @(
@@ -361,7 +384,7 @@ try {
         "Recorded: $(Get-Date -Format 'yyyy-MM-dd')"
         "Product: $product"
         "Chrome: $installed"
-        "Flags: --user-data-dir=<new directory> $($flags -join ' ')"
+        "Flags: --user-data-dir=$directory $($flags -join ' ')"
         'Flags of a recording on top of those, without their values:'
     )
     foreach ($run in $runs) {
