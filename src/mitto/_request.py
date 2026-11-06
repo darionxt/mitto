@@ -5,16 +5,13 @@ where.
 """
 
 from collections.abc import Iterable, Mapping
-from typing import TypedDict, cast
-from urllib.parse import quote_plus
+from typing import TypedDict
 
+from mitto._body import FileFields, QueryParams, RequestData, encode_body, encode_query
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
 
-__all__ = ["BuiltRequest", "QueryParams", "RequestHeaders", "RequestOptions", "build_request", "encode_query"]
-
-type QueryParams = Mapping[str, str] | Iterable[tuple[str, str]]
-"""A query as names and values. Pairs can repeat a name."""
+__all__ = ["BodyOptions", "BuiltRequest", "RequestHeaders", "RequestOptions", "build_request"]
 
 type RequestHeaders = Mapping[str, str | None]
 """What a caller changes about the Persona's headers, by name in any case. None removes a line of the Persona's."""
@@ -23,12 +20,37 @@ type RequestHeaders = Mapping[str, str | None]
 # out as it is written, in Chrome and in Session.request().
 _METHODS_FETCH_NORMALIZES = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"})
 
+# Fetch refuses a body with these, so Chrome never sends one.
+_METHODS_WITHOUT_A_BODY = frozenset({"GET", "HEAD"})
+
 # The native core sends a Referer from its own option, and refuses one among the headers.
 _REFERER = "referer"
 
+_CONTENT_TYPE = "Content-Type"
 
-class RequestOptions(TypedDict, total=False):
-    """The keyword arguments that each method of a Session takes.
+
+class BodyOptions(TypedDict, total=False):
+    """The keyword arguments that make a body. Only one of them makes it, but for `data` with text fields beside `files`.
+
+    Attributes:
+        data: Bytes go as they are, with no Content-Type of their own. Text goes as UTF-8, and a mapping is encoded as
+            URLSearchParams does. Chrome's Content-Type for those depends on the Request Kind: a fetch says what a page's
+            script would send, and a navigation what a form would.
+        json: A value that goes as JSON.stringify writes it, with a Content-Type of application/json. A float keeps
+            Python's text, so 1.0 stays "1.0". None sends no JSON.
+        files: Files by field name, or pairs that can repeat a name, which make a multipart body as Blink's FormData does.
+            A file is its content in bytes, (file name, content) or (file name, content, media type). With no file name it
+            is Blink's "blob", and with no media type it is application/octet-stream, since a type is not guessed. Text
+            fields in a mapping in `data` come before the files.
+    """
+
+    data: RequestData | None
+    json: object
+    files: FileFields | None
+
+
+class RequestOptions(BodyOptions, total=False):
+    """The keyword arguments that each method of a Session takes, with those of BodyOptions.
 
     Attributes:
         params: The query to add to the URL, encoded as URLSearchParams does. A query the URL already has stays as it is,
@@ -60,12 +82,14 @@ class BuiltRequest(RequestDefaults):
         method: The HTTP method to send.
         timeout: The timers of the request.
         follow_redirects: Whether a redirect is followed, or is the response.
+        body: The bytes to send as the request's body, or None for no body.
     """
 
     url: str
     method: str
     timeout: Timeout
     follow_redirects: bool
+    body: bytes | None
 
 
 def build_request(
@@ -78,6 +102,9 @@ def build_request(
     kind: RequestKind | str | None = None,
     timeout: float | Timeout | None = None,
     follow_redirects: bool = True,
+    data: RequestData | None = None,
+    json: object = None,
+    files: FileFields | None = None,
 ) -> BuiltRequest:
     """Return what to ask the native core for, given a caller's arguments as described in RequestOptions.
 
@@ -91,18 +118,31 @@ def build_request(
         kind: See RequestOptions.
         timeout: See RequestOptions. A Session's default is the caller's to put in place of a `timeout` that was not given.
         follow_redirects: See RequestOptions.
+        data: See BodyOptions.
+        json: See BodyOptions.
+        files: See BodyOptions.
 
     Raises:
+        TypeError: If `data` is of no type that makes a body, or `json` holds a value that JSON has no form of.
         ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a
-            positive number of at most 2,000,000 seconds.
+            positive number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds
+            a NaN or an infinity, or a body goes with GET or HEAD or with a Request Kind that Chrome sends none with.
     """
     method = method.upper() if method.upper() in _METHODS_FETCH_NORMALIZES else method
     url = _with_query(url, encode_query(params)) if params is not None else url
     if kind is None:
         kind = RequestKind.NAVIGATION if method == "GET" else RequestKind.FETCH
-    defaults = persona.request_defaults(RequestKind(kind), url)
+    request_kind = RequestKind(kind)
+    body = encode_body(data, json, files)
+    if body is not None and method in _METHODS_WITHOUT_A_BODY:
+        raise ValueError(f"Fetch refuses a body with {method}, so Chrome never sends one")
+    defaults = persona.request_defaults(request_kind, url, with_body=body is not None)
     changes = _changes_by_name(headers or {})
     _, referrer = changes.pop(_REFERER, (_REFERER, defaults["referrer"]))
+    if body is not None:
+        # This takes the place of the Persona's line, as a caller's would. Having no type removes the line, while a type
+        # that a caller gives for bytes still goes where Chrome puts it.
+        changes.setdefault(_CONTENT_TYPE.lower(), (_CONTENT_TYPE, persona.content_type(request_kind, body)))
     return BuiltRequest(
         url=url,
         method=method,
@@ -112,20 +152,8 @@ def build_request(
         referrer=referrer,
         timeout=to_timeout(timeout),
         follow_redirects=follow_redirects,
+        body=None if body is None else body.content,
     )
-
-
-def encode_query(params: QueryParams) -> str:
-    """Return `params` as the text of a query, as URLSearchParams.toString() does."""
-    pairs = cast(Mapping[str, str], params).items() if isinstance(params, Mapping) else params
-    return "&".join(f"{_encode_component(name)}={_encode_component(value)}" for name, value in pairs)
-
-
-def _encode_component(text: str) -> str:
-    # Web IDL turns a lone surrogate into U+FFFD before URLSearchParams sees it, where encoding as UTF-8 would fail.
-    well_formed = text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
-    # The application/x-www-form-urlencoded set keeps "*" and encodes "~", which quote() does the other way round.
-    return quote_plus(well_formed, safe="*").replace("~", "%7E")
 
 
 def _with_query(url: str, query: str) -> str:

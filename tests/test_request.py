@@ -7,8 +7,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from mitto._body import encode_query
 from mitto._persona import WINDOWS_PERSONAS, Persona, RequestKind, load_persona
-from mitto._request import build_request, encode_query
+from mitto._request import BodyOptions, BuiltRequest, build_request
 from mitto._timeout import Timeout
 
 URL = "https://example.test:8444/any/path"
@@ -33,6 +34,7 @@ def test_a_request_of_a_kind_is_what_the_persona_sends_for_that_kind(persona: Pe
         "method": "GET",
         "timeout": Timeout(),
         "follow_redirects": True,
+        "body": None,
         **persona.request_defaults(kind, URL),
     }
 
@@ -278,6 +280,7 @@ def test_a_built_request_needs_no_argument_but_the_method_and_url() -> None:
     built = build_request(ENGINE_PERSONA, "POST", URL)
 
     assert sorted(built) == [
+        "body",
         "follow_redirects",
         "headers",
         "method",
@@ -307,3 +310,170 @@ def test_a_timeout_stays_as_it_is() -> None:
     timeout = Timeout(connect=1, read=2, total=3)
 
     assert build_request(ENGINE_PERSONA, "GET", URL, timeout=timeout)["timeout"] is timeout
+
+
+def _names(built: BuiltRequest) -> list[str]:
+    return [name for name, _ in built["headers"]]
+
+
+def _line(built: BuiltRequest, name: str) -> str | None:
+    return dict(built["headers"]).get(name)
+
+
+def test_a_request_with_no_body_has_none_of_the_lines_of_a_body() -> None:
+    for kind in (RequestKind.NAVIGATION, RequestKind.FETCH):
+        built = build_request(ENGINE_PERSONA, "POST", URL, kind=kind)
+
+        assert built["body"] is None
+        assert {"Cache-Control", "Content-Type", "Origin"}.isdisjoint(_names(built))
+
+
+# Each Content-Type here came from fetch() or a form in Chrome 156, or from a Baseline.
+@pytest.mark.parametrize("persona", PERSONAS, ids=_persona_id)
+@pytest.mark.parametrize(
+    ("kind", "options", "content_type"),
+    [
+        (RequestKind.FETCH, {"data": "text"}, "text/plain;charset=UTF-8"),
+        (RequestKind.FETCH, {"data": ""}, "text/plain;charset=UTF-8"),
+        (RequestKind.FETCH, {"data": {"a": "b"}}, "application/x-www-form-urlencoded;charset=UTF-8"),
+        (RequestKind.FETCH, {"data": {}}, "application/x-www-form-urlencoded;charset=UTF-8"),
+        (RequestKind.FETCH, {"data": b"bytes"}, None),
+        (RequestKind.FETCH, {"data": b""}, None),
+        (RequestKind.FETCH, {"json": {"a": 1}}, "application/json"),
+        (RequestKind.NAVIGATION, {"data": "a b=c d\r\n"}, "text/plain"),
+        (RequestKind.NAVIGATION, {"data": {"a": "b"}}, "application/x-www-form-urlencoded"),
+        (RequestKind.NAVIGATION, {"data": {}}, "application/x-www-form-urlencoded"),
+    ],
+)
+def test_a_body_has_the_content_type_chrome_gives_it(
+    persona: Persona, kind: RequestKind, options: BodyOptions, content_type: str | None
+) -> None:
+    assert _line(build_request(persona, "POST", URL, kind=kind, **options), "Content-Type") == content_type
+
+
+@pytest.mark.parametrize("kind", [RequestKind.FETCH, RequestKind.NAVIGATION])
+def test_a_multipart_body_names_its_boundary_in_its_content_type(kind: RequestKind) -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, kind=kind, files={"file": b"content"})
+
+    content_type = _line(built, "Content-Type")
+    assert content_type is not None
+    media_type, boundary = content_type.split("; boundary=")
+    assert media_type == "multipart/form-data"
+    assert built["body"] is not None
+    assert built["body"].startswith(f"--{boundary}\r\n".encode())
+    assert built["body"].endswith(f"--{boundary}--\r\n".encode())
+
+
+def test_a_form_navigation_says_not_to_take_a_cached_answer_where_a_fetch_does_not() -> None:
+    navigation = build_request(ENGINE_PERSONA, "POST", URL, kind=RequestKind.NAVIGATION, data={"a": "b"})
+    fetch = build_request(ENGINE_PERSONA, "POST", URL, kind=RequestKind.FETCH, data={"a": "b"})
+
+    assert _names(navigation)[0] == "Cache-Control"
+    assert _line(navigation, "Cache-Control") == "max-age=0"
+    assert _line(fetch, "Cache-Control") is None
+
+
+def test_the_default_kind_of_a_post_with_a_body_is_a_fetch() -> None:
+    assert build_request(ENGINE_PERSONA, "POST", URL, data="text") == build_request(
+        ENGINE_PERSONA, "POST", URL, data="text", kind=RequestKind.FETCH
+    )
+
+
+@pytest.mark.parametrize(
+    ("options", "body"),
+    [
+        ({"data": "é"}, b"\xc3\xa9"),
+        ({"data": b"\x00"}, b"\x00"),
+        ({"data": {"a": "b c"}}, b"a=b+c"),
+        ({"json": [1]}, b"[1]"),
+        ({"data": ""}, b""),
+    ],
+)
+def test_a_body_goes_to_the_native_core_as_bytes(options: BodyOptions, body: bytes) -> None:
+    assert build_request(ENGINE_PERSONA, "POST", URL, **options)["body"] == body
+
+
+@pytest.mark.parametrize("name", ["Content-Type", "content-type", "CONTENT-TYPE"])
+def test_a_callers_content_type_takes_the_place_of_the_body_s_and_keeps_the_personas_spelling(name: str) -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, data="text", headers={name: "text/csv"})
+
+    assert _line(built, "Content-Type") == "text/csv"
+    assert _names(built) == _names(build_request(ENGINE_PERSONA, "POST", URL, data="text"))
+
+
+@pytest.mark.parametrize("kind", [RequestKind.FETCH, RequestKind.NAVIGATION])
+def test_a_callers_content_type_for_bytes_goes_where_chrome_puts_it(kind: RequestKind) -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, kind=kind, data=b"x", headers={"Content-Type": "a/b"})
+
+    assert _line(built, "Content-Type") == "a/b"
+    assert _names(built) == _names(build_request(ENGINE_PERSONA, "POST", URL, kind=kind, data="text"))
+
+
+def test_none_removes_the_content_type_of_a_body() -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, data="text", headers={"Content-Type": None})
+
+    assert _line(built, "Content-Type") is None
+
+
+def test_a_content_type_with_no_body_is_another_name_after_the_personas_lines() -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, headers={"Content-Type": "a/b"})
+
+    assert built["headers"][-1] == ("Content-Type", "a/b")
+
+
+@pytest.mark.parametrize("kind", [RequestKind.FETCH, RequestKind.NAVIGATION])
+@pytest.mark.parametrize("options", [{"data": b"x"}, {"data": "x"}, {"json": 1}, {"files": {}}], ids=str)
+def test_no_placeholder_of_a_persona_reaches_the_wire(kind: RequestKind, options: BodyOptions) -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, kind=kind, **options)
+
+    assert not [line for line in built["headers"] if "<" in line[1]]
+
+
+@pytest.mark.parametrize("method", ["GET", "get", "HEAD", "head"])
+@pytest.mark.parametrize("options", [{"data": b""}, {"data": "x"}, {"json": 1}, {"files": {}}], ids=str)
+def test_fetch_refuses_a_body_with_get_or_head_and_so_does_a_session(method: str, options: BodyOptions) -> None:
+    with pytest.raises(ValueError, match="body"):
+        build_request(ENGINE_PERSONA, method, URL, **options)
+
+
+@pytest.mark.parametrize("kind", [RequestKind.SCRIPT, RequestKind.IMAGE])
+def test_a_kind_that_chrome_sends_no_body_with_is_refused(kind: RequestKind) -> None:
+    with pytest.raises(ValueError, match=kind.value):
+        build_request(ENGINE_PERSONA, "POST", URL, kind=kind, data="x")
+
+
+# What an Origin holds in Chrome, as url::Origin::Serialize() writes it.
+@pytest.mark.parametrize(
+    ("url", "origin"),
+    [
+        ("https://example.test:8444/any/path?query#fragment", "https://example.test:8444"),
+        ("https://example.test/", "https://example.test"),
+        ("https://example.test:443/", "https://example.test"),
+        ("http://example.test:80/", "http://example.test"),
+        ("http://example.test:443/", "http://example.test:443"),
+        ("https://example.test:80/", "https://example.test:80"),
+        ("HTTPS://EXAMPLE.Test/", "https://example.test"),
+        ("https://user:password@example.test/", "https://example.test"),
+        ("https://[::1]:8444/", "https://[::1]:8444"),
+        ("https://[::1]/", "https://[::1]"),
+        ("https://bücher.example/", "https://xn--bcher-kva.example"),
+    ],
+)
+def test_the_origin_of_a_body_is_written_as_chrome_writes_it(url: str, origin: str) -> None:
+    assert _line(build_request(ENGINE_PERSONA, "POST", url, data="x"), "Origin") == origin
+
+
+@pytest.mark.parametrize("url", ["not a url", "https://", "//example.test/", "https://example.test:99999/", ""])
+def test_a_url_with_no_origin_gets_no_origin_line_so_that_the_native_core_reports_it(url: str) -> None:
+    built = build_request(ENGINE_PERSONA, "POST", url, data="x")
+
+    assert _line(built, "Origin") is None
+    assert built["referrer"] is None
+
+
+def test_a_caller_can_replace_or_remove_the_origin() -> None:
+    replaced = build_request(ENGINE_PERSONA, "POST", URL, data="x", headers={"origin": "https://other.test"})
+    removed = build_request(ENGINE_PERSONA, "POST", URL, data="x", headers={"Origin": None})
+
+    assert _line(replaced, "Origin") == "https://other.test"
+    assert _line(removed, "Origin") is None

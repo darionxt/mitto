@@ -21,8 +21,8 @@ class Session:
     One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
     requests still running, but not while another thread is starting one.
 
-    Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind`, `timeout` and
-    `follow_redirects`.
+    Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind`, `timeout`, `follow_redirects`,
+    `data`, `json` and `files`.
     """
 
     def __init__(
@@ -82,9 +82,11 @@ class Session:
             **options: See RequestOptions.
 
         Raises:
+            TypeError: If `data` is of no type that makes a body, or `json` holds a value that JSON has no form of.
             ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1,
                 `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a positive
-                number of at most 2,000,000 seconds.
+                number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds a
+                NaN or an infinity, or a body goes with GET or HEAD or with a Request Kind that Chrome sends none with.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
                 that runs out is a RequestTimeoutError. An HTTP error status such as 404 is a response, which
                 Response.raise_for_status() turns into an error. An invalid header or method ends the request with

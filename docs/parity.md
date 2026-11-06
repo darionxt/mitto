@@ -40,7 +40,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 |---|---|---|
 | `navigation`, `fetch`, `script`, `image` | The case's path at the server's own name | Nothing |
 | `navigation_link_*`, `fetch_get_*`, `script_*`, `image_*` | The case's path at its name | Say which page the request comes from, so `Sec-Fetch-Site`, `Referer`, `Origin` and `Sec-Fetch-Storage-Access` are those of a same-origin **Initiator**, or of none for a navigation |
-| `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with no body | Send a body, so `//net` adds `Content-Length: 0` and `Content-Type`, `body` and the frames that hold it are missing. `Origin` and `Cache-Control` go with those |
+| `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with the case's body, from the same fields as the page's form or script | Say which page the request comes from, as for the row above, so `Referer` and `Sec-Fetch-Site` are those of a same-origin **Initiator**, or of none for a navigation, and `Origin` is that of the requested URL |
 | `fetch_post_stream` | `POST` with no body | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
 | `cookie` | `/case/cookie-set`, then the case's path | Keep a cookie, so `Cookie` is a gap in that one line, because a case counts a request without what it should carry when none has it |
 | `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |

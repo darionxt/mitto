@@ -21,8 +21,9 @@ import mitto
 from mitto import _native
 from mitto._native import PrivateSettings
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, RequestKind, load_persona
+from mitto._request import BodyOptions
 from tests.local_server import LocalHTTPServer
-from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer
+from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, MAIN_CASES, CaptureServer, normal_form
 from tools.capture import RequestKind as CaptureRequestKind
 
 ERR_INVALID_ARGUMENT = -4
@@ -143,9 +144,13 @@ class ReceivedRequest:
     method: str
     path: str
     headers: list[tuple[str, str]]
+    body: bytes = b""
 
     def header(self, name: str) -> str | None:
         return dict(self.headers).get(name)
+
+
+REDIRECTS = {"/redirect": 302, "/redirect-307": 307}
 
 
 class AnyMethodServer(LocalHTTPServer):
@@ -169,9 +174,12 @@ class AnyMethodHandler(http.server.BaseHTTPRequestHandler):
 
     def answer(self) -> None:
         server = cast(AnyMethodServer, self.server)
-        server.received.append(ReceivedRequest(self.command, self.path, self.headers.items()))
-        if self.path == "/redirect":
-            self.send_response(302)
+        body_size = int(self.headers.get("Content-Length", "0"))
+        server.received.append(
+            ReceivedRequest(self.command, self.path, self.headers.items(), self.rfile.read(body_size))
+        )
+        if self.path in REDIRECTS:
+            self.send_response(REDIRECTS[self.path])
             self.send_header("Location", "/final")
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -555,3 +563,146 @@ def test_get_sends_what_a_default_session_sends(server: AnyMethodServer) -> None
 
     first, second = server.received
     assert first == second
+
+
+def _lines_of(request: ReceivedRequest) -> list[str]:
+    return [name for name, _ in request.headers]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    ("options", "body", "content_type"),
+    [
+        ({"data": b"\x00bytes\xff"}, b"\x00bytes\xff", None),
+        ({"data": "text é"}, b"text \xc3\xa9", "text/plain;charset=UTF-8"),
+        ({"data": {"a b": "c&d"}}, b"a+b=c%26d", "application/x-www-form-urlencoded;charset=UTF-8"),
+        ({"json": {"a": [1, None]}}, b'{"a":[1,null]}', "application/json"),
+    ],
+    ids=["bytes", "text", "mapping", "json"],
+)
+def test_a_body_reaches_the_server_with_what_chrome_says_of_it(
+    server: AnyMethodServer, options: BodyOptions, body: bytes, content_type: str | None
+) -> None:
+    with mitto.Session() as session:
+        session.post(server.url, **options)
+
+    received = server.received[0]
+    assert received.body == body
+    assert received.header("Content-Length") == str(len(body))
+    assert received.header("Content-Type") == content_type
+    assert received.header("Origin") == f"http://{server.authority}"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_multipart_body_reaches_the_server_with_its_boundary(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.post(server.url, kind="navigation", data={"a": "b"}, files={"file": ("c.txt", b"d", "text/plain")})
+
+    received = server.received[0]
+    content_type = received.header("Content-Type")
+    assert content_type is not None
+    boundary = content_type.removeprefix("multipart/form-data; boundary=")
+    assert (
+        received.body
+        == (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="a"\r\n\r\nb\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="c.txt"\r\n'
+            f"Content-Type: text/plain\r\n\r\nd\r\n--{boundary}--\r\n"
+        ).encode()
+    )
+
+
+@pytest.mark.usefixtures("native_library")
+def test_net_puts_a_content_length_after_connection_and_before_the_personas_lines(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.post(server.url, kind="navigation", data={"a": "b"})
+
+    assert _lines_of(server.received[0])[:4] == ["Host", "Connection", "Content-Length", "Cache-Control"]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    ("name", "method"), [("post", "POST"), ("put", "PUT"), ("patch", "PATCH"), ("delete", "DELETE")]
+)
+def test_an_empty_body_is_a_body_for_any_method(server: AnyMethodServer, name: str, method: str) -> None:
+    with mitto.Session() as session:
+        getattr(session, name)(server.url, data=b"")
+
+    received = server.received[0]
+    assert (received.method, received.header("Content-Length"), received.body) == (method, "0", b"")
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    ("name", "content_length"), [("post", "0"), ("put", "0"), ("patch", None), ("delete", None), ("options", None)]
+)
+def test_with_no_body_net_says_a_length_of_0_for_post_and_put_only(
+    server: AnyMethodServer, name: str, content_length: str | None
+) -> None:
+    with mitto.Session() as session:
+        getattr(session, name)(server.url)
+
+    assert server.received[0].header("Content-Length") == content_length
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_large_body_arrives_whole(server: AnyMethodServer) -> None:
+    body = bytes(range(256)) * 8192
+
+    with mitto.Session() as session:
+        session.post(server.url, data=body)
+
+    assert server.received[0].body == body
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_redirect_that_keeps_the_method_sends_the_body_again(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        response = session.post(f"{server.url}redirect-307", data="text")
+
+    assert response.url == f"{server.url}final"
+    assert [(request.method, request.path, request.body) for request in server.received] == [
+        ("POST", "/redirect-307", b"text"),
+        ("POST", "/final", b"text"),
+    ]
+    assert server.received[1].header("Content-Type") == "text/plain;charset=UTF-8"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_redirect_that_turns_a_post_into_a_get_leaves_out_the_body_and_what_says_what_it_is(
+    server: AnyMethodServer,
+) -> None:
+    with mitto.Session() as session:
+        session.post(f"{server.url}redirect", data="text")
+
+    final = server.received[1]
+    assert (final.method, final.path, final.body) == ("GET", "/final", b"")
+    assert {"Content-Length", "Content-Type", "Origin"}.isdisjoint(_lines_of(final))
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("name", ["get", "head"])
+def test_a_body_with_get_or_head_is_refused_with_nothing_sent(server: AnyMethodServer, name: str) -> None:
+    with mitto.Session() as session, pytest.raises(ValueError, match="body"):
+        getattr(session, name)(server.url, data="text")
+
+    assert server.received == []
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("route", "protocol"), [(HTTP1, "http/1.1"), (HTTP2, "h2"), (HTTP3, "h3")])
+def test_a_body_larger_than_one_frame_arrives_whole_over_each_protocol(route: str, protocol: str) -> None:
+    body = bytes(range(256)) * 160
+    with CaptureServer() as capture_server:
+        settings = PrivateSettings(
+            ignore_certificate_errors_spki_list=[capture_server.spki_hash],
+            origins_to_force_quic_on=[capture_server.authority(HTTP3)] if route == HTTP3 else [],
+        )
+        with mitto.Session(_settings=settings) as session:
+            path = KIND_PATHS[CaptureRequestKind.FETCH]
+            response = session.post(capture_server.url(route, path=path), data=body)
+        form = normal_form(capture_server.recording(route), MAIN_CASES)
+
+    assert response.protocol == protocol
+    request: Any = cast(dict[str, Any], form)["requests"]["fetch"]
+    assert request["body"].encode("latin-1") == body

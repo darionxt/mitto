@@ -38,6 +38,10 @@ static const char kNoRedirectOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"follow_redirects\": false}";
 
+static const char kPostOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"method\": \"POST\"}";
+
 // Each with one timer, for a server that accepts a connection and never answers.
 static const char kConnectTimeoutOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
@@ -60,7 +64,7 @@ static MittoRequest* g_request;
 static int32_t StartWithOptions(const char* url, const char* options) {
   const int32_t error = mitto_request_start(
       g_session, url, kHeaders, sizeof(kHeaders) / sizeof(kHeaders[0]), options,
-      strlen(options), &g_request);
+      strlen(options), NULL, 0, &g_request);
   if (error != 0) {
     fprintf(stderr, "starting %s failed with net error %" PRId32 "\n", url,
             error);
@@ -117,8 +121,8 @@ static int FinishFetch(const char* url, size_t body_size, int32_t result) {
   return 0;
 }
 
-// Takes the running request's events in a blocking call, as a sync caller does.
-static int FetchToEnd(const char* url) {
+// Takes events in a blocking call, as a sync caller does.
+static int FinishInBlockingCalls(const char* url) {
   size_t body_size = 0;
   int32_t result = 0;
   while (1) {
@@ -135,12 +139,36 @@ static int FetchToEnd(const char* url) {
 }
 
 static int Fetch(const char* url) {
-  return Start(url) || FetchToEnd(url);
+  if (Start(url) != 0) {
+    return 1;
+  }
+  return FinishInBlockingCalls(url);
 }
 
 // A redirect is the response here, with no body.
 static int FetchWithoutRedirects(const char* url) {
-  return StartWithOptions(url, kNoRedirectOptions) || FetchToEnd(url);
+  if (StartWithOptions(url, kNoRedirectOptions) != 0) {
+    return 1;
+  }
+  return FinishInBlockingCalls(url);
+}
+
+// Sends a body from a buffer that holds something else once the call has
+// returned, as a caller that reuses its memory does.
+static int Post(const char* url) {
+  char body[] = "the body of a request";
+  const size_t body_size = strlen(body);
+  const int32_t error = mitto_request_start(
+      g_session, url, kHeaders, sizeof(kHeaders) / sizeof(kHeaders[0]),
+      kPostOptions, strlen(kPostOptions), (const uint8_t*)body, body_size,
+      &g_request);
+  if (error != 0) {
+    fprintf(stderr, "starting %s failed with net error %" PRId32 "\n", url,
+            error);
+    return 1;
+  }
+  memset(body, 'x', body_size);
+  return FinishInBlockingCalls(url);
 }
 
 // Waits on the file descriptor, as an event loop does.
@@ -387,6 +415,7 @@ static const struct {
   int (*run)(const char* url);
 } kScenarios[] = {
     {"fetch", Fetch},
+    {"post", Post},
     {"fetch-with-file-descriptor", FetchWithFileDescriptor},
     {"fetch-without-redirects", FetchWithoutRedirects},
     {"cancel-at-once", CancelAtOnce},
