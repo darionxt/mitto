@@ -1,0 +1,69 @@
+{
+  "release": "155",
+  "operating_system": "Windows",
+  "accept_language": "en-US,en;q=0.9",
+  "kinds": {
+    "navigation": {
+      "priority": "HIGHEST",
+      "priority_incremental": true,
+      "referrer": null,
+      "headers": [
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "Upgrade-Insecure-Requests: 1",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Sec-Fetch-Site: none",
+        "Sec-Fetch-Mode: navigate",
+        "Sec-Fetch-User: ?1",
+        "Sec-Fetch-Dest: document"
+      ]
+    },
+    "fetch": {
+      "priority": "MEDIUM",
+      "priority_incremental": true,
+      "referrer": "<origin>/",
+      "headers": [
+        "sec-ch-ua-platform: \"Windows\"",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "Accept: */*",
+        "Sec-Fetch-Site: same-origin",
+        "Sec-Fetch-Mode: cors",
+        "Sec-Fetch-Dest: empty"
+      ]
+    },
+    "script": {
+      "priority": "MEDIUM",
+      "priority_incremental": false,
+      "referrer": "<origin>/",
+      "headers": [
+        "sec-ch-ua-platform: \"Windows\"",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "Accept: */*",
+        "Sec-Fetch-Site: same-origin",
+        "Sec-Fetch-Mode: no-cors",
+        "Sec-Fetch-Dest: script"
+      ]
+    },
+    "image": {
+      "priority": "LOWEST",
+      "priority_incremental": true,
+      "referrer": "<origin>/",
+      "headers": [
+        "sec-ch-ua-platform: \"Windows\"",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Google Chrome\";v=\"155\", \"Chromium\";v=\"155\", \"Not(A:Brand\";v=\"24\"",
+        "sec-ch-ua-mobile: ?0",
+        "Accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Sec-Fetch-Site: same-origin",
+        "Sec-Fetch-Mode: no-cors",
+        "Sec-Fetch-Dest: image"
+      ]
+    }
+  }
+}

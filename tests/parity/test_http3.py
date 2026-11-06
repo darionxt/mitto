@@ -21,6 +21,7 @@ from tools.capture import HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_
 from tools.capture.recording import Json
 from tools.parity import (
     KNOWN_GAPS_FILE_NAME,
+    Baseline,
     dumps_known_gaps,
     find_gaps,
     fingerprint,
@@ -94,8 +95,8 @@ def test_each_request_kind_in_a_file_is_one_http3_baseline(http3_baselines: Path
 
 
 def test_a_recording_like_the_http3_baseline_has_no_gaps(http3_baselines: Path) -> None:
-    def recorder(protocol: str, kind: RequestKind) -> dict[str, Json]:
-        return fingerprint(sample_form("http3"), kind)
+    def recorder(baseline: Baseline) -> dict[str, Json]:
+        return fingerprint(sample_form("http3"), baseline.kind)
 
     assert find_gaps(load_baselines(http3_baselines), recorder) == []
 
@@ -117,10 +118,10 @@ def test_a_recording_like_the_http3_baseline_has_no_gaps(http3_baselines: Path) 
 def test_each_difference_in_http3_is_its_own_gap(
     http3_baselines: Path, change: Callable[[dict[str, Any]], None], field: str
 ) -> None:
-    def recorder(protocol: str, kind: RequestKind) -> dict[str, Json]:
+    def recorder(baseline: Baseline) -> dict[str, Json]:
         form = sample_form("http3")
         change(form)
-        return fingerprint(form, kind)
+        return fingerprint(form, baseline.kind)
 
     gaps = find_gaps(load_baselines(http3_baselines), recorder)
 
@@ -129,10 +130,10 @@ def test_each_difference_in_http3_is_its_own_gap(
 
 
 def test_what_the_capture_server_records_over_http3_goes_through_the_comparison(http3_baselines: Path) -> None:
-    def recorder(protocol: str, kind: RequestKind) -> dict[str, Json]:
-        with CaptureServer() as server, Http3Client(server.port(protocol)) as client:
-            client.get(KIND_PATHS[kind])
-            return fingerprint(normal_form(server.recording(protocol)), kind)
+    def recorder(baseline: Baseline) -> dict[str, Json]:
+        with CaptureServer() as server, Http3Client(server.port(baseline.protocol)) as client:
+            client.get(KIND_PATHS[baseline.kind])
+            return fingerprint(normal_form(server.recording(baseline.protocol)), baseline.kind)
 
     gaps = find_gaps(load_baselines(http3_baselines), recorder)
 

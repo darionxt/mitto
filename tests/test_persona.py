@@ -1,20 +1,24 @@
 """Tests of Persona data against the Baselines of its Chrome Release.
 
-They need no native library and no connection, so they run on every machine and cover HTTP/3, which the native core
-cannot reach yet. What //net adds is written out here, and the Parity Checks show that //net does add it over TCP.
+They need no native library and no connection, so they run on every machine. What //net adds is written out here, and
+the Parity Checks show that //net does add it.
 """
+
+import itertools
 
 import pytest
 
 from mitto._native import Priority
-from mitto._persona import CHROME_157_WINDOWS, RequestDefaults, RequestKind, load_persona
+from mitto._persona import WINDOWS_PERSONAS, RequestDefaults, RequestKind, load_persona
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS
 from tools.capture import RequestKind as CaptureRequestKind
 from tools.capture.normal_form import AUTHORITY_PLACEHOLDER, ORIGIN_PLACEHOLDER
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 
-PERSONA = load_persona(CHROME_157_WINDOWS)
-BASELINES = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if baseline.release == PERSONA.release]
+PERSONAS = {release: load_persona(name) for release, name in WINDOWS_PERSONAS.items()}
+BASELINES = load_baselines(BASELINES_DIRECTORY)
+
+_ANY_URL = "https://example.test:8444/any/path?query"
 
 # The default urgency, which //net leaves out of the priority header.
 _DEFAULT_URGENCY = 3
@@ -24,7 +28,7 @@ _URGENCY_AND_WEIGHT = {Priority.HIGHEST: (0, 256), Priority.MEDIUM: (1, 220), Pr
 
 
 def _defaults(baseline: Baseline) -> RequestDefaults:
-    return PERSONA.request_defaults(RequestKind(baseline.kind.value), "https://example.test:8444/any/path?query")
+    return PERSONAS[baseline.release].request_defaults(RequestKind(baseline.kind.value), _ANY_URL)
 
 
 def _priority_field(defaults: RequestDefaults) -> str:
@@ -39,7 +43,8 @@ def _lines_on_the_wire(baseline: Baseline) -> list[str]:
     lines = [f"{name}: {value}" for name, value in defaults["headers"]]
     if defaults["referrer"] is not None:
         lines.append(f"Referer: {ORIGIN_PLACEHOLDER}/")
-    lines += ["Accept-Encoding: gzip, deflate, br, zstd", f"Accept-Language: {PERSONA.accept_language}"]
+    accept_language = PERSONAS[baseline.release].accept_language
+    lines += ["Accept-Encoding: gzip, deflate, br, zstd", f"Accept-Language: {accept_language}"]
     if baseline.protocol == HTTP1:
         return [f"Host: {AUTHORITY_PLACEHOLDER}", "Connection: keep-alive", *lines]
     lower_case = [f"{name.lower()}:{value}" for name, _, value in (line.partition(":") for line in lines)]
@@ -54,13 +59,15 @@ def _lines_on_the_wire(baseline: Baseline) -> list[str]:
 
 
 def _name(baseline: Baseline) -> str:
-    return f"{baseline.kind.value}-{baseline.protocol}"
+    return f"{baseline.release}-{baseline.kind.value}-{baseline.protocol}"
 
 
-def test_the_persona_has_a_baseline_of_each_request_kind_over_each_protocol() -> None:
-    found = {(baseline.kind.value, baseline.protocol) for baseline in BASELINES}
+def test_the_personas_and_the_baselines_cover_the_same_chrome_releases_request_kinds_and_protocols() -> None:
+    found = {(baseline.release, baseline.kind.value, baseline.protocol) for baseline in BASELINES}
 
-    assert found == {(kind.value, protocol) for kind in RequestKind for protocol in (HTTP1, HTTP2, HTTP3)}
+    assert found == set(
+        itertools.product(WINDOWS_PERSONAS, (kind.value for kind in RequestKind), (HTTP1, HTTP2, HTTP3))
+    )
 
 
 @pytest.mark.parametrize("baseline", BASELINES, ids=_name)
@@ -88,18 +95,21 @@ def test_the_priority_gives_the_http3_priority_update_of_the_baseline(baseline: 
     assert request["priority_updates"] == [_priority_field(_defaults(baseline))]
 
 
-def test_a_subresource_has_the_root_of_the_origin_of_its_url_as_its_referrer() -> None:
-    defaults = PERSONA.request_defaults(RequestKind.FETCH, "https://example.test:8444/any/path?query")
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_a_subresource_has_the_root_of_the_origin_of_its_url_as_its_referrer(release: str) -> None:
+    defaults = PERSONAS[release].request_defaults(RequestKind.FETCH, _ANY_URL)
 
     assert defaults["referrer"] == "https://example.test:8444/"
 
 
-def test_a_navigation_has_no_referrer() -> None:
-    assert PERSONA.request_defaults(RequestKind.NAVIGATION, "https://example.test/")["referrer"] is None
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_a_navigation_has_no_referrer(release: str) -> None:
+    assert PERSONAS[release].request_defaults(RequestKind.NAVIGATION, "https://example.test/")["referrer"] is None
 
 
-def test_the_persona_says_which_chrome_it_presents() -> None:
-    assert (PERSONA.release, PERSONA.operating_system) == ("157", "Windows")
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_the_persona_says_which_chrome_it_presents(release: str) -> None:
+    assert (PERSONAS[release].release, PERSONAS[release].operating_system) == (release, "Windows")
 
 
 def test_the_request_kinds_are_those_of_the_capture_kit() -> None:
