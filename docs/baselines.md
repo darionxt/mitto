@@ -204,7 +204,7 @@ Five sessions of each Chrome Release, from new user data directories, gave ident
 
 ### What differs from Chrome 157
 
-Only `sec-ch-ua` and `User-Agent`, in every Request Kind over every protocol. That is 24 fields per Chrome Release. Everything else in the normal form is the same, including the ClientHello with `trust_anchors`, the HTTP/2 preface, the QUIC parameters and the order of the headers.
+Only `sec-ch-ua` and `User-Agent`, in every Request Kind over every protocol. That is 24 fields per Chrome Release. Everything else in the normal form is the same, including the ClientHello with `trust_anchors`, the HTTP/2 preface, the QUIC parameters and the order of the headers. So [their Personas](persona.md#what-differs-between-chrome-releases) differ in those two lines only.
 
 | Chrome | `sec-ch-ua` | `User-Agent` has |
 |---|---|---|
@@ -251,6 +251,8 @@ These apply to the older Chrome Releases and never appeared in the 10 sessions o
 | `EnforceP2PSocketPortRestrictionsKillSwitch` | 156.0.8061.0 | 155 |
 | `KillSwitch_SearchNavigationPrefetch` | 156.0.8076.0 | 155 |
 | `WebRTC-MediaTaskQueuePriorities` | 156.0.8073.999 | 155 |
+
+`IncreaseHttp3Usage` is the same in all three: the group `EnabledWithConfigureMinimalQuicHints`, with `quic_hints` naming `google.com` and `www.google.com` on port 443, under each protocol in each `chrome.txt`. So [the hints](#chrome-157) that [`native/network_session_configurator.cc`](../native/network_session_configurator.cc) states hold for Chrome 155 and 156 as well.
 
 Five directories are few for a field trial as rare as `IncreaseAmplificationFactor`, so another rare one could still be there. The check on each session's HTTP/3 normal form stays.
 

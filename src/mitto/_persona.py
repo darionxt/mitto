@@ -14,9 +14,23 @@ from urllib.parse import urlsplit
 
 from mitto._native import Priority
 
-__all__ = ["CHROME_157_WINDOWS", "Persona", "RequestDefaults", "RequestKind", "load_persona"]
+__all__ = [
+    "CHROME_155_WINDOWS",
+    "CHROME_156_WINDOWS",
+    "CHROME_157_WINDOWS",
+    "WINDOWS_PERSONAS",
+    "Persona",
+    "RequestDefaults",
+    "RequestKind",
+    "load_persona",
+]
 
+CHROME_155_WINDOWS = "chrome_155_windows"
+CHROME_156_WINDOWS = "chrome_156_windows"
 CHROME_157_WINDOWS = "chrome_157_windows"
+
+WINDOWS_PERSONAS = {"155": CHROME_155_WINDOWS, "156": CHROME_156_WINDOWS, "157": CHROME_157_WINDOWS}
+"""The file of the Persona of each Chrome Release in the Supported Window, on Windows."""
 
 _PERSONAS_DIRECTORY = Path(__file__).with_name("personas")
 _ORIGIN_PLACEHOLDER = "<origin>"
