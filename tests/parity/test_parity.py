@@ -17,7 +17,18 @@ from mitto import Session
 from mitto._native import LIBRARY_ENV_VAR, PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS, load_persona
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
-from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
+from tools.capture import (
+    HTTP1,
+    HTTP2,
+    HTTP3,
+    KIND_PATHS,
+    RUNS,
+    CaptureServer,
+    RequestKind,
+    Run,
+    dumps_normal_form,
+    normal_form,
+)
 from tools.parity import (
     BASELINES_DIRECTORY,
     KNOWN_GAPS_FILE_NAME,
@@ -73,6 +84,17 @@ def test_each_release_has_every_main_request_kind_over_every_protocol() -> None:
     releases = {release for release, _, _ in found}
     assert releases
     assert found == set(itertools.product(releases, RequestKind, (HTTP1, HTTP2, HTTP3)))
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
+def test_each_release_has_every_recording_case_of_every_run(release: str, run: Run) -> None:
+    text = (BASELINES_DIRECTORY / release / f"{run.name}.json").read_text(encoding="utf-8")
+
+    form = json.loads(text)
+
+    assert list(form["requests"]) == [case.name for case in run.cases]
+    assert dumps_normal_form(form) == text
 
 
 def test_each_release_says_which_chrome_recorded_it() -> None:

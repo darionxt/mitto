@@ -64,7 +64,7 @@ Write the file from the Baselines of its Chrome Release in [`tests/baselines`](.
 
 ## What differs between Chrome Releases
 
-An older Chrome Release runs on the network code of the **Engine Release**, and differs only by its Persona ([ADR-0005](adr/0005-older-releases-as-data.md)). Chrome 155 and 156 need nothing else: [their Baselines](baselines.md#what-differs-from-chrome-157) differ from Chrome 157's in `sec-ch-ua` and `User-Agent` only, so those two lines are all that differs between the three files.
+An older Chrome Release runs on the network code of the **Engine Release**, and differs only by its Persona ([ADR-0005](adr/0005-older-releases-as-data.md)). Chrome 155 and 156 need nothing else: [their Baselines](baselines.md#what-differs-from-chrome-157) differ from Chrome 157's in `sec-ch-ua` and `User-Agent` only, so those two lines are all that differs between the three files. The Baselines of [the Recording Cases](baselines.md#the-recording-cases) agree, with redirects, bodies, cookies, plain HTTP and a proxy: every case differs in those two lines only. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so there it is `User-Agent` alone.
 
 [`tools/workspace/compare`](building.md#compare-two-releases), run from each of 155.0.8059.85 and 156.0.8078.80 to 157.0.8103.27, agrees with that. These files are the same in all three, so what sets up a connection did not move:
 
@@ -84,9 +84,9 @@ If a later Chrome Release does differ, the difference has to reach the native co
 
 ## What no Baseline covers
 
-Baselines only record HTTPS. Over plain HTTP to a host that is not local, Chrome leaves out `sec-ch-ua*` and `Sec-Fetch-*`, because those URLs are not potentially trustworthy, and the data does not change for that. `//net` does make the change for `Accept-Encoding`.
+The Baselines of the main **Request Kinds** only record HTTPS. Over plain HTTP to a host that is not local, Chrome leaves out `sec-ch-ua*` and `Sec-Fetch-*`, because those URLs are not potentially trustworthy, as `cases/plain_http.json` shows, and the data does not change for that yet. `//net` does make the change for `Accept-Encoding`.
 
-Baselines record a fresh HTTPS connection that goes well. Everything else is the Engine Release's whichever Persona is presented, which is the imperfect emulation that [ADR-0005 accepts](adr/0005-older-releases-as-data.md#consequences). Between 155 and 157, it changed in these places:
+Baselines record a fresh connection that goes well. Everything else is the Engine Release's whichever Persona is presented, which is the imperfect emulation that [ADR-0005 accepts](adr/0005-older-releases-as-data.md#consequences). Between 155 and 157, it changed in these places:
 
 | What | Where it shows |
 | --- | --- |
