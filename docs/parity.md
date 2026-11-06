@@ -30,7 +30,7 @@ The native core of the **Engine Release** presents every Chrome Release in turn,
 
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json`, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Request Kind in it, and the protocol comes from the file's `protocol` key. [baselines.md](baselines.md) is how to record them.
 
-Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
+Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines. So is `RELEASE/cases`, which holds the **Recording Cases** beyond the main **Request Kinds**. No check compares those yet.
 
 ## Gaps
 

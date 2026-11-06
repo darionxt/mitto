@@ -25,6 +25,7 @@ from tools.capture.http2 import (
     FrameParser,
     Http2Connection,
     Priority,
+    parse_data,
     parse_headers,
     parse_priority,
     parse_settings,
@@ -242,6 +243,33 @@ def test_does_not_answer_a_reset_stream() -> None:
     connection.receive(serialize_frame(RST_STREAM, 0, 1, bytes(4)))
 
     assert connection.receive(serialize_frame(DATA, END_STREAM, 1)) == b""
+
+
+def test_a_response_can_say_more_and_can_have_no_body() -> None:
+    answer = Response(304, "text/plain", b"", "no-cache", (("ETag", '"a"'),))
+    connection = Http2Connection(lambda _: answer)
+    connection.receive(PREFACE)
+
+    output = frames_of(connection.receive(samples.http2_request_frame("/")))
+
+    assert [(frame.type, frame.flags) for frame in output] == [(HEADERS, END_HEADERS | END_STREAM)]
+    headers = dict(Decoder().decode(output[0].payload, raw=True))
+    assert headers[b":status"] == b"304"
+    assert headers[b"cache-control"] == b"no-cache"
+    assert headers[b"etag"] == b'"a"'
+
+
+def test_parses_the_body_out_of_a_padded_data_frame() -> None:
+    frame = Frame(DATA, PADDED, 1, b"\x02body\x00\x00")
+
+    assert parse_data(frame) == b"body"
+    assert parse_data(Frame(DATA, 0, 1, b"body")) == b"body"
+
+
+@pytest.mark.parametrize("payload", [b"", b"\x05a"])
+def test_refuses_padding_that_does_not_fit(payload: bytes) -> None:
+    with pytest.raises(ParseError):
+        parse_data(Frame(DATA, PADDED, 1, payload))
 
 
 def test_splits_a_long_body_into_frames() -> None:

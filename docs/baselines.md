@@ -102,7 +102,7 @@ Studies in a seed can filter by country, so every recording of a Chrome Release 
 
 To see that the flag works, read the field trials in `chrome://version/?show-variations-cmd` with and without it. With Chrome 157 and the seed of 2026-11-05, `ContextualTasksDesktop` filters on the US and `LensSidePanelUnification` on everywhere but the US, each with one group at 100%. With the flag the first is there and the second is not. Without it, from an exit elsewhere, it is the other way round.
 
-Capture traffic stays out of all this. Chrome resolves `*.localhost` itself and never sends it through a proxy, and the capture server only listens on loopback. The raw recording holds each client's address as `peer`, so that this can be checked.
+Capture traffic stays out of all this. Chrome resolves `*.localhost` itself and never sends it through a proxy. The [case pages](capture.md#recording-cases) are at names that are not local, so their starts of Chrome have `--no-proxy-server`, and `--host-resolver-rules` sends those names to loopback with no DNS. The capture server only listens on loopback, and its own proxy refuses a tunnel to any name but its own, so nothing that reaches it leaves the machine. The raw recording holds each client's address as `peer`, so that this can be checked.
 
 `chrome.txt` shows what one session drew, and only names that look network-related. The seed holds every study. To read it, take `VariationsSafeSeedV2` from the user data directory: zstd over a protocol buffer whose field 1 is the `VariationsSeed` of `components/variations/proto/variations_seed.proto`, with the serial number that `chrome.txt` names. In the seed of 2026-11-05, no study names a feature that decides the ClientHello over TCP.
 
@@ -124,17 +124,17 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ Comma
 Get-Content "$env:USERPROFILE\mitto\record-a.log"
 ```
 
-It takes about a minute, and ends with `Done:` or with an error. Windows of Chrome open and close on the desktop meanwhile.
+It takes about two minutes, and ends with `Done:` or with an error. Windows of Chrome open and close on the desktop meanwhile. If a case page fails, the reason is in `server-errors.log` in the output directory.
 
 ### What it does
 
 [`tools/baselines/record.ps1`](../tools/baselines/record.ps1) does the following. At the machine you can do the same by hand, with `chrome` being `%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`:
 
 1. It starts Chrome with the first five flags below and `about:blank`, waits until `Local State` has `variations_country`, about 15 seconds, and closes Chrome through its window. Do not kill it: Chrome counts that as a crash, and a crash streak makes it give up its seed.
-2. It starts the capture server, `uv run python -m tools.capture --out recordings\a`, which prints the hash and the three addresses.
-3. For each address, it starts Chrome again with the flags and the address, in the order HTTP/1.1, HTTP/2, HTTP/3. It waits until the server has written that protocol's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. The server exits after the third.
+2. It starts the capture server, `uv run python -m tools.capture --out recordings\a --click-in USER_DATA_DIRECTORY`, which writes the address and flags of [each run](capture.md#recording-cases) to `runs.json`.
+3. For each run, it starts Chrome again with its flags and its address, in the order of that list. The server clicks what the case pages ask to have clicked, through the debugging port. The script waits until the server has written that run's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. The server exits after the last.
 4. It checks that every client's address is loopback, that `Accept-Language` is `en-US`, that Chrome lists active variations, and that Chrome's version did not change.
-5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each protocol, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list.
+5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list.
 
 | Flag | On | Why |
 |---|---|---|
@@ -144,19 +144,22 @@ It takes about a minute, and ends with `Done:` or with an error. Windows of Chro
 | `--lang=en-US` | Every start | The `en-US` locale, whatever language Windows has |
 | `--variations-override-country=us` | Every start | See above |
 | `--ignore-certificate-errors-spki-list=HASH` | Recording starts | Trusts the capture server's private certificate |
-| `--origin-to-force-quic-on=AUTHORITY` | The HTTP/3 start | Without it, Chrome refuses a certificate from an unknown root over QUIC |
-| `--remote-debugging-port=0` | Recording starts, by the script | How the script reads `chrome://version` without a person. At the machine you need no such flag, and `-NoDebuggingPort` leaves it out, without field trials and features in `chrome.txt` |
+| `--origin-to-force-quic-on=AUTHORITY,...` | The HTTP/3 starts | Without it, Chrome refuses a certificate from an unknown root over QUIC. A case page has three names, so that run lists three |
+| `--host-resolver-rules=RULES` | Starts at a case page, except through the proxy | Sends the names of the case pages to loopback |
+| `--no-proxy-server` | Starts at a case page, except through the proxy | Names that are not local would otherwise go to whatever proxy the machine has |
+| `--proxy-server=URL` | The starts through the proxy | Makes Chrome reach the case page through the capture server's proxy. What else Chrome sends meanwhile, such as asking for a new seed, the proxy refuses |
+| `--remote-debugging-port=0` | Recording starts, by the script | How the script reads `chrome://version` and clicks the case pages without a person. At the machine you need no such flag, and you click yourself. `-NoDebuggingPort` leaves it out, without field trials and features in `chrome.txt` and with only the main **Request Kinds** |
 
 ## Check and commit
 
-1. Record a second session, with new paths, and compare the normal forms where you have Git, such as with `git diff --no-index recordings/a/http1.json recordings/b/http1.json`. They should be identical. If they are not, find the cause and write it under the Chrome Release below. `chrome.txt` will differ, as Chrome 157 shows below.
+1. Record a second session, with new paths, and compare the normal forms where you have Git, such as with `git diff --no-index recordings/a/http1.json recordings/b/http1.json` and the same for each file in `cases`. They should be identical. If they are not, find the cause and write it under the Chrome Release below. `chrome.txt` will differ, as Chrome 157 shows below.
 2. Check that the files hold nothing personal. A normal form has placeholders for the host and no paths. `chrome.txt` has no paths, and the script leaves the page's command line and profile path out. Search both for the machine's name, the user's name and anything like a path or an address, in place of `NAME` here:
 
    ```bash
-   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/chrome.txt
+   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?}.json recordings/a/chrome.txt
    ```
 
-3. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`. Leave out the raw recordings and logs, which are not Baselines.
+3. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, and the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
 4. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
 
 ## Where each Chrome Release comes from
@@ -190,7 +193,7 @@ The field trials of the first five do differ, with no effect on the normal form:
 
 One field trial does reach the normal form: `IncreaseAmplificationFactor`, with the feature `TryQuicByDefault`. It takes 3 of the 100 slots of a layer, so about 3% of user data directories have it, and then each start of Chrome draws one of three groups. Those set `google_connection_options` to `["8AFF", "ORIG"]`, `["5AFF", "ORIG"]` or the usual `["ORIG"]`. One directory of the 13 here had it, and its HTTP/3 start drew `8AFF`.
 
-A Baseline holds what most installations send. So if a session's HTTP/3 normal form has such an option, and `chrome.txt` shows that group under `http3.json`, record another session and leave that one out. The study applies from 146.0.7680.71, so this goes for Chrome 155 and 156 too.
+A Baseline holds what most installations send. So if a session's HTTP/3 normal form has such an option, and `chrome.txt` shows that group under that file, record another session and leave that one out. The study applies from 146.0.7680.71, so this goes for Chrome 155 and 156 too.
 
 Another reaches the wire where no normal form can show it. `IncreaseHttp3Usage`, with the feature `ConfigureQuicHints`, is in every `chrome.txt` here, and it tells Chrome that `google.com` and `www.google.com` speak QUIC before either has sent an Alt-Svc. The capture server is neither of them, so [`native/network_session_configurator.cc`](../native/network_session_configurator.cc) states this by hand.
 

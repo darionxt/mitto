@@ -4,6 +4,7 @@ import base64
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 
 class RequestKind(StrEnum):
@@ -13,15 +14,37 @@ class RequestKind(StrEnum):
     IMAGE = "image"
 
 
+class RequestHead(Protocol):
+    """What the three protocols' requests have in common, which is all it takes to answer one."""
+
+    @property
+    def target(self) -> str: ...
+
+    @property
+    def headers(self) -> tuple[tuple[str, str], ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class Response:
+    """An answer.
+
+    Attributes:
+        status: The status code.
+        content_type: The value of Content-Type.
+        body: The body.
+        cache_control: The value of Cache-Control.
+        headers: More (name, value) pairs to send, in order, with the case HTTP/1.1 uses.
+    """
+
     status: int
     content_type: str
     body: bytes
+    cache_control: str = "no-store"
+    headers: tuple[tuple[str, str], ...] = ()
 
 
-type Responder = Callable[[str], Response]
-"""What answers a request, given its target."""
+type Responder = Callable[[RequestHead], Response]
+"""What answers a request."""
 
 KIND_PATHS = {
     RequestKind.NAVIGATION: "/",
@@ -74,14 +97,11 @@ _RESPONSES = {
 _NOT_FOUND = Response(404, "text/plain; charset=utf-8", b"not found\n")
 
 
-def respond(target: str) -> Response:
-    """Answer a request for target."""
+def response_for(target: str) -> Response:
+    """Answer a request for target, as the test page and its paths do."""
     return _RESPONSES.get(target, _NOT_FOUND)
 
 
-def kind_of(target: str) -> RequestKind | None:
-    """Return the Request Kind a request for target stands for, if any."""
-    for kind, path in KIND_PATHS.items():
-        if path == target:
-            return kind
-    return None
+def respond(request: RequestHead) -> Response:
+    """Answer a request, as the test page and its paths do."""
+    return response_for(request.target)

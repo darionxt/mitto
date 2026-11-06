@@ -31,6 +31,9 @@ struct SessionSettings {
   // over QUIC only for a host named here.
   std::set<url::SchemeHostPort> origins_to_force_quic_on;
   bool force_quic_everywhere = false;
+
+  // What Chrome's --host-resolver-rules takes, each rule known to be valid.
+  std::string host_resolver_rules;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns

@@ -110,7 +110,8 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //     "version": 1,
 //     "ignore_certificate_errors_spki_list": ["<SPKI hash>"],
 //     "accept_language": "en-US,en;q=0.9",
-//     "origins_to_force_quic_on": ["<host>:<port>"]
+//     "origins_to_force_quic_on": ["<host>:<port>"],
+//     "host_resolver_rules": "MAP <host> <address>"
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -128,6 +129,11 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //   for each of their hosts. The certificate still has to verify. "*" stands
 //   for every origin. The default is an empty list, so that a request learns of
 //   QUIC from Alt-Svc.
+// - "host_resolver_rules" holds rules that change which address a name resolves
+//   to, separated by commas, with the meaning of Chrome's
+//   --host-resolver-rules. Only the name's resolution changes, so SNI, the
+//   certificate check and the Host header keep the name. The default is an empty
+//   string, which holds no rules.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.

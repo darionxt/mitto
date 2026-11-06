@@ -3,7 +3,7 @@
 import pytest
 
 from tools.capture.http1 import Http1Connection, parse_request_head
-from tools.capture.page import KIND_PATHS, RequestKind, respond
+from tools.capture.page import KIND_PATHS, RequestKind, Response, respond, response_for
 from tools.capture.wire import ParseError
 
 _GET = b"GET /fetch HTTP/1.1\r\nHost: example\r\nsec-ch-ua-mobile: ?0\r\nAccept:   */*  \r\n\r\n"
@@ -74,12 +74,40 @@ def test_answers_pipelined_requests_in_order() -> None:
     assert [request.target for request in connection.requests] == ["/fetch", "/missing"]
 
 
-def test_skips_a_body_by_its_length() -> None:
+def test_answers_when_the_whole_body_has_arrived() -> None:
     connection = Http1Connection(respond)
-    first = b"POST /fetch HTTP/1.1\r\nContent-Length: 5\r\n\r\nab"
 
-    assert connection.receive(first).startswith(b"HTTP/1.1 200")
-    assert connection.receive(b"cde" + b"GET /missing HTTP/1.1\r\n\r\n").startswith(b"HTTP/1.1 404")
+    assert connection.receive(b"POST /fetch HTTP/1.1\r\nContent-Length: 5\r\n\r\nab") == b""
+    output = connection.receive(b"cde" + b"GET /missing HTTP/1.1\r\n\r\n")
+
+    assert output.index(b"200 OK") < output.index(b"404 Not Found")
+    assert [request.body for request in connection.requests] == [b"abcde", b""]
+
+
+def test_keeps_a_request_whose_body_never_arrives() -> None:
+    connection = Http1Connection(respond)
+
+    connection.receive(b"POST /fetch HTTP/1.1\r\nContent-Length: 5\r\n\r\nab")
+
+    assert [request.target for request in connection.requests] == ["/fetch"]
+    assert connection.requests[0].body == b""
+
+
+def test_refuses_an_oversized_body() -> None:
+    connection = Http1Connection(respond)
+
+    with pytest.raises(ParseError):
+        connection.receive(b"POST / HTTP/1.1\r\nContent-Length: " + str(1 << 25).encode() + b"\r\n\r\n")
+
+
+def test_sends_what_a_response_asks_for() -> None:
+    answer = Response(302, "text/plain", b"", "no-cache", (("Location", "/next"), ("ETag", '"a"')))
+    connection = Http1Connection(lambda _: answer)
+
+    output = connection.receive(_GET)
+
+    assert output.startswith(b"HTTP/1.1 302 Found\r\n")
+    assert b'\r\nCache-Control: no-cache\r\nLocation: /next\r\nETag: "a"\r\n' in output
 
 
 @pytest.mark.parametrize("header", [b"Connection: close", b"connection: CLOSE", b"Transfer-Encoding: chunked"])
@@ -108,7 +136,7 @@ def test_refuses_an_endless_head() -> None:
 
 
 def test_page_requests_every_request_kind() -> None:
-    page = respond(KIND_PATHS[RequestKind.NAVIGATION]).body.decode()
+    page = response_for(KIND_PATHS[RequestKind.NAVIGATION]).body.decode()
 
     for kind in (RequestKind.FETCH, RequestKind.SCRIPT, RequestKind.IMAGE):
         assert KIND_PATHS[kind] in page

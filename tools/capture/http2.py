@@ -162,6 +162,22 @@ def parse_headers(frame: Frame) -> tuple[Priority | None, bytes]:
     return priority, rest[: len(rest) - padding]
 
 
+def parse_data(frame: Frame) -> bytes:
+    """Return what a DATA frame holds of its stream's body.
+
+    Raises:
+        ParseError: The padding does not fit the payload.
+    """
+    if not frame.flags & PADDED:
+        return frame.payload
+    reader = Reader(frame.payload)
+    padding = reader.uint(1)
+    rest = reader.rest()
+    if padding > len(rest):
+        raise ParseError(f"{padding} bytes of padding in {len(rest)} bytes")
+    return rest[: len(rest) - padding]
+
+
 def _read_priority(reader: Reader) -> Priority:
     dependency = reader.uint(4)
     weight = reader.uint(1) + 1
@@ -195,7 +211,7 @@ class Http2Connection:
         self._block_start: Frame | None = None
         self._block = bytearray()
         self._seen_streams: set[int] = set()
-        self._unanswered: dict[int, str] = {}
+        self._unanswered: dict[int, Http2Request] = {}
         self.frames: list[Frame] = []
         self.requests: list[Http2Request] = []
         self.closed = False
@@ -230,6 +246,7 @@ class Http2Connection:
         if frame.type == CONTINUATION:
             return self._continue_block(frame)
         if frame.type == DATA:
+            parse_data(frame)
             return self._finish_stream(frame.stream_id) if frame.flags & END_STREAM else b""
         if frame.type == SETTINGS:
             parse_settings(frame)
@@ -280,13 +297,13 @@ class Http2Connection:
             request = Http2Request(stream_id, start.flags, priority, decoded)
             self.requests.append(request)
             self._seen_streams.add(stream_id)
-            self._unanswered[stream_id] = request.target
+            self._unanswered[stream_id] = request
         return self._finish_stream(stream_id) if start.flags & END_STREAM else b""
 
     def _finish_stream(self, stream_id: int) -> bytes:
         """Answer the request on a stream the client has finished sending on, unless it has an answer already."""
-        target = self._unanswered.pop(stream_id, None)
-        return b"" if target is None else self._serialize(stream_id, self._respond(target))
+        request = self._unanswered.pop(stream_id, None)
+        return b"" if request is None else self._serialize(stream_id, self._respond(request))
 
     def _serialize(self, stream_id: int, response: Response) -> bytes:
         block = self._encoder.encode(
@@ -294,9 +311,13 @@ class Http2Connection:
                 (":status", str(response.status)),
                 ("content-type", response.content_type),
                 ("content-length", str(len(response.body))),
-                ("cache-control", "no-store"),
+                ("cache-control", response.cache_control),
+                *((name.lower(), value) for name, value in response.headers),
             ]
         )
+        # A client resets a stream that goes on after a response that can have no body, such as a 304.
+        if not response.body:
+            return serialize_frame(HEADERS, END_HEADERS | END_STREAM, stream_id, block)
         output = bytearray(serialize_frame(HEADERS, END_HEADERS, stream_id, block))
         body = response.body
         # Flow control is not enforced: these responses are far smaller than the windows real clients open.

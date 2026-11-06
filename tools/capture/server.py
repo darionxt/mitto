@@ -16,18 +16,40 @@ from pathlib import Path
 from types import TracebackType
 from typing import Protocol, Self
 
+from tools.capture.cases import (
+    CROSS_SITE_HOST,
+    DONE_PATHS,
+    HOST_NAMES,
+    SAME_SITE_HOST,
+    Run,
+    respond_on,
+)
 from tools.capture.certificate import Certificate, generate_certificate
 from tools.capture.client_hello import ClientHelloAssembler, ClientHelloRecords
-from tools.capture.http1 import Http1Connection, Http1Request
+from tools.capture.http1 import Http1Connection, Http1Request, parse_request_head
 from tools.capture.http2 import Frame, Http2Connection, Http2Request
-from tools.capture.page import DONE_PATH, Responder, Response, respond
+from tools.capture.page import DONE_PATH, RequestHead, Responder, Response
 from tools.capture.quic_server import Datagram, LiveQuicConnection, QuicDispatcher
-from tools.capture.recording import HTTP1, HTTP2, HTTP3, ConnectionRecord, Recording
+from tools.capture.recording import (
+    HTTP1,
+    HTTP2,
+    HTTP3,
+    PLAIN_HTTP,
+    PROXIED_HTTP1,
+    PROXIED_HTTP2,
+    PROXY,
+    ConnectionRecord,
+    Recording,
+)
 from tools.capture.wire import ParseError
 
 DEFAULT_HOST = "capture.localhost"
 """Chrome and the network stack resolve *.localhost to loopback themselves, and, unlike an IP address, it gets SNI."""
 
+_HOST_SUFFIXES = (".localhost", ".test")
+_MAX_CONNECT_HEAD_SIZE = 1 << 16
+_TUNNEL_OPEN = b"HTTP/1.1 200 Connection established\r\n\r\n"
+_TUNNEL_REFUSED = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 _READ_SIZE = 1 << 16
 _MAX_DATAGRAM_SIZE = 1 << 16
 _POLL_SECONDS = 0.05
@@ -55,13 +77,31 @@ class _ConnectionClosedError(Exception):
         super().__init__("the client closed the connection during the handshake")
 
 
+class _Stream(Protocol):
+    def read(self) -> bytes: ...
+
+    def write(self, data: bytes) -> None: ...
+
+    @property
+    def alpn(self) -> str | None: ...
+
+    @property
+    def tls_version(self) -> str | None: ...
+
+    @property
+    def cipher(self) -> str | None: ...
+
+
 class _LiveConnection:
     """A connection in progress. Only touch it while holding the server's lock."""
 
-    def __init__(self, connection_id: int, client_hello: ClientHelloRecords, peer: str) -> None:
+    def __init__(
+        self, connection_id: int, client_hello: ClientHelloRecords | None, peer: str, connect: Http1Request | None
+    ) -> None:
         self.id = connection_id
         self.client_hello = client_hello
         self.peer = peer
+        self.connect = connect
         self.tls_version: str | None = None
         self.cipher: str | None = None
         self.alpn: str | None = None
@@ -86,25 +126,37 @@ class _LiveConnection:
             requests,
             self.error,
             self.peer,
+            self.connect,
         )
 
 
 class _Endpoint:
-    """One port: the protocol it offers through ALPN, and what it has recorded."""
+    """One route into the server: what it offers, and what it has recorded.
 
-    def __init__(self, protocol: str, requested_port: int) -> None:
-        self.protocol = protocol
+    Attributes:
+        route: The route.
+        requested_port: The port it was asked to listen on. 0 means any free port.
+        scheme: The scheme of a URL on this route.
+        port: The port a URL on this route names.
+        context: What the connections on this route speak TLS with, if they do. It goes with the protocol ALPN offers.
+        connections: What the route has recorded.
+        done: The done paths that a client has asked for on this route.
+    """
+
+    def __init__(self, route: str, requested_port: int, scheme: str = "https") -> None:
+        self.route = route
         self.requested_port = requested_port
+        self.scheme = scheme
         self.port = 0
+        self.context: ssl.SSLContext | None = None
         self.connections: list[_LiveConnection | LiveQuicConnection] = []
-        self.page_done = threading.Event()
+        self.done = {path: threading.Event() for path in DONE_PATHS}
 
 
 @dataclass(frozen=True, slots=True)
 class _Listener:
     sock: socket.socket
     endpoint: _Endpoint
-    context: ssl.SSLContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +206,19 @@ class _TlsStream:
             self.tls.write(data)
             self._flush()
 
+    @property
+    def alpn(self) -> str | None:
+        return self.tls.selected_alpn_protocol()
+
+    @property
+    def tls_version(self) -> str | None:
+        return self.tls.version()
+
+    @property
+    def cipher(self) -> str | None:
+        cipher = self.tls.cipher()
+        return cipher[0] if cipher else None
+
     def _fill(self) -> bool:
         data = self._sock.recv(_READ_SIZE)
         if not data:
@@ -167,29 +232,61 @@ class _TlsStream:
             self._sock.sendall(data)
 
 
-class CaptureServer:
-    """Serves the test page over HTTP/1.1, HTTP/2 and HTTP/3, one port each, and records what clients send to each port.
+class _PlainStream:
+    """A connection without TLS."""
 
-    Use it as a context manager. Clients must connect by name, so that they send SNI. Connections never get session
-    tickets, so every ClientHello is that of a fresh connection and has no pre_shared_key.
+    alpn = None
+    tls_version = None
+    cipher = None
+
+    def __init__(self, sock: socket.socket) -> None:
+        self._sock = sock
+
+    def read(self) -> bytes:
+        return self._sock.recv(_READ_SIZE)
+
+    def write(self, data: bytes) -> None:
+        if data:
+            self._sock.sendall(data)
+
+
+class CaptureServer:
+    """Serves the test pages and records what clients send, one recording per route into the server.
+
+    HTTP/1.1, HTTP/2 and HTTP/3 have a port each. Plain HTTP has a port, and so does an HTTP proxy, through which HTTP/1.1
+    and HTTP/2 can be reached too. Use it as a context manager. Clients must connect by name, so that they send SNI.
+    Connections never get session tickets, so every ClientHello is that of a fresh connection and has no pre_shared_key.
     """
 
     def __init__(
-        self, host: str = DEFAULT_HOST, *, http1_port: int = 0, http2_port: int = 0, http3_port: int = 0
+        self,
+        host: str = DEFAULT_HOST,
+        *,
+        http1_port: int = 0,
+        http2_port: int = 0,
+        http3_port: int = 0,
+        plain_http_port: int = 0,
+        proxy_port: int = 0,
     ) -> None:
-        """Prepare a server at host, which must end in .localhost.
+        """Prepare a server at host, which must end in .localhost or .test.
+
+        The server also answers under the names of the case pages, which only a client told how to resolve them finds.
 
         A port of 0 means any free port whose number no other port of this server has. Named ports may share a number
         across TCP and UDP.
         """
-        if not host.endswith(".localhost"):
-            raise ValueError(f"{host!r} does not end in .localhost")
+        if not host.endswith(_HOST_SUFFIXES):
+            raise ValueError(f"{host!r} does not end in .localhost or .test")
         self.host = host
         self._certificate: Certificate | None = None
         self._endpoints = {
             HTTP1: _Endpoint(HTTP1, http1_port),
             HTTP2: _Endpoint(HTTP2, http2_port),
             HTTP3: _Endpoint(HTTP3, http3_port),
+            PLAIN_HTTP: _Endpoint(PLAIN_HTTP, plain_http_port, "http"),
+            PROXY: _Endpoint(PROXY, proxy_port, "http"),
+            PROXIED_HTTP1: _Endpoint(PROXIED_HTTP1, 0),
+            PROXIED_HTTP2: _Endpoint(PROXIED_HTTP2, 0),
         }
         self._lock = threading.Lock()
         self._connection_ids = itertools.count(1)
@@ -218,28 +315,64 @@ class CaptureServer:
             raise RuntimeError("the server has not started")
         return self._certificate.spki_hash
 
-    def url(self, protocol: str) -> str:
-        """The test page's address on the port for protocol."""
-        return f"https://{self.authority(protocol)}/"
+    @property
+    def host_resolver_rules(self) -> str:
+        """The value for Chrome's --host-resolver-rules, and the like, which sends the case pages' names here."""
+        return ",".join(f"MAP {name} {_LOOPBACKS[0][1]}" for name in HOST_NAMES)
 
-    def authority(self, protocol: str) -> str:
-        """The name and port of the port for protocol."""
-        return f"{self.host}:{self.port(protocol)}"
+    @property
+    def proxy_url(self) -> str:
+        """The value for Chrome's --proxy-server."""
+        return f"http://{_LOOPBACKS[0][1]}:{self._endpoints[PROXY].port}"
 
-    def port(self, protocol: str) -> int:
-        """The port for protocol."""
-        return self._endpoints[protocol].port
+    def url(self, route: str, *, host: str | None = None, path: str = "/") -> str:
+        """The address of path on a route, at host or else at the server's own name."""
+        return f"{self._endpoints[route].scheme}://{self.authority(route, host=host)}{path}"
 
-    def recording(self, protocol: str) -> Recording:
-        """Return what the port for protocol has recorded so far."""
-        endpoint = self._endpoints[protocol]
+    def authority(self, route: str, *, host: str | None = None) -> str:
+        """The name and port of a route, at host or else at the server's own name."""
+        return f"{host or self.host}:{self.port(route)}"
+
+    def port(self, route: str) -> int:
+        """The port a URL on a route names."""
+        return self._endpoints[route].port
+
+    def recording(self, route: str, *, host: str | None = None) -> Recording:
+        """Return what a route has recorded so far, as seen from a page at host or else at the server's own name."""
+        endpoint = self._endpoints[route]
         with self._lock:
             connections = tuple(connection.snapshot() for connection in endpoint.connections)
-        return Recording(self.host, self.authority(protocol), connections)
+        return Recording(
+            host or self.host,
+            self.authority(route, host=host),
+            connections,
+            self.authority(route, host=SAME_SITE_HOST),
+            self.authority(route, host=CROSS_SITE_HOST),
+            endpoint.scheme,
+        )
 
-    def wait_for_page(self, protocol: str, timeout: float) -> bool:
-        """Wait until the test page has finished loading on the port for protocol. Returns whether it has."""
-        return self._endpoints[protocol].page_done.wait(timeout)
+    def wait_for_page(self, route: str, timeout: float, *, done_path: str = DONE_PATH) -> bool:
+        """Wait until a page has finished loading on a route, which it says at done_path. Returns whether it has."""
+        return self._endpoints[route].done[done_path].wait(timeout)
+
+    def start_url(self, run: Run) -> str:
+        """The address a run starts at."""
+        return self.url(run.route, host=run.host, path=run.start_path)
+
+    def chrome_flags(self, run: Run) -> list[str]:
+        """The flags a Chrome needs for a run, on top of those for any Chrome."""
+        flags = [f"--ignore-certificate-errors-spki-list={self.spki_hash}"]
+        if run.route in {PROXIED_HTTP1, PROXIED_HTTP2}:
+            # The proxy is what finds the name, so nothing here says how to resolve it.
+            return [*flags, f"--proxy-server={self.proxy_url}"]
+        if run.host is not None:
+            # A proxy of this machine's would get these names, where it would never get a *.localhost name.
+            flags += [f"--host-resolver-rules={self.host_resolver_rules}", "--no-proxy-server"]
+        if run.route == HTTP3:
+            hosts = (run.host,) if run.host is None else HOST_NAMES
+            authorities = ",".join(self.authority(HTTP3, host=host) for host in hosts)
+            flags.append(f"--origin-to-force-quic-on={authorities}")
+        return flags
 
     def start(self) -> None:
         """Start listening. A server starts only once.
@@ -278,16 +411,23 @@ class CaptureServer:
         self._selector.close()
 
     def _start(self) -> None:
-        self._certificate = generate_certificate(self.host)
-        for protocol in (HTTP1, HTTP2):
-            self._listen(self._endpoints[protocol], _server_context(self._certificate, protocol))
+        self._certificate = generate_certificate(self.host, *(name for name in HOST_NAMES if name != self.host))
+        for protocol, proxied in ((HTTP1, PROXIED_HTTP1), (HTTP2, PROXIED_HTTP2)):
+            direct = self._endpoints[protocol]
+            direct.context = _server_context(self._certificate, protocol)
+            self._listen(direct)
+            tunnel = self._endpoints[proxied]
+            tunnel.context = direct.context
+            tunnel.port = direct.port
+        self._listen(self._endpoints[PLAIN_HTTP])
+        self._listen(self._endpoints[PROXY])
         self._listen_quic(self._endpoints[HTTP3], self._certificate)
         self._listen_thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._listen_thread.start()
 
-    def _listen(self, endpoint: _Endpoint, context: ssl.SSLContext) -> None:
+    def _listen(self, endpoint: _Endpoint) -> None:
         for sock in self._bind(endpoint, _open_tcp):
-            self._selector.register(sock, selectors.EVENT_READ, _Listener(sock, endpoint, context))
+            self._selector.register(sock, selectors.EVENT_READ, _Listener(sock, endpoint))
 
     def _listen_quic(self, endpoint: _Endpoint, certificate: Certificate) -> None:
         def record(connection: LiveQuicConnection) -> None:
@@ -383,10 +523,22 @@ class CaptureServer:
     def _serve(self, sock: socket.socket, peer: str, listener: _Listener) -> None:
         live: _LiveConnection | None = None
         try:
-            stream = _TlsStream(sock, listener.context)
-            live = self._read_client_hello(sock, peer, stream, listener.endpoint)
-            stream.handshake()
-            http = self._start_http(live, stream, listener.endpoint)
+            endpoint = listener.endpoint
+            connect = None
+            if endpoint.route == PROXY:
+                endpoint, connect = self._open_tunnel(sock)
+                if endpoint is None:
+                    return
+            stream: _Stream
+            if endpoint.context is None:
+                stream = _PlainStream(sock)
+                live = self._record_connection(endpoint, None, peer, None)
+            else:
+                tls_stream = _TlsStream(sock, endpoint.context)
+                live = self._read_client_hello(sock, peer, tls_stream, endpoint, connect)
+                tls_stream.handshake()
+                stream = tls_stream
+            http = self._start_http(live, stream, endpoint)
             stream.write(http.start())
             while not http.closed:
                 data = stream.read()
@@ -408,8 +560,50 @@ class CaptureServer:
                 self._open_sockets.discard(sock)
             sock.close()
 
+    def _open_tunnel(self, sock: socket.socket) -> tuple[_Endpoint | None, Http1Request | None]:
+        """Read what a client asks of the proxy and answer it. Returns the route of the tunnel, if it gets one."""
+        head = bytearray()
+        while (end := head.find(b"\r\n\r\n")) < 0:
+            if len(head) > _MAX_CONNECT_HEAD_SIZE:
+                raise ParseError(f"request head over {_MAX_CONNECT_HEAD_SIZE} bytes")
+            data = sock.recv(_READ_SIZE)
+            if not data:
+                raise _ConnectionClosedError
+            head += data
+        if len(head) > end + 4:
+            raise ParseError("bytes that did not wait for an answer to CONNECT")
+        request = parse_request_head(bytes(head[:end]))
+        endpoint = self._tunnel_endpoint(request) if request.method == "CONNECT" else None
+        if endpoint is None:
+            # Chrome's other traffic comes this way too, and none of it may leave this machine.
+            sock.sendall(_TUNNEL_REFUSED)
+            return None, None
+        sock.sendall(_TUNNEL_OPEN)
+        return endpoint, request
+
+    def _tunnel_endpoint(self, request: Http1Request) -> _Endpoint | None:
+        name, _, port = request.target.rpartition(":")
+        if name != self.host and name not in HOST_NAMES:
+            return None
+        for direct, proxied in ((HTTP1, PROXIED_HTTP1), (HTTP2, PROXIED_HTTP2)):
+            if port == str(self._endpoints[direct].port):
+                return self._endpoints[proxied]
+        return None
+
+    def _record_connection(
+        self,
+        endpoint: _Endpoint,
+        client_hello: ClientHelloRecords | None,
+        peer: str,
+        connect: Http1Request | None,
+    ) -> _LiveConnection:
+        with self._lock:
+            live = _LiveConnection(next(self._connection_ids), client_hello, peer, connect)
+            endpoint.connections.append(live)
+        return live
+
     def _read_client_hello(
-        self, sock: socket.socket, peer: str, stream: _TlsStream, endpoint: _Endpoint
+        self, sock: socket.socket, peer: str, stream: _TlsStream, endpoint: _Endpoint, connect: Http1Request | None
     ) -> _LiveConnection:
         assembler = ClientHelloAssembler()
         while True:
@@ -419,29 +613,26 @@ class CaptureServer:
             stream.feed(data)
             client_hello = assembler.feed(data)
             if client_hello is not None:
-                with self._lock:
-                    live = _LiveConnection(next(self._connection_ids), client_hello, peer)
-                    endpoint.connections.append(live)
-                return live
+                return self._record_connection(endpoint, client_hello, peer, connect)
 
-    def _start_http(self, live: _LiveConnection, stream: _TlsStream, endpoint: _Endpoint) -> _HttpConnection:
-        alpn = stream.tls.selected_alpn_protocol()
-        cipher = stream.tls.cipher()
+    def _start_http(self, live: _LiveConnection, stream: _Stream, endpoint: _Endpoint) -> _HttpConnection:
+        alpn = stream.alpn
         responder = _page_responder(endpoint)
         http = Http2Connection(responder) if alpn == HTTP2 else Http1Connection(responder)
         with self._lock:
-            live.tls_version = stream.tls.version()
-            live.cipher = cipher[0] if cipher else None
+            live.tls_version = stream.tls_version
+            live.cipher = stream.cipher
             live.alpn = alpn
             live.http = http
         return http
 
 
 def _page_responder(endpoint: _Endpoint) -> Responder:
-    def answer(target: str) -> Response:
-        if target == DONE_PATH:
-            endpoint.page_done.set()
-        return respond(target)
+    def answer(request: RequestHead) -> Response:
+        done = endpoint.done.get(request.target)
+        if done is not None:
+            done.set()
+        return respond_on(endpoint.scheme, endpoint.port, request)
 
     return answer
 

@@ -5,12 +5,13 @@ import json
 import sys
 from pathlib import Path
 
+from tools.capture.cases import RUNS, Run
+from tools.capture.devtools import PageClicker
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
-from tools.capture.page import RequestKind
-from tools.capture.recording import HTTP1, HTTP2, HTTP3, raw_form
+from tools.capture.recording import raw_form
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
-_FILE_STEMS = {HTTP1: "http1", HTTP2: "http2", HTTP3: "http3"}
+_RUNS_FILE = "runs.json"
 _POLL_SECONDS = 0.1
 
 
@@ -21,80 +22,117 @@ def main() -> int:
     parser.add_argument("--http1-port", type=int, default=8443, help="HTTP/1.1 port (default: %(default)s)")
     parser.add_argument("--http2-port", type=int, default=8444, help="HTTP/2 port (default: %(default)s)")
     parser.add_argument("--http3-port", type=int, default=8445, help="HTTP/3 UDP port (default: %(default)s)")
+    parser.add_argument("--plain-http-port", type=int, default=8446, help="plain HTTP port (default: %(default)s)")
+    parser.add_argument("--proxy-port", type=int, default=8447, help="HTTP proxy port (default: %(default)s)")
+    parser.add_argument(
+        "--runs",
+        nargs="+",
+        choices=[run.name for run in RUNS],
+        default=[run.name for run in RUNS],
+        metavar="RUN",
+        help="which recordings to wait for (default: all of them)",
+    )
+    parser.add_argument(
+        "--click-in",
+        type=Path,
+        metavar="USER_DATA_DIRECTORY",
+        help="click what the pages ask to have clicked, in the Chrome with this directory and a debugging port",
+    )
     args = parser.parse_args()
+    if not args.host.endswith(".localhost"):
+        parser.error(f"{args.host!r} does not end in .localhost")
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
-    try:
-        server = CaptureServer(
-            args.host, http1_port=args.http1_port, http2_port=args.http2_port, http3_port=args.http3_port
-        )
-    except ValueError as error:
-        parser.error(str(error))
+    server = CaptureServer(
+        args.host,
+        http1_port=args.http1_port,
+        http2_port=args.http2_port,
+        http3_port=args.http3_port,
+        plain_http_port=args.plain_http_port,
+        proxy_port=args.proxy_port,
+    )
     try:
         server.start()
     except OSError as error:
         print(
-            f"Cannot listen on the ports: {error}. --http1-port, --http2-port and --http3-port choose others.",
+            f"Cannot listen on the ports: {error}. --http1-port, --http2-port, --http3-port, --plain-http-port and"
+            " --proxy-port choose others.",
             file=sys.stderr,
         )
         return 1
+    runs = [run for run in RUNS if run.name in args.runs]
     try:
-        return _record(server, out)
+        if args.click_in is None:
+            return _record(server, runs, out)
+        with PageClicker(args.click_in):
+            return _record(server, runs, out)
     finally:
         server.close()
 
 
-def _record(server: CaptureServer, out: Path) -> int:
-    """Say how to reach the server, and write what each port records. Returns the exit code."""
+def _record(server: CaptureServer, runs: list[Run], out: Path) -> int:
+    """Say how to reach the server, and write what each run records. Returns the exit code."""
     print(f"SPKI hash: {server.spki_hash}")
-    print(f"HTTP/1.1:  {server.url(HTTP1)}")
-    print(f"HTTP/2:    {server.url(HTTP2)}")
-    print(f"HTTP/3:    {server.url(HTTP3)}")
     print()
     print("Start each recording from a new, empty user data directory:")
-    command = (
-        f'  chrome --user-data-dir="NEW_EMPTY_DIRECTORY" --ignore-certificate-errors-spki-list={server.spki_hash}'
-        " --no-first-run --no-default-browser-check"
-    )
-    print(f"{command} URL")
+    print('  chrome --user-data-dir="NEW_EMPTY_DIRECTORY" --no-first-run --no-default-browser-check FLAGS URL')
     print()
-    print("For HTTP/3, Chrome also has to be told to use QUIC there:")
-    print(f"{command} --origin-to-force-quic-on={server.authority(HTTP3)} {server.url(HTTP3)}")
+    for run in runs:
+        print(f"{run.label}: {server.start_url(run)}")
+        print(f"  FLAGS: {' '.join(_quoted(flag) for flag in server.chrome_flags(run))}")
     print()
-    print("Waiting for the test page to finish on all three ports. Ctrl-C stops early.", flush=True)
-    pending = dict(_FILE_STEMS)
+    (out / _RUNS_FILE).write_text(json.dumps(_runs_form(server, runs), indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(f"Waiting for the page of each to finish, or for the clicks they ask for. {_RUNS_FILE} lists them.")
+    print("Ctrl-C stops early.", flush=True)
+    pending = list(runs)
     failed = False
     try:
         while pending:
-            for protocol, stem in list(pending.items()):
-                if server.wait_for_page(protocol, _POLL_SECONDS):
-                    failed = not _write(server, protocol, out, stem) or failed
-                    del pending[protocol]
+            for run in list(pending):
+                if server.wait_for_page(run.route, _POLL_SECONDS / len(pending), done_path=run.done_path):
+                    failed = not _write(server, run, out) or failed
+                    pending.remove(run)
     except KeyboardInterrupt:
         return 130
     return 1 if failed else 0
 
 
-def _write(server: CaptureServer, protocol: str, out: Path, stem: str) -> bool:
-    """Write a port's recordings. Returns whether they make a complete normal form."""
-    recording = server.recording(protocol)
-    raw_path = out / f"{stem}.raw.json"
+def _quoted(flag: str) -> str:
+    name, separator, value = flag.partition("=")
+    return f'{name}{separator}"{value}"' if " " in value else flag
+
+
+def _runs_form(server: CaptureServer, runs: list[Run]) -> dict[str, list[dict[str, str | list[str]]]]:
+    """Return what a script needs to take a recording session through each run."""
+    return {
+        "runs": [
+            {"name": run.name, "label": run.label, "url": server.start_url(run), "flags": server.chrome_flags(run)}
+            for run in runs
+        ]
+    }
+
+
+def _write(server: CaptureServer, run: Run, out: Path) -> bool:
+    """Write a run's recordings. Returns whether they make a complete normal form."""
+    recording = server.recording(run.route, host=run.host)
+    raw_path = out / f"{run.name}.raw.json"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(json.dumps(raw_form(recording), indent=2) + "\n", encoding="utf-8", newline="\n")
     try:
-        form = normal_form(recording)
+        form = normal_form(recording, run.cases)
     except RecordingError as error:
-        print(f"{protocol}: {error}. See {raw_path}.", file=sys.stderr)
+        print(f"{run.label}: {error}. See {raw_path}.", file=sys.stderr)
         return False
-    path = out / f"{stem}.json"
+    path = out / f"{run.name}.json"
     path.write_text(dumps_normal_form(form), encoding="utf-8", newline="\n")
     requests = form["requests"]
     assert isinstance(requests, dict)
-    missing = [kind.value for kind in RequestKind if kind.value not in requests]
+    missing = [case.name for case in run.cases if case.name not in requests]
     if missing:
-        print(f"{protocol}: no request of kind {', '.join(missing)}. See {raw_path}.", file=sys.stderr)
+        print(f"{run.label}: nothing for {', '.join(missing)}. See {raw_path}.", file=sys.stderr)
         return False
-    print(f"{protocol}: wrote {path}", flush=True)
+    print(f"{run.label}: wrote {path}", flush=True)
     return True
 
 

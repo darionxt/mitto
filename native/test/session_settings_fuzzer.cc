@@ -10,6 +10,8 @@
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "mitto/session_settings.h"
+#include "net/base/host_mapping_rules.h"
+#include "net/base/host_port_pair.h"
 #include "net/http/http_request_headers.h"
 #include "url/scheme_host_port.h"
 
@@ -32,5 +34,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   for (const url::SchemeHostPort& origin : settings->origins_to_force_quic_on) {
     CHECK(origin.IsValid());
   }
+  net::HostMappingRules rules;
+  rules.SetRulesFromString(settings->host_resolver_rules);
+  net::HostPortPair host_port("capture.test", 443);
+  rules.RewriteHost(&host_port);
   return 0;
 }
