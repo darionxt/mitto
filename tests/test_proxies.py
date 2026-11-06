@@ -458,6 +458,20 @@ def test_what_a_socks5_proxy_answers_decides_the_error(
 
 
 @pytest.mark.usefixtures("native_library")
+def test_a_connection_that_breaks_during_the_exchange_with_a_socks5_proxy_keeps_its_own_error() -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN, socks_resets=True)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+        pytest.raises(mitto.ConnectionFailedError) as caught,
+    ):
+        session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert caught.value.name == "ERR_CONNECTION_RESET"
+    assert proxy.socks_logins == []
+
+
+@pytest.mark.usefixtures("native_library")
 def test_a_socks5_proxy_that_fails_the_request_after_the_credentials_is_an_error_of_the_proxy() -> None:
     with (
         serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN, socks_refuses_requests=True)) as proxy,

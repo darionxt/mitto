@@ -8,6 +8,7 @@ import select
 import socket
 import socketserver
 import ssl
+import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,6 +125,11 @@ class _ProxyHandler(socketserver.StreamRequestHandler):
 
     def _choose_socks_method(self, proxy: "LocalProxy", methods: bytes) -> bool:
         """Answer a greeting, take any credentials, and return whether a request may follow."""
+        if proxy.socks_resets:
+            # With no time to linger, closing sends a reset and not an end of file.
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            self.connection.close()
+            return False
         if proxy.socks_method_answer is not None:
             self._send_socks_answer(proxy, proxy.socks_method_answer)
             return False
@@ -179,6 +185,7 @@ class LocalProxy(QuietServer):
         socks_status_answer: The same for what a client sends as credentials.
         socks_splits_answers: Whether what it answers during that part goes out one byte at a time.
         socks_refuses_requests: Whether it answers each SOCKS5 request, which comes after that part, with a refusal.
+        socks_resets: Whether it resets the connection in place of answering a SOCKS5 greeting.
         authorization: What Proxy-Authorization has to hold, or None if it asks for nothing. An empty string takes any.
         challenge: What Proxy-Authenticate holds when it asks.
         challenge_each_host: Whether it asks once for each host, whatever a client sends first.
@@ -198,6 +205,7 @@ class LocalProxy(QuietServer):
         socks_status_answer: bytes | None = None,
         socks_splits_answers: bool = False,
         socks_refuses_requests: bool = False,
+        socks_resets: bool = False,
         authorization: str | None = None,
         challenge: str = BASIC_CHALLENGE,
         challenge_each_host: bool = False,
@@ -209,6 +217,7 @@ class LocalProxy(QuietServer):
         self.socks_status_answer = socks_status_answer
         self.socks_splits_answers = socks_splits_answers
         self.socks_refuses_requests = socks_refuses_requests
+        self.socks_resets = socks_resets
         self.authorization = authorization
         self.challenge = challenge
         self.challenge_each_host = challenge_each_host
