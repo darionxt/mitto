@@ -37,6 +37,7 @@ from tools.parity.replay import run_of, session_settings
 
 _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
+_ERR_SOCKS_CONNECTION_FAILED = -120
 _ERR_PROXY_AUTH_REQUESTED = -127
 _ERR_CERT_AUTHORITY_INVALID = -202
 _ERR_ALPN_NEGOTIATION_FAILED = -122
@@ -48,6 +49,7 @@ _TIMEOUT_SECONDS = 120
 _HOST = "localhost"
 _FETCH_PATH = KIND_PATHS[RequestKind.FETCH]
 _REVALIDATION_PATH = next(case.path for case in CASES if case.name == "revalidation")
+_SOCKS5_LOGIN = (b"user", b"password")
 _STREAM_CASE = next(case for case in CASES if case.name == "fetch_post_stream")
 _STREAM_BODY = "the body of a request"
 
@@ -111,6 +113,70 @@ def test_a_request_through_a_proxy_that_refuses_its_credentials(program: Path) -
     assert result.returncode == 1
     assert f"net error {_ERR_PROXY_AUTH_REQUESTED}" in result.stderr
     assert len(proxy.requests) == 2
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+@pytest.mark.parametrize("splits_answers", [False, True])
+def test_a_request_through_a_socks5_proxy_that_asks_for_credentials(
+    program: Path, protocol: str, splits_answers: bool
+) -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN, socks_splits_answers=splits_answers)) as proxy,
+        CaptureServer() as server,
+    ):
+        settings = {**_settings(server, protocol), "proxy": f"socks5://user:password@127.0.0.1:{proxy.port}"}
+        result = _run(program, server.url(protocol, host=CASE_HOST), settings)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+
+
+def test_a_request_through_a_socks5_proxy_that_refuses_its_credentials(program: Path) -> None:
+    with serving(LocalProxy(socks=True, socks_credentials=(b"user", b"other"))) as proxy, CaptureServer() as server:
+        settings = {**_settings(server, HTTP2), "proxy": f"socks5://user:password@127.0.0.1:{proxy.port}"}
+        result = _run(program, server.url(HTTP2, host=CASE_HOST), settings)
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_PROXY_AUTH_REQUESTED}" in result.stderr
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+
+
+def test_a_request_through_a_socks5_proxy_that_speaks_no_socks(program: Path) -> None:
+    with serving(LocalProxy(socks=True, socks_method_answer=b"HTTP/1.1 400 Bad Request\r\n\r\n")) as proxy:
+        settings: dict[str, object] = {
+            "version": SETTINGS_VERSION,
+            "proxy": f"socks5://user:password@127.0.0.1:{proxy.port}",
+        }
+        result = _run(program, "http://target.test/", settings)
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_SOCKS_CONNECTION_FAILED}" in result.stderr
+    assert proxy.socks_logins == []
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+def test_a_request_around_a_socks5_proxy_with_credentials(program: Path, protocol: str) -> None:
+    with serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy, CaptureServer() as server:
+        settings = {**_settings(server, protocol), "proxy": f"socks5://user:password@127.0.0.1:{proxy.port}"}
+        result = _run(program, server.url(protocol), settings)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+    assert proxy.socks_greetings == []
+
+
+def test_a_timer_that_runs_out_during_the_exchange_with_a_socks5_proxy(program: Path) -> None:
+    # The system accepts the connection, and nothing here reads from it.
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        settings: dict[str, object] = {
+            "version": SETTINGS_VERSION,
+            "proxy": f"socks5://user:password@127.0.0.1:{listener.getsockname()[1]}",
+        }
+        result = _run(program, "http://target.test/", settings, "connect-timeout")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["timed out with ERR_CONNECTION_TIMED_OUT"]
 
 
 def _redirect_url(server: CaptureServer, protocol: str) -> tuple[str, dict[str, object]]:
@@ -501,6 +567,42 @@ def test_a_session_destroyed_during_a_certificate_fetch(program: Path, tmp_path:
 
 def test_a_process_that_exits_during_a_certificate_fetch(program: Path, tmp_path: Path) -> None:
     result = _run_until_told(program, tmp_path, "exit-when-told")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["exiting"]
+
+
+def _run_until_a_socks5_proxy_has_greeted(program: Path, scenario: str) -> subprocess.CompletedProcess[str]:
+    """Run a scenario, tell it to go on once a SOCKS5 greeting has come, and answer nothing, so the exchange is waiting."""
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        settings = {
+            "version": SETTINGS_VERSION,
+            "proxy": f"socks5://user:password@127.0.0.1:{listener.getsockname()[1]}",
+        }
+        args = [program, "http://target.test/", json.dumps(settings), scenario]
+        with subprocess.Popen(
+            args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        ) as process:
+            listener.settimeout(_TIMEOUT_SECONDS)
+            connection, _ = listener.accept()
+            with connection:
+                greeting = connection.recv(16)
+                stdout, stderr = process.communicate("go", timeout=_TIMEOUT_SECONDS)
+
+    assert greeting == b"\x05\x02\x00\x02"
+    assert "Sanitizer" not in stderr, stderr
+    return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+def test_a_session_destroyed_during_the_exchange_with_a_socks5_proxy(program: Path) -> None:
+    result = _run_until_a_socks5_proxy_has_greeted(program, "destroy-session-when-told")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["cancelled"]
+
+
+def test_a_process_that_exits_during_the_exchange_with_a_socks5_proxy(program: Path) -> None:
+    result = _run_until_a_socks5_proxy_has_greeted(program, "exit-when-told")
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["exiting"]

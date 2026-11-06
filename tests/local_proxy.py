@@ -8,6 +8,8 @@ import select
 import socket
 import socketserver
 import ssl
+import struct
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -25,8 +27,13 @@ _BODY = b"answered by the proxy"
 _SOCKS_VERSION = 5
 _SOCKS_CONNECT = 1
 _SOCKS_NO_AUTHENTICATION = 0
+_SOCKS_USERNAME_AND_PASSWORD = 2
+_SOCKS_NO_ACCEPTABLE_METHOD = 0xFF
+_SOCKS_AUTHENTICATION_VERSION = 1
 _SOCKS_NAME = 3
 _SOCKS_SUCCEEDED = b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00"
+_SOCKS_REFUSED = b"\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00"
+_SPLIT_ANSWER_DELAY_SECONDS = 0.01
 
 BASIC_CHALLENGE = 'Basic realm="mitto"'
 DIGEST_CHALLENGE = 'Digest realm="mitto", nonce="abc", qop="auth"'
@@ -101,16 +108,59 @@ class _ProxyHandler(socketserver.StreamRequestHandler):
         proxy = cast("LocalProxy", self.server)
         version, method_count = self.rfile.read(2)
         methods = self.rfile.read(method_count)
+        proxy.socks_greetings.append(bytes((version, method_count)) + methods)
         assert version == _SOCKS_VERSION
-        assert _SOCKS_NO_AUTHENTICATION in methods
-        self.wfile.write(bytes((_SOCKS_VERSION, _SOCKS_NO_AUTHENTICATION)))
+        if not self._choose_socks_method(proxy, methods):
+            return
         version, command, _, address_type = self.rfile.read(4)
         assert (version, command, address_type) == (_SOCKS_VERSION, _SOCKS_CONNECT, _SOCKS_NAME)
         name = self.rfile.read(self.rfile.read(1)[0]).decode()
         port = int.from_bytes(self.rfile.read(2))
         proxy.socks_targets.append(f"{name}:{port}")
+        if proxy.socks_refuses_requests:
+            self.wfile.write(_SOCKS_REFUSED)
+            return
         self.wfile.write(_SOCKS_SUCCEEDED)
         self._tunnel(port)
+
+    def _choose_socks_method(self, proxy: "LocalProxy", methods: bytes) -> bool:
+        """Answer a greeting, take any credentials, and return whether a request may follow."""
+        if proxy.socks_resets:
+            # With no time to linger, closing sends a reset and not an end of file.
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            self.connection.close()
+            return False
+        if proxy.socks_method_answer is not None:
+            self._send_socks_answer(proxy, proxy.socks_method_answer)
+            return False
+        if proxy.socks_credentials is None:
+            assert _SOCKS_NO_AUTHENTICATION in methods
+            self._send_socks_answer(proxy, bytes((_SOCKS_VERSION, _SOCKS_NO_AUTHENTICATION)))
+            return True
+        if _SOCKS_USERNAME_AND_PASSWORD not in methods:
+            self._send_socks_answer(proxy, bytes((_SOCKS_VERSION, _SOCKS_NO_ACCEPTABLE_METHOD)))
+            return False
+        self._send_socks_answer(proxy, bytes((_SOCKS_VERSION, _SOCKS_USERNAME_AND_PASSWORD)))
+
+        version = self.rfile.read(1)[0]
+        username = self.rfile.read(self.rfile.read(1)[0])
+        password = self.rfile.read(self.rfile.read(1)[0])
+        proxy.socks_logins.append((username, password))
+        assert version == _SOCKS_AUTHENTICATION_VERSION
+        if proxy.socks_status_answer is not None:
+            self._send_socks_answer(proxy, proxy.socks_status_answer)
+            return False
+        accepted = (username, password) == proxy.socks_credentials
+        self._send_socks_answer(proxy, bytes((_SOCKS_AUTHENTICATION_VERSION, 0 if accepted else 1)))
+        return accepted
+
+    def _send_socks_answer(self, proxy: "LocalProxy", answer: bytes) -> None:
+        if not proxy.socks_splits_answers:
+            self.wfile.write(answer)
+            return
+        for byte in answer:
+            self.wfile.write(bytes((byte,)))
+            time.sleep(_SPLIT_ANSWER_DELAY_SECONDS)
 
     def _tunnel(self, port: int) -> None:
         with socket.create_connection((_LOOPBACK, port)) as target:
@@ -129,11 +179,20 @@ class LocalProxy(QuietServer):
 
     Attributes:
         socks: Whether it speaks SOCKS5 and not HTTP.
+        socks_credentials: The (username, password) a SOCKS5 client has to give, or None if it needs none.
+        socks_method_answer: What to answer a SOCKS5 greeting with before closing the connection, in place of its own
+            answer, or None to answer properly.
+        socks_status_answer: The same for what a client sends as credentials.
+        socks_splits_answers: Whether what it answers during that part goes out one byte at a time.
+        socks_refuses_requests: Whether it answers each SOCKS5 request, which comes after that part, with a refusal.
+        socks_resets: Whether it resets the connection in place of answering a SOCKS5 greeting.
         authorization: What Proxy-Authorization has to hold, or None if it asks for nothing. An empty string takes any.
         challenge: What Proxy-Authenticate holds when it asks.
         challenge_each_host: Whether it asks once for each host, whatever a client sends first.
         redirects: For a plain HTTP request, the Location to answer each target with. It answers any other with a 200.
         requests: What it has been asked over HTTP.
+        socks_greetings: Each SOCKS5 greeting as it came.
+        socks_logins: The (username, password) that each SOCKS5 client gave.
         socks_targets: The "name:port" of each SOCKS5 tunnel.
     """
 
@@ -141,17 +200,31 @@ class LocalProxy(QuietServer):
         self,
         *,
         socks: bool = False,
+        socks_credentials: tuple[bytes, bytes] | None = None,
+        socks_method_answer: bytes | None = None,
+        socks_status_answer: bytes | None = None,
+        socks_splits_answers: bool = False,
+        socks_refuses_requests: bool = False,
+        socks_resets: bool = False,
         authorization: str | None = None,
         challenge: str = BASIC_CHALLENGE,
         challenge_each_host: bool = False,
     ) -> None:
         super().__init__((_LOOPBACK, 0), _ProxyHandler)
         self.socks = socks
+        self.socks_credentials = socks_credentials
+        self.socks_method_answer = socks_method_answer
+        self.socks_status_answer = socks_status_answer
+        self.socks_splits_answers = socks_splits_answers
+        self.socks_refuses_requests = socks_refuses_requests
+        self.socks_resets = socks_resets
         self.authorization = authorization
         self.challenge = challenge
         self.challenge_each_host = challenge_each_host
         self.redirects: dict[str, str] = {}
         self.requests: list[ProxiedRequest] = []
+        self.socks_greetings: list[bytes] = []
+        self.socks_logins: list[tuple[bytes, bytes]] = []
         self.socks_targets: list[str] = []
         self._hosts_asked: set[str] = set()
 

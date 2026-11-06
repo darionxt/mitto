@@ -96,7 +96,9 @@ typedef struct MittoEvent {
   // (ERR_ABORTED) says that the request was cancelled. A timer from the request's
   // options ends it with -118 (ERR_CONNECTION_TIMED_OUT) or -7 (ERR_TIMED_OUT).
   // A proxy that asks for credentials the Session does not have, or refuses
-  // those it has, ends it with -127 (ERR_PROXY_AUTH_REQUESTED).
+  // those it has, ends it with -127 (ERR_PROXY_AUTH_REQUESTED), except that a
+  // SOCKS5 proxy asking a Session with none ends it with -120
+  // (ERR_SOCKS_CONNECTION_FAILED).
   int32_t net_error;
   // RESPONSE_STARTED: 1 if its body comes from the Session's HTTP cache, also
   // when the server has answered a revalidation with a 304. Otherwise 0.
@@ -181,10 +183,10 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   a proxy that fails is not a reason to go directly. The scheme is "http",
 //   "https" or "socks5", and the port defaults to 80, 443 or 1080. The URL
 //   holds nothing beyond a host and port, but for a username and password,
-//   percent-encoded, which answer the proxy when it asks. "socks5" takes
-//   neither of them, because //net only offers it "no authentication". The
-//   default is to reach each server directly, whatever the system's proxy
-//   settings say.
+//   percent-encoded, which answer the proxy when it asks. For "socks5", which
+//   //net only offers "no authentication", the library answers by RFC 1929, and
+//   each of them may be at most 255 bytes once decoded. The default is to reach
+//   each server directly, whatever the system's proxy settings say.
 // - "http_cache" keeps responses as Chrome's HTTP cache does, split by
 //   top-level site. "memory" keeps them until the Session is destroyed. An
 //   absolute path keeps them in that directory, which is made if it does not
