@@ -157,7 +157,9 @@ def test_a_baseline_of_a_chrome_release_with_no_persona_cannot_be_recorded() -> 
 
 def test_a_request_without_a_response_is_one_gap() -> None:
     def refused(baseline: Baseline) -> dict[str, Json]:
-        raise RequestError(f"https://capture.localhost/{baseline.protocol}/{baseline.kind}", -102)
+        raise RequestError(
+            f"https://capture.localhost/{baseline.protocol}/{baseline.kind}", -102, "GET", "ERR_CONNECTION_REFUSED"
+        )
 
     baseline = Baseline("157", RequestKind.FETCH, "h3", {"protocol": "h3", "tls": {}})
 

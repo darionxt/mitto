@@ -82,7 +82,8 @@ typedef struct MittoEvent {
   int32_t status;
   // FINISHED: 0 if the whole body was read, otherwise a negative Chromium net
   // error code. An HTTP error status such as 404 is not a net error. -3
-  // (ERR_ABORTED) says that the request was cancelled.
+  // (ERR_ABORTED) says that the request was cancelled. A timer from the request's
+  // options ends it with -118 (ERR_CONNECTION_TIMED_OUT) or -7 (ERR_TIMED_OUT).
   int32_t net_error;
   // RESPONSE_STARTED: the protocol it arrived over, for example "http/1.1" or
   // "h2".
@@ -100,6 +101,12 @@ typedef struct MittoEvent {
 // Returns the ABI version of the loaded library. Callers compare it with the
 // version they were written for before making any other call.
 MITTO_EXPORT uint32_t mitto_abi_version(void);
+
+// Returns the name of a Chromium net error code, as the Engine Release spells it:
+// "ERR_NAME_NOT_RESOLVED" for -105, "OK" for 0 and "ERR_<unknown>" for a value
+// that has no name. May be called from any thread, with no Session. The string is
+// NUL-terminated and lasts as long as the process, so the caller does not free it.
+MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 
 // Creates a Session. May be called from any thread. The first call in a process
 // also waits for the system's DNS settings, for up to a second, so that the
@@ -205,7 +212,10 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //     "method": "GET",
 //     "priority": 2,
 //     "priority_incremental": true,
-//     "referrer": "https://example.com/"
+//     "referrer": "https://example.com/",
+//     "connect_timeout_ms": 5000,
+//     "read_timeout_ms": 5000,
+//     "total_timeout_ms": 30000
 //   }
 //
 // - "version" is required and must be MITTO_REQUEST_OPTIONS_VERSION.
@@ -220,6 +230,22 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   `headers` and before the headers it adds, and leaves out any username,
 //   password and fragment. A URL that //net cannot send as a referrer, such as
 //   one that is not valid, is refused. The default is to send none.
+// - "connect_timeout_ms" limits the time from the start of the request, or from a
+//   redirect, until net::URLRequest::Delegate::OnConnected() runs: the name is
+//   resolved, a connection is free and any proxy tunnel and TLS handshake are
+//   done. Past it, the request finishes with ERR_CONNECTION_TIMED_OUT.
+// - "read_timeout_ms" limits each wait for bytes from the server. One wait runs
+//   from OnConnected() until the headers have arrived, which //net does not report
+//   a byte at a time. Others run while mitto_request_read() has asked for body
+//   bytes that have not come, so a caller who does not read never hits it. Bytes
+//   that a content decoder holds back still count as arriving, which can stretch
+//   a wait to almost twice the limit. Past it, the request finishes with
+//   ERR_TIMED_OUT.
+// - "total_timeout_ms" limits the time from the start of the request to its end,
+//   over all its redirects and however fast the caller reads. Past it, the request
+//   finishes with ERR_TIMED_OUT.
+// - Each timer takes a positive number of milliseconds up to 2147483647. The
+//   default is no timer, which leaves only the limits that //net has of its own.
 //
 // An unknown key or an invalid value is refused, so a mistake cannot go
 // unnoticed.

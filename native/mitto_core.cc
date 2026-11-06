@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "base/at_exit.h"
+#include "base/byte_size.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
@@ -43,11 +44,13 @@
 #include "mitto/session_settings.h"
 #include "mitto/ssl_config_service_mojo.h"
 #include "mitto/stub_resolver_config_reader.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
+#include "net/base/transport_info.h"
 #include "net/cert/cert_verifier.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
@@ -187,6 +190,13 @@ class RequestJob final : public net::URLRequest::Delegate {
     request_->SetExtraRequestHeaders(request_headers_);
     request_->SetPriorityIncremental(options_.priority_incremental);
     request_->SetReferrer(options_.referrer.spec());
+    if (options_.total_timeout) {
+      total_timer_.Start(FROM_HERE, *options_.total_timeout,
+                         base::BindOnce(&RequestJob::Finish,
+                                        base::Unretained(this),
+                                        net::ERR_TIMED_OUT));
+    }
+    StartConnectTimer();
     request_->Start();
   }
 
@@ -199,17 +209,30 @@ class RequestJob final : public net::URLRequest::Delegate {
     }
     const int result =
         request_->Read(channel_->read_buffer(), RequestChannel::kReadBufferSize);
-    if (result != net::ERR_IO_PENDING) {
-      OnReadCompleted(request_.get(), result);
+    if (result == net::ERR_IO_PENDING) {
+      StartReadTimer();
+      return;
     }
+    OnReadCompleted(request_.get(), result);
   }
 
   void Cancel() { Finish(net::ERR_ABORTED); }
 
   // net::URLRequest::Delegate:
+  int OnConnected(net::URLRequest* request,
+                  const net::TransportInfo& info,
+                  net::CompletionOnceCallback callback) override {
+    connect_timer_.Stop();
+    StartReadTimer();
+    return net::OK;
+  }
+
   void OnReceivedRedirect(net::URLRequest* request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override {
+    // The next hop has its own connection to get.
+    read_timer_.Stop();
+    StartConnectTimer();
     RequestEvent event;
     event.type = MITTO_EVENT_REDIRECT_FOLLOWED;
     event.status = redirect_info.status_code;
@@ -232,6 +255,9 @@ class RequestJob final : public net::URLRequest::Delegate {
       Finish(net_error);
       return;
     }
+    // A response from a cache comes with no connection.
+    connect_timer_.Stop();
+    read_timer_.Stop();
     RequestEvent event;
     event.type = MITTO_EVENT_RESPONSE_STARTED;
     event.status = request->GetResponseCode();
@@ -249,6 +275,7 @@ class RequestJob final : public net::URLRequest::Delegate {
   }
 
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override {
+    read_timer_.Stop();
     if (bytes_read <= 0) {
       Finish(bytes_read);
       return;
@@ -258,6 +285,35 @@ class RequestJob final : public net::URLRequest::Delegate {
   }
 
  private:
+  void StartConnectTimer() {
+    if (options_.connect_timeout) {
+      connect_timer_.Start(FROM_HERE, *options_.connect_timeout,
+                           base::BindOnce(&RequestJob::Finish,
+                                          base::Unretained(this),
+                                          net::ERR_CONNECTION_TIMED_OUT));
+    }
+  }
+
+  void StartReadTimer() {
+    if (options_.read_timeout) {
+      received_bytes_at_read_timer_start_ = request_->GetTotalReceivedBytes();
+      read_timer_.Start(FROM_HERE, *options_.read_timeout,
+                        base::BindOnce(&RequestJob::OnReadTimerFired,
+                                       base::Unretained(this)));
+    }
+  }
+
+  void OnReadTimerFired() {
+    // A content decoder can take bytes and give nothing back yet, and then //net
+    // does not complete the read, although the server is still sending.
+    if (request_->GetTotalReceivedBytes() !=
+        received_bytes_at_read_timer_start_) {
+      StartReadTimer();
+      return;
+    }
+    Finish(net::ERR_TIMED_OUT);
+  }
+
   // `result` is net::OK when the body ended, otherwise a net error. This deletes
   // the job, so nothing may touch it afterwards.
   void Finish(int result) {
@@ -277,6 +333,10 @@ class RequestJob final : public net::URLRequest::Delegate {
   std::unique_ptr<net::URLRequest> request_;
   bool response_started_ = false;
   bool read_wanted_ = false;
+  base::OneShotTimer connect_timer_;
+  base::OneShotTimer read_timer_;
+  base::OneShotTimer total_timer_;
+  base::ByteSize received_bytes_at_read_timer_start_;
   base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};
 };
 
@@ -524,6 +584,22 @@ extern "C" {
 
 uint32_t mitto_abi_version(void) {
   return MITTO_ABI_VERSION;
+}
+
+const char* mitto_net_error_name(int32_t net_error) {
+  // The list and not net::ErrorToShortString(), which reports an unknown value
+  // as a bug in //net. Here it comes from outside the library.
+  switch (net_error) {
+    case net::OK:
+      return "OK";
+#define NET_ERROR(label, value) \
+  case net::ERR_##label:        \
+    return "ERR_" #label;
+#include "net/base/net_error_list.h"
+#undef NET_ERROR
+    default:
+      return "ERR_<unknown>";
+  }
 }
 
 int32_t mitto_session_create(const char* settings,

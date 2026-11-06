@@ -25,6 +25,7 @@ HEADER = Path(__file__).parents[1] / "native" / "include" / "mitto" / "mitto.h"
 COMPLETE_STUB = """
 #include <stdint.h>
 uint32_t mitto_abi_version(void) {{ return {abi_version}; }}
+const char* mitto_net_error_name(int32_t net_error) {{ return "ERR_STUB"; }}
 int32_t mitto_session_create(const char* settings, unsigned long size, void** session) {{ return -2; }}
 void mitto_session_destroy(void* session) {{}}
 int32_t mitto_session_event_fd(void* session, int32_t* fd) {{ return -2; }}

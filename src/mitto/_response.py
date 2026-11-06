@@ -5,11 +5,15 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from mitto._errors import MittoError
 from mitto._native import NativeResponse
 
-__all__ = ["Headers", "Response", "to_response"]
+__all__ = ["HTTPStatusError", "Headers", "Response", "to_response"]
 
 _DEFAULT_CHARSET = "utf-8"
+
+# The first HTTP status code that says the request failed.
+_FIRST_ERROR_STATUS = 400
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,35 @@ class Response:
             ValueError: If the body is not JSON. json.JSONDecodeError and UnicodeDecodeError are both ValueErrors.
         """
         return json.loads(self.content)
+
+    def raise_for_status(self) -> None:
+        """Do nothing, unless the status says that the request failed.
+
+        Raises:
+            HTTPStatusError: If the status is 400 or above.
+        """
+        if self.status >= _FIRST_ERROR_STATUS:
+            raise HTTPStatusError(self)
+
+
+class HTTPStatusError(MittoError):
+    """A response's status says that the request failed, as raised by Response.raise_for_status().
+
+    Attributes:
+        response: The response, whose status and URL are here too.
+        status: The HTTP status code.
+        url: The final URL, after redirects.
+    """
+
+    def __init__(self, response: Response) -> None:
+        # Exception pickles its args, so they have to be what __init__ takes.
+        super().__init__(response)
+        self.response = response
+        self.status = response.status
+        self.url = response.url
+
+    def __str__(self) -> str:
+        return f"status {self.status} from {self.url}"
 
 
 def to_response(native: NativeResponse) -> Response:

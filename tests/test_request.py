@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 
 from mitto._persona import WINDOWS_PERSONAS, Persona, RequestKind, load_persona
 from mitto._request import build_request, encode_query
+from mitto._timeout import Timeout
 
 URL = "https://example.test:8444/any/path"
 ORIGIN_ROOT = "https://example.test:8444/"
@@ -30,6 +31,7 @@ def test_a_request_of_a_kind_is_what_the_persona_sends_for_that_kind(persona: Pe
     assert build_request(persona, "GET", URL, kind=kind) == {
         "url": URL,
         "method": "GET",
+        "timeout": Timeout(),
         **persona.request_defaults(kind, URL),
     }
 
@@ -267,9 +269,24 @@ def test_building_leaves_the_callers_headers_alone() -> None:
 def test_a_built_request_needs_no_argument_but_the_method_and_url() -> None:
     built = build_request(ENGINE_PERSONA, "POST", URL)
 
-    assert sorted(built) == ["headers", "method", "priority", "priority_incremental", "referrer", "url"]
+    assert sorted(built) == ["headers", "method", "priority", "priority_incremental", "referrer", "timeout", "url"]
 
 
 def test_an_unknown_argument_is_refused() -> None:
-    with pytest.raises(TypeError, match="timeout"):
-        build_request(ENGINE_PERSONA, "GET", URL, timeout=1)  # pyright: ignore[reportCallIssue]
+    with pytest.raises(TypeError, match="retries"):
+        build_request(ENGINE_PERSONA, "GET", URL, retries=1)  # pyright: ignore[reportCallIssue]
+
+
+def test_no_timeout_runs_no_timer() -> None:
+    assert build_request(ENGINE_PERSONA, "GET", URL)["timeout"] == Timeout()
+    assert build_request(ENGINE_PERSONA, "GET", URL, timeout=None)["timeout"] == Timeout()
+
+
+def test_a_number_as_timeout_is_the_total_time() -> None:
+    assert build_request(ENGINE_PERSONA, "GET", URL, timeout=2.5)["timeout"] == Timeout(total=2.5)
+
+
+def test_a_timeout_stays_as_it_is() -> None:
+    timeout = Timeout(connect=1, read=2, total=3)
+
+    assert build_request(ENGINE_PERSONA, "GET", URL, timeout=timeout)["timeout"] is timeout
