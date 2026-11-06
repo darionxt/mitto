@@ -144,7 +144,7 @@ def test_the_persona_says_which_chrome_it_presents(release: str) -> None:
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
 @pytest.mark.parametrize("kind", RequestKind)
 def test_the_user_agent_is_the_one_of_every_request_kind(release: str, kind: RequestKind) -> None:
-    headers = dict(PERSONAS[release].request_defaults(kind, _ANY_URL)["headers"])
+    headers = dict(PERSONAS[release].request_defaults(kind)["headers"])
 
     assert headers["User-Agent"] == PERSONAS[release].user_agent
 
