@@ -711,3 +711,25 @@ def test_the_environment_of_a_build_has_no_depot_tools(monkeypatch: pytest.Monke
 
     assert env["PATH"].split(os.pathsep) == ["/usr/bin", "/w/depot_tools_not"]
     assert "PYTHONPATH" not in env
+
+
+def test_a_build_config_adds_to_the_args_of_the_plain_build(tmp_path: Path) -> None:
+    export.write_args(export.ASAN, tmp_path)
+
+    assert (tmp_path / "args.gn").read_text() == export.ARGS_GN.read_text() + export.ASAN.args
+    assert "is_asan = true" in export.ASAN.args
+
+
+def test_the_plain_build_has_only_the_args_of_the_plain_build(tmp_path: Path) -> None:
+    export.write_args(export.PLAIN, tmp_path)
+
+    assert (tmp_path / "args.gn").read_text() == export.ARGS_GN.read_text()
+
+
+def test_a_build_that_this_host_has_not_traced_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(export, "current_host", lambda: export.MAC)
+
+    with pytest.raises(export.ExportError, match="asan"):
+        export.build_from_export(tmp_path / "new", None, export.ASAN)
+
+    assert not (tmp_path / "new").exists()

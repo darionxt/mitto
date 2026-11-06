@@ -2,6 +2,8 @@
 # in include/mitto/mitto.h. tools/workspace/bootstrap links this directory into
 # the Chromium checkout as //mitto.
 
+import("//build/config/sanitizers/sanitizers.gni")
+
 config("public_api") {
   include_dirs = [ "include" ]
 }
@@ -69,9 +71,35 @@ executable("mitto_core_test") {
   }
 }
 
+# Only the fuzz build loads this, so that no other build reads //testing.
+if (use_libfuzzer) {
+  import("//testing/libfuzzer/fuzzer_test.gni")
+
+  fuzzer_test("session_settings_fuzzer") {
+    # The parser and not the library, whose exports list hides everything but the
+    # C API.
+    sources = [
+      "ignore_errors_cert_verifier.h",
+      "session_settings.cc",
+      "session_settings.h",
+      "test/session_settings_fuzzer.cc",
+    ]
+    additional_configs = [ ":public_api" ]
+    deps = [
+      "//base",
+      "//net",
+      "//url",
+    ]
+  }
+}
+
 group("mitto") {
+  testonly = use_libfuzzer
   deps = [
     ":mitto_core",
     ":mitto_core_test",
   ]
+  if (use_libfuzzer) {
+    deps += [ ":session_settings_fuzzer" ]
+  }
 }

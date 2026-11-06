@@ -109,12 +109,32 @@ class CipdPackage:
 
 
 @dataclasses.dataclass(frozen=True)
+class BuildConfig:
+    """A way to build the native core: GN args on top of args.gn, in a build directory of its own."""
+
+    name: str
+    args: str = ""
+
+
+# The build that ships.
+PLAIN = BuildConfig("mitto")
+ASAN = BuildConfig("asan", "is_asan = true\nis_lsan = true\n")
+UBSAN = BuildConfig("ubsan", "is_ubsan = true\nis_ubsan_no_recover = true\n")
+# The fuzz target has a build of its own, because Chromium's fuzzing builds define
+# FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION, which changes BoringSSL's random numbers
+# among other things. Its owners files would ask git, and an export has no git.
+FUZZ = BuildConfig("fuzz", "is_asan = true\nuse_libfuzzer = true\ngenerate_fuzzer_owners = false\n")
+CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ)
+
+
+@dataclasses.dataclass(frozen=True)
 class Host:
     name: str
     gn: str
     cipd_platform: str
     packages: tuple[GcsPackage | CipdPackage, ...]
     library: str
+    configs: tuple[BuildConfig, ...]
 
     @property
     def cipd_arch(self) -> str:
@@ -135,6 +155,7 @@ LINUX = Host(
         CipdPackage("third_party/cpython3/host"),
     ),
     library="libmitto_core.so",
+    configs=CONFIGS,
 )
 MAC = Host(
     name="mac",
@@ -149,6 +170,7 @@ MAC = Host(
         CipdPackage("third_party/cpython3/host"),
     ),
     library="libmitto_core.dylib",
+    configs=(PLAIN,),
 )
 HOSTS = (LINUX, MAC)
 
@@ -516,13 +538,17 @@ def check_checkout(src: Path) -> None:
         die(f"{src / 'mitto'} differs from {NATIVE}; rerun tools/workspace/bootstrap from this repository")
 
 
-def traced_build(src: Path, host: Host, build_dir: Path, trace_dir: Path) -> None:
+def write_args(config: BuildConfig, build_dir: Path) -> None:
+    (build_dir / "args.gn").write_text(ARGS_GN.read_text() + config.args)
+
+
+def traced_build(src: Path, host: Host, config: BuildConfig, build_dir: Path, trace_dir: Path) -> None:
     """Builds the native core from nothing, so that every file it needs gets read."""
     site = trace_dir / "site"
-    site.mkdir()
-    (site / "sitecustomize.py").write_text(TRACE_HOOK)
     logs = trace_dir / "logs"
-    logs.mkdir()
+    site.mkdir(exist_ok=True)
+    (site / "sitecustomize.py").write_text(TRACE_HOOK)
+    logs.mkdir(exist_ok=True)
     env = build_environment()
     env |= {
         "MITTO_EXPORT_TRACE": str(logs),
@@ -534,9 +560,9 @@ def traced_build(src: Path, host: Host, build_dir: Path, trace_dir: Path) -> Non
     }
     shutil.rmtree(build_dir, ignore_errors=True)
     build_dir.mkdir(parents=True)
-    shutil.copy(ARGS_GN, build_dir / "args.gn")
+    write_args(config, build_dir)
     relative = build_dir.relative_to(src)
-    note("generating the traced build")
+    note(f"generating the traced {config.name} build")
     check_call([src / host.gn, "gen", relative, *GN_ROOT, "--ide=json"], cwd=src, env=env)
     note("building; a first build takes minutes")
     check_call([src / "third_party/ninja/ninja", "-C", relative, "mitto"], cwd=src, env=env)
@@ -607,13 +633,19 @@ def copy_files(src: Path, paths: Iterable[str], destination: Path) -> None:
 def make_slice(workspace: Path, tag: str, host: Host) -> Path:
     src = checkout_of(workspace, tag)
     check_checkout(src)
-    build_dir = src / "out" / "export-trace"
     destination = export_dir(workspace, tag) / host.name
+    used: set[str] = set()
+    libraries: dict[str, str] = {}
     with tempfile.TemporaryDirectory(dir=workspace) as temporary:
         trace_dir = Path(temporary)
-        traced_build(src, host, build_dir, trace_dir)
-        paths = files_to_keep(src, paths_used_by_build(src, build_dir, trace_dir / "logs"))
-    fingerprint = library_fingerprint(build_dir / host.library)
+        for config in host.configs:
+            build_dir = src / "out" / f"export-trace-{config.name}"
+            traced_build(src, host, config, build_dir, trace_dir)
+            used |= paths_used_by_build(src, build_dir, trace_dir / "logs")
+            libraries[config.name] = library_fingerprint(build_dir / host.library)
+            note(f"{config.name} {host.library}: fingerprint {libraries[config.name]}")
+            shutil.rmtree(build_dir)
+    paths = files_to_keep(src, used)
     shutil.rmtree(destination, ignore_errors=True)
     copy_files(src, paths, destination / "src")
     size = sum((destination / "src" / path).lstat().st_size for path in paths)
@@ -624,15 +656,13 @@ def make_slice(workspace: Path, tag: str, host: Host) -> Path:
                 "host": host.name,
                 "commit_time": int(output_of(["git", "-C", src, "log", "-1", "--format=%ct"]).strip()),
                 "patches": {patch.name: sha256_of(patch) for patch in sorted(PATCHES.glob("*.patch"))},
-                "library": fingerprint,
+                "libraries": libraries,
             },
             indent=2,
         )
         + "\n"
     )
-    shutil.rmtree(build_dir)
     note(f"{destination}: {len(paths)} files, {human_size(size)}")
-    note(f"{host.library}: fingerprint {fingerprint}")
     return destination
 
 
@@ -816,7 +846,7 @@ def make_archive(workspace: Path, tag: str) -> Path:
     metadata = {
         "chromium_tag": tag,
         "patches": patches,
-        "traced_library": {info["host"]: info["library"] for info in infos},
+        "traced_libraries": {info["host"]: info["libraries"] for info in infos},
         "toolchain": {host.name: toolchain_pins(deps, host, resolve) for host in HOSTS},
     }
     extras = {
@@ -930,9 +960,11 @@ def unpack_export(archive: Path, checkout: Path) -> None:
         unpacked.rename(checkout)
 
 
-def build_from_export(directory: Path, archive: Path | None) -> Path:
+def build_from_export(directory: Path, archive: Path | None, config: BuildConfig = PLAIN) -> Path:
     tag = read_tag()
     host = current_host()
+    if config not in host.configs:
+        die(f"the {config.name} build is only traced on other Hosts, so the export may lack its files here")
     directory.mkdir(parents=True, exist_ok=True)
     directory = directory.resolve()
     if re.search(r"\s", str(directory)):
@@ -950,15 +982,16 @@ def build_from_export(directory: Path, archive: Path | None) -> Path:
     link = src / "mitto"
     link.unlink(missing_ok=True)
     link.symlink_to(NATIVE)
-    build_dir = src / "out" / "mitto"
+    relative = Path("out") / config.name
+    build_dir = src / relative
     build_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(ARGS_GN, build_dir / "args.gn")
+    write_args(config, build_dir)
 
     env = build_environment()
-    check_call([src / host.gn, "gen", "out/mitto", *GN_ROOT], cwd=src, env=env)
-    check_call([src / "third_party/ninja/ninja", "-C", "out/mitto", "mitto"], cwd=src, env=env)
+    check_call([src / host.gn, "gen", relative, *GN_ROOT], cwd=src, env=env)
+    check_call([src / "third_party/ninja/ninja", "-C", relative, "mitto"], cwd=src, env=env)
     library = build_dir / host.library
-    if library_fingerprint(library) == metadata["traced_library"][host.name]:
+    if library_fingerprint(library) == metadata["traced_libraries"][host.name][config.name]:
         note("the library is the same as the one the slice of this export built")
     else:
         note("the library differs from the one the slice of this export built, as it should once native/ has changed")
@@ -974,6 +1007,9 @@ def main() -> int:
     build = commands.add_parser("build", help="build the native core from the export")
     build.add_argument("directory", type=Path, help="where to unpack and build")
     build.add_argument("--archive", type=Path, help="a local archive, instead of the published export")
+    build.add_argument(
+        "--config", choices=[config.name for config in CONFIGS], default=PLAIN.name, help="what kind of build to make"
+    )
     arguments = parser.parse_args()
     try:
         match arguments.command:
@@ -982,7 +1018,8 @@ def main() -> int:
             case "merge":
                 make_archive(workspace_dir(), read_tag())
             case _:
-                build_from_export(arguments.directory, arguments.archive)
+                config = next(config for config in CONFIGS if config.name == arguments.config)
+                build_from_export(arguments.directory, arguments.archive, config)
     except ExportError as error:
         print(f"export: error: {error}", file=sys.stderr)
         return 1

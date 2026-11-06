@@ -1,0 +1,101 @@
+name: Sanitizers
+
+# Not a required check, because it does not run on every pull request.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/sanitizers.yml
+      - native/**
+      - tests/test_core_test_program.py
+      - tools/workspace/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/sanitizers.yml
+      - native/**
+      - tests/test_core_test_program.py
+      - tools/workspace/**
+  # A build that has not changed comes from the cache, so that a scheduled run
+  # costs little more than the fuzzing, which finds something new each time.
+  schedule:
+    - cron: "23 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native core, ${{ matrix.config }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # What the job runs, and the libraries that each of those loads.
+          - config: asan
+            files: mitto_core_test libmitto_core.so libsanitizer_shared_hooks.so
+          - config: ubsan
+            files: mitto_core_test libmitto_core.so
+          - config: fuzz
+            files: session_settings_fuzzer libsanitizer_shared_hooks.so
+    env:
+      UV_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      # tools/workspace holds the pin of the source export, and this file the list of
+      # what is cached, so this key covers both.
+      - id: cached-build
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/native-core
+          key: native-core-${{ matrix.config }}-${{ hashFiles('.github/workflows/sanitizers.yml', 'native/**', 'tools/workspace/**') }}
+      - name: Build the native core
+        if: steps.cached-build.outputs.cache-hit != 'true'
+        env:
+          CONFIG: ${{ matrix.config }}
+          FILES: ${{ matrix.files }}
+        run: |
+          set -o pipefail
+          uv run tools/workspace/export.py build "$RUNNER_TEMP/export" --config "$CONFIG" | tee "$RUNNER_TEMP/build.log"
+          build_dir="$(dirname "$(tail -n 1 "$RUNNER_TEMP/build.log")")"
+          mkdir "$RUNNER_TEMP/native-core"
+          for file in $FILES; do
+            cp "$build_dir/$file" "$RUNNER_TEMP/native-core"
+          done
+          # Without this a report names no source lines, and the toolchain is not cached.
+          cp "$build_dir/../../third_party/llvm-build/Release+Asserts/bin/llvm-symbolizer" "$RUNNER_TEMP/native-core"
+      # Before the tests, so that a test that fails does not waste the build.
+      - if: steps.cached-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/native-core
+          key: ${{ steps.cached-build.outputs.cache-primary-key }}
+      - name: Run the C test program against a local server
+        if: matrix.config != 'fuzz'
+        run: uv run pytest tests/test_core_test_program.py -rs
+        env:
+          MITTO_CORE_TEST: ${{ runner.temp }}/native-core/mitto_core_test
+          ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+          UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+      - name: Fuzz the code that reads a Session's settings
+        if: matrix.config == 'fuzz'
+        run: |
+          mkdir "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/crashes"
+          "$RUNNER_TEMP/native-core/session_settings_fuzzer" \
+            -max_total_time=300 \
+            -dict=native/test/session_settings_fuzzer.dict \
+            -artifact_prefix="$RUNNER_TEMP/crashes/" \
+            "$RUNNER_TEMP/corpus" native/test/session_settings_corpus
+        env:
+          ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+      # A run is random, so the input that crashed it is the only way to repeat it.
+      - if: failure() && matrix.config == 'fuzz'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: session-settings-fuzzer-crashes
+          path: ${{ runner.temp }}/crashes
+          if-no-files-found: ignore
