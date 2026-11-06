@@ -44,7 +44,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `fetch_post_stream` | `POST` with no body | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
 | `cookie` | `/case/cookie-set`, then the case's path | Keep a cookie, so `Cookie` is a gap in that one line, because a case counts a request without what it should carry when none has it |
 | `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |
-| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop. Wait before it follows a redirect, so over HTTP/2 every hop but the last has `RST_STREAM` in `later_frames`: `//net` cancels the stream before it has read that the stream ended, where Chrome follows the redirect later |
+| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop. Wait before it follows a redirect, so over HTTP/2 every hop but the last usually has `RST_STREAM` in `later_frames`, where Chrome follows the redirect later and has none ([why only usually](#the-known-gaps-list)) |
 | `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
 | `proxy_connect`, `proxy_navigation` | Nothing | Use a proxy, so each is [one gap](#gaps) in the field `request` |
 
@@ -82,6 +82,8 @@ A request that gets no response has nothing to compare. It is one gap in the fie
 A run fails on a gap that is not in the list and on a gap in the list that no longer exists. A gap whose value has changed counts as both, so the list always says exactly how mitto differs from the Baselines.
 
 There is one list for both **Hosts**, because a Wire Fingerprint must not depend on the Host. A gap on only one Host fails the run on the other.
+
+One gap comes and goes on any Host, so a run accepts it whichever way it went: a redirect hop whose `later_frames` is one `RST_STREAM` with the error `CANCEL`. The native core follows a redirect at once, from inside the callback that `//net` runs when the response headers arrive, and `//net` cancels the stream because it has not read the frame's end of stream yet. If the response arrived before `//net` asked for it, the stream has already ended and nothing is cancelled, which happened in about one replay in 600 on a loaded machine. So the list has this line for each such hop, and writing the list again can lose one, which needs no attention. When the native core no longer follows a redirect from inside that callback, these lines should go for good, and `_depends_on_timing()` in `tools/parity/gaps.py` with them.
 
 To write the list again from what the native core does now:
 

@@ -10,7 +10,15 @@ from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, Case, Run
 from tools.capture.cases import PROXY_CONNECT
 from tools.capture.http1 import Http1Request
 from tools.capture.recording import ConnectionRecord, Json, Recording
-from tools.parity import BASELINES_DIRECTORY, KNOWN_GAPS_FILE_NAME, Baseline, Gap, find_gaps, loads_known_gaps
+from tools.parity import (
+    BASELINES_DIRECTORY,
+    KNOWN_GAPS_FILE_NAME,
+    Baseline,
+    Gap,
+    find_gaps,
+    loads_known_gaps,
+    mismatches,
+)
 from tools.parity.check import as_recorded, record
 from tools.parity.replay import REPLAYS, can_reach, protocol_of, run_of
 
@@ -154,4 +162,4 @@ def test_a_replay_goes_to_the_path_of_its_case_and_shows_no_gaps_against_itself(
         assert case.path in str(recorded["request"]), case.name
         baselines.append(Baseline(_RELEASE, case.name, protocol, recorded))
 
-    assert find_gaps(baselines) == []
+    assert not mismatches(find_gaps(baselines), [])

@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tools.capture.recording import Json
 from tools.parity import Gap, KnownGapsError, dumps_known_gaps, loads_known_gaps, mismatches
 
 GAP = Gap("157", "navigation", "h2", "tls.cipher_suites", ["A", "B"], ["A"])
@@ -71,6 +72,33 @@ def test_a_gap_whose_value_changed_is_both() -> None:
 
     assert found.unlisted == [changed]
     assert found.gone == [GAP]
+
+
+CANCEL: list[Json] = [{"type": "RST_STREAM", "flags": [], "payload": "00000008"}]
+REDIRECT_CANCEL = Gap("157", "redirect_fetch_1", "h2", "request.later_frames", None, CANCEL)
+
+
+def test_a_cancelled_redirect_stream_that_is_listed_may_not_come() -> None:
+    assert not mismatches([], [REDIRECT_CANCEL])
+
+
+def test_a_cancelled_redirect_stream_that_is_not_listed_may_come() -> None:
+    assert not mismatches([REDIRECT_CANCEL], [])
+
+
+@pytest.mark.parametrize(
+    "gap",
+    [
+        Gap("157", "navigation", "h2", "request.later_frames", None, CANCEL),
+        Gap("157", "redirect_fetch_1", "h2", "request.later_frames", None, [*CANCEL, *CANCEL]),
+        Gap("157", "redirect_fetch_1", "h2", "request.later_frames", None, [{"type": "RST_STREAM", "payload": "0"}]),
+        Gap("157", "redirect_fetch_1", "h2", "request.flags", None, CANCEL),
+    ],
+    ids=["another case", "another frame as well", "another error", "another field"],
+)
+def test_only_a_cancelled_redirect_stream_may_come_and_go(gap: Gap) -> None:
+    assert mismatches([gap], []).unlisted == [gap]
+    assert mismatches([], [gap]).gone == [gap]
 
 
 def test_the_key_order_inside_a_value_does_not_matter() -> None:
