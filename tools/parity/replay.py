@@ -13,6 +13,7 @@ from tools.capture import (
     CASES,
     COOKIE_SET_PATH,
     CROSS_SITE_HOST,
+    FORMS_PATH,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -21,6 +22,7 @@ from tools.capture import (
     PROXIED_HTTP2,
     RUNS,
     SAME_SITE_HOST,
+    START_PATH,
     CaptureServer,
     RequestKind,
     Run,
@@ -43,6 +45,9 @@ class Replay:
             chain for a later hop, and what goes through a tunnel for what opens the tunnel.
         before: The paths to ask for first, on the same Session and with the same kind.
         body: What makes the body, from what the page's form or script gives Chrome in tools/capture/cases.py.
+        page: The path of the page the request came from in tools/capture/cases.py, or nothing for what a request with no
+            Initiator is.
+        page_host: The name of that page, or nothing for the name the case's run starts at.
     """
 
     kind: RequestKind
@@ -51,10 +56,12 @@ class Replay:
     start: str | None = None
     before: tuple[str, ...] = ()
     body: BodyOptions = field(default_factory=BodyOptions)
+    page: str | None = None
+    page_host: str | None = None
 
 
-def _hops(prefix: str, kind: RequestKind) -> dict[str, Replay]:
-    return {f"{prefix}_{hop}": Replay(kind, start=f"{prefix}_1") for hop in range(1, 5)}
+def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
+    return {f"{prefix}_{hop}": Replay(kind, start=f"{prefix}_1", page=page) for hop in range(1, 5)}
 
 
 REPLAYS = {
@@ -62,11 +69,18 @@ REPLAYS = {
     RequestKind.FETCH.value: Replay(RequestKind.FETCH),
     RequestKind.SCRIPT.value: Replay(RequestKind.SCRIPT),
     RequestKind.IMAGE.value: Replay(RequestKind.IMAGE),
-    "navigation_link_same_origin": Replay(RequestKind.NAVIGATION),
-    "navigation_link_same_site": Replay(RequestKind.NAVIGATION, host=SAME_SITE_HOST),
-    "navigation_link_cross_site": Replay(RequestKind.NAVIGATION, host=CROSS_SITE_HOST),
+    "navigation_link_same_origin": Replay(RequestKind.NAVIGATION, page=START_PATH),
+    "navigation_link_same_site": Replay(
+        RequestKind.NAVIGATION, host=SAME_SITE_HOST, page=_PATHS["navigation_link_same_origin"]
+    ),
+    "navigation_link_cross_site": Replay(
+        RequestKind.NAVIGATION,
+        host=CROSS_SITE_HOST,
+        page=_PATHS["navigation_link_same_site"],
+        page_host=SAME_SITE_HOST,
+    ),
     "navigation_form_urlencoded": Replay(
-        RequestKind.NAVIGATION, _POST, body={"data": {"name": "mitto", "a b&c": "d e&f+g"}}
+        RequestKind.NAVIGATION, _POST, body={"data": {"name": "mitto", "a b&c": "d e&f+g"}}, page=FORMS_PATH
     ),
     "navigation_form_multipart": Replay(
         RequestKind.NAVIGATION,
@@ -75,25 +89,26 @@ REPLAYS = {
             "data": {"name": "mitto", 'a "b"': "d e&f+g"},
             "files": {"file": ('file "name".txt', b"file text\n", "text/plain")},
         },
+        page=_PATHS["navigation_form_urlencoded"],
     ),
-    "fetch_get_same_site": Replay(RequestKind.FETCH, host=SAME_SITE_HOST),
-    "fetch_get_cross_site": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST),
-    "fetch_post_text_same_origin": Replay(RequestKind.FETCH, _POST, body=_TEXT),
-    "fetch_post_text_cross_site": Replay(RequestKind.FETCH, _POST, host=CROSS_SITE_HOST, body=_TEXT),
-    "fetch_post_json_same_origin": Replay(RequestKind.FETCH, _POST, body={"json": {"json": "body"}}),
-    "fetch_post_stream": Replay(RequestKind.FETCH, _POST, body={"data": [b"stream body"]}),
-    "script_same_site": Replay(RequestKind.SCRIPT, host=SAME_SITE_HOST),
-    "script_cross_site": Replay(RequestKind.SCRIPT, host=CROSS_SITE_HOST),
-    "image_same_site": Replay(RequestKind.IMAGE, host=SAME_SITE_HOST),
-    "image_cross_site": Replay(RequestKind.IMAGE, host=CROSS_SITE_HOST),
-    "cookie": Replay(RequestKind.FETCH, before=(COOKIE_SET_PATH,)),
-    "revalidation": Replay(RequestKind.FETCH, before=(_PATHS["revalidation"],)),
-    **_hops("redirect_navigation", RequestKind.NAVIGATION),
-    **_hops("redirect_fetch", RequestKind.FETCH),
+    "fetch_get_same_site": Replay(RequestKind.FETCH, host=SAME_SITE_HOST, page=START_PATH),
+    "fetch_get_cross_site": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=START_PATH),
+    "fetch_post_text_same_origin": Replay(RequestKind.FETCH, _POST, body=_TEXT, page=START_PATH),
+    "fetch_post_text_cross_site": Replay(RequestKind.FETCH, _POST, host=CROSS_SITE_HOST, body=_TEXT, page=START_PATH),
+    "fetch_post_json_same_origin": Replay(RequestKind.FETCH, _POST, body={"json": {"json": "body"}}, page=START_PATH),
+    "fetch_post_stream": Replay(RequestKind.FETCH, _POST, body={"data": [b"stream body"]}, page=START_PATH),
+    "script_same_site": Replay(RequestKind.SCRIPT, host=SAME_SITE_HOST, page=START_PATH),
+    "script_cross_site": Replay(RequestKind.SCRIPT, host=CROSS_SITE_HOST, page=START_PATH),
+    "image_same_site": Replay(RequestKind.IMAGE, host=SAME_SITE_HOST, page=START_PATH),
+    "image_cross_site": Replay(RequestKind.IMAGE, host=CROSS_SITE_HOST, page=START_PATH),
+    "cookie": Replay(RequestKind.FETCH, before=(COOKIE_SET_PATH,), page=START_PATH),
+    "revalidation": Replay(RequestKind.FETCH, before=(_PATHS["revalidation"],), page=START_PATH),
+    **_hops("redirect_navigation", RequestKind.NAVIGATION, _PATHS["navigation_form_multipart"]),
+    **_hops("redirect_fetch", RequestKind.FETCH, START_PATH),
     "plain_http_navigation": Replay(RequestKind.NAVIGATION),
-    "plain_http_fetch": Replay(RequestKind.FETCH),
-    "plain_http_script": Replay(RequestKind.SCRIPT),
-    "plain_http_image": Replay(RequestKind.IMAGE),
+    "plain_http_fetch": Replay(RequestKind.FETCH, page=_PATHS["plain_http_navigation"]),
+    "plain_http_script": Replay(RequestKind.SCRIPT, page=_PATHS["plain_http_navigation"]),
+    "plain_http_image": Replay(RequestKind.IMAGE, page=_PATHS["plain_http_navigation"]),
     "proxy_connect": Replay(RequestKind.NAVIGATION, start="proxy_navigation"),
     "proxy_navigation": Replay(RequestKind.NAVIGATION),
 }
@@ -148,8 +163,11 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
     """
     steps = REPLAYS[case]
     kind = steps.kind.value
+    initiator = None
+    if steps.page is not None:
+        initiator = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
     for path in steps.before:
-        session.get(server.url(run.route, host=run.host, path=path), kind=kind)
+        session.get(server.url(run.route, host=run.host, path=path), kind=kind, initiator=initiator)
     path = _PATHS[steps.start or case]
     url = server.url(run.route, host=steps.host or run.host, path=path)
-    session.request(steps.method, url, kind=kind, **steps.body)
+    session.request(steps.method, url, kind=kind, initiator=initiator, **steps.body)

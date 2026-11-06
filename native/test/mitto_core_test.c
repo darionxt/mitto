@@ -43,6 +43,23 @@ static const char kPostOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"method\": \"POST\"}";
 
+// What a Persona's request says of itself, so that the rules of each hop run.
+static const char kNavigationFromAPageOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"fetch\": {\"mode\": \"navigate\", \"destination\": \"document\", "
+    "\"credentials_mode\": \"include\", \"has_user_activation\": true, "
+    "\"initiator\": \"https://a.test/page\"}}";
+static const char kCorsFromAPageOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"fetch\": {\"mode\": \"cors\", \"destination\": \"empty\", "
+    "\"credentials_mode\": \"same-origin\", "
+    "\"initiator\": \"https://a.test/page\", "
+    "\"fixed_headers\": [\"Accept\"]}}";
+static const char kNoCorsWithNoInitiatorOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"fetch\": {\"mode\": \"no-cors\", \"destination\": \"script\", "
+    "\"credentials_mode\": \"include\"}}";
+
 static const char kStreamOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"method\": \"POST\", \"stream_body\": true}";
@@ -77,6 +94,15 @@ static const char kCookieFilter[] =
 
 static const MittoHeader kHeaders[] = {
     {"Accept", sizeof("Accept") - 1, "*/*", sizeof("*/*") - 1},
+};
+
+// With the lines that the rules of each hop set, move and remove.
+static const MittoHeader kHeadersOfAPersona[] = {
+    {"sec-ch-ua", sizeof("sec-ch-ua") - 1, "\"a\"", sizeof("\"a\"") - 1},
+    {"Accept", sizeof("Accept") - 1, "*/*", sizeof("*/*") - 1},
+    {"Origin", sizeof("Origin") - 1, "<origin>", sizeof("<origin>") - 1},
+    {"Sec-Fetch-Site", sizeof("Sec-Fetch-Site") - 1, "none", sizeof("none") - 1},
+    {"Sec-Fetch-Mode", sizeof("Sec-Fetch-Mode") - 1, "cors", sizeof("cors") - 1},
 };
 
 // Global, so that what a scenario leaves running at exit is not a leak.
@@ -173,6 +199,32 @@ static int FetchWithoutRedirects(const char* url) {
     return 1;
   }
   return FinishInBlockingCalls(url);
+}
+
+// Makes a request with what a Persona gives it, and goes through what follows.
+static int FetchLikeAPersona(const char* url, const char* options) {
+  const int32_t error = mitto_request_start(
+      g_session, url, kHeadersOfAPersona,
+      sizeof(kHeadersOfAPersona) / sizeof(kHeadersOfAPersona[0]), options,
+      strlen(options), NULL, 0, &g_request);
+  if (error != 0) {
+    fprintf(stderr, "starting %s failed with net error %" PRId32 "\n", url,
+            error);
+    return 1;
+  }
+  return FinishInBlockingCalls(url);
+}
+
+static int NavigationFromAPage(const char* url) {
+  return FetchLikeAPersona(url, kNavigationFromAPageOptions);
+}
+
+static int CorsFromAPage(const char* url) {
+  return FetchLikeAPersona(url, kCorsFromAPageOptions);
+}
+
+static int NoCorsWithNoInitiator(const char* url) {
+  return FetchLikeAPersona(url, kNoCorsWithNoInitiatorOptions);
 }
 
 // Sends a body from a buffer that holds something else once the call has
@@ -677,6 +729,9 @@ static const struct {
     {"end-stream-before-its-size", EndStreamBeforeItsSize},
     {"fetch-with-file-descriptor", FetchWithFileDescriptor},
     {"fetch-without-redirects", FetchWithoutRedirects},
+    {"navigation-from-a-page", NavigationFromAPage},
+    {"cors-from-a-page", CorsFromAPage},
+    {"no-cors-with-no-initiator", NoCorsWithNoInitiator},
     {"cancel-at-once", CancelAtOnce},
     {"cancel-after-response", CancelAfterResponse},
     {"cancel-at-redirect", CancelAtRedirect},

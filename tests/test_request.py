@@ -13,7 +13,6 @@ from mitto._request import BodyOptions, BuiltRequest, build_request
 from mitto._timeout import Timeout
 
 URL = "https://example.test:8444/any/path"
-ORIGIN_ROOT = "https://example.test:8444/"
 
 PERSONAS = [load_persona(name) for name in WINDOWS_PERSONAS.values()]
 ENGINE_PERSONA = load_persona(WINDOWS_PERSONAS["157"])
@@ -33,9 +32,10 @@ def test_a_request_of_a_kind_is_what_the_persona_sends_for_that_kind(persona: Pe
         "url": URL,
         "method": "GET",
         "timeout": Timeout(),
+        "referrer": None,
         "follow_redirects": True,
         "body": None,
-        **persona.request_defaults(kind, URL),
+        **persona.request_defaults(kind),
     }
 
 
@@ -68,7 +68,7 @@ def test_an_unknown_kind_is_refused() -> None:
 def test_the_default_kind_is_navigation_for_get_and_fetch_for_other_methods(method: str, kind: RequestKind) -> None:
     built = build_request(ENGINE_PERSONA, method, URL)
 
-    assert built["headers"] == ENGINE_PERSONA.request_defaults(kind, URL)["headers"]
+    assert built["headers"] == ENGINE_PERSONA.request_defaults(kind)["headers"]
 
 
 # Each result here came from new Request().method in Chrome 156.
@@ -156,7 +156,7 @@ def test_no_params_leave_the_url_alone(params: dict[str, str] | list[tuple[str, 
 @pytest.mark.parametrize("persona", PERSONAS, ids=_persona_id)
 @pytest.mark.parametrize("kind", RequestKind)
 def test_a_header_replaces_the_personas_line_in_place(persona: Persona, kind: RequestKind) -> None:
-    lines = persona.request_defaults(kind, URL)["headers"]
+    lines = persona.request_defaults(kind)["headers"]
 
     for index, (name, _) in enumerate(lines):
         # A different case on purpose: the name stays as Chrome spells it.
@@ -168,7 +168,7 @@ def test_a_header_replaces_the_personas_line_in_place(persona: Persona, kind: Re
 @pytest.mark.parametrize("persona", PERSONAS, ids=_persona_id)
 @pytest.mark.parametrize("kind", RequestKind)
 def test_none_removes_a_personas_line(persona: Persona, kind: RequestKind) -> None:
-    lines = persona.request_defaults(kind, URL)["headers"]
+    lines = persona.request_defaults(kind)["headers"]
 
     for index, (name, _) in enumerate(lines):
         built = build_request(persona, "GET", URL, kind=kind, headers={name.swapcase(): None})
@@ -179,7 +179,7 @@ def test_none_removes_a_personas_line(persona: Persona, kind: RequestKind) -> No
 @pytest.mark.parametrize("persona", PERSONAS, ids=_persona_id)
 @pytest.mark.parametrize("kind", RequestKind)
 def test_other_names_follow_the_personas_lines_in_the_order_given(persona: Persona, kind: RequestKind) -> None:
-    lines = persona.request_defaults(kind, URL)["headers"]
+    lines = persona.request_defaults(kind)["headers"]
 
     built = build_request(persona, "GET", URL, kind=kind, headers={"X-Second": "2", "x-first": "1"})
 
@@ -187,7 +187,7 @@ def test_other_names_follow_the_personas_lines_in_the_order_given(persona: Perso
 
 
 def test_none_for_a_name_the_persona_does_not_have_does_nothing() -> None:
-    lines = ENGINE_PERSONA.request_defaults(RequestKind.NAVIGATION, URL)["headers"]
+    lines = ENGINE_PERSONA.request_defaults(RequestKind.NAVIGATION)["headers"]
 
     built = build_request(ENGINE_PERSONA, "GET", URL, headers={"Accept-Encoding": None, "X-Absent": None})
 
@@ -216,6 +216,7 @@ def test_changes_to_several_lines_at_once() -> None:
         "User-Agent",
         "sec-ch-ua",
         "Accept",
+        "Origin",
         "Sec-Fetch-Site",
         "Sec-Fetch-Mode",
         "Sec-Fetch-Dest",
@@ -234,7 +235,8 @@ def test_a_referer_replaces_the_personas_and_never_goes_among_the_headers(name: 
     built = build_request(ENGINE_PERSONA, "GET", URL, kind=RequestKind.FETCH, headers={name: "https://other.test/"})
 
     assert built["referrer"] == "https://other.test/"
-    assert built["headers"] == ENGINE_PERSONA.request_defaults(RequestKind.FETCH, URL)["headers"]
+    assert built["headers"] == ENGINE_PERSONA.request_defaults(RequestKind.FETCH)["headers"]
+    assert built["fetch"].fixed_headers == (name.lower(),)
 
 
 def test_a_referer_can_be_given_to_a_kind_that_has_none() -> None:
@@ -243,22 +245,25 @@ def test_a_referer_can_be_given_to_a_kind_that_has_none() -> None:
     assert built["referrer"] == "https://other.test/"
 
 
-def test_none_removes_the_personas_referer() -> None:
+def test_none_removes_what_the_initiator_would_make_the_referer() -> None:
     built = build_request(ENGINE_PERSONA, "GET", URL, kind=RequestKind.FETCH, headers={"Referer": None})
 
     assert built["referrer"] is None
+    assert built["fetch"].fixed_headers == ("referer",)
 
 
-def test_the_personas_referer_names_the_origin_and_not_the_query() -> None:
-    built = build_request(ENGINE_PERSONA, "POST", URL, params={"q": "x"})
+def test_with_no_referer_from_a_caller_the_initiator_decides_it() -> None:
+    built = build_request(ENGINE_PERSONA, "GET", URL, kind=RequestKind.FETCH, initiator="https://other.test/page")
 
-    assert built["referrer"] == ORIGIN_ROOT
+    assert built["referrer"] is None
+    assert built["fetch"].initiator == "https://other.test/page"
+    assert built["fetch"].fixed_headers == ()
 
 
-@pytest.mark.parametrize("url", ["not a url", "http://[bad/", "/only/a/path", "data:text/plain,hello"])
-def test_a_url_without_an_origin_gets_no_referrer(url: str) -> None:
-    # The native core would refuse the referrer and never say what is wrong with the URL.
-    assert build_request(ENGINE_PERSONA, "POST", url)["referrer"] is None
+def test_only_a_callers_names_are_fixed_and_not_what_a_body_says_of_itself() -> None:
+    built = build_request(ENGINE_PERSONA, "POST", URL, data="x", headers={"X-Thing": "1", "Accept": None})
+
+    assert built["fetch"].fixed_headers == ("x-thing", "accept")
 
 
 @pytest.mark.parametrize("follow_redirects", [True, False])
@@ -281,6 +286,7 @@ def test_a_built_request_needs_no_argument_but_the_method_and_url() -> None:
 
     assert sorted(built) == [
         "body",
+        "fetch",
         "follow_redirects",
         "headers",
         "method",
@@ -325,7 +331,7 @@ def test_a_request_with_no_body_has_none_of_the_lines_of_a_body() -> None:
         built = build_request(ENGINE_PERSONA, "POST", URL, kind=kind)
 
         assert built["body"] is None
-        assert {"Cache-Control", "Content-Type", "Origin"}.isdisjoint(_names(built))
+        assert {"Cache-Control", "Content-Type"}.isdisjoint(_names(built))
 
 
 # Each Content-Type here came from fetch() or a form in Chrome 156, or from a Baseline.
@@ -423,10 +429,11 @@ def test_a_content_type_with_no_body_is_another_name_after_the_personas_lines() 
 
 @pytest.mark.parametrize("kind", [RequestKind.FETCH, RequestKind.NAVIGATION])
 @pytest.mark.parametrize("options", [{"data": b"x"}, {"data": "x"}, {"json": 1}, {"files": {}}], ids=str)
-def test_no_placeholder_of_a_persona_reaches_the_wire(kind: RequestKind, options: BodyOptions) -> None:
+def test_no_placeholder_of_a_persona_is_left_for_the_wire(kind: RequestKind, options: BodyOptions) -> None:
     built = build_request(ENGINE_PERSONA, "POST", URL, kind=kind, **options)
 
-    assert not [line for line in built["headers"] if "<" in line[1]]
+    # The native core writes the value of Origin, or removes the line. tests/test_initiator.py shows that on the wire.
+    assert not [line for line in built["headers"] if "<" in line[1] and line[0] != "Origin"]
 
 
 @pytest.mark.parametrize("method", ["GET", "get", "HEAD", "head"])
@@ -442,38 +449,11 @@ def test_a_kind_that_chrome_sends_no_body_with_is_refused(kind: RequestKind) -> 
         build_request(ENGINE_PERSONA, "POST", URL, kind=kind, data="x")
 
 
-# What an Origin holds in Chrome, as url::Origin::Serialize() writes it.
-@pytest.mark.parametrize(
-    ("url", "origin"),
-    [
-        ("https://example.test:8444/any/path?query#fragment", "https://example.test:8444"),
-        ("https://example.test/", "https://example.test"),
-        ("https://example.test:443/", "https://example.test"),
-        ("http://example.test:80/", "http://example.test"),
-        ("http://example.test:443/", "http://example.test:443"),
-        ("https://example.test:80/", "https://example.test:80"),
-        ("HTTPS://EXAMPLE.Test/", "https://example.test"),
-        ("https://user:password@example.test/", "https://example.test"),
-        ("https://[::1]:8444/", "https://[::1]:8444"),
-        ("https://[::1]/", "https://[::1]"),
-        ("https://bücher.example/", "https://xn--bcher-kva.example"),
-    ],
-)
-def test_the_origin_of_a_body_is_written_as_chrome_writes_it(url: str, origin: str) -> None:
-    assert _line(build_request(ENGINE_PERSONA, "POST", url, data="x"), "Origin") == origin
-
-
-@pytest.mark.parametrize("url", ["not a url", "https://", "//example.test/", "https://example.test:99999/", ""])
-def test_a_url_with_no_origin_gets_no_origin_line_so_that_the_native_core_reports_it(url: str) -> None:
-    built = build_request(ENGINE_PERSONA, "POST", url, data="x")
-
-    assert _line(built, "Origin") is None
-    assert built["referrer"] is None
-
-
 def test_a_caller_can_replace_or_remove_the_origin() -> None:
     replaced = build_request(ENGINE_PERSONA, "POST", URL, data="x", headers={"origin": "https://other.test"})
     removed = build_request(ENGINE_PERSONA, "POST", URL, data="x", headers={"Origin": None})
 
     assert _line(replaced, "Origin") == "https://other.test"
+    assert replaced["fetch"].fixed_headers == ("origin",)
     assert _line(removed, "Origin") is None
+    assert removed["fetch"].fixed_headers == ("origin",)

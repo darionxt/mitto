@@ -32,6 +32,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   CHECK_GE(options->priority, net::MINIMUM_PRIORITY);
   CHECK_LE(options->priority, net::MAXIMUM_PRIORITY);
   CHECK(options->referrer.is_empty() || options->referrer.is_valid());
+  if (options->fetch) {
+    // The Sec-Fetch-Dest header holds it, and SetHeader() CHECKs a value. A
+    // rule takes the origin of an initiator, which only means something if it
+    // is valid.
+    CHECK(net::HttpUtil::IsToken(options->fetch->destination));
+    CHECK(!options->fetch->initiator || options->fetch->initiator->is_valid());
+  }
   for (const std::optional<base::TimeDelta>& timeout :
        {options->connect_timeout, options->read_timeout,
         options->total_timeout}) {

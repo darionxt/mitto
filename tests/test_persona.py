@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from mitto._native import Priority
+from mitto._native import FetchParams, Priority
 from mitto._persona import WINDOWS_PERSONAS, RequestDefaults, RequestKind, load_persona
 from mitto._request import build_request
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS
@@ -42,8 +42,12 @@ _NOT_FROM_THE_PERSONA = {
     "priority",
 }
 
-# The values that depend on the Initiator, which a Session cannot name yet. Their lines still have to be in place.
-_VALUES_OF_THE_INITIATOR = {"origin", "sec-fetch-site"}
+# The native core gives this line its value, from the Initiator, and the Parity Checks show that value. The line still has
+# to be in its place here.
+_VALUE_FROM_THE_NATIVE_CORE = "sec-fetch-site"
+
+# What the native core leaves of the Persona's lines, for a GET that a kind makes without a body or an Initiator.
+_NOT_ON_A_GET = "Origin"
 
 # The boundary as a normal form writes it.
 _RANDOM_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
@@ -56,7 +60,7 @@ _URGENCY_AND_WEIGHT = {Priority.HIGHEST: (0, 256), Priority.MEDIUM: (1, 220), Pr
 
 
 def _defaults(baseline: Baseline) -> RequestDefaults:
-    return PERSONAS[baseline.release].request_defaults(RequestKind(baseline.case), _ANY_URL)
+    return PERSONAS[baseline.release].request_defaults(RequestKind(baseline.case))
 
 
 def _priority_field(defaults: RequestDefaults) -> str:
@@ -68,8 +72,8 @@ def _priority_field(defaults: RequestDefaults) -> str:
 def _lines_on_the_wire(baseline: Baseline) -> list[str]:
     """Return the header lines that the Persona's data and //net together give for a Baseline's request."""
     defaults = _defaults(baseline)
-    lines = [f"{name}: {value}" for name, value in defaults["headers"]]
-    if defaults["referrer"] is not None:
+    lines = [f"{name}: {value}" for name, value in defaults["headers"] if name != _NOT_ON_A_GET]
+    if baseline.case != RequestKind.NAVIGATION:
         lines.append(f"Referer: {ORIGIN_PLACEHOLDER}/")
     accept_language = PERSONAS[baseline.release].accept_language
     lines += ["Accept-Encoding: gzip, deflate, br, zstd", f"Accept-Language: {accept_language}"]
@@ -124,15 +128,17 @@ def test_the_priority_gives_the_http3_priority_update_of_the_baseline(baseline: 
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-def test_a_subresource_has_the_root_of_the_origin_of_its_url_as_its_referrer(release: str) -> None:
-    defaults = PERSONAS[release].request_defaults(RequestKind.FETCH, _ANY_URL)
-
-    assert defaults["referrer"] == "https://example.test:8444/"
-
-
-@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-def test_a_navigation_has_no_referrer(release: str) -> None:
-    assert PERSONAS[release].request_defaults(RequestKind.NAVIGATION, "https://example.test/")["referrer"] is None
+@pytest.mark.parametrize(
+    ("kind", "fetch"),
+    [
+        (RequestKind.NAVIGATION, FetchParams("navigate", "document", "include", has_user_activation=True)),
+        (RequestKind.FETCH, FetchParams("cors", "empty", "same-origin")),
+        (RequestKind.SCRIPT, FetchParams("no-cors", "script", "include")),
+        (RequestKind.IMAGE, FetchParams("no-cors", "image", "include")),
+    ],
+)
+def test_a_kind_says_what_chrome_says_of_such_a_request(release: str, kind: RequestKind, fetch: FetchParams) -> None:
+    assert PERSONAS[release].request_defaults(kind)["fetch"] == fetch
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
@@ -143,7 +149,7 @@ def test_the_persona_says_which_chrome_it_presents(release: str) -> None:
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
 @pytest.mark.parametrize("kind", RequestKind)
 def test_the_user_agent_is_the_one_of_every_request_kind(release: str, kind: RequestKind) -> None:
-    headers = dict(PERSONAS[release].request_defaults(kind, _ANY_URL)["headers"])
+    headers = dict(PERSONAS[release].request_defaults(kind)["headers"])
 
     assert headers["User-Agent"] == PERSONAS[release].user_agent
 
@@ -165,13 +171,13 @@ def test_the_request_kinds_are_those_of_the_capture_kit() -> None:
 
 
 def _from_the_persona(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    """Return the lines that a Persona decides, by lower-case name, with what depends on the Initiator left out."""
+    """Return the lines that a Persona decides, by lower-case name, with the value of what the native core sets left out."""
     found: list[tuple[str, str]] = []
     for name, value in lines:
         lower_name = name.lower()
         if lower_name in _NOT_FROM_THE_PERSONA or lower_name.startswith(":"):
             continue
-        found.append((lower_name, "" if lower_name in _VALUES_OF_THE_INITIATOR else value))
+        found.append((lower_name, "" if lower_name == _VALUE_FROM_THE_NATIVE_CORE else value))
     return found
 
 
