@@ -24,8 +24,8 @@ class Session:
     One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
     requests still running, but not while another thread is starting one or using its cookies.
 
-    Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind`, `timeout`, `follow_redirects`,
-    `data`, `json` and `files`.
+    Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind`, `initiator`, `timeout`,
+    `follow_redirects`, `data`, `json` and `files`.
 
     Attributes:
         cookies: The cookies, which //net sets from responses and sends with requests.
@@ -119,8 +119,8 @@ class Session:
                 NaN or an infinity, or a body goes with GET or HEAD or with a Request Kind that Chrome sends none with.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
                 that runs out is a RequestTimeoutError. An HTTP error status such as 404 is a response, which
-                Response.raise_for_status() turns into an error. An invalid header or method ends the request with
-                ERR_INVALID_ARGUMENT.
+                Response.raise_for_status() turns into an error. An invalid header or method, or an `initiator` that is not
+                a valid URL, ends the request with ERR_INVALID_ARGUMENT.
         """
         options.setdefault("timeout", self._timeout)
         built = build_request(self._persona, method, url, **options)

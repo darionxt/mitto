@@ -238,15 +238,16 @@ def server() -> Iterator[AnyMethodServer]:
 
 
 def on_the_wire(server: AnyMethodServer, persona_name: str, kind: RequestKind) -> list[tuple[str, str]]:
-    """Return what a GET to the server sends for a Persona and a Request Kind, when the caller changes nothing."""
+    """Return what a GET to the server sends for a Persona and a Request Kind, when the caller changes nothing.
+
+    A subresource comes from the page at the root of its URL's origin, and a navigation from no page.
+    """
     persona = load_persona(persona_name)
-    defaults = persona.request_defaults(kind, server.url)
-    referrer = defaults["referrer"]
     return [
         ("Host", server.authority),
         ("Connection", "keep-alive"),
-        *defaults["headers"],
-        *([("Referer", referrer)] if referrer is not None else []),
+        *[line for line in persona.request_defaults(kind)["headers"] if line[0] != "Origin"],
+        *([("Referer", server.url)] if kind != RequestKind.NAVIGATION else []),
         ACCEPT_ENCODING,
         ("Accept-Language", persona.accept_language),
     ]

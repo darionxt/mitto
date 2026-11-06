@@ -517,7 +517,7 @@ def test_get_presents_chrome_157_with_the_navigation_request_kind(http_server: R
     assert headers == [
         ("Host", http_server.base_url.rstrip("/")),
         ("Connection", "keep-alive"),
-        *persona.request_defaults(RequestKind.NAVIGATION, "http://127.0.0.1/")["headers"],
+        *[line for line in persona.request_defaults(RequestKind.NAVIGATION)["headers"] if line[0] != "Origin"],
         ACCEPT_ENCODING,
         ("Accept-Language", persona.accept_language),
     ]

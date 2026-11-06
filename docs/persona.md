@@ -10,6 +10,7 @@ with mitto.Session(persona="chrome_155_windows") as session:
     session.get(url, kind="script")
     session.post(url, json={"a": 1})
     session.post(url, kind="navigation", data={"a": "b"}, files={"file": ("a.txt", b"text", "text/plain")})
+    session.get(url, kind="script", initiator="https://example.com/page")
 ```
 
 ## The file
@@ -21,16 +22,14 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `release` | The Chrome Release |
 | `operating_system` | The operating system the Persona claims, independent of the **Host** |
 | `accept_language` | The value for `Accept-Language`, which is a Session setting |
+| `kinds.KIND.credentials_mode` | `same-origin`, as a page's `fetch()` has unless it asks otherwise, or `include`, as an element has |
 | `kinds.KIND.priority` | The request's priority, such as `HIGHEST`, as in the C API's `MITTO_PRIORITY_HIGHEST` |
 | `kinds.KIND.priority_incremental` | Whether the response can be used as it arrives |
-| `kinds.KIND.referrer` | The value for `Referer`, or `null`. `<origin>` stands for the origin of the requested URL |
 | `kinds.KIND.headers` | `name: value` lines in the order Chrome sends them, with the case HTTP/1.1 sends |
 | `kinds.KIND.body.lines` | The names in `headers` that only a request with a body has. A kind without `body` cannot have one, so a body with `script` or `image` is refused |
 | `kinds.KIND.body.content_types` | The value for `Content-Type`, by what the body is: `text`, `form`, `json` or `multipart`. `<boundary>` stands for the boundary of a multipart body |
 
-In `headers`, `<origin>` stands for the origin of the requested URL, and `<content-type>` for what the body says of itself or what a caller gives.
-
-Subresource kinds describe one same-origin **Initiator**, the page at the root of the origin, and so does a body's `Origin`. A Session offers no other Initiator yet.
+In `headers`, `<content-type>` stands for what the body says of itself or what a caller gives. `<origin>` is never sent, because the native core writes that line's value or removes the line. `Sec-Fetch-Mode` and `Sec-Fetch-Dest` say what the request is for, which the native core also needs on a later hop, and `Sec-Fetch-User` says that the user started it.
 
 ## What comes from where
 
@@ -40,8 +39,9 @@ The file does not hold everything on the wire, because Chrome does not decide ev
 | --- | --- |
 | `Host`, `Connection`, and the pseudo-headers of HTTP/2 and HTTP/3 | `//net` |
 | The lines in `headers` | The C API's `headers`. HTTP/2 and HTTP/3 send the names in lower case |
+| The values of `Origin` and `Sec-Fetch-*`, and whether those and `sec-ch-*` go at all | The native core, from the page a request comes from ([below](#the-initiator)). A line in `headers` keeps its place, and one that the native core adds goes after the others |
 | `Content-Length` | `//net`, after `Connection` or the pseudo-headers, from the C API's `body`. It says 0 for `POST` and `PUT` with no body at all, and for any method with an empty one |
-| `Referer` | The C API's `referrer`. `//net` drops a `Referer` among the headers, and sends this one after them |
+| `Referer` | The native core, from the page a request comes from, or the C API's `referrer` for a caller's. `//net` drops a `Referer` among the headers, and sends this one after them |
 | `Accept-Encoding` | `//net`, after `Referer`. The native core turns on Brotli and Zstandard as Chrome does, and `//net` advertises them only over HTTPS and to localhost |
 | `Accept-Language` | `//net`, after `Accept-Encoding`, from the Session setting |
 | `Cookie` | `//net`, after `Accept-Language`, from the Session's cookie store ([cookies](parity.md#cookies)) |
@@ -52,7 +52,7 @@ So a line for `Referer`, `Accept-Encoding`, `Accept-Language` or `priority` does
 
 ## What a body adds
 
-`data`, `json` and `files` make a body, and the native core hands it to `//net`, which adds `Content-Length`. `Content-Type` and `Origin` go out with a body on a fetch or a navigation, and `Cache-Control: max-age=0` on a navigation only. Each has its place in `headers` in the file, from the Baselines. What the body is decides its `Content-Type`:
+`data`, `json` and `files` make a body, and the native core hands it to `//net`, which adds `Content-Length`. `Content-Type` goes out with a body on a fetch or a navigation, and `Cache-Control: max-age=0` on a navigation only. Each has its place in `headers` in the file, from the Baselines. What the body is decides its `Content-Type`:
 
 | Argument | The body | `Content-Type` of a fetch | `Content-Type` of a navigation |
 | --- | --- | --- | --- |
@@ -68,6 +68,25 @@ A multipart body has a boundary of `----WebKitFormBoundary` and 16 random letter
 
 Fetch refuses a body with `GET` or `HEAD`, so a Session does too.
 
+## The Initiator
+
+`initiator=` takes the URL of the page a request is made from, which counts as a top-level page. Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`.
+
+From the page and the URL of each hop, the native core sets these, in code ported from Chrome ([which code](parity.md#the-initiator-and-each-hop)):
+
+| On the wire | What decides it |
+| --- | --- |
+| `Sec-Fetch-Site` | How far from the page's origin the URL and every URL before it have been: `same-origin`, `same-site` or `cross-site`. With no page it is `none` on every hop |
+| `Referer` | `strict-origin-when-cross-origin`: the whole page on its own origin, its origin elsewhere, and nothing from HTTPS to HTTP. Once it has shrunk it stays that way, also when a redirect comes back |
+| `Origin` on a fetch | The page's origin, for another origin or for a method but `GET` and `HEAD`. Once a redirect has left an origin other than the page's for yet another, it is `null` for the rest of the chain |
+| `Origin` on a navigation | The page's origin for a method but `GET` and `HEAD`, or `null` with no page or from HTTPS to HTTP. `//net` makes it `null` at a redirect to another origin |
+| `Origin` on a script or image | Nothing for `GET` and `HEAD` |
+| `Sec-Fetch-Storage-Access` | `active` with `credentials_mode` of `include`, for a URL that is not of the same site as the page. So a cross-site `script` or `image` sends it, and a `fetch()` does not. A navigation becomes the first party, so it does not either |
+| `sec-ch-*` and `Sec-Fetch-*` | Only for a URL that is potentially trustworthy, so not over plain HTTP to a host that is not local. A redirect to such a URL takes them away. A redirect from one adds `Sec-Fetch-*` on any kind, and `sec-ch-*` only on a navigation |
+| The place of `sec-ch-*` | A navigation sends them again on each hop, after `Sec-Fetch-Dest`. A subresource keeps them in the Persona's place |
+
+`//net` decides from the same page which cookies go ([cookies](parity.md#which-site-a-request-belongs-to)) and which connections a request can use ([partitioning](parity.md#partitioning)).
+
 ## What a caller changes
 
 `Session(accept_language=...)` replaces the Persona's `accept_language`, and an empty string sends no `Accept-Language`. For one request, `headers` changes the Persona's lines, by name in any case:
@@ -78,7 +97,8 @@ Fetch refuses a body with `GET` or `HEAD`, so a Session does too.
 | Another name | After the Persona's lines, in the order given, before what `//net` adds |
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
-| `Referer` | Replaces or, with `None`, removes the Persona's `referrer`. `//net` still decides where it goes |
+| `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what the Initiator would make of it. `//net` still decides where it goes |
+| A line that the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop, also over plain HTTP. `//net` still changes an `Origin` on a redirect, as it does in Chrome: `null` for another origin, and gone when the method changes |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
 
 A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone. `Cookie` is the exception: it keeps that place, but `//net` writes over its value whenever the store holds a cookie for the URL, and it does not follow a redirect to another origin.
@@ -87,7 +107,7 @@ A name that `//net` would add, such as `Accept-Encoding`, counts as another name
 
 Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`.
 
-[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` really does. `Origin` and `Sec-Fetch-Site` differ in those cases, because their values depend on an Initiator that a Session cannot name yet.
+[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
 
 ## What differs between Chrome Releases
 
@@ -110,8 +130,6 @@ If a later Chrome Release does differ, the difference has to reach the native co
 - A difference that is neither is a decision for the milestone's plan, and does not stay on the known-gaps list.
 
 ## What no Baseline covers
-
-The Baselines of the main **Request Kinds** only record HTTPS. Over plain HTTP to a host that is not local, Chrome leaves out `sec-ch-ua*` and `Sec-Fetch-*`, because those URLs are not potentially trustworthy, as `cases/plain_http.json` shows, and the data does not change for that yet. `//net` does make the change for `Accept-Encoding`.
 
 Baselines record a fresh connection that goes well. Everything else is the Engine Release's whichever Persona is presented, which is the imperfect emulation that [ADR-0005 accepts](adr/0005-older-releases-as-data.md#consequences). Between 155 and 157, it changed in these places:
 

@@ -38,6 +38,7 @@
 #include "base/timer/timer.h"
 #include "mitto/cookie_json.h"
 #include "mitto/feature_list.h"
+#include "mitto/fetch_rules.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
 #include "mitto/network_session_configurator.h"
@@ -51,6 +52,7 @@
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_anonymization_key.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
@@ -66,7 +68,6 @@
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
-#include "net/cookies/site_for_cookies.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
 #include "net/dns/system_dns_config_change_notifier.h"
@@ -83,6 +84,7 @@
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
+#include "net/url_request/referrer_policy.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
@@ -188,7 +190,11 @@ class RequestJob final : public net::URLRequest::Delegate {
         url_(std::move(url)),
         request_headers_(std::move(headers)),
         options_(std::move(options)),
-        body_(std::move(body)) {}
+        body_(std::move(body)) {
+    if (options_.fetch) {
+      fetch_rules_.emplace(*std::move(options_.fetch), url_);
+    }
+  }
 
   RequestJob(const RequestJob&) = delete;
   RequestJob& operator=(const RequestJob&) = delete;
@@ -205,15 +211,18 @@ class RequestJob final : public net::URLRequest::Delegate {
         url_, options_.priority, this, kTrafficAnnotation,
         net::handles::kInvalidNetworkHandle);
     request_->set_method(options_.method);
-    // A request cannot say yet which page it comes from, so each counts as one
-    // that the user started at its URL, like a link typed into the address bar.
-    // That makes every cookie of its site go out, whatever its SameSite.
-    request_->set_site_for_cookies(net::SiteForCookies::FromUrl(url_));
-    request_->set_first_party_url_policy(
-        net::RedirectInfo::FirstPartyURLPolicy::UPDATE_URL_ON_REDIRECT);
     request_->SetExtraRequestHeaders(request_headers_);
     request_->SetPriorityIncremental(options_.priority_incremental);
-    request_->SetReferrer(options_.referrer.spec());
+    if (fetch_rules_) {
+      fetch_rules_->ConfigureRequest(*request_);
+    } else {
+      SetUpTopLevelNavigation(*request_);
+    }
+    if (!options_.referrer.is_empty()) {
+      // The caller's, so no rule changes it, on any hop.
+      request_->set_referrer_policy(net::ReferrerPolicy::NEVER_CLEAR);
+      request_->SetReferrer(options_.referrer.spec());
+    }
     if (body_) {
       // What Chrome's network service makes of a body held in memory. //net adds
       // the Content-Length from it, and rewinds it for a redirect or a retry.
@@ -270,7 +279,7 @@ class RequestJob final : public net::URLRequest::Delegate {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&RequestJob::ContinueAfterRedirect,
-                       weak_ptr_factory_.GetWeakPtr(), redirect_info.new_url));
+                       weak_ptr_factory_.GetWeakPtr(), redirect_info));
   }
 
   void OnSSLCertificateError(net::URLRequest* request,
@@ -323,7 +332,7 @@ class RequestJob final : public net::URLRequest::Delegate {
 
   // Goes on from a redirect that OnReceivedRedirect() deferred. This may delete
   // the job, so nothing may touch it afterwards.
-  void ContinueAfterRedirect(const GURL& new_url) {
+  void ContinueAfterRedirect(const net::RedirectInfo& redirect_info) {
     if (!options_.follow_redirects) {
       PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
       // //net does not read the body of a redirect, so this is all there is.
@@ -339,14 +348,18 @@ class RequestJob final : public net::URLRequest::Delegate {
     // keep it where it belongs. //net adds the store's cookies on each hop, so
     // this does not touch them.
     std::vector<std::string> removed_headers;
-    if (!url::IsSameOriginWith(request_->url(), new_url)) {
+    if (!url::IsSameOriginWith(request_->url(), redirect_info.new_url)) {
       removed_headers.emplace_back(net::HttpRequestHeaders::kAuthorization);
       removed_headers.emplace_back(net::HttpRequestHeaders::kCookie);
     }
+    net::HttpRequestHeaders modified_headers;
+    if (fetch_rules_) {
+      fetch_rules_->WillFollowRedirect(*request_, redirect_info,
+                                       removed_headers, modified_headers);
+    }
     // The next hop has its own connection to get.
     StartConnectTimer();
-    request_->FollowDeferredRedirect(removed_headers,
-                                     /*modified_headers=*/std::nullopt);
+    request_->FollowDeferredRedirect(removed_headers, modified_headers);
   }
 
   void StartConnectTimer() {
@@ -396,7 +409,9 @@ class RequestJob final : public net::URLRequest::Delegate {
   const scoped_refptr<RequestChannel> channel_;
   const GURL url_;
   const net::HttpRequestHeaders request_headers_;
-  const RequestOptions options_;
+  RequestOptions options_;
+  // What a request made for a page does at its start and on each hop.
+  std::optional<FetchRules> fetch_rules_;
   // What to send as the body, until Start() hands it to `request_`.
   std::optional<std::vector<char>> body_;
   std::unique_ptr<net::URLRequest> request_;
@@ -544,6 +559,11 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     // loaded the library are not meant for it.
     base::CommandLine::Init(0, nullptr);
     InitFeatureList();
+    // What ChromeMainDelegate::CommonEarlyInitialization() does. This needs the
+    // feature list, and has to come before anything asks whether partitioning is
+    // on. HttpCache::SplitCacheFeatureEnableByDefault() goes right here, the line
+    // before it as in Chrome, when a Session has a cache.
+    net::NetworkAnonymizationKey::PartitionByDefault();
     base::ThreadPoolInstance::CreateAndStartWithDefaultParams("mitto");
     CHECK(network_thread_.StartWithOptions(
         base::Thread::Options(base::MessagePumpType::IO, 0)));

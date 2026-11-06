@@ -145,7 +145,7 @@ def test_a_set_cookie_on_a_redirect_reaches_the_next_hop(servers: Servers) -> No
 
 
 @pytest.mark.usefixtures("native_library")
-def test_a_cross_site_redirect_counts_as_its_new_site_until_a_request_can_name_its_page(servers: Servers) -> None:
+def test_a_navigation_the_browser_started_counts_as_the_site_of_each_hop(servers: Servers) -> None:
     with new_session() as session:
         session.get(setting(servers.https(host=OTHER_SITE), "already=1; SameSite=Strict"))
 
@@ -157,7 +157,7 @@ def test_a_cross_site_redirect_counts_as_its_new_site_until_a_request_can_name_i
 
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize("attribute", ["SameSite=Strict", "SameSite=Lax", "SameSite=None; Secure", "Secure"])
-def test_each_cookie_of_its_site_goes_until_a_request_can_name_its_page(servers: Servers, attribute: str) -> None:
+def test_each_cookie_of_its_site_goes_on_a_navigation_the_browser_started(servers: Servers, attribute: str) -> None:
     with new_session() as session:
         session.get(setting(servers.https(), f"a=1; {attribute}"))
 
@@ -901,9 +901,6 @@ def test_a_new_cookie_encodes_its_path_as_a_url_does() -> None:
         assert [cookie.path for cookie in session.cookies] == ["/a%20b%E9"]
 
 
-# A partition key has no request to go with until a request can name its page, so only the store shows it.
-
-
 @pytest.mark.usefixtures("native_library")
 def test_a_partitioned_cookie_keeps_its_key_and_is_apart_from_another_partition(servers: Servers) -> None:
     key = CookiePartitionKey("https://example.test", True)
@@ -916,14 +913,15 @@ def test_a_partitioned_cookie_keeps_its_key_and_is_apart_from_another_partition(
 
 
 @pytest.mark.usefixtures("native_library")
-def test_a_partitioned_set_cookie_is_an_ordinary_cookie_until_a_request_has_a_partition(servers: Servers) -> None:
+def test_a_partitioned_set_cookie_goes_in_the_partition_of_its_site(servers: Servers) -> None:
+    # tests/test_initiator.py has what another top-level site does.
     with new_session() as session:
         session.get(setting(servers.https(), "a=1; Secure; Partitioned"))
 
         assert sent(session, servers.https()) == "a=1"
         cookie = session.cookies.get("a")
         assert cookie is not None
-        assert cookie.partition_key is None
+        assert cookie.partition_key == CookiePartitionKey("https://example.test", False)
 
 
 # The saved file.
