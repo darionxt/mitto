@@ -55,6 +55,10 @@ $NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|soc
     '|preconnect|proxy|priorit|urlloader|structuredheaders|shareddictionar|zstd|brotli|clienthint|acceptlang|useragent' +
     '|reduceua|connection|preload|prefetch|prerender|hsts|(?-i:ECH|H2|H3)'
 
+# Chrome turns these on in ChromeMainDelegate::CommonEarlyInitialization unless something overrides them, and //net has
+# them off. chrome://version only lists overrides, so with none, only these lines of chrome.txt name them.
+$OnInChromesCode = @('PartitionConnectionsByNetworkIsolationKey', 'SplitCacheByNetworkIsolationKey')
+
 $MainRuns = @('http1', 'http2', 'http3')
 $RunsFile = 'runs.json'
 $CertificateFlag = '--ignore-certificate-errors-spki-list'
@@ -243,6 +247,14 @@ function Format-NetworkPart($Page) {
     $lines += @('--force-fieldtrial-params:') + @($parameters | ForEach-Object { "  $_" })
     $lines += @('--enable-features:') + @($features['enable-features'] | ForEach-Object { "  $_" })
     $lines += @('--disable-features:') + @($features['disable-features'] | ForEach-Object { "  $_" })
+    $lines += 'On in Chrome''s own code, unless overridden:'
+    foreach ($name in $OnInChromesCode) {
+        $state = 'not overridden'
+        foreach ($switch in 'enable-features', 'disable-features') {
+            if (@($features[$switch] | Where-Object { ($_ -split '<')[0] -eq $name }).Count -gt 0) { $state = "--$switch" }
+        }
+        $lines += "  ${name}: $state"
+    }
     return $lines
 }
 
