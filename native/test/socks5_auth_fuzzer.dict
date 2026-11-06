@@ -1,0 +1,6 @@
+# What a SOCKS5 proxy answers before a request, by RFC 1928 and RFC 1929.
+"\x05\x00"
+"\x05\x02"
+"\x05\xFF"
+"\x01\x00"
+"\x01\x01"

@@ -380,6 +380,13 @@ def test_session_create_accepts_each_seed_of_the_fuzzer(native_library: ctypes.C
         "SOCKS5://PROXY.TEST:1080",
         "socks5://127.0.0.1:80",
         "socks5://[::1]:1080",
+        "socks5://user:password@proxy.test:1080",
+        "socks5://user@proxy.test",
+        "socks5://:password@proxy.test",
+        "SOCKS5://user:password@proxy.test",
+        "socks5://us%40er:p%FFss@proxy.test",
+        f"socks5://{'u' * 255}:{'p' * 255}@proxy.test",
+        f"socks5://{'%FF' * 255}@proxy.test",
     ],
 )
 def test_session_create_accepts_a_proxy(native_library: ctypes.CDLL, proxy: str) -> None:
@@ -483,9 +490,16 @@ def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.
         pytest.param(b'{"version": 1, "proxy": "http://proxy.test?query"}', id="proxy-has-a-query"),
         pytest.param(b'{"version": 1, "proxy": "http://proxy.test#fragment"}', id="proxy-has-a-fragment"),
         pytest.param(b'{"version": 1, "proxy": "socks5://a b:1080"}', id="socks5-proxy-has-a-space-in-its-host"),
-        pytest.param(b'{"version": 1, "proxy": "socks5://user:password@proxy.test"}', id="socks5-with-credentials"),
-        pytest.param(b'{"version": 1, "proxy": "socks5://user@proxy.test"}', id="socks5-with-a-username"),
-        pytest.param(b'{"version": 1, "proxy": "socks5://:password@proxy.test"}', id="socks5-with-a-password"),
+        pytest.param(
+            b'{"version": 1, "proxy": "socks5://%s@proxy.test"}' % (b"u" * 256), id="socks5-username-is-too-long"
+        ),
+        pytest.param(
+            b'{"version": 1, "proxy": "socks5://%s@proxy.test"}' % (b"%FF" * 256),
+            id="socks5-username-is-too-long-once-decoded",
+        ),
+        pytest.param(
+            b'{"version": 1, "proxy": "socks5://user:%s@proxy.test"}' % (b"p" * 256), id="socks5-password-is-too-long"
+        ),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": "a.test:443"}', id="origins-is-a-string"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": [1]}', id="origin-is-a-number"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": [""]}', id="origin-is-empty"),

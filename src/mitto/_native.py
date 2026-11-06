@@ -81,8 +81,7 @@ _READ_SIZE = 64 * 1024
 # How much a write gives: as much as the native core holds at a time.
 _WRITE_SIZE = 64 * 1024
 
-_SOCKS5_SCHEME = "socks5"
-_PROXY_SCHEMES = frozenset({"http", "https", _SOCKS5_SCHEME})
+_PROXY_SCHEMES = frozenset({"http", "https", "socks5"})
 
 
 class Priority(enum.IntEnum):
@@ -260,20 +259,17 @@ def encode_url(url: str) -> bytes:
 
 
 def _check_proxy(proxy: str) -> None:
-    """Refuse the proxies whose fault a message can name, which the native core refuses too with only a net error.
+    """Refuse a proxy whose fault a message can name, which the native core refuses too with only a net error.
 
-    A proxy's URL may hold a password, and until it parses nothing says which part that is, so neither message repeats any
-    of it.
+    A proxy's URL may hold a password, and until it parses nothing says which part that is, so the message repeats none of
+    it.
 
     Raises:
-        ValueError: If `proxy` has no scheme that names a kind of proxy, or asks for a SOCKS5 proxy with credentials.
+        ValueError: If `proxy` has no scheme that names a kind of proxy.
     """
-    scheme, separator, rest = proxy.partition("://")
-    scheme = scheme.lower()
-    if not separator or scheme not in _PROXY_SCHEMES:
+    scheme, separator, _ = proxy.partition("://")
+    if not separator or scheme.lower() not in _PROXY_SCHEMES:
         raise ValueError("a proxy is a URL whose scheme is http, https or socks5")
-    if scheme == _SOCKS5_SCHEME and "@" in rest.partition("/")[0].partition("?")[0].partition("#")[0]:
-        raise ValueError("a SOCKS5 proxy cannot take a username or password yet")
 
 
 def timeout_options(timeout: Timeout) -> dict[str, int]:
@@ -616,7 +612,8 @@ class Session:
                 of Chrome's --host-resolver-rules. Only the name's resolution changes, so SNI, the certificate check and
                 the Host header keep the name.
             proxy: The proxy for every request, as a URL with the scheme http, https or socks5. A username and password in
-                it answer the proxy when it asks. None reaches each server directly, whatever the system's settings say.
+                it answer the proxy when it asks, and for socks5 each may be at most 255 bytes once decoded. None reaches
+                each server directly, whatever the system's settings say.
 
         Raises:
             ValueError: If the native core refuses the settings. The message leaves out `proxy`, which may hold a password.
