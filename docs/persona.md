@@ -8,6 +8,8 @@ There is one Persona for each Chrome Release in the **Supported Window**, all on
 with mitto.Session(persona="chrome_155_windows") as session:
     session.get(url)
     session.get(url, kind="script")
+    session.post(url, json={"a": 1})
+    session.post(url, kind="navigation", data={"a": "b"}, files={"file": ("a.txt", b"text", "text/plain")})
 ```
 
 ## The file
@@ -23,8 +25,12 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `kinds.KIND.priority_incremental` | Whether the response can be used as it arrives |
 | `kinds.KIND.referrer` | The value for `Referer`, or `null`. `<origin>` stands for the origin of the requested URL |
 | `kinds.KIND.headers` | `name: value` lines in the order Chrome sends them, with the case HTTP/1.1 sends |
+| `kinds.KIND.body.lines` | The names in `headers` that only a request with a body has. A kind without `body` cannot have one, so a body with `script` or `image` is refused |
+| `kinds.KIND.body.content_types` | The value for `Content-Type`, by what the body is: `text`, `form`, `json` or `multipart`. `<boundary>` stands for the boundary of a multipart body |
 
-Subresource kinds describe one same-origin **Initiator**, the page at the root of the origin. A Session offers no other Initiator yet.
+In `headers`, `<origin>` stands for the origin of the requested URL, and `<content-type>` for what the body says of itself or what a caller gives.
+
+Subresource kinds describe one same-origin **Initiator**, the page at the root of the origin, and so does a body's `Origin`. A Session offers no other Initiator yet.
 
 ## What comes from where
 
@@ -34,6 +40,7 @@ The file does not hold everything on the wire, because Chrome does not decide ev
 | --- | --- |
 | `Host`, `Connection`, and the pseudo-headers of HTTP/2 and HTTP/3 | `//net` |
 | The lines in `headers` | The C API's `headers`. HTTP/2 and HTTP/3 send the names in lower case |
+| `Content-Length` | `//net`, after `Connection` or the pseudo-headers, from the C API's `body`. It says 0 for `POST` and `PUT` with no body at all, and for any method with an empty one |
 | `Referer` | The C API's `referrer`. `//net` drops a `Referer` among the headers, and sends this one after them |
 | `Accept-Encoding` | `//net`, after `Referer`. The native core turns on Brotli and Zstandard as Chrome does, and `//net` advertises them only over HTTPS and to localhost |
 | `Accept-Language` | `//net`, after `Accept-Encoding`, from the Session setting |
@@ -41,6 +48,24 @@ The file does not hold everything on the wire, because Chrome does not decide ev
 | The HTTP/2 stream weight and the HTTP/3 `PRIORITY_UPDATE` | `//net`, from the same two values |
 
 So a line for `Referer`, `Accept-Encoding`, `Accept-Language` or `priority` does not belong in `headers`. Giving `Referer` there is an error, and giving the others would put them in the wrong place, or send `priority` over HTTP/1.1 as well.
+
+## What a body adds
+
+`data`, `json` and `files` make a body, and the native core hands it to `//net`, which adds `Content-Length`. `Content-Type` and `Origin` go out with a body on a fetch or a navigation, and `Cache-Control: max-age=0` on a navigation only. Each has its place in `headers` in the file, from the Baselines. What the body is decides its `Content-Type`:
+
+| Argument | The body | `Content-Type` of a fetch | `Content-Type` of a navigation |
+| --- | --- | --- | --- |
+| `data=b"..."` | As it is | None, as for an `ArrayBuffer` | None |
+| `data="..."` | UTF-8 | `text/plain;charset=UTF-8` | `text/plain` |
+| `data={...}` | As `URLSearchParams` writes it | `application/x-www-form-urlencoded;charset=UTF-8` | `application/x-www-form-urlencoded` |
+| `json=...` | As `JSON.stringify` writes it, except that a float keeps Python's text. NaN and the infinities are refused, where `JSON.stringify` would write `null` | `application/json` | `application/json` |
+| `files={...}`, with text fields in a mapping in `data` | As Blink's `FormData` writes it, with text fields first | `multipart/form-data; boundary=...` | The same |
+
+A mapping follows `URLSearchParams` on a navigation too. A real form writes a line break in a value as `%0D%0A`, where `URLSearchParams` keeps a lone `%0A`, so a caller who wants the form's writes `\r\n`.
+
+A multipart body has a boundary of `----WebKitFormBoundary` and 16 random letters and digits, drawn as Blink draws them. A field's name has `%0D%0A` for any line break and `%22` for a quote, and a file name has `%0D`, `%0A` and `%22`, so that neither can break out of its line. A value of a text field has its line breaks changed to CRLF, and a file's content stays as it is. A file with no name is Blink's `blob`. A file with no type, or one that holds a control character or anything else outside ASCII, says `application/octet-stream`, and any other type goes in lower case, as a `Blob` writes it. mitto does not guess a type from a file's name: what Chrome does depends on the operating system's own list, so it would differ between **Hosts**.
+
+Fetch refuses a body with `GET` or `HEAD`, so a Session does too.
 
 ## What a caller changes
 
@@ -53,14 +78,15 @@ So a line for `Referer`, `Accept-Encoding`, `Accept-Language` or `priority` does
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
 | `Referer` | Replaces or, with `None`, removes the Persona's `referrer`. `//net` still decides where it goes |
+| `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
 
 A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone.
 
 ## Write one
 
-Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three.
+Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`.
 
-[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of its Chrome Release, including HTTP/3, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` really does.
+[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` really does. `Origin` and `Sec-Fetch-Site` differ in those cases, because their values depend on an Initiator that a Session cannot name yet.
 
 ## What differs between Chrome Releases
 

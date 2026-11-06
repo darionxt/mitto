@@ -8,17 +8,33 @@
       "priority_incremental": true,
       "referrer": null,
       "headers": [
+        "Cache-Control: max-age=0",
         "sec-ch-ua: \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\"",
         "sec-ch-ua-mobile: ?0",
         "sec-ch-ua-platform: \"Windows\"",
         "Upgrade-Insecure-Requests: 1",
+        "Content-Type: <content-type>",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+        "Origin: <origin>",
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Sec-Fetch-Site: none",
         "Sec-Fetch-Mode: navigate",
         "Sec-Fetch-User: ?1",
         "Sec-Fetch-Dest: document"
-      ]
+      ],
+      "body": {
+        "lines": [
+          "Cache-Control",
+          "Content-Type",
+          "Origin"
+        ],
+        "content_types": {
+          "text": "text/plain",
+          "form": "application/x-www-form-urlencoded",
+          "json": "application/json",
+          "multipart": "multipart/form-data; boundary=<boundary>"
+        }
+      }
     },
     "fetch": {
       "priority": "MEDIUM",
@@ -28,12 +44,26 @@
         "sec-ch-ua-platform: \"Windows\"",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
         "sec-ch-ua: \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\"",
+        "Content-Type: <content-type>",
         "sec-ch-ua-mobile: ?0",
         "Accept: */*",
+        "Origin: <origin>",
         "Sec-Fetch-Site: same-origin",
         "Sec-Fetch-Mode: cors",
         "Sec-Fetch-Dest: empty"
-      ]
+      ],
+      "body": {
+        "lines": [
+          "Content-Type",
+          "Origin"
+        ],
+        "content_types": {
+          "text": "text/plain;charset=UTF-8",
+          "form": "application/x-www-form-urlencoded;charset=UTF-8",
+          "json": "application/json",
+          "multipart": "multipart/form-data; boundary=<boundary>"
+        }
+      }
     },
     "script": {
       "priority": "MEDIUM",
