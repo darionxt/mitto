@@ -247,6 +247,7 @@ Only connections that carried a request of a Recording Case count, and a run's n
 
 ### What it does not capture yet
 
+- **Which requests share a connection.** The normal form describes one connection and then each request, so it cannot show how a client spreads its requests over connections, such as [partitioning](baselines.md#features-on-in-chromes-own-code). The raw recording can.
 - **ALPS.** Python's `ssl` cannot negotiate it, so the normal form has Chrome's offer but not the settings Chrome would then send.
 - **Resumed connections.** The server gives out no tickets, so the normal form describes fresh connections only.
 - **Frames that depend on the response or on timing.** The normal form leaves out frames sent after the first request on stream 0, such as a later `SETTINGS` or `PING`. They remain in the raw recording.
