@@ -29,8 +29,8 @@ class Certificate:
     spki_hash: str
 
 
-def generate_certificate(host: str) -> Certificate:
-    """Generate a new self-signed certificate for host."""
+def generate_certificate(host: str, *other_names: str) -> Certificate:
+    """Generate a new self-signed certificate for host and any other names."""
     key = ec.generate_private_key(ec.SECP256R1())
     now = datetime.datetime.now(datetime.UTC)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
@@ -42,7 +42,9 @@ def generate_certificate(host: str) -> Certificate:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - _CLOCK_SKEW)
         .not_valid_after(now + _VALIDITY)
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(name) for name in (host, *other_names)]), critical=False
+        )
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(key, hashes.SHA256())
     )

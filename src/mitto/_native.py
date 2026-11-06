@@ -222,6 +222,7 @@ class Session:
         ignore_certificate_errors_spki_list: Sequence[str] = (),
         accept_language: str = "",
         origins_to_force_quic_on: Sequence[str] = (),
+        host_resolver_rules: str = "",
     ) -> None:
         """Create the Session.
 
@@ -235,6 +236,9 @@ class Session:
                 with the meaning of Chrome's --origin-to-force-quic-on. It also lifts //net's refusal of QUIC to a
                 certificate from an unknown root, for each of their hosts. The certificate still has to verify. "*"
                 stands for every origin. Without any, a request learns of QUIC from Alt-Svc.
+            host_resolver_rules: Rules that change which address a name resolves to, separated by commas, with the meaning
+                of Chrome's --host-resolver-rules. Only the name's resolution changes, so SNI, the certificate check and
+                the Host header keep the name.
 
         Raises:
             ValueError: If the native core refuses the settings.
@@ -247,6 +251,7 @@ class Session:
                 "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
                 "accept_language": accept_language,
                 "origins_to_force_quic_on": list(origins_to_force_quic_on),
+                "host_resolver_rules": host_resolver_rules,
             }
         ).encode()
         self._handle = ctypes.POINTER(MittoSession)()

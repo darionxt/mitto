@@ -171,7 +171,7 @@ class _RequestStream:
         # The header sections that have arrived but not been decoded. The first may be waiting for QPACK encoder data.
         self.header_sections: deque[bytes] = deque()
         self.blocked = False
-        self.target: str | None = None
+        self.request: Http3Request | None = None
         self.finished = False
         self.reset = False
         self.answered = False
@@ -273,18 +273,17 @@ class Http3Connection:
         self, stream_id: int, stream: _RequestStream, control: bytes, headers: list[tuple[bytes, bytes]]
     ) -> list[StreamData]:
         # A later header section on a stream holds trailers, not a new request.
-        if stream.target is None:
+        if stream.request is None:
             decoded = tuple((name.decode("latin-1"), value.decode("latin-1")) for name, value in headers)
-            request = Http3Request(stream_id, decoded)
-            self.requests.append(request)
-            stream.target = request.target
+            stream.request = Http3Request(stream_id, decoded)
+            self.requests.append(stream.request)
         return [StreamData(_SERVER_DECODER_STREAM, control)] if control else []
 
     def _answer(self, stream_id: int, stream: _RequestStream) -> list[StreamData]:
-        if stream.target is None or not stream.finished or stream.reset or stream.answered:
+        if stream.request is None or not stream.finished or stream.reset or stream.answered:
             return []
         stream.answered = True
-        return self._serialize(stream_id, self._respond(stream.target))
+        return self._serialize(stream_id, self._respond(stream.request))
 
     def _receive_unidirectional(self, stream_id: int, data: bytes) -> list[StreamData]:
         stream = self._unidirectional_streams.setdefault(stream_id, _UnidirectionalStream())
@@ -333,7 +332,11 @@ class Http3Connection:
                 (b":status", str(response.status).encode()),
                 (b"content-type", response.content_type.encode()),
                 (b"content-length", str(len(response.body)).encode()),
-                (b"cache-control", b"no-store"),
+                (b"cache-control", response.cache_control.encode()),
+                *((name.lower().encode(), value.encode()) for name, value in response.headers),
             ],
         )
-        return [StreamData(stream_id, serialize_frame(HEADERS, section) + serialize_frame(DATA, response.body), True)]
+        data = serialize_frame(HEADERS, section)
+        if response.body:
+            data += serialize_frame(DATA, response.body)
+        return [StreamData(stream_id, data, True)]

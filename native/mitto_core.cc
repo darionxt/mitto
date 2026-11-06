@@ -222,6 +222,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   builder.set_enable_brotli(true);
   builder.set_enable_zstd(true);
   builder.set_accept_language(settings.accept_language);
+  builder.set_host_mapping_rules(std::move(settings.host_resolver_rules));
   // Proxies are not supported yet, so ignore the system's settings.
   builder.set_proxy_config_service(
       std::make_unique<net::ProxyConfigServiceFixed>(

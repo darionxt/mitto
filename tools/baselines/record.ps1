@@ -4,8 +4,9 @@
 
 .DESCRIPTION
     Starts Chrome from a new user data directory and lets its variations seed arrive. Then it starts the capture server
-    and records each protocol in a new start of Chrome from that directory, so that field trials apply. Chrome always
-    runs on the desktop of whoever is logged in at the machine, windowed, also when this script runs over SSH.
+    and takes a new start of Chrome from that directory through each of the server's runs, so that field trials apply.
+    Chrome always runs on the desktop of whoever is logged in at the machine, windowed, also when this script runs over
+    SSH.
 
     The output directory gets what the capture server writes, and chrome.txt, which says which Chrome recorded it.
 
@@ -23,7 +24,8 @@
 
 .PARAMETER NoDebuggingPort
     Starts Chrome without a debugging port, so that it holds nothing but the flags of the procedure. This script reads
-    chrome://version through that port, so chrome.txt then has no field trials or features.
+    chrome://version through that port, so chrome.txt then has no field trials or features. The case pages get their
+    clicks through it too, so this records the main Request Kinds only.
 
 .PARAMETER NoVariationsSeed
     For a Chrome that fetches no variations seed, such as Chrome for Testing as it comes. The first start lasts as long
@@ -53,11 +55,9 @@ $NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|soc
     '|preconnect|proxy|priorit|urlloader|structuredheaders|shareddictionar|zstd|brotli|clienthint|acceptlang|useragent' +
     '|reduceua|connection|preload|prefetch|prerender|hsts|(?-i:ECH|H2|H3)'
 
-$Protocols = @(
-    @{ Stem = 'http1'; Label = 'HTTP/1.1' }
-    @{ Stem = 'http2'; Label = 'HTTP/2' }
-    @{ Stem = 'http3'; Label = 'HTTP/3' }
-)
+$MainRuns = @('http1', 'http2', 'http3')
+$RunsFile = 'runs.json'
+$CertificateFlag = '--ignore-certificate-errors-spki-list'
 $TaskPrefix = 'mitto-baselines'
 $SeedTimeoutSeconds = 360
 $FirstStartWithoutSeedSeconds = 15
@@ -94,6 +94,13 @@ function Start-InConsole([string]$Name, [string]$Execute, [string]$Arguments) {
 
 function Start-Chrome([string[]]$Flags, [string]$Url) {
     Start-InConsole 'chrome' $Chrome (($BaseFlags + $Flags + $Url) -join ' ')
+}
+
+function Format-Flag([string]$Flag) {
+    # Chrome gets one command line, so a value with spaces in it needs quotes.
+    $name, $value = $Flag -split '=', 2
+    if ($value -match ' ') { return "$name=`"$value`"" }
+    return $Flag
 }
 
 function Get-OurChromeProcesses {
@@ -239,15 +246,15 @@ function Format-NetworkPart($Page) {
     return $lines
 }
 
-function Assert-Recording([string]$Stem) {
+function Assert-Recording([string]$Name) {
     # The capture traffic must stay on this machine, whatever proxy the network has.
-    $raw = [IO.File]::ReadAllText((Join-Path $Out "$Stem.raw.json")) | ConvertFrom-Json
+    $raw = [IO.File]::ReadAllText((Join-Path $Out "$Name.raw.json")) | ConvertFrom-Json
     $peers = @($raw.connections | ForEach-Object { $_.peer } | Sort-Object -Unique)
     $elsewhere = @($peers | Where-Object { $_ -notin '127.0.0.1', '::1' })
-    if ($peers.Count -eq 0 -or $elsewhere.Count -gt 0) { throw "$Stem has peers other than loopback: $($peers -join ', ')" }
-    $text = [IO.File]::ReadAllText((Join-Path $Out "$Stem.json"))
-    if ($text -notmatch '(?i)accept-language: en-US') { throw "$Stem was not recorded with an en-US Accept-Language." }
-    Write-Step "$Stem peers: $($peers -join ', '); Accept-Language is en-US"
+    if ($peers.Count -eq 0 -or $elsewhere.Count -gt 0) { throw "$Name has peers other than loopback: $($peers -join ', ')" }
+    $text = [IO.File]::ReadAllText((Join-Path $Out "$Name.json"))
+    if ($text -notmatch '(?i)accept-language: en-US') { throw "$Name was not recorded with an en-US Accept-Language." }
+    Write-Step "$Name peers: $($peers -join ', '); Accept-Language is en-US"
 }
 
 $repository = Split-Path (Split-Path $PSScriptRoot)
@@ -256,9 +263,7 @@ $UserDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFrom
 if (-not (Test-Path $Chrome)) { throw "No Chrome at $Chrome." }
 $Chrome = (Resolve-Path $Chrome).Path
 if (Test-Path $UserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
-foreach ($protocol in $Protocols) {
-    if (Test-Path (Join-Path $Out "$($protocol.Stem).json")) { throw "$Out already holds a recording." }
-}
+if (Test-Path (Join-Path $Out $RunsFile)) { throw "$Out already holds a recording." }
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $installed = (Get-Item $Chrome).VersionInfo.ProductVersion
@@ -273,7 +278,7 @@ $BaseFlags = @(
     '--lang=en-US'
     "--variations-override-country=$Country"
 ) + $ExtraFlags
-$RecordingFlags = @('--ignore-certificate-errors-spki-list=<hash>')
+$RecordingFlags = @()
 if (-not $NoDebuggingPort) { $RecordingFlags += '--remote-debugging-port=0' }
 $server = $null
 $pages = @{}
@@ -293,7 +298,13 @@ try {
 
     $serverOutput = Join-Path $Out 'server.log'
     $serverErrors = Join-Path $Out 'server-errors.log'
-    $server = Start-Process -FilePath 'uv' -ArgumentList @('run', 'python', '-m', 'tools.capture', '--out', "`"$Out`"") `
+    $serverArguments = @('run', 'python', '-m', 'tools.capture', '--out', "`"$Out`"")
+    if ($NoDebuggingPort) {
+        $serverArguments += @('--runs') + $MainRuns
+    } else {
+        $serverArguments += @('--click-in', "`"$UserDataDir`"")
+    }
+    $server = Start-Process -FilePath 'uv' -ArgumentList $serverArguments `
         -WorkingDirectory $repository -NoNewWindow -PassThru `
         -RedirectStandardOutput $serverOutput -RedirectStandardError $serverErrors
     $null = $server.Handle # Without this, its exit code gets lost.
@@ -301,27 +312,21 @@ try {
         if ($server.HasExited) { throw "The capture server stopped: $(Get-Content $serverErrors -Raw)" }
         (Test-Path $serverOutput) -and (Select-String -Path $serverOutput -Pattern '^Waiting for' -Quiet)
     }
-    $printed = Get-Content $serverOutput
-    $spki = (($printed | Select-String -Pattern '^SPKI hash: (.+)$').Matches[0].Groups[1].Value)
-    foreach ($protocol in $Protocols) {
-        $line = $printed | Select-String -Pattern ('^' + [regex]::Escape($protocol.Label) + ':\s+(\S+)$')
-        $protocol.Url = $line.Matches[0].Groups[1].Value
-    }
+    $runs = ([IO.File]::ReadAllText((Join-Path $Out $RunsFile)) | ConvertFrom-Json).runs
 
-    foreach ($protocol in $Protocols) {
-        Write-Step "Recording $($protocol.Label)"
-        $flags = @($RecordingFlags | ForEach-Object { $_.Replace('<hash>', $spki) })
-        if ($protocol.Stem -eq 'http3') { $flags += "--origin-to-force-quic-on=$(([Uri]$protocol.Url).Authority)" }
+    foreach ($run in $runs) {
+        Write-Step "Recording $($run.label)"
+        $flags = @($run.flags | ForEach-Object { Format-Flag $_ }) + $RecordingFlags
         Remove-Item (Join-Path $UserDataDir 'DevToolsActivePort') -ErrorAction SilentlyContinue
-        Start-Chrome $flags $protocol.Url
-        $written = Join-Path $Out "$($protocol.Stem).json"
-        Wait-Until "the test page on $($protocol.Url)" $PageTimeoutSeconds {
+        Start-Chrome $flags $run.url
+        $written = Join-Path $Out "$($run.name).json"
+        Wait-Until "the page at $($run.url)" $PageTimeoutSeconds {
             if ($server.HasExited -and -not (Test-Path $written)) {
                 throw "The capture server stopped: $(Get-Content $serverErrors -Raw)"
             }
             Test-Path $written
         }
-        if (-not $NoDebuggingPort) { $pages[$protocol.Stem] = Read-VersionPage }
+        if (-not $NoDebuggingPort) { $pages[$run.name] = Read-VersionPage }
         Stop-Chrome
     }
 
@@ -329,10 +334,10 @@ try {
     if ($server.ExitCode -ne 0) { throw "The capture server failed: $(Get-Content $serverErrors -Raw)" }
     $server = $null
 
-    foreach ($protocol in $Protocols) { Assert-Recording $protocol.Stem }
+    foreach ($run in $runs) { Assert-Recording $run.name }
     if ((Get-Item $Chrome).VersionInfo.ProductVersion -ne $installed) { throw 'Chrome changed version during the session.' }
 
-    $flags = @($BaseFlags | Select-Object -Skip 1) + $RecordingFlags
+    $flags = @($BaseFlags | Select-Object -Skip 1) + "$CertificateFlag=<hash>" + $RecordingFlags
     $purpose = 'Which Chrome recorded the Baselines in this directory. See docs/baselines.md.'
     if (-not $isBaseline) { $purpose = 'Which Chrome recorded this comparison, which is not a Baseline. See docs/baselines.md.' }
     $note = @(
@@ -342,21 +347,25 @@ try {
         "Product: $product"
         "Chrome: $installed"
         "Flags: --user-data-dir=<new directory> $($flags -join ' ')"
-        'Flags for HTTP/3 only: --origin-to-force-quic-on=<authority>'
-        "Variations seed: $(Get-SeedSerialNumber)"
+        'Flags of a recording on top of those, without their values:'
     )
+    foreach ($run in $runs) {
+        $names = @($run.flags | ForEach-Object { ($_ -split '=', 2)[0] } | Where-Object { $_ -ne $CertificateFlag })
+        $note += "  $($run.name).json: $($names -join ' ')"
+    }
+    $note += "Variations seed: $(Get-SeedSerialNumber)"
     if ($pages.Count -gt 0) {
         $first = $pages['http1']
         $note += @("Version: $($first.version)", "System: $($first.system)", "User agent: $($first.userAgent)")
     }
-    foreach ($protocol in $Protocols) {
-        if (-not $pages.ContainsKey($protocol.Stem)) { continue }
-        $page = $pages[$protocol.Stem]
+    foreach ($run in $runs) {
+        if (-not $pages.ContainsKey($run.name)) { continue }
+        $page = $pages[$run.name]
         if (-not $page.version.StartsWith($installed)) { throw "chrome://version says $($page.version), not $installed." }
         if (-not $NoVariationsSeed -and -not $page.active) {
-            throw "chrome://version lists no active variations for $($protocol.Stem), so the seed did not apply."
+            throw "chrome://version lists no active variations for $($run.name), so the seed did not apply."
         }
-        $note += @('', "$($protocol.Stem).json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it")
+        $note += @('', "$($run.name).json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it")
         $note += Format-NetworkPart $page
     }
     [IO.File]::WriteAllText((Join-Path $Out 'chrome.txt'), (($note -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))

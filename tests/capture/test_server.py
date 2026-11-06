@@ -8,7 +8,6 @@ import json
 import logging
 import re
 import socket
-import ssl
 import subprocess
 import sys
 import time
@@ -18,12 +17,24 @@ from pathlib import Path
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from hpack import Decoder, Encoder
 
 from tests.capture import samples
+from tests.capture.clients import Http2Client, client_context, connect, http1_get
 from tests.capture.http3_client import Http3Client
-from tools.capture import DEFAULT_HOST, HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_form
-from tools.capture.http2 import DATA, END_STREAM, HEADERS, PREFACE, SETTINGS, FrameParser, serialize_frame
+from tools.capture import (
+    DEFAULT_HOST,
+    HTTP1,
+    HTTP2,
+    HTTP3,
+    KIND_PATHS,
+    PLAIN_HTTP,
+    PROXY,
+    CaptureServer,
+    RequestKind,
+    normal_form,
+)
+from tools.capture.cases import HOST_NAMES
+from tools.capture.http2 import SETTINGS
 from tools.capture.page import DONE_PATH
 from tools.capture.recording import ConnectionRecord, QuicConnectionRecord
 
@@ -40,64 +51,6 @@ def free_ports(count: int, kind: int = socket.SOCK_STREAM) -> list[int]:
     for sock in sockets:
         sock.close()
     return ports
-
-
-def client_context(offered: tuple[str, ...] = ("h2", "http/1.1")) -> ssl.SSLContext:
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    context.set_alpn_protocols(list(offered))
-    return context
-
-
-def connect(port: int, offered: tuple[str, ...] = ("h2", "http/1.1"), host: str = DEFAULT_HOST) -> ssl.SSLSocket:
-    sock = socket.create_connection(("127.0.0.1", port), timeout=_TIMEOUT_SECONDS)
-    return client_context(offered).wrap_socket(sock, server_hostname=host)
-
-
-def http1_get(sock: ssl.SSLSocket, target: str) -> bytes:
-    """Send a GET and return the whole response."""
-    sock.sendall(f"GET {target} HTTP/1.1\r\nHost: {sock.server_hostname}\r\nAccept: */*\r\n\r\n".encode())
-    received = bytearray()
-    while b"\r\n\r\n" not in received:
-        received += sock.recv(1 << 16)
-    head, _, body = bytes(received).partition(b"\r\n\r\n")
-    match = re.search(rb"Content-Length: (\d+)", head)
-    assert match is not None
-    missing = int(match.group(1)) - len(body)
-    while missing > 0:
-        more = sock.recv(1 << 16)
-        body += more
-        missing -= len(more)
-    return head + b"\r\n\r\n" + body
-
-
-class Http2Client:
-    """Just enough of an HTTP/2 client to send GETs and read the answers."""
-
-    def __init__(self, sock: ssl.SSLSocket) -> None:
-        self.sock = sock
-        self.parser = FrameParser()
-        self.encoder = Encoder()
-        self.decoder = Decoder()
-        self.next_stream = 1
-        sock.sendall(PREFACE + serialize_frame(SETTINGS, 0, 0, (4).to_bytes(2) + (65536).to_bytes(4)))
-
-    def get(self, target: str) -> tuple[bytes, bytes]:
-        """Send a GET and return the status and the body."""
-        stream_id = self.next_stream
-        self.next_stream += 2
-        self.sock.sendall(samples.http2_request_frame(target, stream_id=stream_id, encoder=self.encoder))
-        status = b""
-        body = bytearray()
-        while True:
-            for frame in self.parser.feed(self.sock.recv(1 << 16)):
-                if frame.type == HEADERS:
-                    status = dict(self.decoder.decode(frame.payload, raw=True))[b":status"]
-                elif frame.type == DATA and frame.stream_id == stream_id:
-                    body += frame.payload
-                    if frame.flags & END_STREAM:
-                        return status, bytes(body)
 
 
 def wait_for_ended_connection(server: CaptureServer, protocol: str) -> ConnectionRecord:
@@ -128,7 +81,7 @@ def only_quic_connection(server: CaptureServer) -> QuicConnectionRecord:
     return connection
 
 
-def test_a_host_must_be_a_localhost_name() -> None:
+def test_a_host_must_be_a_name_nothing_else_has() -> None:
     with pytest.raises(ValueError, match="localhost"):
         CaptureServer("example.com")
 
@@ -143,7 +96,7 @@ def test_prints_the_hash_of_the_certificate_it_serves() -> None:
         )
         assert server.spki_hash == base64.b64encode(hashlib.sha256(spki).digest()).decode()
         names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
-        assert names.get_values_for_type(x509.DNSName) == [server.host]
+        assert names.get_values_for_type(x509.DNSName) == [server.host, *HOST_NAMES]
 
 
 def test_each_port_chooses_its_protocol_through_alpn() -> None:
@@ -442,6 +395,7 @@ def test_keeps_the_client_hello_of_a_connection_that_stopped_there() -> None:
             sock.sendall(raw)
         connection = wait_for_ended_connection(server, HTTP1)
 
+    assert connection.client_hello is not None
     assert connection.client_hello.raw == raw
     assert connection.requests == ()
     assert connection.error is not None
@@ -522,15 +476,16 @@ def steer_first_bind(
     monkeypatch.setattr(socket.socket, "bind", bind)
 
 
-@pytest.mark.parametrize(("protocol", "index"), [(HTTP1, 0), (HTTP2, -1)])
+@pytest.mark.parametrize(("route", "position"), [(HTTP1, 0), (HTTP2, 1), (PLAIN_HTTP, 2), (PROXY, 3)])
 def test_a_chosen_http3_port_does_not_take_the_number_of_a_tcp_port(
-    monkeypatch: pytest.MonkeyPatch, protocol: str, index: int
+    monkeypatch: pytest.MonkeyPatch, route: str, position: int
 ) -> None:
     """TCP to the HTTP/3 port must be refused, not reach another port's listener and get a response."""
-    steer_first_bind(monkeypatch, socket.SOCK_DGRAM, lambda tcp_ports: tcp_ports[index])
+    # Each of the four TCP ports listens on one or two loopback addresses, whichever the machine has.
+    steer_first_bind(monkeypatch, socket.SOCK_DGRAM, lambda tcp_ports: tcp_ports[position * len(tcp_ports) // 4])
 
     with CaptureServer() as server:
-        assert server.port(HTTP3) != server.port(protocol)
+        assert server.port(HTTP3) != server.port(route)
 
 
 def test_a_chosen_tcp_port_does_not_take_the_number_of_a_named_http3_port(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -549,9 +504,9 @@ def test_named_ports_may_share_a_number_across_tcp_and_udp() -> None:
         assert server.port(HTTP1) == server.port(HTTP3) == port
 
 
-def test_command_line_writes_all_recordings(tmp_path: Path) -> None:
+def test_command_line_writes_the_recordings_of_its_runs(tmp_path: Path) -> None:
     # Named ports, as by default: a server that starts twice gets away with it on port 0.
-    http1_port, http2_port = free_ports(2)
+    http1_port, http2_port, plain_http_port, proxy_port = free_ports(4)
     http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
     command = [
         sys.executable,
@@ -565,6 +520,14 @@ def test_command_line_writes_all_recordings(tmp_path: Path) -> None:
         str(http2_port),
         "--http3-port",
         str(http3_port),
+        "--plain-http-port",
+        str(plain_http_port),
+        "--proxy-port",
+        str(proxy_port),
+        "--runs",
+        "http1",
+        "http2",
+        "http3",
     ]
     with subprocess.Popen(
         command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -627,6 +590,8 @@ def test_command_line_explains_a_port_in_use(tmp_path: Path) -> None:
             str(tmp_path),
             "--http1-port",
             str(server.port(HTTP1)),
+            "--http2-port",
+            str(free_ports(1)[0]),
         ]
         result = subprocess.run(command, cwd=_REPOSITORY, capture_output=True, text=True, check=False)
 

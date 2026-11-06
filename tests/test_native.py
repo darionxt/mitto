@@ -282,6 +282,24 @@ def test_session_create_accepts_an_origin_to_force_quic_on(native_library: ctype
     native_library.mitto_session_destroy(handle)
 
 
+@pytest.mark.parametrize(
+    "rules",
+    [
+        "",
+        "MAP capture.test 127.0.0.1",
+        "MAP capture.test 127.0.0.1,MAP *.capture.test [::1]:443, EXCLUDE other.capture.test",
+        "map CAPTURE.test 127.0.0.1",
+    ],
+)
+def test_session_create_accepts_host_resolver_rules(native_library: ctypes.CDLL, rules: str) -> None:
+    settings = f'{{"version": 1, "host_resolver_rules": "{rules}"}}'.encode()
+
+    error, handle = create_session(native_library, settings)
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
 def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.CDLL) -> None:
     handle = ctypes.POINTER(_native.MittoSession)()
 
@@ -318,6 +336,13 @@ def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["A.test:443"]}', id="origin-is-not-canonical"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["[::1]:443"]}', id="origin-is-ipv6"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["a\\u0000.test:443"]}', id="nul-in-origin"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": 1}', id="rules-are-a-number"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": ["MAP a.test 127.0.0.1"]}', id="rules-are-a-list"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": "nonsense"}', id="rule-is-nonsense"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": "MAP a.test"}', id="rule-has-no-address"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": "MAP a.test b c"}', id="rule-has-too-much"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": "MAP a.test b:port"}', id="rule-has-a-bad-port"),
+        pytest.param(b'{"version": 1, "host_resolver_rules": "MAP a.test 127.0.0.1,"}', id="rule-is-empty"),
     ],
 )
 def test_session_create_refuses_invalid_settings(native_library: ctypes.CDLL, settings: bytes) -> None:

@@ -36,7 +36,15 @@ from tools.capture.wire import ParseError
 HTTP1 = "http/1.1"
 HTTP2 = "h2"
 HTTP3 = "h3"
-"""The protocols, by the names ALPN knows them by."""
+"""The protocols, by the names ALPN knows them by. Each is also a route: the port that offers it, directly."""
+
+PLAIN_HTTP = "plain http"
+PROXIED_HTTP1 = "http/1.1 through the proxy"
+PROXIED_HTTP2 = "h2 through the proxy"
+"""The other routes into the server. A route is what the server keeps one recording of."""
+
+PROXY = "proxy"
+"""The port of the server's HTTP proxy. What comes through it counts as PROXIED_HTTP1 or PROXIED_HTTP2."""
 
 type Json = bool | int | str | list[Json] | dict[str, Json] | None
 
@@ -47,7 +55,7 @@ class ConnectionRecord:
 
     Attributes:
         id: The connection's number among the server's connections, counted from 1.
-        client_hello: The ClientHello that opened it.
+        client_hello: The ClientHello that opened it, or nothing on a connection without TLS.
         tls_version: The TLS version the handshake settled on, if it got that far.
         cipher: The cipher suite the handshake settled on, if it got that far.
         alpn: The protocol ALPN settled on, if any. Anything but h2 is served as HTTP/1.1.
@@ -55,10 +63,11 @@ class ConnectionRecord:
         requests: Every request received, in order.
         error: Why the server gave up on the connection, if it did.
         peer: The client's address, without its port, if known.
+        connect: The CONNECT request that opened the tunnel this connection came through, if it came through one.
     """
 
     id: int
-    client_hello: ClientHelloRecords
+    client_hello: ClientHelloRecords | None
     tls_version: str | None
     cipher: str | None
     alpn: str | None
@@ -66,6 +75,7 @@ class ConnectionRecord:
     requests: tuple[Http1Request | Http2Request, ...]
     error: str | None
     peer: str | None = None
+    connect: Http1Request | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,17 +111,23 @@ class QuicConnectionRecord:
 
 @dataclass(frozen=True, slots=True)
 class Recording:
-    """Everything one port of the server has received so far.
+    """Everything one route into the server has received so far.
 
     Attributes:
-        host: The name the server is at, without a port.
-        authority: The name and port of this recording's port.
-        connections: The port's connections, in the order they arrived.
+        host: The name the page is at, without a port.
+        authority: The name and port the page is at.
+        connections: The route's connections, in the order they arrived.
+        same_site_authority: The name and port that are same-site with the page, if the server has one.
+        cross_site_authority: The name and port that are cross-site with the page, if the server has one.
+        scheme: The page's scheme.
     """
 
     host: str
     authority: str
     connections: tuple[ConnectionRecord | QuicConnectionRecord, ...]
+    same_site_authority: str | None = None
+    cross_site_authority: str | None = None
+    scheme: str = "https"
 
 
 def header_lines(headers: tuple[tuple[str, str], ...]) -> list[Json]:
@@ -131,17 +147,20 @@ def raw_form(recording: Recording) -> Json:
 def _raw_connection(connection: ConnectionRecord | QuicConnectionRecord) -> Json:
     if isinstance(connection, QuicConnectionRecord):
         return _raw_quic_connection(connection)
-    return {
+    form: dict[str, Json] = {
         "id": connection.id,
         "peer": connection.peer,
         "tls_version": connection.tls_version,
         "cipher": connection.cipher,
         "alpn": connection.alpn,
         "error": connection.error,
-        "client_hello": connection.client_hello.raw.hex(),
+        "client_hello": None if connection.client_hello is None else connection.client_hello.raw.hex(),
         "frames": [_raw_frame(frame) for frame in connection.frames],
         "requests": [_raw_request(request) for request in connection.requests],
     }
+    if connection.connect is not None:
+        form["connect"] = _raw_request(connection.connect)
+    return form
 
 
 def _raw_quic_connection(connection: QuicConnectionRecord) -> Json:
@@ -237,8 +256,11 @@ def _raw_priority(priority: Priority) -> Json:
 
 def _raw_request(request: Http1Request | Http2Request) -> Json:
     if isinstance(request, Http1Request):
-        return {
+        form: dict[str, Json] = {
             "request_line": f"{request.method} {request.target} {request.version}",
             "headers": header_lines(request.headers),
         }
+        if request.body:
+            form["body"] = request.body.hex()
+        return form
     return {"stream": request.stream_id, "headers": header_lines(request.headers)}

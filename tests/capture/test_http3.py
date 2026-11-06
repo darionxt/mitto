@@ -61,9 +61,9 @@ def decode_response(output: list[StreamData]) -> tuple[list[tuple[bytes, bytes]]
     assert len(output) == 1
     stream_id, data, end_stream = output[0]
     frames = FrameParser().feed(data)
-    assert [frame_type for frame_type, _ in frames] == [HEADERS, DATA]
+    assert [frame_type for frame_type, _ in frames] in ([HEADERS], [HEADERS, DATA])
     _, headers = Decoder(0, 0).feed_header(stream_id, frames[0][1])
-    return headers, frames[1][1], end_stream
+    return headers, frames[1][1] if len(frames) == 2 else b"", end_stream
 
 
 def test_starts_with_the_streams_a_server_must_open() -> None:
@@ -112,8 +112,23 @@ def test_a_request_can_arrive_in_pieces() -> None:
     assert connection.frames == [Http3Frame(FIRST, HEADERS, frame[2:])]
 
 
+def test_a_response_can_say_more_and_can_have_no_body() -> None:
+    answer = Response(304, "text/plain", b"", "no-cache", (("ETag", '"a"'),))
+    connection = Http3Connection(lambda _: answer)
+
+    output = connection.receive(FIRST, request_frame(), end_stream=True)
+
+    assert [frame_type for frame_type, _ in FrameParser().feed(output[0].data)] == [HEADERS]
+    headers, body, ended = decode_response(output)
+    assert dict(headers)[b":status"] == b"304"
+    assert dict(headers)[b"cache-control"] == b"no-cache"
+    assert dict(headers)[b"etag"] == b'"a"'
+    assert body == b""
+    assert ended
+
+
 def test_a_missing_path_is_not_found() -> None:
-    connection = Http3Connection(lambda target: Response(404, "text/plain", target.encode()))
+    connection = Http3Connection(lambda request: Response(404, "text/plain", request.target.encode()))
 
     output = connection.receive(FIRST, request_frame([(b":method", b"GET")]), end_stream=True)
 

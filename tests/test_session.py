@@ -33,8 +33,10 @@ import mitto
 from mitto._native import Priority, RequestError, Session
 from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
 from tests.local_server import LocalHTTPServer
-from tools.capture import HTTP2, HTTP3, KIND_PATHS, CaptureServer, normal_form
+from tools.capture import CASE_HOST, HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, normal_form
 from tools.capture import RequestKind as CaptureRequestKind
+from tools.capture.cases import HOST_NAMES
+from tools.capture.recording import ConnectionRecord, QuicConnectionRecord
 
 pytestmark = pytest.mark.usefixtures("native_library")
 
@@ -191,6 +193,57 @@ def test_an_invalid_spki_hash_is_refused() -> None:
 def test_an_invalid_origin_to_force_quic_on_is_refused() -> None:
     with pytest.raises(ValueError, match="refused"):
         Session(origins_to_force_quic_on=["no port"])
+
+
+def test_invalid_host_resolver_rules_are_refused() -> None:
+    with pytest.raises(ValueError, match="refused"):
+        Session(host_resolver_rules="MAP no-address.test")
+
+
+def test_a_name_that_exists_nowhere_resolves_through_host_resolver_rules(tls_server: RecordingServer) -> None:
+    url = f"https://{CASE_HOST}:{tls_server.server_port}/"
+
+    with (
+        Session(ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH]) as without_rules,
+        pytest.raises(RequestError),
+    ):
+        without_rules.request(url)
+    assert tls_server.received == []
+
+    with Session(
+        ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH],
+        host_resolver_rules=f"MAP {CASE_HOST} 127.0.0.1",
+    ) as session:
+        assert session.request(url).status == 200
+
+    assert dict(tls_server.received[0].headers)["Host"] == f"{CASE_HOST}:{tls_server.server_port}"
+
+
+def sent_server_name(connection: ConnectionRecord | QuicConnectionRecord) -> str:
+    """Return the name in a connection's SNI, which is one list entry of one name."""
+    assert connection.client_hello is not None
+    extension = next(extension for extension in connection.client_hello.hello.extensions if extension.type == 0)
+    return extension.data[5:].decode()
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_host_resolver_rules_reach_every_name_and_leave_it_in_sni(protocol: str) -> None:
+    path = KIND_PATHS[CaptureRequestKind.FETCH]
+    with (
+        CaptureServer() as server,
+        Session(
+            ignore_certificate_errors_spki_list=[server.spki_hash],
+            origins_to_force_quic_on=[server.authority(HTTP3, host=name) for name in HOST_NAMES]
+            if protocol == HTTP3
+            else [],
+            host_resolver_rules=server.host_resolver_rules,
+        ) as session,
+    ):
+        for name in HOST_NAMES:
+            assert session.request(server.url(protocol, host=name, path=path)).status == 200
+        connections = server.recording(protocol).connections
+
+    assert sent_server_name(connections[0]) == CASE_HOST
 
 
 def test_a_session_moves_to_http3_through_alt_svc(tls_server: RecordingServer) -> None:
