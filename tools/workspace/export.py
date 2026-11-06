@@ -49,6 +49,9 @@ PATCHES = REPO / "tools/workspace/patches"
 NATIVE = REPO / "native"
 PIN_FILE = REPO / "tools/workspace/source_export.json"
 
+# The time that the files of a CIPD package get, in seconds since the epoch.
+CIPD_FILE_TIME = 1_000_000_000
+
 # GitHub refuses a bigger release asset.
 ASSET_LIMIT = 2 * 1024**3
 
@@ -887,7 +890,12 @@ def download(url: str, sha256: str, directory: Path) -> Path:
 
 
 def extract_zip(archive: Path, destination: Path) -> None:
-    """Unpacks a CIPD package. zipfile drops file modes and symlinks, so restore them."""
+    """Unpacks a CIPD package. zipfile drops file modes and symlinks, so restore them.
+
+    zipfile also gives each file the current time. The build depends on some of these
+    programs, so ninja would take a package unpacked after a build's objects for a
+    change, and rebuild what depends on it. A fixed old time keeps those objects valid.
+    """
     with zipfile.ZipFile(archive) as packed:
         for member in packed.infolist():
             if member.filename.startswith(".cipdpkg/"):
@@ -903,6 +911,9 @@ def extract_zip(archive: Path, destination: Path) -> None:
             else:
                 target.write_bytes(packed.read(member))
                 target.chmod(0o755 if mode & stat.S_IXUSR else 0o644)
+    for path in destination.rglob("*"):
+        if not path.is_symlink():
+            os.utime(path, (CIPD_FILE_TIME, CIPD_FILE_TIME))
 
 
 def fetch_toolchain(metadata: Mapping[str, Any], host: Host, checkout: Path, downloads: Path) -> None:
@@ -943,6 +954,8 @@ def unpack_export(archive: Path, checkout: Path) -> None:
 
     A checkout only appears once it is whole, so a run that stopped starts over.
     An export replaced under the same release must not build with the old sources.
+    A checkout with no stamp holds only `src/out`, restored from a cache of a build's
+    objects. Those move into the new checkout, so that the build can reuse them.
     """
     identity = sha256_of(archive)
     stamp = checkout / "archive.sha256"
@@ -957,6 +970,9 @@ def unpack_export(archive: Path, checkout: Path) -> None:
         if not (unpacked / "export.json").is_file():
             die(f"{archive} has no {checkout.name}/export.json; it is not the export of that release")
         (unpacked / stamp.name).write_text(identity + "\n")
+        if checkout.exists():
+            (checkout / "src/out").rename(unpacked / "src/out")
+            shutil.rmtree(checkout)
         unpacked.rename(checkout)
 
 

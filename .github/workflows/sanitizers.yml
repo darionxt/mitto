@@ -53,6 +53,18 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: native-core-${{ matrix.config }}-${{ hashFiles('.github/workflows/sanitizers.yml', 'native/**', 'tools/workspace/**') }}
+      - id: tag
+        run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
+      # What the export compiles to changes only with tools/workspace, so a pull request
+      # reuses main's objects and rebuilds only native/. main always builds from nothing,
+      # so a mistake in an incremental build cannot go unnoticed there.
+      - id: cached-objects
+        if: steps.cached-build.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
+          key: native-objects-${{ matrix.config }}-${{ hashFiles('tools/workspace/**') }}
+          lookup-only: ${{ github.event_name != 'pull_request' }}
       - name: Build the native core
         if: steps.cached-build.outputs.cache-hit != 'true'
         env:
@@ -74,6 +86,11 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-build.outputs.cache-primary-key }}
+      - if: steps.cached-build.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
+          key: ${{ steps.cached-objects.outputs.cache-primary-key }}
       - name: Run the C test program against a local server
         if: matrix.config != 'fuzz'
         run: uv run pytest tests/test_core_test_program.py -rs
@@ -88,13 +105,15 @@ jobs:
           for target in session_settings request_options; do
             mkdir "$RUNNER_TEMP/corpus-$target"
             "$RUNNER_TEMP/native-core/${target}_fuzzer" \
-              -max_total_time=300 \
+              -max_total_time="$FUZZ_SECONDS" \
               -dict="native/test/${target}_fuzzer.dict" \
               -artifact_prefix="$RUNNER_TEMP/crashes/$target-" \
               "$RUNNER_TEMP/corpus-$target" "native/test/${target}_corpus"
           done
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+          # A pull request only checks that new code does not fail quickly. The daily run looks harder.
+          FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 60 || 300 }}
       # A run is random, so the input that crashed it is the only way to repeat it.
       - if: failure() && matrix.config == 'fuzz'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
