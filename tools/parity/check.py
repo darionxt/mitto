@@ -2,23 +2,30 @@
 
 import json
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
 from mitto import RequestError, Session
-from mitto._native import PrivateSettings
 from mitto._persona import WINDOWS_PERSONAS
-from tools.capture import HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_form
+from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
+from tools.parity.replay import can_reach, replay, run_of, session_settings
 
 BASELINES_DIRECTORY = Path(__file__).parents[2] / "tests" / "baselines"
 
 _RAW_SUFFIX = ".raw.json"
 _REQUESTS = "requests"
+_REQUEST = "request"
 _RESPONSE_FIELD = "response"
 _A_RESPONSE = "a response"
+
+_REFUSED: Json = {"refused": True}
+"""A Baseline's request when Chrome refused to send it at all."""
+
+_REFUSAL_ERROR = "ERR_ALPN_NEGOTIATION_FAILED"
+"""What a client sees when //net settles on HTTP/1.1 for a stream body, which it refuses to send over that."""
 
 type Recorder = Callable[[Baseline], dict[str, Json]]
 """What makes the request of a Baseline, and returns the fingerprint of what it sent."""
@@ -30,48 +37,48 @@ class BaselineError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Baseline:
-    """What real Chrome sent for one Chrome Release, Request Kind and protocol.
+    """What real Chrome sent for one Chrome Release, Recording Case and protocol.
 
     Attributes:
         release: The Chrome Release, such as "157".
-        kind: The Request Kind.
+        case: The name of the Recording Case, such as "navigation" or "fetch_post_text_cross_site".
         protocol: The protocol, such as "h2".
         fingerprint: See fingerprint().
     """
 
     release: str
-    kind: RequestKind
+    case: str
     protocol: str
     fingerprint: dict[str, Json]
 
 
-def fingerprint(form: dict[str, Json], kind: RequestKind) -> dict[str, Json]:
-    """Return the part of a normal form that is about one Request Kind.
+def fingerprint(form: dict[str, Json], case: str) -> dict[str, Json]:
+    """Return the part of a normal form that is about one Recording Case.
 
-    That is everything about its connection, and that kind's entry in "requests" as "request". The entry is None if the
+    That is everything about its connection, and that case's entry in "requests" as "request". The entry is None if the
     normal form has none.
     """
     connection = {key: value for key, value in form.items() if key != _REQUESTS}
     requests = form.get(_REQUESTS)
-    return {**connection, "request": requests.get(kind.value) if isinstance(requests, dict) else None}
+    return {**connection, _REQUEST: requests.get(case) if isinstance(requests, dict) else None}
 
 
 def load_baselines(directory: Path) -> list[Baseline]:
     """Read the Baselines from directory, in a fixed order.
 
-    Each file named RELEASE/NAME.json holds a normal form, with one Baseline for each Request Kind in it. Other files,
-    such as raw recordings and notes on where a Baseline came from, are left alone.
+    Each file named RELEASE/NAME.json or RELEASE/cases/NAME.json holds a normal form, with one Baseline for each Recording
+    Case in it. Other files, such as raw recordings and notes on where a Baseline came from, are left alone.
 
     Raises:
         BaselineError: A file is not a normal form, or two files hold the same Baseline.
     """
     baselines: list[Baseline] = []
-    seen: dict[tuple[str, RequestKind, str], Path] = {}
-    for path in sorted(directory.glob("*/*.json")):
+    seen: dict[tuple[str, str, str], Path] = {}
+    for path in sorted((*directory.glob("*/*.json"), *directory.glob("*/cases/*.json"))):
         if path.name.endswith(_RAW_SUFFIX):
             continue
-        for baseline in _read_baselines(path):
-            key = (baseline.release, baseline.kind, baseline.protocol)
+        for baseline in _read_baselines(path, path.relative_to(directory).parts[0]):
+            key = (baseline.release, baseline.case, baseline.protocol)
             if key in seen:
                 raise BaselineError(f"{path} and {seen[key]} both hold {key}")
             seen[key] = path
@@ -79,7 +86,7 @@ def load_baselines(directory: Path) -> list[Baseline]:
     return baselines
 
 
-def _read_baselines(path: Path) -> list[Baseline]:
+def _read_baselines(path: Path, release: str) -> list[Baseline]:
     try:
         form = json.loads(path.read_text(encoding="utf-8"))
     except ValueError as error:
@@ -91,11 +98,10 @@ def _read_baselines(path: Path) -> list[Baseline]:
     requests = form.get(_REQUESTS)
     if not isinstance(protocol, str) or not isinstance(requests, dict) or not requests:
         raise BaselineError(f"{path} is not a normal form with a protocol and requests")
-    try:
-        kinds = [RequestKind(name) for name in requests]
-    except ValueError as error:
-        raise BaselineError(f"{path} holds an unknown Request Kind: {error}") from error
-    return [Baseline(path.parent.name, kind, protocol, fingerprint(form, kind)) for kind in kinds]
+    for case in requests:
+        if run_of(case, protocol) is None:
+            raise BaselineError(f"{path} holds an unknown Recording Case: {case} over {protocol}")
+    return [Baseline(release, case, protocol, fingerprint(form, case)) for case in requests]
 
 
 def _persona_of(release: str) -> str:
@@ -106,35 +112,54 @@ def _persona_of(release: str) -> str:
 
 
 def record(baseline: Baseline) -> dict[str, Json]:
-    """Make the request of a Baseline through a new Session to a new capture server.
+    """Replay the Recording Case of a Baseline through a new Session to a new capture server.
 
-    The request presents the Persona of the Baseline's Chrome Release. The Session accepts the server's private
-    certificate, in settings that the public API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as
-    well, like the Chrome that recorded the Baselines, because //net refuses QUIC to that certificate otherwise.
+    The request presents the Persona of the Baseline's Chrome Release, and goes where the Chrome that recorded the Baseline
+    went. The Session accepts the server's private certificate and finds the case pages' names, in settings that the public
+    API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, because //net refuses QUIC to that
+    certificate otherwise.
 
     Returns:
-        The fingerprint of what the capture server received.
+        The fingerprint of what the capture server received. A request that never reached the server is None there, and
+        with no connection to compare, its connection counts as the Baseline's, so that it is one gap.
 
     Raises:
-        BaselineError: No Persona presents the Baseline's Chrome Release.
-        RequestError: The request got no response.
+        BaselineError: No Persona presents the Baseline's Chrome Release, or no run records its Recording Case.
+        RequestError: A request got no response, and that is not what the Baseline shows.
+        RecordingError: The connections that carried the requests do not look the same.
         NativeLibraryError: The native library cannot be used.
     """
     persona = _persona_of(baseline.release)
-    protocol = baseline.protocol
-    kind = baseline.kind
-    with (
-        CaptureServer() as server,
-        Session(
-            persona=persona,
-            _settings=PrivateSettings(
-                ignore_certificate_errors_spki_list=[server.spki_hash],
-                origins_to_force_quic_on=[server.authority(HTTP3)] if protocol == HTTP3 else [],
-            ),
-        ) as session,
-    ):
-        session.get(f"https://{server.authority(protocol)}{KIND_PATHS[kind]}", kind=kind.value)
-    return fingerprint(normal_form(server.recording(protocol)), kind)
+    run = run_of(baseline.case, baseline.protocol)
+    if run is None:
+        raise BaselineError(f"no run records {baseline.case} over {baseline.protocol}")
+    if not can_reach(run):
+        return {**baseline.fingerprint, _REQUEST: None}
+    refused: Json = None
+    with CaptureServer() as server, Session(persona=persona, _settings=session_settings(server, run)) as session:
+        try:
+            replay(session, server, run, baseline.case)
+        except RequestError as error:
+            if error.name != _REFUSAL_ERROR or baseline.fingerprint.get(_REQUEST) != _REFUSED:
+                raise
+            refused = _REFUSED
+    recording = server.recording(run.route, host=run.host)
+    cases = [as_recorded(case, recording) for case in run.cases]
+    if not any(_was_recorded(case, recording) for case in cases):
+        return {**baseline.fingerprint, _REQUEST: refused}
+    return fingerprint(normal_form(recording, cases), baseline.case)
+
+
+def _was_recorded(case: Case, recording: Recording) -> bool:
+    return any(case.matches(request) for connection in recording.connections for request in connection.requests)
+
+
+def as_recorded(case: Case, recording: Recording) -> Case:
+    """Return a case, or if no request carries what it should, the case that any request to its path stands for.
+
+    So a request without its Cookie is a gap in that header, rather than a request that is missing.
+    """
+    return case if case.carries is None or _was_recorded(case, recording) else replace(case, carries=None)
 
 
 def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> list[Gap]:
@@ -143,7 +168,8 @@ def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> lis
     A request that gets no response has nothing to compare, so it is one gap, in the field "response".
 
     Raises:
-        BaselineError: No Persona presents the Chrome Release of a Baseline.
+        BaselineError: No Persona presents the Chrome Release of a Baseline, or no run records its Recording Case.
+        RecordingError: The connections that carried a Baseline's requests do not look the same.
         NativeLibraryError: The native library cannot be used.
     """
     gaps: list[Gap] = []
@@ -154,5 +180,5 @@ def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> lis
             found = [(_RESPONSE_FIELD, _A_RESPONSE, f"net error {error.net_error}")]
         else:
             found = differences(baseline.fingerprint, recorded)
-        gaps += [Gap(baseline.release, baseline.kind.value, baseline.protocol, *difference) for difference in found]
+        gaps += [Gap(baseline.release, baseline.case, baseline.protocol, *difference) for difference in found]
     return gaps

@@ -16,7 +16,11 @@ from tools.capture.normal_form import AUTHORITY_PLACEHOLDER, ORIGIN_PLACEHOLDER
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 
 PERSONAS = {release: load_persona(name) for release, name in WINDOWS_PERSONAS.items()}
-BASELINES = load_baselines(BASELINES_DIRECTORY)
+BASELINES = [
+    baseline
+    for baseline in load_baselines(BASELINES_DIRECTORY)
+    if baseline.case in {kind.value for kind in RequestKind}
+]
 
 _ANY_URL = "https://example.test:8444/any/path?query"
 
@@ -28,7 +32,7 @@ _URGENCY_AND_WEIGHT = {Priority.HIGHEST: (0, 256), Priority.MEDIUM: (1, 220), Pr
 
 
 def _defaults(baseline: Baseline) -> RequestDefaults:
-    return PERSONAS[baseline.release].request_defaults(RequestKind(baseline.kind.value), _ANY_URL)
+    return PERSONAS[baseline.release].request_defaults(RequestKind(baseline.case), _ANY_URL)
 
 
 def _priority_field(defaults: RequestDefaults) -> str:
@@ -52,18 +56,18 @@ def _lines_on_the_wire(baseline: Baseline) -> list[str]:
         ":method: GET",
         f":authority: {AUTHORITY_PLACEHOLDER}",
         ":scheme: https",
-        f":path: {KIND_PATHS[baseline.kind]}",
+        f":path: {KIND_PATHS[CaptureRequestKind(baseline.case)]}",
         *lower_case,
         f"priority: {_priority_field(defaults)}",
     ]
 
 
 def _name(baseline: Baseline) -> str:
-    return f"{baseline.release}-{baseline.kind.value}-{baseline.protocol}"
+    return f"{baseline.release}-{baseline.case}-{baseline.protocol}"
 
 
 def test_the_personas_and_the_baselines_cover_the_same_chrome_releases_request_kinds_and_protocols() -> None:
-    found = {(baseline.release, baseline.kind.value, baseline.protocol) for baseline in BASELINES}
+    found = {(baseline.release, baseline.case, baseline.protocol) for baseline in BASELINES}
 
     assert found == set(
         itertools.product(WINDOWS_PERSONAS, (kind.value for kind in RequestKind), (HTTP1, HTTP2, HTTP3))

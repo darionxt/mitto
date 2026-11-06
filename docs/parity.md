@@ -1,6 +1,6 @@
 # Parity Checks
 
-A **Parity Check** compares what the public API sends through the native core with what real Chrome sent, as recorded in a **Baseline**. Everything the rest of milestone M1 does is measured with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
+A **Parity Check** compares what the public API sends through the native core with what real Chrome sent, as recorded in a **Baseline**. Everything milestones M1 and M2 do is measured with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
 
 ## Run them
 
@@ -18,23 +18,43 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate, through a setting that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origin, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
-3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol, with that kind as `kind`, so with what the Persona sends for it ([persona.md](persona.md));
+2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
+3. [replays](#replaying-a-recording-case) the Baseline's **Recording Case** through the public API, with what the Persona sends for that case's **Request Kind** ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
-Each comparison covers what the connection looks like and the one request. So a difference in the connection, such as in the ClientHello, shows up once for each Request Kind.
+Each comparison covers what the connection looks like and the one request. So a difference in the connection, such as in the ClientHello, shows up once for each Recording Case. The Baselines hold the same connection in every file of a protocol, but a replay need not, so this still says something about the native core.
 
 The native core of the **Engine Release** presents every Chrome Release in turn, so one native library checks all of them. A Baseline of a Chrome Release that has no Persona stops the run.
 
 ## Baselines
 
-A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json`, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Request Kind in it, and the protocol comes from the file's `protocol` key. [baselines.md](baselines.md) is how to record them.
+A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
 
-Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines. So is `RELEASE/cases`, which holds the **Recording Cases** beyond the main **Request Kinds**. No check compares those yet.
+Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
+
+## Replaying a Recording Case
+
+A replay does what a caller of the public API can do today, in `REPLAYS` in `tools/parity/replay.py`: the case's method and **Request Kind**, at the case's name, on the route of its run. It passes no headers of its own, so what the Persona and `//net` send is what gets compared. What the API cannot do yet is therefore a set of gaps, which go when the API can do it:
+
+| Recording Cases | A replay asks for | What it cannot do yet, and how that shows |
+|---|---|---|
+| `navigation`, `fetch`, `script`, `image` | The case's path at the server's own name | Nothing |
+| `navigation_link_*`, `fetch_get_*`, `script_*`, `image_*` | The case's path at its name | Say which page the request comes from, so `Sec-Fetch-Site`, `Referer`, `Origin` and `Sec-Fetch-Storage-Access` are those of a same-origin **Initiator**, or of none for a navigation |
+| `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with no body | Send a body, so `//net` adds `Content-Length: 0` and `Content-Type`, `body` and the frames that hold it are missing. `Origin` and `Cache-Control` go with those |
+| `fetch_post_stream` | `POST` with no body | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
+| `cookie` | `/case/cookie-set`, then the case's path | Keep a cookie, so `Cookie` is a gap in that one line, because a case counts a request without what it should carry when none has it |
+| `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |
+| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop. Wait before it follows a redirect, so over HTTP/2 every hop but the last usually has `RST_STREAM` in `later_frames`, where Chrome follows the redirect later and has none ([why only usually](#the-known-gaps-list)) |
+| `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
+| `proxy_connect`, `proxy_navigation` | Nothing | Use a proxy, so each is [one gap](#gaps) in the field `request` |
+
+When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
+
+Every case made from a page has the gaps of an Initiator as well, whatever else it lacks. So `cookie` still differs in `Referer` when a Session keeps its cookie, until a request can say which page it comes from.
 
 ## Gaps
 
-A gap is one field in which the two normal forms differ. A failure names the Chrome Release, Request Kind, protocol and field, with both values:
+A gap is one field in which the two normal forms differ. A failure names the Chrome Release, Recording Case, protocol and field, with both values:
 
 ```text
 Chrome 157, navigation, h2, request.headers.accept-encoding
@@ -53,15 +73,17 @@ Chrome 157, navigation, h2, request.headers.accept-encoding
 
 The request's own fields come under `request`. If several items have the same `type` or name, the later ones get a number, such as `tls.extensions.GREASE#2`. If the items both sides have are in a different order, that is one more gap, in a field such as `request.headers.<order>`, whose values are the names in each order.
 
-A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error.
+A request that gets no response has nothing to compare. It is one gap in the field `response`, whose value for mitto is the net error. A request that never reached the server, with no error, is one gap in the field `request`, whose value for the Baseline is the whole request.
 
 ## The known-gaps list
 
-`tests/baselines/known_gaps.json` holds every **Known Gap**, one per line, with the keys `release`, `kind`, `protocol`, `field`, `baseline` and `mitto`. Here `null` means that side does not have the field.
+`tests/baselines/known_gaps.json` holds every **Known Gap**, one per line, with the keys `release`, `case`, `protocol`, `field`, `baseline` and `mitto`. Here `null` means that side does not have the field. `case` is the name of the Recording Case, so a case with no line in the list matches its Baselines, and a line holds what to look for: `grep '"case": "cookie"' tests/baselines/known_gaps.json`.
 
 A run fails on a gap that is not in the list and on a gap in the list that no longer exists. A gap whose value has changed counts as both, so the list always says exactly how mitto differs from the Baselines.
 
 There is one list for both **Hosts**, because a Wire Fingerprint must not depend on the Host. A gap on only one Host fails the run on the other.
+
+One gap comes and goes on any Host, so a run accepts it whichever way it went: a redirect hop whose `later_frames` is one `RST_STREAM` with the error `CANCEL`. The native core follows a redirect at once, from inside the callback that `//net` runs when the response headers arrive, and `//net` cancels the stream because it has not read the frame's end of stream yet. If the response arrived before `//net` asked for it, the stream has already ended and nothing is cancelled, which happened in about one replay in 600 on a loaded machine. So the list has this line for each such hop, and writing the list again can lose one, which needs no attention. When the native core no longer follows a redirect from inside that callback, these lines should go for good, and `_depends_on_timing()` in `tools/parity/gaps.py` with them.
 
 To write the list again from what the native core does now:
 
@@ -69,7 +91,7 @@ To write the list again from what the native core does now:
 uv run python -m tools.parity
 ```
 
-This needs a native library, and it runs the same comparison as the tests. `--baselines DIR` uses another directory of Baselines, with its own list. Read the diff before you commit it. Fixing a gap only removes lines. An added line means mitto moved away from a Baseline, or a Baseline changed.
+This needs a native library, and it runs the same comparison as the tests. It also prints how many gaps each Recording Case has, over every Chrome Release and protocol, where 0 means the case matches. `--baselines DIR` uses another directory of Baselines, with its own list. Read the diff before you commit it. Fixing a gap only removes lines. An added line means mitto moved away from a Baseline, or a Baseline changed.
 
 ## What the native core states
 
@@ -119,4 +141,4 @@ The first three let a Session accept what Chrome would refuse. None of them chan
 
 ## Tests of the comparison
 
-Real Baselines are recorded by hand on a Windows machine, so `tests/parity` tests the comparison itself with a sample: the real normal forms of Chrome 156 on macOS in `tests/capture/data`. It changes that sample on purpose and expects the run to fail, both through the native core and, where there is no native library, through a stand-in for it.
+Real Baselines are recorded by hand on a Windows machine, so `tests/parity` tests the comparison itself with a sample: the real normal forms of Chrome 156 on macOS in `tests/capture/data`. It changes that sample on purpose and expects the run to fail, both through the native core and, where there is no native library, through a stand-in for it. `tests/parity/test_replay.py` checks that each replay goes where its case went, and that a replay compared with itself has no gaps, so that what the list holds is about mitto and not about the replay.

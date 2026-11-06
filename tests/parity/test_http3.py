@@ -90,13 +90,13 @@ def _change_a_header(form: dict[str, Any]) -> None:
 def test_each_request_kind_in_a_file_is_one_http3_baseline(http3_baselines: Path) -> None:
     baselines = load_baselines(http3_baselines)
 
-    assert [(baseline.protocol, baseline.kind.value) for baseline in baselines] == [("h3", kind) for kind in _ALL_KINDS]
+    assert [(baseline.protocol, baseline.case) for baseline in baselines] == [("h3", kind) for kind in _ALL_KINDS]
     assert sorted(baselines[0].fingerprint) == ["format", "http3", "protocol", "quic", "request", "tls"]
 
 
 def test_a_recording_like_the_http3_baseline_has_no_gaps(http3_baselines: Path) -> None:
     def recorder(baseline: Baseline) -> dict[str, Json]:
-        return fingerprint(sample_form("http3"), baseline.kind)
+        return fingerprint(sample_form("http3"), baseline.case)
 
     assert find_gaps(load_baselines(http3_baselines), recorder) == []
 
@@ -121,7 +121,7 @@ def test_each_difference_in_http3_is_its_own_gap(
     def recorder(baseline: Baseline) -> dict[str, Json]:
         form = sample_form("http3")
         change(form)
-        return fingerprint(form, baseline.kind)
+        return fingerprint(form, baseline.case)
 
     gaps = find_gaps(load_baselines(http3_baselines), recorder)
 
@@ -132,14 +132,14 @@ def test_each_difference_in_http3_is_its_own_gap(
 def test_what_the_capture_server_records_over_http3_goes_through_the_comparison(http3_baselines: Path) -> None:
     def recorder(baseline: Baseline) -> dict[str, Json]:
         with CaptureServer() as server, Http3Client(server.port(baseline.protocol)) as client:
-            client.get(KIND_PATHS[baseline.kind])
-            return fingerprint(normal_form(server.recording(baseline.protocol)), baseline.kind)
+            client.get(KIND_PATHS[RequestKind(baseline.case)])
+            return fingerprint(normal_form(server.recording(baseline.protocol)), baseline.case)
 
     gaps = find_gaps(load_baselines(http3_baselines), recorder)
 
     fields = {gap.field for gap in gaps}
     assert {gap.protocol for gap in gaps} == {"h3"}
-    assert {gap.kind for gap in gaps} == set(_ALL_KINDS)
+    assert {gap.case for gap in gaps} == set(_ALL_KINDS)
     # The client is not Chrome, so this finds differences, each in a field of its own.
     assert "quic.first_datagram_ip_size" in fields
     assert "tls.extensions.trust_anchors" in fields

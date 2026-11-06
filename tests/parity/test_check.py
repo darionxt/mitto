@@ -7,22 +7,21 @@ import pytest
 
 from mitto._native import RequestError
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline, sample_form
-from tools.capture import RequestKind
 from tools.capture.recording import Json
 from tools.parity import Baseline, BaselineError, Gap, find_gaps, fingerprint, load_baselines, mismatches
 
-ALL_KINDS = [RequestKind.NAVIGATION, RequestKind.FETCH, RequestKind.SCRIPT, RequestKind.IMAGE]
+ALL_KINDS = ["navigation", "fetch", "script", "image"]
 
 
 def identical_to_the_sample(baseline: Baseline) -> dict[str, Json]:
     """Record what the unchanged sample Baseline holds, so that there is no gap until a Baseline changes."""
-    return fingerprint(sample_form("http2" if baseline.protocol == "h2" else "http1"), baseline.kind)
+    return fingerprint(sample_form("http2" if baseline.protocol == "h2" else "http1"), baseline.case)
 
 
-def test_each_request_kind_in_a_file_is_one_baseline(sample_baselines: Path) -> None:
+def test_each_recording_case_in_a_file_is_one_baseline(sample_baselines: Path) -> None:
     baselines = load_baselines(sample_baselines)
 
-    assert [(baseline.release, baseline.protocol, baseline.kind) for baseline in baselines] == [
+    assert [(baseline.release, baseline.protocol, baseline.case) for baseline in baselines] == [
         *((SAMPLE_RELEASE, "http/1.1", kind) for kind in ALL_KINDS),
         *((SAMPLE_RELEASE, "h2", kind) for kind in ALL_KINDS),
     ]
@@ -32,7 +31,7 @@ def test_a_baseline_holds_its_connection_and_its_own_request(sample_baselines: P
     form = sample_form("http2")
     baseline = load_baselines(sample_baselines)[4]
 
-    assert baseline.kind is RequestKind.NAVIGATION
+    assert baseline.case == "navigation"
     assert baseline.fingerprint == {
         "format": form["format"],
         "protocol": "h2",
@@ -45,15 +44,15 @@ def test_a_baseline_holds_its_connection_and_its_own_request(sample_baselines: P
 def test_a_new_top_level_field_stays_in_the_fingerprint() -> None:
     form: dict[str, Json] = {"protocol": "h3", "quic": {"version": 1}, "requests": {"image": {"headers": []}}}
 
-    assert fingerprint(form, RequestKind.IMAGE) == {
+    assert fingerprint(form, "image") == {
         "protocol": "h3",
         "quic": {"version": 1},
         "request": {"headers": []},
     }
 
 
-def test_a_request_kind_missing_from_a_recording_has_no_request() -> None:
-    assert fingerprint({"protocol": "h2", "requests": {}}, RequestKind.IMAGE) == {"protocol": "h2", "request": None}
+def test_a_recording_case_missing_from_a_recording_has_no_request() -> None:
+    assert fingerprint({"protocol": "h2", "requests": {}}, "image") == {"protocol": "h2", "request": None}
 
 
 def test_a_directory_without_baselines_has_none(tmp_path: Path) -> None:
@@ -79,7 +78,8 @@ def test_other_files_are_not_baselines(sample_baselines: Path) -> None:
         ('{"requests": {"image": {}}}', "protocol"),
         ('{"protocol": "h2"}', "requests"),
         ('{"protocol": "h2", "requests": {}}', "requests"),
-        ('{"protocol": "h2", "requests": {"prefetch": {}}}', "unknown Request Kind"),
+        ('{"protocol": "h2", "requests": {"prefetch": {}}}', "unknown Recording Case"),
+        ('{"protocol": "h2", "requests": {"plain_http_fetch": {}}}', "unknown Recording Case"),
     ],
 )
 def test_a_file_that_is_no_normal_form_is_refused(tmp_path: Path, text: str, complaint: str) -> None:
@@ -111,7 +111,7 @@ def test_a_recording_like_the_baseline_has_no_gaps(sample_baselines: Path) -> No
     assert find_gaps(load_baselines(sample_baselines), identical_to_the_sample) == []
 
 
-def test_a_gap_names_release_kind_protocol_and_field(sample_baselines: Path, change_baseline: ChangeBaseline) -> None:
+def test_a_gap_names_release_case_protocol_and_field(sample_baselines: Path, change_baseline: ChangeBaseline) -> None:
     def add_header(form: dict[str, Any]) -> None:
         form["requests"]["image"]["headers"].append("x-changed: yes")
 
@@ -122,14 +122,16 @@ def test_a_gap_names_release_kind_protocol_and_field(sample_baselines: Path, cha
     ]
 
 
-def test_a_connection_gap_is_one_gap_per_request_kind(sample_baselines: Path, change_baseline: ChangeBaseline) -> None:
+def test_a_connection_gap_is_one_gap_per_recording_case(
+    sample_baselines: Path, change_baseline: ChangeBaseline
+) -> None:
     def change_version(form: dict[str, Any]) -> None:
         form["tls"]["legacy_version"] = "TLS 1.3"
 
     change_baseline("http1", change_version)
 
     assert find_gaps(load_baselines(sample_baselines), identical_to_the_sample) == [
-        Gap(SAMPLE_RELEASE, kind.value, "http/1.1", "tls.legacy_version", "TLS 1.3", "TLS 1.2") for kind in ALL_KINDS
+        Gap(SAMPLE_RELEASE, kind, "http/1.1", "tls.legacy_version", "TLS 1.3", "TLS 1.2") for kind in ALL_KINDS
     ]
 
 
@@ -149,7 +151,7 @@ def test_each_baseline_is_recorded_with_its_own_chrome_release(sample_baselines:
 
 
 def test_a_baseline_of_a_chrome_release_with_no_persona_cannot_be_recorded() -> None:
-    baseline = Baseline("154", RequestKind.FETCH, "h2", {"protocol": "h2"})
+    baseline = Baseline("154", "fetch", "h2", {"protocol": "h2"})
 
     with pytest.raises(BaselineError, match="Chrome 154"):
         find_gaps([baseline])
@@ -158,10 +160,10 @@ def test_a_baseline_of_a_chrome_release_with_no_persona_cannot_be_recorded() -> 
 def test_a_request_without_a_response_is_one_gap() -> None:
     def refused(baseline: Baseline) -> dict[str, Json]:
         raise RequestError(
-            f"https://capture.localhost/{baseline.protocol}/{baseline.kind}", -102, "GET", "ERR_CONNECTION_REFUSED"
+            f"https://capture.localhost/{baseline.protocol}/{baseline.case}", -102, "GET", "ERR_CONNECTION_REFUSED"
         )
 
-    baseline = Baseline("157", RequestKind.FETCH, "h3", {"protocol": "h3", "tls": {}})
+    baseline = Baseline("157", "fetch", "h3", {"protocol": "h3", "tls": {}})
 
     assert find_gaps([baseline], refused) == [Gap("157", "fetch", "h3", "response", "a response", "net error -102")]
 
@@ -180,10 +182,28 @@ def test_a_changed_baseline_is_a_mismatch_with_the_list_made_before_the_change(
     assert [(gap.field, gap.baseline) for gap in found.unlisted] == [("request.flags", ["END_HEADERS"])]
 
 
-def test_the_recording_cases_of_a_release_are_left_alone_for_now(sample_baselines: Path) -> None:
+def test_the_recording_cases_of_a_release_are_baselines_of_that_release(sample_baselines: Path) -> None:
     before = load_baselines(sample_baselines)
     cases = sample_baselines / SAMPLE_RELEASE / "cases"
     cases.mkdir()
     (cases / "http1.json").write_text('{"protocol": "http/1.1", "requests": {"cookie": {}}}')
+    (cases / "http1.raw.json").write_text("{}")
 
-    assert load_baselines(sample_baselines) == before
+    assert load_baselines(sample_baselines) == [
+        Baseline(SAMPLE_RELEASE, "cookie", "http/1.1", {"protocol": "http/1.1", "request": {}}),
+        *before,
+    ]
+
+
+def test_a_file_in_cases_cannot_hold_a_baseline_of_a_main_file(sample_baselines: Path) -> None:
+    release = sample_baselines / SAMPLE_RELEASE
+    (release / "cases").mkdir()
+    (release / "cases" / "http2.json").write_text((release / "http2.json").read_text())
+
+    with pytest.raises(BaselineError, match=r"cases.http2\.json"):
+        load_baselines(sample_baselines)
+
+
+def test_a_baseline_of_a_case_that_no_run_records_cannot_be_recorded() -> None:
+    with pytest.raises(BaselineError, match="plain_http_fetch over h2"):
+        find_gaps([Baseline("157", "plain_http_fetch", "h2", {})])
