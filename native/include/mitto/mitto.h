@@ -91,6 +91,8 @@ typedef struct MittoEvent {
   // error code. An HTTP error status such as 404 is not a net error. -3
   // (ERR_ABORTED) says that the request was cancelled. A timer from the request's
   // options ends it with -118 (ERR_CONNECTION_TIMED_OUT) or -7 (ERR_TIMED_OUT).
+  // A proxy that asks for credentials the Session does not have, or refuses
+  // those it has, ends it with -127 (ERR_PROXY_AUTH_REQUESTED).
   int32_t net_error;
   // RESPONSE_STARTED: the protocol it arrived over, for example "http/1.1" or
   // "h2".
@@ -127,9 +129,11 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //     "ignore_certificate_errors_spki_list": ["<SPKI hash>"],
 //     "additional_trust_anchors": ["<text of a PEM file>"],
 //     "accept_language": "en-US,en;q=0.9",
+//     "user_agent": "Mozilla/5.0",
 //     "origins_to_force_quic_on": ["<host>:<port>"],
 //     "dns_nameserver": "<IP address>:<port>",
-//     "host_resolver_rules": "MAP <host> <address>"
+//     "host_resolver_rules": "MAP <host> <address>",
+//     "proxy": "http://<username>:<password>@<host>:<port>"
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -146,6 +150,10 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 // - "accept_language" is the value of the Accept-Language header that //net adds
 //   to each request whose headers do not hold one. The default is an empty
 //   string, which adds no header.
+// - "user_agent" is the value of the User-Agent header that //net adds to each
+//   request whose headers do not hold one, and sends in what it makes by
+//   itself: a CONNECT and a fetch for a certificate. The default is an empty
+//   string, which adds an empty header to a request, and none to a CONNECT.
 // - "origins_to_force_quic_on" reaches the listed HTTPS origins over QUIC and
 //   nothing else, with the meaning of Chrome's --origin-to-force-quic-on. It
 //   also lifts //net's refusal of QUIC to a certificate from an unknown root,
@@ -160,6 +168,15 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   --host-resolver-rules. Only the name's resolution changes, so SNI, the
 //   certificate check and the Host header keep the name. The default is an empty
 //   string, which holds no rules.
+// - "proxy" sends every request through this proxy, as Chrome's --proxy-server
+//   does with the same one. So a request to a loopback name goes around it, and
+//   a proxy that fails is not a reason to go directly. The scheme is "http",
+//   "https" or "socks5", and the port defaults to 80, 443 or 1080. The URL
+//   holds nothing beyond a host and port, but for a username and password,
+//   percent-encoded, which answer the proxy when it asks. "socks5" takes
+//   neither of them, because //net only offers it "no authentication". The
+//   default is to reach each server directly, whatever the system's proxy
+//   settings say.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.

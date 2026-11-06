@@ -7,7 +7,9 @@
 #include <string_view>
 
 #include "mitto/ignore_errors_cert_verifier.h"
+#include "net/base/auth.h"
 #include "net/base/ip_endpoint.h"
+#include "net/proxy_resolution/proxy_config.h"
 #include "third_party/boringssl/src/pki/parsed_certificate.h"
 #include "url/scheme_host_port.h"
 
@@ -30,6 +32,19 @@ struct SessionSettings {
   // The value of the Accept-Language header that //net adds to a request that
   // has none. Empty adds no header.
   std::string accept_language;
+
+  // The value of the User-Agent header that //net adds to a request that has
+  // none, and sends in what it makes by itself: a CONNECT and a fetch for a
+  // certificate. Empty adds an empty header to a request, and none to a
+  // CONNECT.
+  std::string user_agent;
+
+  // The one proxy that requests go through, or none, whatever the system's
+  // settings say.
+  net::ProxyConfig proxy_config;
+
+  // What to answer that proxy with when it asks.
+  std::optional<net::AuthCredentials> proxy_credentials;
 
   // Origins that are reached over QUIC, and over nothing else, and whether that
   // goes for every origin. //net accepts a certificate from an unknown root

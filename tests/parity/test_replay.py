@@ -6,7 +6,7 @@ from typing import Any, Self
 import pytest
 
 from mitto import RequestError
-from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, Case, Run
+from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, CaptureServer, Case, Run
 from tools.capture.cases import PROXY_CONNECT
 from tools.capture.http1 import Http1Request
 from tools.capture.recording import ConnectionRecord, Json, Recording
@@ -20,12 +20,11 @@ from tools.parity import (
     mismatches,
 )
 from tools.parity.check import as_recorded, record
-from tools.parity.replay import REPLAYS, can_reach, protocol_of, run_of
+from tools.parity.replay import REPLAYS, protocol_of, proxy_of, run_of, session_settings
 
 _RELEASE = "157"
 _REFUSED: dict[str, Json] = {"refused": True}
 _REFUSAL = "ERR_ALPN_NEGOTIATION_FAILED"
-_REACHABLE_RUNS = [run for run in RUNS if can_reach(run)]
 _WHERE_A_REQUEST_WENT = {":method", ":authority", ":scheme", ":path", "host"}
 
 
@@ -78,11 +77,12 @@ def test_no_run_records_a_case_over_a_protocol_it_does_not_have() -> None:
     assert run_of("no_such_case", HTTP1) is None
 
 
-def test_every_later_hop_starts_at_the_first_hop_of_its_chain() -> None:
-    hops = {name: replay.start for name, replay in REPLAYS.items() if replay.start is not None}
+def test_only_a_later_hop_and_what_opens_a_tunnel_ask_for_another_case() -> None:
+    starts = {name: replay.start for name, replay in REPLAYS.items() if replay.start is not None}
 
-    assert hops == {
-        f"redirect_{kind}_{hop}": f"redirect_{kind}_1" for kind in ("navigation", "fetch") for hop in range(1, 5)
+    assert starts == {
+        **{f"redirect_{kind}_{hop}": f"redirect_{kind}_1" for kind in ("navigation", "fetch") for hop in range(1, 5)},
+        "proxy_connect": "proxy_navigation",
     }
 
 
@@ -107,13 +107,15 @@ def test_a_case_that_carries_nothing_stays_the_same_case() -> None:
     assert as_recorded(PROXY_CONNECT, _recording_of(_request("/case/proxy-navigation"))) is PROXY_CONNECT
 
 
-@pytest.mark.parametrize("case", ["proxy_connect", "proxy_navigation"])
-@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
-def test_a_case_a_session_cannot_reach_yet_is_one_gap_that_holds_the_whole_request(case: str, protocol: str) -> None:
-    request: dict[str, Json] = {"headers": ["Host: <authority>"]}
-    baseline = Baseline(_RELEASE, case, protocol, {"protocol": protocol, "tls": {"a": 1}, "request": request})
+@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
+def test_a_replay_goes_through_a_proxy_and_is_told_how_to_find_names_as_the_chrome_of_its_run_was(run: Run) -> None:
+    with CaptureServer() as server:
+        flags = server.chrome_flags(run)
+        proxy = proxy_of(server, run)
+        rules = session_settings(server, run).get("host_resolver_rules")
 
-    assert find_gaps([baseline]) == [Gap(_RELEASE, case, protocol, "request", request, None)]
+    assert (f"--proxy-server={proxy}" in flags) == (proxy is not None)
+    assert (f"--host-resolver-rules={rules}" in flags) == bool(rules)
 
 
 def test_a_refusal_with_nothing_on_the_wire_matches_a_baseline_of_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,14 +154,16 @@ def test_no_known_gap_says_that_a_replay_went_somewhere_else() -> None:
 
 
 @pytest.mark.usefixtures("native_library")
-@pytest.mark.parametrize("run", _REACHABLE_RUNS, ids=lambda run: run.name)
+@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
 def test_a_replay_goes_to_the_path_of_its_case_and_shows_no_gaps_against_itself(run: Run) -> None:
     protocol = protocol_of(run.route)
     baselines: list[Baseline] = []
     for case in run.cases:
         recorded = record(Baseline(_RELEASE, case.name, protocol, {}))
         assert recorded["protocol"] == protocol
-        assert case.path in str(recorded["request"]), case.name
+        # What opens a tunnel has no path, because it names a server instead.
+        where = "CONNECT <authority>" if case is PROXY_CONNECT else case.path
+        assert where in str(recorded["request"]), case.name
         baselines.append(Baseline(_RELEASE, case.name, protocol, recorded))
 
     assert not mismatches(find_gaps(baselines), [])

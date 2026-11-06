@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtendedKeyUsageOID, NameOID
 
-from tests.local_server import LocalHTTPServer
+from tests.local_server import QuietServer
 
 _VALIDITY = datetime.timedelta(days=30)
 _CLOCK_SKEW = datetime.timedelta(days=1)
@@ -111,15 +111,6 @@ def generate_leaf(issuer: Issued, host: str, aia_url: str | None = None) -> Issu
     return Issued(builder.sign(issuer.key, hashes.SHA256()), key)
 
 
-class _QuietServer(LocalHTTPServer):
-    """A local server whose handlers can outlive it, and whose clients may drop a connection at any point."""
-
-    daemon_threads = True
-
-    def handle_error(self, request: Any, client_address: Any) -> None:
-        pass
-
-
 class _AiaHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         server = cast("AiaServer", self.server)
@@ -136,7 +127,7 @@ class _AiaHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-class AiaServer(_QuietServer):
+class AiaServer(QuietServer):
     """A local HTTP server that holds one issuer certificate, and records what asks for it.
 
     Attributes:
@@ -168,8 +159,9 @@ class _TlsHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
-        self.send_response(200)
-        for name, value in cast("TlsServer", self.server).response_headers:
+        server = cast("TlsServer", self.server)
+        self.send_response(server.status)
+        for name, value in server.response_headers:
             self.send_header(name, value)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -178,15 +170,17 @@ class _TlsHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-class TlsServer(_QuietServer):
-    """A local HTTPS server that presents `leaf` and whatever follows it, and answers 200.
+class TlsServer(QuietServer):
+    """A local HTTPS server that presents `leaf` and whatever follows it.
 
     Attributes:
+        status: The status of each response.
         response_headers: The (name, value) pairs that each response holds.
     """
 
     def __init__(self, directory: Path, leaf: Issued, *chain: Issued) -> None:
         super().__init__(("127.0.0.1", 0), _TlsHandler)
+        self.status = 200
         self.response_headers: list[tuple[str, str]] = []
         key = leaf.key.private_bytes(
             serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()

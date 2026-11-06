@@ -39,7 +39,8 @@ class Replay:
         kind: The Request Kind to ask for.
         method: The HTTP method.
         host: The name to ask for, or nothing for the name the case's run starts at.
-        start: The name of the case to ask for, if this one is a later hop of a redirect chain.
+        start: The name of the case to ask for, if asking for that is what makes this one: the first hop of a redirect
+            chain for a later hop, and what goes through a tunnel for what opens the tunnel.
         before: The paths to ask for first, on the same Session and with the same kind.
         body: What makes the body, from what the page's form or script gives Chrome in tools/capture/cases.py.
     """
@@ -93,7 +94,7 @@ REPLAYS = {
     "plain_http_fetch": Replay(RequestKind.FETCH),
     "plain_http_script": Replay(RequestKind.SCRIPT),
     "plain_http_image": Replay(RequestKind.IMAGE),
-    "proxy_connect": Replay(RequestKind.NAVIGATION),
+    "proxy_connect": Replay(RequestKind.NAVIGATION, start="proxy_navigation"),
     "proxy_navigation": Replay(RequestKind.NAVIGATION),
 }
 """How to replay each Recording Case, by its name."""
@@ -123,17 +124,19 @@ def run_of(case: str, protocol: str) -> Run | None:
     return _RUNS.get((case, protocol))
 
 
-def can_reach(run: Run) -> bool:
-    """Return whether a Session can reach the route of a run. It cannot use a proxy yet."""
-    return run.route not in _PROXIED_ROUTES
+def proxy_of(server: CaptureServer, run: Run) -> str | None:
+    """Return the proxy that the Chrome of a run went through, or None if it went directly."""
+    return server.proxy_url if run.route in _PROXIED_ROUTES else None
 
 
 def session_settings(server: CaptureServer, run: Run) -> PrivateSettings:
     """Return what a Session needs that the public API keeps private, to reach a server as the Chrome of a run did."""
+    # The proxy is what finds the name, as in CaptureServer.chrome_flags().
+    finds_its_own_names = run.host is None or run.route in _PROXIED_ROUTES
     return PrivateSettings(
         ignore_certificate_errors_spki_list=[server.spki_hash],
         origins_to_force_quic_on=server.origins_to_force_quic_on(run),
-        host_resolver_rules="" if run.host is None else server.host_resolver_rules,
+        host_resolver_rules="" if finds_its_own_names else server.host_resolver_rules,
     )
 
 
