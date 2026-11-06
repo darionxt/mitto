@@ -259,7 +259,67 @@ Only connections that carried a request of a Recording Case count, and a run's n
 
 A fresh user data directory has no variations seed, so it shows no field trials. [baselines.md](baselines.md) is how Baselines get one.
 
-Chrome's trust anchors, in the `trust_anchors` extension, start from its compiled-in root store. When the PKI metadata component brings a root store with a higher version, Chrome takes the list from that, without a new Chrome Release. A recording is over before the component arrives, so Baselines hold the compiled-in list and cannot show what a Chrome that has run for a while sends.
+Chrome's trust anchors, in the `trust_anchors` extension, start from its compiled-in root store, and the PKI metadata component can replace them without a new **Chrome Release**. So we compared a Chrome that holds the component with the Baselines, using Chrome 157.0.8103.39 on 2026-11-06:
+
+| Question | Answer | From |
+|---|---|---|
+| Does the list differ? | No. The component holds root store version 43 and Chrome compiles in 42, with the same 28 IDs | Measured |
+| How often does it change? | The set of IDs has changed 8 times since IDs first appeared in July 2025, and last on 2026-08-17. The root store's version goes up about every three weeks, mostly without changing the set | The source's history |
+| Is one fixed list per **Engine Release** better than the compiled-in one? | No. mitto keeps the compiled-in list | Both of the above |
+
+#### What Chrome does
+
+This part comes from reading Chromium 157's source. `SSLConfigServiceManager` starts with the IDs of the compiled-in root store. `PKIMetadataComponentInstallerService` reads the component's `crs.pb` when the component arrives and at each start. If its `version_major` is above the compiled-in one, the IDs in it replace the list for new connections. IDs are sorted before they go out, so only the set can differ. The first check for component updates comes a minute after a start, and the next every 5 hours.
+
+#### What we measured
+
+From a new user data directory, with the flags of a Baseline, `chrome://components` showed PKI Metadata at `0.0.0.0`, `Checking` after a minute, and `1825`, `Updated`, after 335 seconds. Its `crs.pb` has the same IDs as the Baselines. From that directory, [`record.ps1`](baselines.md#a-chrome-that-has-run-for-a-while) gave normal forms identical to `tests/baselines/157` over all three protocols and, for every run, to a new session of the same hour. That was two sessions straight after a start and two with Chrome settled first.
+
+With the lists equal, that alone cannot show that the wire follows the component. So in a copy of that directory, we took the ID `d6790901` off its anchor in `crs.pb`. The anchor stays, so what Chrome trusts does not change. No real Chrome has this file.
+
+| Session from the copy | Result |
+|---|---|
+| Chrome settled for 20 seconds before each page | All 28 connections sent 27 IDs. In the normal forms, that ID is the only difference from a new session |
+| Three starts, each with a new connection about every second for 5 minutes | The list went from 28 to 27 IDs 1.6 to 1.9 seconds after the start, and stayed there |
+| Two sessions straight after a start | All 95 connections sent 28 IDs, because a recording is over by then |
+
+So the first connections after every start of Chrome carry the compiled-in list, whatever the component holds. Baselines hold that list even from a directory that has the component, and a comparison has to let Chrome settle.
+
+#### How often it changes
+
+This part comes from the history of `net/data/ssl/chrome_root_store/root_store.textproto`:
+
+| Root store version | In the source since | IDs | Change |
+|---|---|---|---|
+| 23 | 2025-07-23 | 4 | The first IDs |
+| 24 | 2025-08-12 | 15 | 11 more |
+| 25 | 2025-10-06 | 17 | 2 more |
+| 29 | 2026-01-08 | 36 | 19 more |
+| 31 | 2026-04-14 | 32 | 4 fewer |
+| 34 | 2026-06-20 | 29 | 3 fewer |
+| 35 | 2026-06-23 | 32 | The same 3 back |
+| 38 | 2026-08-17 | 28 | 4 fewer |
+
+Versions 39 to 45, the last on 2026-11-05, keep those 28. These are dates in the source. On 2026-11-06 the component held version 43, so what it serves can be behind. That is one sample, and we did not measure when a version reaches the component.
+
+At a tag of each Chrome Release, the compiled-in store has 36 IDs in 145 to 147, 32 in 148 to 152, and 28 in 153 to 158. By the dates above, the newest stable Chrome Release's compiled-in list differed from the newest root store on 21 of the 282 days since 145 went stable on 2026-01-28: 9 days from version 31 until 148, the 3 days of version 34, and 9 days from version 38 until 153.
+
+#### Why the compiled-in list stays
+
+`SSLContextConfig::trust_anchor_ids` could state a fixed list per **Session**, taken from the component when an Engine Release is made. That would not be better:
+
+- Today it would be the same list. It only differs if the set changes after the Engine Release's branch, and a new Engine Release follows every two weeks.
+- It stops following the component as soon as the release is made, as the compiled-in list does, so it falls behind a Chrome that has run for a while in the same way.
+- It could name a root that the Session's verifier does not have. The verifier uses the compiled-in store, and mitto has no component to update it. A server with a chain for that ID may send that chain, and the Session then refuses it.
+- Baselines hold the compiled-in list, so a Parity Check would need a **Known Gap** for a difference we chose.
+
+A Session therefore looks like a Chrome in the first seconds after a start. When the set does change, it differs from a Chrome that has run for a while until the Engine Release moves past that change.
+
+#### What this does not cover
+
+The Chrome here ran for minutes, not days, and no component with a different set of IDs has reached it. That a component replaces the list while Chrome is running, without a new start, comes from the source.
+
+Merkle Tree Certificates would change the answer. With `VerifyMTCs` on, Chrome adds the IDs of its Merkle Tree CAs, and a second component, PKI Metadata Fastpush, adds landmark IDs that expire. The feature is off by default in 157 and upstream on 2026-11-06, the seeds of 2026-11-05 and 2026-11-06 have no study that names it, and `chrome://components` showed no such component. A Baseline would show it, because it adds IDs to the compiled-in list too.
 
 ## From Python
 
