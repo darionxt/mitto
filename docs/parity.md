@@ -1,6 +1,6 @@
 # Parity Checks
 
-A **Parity Check** compares what the native core sends with what real Chrome sent, as recorded in a **Baseline**. Everything the rest of milestone M1 does is measured with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
+A **Parity Check** compares what the public API sends through the native core with what real Chrome sent, as recorded in a **Baseline**. Everything the rest of milestone M1 does is measured with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
 
 ## Run them
 
@@ -18,8 +18,8 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new native Session that accepts the server's private certificate and has the settings of the **Persona** of the Baseline's **Chrome Release**. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origin, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
-3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol, with what the Persona sends for that kind ([persona.md](persona.md));
+2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate, through a setting that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origin, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
+3. requests the path of the Baseline's **Request Kind** on the port of the Baseline's protocol, with that kind as `kind`, so with what the Persona sends for it ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
 Each comparison covers what the connection looks like and the one request. So a difference in the connection, such as in the ClientHello, shows up once for each Request Kind.
@@ -92,7 +92,7 @@ The trust anchors come from the root store compiled into `//net`, as they do in 
 
 The first Session in a process waits up to a second for the system's DNS settings, which Chrome does not do, because Chrome has them long before a page asks for a host. A program's first request can come right away, and without those settings it would go to the system's resolver, which sees no HTTPS records.
 
-No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
+No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and the public Session takes it only through `_settings`. Such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
 
 ## Tests of the comparison
 

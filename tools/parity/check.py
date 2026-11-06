@@ -1,4 +1,4 @@
-"""One Parity Check: load Baselines, make the same requests through the native core, and find the gaps."""
+"""One Parity Check: load Baselines, make the same requests through the public API, and find the gaps."""
 
 import json
 from collections.abc import Callable, Iterable
@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from mitto._native import RequestError, Session
-from mitto._persona import WINDOWS_PERSONAS, Persona, load_persona
-from mitto._persona import RequestKind as PersonaRequestKind
+from mitto import RequestError, Session
+from mitto._native import PrivateSettings
+from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
@@ -98,19 +98,19 @@ def _read_baselines(path: Path) -> list[Baseline]:
     return [Baseline(path.parent.name, kind, protocol, fingerprint(form, kind)) for kind in kinds]
 
 
-def _persona_of(release: str) -> Persona:
+def _persona_of(release: str) -> str:
     name = WINDOWS_PERSONAS.get(release)
     if name is None:
         raise BaselineError(f"no Persona presents Chrome {release}, so its Baselines cannot be checked")
-    return load_persona(name)
+    return name
 
 
 def record(baseline: Baseline) -> dict[str, Json]:
-    """Make the request of a Baseline through a new native Session to a new capture server.
+    """Make the request of a Baseline through a new Session to a new capture server.
 
-    The request presents the Persona of the Baseline's Chrome Release. Over HTTP/3 it has Chrome's
-    --origin-to-force-quic-on as well, like the Chrome that recorded the Baselines, because //net refuses QUIC to the
-    server's private certificate otherwise.
+    The request presents the Persona of the Baseline's Chrome Release. The Session accepts the server's private
+    certificate, in settings that the public API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as
+    well, like the Chrome that recorded the Baselines, because //net refuses QUIC to that certificate otherwise.
 
     Returns:
         The fingerprint of what the capture server received.
@@ -126,13 +126,14 @@ def record(baseline: Baseline) -> dict[str, Json]:
     with (
         CaptureServer() as server,
         Session(
-            ignore_certificate_errors_spki_list=[server.spki_hash],
-            accept_language=persona.accept_language,
-            origins_to_force_quic_on=[server.authority(HTTP3)] if protocol == HTTP3 else [],
+            persona=persona,
+            _settings=PrivateSettings(
+                ignore_certificate_errors_spki_list=[server.spki_hash],
+                origins_to_force_quic_on=[server.authority(HTTP3)] if protocol == HTTP3 else [],
+            ),
         ) as session,
     ):
-        url = f"https://{server.authority(protocol)}{KIND_PATHS[kind]}"
-        session.request(url, **persona.request_defaults(PersonaRequestKind(kind.value), url))
+        session.get(f"https://{server.authority(protocol)}{KIND_PATHS[kind]}", kind=kind.value)
     return fingerprint(normal_form(server.recording(protocol)), kind)
 
 

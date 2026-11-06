@@ -1,29 +1,108 @@
-"""The public API: one blocking GET through a default Session of the native core."""
+"""The public API: a Session, and get() as a shortcut on a default one."""
 
 import functools
-from dataclasses import dataclass, field
+from types import TracebackType
+from typing import Self, Unpack
 
-from mitto._native import RequestError, Session, encode_url
-from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
+from mitto import _native
+from mitto._native import PrivateSettings, encode_url
+from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
+from mitto._request import RequestOptions, build_request
+from mitto._response import Response, to_response
 
-__all__ = ["RequestError", "Response", "get"]
+__all__ = ["Session", "get"]
 
 
-@dataclass(frozen=True, slots=True)
-class Response:
-    """A finished response.
+class Session:
+    """A long-lived client that holds one Chrome-like browsing state: its Persona and its open connections.
 
-    Attributes:
-        status: The HTTP status code of the final response, after redirects.
-        headers: The final response's (name, value) pairs in the order received, so repeated headers stay separate.
-            Headers have no fixed encoding, so they are decoded as Latin-1, which keeps every byte:
-            value.encode("latin-1") gives back what the server sent.
-        body: The final response's body, after any content decoding. It stays out of repr(), since it can be large.
+    One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
+    requests still running, but not while another thread is starting one.
+
+    Each method takes the keyword arguments of RequestOptions: `params`, `headers` and `kind`.
     """
 
-    status: int
-    headers: tuple[tuple[str, str], ...]
-    body: bytes = field(repr=False)
+    def __init__(
+        self,
+        *,
+        persona: str = ENGINE_RELEASE_PERSONA,
+        accept_language: str | None = None,
+        _settings: PrivateSettings | None = None,
+    ) -> None:
+        """Create the Session.
+
+        Args:
+            persona: The Persona to present, such as "chrome_157_windows". The default is the Engine Release's.
+            accept_language: The value of the Accept-Language header in place of the Persona's. An empty string sends none.
+            _settings: Settings that only tests need, which are not part of the public API.
+
+        Raises:
+            ValueError: If there is no such Persona, or the native core refuses `accept_language`.
+            NativeLibraryError: If the native library cannot be used.
+        """
+        self._persona = load_persona(persona)
+        self._native = _native.Session(
+            accept_language=self._persona.accept_language if accept_language is None else accept_language,
+            **(PrivateSettings() if _settings is None else _settings),
+        )
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Close the Session's connections. Requests still running end with a RequestError, and so do later ones."""
+        self._native.close()
+
+    def request(self, method: str, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
+
+        Args:
+            method: The HTTP method. Fetch's normalized methods are sent in upper case however they are given, as Chrome
+                does, and any other is sent as it is written.
+            url: The URL to fetch.
+            **options: See RequestOptions.
+
+        Raises:
+            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1,
+                `kind` is not a Request Kind or two names in `headers` differ only in case.
+            RequestError: If the request ends without a response. An HTTP error status such as 404 is a response. An invalid
+                header or method ends the request with ERR_INVALID_ARGUMENT.
+        """
+        built = build_request(self._persona, method, url, **options)
+        return to_response(self._native.request(**built))
+
+    def get(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send a GET request, as request() does."""
+        return self.request("GET", url, **options)
+
+    def post(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send a POST request, as request() does."""
+        return self.request("POST", url, **options)
+
+    def put(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send a PUT request, as request() does."""
+        return self.request("PUT", url, **options)
+
+    def patch(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send a PATCH request, as request() does."""
+        return self.request("PATCH", url, **options)
+
+    def delete(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send a DELETE request, as request() does."""
+        return self.request("DELETE", url, **options)
+
+    def head(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send a HEAD request, as request() does."""
+        return self.request("HEAD", url, **options)
+
+    def options(self, url: str, **options: Unpack[RequestOptions]) -> Response:
+        """Send an OPTIONS request, as request() does."""
+        return self.request("OPTIONS", url, **options)
 
 
 @functools.cache
@@ -32,19 +111,19 @@ def default_session() -> Session:
 
     Threads that race here may each create one. The ones that lose stay open unused, which does no harm.
     """
-    return Session(accept_language=load_persona(CHROME_157_WINDOWS).accept_language)
+    return Session()
 
 
-def get(url: str) -> Response:
-    """Fetch `url` the way Chrome 157 on Windows navigates to it, and block until the whole response has arrived.
+def get(url: str, **options: Unpack[RequestOptions]) -> Response:
+    """Send a GET request on a default Session, which presents the Engine Release's Persona.
+
+    Takes the arguments of Session.get(). A navigation is the default, as it is there.
 
     Raises:
-        ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8.
+        ValueError: As Session.request() does.
         NativeLibraryError: If the native library cannot be used.
-        RequestError: If the request ends without a response. An HTTP error status such as 404 is a response.
+        RequestError: As Session.request() does.
     """
     # An invalid URL is reported before anything else, whether or not there is a native library.
     encode_url(url)
-    defaults = load_persona(CHROME_157_WINDOWS).request_defaults(RequestKind.NAVIGATION, url)
-    native = default_session().request(url, **defaults)
-    return Response(status=native.status, headers=native.headers, body=native.body)
+    return default_session().get(url, **options)

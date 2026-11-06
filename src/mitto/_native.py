@@ -1,8 +1,7 @@
 """The private binding of the native core's C API.
 
 Nothing is loaded until load_library() is called, so the package can be imported on a machine without the native
-library. Session is the only way to reach the engine settings and per-request headers, which stay private until the
-public Session API exists.
+library. The public Session is built on the Session here, and the settings that only tests need stay private.
 """
 
 import ctypes
@@ -16,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, TypedDict
 
 __all__ = [
     "ABI_VERSION",
@@ -36,6 +35,7 @@ __all__ = [
     "NativeRequest",
     "NativeResponse",
     "Priority",
+    "PrivateSettings",
     "RedirectFollowed",
     "RequestError",
     "ResponseStarted",
@@ -394,6 +394,18 @@ class NativeRequest:
         """Cancel the request if it is still running, and release it. Later calls do nothing or raise a RequestError."""
         self._library.mitto_request_release(self._handle)
         self._handle = ctypes.POINTER(MittoRequest)()
+
+
+class PrivateSettings(TypedDict, total=False):
+    """The Session settings that the public API does not offer, for tests to pass to the public Session as `_settings`.
+
+    The keys are arguments of Session.__init__ here, which says what they mean.
+    """
+
+    ignore_certificate_errors_spki_list: Sequence[str]
+    origins_to_force_quic_on: Sequence[str]
+    dns_nameserver: str | None
+    host_resolver_rules: str
 
 
 class Session:
