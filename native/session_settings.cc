@@ -1,5 +1,6 @@
 #include "mitto/session_settings.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/json/json_reader.h"
@@ -11,7 +12,9 @@
 #include "net/base/host_mapping_rules.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_address.h"
+#include "net/cert/x509_util.h"
 #include "net/http/http_util.h"
+#include "third_party/boringssl/src/pki/pem.h"
 
 namespace mitto {
 namespace {
@@ -19,6 +22,9 @@ namespace {
 constexpr std::string_view kVersionKey = "version";
 constexpr std::string_view kIgnoreCertificateErrorsSPKIListKey =
     "ignore_certificate_errors_spki_list";
+constexpr std::string_view kAdditionalTrustAnchorsKey =
+    "additional_trust_anchors";
+constexpr std::string_view kPemBlockTypes[] = {"CERTIFICATE"};
 constexpr std::string_view kAcceptLanguageKey = "accept_language";
 constexpr std::string_view kOriginsToForceQuicOnKey =
     "origins_to_force_quic_on";
@@ -43,6 +49,38 @@ std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
     hashes.insert(hash->sha256hashvalue());
   }
   return hashes;
+}
+
+// Reads each entry as the text of a PEM file. An entry with no certificate is
+// refused, and so is a certificate that //net cannot parse, where Chrome's own
+// reading of its additional certificates drops it. Either way the caller's
+// server would just fail later, with nothing to say why.
+std::optional<bssl::ParsedCertificateList> ReadTrustAnchors(
+    const base::Value& value) {
+  if (!value.is_list()) {
+    return std::nullopt;
+  }
+  bssl::ParsedCertificateList anchors;
+  for (const base::Value& entry : value.GetList()) {
+    if (!entry.is_string()) {
+      return std::nullopt;
+    }
+    bssl::PEMTokenizer pem(entry.GetString(), kPemBlockTypes);
+    if (!pem.GetNext()) {
+      return std::nullopt;
+    }
+    do {
+      std::shared_ptr<const bssl::ParsedCertificate> anchor =
+          net::x509_util::CreateParsedCertificate(
+              net::x509_util::CreateCryptoBuffer(pem.data()),
+              /*errors=*/nullptr);
+      if (!anchor) {
+        return std::nullopt;
+      }
+      anchors.push_back(std::move(anchor));
+    } while (pem.GetNext());
+  }
+  return anchors;
 }
 
 // Reads the origins the way Chrome reads --origin-to-force-quic-on in
@@ -129,6 +167,15 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
   SessionSettings settings;
   for (const auto [key, value] : *dict) {
     if (key == kVersionKey) {
+      continue;
+    }
+    if (key == kAdditionalTrustAnchorsKey) {
+      std::optional<bssl::ParsedCertificateList> anchors =
+          ReadTrustAnchors(value);
+      if (!anchors) {
+        return std::nullopt;
+      }
+      settings.additional_trust_anchors = std::move(*anchors);
       continue;
     }
     if (key == kAcceptLanguageKey) {

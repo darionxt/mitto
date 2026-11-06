@@ -181,7 +181,7 @@ export MITTO_CORE_TEST=/absolute/path/to/new/directory/chromium-<tag>/src/out/as
 ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 ```
 
-Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, and tries settings that are refused. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
+Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
 To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, with the files of that name:
 

@@ -26,13 +26,17 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   }
 
   // What a Session relies on in settings that were accepted. //net CHECKs the
-  // value of each header it adds, and an invalid origin would make it accept
-  // unknown roots for every host.
+  // value of each header it adds, an invalid origin would make it accept
+  // unknown roots for every host, and the verifier uses each anchor without
+  // checking it.
   net::HttpRequestHeaders headers;
   headers.SetHeader(net::HttpRequestHeaders::kAcceptLanguage,
                     settings->accept_language);
   for (const url::SchemeHostPort& origin : settings->origins_to_force_quic_on) {
     CHECK(origin.IsValid());
+  }
+  for (const auto& anchor : settings->additional_trust_anchors) {
+    CHECK(anchor);
   }
   net::HostMappingRules rules;
   rules.SetRulesFromString(settings->host_resolver_rules);

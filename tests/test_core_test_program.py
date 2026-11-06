@@ -12,12 +12,14 @@ from pathlib import Path
 import pytest
 
 from mitto._native import SETTINGS_VERSION
+from tests.local_certificates import AiaServer, TlsServer, generate_intermediate, generate_leaf, generate_root, serving
 from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer
 
 _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
 _ERR_CERT_AUTHORITY_INVALID = -202
 _TIMEOUT_SECONDS = 120
+_HOST = "localhost"
 
 
 @pytest.fixture
@@ -113,3 +115,54 @@ def test_a_request_that_fails(program: Path) -> None:
 
     assert result.returncode == 1
     assert f"net error {_ERR_CERT_AUTHORITY_INVALID}" in result.stderr
+
+
+def test_a_missing_intermediate_is_fetched_from_its_aia_url(program: Path, tmp_path: Path) -> None:
+    root = generate_root()
+    intermediate = generate_intermediate(root)
+    with (
+        serving(AiaServer(intermediate.der)) as aia,
+        serving(TlsServer(tmp_path, generate_leaf(intermediate, _HOST, aia.url))) as server,
+    ):
+        settings: dict[str, object] = {"version": SETTINGS_VERSION, "additional_trust_anchors": [root.pem]}
+        result = _run(program, f"https://{_HOST}:{server.server_port}/", settings)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "status 200 over http/1.1"
+
+
+def _run_until_told(program: Path, tmp_path: Path, scenario: str) -> subprocess.CompletedProcess[str]:
+    """Run a scenario, and let it go on once its request is waiting for a certificate fetch."""
+    root = generate_root()
+    intermediate = generate_intermediate(root)
+    with (
+        serving(AiaServer(hang=True)) as aia,
+        serving(TlsServer(tmp_path, generate_leaf(intermediate, _HOST, aia.url))) as server,
+    ):
+        settings = {"version": SETTINGS_VERSION, "additional_trust_anchors": [root.pem]}
+        url = f"https://{_HOST}:{server.server_port}/"
+        args = [program, url, json.dumps(settings), scenario]
+        with subprocess.Popen(
+            args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        ) as process:
+            fetched = aia.requested.wait(_TIMEOUT_SECONDS)
+            stdout, stderr = process.communicate("go", timeout=_TIMEOUT_SECONDS)
+        aia.released.set()
+
+    assert fetched, stderr
+    assert "Sanitizer" not in stderr, stderr
+    return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
+
+
+def test_a_session_destroyed_during_a_certificate_fetch(program: Path, tmp_path: Path) -> None:
+    result = _run_until_told(program, tmp_path, "destroy-session-when-told")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["cancelled"]
+
+
+def test_a_process_that_exits_during_a_certificate_fetch(program: Path, tmp_path: Path) -> None:
+    result = _run_until_told(program, tmp_path, "exit-when-told")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["exiting"]
