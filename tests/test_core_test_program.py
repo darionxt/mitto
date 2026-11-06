@@ -14,7 +14,8 @@ import pytest
 
 from mitto._native import SETTINGS_VERSION
 from tests.local_certificates import AiaServer, TlsServer, generate_intermediate, generate_leaf, generate_root, serving
-from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer
+from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer
+from tools.parity.replay import run_of, session_settings
 
 _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
@@ -60,6 +61,63 @@ def test_a_request_over_each_protocol(program: Path, protocol: str, scenario: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+
+
+def _redirect_url(server: CaptureServer, protocol: str) -> tuple[str, dict[str, object]]:
+    """Return the first of the capture server's redirects over a protocol, and the settings that reach it."""
+    run = run_of("redirect_fetch_1", protocol)
+    assert run is not None
+    path = next(case.path for case in CASES if case.name == "redirect_fetch_1")
+    return server.url(run.route, host=run.host, path=path), {
+        "version": SETTINGS_VERSION,
+        **session_settings(server, run),
+    }
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_that_follows_redirects(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        url, settings = _redirect_url(server, protocol)
+        result = _run(program, url, settings)
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert [line.split(" from ")[0] for line in lines[:3]] == ["redirect 302"] * 3
+    assert lines[0] == f"redirect 302 from {url}"
+    assert lines[3] == f"status 200 over {protocol}"
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_that_does_not_follow_redirects(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        url, settings = _redirect_url(server, protocol)
+        result = _run(program, url, settings, "fetch-without-redirects")
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[:2] == [f"status 302 over {protocol}", f"url: {url}"]
+    assert lines[-1] == "body: 0 bytes"
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_that_is_cancelled_at_a_redirect_leaves_the_session_working(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        url, settings = _redirect_url(server, protocol)
+        result = _run(program, url, settings, "cancel-at-redirect")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "ended"
+    assert f"status 200 over {protocol}" in result.stdout
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_session_destroyed_at_a_redirect(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        url, settings = _redirect_url(server, protocol)
+        result = _run(program, url, settings, "destroy-session-at-redirect")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["ended"]
 
 
 @pytest.mark.parametrize("scenario", ["cancel-at-once", "cancel-after-response"])

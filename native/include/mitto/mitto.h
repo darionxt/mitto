@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 4
+#define MITTO_ABI_VERSION 5
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -41,7 +41,8 @@
 // The final response has started. Its body waits until mitto_request_read()
 // asks for it.
 #define MITTO_EVENT_RESPONSE_STARTED 1
-// A redirect arrived and //net follows it.
+// A redirect arrived and //net follows it. The next event's URL says where it
+// led, unless the request ends first.
 #define MITTO_EVENT_REDIRECT_FOLLOWED 2
 // Body bytes that mitto_request_read() asked for have arrived.
 #define MITTO_EVENT_BODY_AVAILABLE 3
@@ -89,7 +90,7 @@ typedef struct MittoEvent {
   // "h2".
   char* protocol;
   // RESPONSE_STARTED: the final URL, after redirects. REDIRECT_FOLLOWED: the URL
-  // that it leads to.
+  // that answered with the redirect.
   char* url;
   // RESPONSE_STARTED and REDIRECT_FOLLOWED: the headers of that response in the
   // order received, one "name: value\r\n" line each. The status line is not
@@ -201,8 +202,10 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 
 // Starts a request for `url`, a NUL-terminated UTF-8 string, on the library's
 // network thread, and returns without waiting for it. May be called from any
-// thread, also while other requests run on the same Session. Redirects are
-// followed as //net decides.
+// thread, also while other requests run on the same Session. //net decides what
+// a redirect does to the method and the body, as it does in Chrome, and ends the
+// request with ERR_TOO_MANY_REDIRECTS after 20 of them. An Authorization header
+// does not go to another origin, and stays gone if a later redirect comes back.
 //
 // `headers` points to `header_count` headers, in the order they are to reach
 // the wire, and may be null if the count is 0. A name may appear only once,
@@ -219,6 +222,7 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //     "priority": 2,
 //     "priority_incremental": true,
 //     "referrer": "https://example.com/",
+//     "follow_redirects": false,
 //     "connect_timeout_ms": 5000,
 //     "read_timeout_ms": 5000,
 //     "total_timeout_ms": 30000
@@ -236,6 +240,10 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   `headers` and before the headers it adds, and leaves out any username,
 //   password and fragment. A URL that //net cannot send as a referrer, such as
 //   one that is not valid, is refused. The default is to send none.
+// - "follow_redirects" set to false makes a redirect the response, whose body is
+//   empty because //net does not read the body of a redirect. A redirect to a URL
+//   that is not valid still ends the request with ERR_INVALID_REDIRECT, because
+//   //net checks that first. The default is true.
 // - "connect_timeout_ms" limits the time from the start of the request, or from a
 //   redirect, until net::URLRequest::Delegate::OnConnected() runs: the name is
 //   resolved, a connection is free and any proxy tunnel and TLS handshake are

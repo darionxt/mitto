@@ -21,7 +21,8 @@ class Session:
     One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
     requests still running, but not while another thread is starting one.
 
-    Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind` and `timeout`.
+    Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind`, `timeout` and
+    `follow_redirects`.
     """
 
     def __init__(

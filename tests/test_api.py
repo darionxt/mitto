@@ -489,6 +489,7 @@ def test_a_response_gives_the_url_it_ended_at(server: AnyMethodServer) -> None:
 
     assert response.url == f"{server.url}final"
     assert response.status == 201
+    assert [(hop.status, hop.url) for hop in response.history] == [(302, f"{server.url}redirect")]
 
 
 @pytest.mark.usefixtures("native_library")

@@ -15,7 +15,7 @@ from mitto._errors import (
     TooManyRedirectsError,
 )
 from mitto._persona import RequestKind
-from mitto._response import Headers, HTTPStatusError, Response
+from mitto._response import Headers, HTTPStatusError, Redirect, Response
 from mitto._timeout import Timeout
 
 __all__ = [
@@ -28,6 +28,7 @@ __all__ = [
     "NativeLibraryError",
     "ProtocolError",
     "ProxyError",
+    "Redirect",
     "RequestError",
     "RequestKind",
     "RequestTimeoutError",

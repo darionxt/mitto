@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/at_exit.h"
 #include "base/byte_size.h"
@@ -77,6 +78,7 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 static_assert(MITTO_PRIORITY_THROTTLED == net::THROTTLED);
 static_assert(MITTO_PRIORITY_IDLE == net::IDLE);
@@ -238,16 +240,17 @@ class RequestJob final : public net::URLRequest::Delegate {
   void OnReceivedRedirect(net::URLRequest* request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override {
-    // The next hop has its own connection to get.
+    // //net is still in the read that brought these headers. Over HTTP/2 it has
+    // yet to see the END_STREAM of their frame, so going on from here would
+    // cancel a stream that is about to end. Chrome's answer to a redirect comes
+    // from a later task, so it never does.
+    *defer_redirect = true;
+    connect_timer_.Stop();
     read_timer_.Stop();
-    StartConnectTimer();
-    RequestEvent event;
-    event.type = MITTO_EVENT_REDIRECT_FOLLOWED;
-    event.status = redirect_info.status_code;
-    event.url = redirect_info.new_url.spec();
-    event.headers = HeaderLines(*request->response_headers());
-    channel_->Push(std::move(event));
-    session_->ready_requests.Add(handle_);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&RequestJob::ContinueAfterRedirect,
+                       weak_ptr_factory_.GetWeakPtr(), redirect_info.new_url));
   }
 
   void OnSSLCertificateError(net::URLRequest* request,
@@ -266,15 +269,7 @@ class RequestJob final : public net::URLRequest::Delegate {
     // A response from a cache comes with no connection.
     connect_timer_.Stop();
     read_timer_.Stop();
-    RequestEvent event;
-    event.type = MITTO_EVENT_RESPONSE_STARTED;
-    event.status = request->GetResponseCode();
-    event.protocol = net::HttpConnectionInfoToString(
-        request->response_info().connection_info);
-    event.url = request->url().spec();
-    event.headers = HeaderLines(*request->response_headers());
-    channel_->Push(std::move(event));
-    session_->ready_requests.Add(handle_);
+    PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
 
     response_started_ = true;
     if (read_wanted_) {
@@ -293,6 +288,43 @@ class RequestJob final : public net::URLRequest::Delegate {
   }
 
  private:
+  // Pushes an event of `type` that describes the response so far.
+  void PushResponseEvent(int32_t type) {
+    RequestEvent event;
+    event.type = type;
+    event.status = request_->GetResponseCode();
+    event.protocol = net::HttpConnectionInfoToString(
+        request_->response_info().connection_info);
+    event.url = request_->url().spec();
+    event.headers = HeaderLines(*request_->response_headers());
+    channel_->Push(std::move(event));
+    session_->ready_requests.Add(handle_);
+  }
+
+  // Goes on from a redirect that OnReceivedRedirect() deferred. This may delete
+  // the job, so nothing may touch it afterwards.
+  void ContinueAfterRedirect(const GURL& new_url) {
+    if (!options_.follow_redirects) {
+      PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
+      // //net does not read the body of a redirect, so this is all there is.
+      Finish(net::OK);
+      return;
+    }
+    PushResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED);
+
+    // Step 13 of https://fetch.spec.whatwg.org/#http-redirect-fetch, which
+    // Chrome does in ResourceLoader::WillFollowRedirect() in Blink. The header
+    // stays gone if a later hop comes back to this origin.
+    std::vector<std::string> removed_headers;
+    if (!url::IsSameOriginWith(request_->url(), new_url)) {
+      removed_headers.emplace_back(net::HttpRequestHeaders::kAuthorization);
+    }
+    // The next hop has its own connection to get.
+    StartConnectTimer();
+    request_->FollowDeferredRedirect(removed_headers,
+                                     /*modified_headers=*/std::nullopt);
+  }
+
   void StartConnectTimer() {
     if (options_.connect_timeout) {
       connect_timer_.Start(FROM_HERE, *options_.connect_timeout,

@@ -34,6 +34,10 @@ static const char kOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"priority\": " STRINGIFY(MITTO_PRIORITY_MEDIUM) "}";
 
+static const char kNoRedirectOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"follow_redirects\": false}";
+
 // Each with one timer, for a server that accepts a connection and never answers.
 static const char kConnectTimeoutOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
@@ -82,7 +86,7 @@ static void ReadBody(size_t* body_size) {
 static int HandleEvent(MittoEvent* event, size_t* body_size, int32_t* result) {
   switch (event->type) {
     case MITTO_EVENT_REDIRECT_FOLLOWED:
-      printf("redirect %" PRId32 " to %s\n", event->status, event->url);
+      printf("redirect %" PRId32 " from %s\n", event->status, event->url);
       break;
     case MITTO_EVENT_RESPONSE_STARTED:
       printf("status %" PRId32 " over %s\n", event->status, event->protocol);
@@ -113,11 +117,8 @@ static int FinishFetch(const char* url, size_t body_size, int32_t result) {
   return 0;
 }
 
-// Takes events in a blocking call, as a sync caller does.
-static int Fetch(const char* url) {
-  if (Start(url) != 0) {
-    return 1;
-  }
+// Takes the running request's events in a blocking call, as a sync caller does.
+static int FetchToEnd(const char* url) {
   size_t body_size = 0;
   int32_t result = 0;
   while (1) {
@@ -131,6 +132,15 @@ static int Fetch(const char* url) {
       return FinishFetch(url, body_size, result);
     }
   }
+}
+
+static int Fetch(const char* url) {
+  return Start(url) || FetchToEnd(url);
+}
+
+// A redirect is the response here, with no body.
+static int FetchWithoutRedirects(const char* url) {
+  return StartWithOptions(url, kNoRedirectOptions) || FetchToEnd(url);
 }
 
 // Waits on the file descriptor, as an event loop does.
@@ -252,6 +262,47 @@ static int ReleaseAfterResponse(const char* url) {
   return Fetch(url);
 }
 
+// Takes events until the last one and releases the request. A request that was
+// cancelled while it was on its way may finish all the same.
+static int DrainToEnd(void) {
+  while (1) {
+    MittoEvent event;
+    const int32_t error =
+        mitto_request_next_event(g_request, EVENT_TIMEOUT_MS, &event);
+    if (error != 0) {
+      fprintf(stderr, "next event failed with net error %" PRId32 "\n", error);
+      return 1;
+    }
+    const int32_t event_type = event.type;
+    mitto_event_free(&event);
+    if (event_type == MITTO_EVENT_FINISHED) {
+      mitto_request_release(g_request);
+      g_request = NULL;
+      printf("ended\n");
+      return 0;
+    }
+  }
+}
+
+static int CancelAtRedirect(const char* url) {
+  if (Start(url) != 0 || WaitFor(MITTO_EVENT_REDIRECT_FOLLOWED) != 0) {
+    return 1;
+  }
+  mitto_request_cancel(g_request);
+  return DrainToEnd() || Fetch(url);
+}
+
+// main() destroys the Session after a scenario, which does nothing the second
+// time.
+static int DestroySessionAtRedirect(const char* url) {
+  if (Start(url) != 0 || WaitFor(MITTO_EVENT_REDIRECT_FOLLOWED) != 0) {
+    return 1;
+  }
+  mitto_session_destroy(g_session);
+  g_session = NULL;
+  return DrainToEnd();
+}
+
 // main() destroys the Session after a scenario, which does nothing the second
 // time.
 static int DestroySessionWhileRunning(const char* url) {
@@ -337,11 +388,14 @@ static const struct {
 } kScenarios[] = {
     {"fetch", Fetch},
     {"fetch-with-file-descriptor", FetchWithFileDescriptor},
+    {"fetch-without-redirects", FetchWithoutRedirects},
     {"cancel-at-once", CancelAtOnce},
     {"cancel-after-response", CancelAfterResponse},
+    {"cancel-at-redirect", CancelAtRedirect},
     {"release-at-once", ReleaseAtOnce},
     {"release-after-response", ReleaseAfterResponse},
     {"destroy-session-while-running", DestroySessionWhileRunning},
+    {"destroy-session-at-redirect", DestroySessionAtRedirect},
     {"exit-while-running", ExitWhileRunning},
     {"connect-timeout", ConnectTimeout},
     {"read-timeout", ReadTimeout},
