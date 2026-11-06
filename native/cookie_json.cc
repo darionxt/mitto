@@ -22,11 +22,15 @@
 #include "base/values.h"
 #include "mitto/mitto.h"
 #include "net/base/url_util.h"
+#include "net/cookies/cookie_access_params.h"
+#include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_constants.h"
+#include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_partition_key.h"
 #include "url/gurl.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
+#include "url/url_constants.h"
 
 namespace mitto {
 namespace {
@@ -370,6 +374,18 @@ std::optional<CookieToSet> ParseCookie(const base::Value& value) {
   }
   GURL source_url(base::StrCat({"https://", HostOf(cookie->Domain())}));
   if (!source_url.is_valid() || !cookie->IsDomainMatch(source_url.host())) {
+    return std::nullopt;
+  }
+  // What the store will ask, as it does with no delegate, such as whether a
+  // SameSite=None cookie is Secure. Asking now means that a list it would
+  // refuse part of changes nothing.
+  const net::CookieAccessResult access_result = cookie->IsSetPermittedInContext(
+      source_url, net::CookieOptions::MakeAllInclusive(),
+      net::CookieAccessParams(net::CookieAccessSemantics::UNKNOWN,
+                              net::CookieScopeSemantics::UNKNOWN,
+                              /*delegate_treats_url_as_trustworthy=*/false),
+      {url::kHttpsScheme});
+  if (!access_result.status.IsInclude()) {
     return std::nullopt;
   }
 

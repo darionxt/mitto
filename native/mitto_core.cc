@@ -613,7 +613,8 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     return cookies;
   }
 
-  // Returns whether the store took every one of them.
+  // Returns whether the store took every one of them. ParseCookies() has
+  // already asked it, so this only guards against //net changing its mind.
   bool SetCookies(MittoSession& session, std::vector<CookieToSet> cookies) {
     bool all_set = true;
     base::WaitableEvent done;

@@ -129,6 +129,8 @@ A cookie crosses the C API in one of two ways, which are those of `//net`:
 | Has no `created_us`, so it is new | `CanonicalCookie::CreateSanitizedCookie()`, as DevTools does | Those of a server at its domain: a `__Host-` cookie must be `Secure`, a dot before a public suffix gives a cookie for that one name, and a path is encoded as a URL does |
 | Has `created_us`, so it has been in a store | `CanonicalCookie::FromStorage()`, as Chrome's own store does | That it is canonical, which every cookie `//net` has stored is |
 
+Either way, the parser also asks what the store will ask of any cookie, such as whether a `SameSite=None` cookie is `Secure`, so a list with one cookie the store would refuse changes nothing.
+
 The second way is why a saved list always loads, whatever a server sent. The checks of a new cookie refuse a path that grows too long once it is encoded, and they would change the path of any other that a URL has to encode. A cookie stored with such a path never matches a request, and it should stay that way after a load. Either way it counts as coming from `https://` at its domain, so that a caller can replace a `Secure` cookie, and a list that holds a `Secure` cookie and a cookie from HTTP of the same name loads in any order.
 
 ### Which site a request belongs to

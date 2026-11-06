@@ -583,6 +583,8 @@ def test_a_dot_before_a_public_suffix_makes_no_cookie_for_all_of_it(servers: Ser
         Cookie("a", "1", domain=HOST, partition_key=CookiePartitionKey("https://example.test", False)),
         Cookie("a", "1", domain=HOST, secure=True, partition_key=CookiePartitionKey("not a site", False)),
         Cookie("a", "1", domain=HOST, secure=True, partition_key=CookiePartitionKey("", False)),
+        Cookie("a", "1", domain=HOST, same_site="none"),
+        Cookie("a", "1", domain=HOST, same_site="none", created=ANY_TIME),
         Cookie("a", "1", domain=HOST, last_accessed=ANY_TIME),
         Cookie("a", "1", domain=HOST, last_updated=ANY_TIME),
         Cookie("a", "1", domain=HOST, source_scheme="secure"),
@@ -680,14 +682,25 @@ def test_cookies_in_a_form_that_the_native_core_refuses(cookies: bytes) -> None:
 
 
 @pytest.mark.usefixtures("native_library")
-def test_a_refused_cookie_stops_the_others_of_its_call() -> None:
-    good = {"name": "a", "value": "1", "domain": "a.test"}
-    bad = {"name": "b", "value": "1;2", "domain": "a.test"}
-    with _native.Session() as session:
+@pytest.mark.parametrize(
+    "refused",
+    [
+        # What the parser sees, and what only the store's own rules refuse.
+        {"name": "b", "value": "1;2", "domain": HOST},
+        {"name": "b", "value": "1", "domain": HOST, "same_site": "none"},
+        {"name": "b", "value": "1", "domain": HOST, "same_site": "none", "created_us": 1790000000000000},
+    ],
+)
+def test_a_refused_cookie_stops_the_others_of_its_call(refused: dict[str, object]) -> None:
+    replacing = {"name": "a", "value": "new", "domain": HOST}
+    adding = {"name": "c", "value": "1", "domain": HOST}
+    cookies = {"version": _native.COOKIES_VERSION, "cookies": [replacing, adding, refused]}
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "old", domain=HOST))
         with pytest.raises(ValueError, match="refused"):
-            session.set_cookies(json.dumps({"version": _native.COOKIES_VERSION, "cookies": [good, bad]}).encode())
+            session._native.set_cookies(json.dumps(cookies).encode())  # pyright: ignore[reportPrivateUsage]
 
-        assert json.loads(session.list_cookies())["cookies"] == []
+        assert [(cookie.name, cookie.value) for cookie in session.cookies] == [("a", "old")]
 
 
 @pytest.mark.usefixtures("native_library")
@@ -1104,6 +1117,21 @@ def test_loading_what_is_not_cookies_names_the_file_and_adds_nothing(tmp_path: P
         assert "secret" not in str(caught.value)
         assert "secret" not in str(caught.value.__cause__)
         assert len(session.cookies) == 0
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_file_with_a_cookie_only_the_store_refuses_changes_nothing(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    good = {"name": "a", "value": "new", "domain": HOST}
+    bad = {"name": "b", "value": "1", "domain": HOST, "same_site": "none"}
+    file.write_text(json.dumps({"version": _native.COOKIES_VERSION, "cookies": [good, bad]}))
+
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "old", domain=HOST))
+        with pytest.raises(ValueError, match=r"cookies\.json"):
+            session.cookies.load(file)
+
+        assert [cookie.value for cookie in session.cookies] == ["old"]
 
 
 @pytest.mark.usefixtures("native_library")
