@@ -154,6 +154,8 @@ A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs
 
 The job keeps only the library, in the Actions cache: 28 MB on Linux and 12 MB on macOS, compressed. The key is the runner's name and a hash of `native/` and `tools/workspace/`, which holds the pin of the export. When none of that has changed, the job skips the build. A pull request can read the caches of `main` and its own, so one that changes neither directory uses the library that `main` built. One that changes either builds once, and `main` builds again after the merge.
 
+A second cache keeps the build's directory, about 300 MB per **Host** and build, because what the export compiles to changes only with `tools/workspace/`. Its key is the runner's or the build's name and a hash of that directory. `main` saves it the first time it builds with that hash, and a pull request restores it and rebuilds only `native/`. In one trial, a change to one file in `native/` rebuilt 11 of about 4,000 objects, and the whole job took about 2 minutes on either Host. `main` never restores it, so each merge still builds from nothing and shows a mistake in an incremental build. A pull request that changes `tools/workspace/` also builds from nothing. CIPD packages are unpacked with a fixed file time, because ninja would otherwise rebuild what depends on them.
+
 `xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use. The Python jobs use it as well, because 9 of 90 jobs on `macos-latest` got no runner within 15 minutes and were cancelled, and none of 36 on `xcode-27` did.
 
 ### Sanitizer builds and the fuzz target
@@ -190,7 +192,7 @@ mkdir corpus
 ASAN_OPTIONS=detect_leaks=1 /absolute/path/to/new/directory/chromium-<tag>/src/out/fuzz/session_settings_fuzzer -max_total_time=60 -dict=native/test/session_settings_fuzzer.dict corpus native/test/session_settings_corpus
 ```
 
-[`.github/workflows/sanitizers.yml`](../.github/workflows/sanitizers.yml) runs one job per build on `ubuntu-latest`. It runs when a pull request or `main` changes `native/` or `tools/workspace/`, and every day, when the unchanged builds come from the cache and only the fuzzing takes real time. It fuzzes each target for five minutes and keeps any input that crashed one as an artifact of the run. These jobs are not required checks, because they do not run on every pull request.
+[`.github/workflows/sanitizers.yml`](../.github/workflows/sanitizers.yml) runs one job per build on `ubuntu-latest`. It runs when a pull request or `main` changes `native/` or `tools/workspace/`, and every day, when the unchanged builds come from the cache and only the fuzzing takes real time. It fuzzes each target for five minutes, or for one minute on a pull request, and keeps any input that crashed one as an artifact of the run. Builds reuse objects from `main` in the same way as in the job above. These jobs are not required checks, because they do not run on every pull request.
 
 Times are from two runs from a cold cache.
 

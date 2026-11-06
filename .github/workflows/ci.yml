@@ -59,6 +59,18 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: native-core-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
+      - id: tag
+        run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
+      # What the export compiles to changes only with tools/workspace, so a pull request
+      # reuses main's objects and rebuilds only native/. main always builds from nothing,
+      # so a mistake in an incremental build cannot go unnoticed there.
+      - id: cached-objects
+        if: steps.cached-library.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
+          key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
+          lookup-only: ${{ github.event_name != 'pull_request' }}
       - name: Build the native core
         if: steps.cached-library.outputs.cache-hit != 'true'
         run: |
@@ -72,6 +84,11 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-library.outputs.cache-primary-key }}
+      - if: steps.cached-library.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
+          key: ${{ steps.cached-objects.outputs.cache-primary-key }}
       - run: uv run pytest -rs
         env:
           MITTO_NATIVE_LIBRARY: ${{ runner.temp }}/native-core/${{ matrix.library }}

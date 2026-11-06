@@ -514,6 +514,17 @@ def test_a_cipd_package_keeps_modes_and_links(tmp_path: Path) -> None:
     assert not (destination / ".cipdpkg").exists()
 
 
+def test_a_cipd_package_has_a_fixed_time(tmp_path: Path) -> None:
+    archive_file = tmp_path / "package.zip"
+    with zipfile.ZipFile(archive_file, "w") as packed:
+        packed.writestr("bin/tool", "tool")
+    destination = tmp_path / "unpacked"
+
+    export.extract_zip(archive_file, destination)
+
+    assert (destination / "bin/tool").stat().st_mtime == export.CIPD_FILE_TIME
+
+
 def test_download_checks_the_hash(tmp_path: Path) -> None:
     source = write(tmp_path, "source/package", "package")
     digest = hashlib.sha256(b"package").hexdigest()
@@ -602,6 +613,21 @@ def test_an_export_unpacks_whole(tmp_path: Path) -> None:
 
     assert (root / "chromium-1/src/a.h").read_text() == "a"
     assert [path.name for path in root.iterdir()] == ["chromium-1"]
+
+
+def test_build_output_restored_from_a_cache_stays_with_its_time(tmp_path: Path) -> None:
+    archive = tar_of(tmp_path, "a.tar.xz", {"chromium-1/export.json": "{}", "chromium-1/src/a.h": "a"})
+    root = tmp_path / "build"
+    restored = root / "chromium-1/src/out/mitto/a.o"
+    restored.parent.mkdir(parents=True)
+    restored.write_text("object")
+    os.utime(restored, (1000, 1000))
+
+    export.unpack_export(archive, root / "chromium-1")
+
+    assert (root / "chromium-1/src/a.h").read_text() == "a"
+    assert restored.read_text() == "object"
+    assert restored.stat().st_mtime == 1000
 
 
 def test_the_same_export_is_not_unpacked_again(tmp_path: Path) -> None:
