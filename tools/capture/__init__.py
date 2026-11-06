@@ -1,6 +1,16 @@
 """The capture kit: a local server that records what a client sends, raw and in the normal form Baselines use."""
 
-from tools.capture.cases import CASE_HOST, CASES, CROSS_SITE_HOST, MAIN_CASES, RUNS, SAME_SITE_HOST, Case, Run
+from tools.capture.cases import (
+    CASE_HOST,
+    CASES,
+    COOKIE_SET_PATH,
+    CROSS_SITE_HOST,
+    MAIN_CASES,
+    RUNS,
+    SAME_SITE_HOST,
+    Case,
+    Run,
+)
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
 from tools.capture.page import KIND_PATHS, RequestKind
 from tools.capture.recording import (
@@ -19,6 +29,7 @@ from tools.capture.server import DEFAULT_HOST, CaptureServer
 __all__ = [
     "CASES",
     "CASE_HOST",
+    "COOKIE_SET_PATH",
     "CROSS_SITE_HOST",
     "DEFAULT_HOST",
     "HTTP1",

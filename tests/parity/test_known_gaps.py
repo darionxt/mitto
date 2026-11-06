@@ -26,13 +26,13 @@ def test_the_list_holds_one_gap_per_line() -> None:
     assert lines[-1] == "]"
     assert json.loads(lines[1].rstrip(",")) == {
         "release": "157",
-        "kind": "navigation",
+        "case": "navigation",
         "protocol": "h2",
         "field": "tls.cipher_suites",
         "baseline": ["A", "B"],
         "mitto": ["A"],
     }
-    assert json.loads(lines[2])["kind"] == "fetch"
+    assert json.loads(lines[2])["case"] == "fetch"
 
 
 @pytest.mark.parametrize(

@@ -41,6 +41,7 @@ from tools.parity import (
     mismatches,
 )
 from tools.parity.check import record
+from tools.parity.replay import protocol_of
 
 _REPOSITORY = Path(__file__).parents[2]
 _REGENERATE = "uv run python -m tools.parity"
@@ -78,12 +79,14 @@ def test_the_known_gaps_list_is_written_the_way_the_command_writes_it() -> None:
     assert dumps_known_gaps(loads_known_gaps(text)) == text
 
 
-def test_each_release_has_every_main_request_kind_over_every_protocol() -> None:
-    found = {(baseline.release, baseline.kind, baseline.protocol) for baseline in load_baselines(BASELINES_DIRECTORY)}
+def test_each_release_has_a_baseline_of_every_recording_case_of_every_run() -> None:
+    found = {(baseline.release, baseline.case, baseline.protocol) for baseline in load_baselines(BASELINES_DIRECTORY)}
 
-    releases = {release for release, _, _ in found}
-    assert releases
-    assert found == set(itertools.product(releases, RequestKind, (HTTP1, HTTP2, HTTP3)))
+    assert found == {
+        (release, case.name, protocol_of(run.route))
+        for release, run in itertools.product(WINDOWS_PERSONAS, RUNS)
+        for case in run.cases
+    }
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
@@ -108,7 +111,7 @@ def test_each_release_says_which_chrome_recorded_it() -> None:
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
 def test_a_check_presents_the_chrome_release_of_its_baseline(release: str) -> None:
-    request = record(Baseline(release, RequestKind.NAVIGATION, HTTP2, {}))["request"]
+    request = record(Baseline(release, "navigation", HTTP2, {}))["request"]
 
     assert isinstance(request, dict)
     headers = request["headers"]
@@ -123,6 +126,7 @@ def test_a_regenerated_list_makes_the_run_pass(sample_baselines: Path) -> None:
     assert result.returncode == 0, result.stderr
     listed = known_gaps(sample_baselines)
     assert f"Wrote {len(listed)} gaps" in result.stdout
+    assert f"  navigation: {sum(gap.case == 'navigation' for gap in listed)}\n" in result.stdout
     assert not mismatches(find_gaps(load_baselines(sample_baselines)), listed)
 
 
@@ -169,7 +173,7 @@ def test_a_deliberate_change_to_a_sample_baseline_fails_the_run(
     found = mismatches(find_gaps(load_baselines(sample_baselines)), listed)
 
     assert found
-    assert [(gap.release, gap.kind, gap.protocol, gap.field) for gap in found.unlisted] == [
+    assert [(gap.release, gap.case, gap.protocol, gap.field) for gap in found.unlisted] == [
         (SAMPLE_RELEASE, kind, HTTP2, field) for kind in kinds
     ]
     report = str(found)
@@ -195,7 +199,7 @@ def test_a_listed_gap_that_no_longer_exists_fails_the_run(
 
     assert found
     assert found.unlisted == []
-    assert [(gap.kind, gap.protocol, gap.field, gap.mitto) for gap in found.gone] == [
+    assert [(gap.case, gap.protocol, gap.field, gap.mitto) for gap in found.gone] == [
         ("navigation", HTTP2, "request.headers.x-changed", None)
     ]
 
@@ -222,7 +226,7 @@ def test_a_baseline_recorded_from_the_native_core_has_no_gaps(tmp_path: Path, pr
 
     baselines = load_baselines(tmp_path)
 
-    assert [baseline.kind.value for baseline in baselines] == list(_ALL_KINDS)
+    assert [baseline.case for baseline in baselines] == list(_ALL_KINDS)
     assert find_gaps(baselines) == []
 
 

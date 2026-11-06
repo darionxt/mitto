@@ -34,7 +34,7 @@ _DONE_PATH = "/case/done"
 _PLAIN_HTTP_DONE_PATH = "/case/plain-http-done"
 _PROXY_DONE_PATH = "/case/proxy-done"
 _FAILED_PREFIX = "/case/failed?"
-_COOKIE_SET_PATH = "/case/cookie-set"
+COOKIE_SET_PATH = "/case/cookie-set"
 _COOKIE = "mitto=1"
 
 _CASE_PREFIX = "/case/"
@@ -319,7 +319,7 @@ def _start_page(page: str, same_site: str, cross_site: str) -> Response:
         "fetch_post_json_same_origin": _FETCH_POST_JSON_SAME_ORIGIN.path,
         "fetch_post_stream": _FETCH_POST_STREAM.path,
         "fetch_post_stream_refused": _FETCH_POST_STREAM_REFUSED_PATH,
-        "cookie_set": _COOKIE_SET_PATH,
+        "cookie_set": COOKIE_SET_PATH,
         "cookie": _COOKIE_CARRIED.path,
         "revalidation": _REVALIDATION.path,
         "redirect_fetch_1": _REDIRECT_FETCH[0].path,
@@ -391,7 +391,7 @@ def _responses(scheme: str, port: int) -> dict[str, Response]:
         _IMAGE_SAME_SITE.path: image,
         _IMAGE_CROSS_SITE.path: image,
         # The cookie's path keeps it off every request but the one that shows it.
-        _COOKIE_SET_PATH: _case_response(_TEXT, b"set\n", ("Set-Cookie", f"{_COOKIE}; Path={_COOKIE_CARRIED.path}")),
+        COOKIE_SET_PATH: _case_response(_TEXT, b"set\n", ("Set-Cookie", f"{_COOKIE}; Path={_COOKIE_CARRIED.path}")),
         _COOKIE_CARRIED.path: text,
         _REVALIDATION.path: _case_response(_TEXT, b"answered\n", ("ETag", _ETAG), cache_control="no-cache"),
         _PLAIN_HTTP_NAVIGATION.path: _plain_http_page(),

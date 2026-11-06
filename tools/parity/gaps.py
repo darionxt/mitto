@@ -28,7 +28,7 @@ class Gap:
 
     Attributes:
         release: The Baseline's Chrome Release, such as "157".
-        kind: The Baseline's Request Kind, such as "navigation".
+        case: The Baseline's Recording Case, such as "navigation" or "fetch_post_text_cross_site".
         protocol: The Baseline's protocol, such as "h2".
         field: Where the two differ, such as "tls.cipher_suites" or "request.headers.user-agent".
         baseline: The Baseline's value, or None if it has no such field.
@@ -36,7 +36,7 @@ class Gap:
     """
 
     release: str
-    kind: str
+    case: str
     protocol: str
     field: str
     baseline: Json
@@ -44,7 +44,7 @@ class Gap:
 
     def __str__(self) -> str:
         return (
-            f"Chrome {self.release}, {self.kind}, {self.protocol}, {self.field}\n"
+            f"Chrome {self.release}, {self.case}, {self.protocol}, {self.field}\n"
             f"  Baseline: {_shown(self.baseline)}\n"
             f"  mitto:    {_shown(self.mitto)}"
         )

@@ -376,10 +376,15 @@ class CaptureServer:
             # A proxy of this machine's would get these names, where it would never get a *.localhost name.
             flags += [f"--host-resolver-rules={self.host_resolver_rules}", "--no-proxy-server"]
         if run.route == HTTP3:
-            hosts = (run.host,) if run.host is None else HOST_NAMES
-            authorities = ",".join(self.authority(HTTP3, host=host) for host in hosts)
-            flags.append(f"--origin-to-force-quic-on={authorities}")
+            flags.append(f"--origin-to-force-quic-on={','.join(self.origins_to_force_quic_on(run))}")
         return flags
+
+    def origins_to_force_quic_on(self, run: Run) -> list[str]:
+        """The origins a client has to be told speak QUIC for a run, each written "host:port"."""
+        if run.route != HTTP3:
+            return []
+        hosts = (run.host,) if run.host is None else HOST_NAMES
+        return [self.authority(HTTP3, host=host) for host in hosts]
 
     def start(self) -> None:
         """Start listening. A server starts only once.
