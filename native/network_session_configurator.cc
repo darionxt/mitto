@@ -83,6 +83,16 @@ void ConfigureHttp2Params(net::HttpNetworkSessionParams* params) {
 
   // Chrome does not set this one anywhere, and no field trial reaches it.
   params->spdy_session_max_recv_window_size = kSpdySessionMaxRecvWindowSize;
+
+  // Nor does Chrome set this one, so Chrome takes the default in
+  // net/http/http_network_session.h: true on Windows, Android and iOS, false
+  // elsewhere. The Personas are Windows Chrome, so it is stated, and what a
+  // connection does when the network changes does not follow the Host. With
+  // true, the sessions go away on an IP address change, so the requests on them
+  // can finish. With false they close, and those requests fail with
+  // ERR_NETWORK_CHANGED. It does not show on the wire, and it needs the
+  // NetworkChangeNotifier that mitto_core.cc creates.
+  params->spdy_go_away_on_ip_change = true;
 }
 
 void ConfigureQuicParams(net::HttpNetworkSessionParams* params,
