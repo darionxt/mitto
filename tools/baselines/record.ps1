@@ -263,7 +263,10 @@ $UserDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFrom
 if (-not (Test-Path $Chrome)) { throw "No Chrome at $Chrome." }
 $Chrome = (Resolve-Path $Chrome).Path
 if (Test-Path $UserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
-if (Test-Path (Join-Path $Out $RunsFile)) { throw "$Out already holds a recording." }
+# A file that is there already would count as that run's recording, with nothing recorded.
+if ((Test-Path $Out) -and @(Get-ChildItem $Out -Recurse -File -Filter '*.json').Count -gt 0) {
+    throw "$Out already holds a recording."
+}
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $installed = (Get-Item $Chrome).VersionInfo.ProductVersion
