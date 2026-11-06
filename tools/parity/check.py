@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from mitto._native import RequestError, Session
-from mitto._persona import CHROME_157_WINDOWS, load_persona
+from mitto._persona import WINDOWS_PERSONAS, Persona, load_persona
 from mitto._persona import RequestKind as PersonaRequestKind
 from tools.capture import HTTP3, KIND_PATHS, CaptureServer, RequestKind, normal_form
 from tools.capture.recording import Json
@@ -20,8 +20,8 @@ _REQUESTS = "requests"
 _RESPONSE_FIELD = "response"
 _A_RESPONSE = "a response"
 
-type Recorder = Callable[[str, RequestKind], dict[str, Json]]
-"""What makes a request of a Request Kind over a protocol, and returns the fingerprint of what it sent."""
+type Recorder = Callable[[Baseline], dict[str, Json]]
+"""What makes the request of a Baseline, and returns the fingerprint of what it sent."""
 
 
 class BaselineError(Exception):
@@ -98,21 +98,31 @@ def _read_baselines(path: Path) -> list[Baseline]:
     return [Baseline(path.parent.name, kind, protocol, fingerprint(form, kind)) for kind in kinds]
 
 
-def record(protocol: str, kind: RequestKind) -> dict[str, Json]:
-    """Make one request of a Request Kind through a new native Session to a new capture server.
+def _persona_of(release: str) -> Persona:
+    name = WINDOWS_PERSONAS.get(release)
+    if name is None:
+        raise BaselineError(f"no Persona presents Chrome {release}, so its Baselines cannot be checked")
+    return load_persona(name)
 
-    The request presents the Chrome 157 Persona, the only one so far, whichever Chrome Release the Baseline is from.
-    Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, like the Chrome that recorded the Baselines, because
-    //net refuses QUIC to the server's private certificate otherwise.
+
+def record(baseline: Baseline) -> dict[str, Json]:
+    """Make the request of a Baseline through a new native Session to a new capture server.
+
+    The request presents the Persona of the Baseline's Chrome Release. Over HTTP/3 it has Chrome's
+    --origin-to-force-quic-on as well, like the Chrome that recorded the Baselines, because //net refuses QUIC to the
+    server's private certificate otherwise.
 
     Returns:
         The fingerprint of what the capture server received.
 
     Raises:
+        BaselineError: No Persona presents the Baseline's Chrome Release.
         RequestError: The request got no response.
         NativeLibraryError: The native library cannot be used.
     """
-    persona = load_persona(CHROME_157_WINDOWS)
+    persona = _persona_of(baseline.release)
+    protocol = baseline.protocol
+    kind = baseline.kind
     with (
         CaptureServer() as server,
         Session(
@@ -132,12 +142,13 @@ def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> lis
     A request that gets no response has nothing to compare, so it is one gap, in the field "response".
 
     Raises:
+        BaselineError: No Persona presents the Chrome Release of a Baseline.
         NativeLibraryError: The native library cannot be used.
     """
     gaps: list[Gap] = []
     for baseline in baselines:
         try:
-            recorded = recorder(baseline.protocol, baseline.kind)
+            recorded = recorder(baseline)
         except RequestError as error:
             found = [(_RESPONSE_FIELD, _A_RESPONSE, f"net error {error.net_error}")]
         else:

@@ -14,13 +14,14 @@ from typing import Any
 import pytest
 
 from mitto._native import LIBRARY_ENV_VAR, Session
-from mitto._persona import CHROME_157_WINDOWS, load_persona
+from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS, load_persona
 from mitto._persona import RequestKind as PersonaRequestKind
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
 from tools.parity import (
     BASELINES_DIRECTORY,
     KNOWN_GAPS_FILE_NAME,
+    Baseline,
     Gap,
     dumps_known_gaps,
     find_gaps,
@@ -28,6 +29,7 @@ from tools.parity import (
     loads_known_gaps,
     mismatches,
 )
+from tools.parity.check import record
 
 _REPOSITORY = Path(__file__).parents[2]
 _REGENERATE = "uv run python -m tools.parity"
@@ -79,6 +81,17 @@ def test_each_release_says_which_chrome_recorded_it() -> None:
     for release in releases:
         note = (BASELINES_DIRECTORY / release / "chrome.txt").read_text()
         assert f"Chrome: {release}." in note
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_a_check_presents_the_chrome_release_of_its_baseline(release: str) -> None:
+    request = record(Baseline(release, RequestKind.NAVIGATION, HTTP2, {}))["request"]
+
+    assert isinstance(request, dict)
+    headers = request["headers"]
+    assert isinstance(headers, list)
+    assert any(f"Chrome/{release}.0.0.0" in str(line) for line in headers)
 
 
 @pytest.mark.usefixtures("native_library")
@@ -180,7 +193,7 @@ def test_a_baseline_recorded_from_the_native_core_has_no_gaps(tmp_path: Path, pr
         for kind in RequestKind:
             url = f"https://{server.authority(protocol)}{KIND_PATHS[kind]}"
             session.request(url, **persona.request_defaults(PersonaRequestKind(kind.value), url))
-    release = tmp_path / "mitto"
+    release = tmp_path / persona.release
     release.mkdir()
     (release / f"{stem}.json").write_text(dumps_normal_form(normal_form(server.recording(protocol))))
 
@@ -217,6 +230,20 @@ def test_the_command_refuses_a_bad_baseline(sample_baselines: Path) -> None:
 
     assert result.returncode == 1
     assert "http2.json" in result.stderr
+
+
+def test_the_command_refuses_a_chrome_release_with_no_persona_and_leaves_the_list_alone(
+    sample_baselines: Path,
+) -> None:
+    known = sample_baselines / KNOWN_GAPS_FILE_NAME
+    known.write_text("[]\n")
+    (sample_baselines / SAMPLE_RELEASE).rename(sample_baselines / "154")
+
+    result = regenerate(sample_baselines)
+
+    assert result.returncode == 1
+    assert "Chrome 154" in result.stderr
+    assert known.read_text() == "[]\n"
 
 
 def test_the_command_refuses_a_bad_list_and_leaves_it_alone(tmp_path: Path) -> None:

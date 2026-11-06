@@ -14,9 +14,9 @@ from tools.parity import Baseline, BaselineError, Gap, find_gaps, fingerprint, l
 ALL_KINDS = [RequestKind.NAVIGATION, RequestKind.FETCH, RequestKind.SCRIPT, RequestKind.IMAGE]
 
 
-def identical_to_the_sample(protocol: str, kind: RequestKind) -> dict[str, Json]:
+def identical_to_the_sample(baseline: Baseline) -> dict[str, Json]:
     """Record what the unchanged sample Baseline holds, so that there is no gap until a Baseline changes."""
-    return fingerprint(sample_form("http2" if protocol == "h2" else "http1"), kind)
+    return fingerprint(sample_form("http2" if baseline.protocol == "h2" else "http1"), baseline.kind)
 
 
 def test_each_request_kind_in_a_file_is_one_baseline(sample_baselines: Path) -> None:
@@ -133,9 +133,31 @@ def test_a_connection_gap_is_one_gap_per_request_kind(sample_baselines: Path, ch
     ]
 
 
+def test_each_baseline_is_recorded_with_its_own_chrome_release(sample_baselines: Path) -> None:
+    older = sample_baselines / "155"
+    older.mkdir()
+    (older / "http2.json").write_text((sample_baselines / SAMPLE_RELEASE / "http2.json").read_text())
+    recorded: list[str] = []
+
+    def recorder(baseline: Baseline) -> dict[str, Json]:
+        recorded.append(baseline.release)
+        return baseline.fingerprint
+
+    find_gaps(load_baselines(sample_baselines), recorder)
+
+    assert recorded == ["155"] * 4 + [SAMPLE_RELEASE] * 8
+
+
+def test_a_baseline_of_a_chrome_release_with_no_persona_cannot_be_recorded() -> None:
+    baseline = Baseline("154", RequestKind.FETCH, "h2", {"protocol": "h2"})
+
+    with pytest.raises(BaselineError, match="Chrome 154"):
+        find_gaps([baseline])
+
+
 def test_a_request_without_a_response_is_one_gap() -> None:
-    def refused(protocol: str, kind: RequestKind) -> dict[str, Json]:
-        raise RequestError(f"https://capture.localhost/{protocol}/{kind}", -102)
+    def refused(baseline: Baseline) -> dict[str, Json]:
+        raise RequestError(f"https://capture.localhost/{baseline.protocol}/{baseline.kind}", -102)
 
     baseline = Baseline("157", RequestKind.FETCH, "h3", {"protocol": "h3", "tls": {}})
 

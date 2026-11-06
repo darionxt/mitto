@@ -42,7 +42,7 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
   - `Accept` and priority per Request Kind;
   - `Accept-Language`;
   - header order;
-  - TLS, HTTP/2 and QUIC deltas for the older releases.
+  - TLS, HTTP/2 and QUIC deltas for the older releases. Chrome 155 and 156 turned out to have none: their [Personas](persona.md#what-differs-between-chrome-releases) differ from Chrome 157's in `sec-ch-ua` and `User-Agent` only, so a Persona carries no engine settings yet. Where a later Chrome Release differs, the same page says how.
 - **Parity Checks** that run offline against the capture server and gate CI. See [parity.md](parity.md).
 - **Exit:** Parity Checks pass for all three Chrome Releases and the main Request Kinds, over HTTP/1.1, HTTP/2 and HTTP/3.
 
