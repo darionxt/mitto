@@ -690,7 +690,7 @@ class Session:
             headers: The (name, value) pairs to send, in the order they are to reach the wire, encoded as Latin-1. A
                 name may appear only once, ignoring case. //net adds its own headers as it does in Chrome, such as Host
                 before these and Accept-Encoding after them, unless they are among these. Referer cannot be among these,
-                because //net only sends `referrer`.
+                because //net only sends the one that `referrer` or `fetch` gives it.
             method: The HTTP method, sent as it is written here. Chrome never sends CONNECT, TRACE or TRACK, so they are
                 refused.
             priority: The priority of the request.

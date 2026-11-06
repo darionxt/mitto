@@ -354,7 +354,8 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 // the wire, and may be null if the count is 0. A name may appear only once,
 // ignoring case. //net adds its own headers as it does in Chrome, such as Host
 // before these and Accept-Encoding after them, unless they are among these.
-// Referer cannot be among these, because //net only sends the "referrer" option.
+// Referer cannot be among these, because //net only sends the one that
+// "referrer" or "fetch" gives it.
 //
 // `options` is a buffer of `options_size` bytes that holds one UTF-8 JSON object
 // and needs no trailing NUL byte:

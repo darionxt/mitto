@@ -4,13 +4,11 @@
 #ifndef MITTO_SEC_HEADER_HELPERS_H_
 #define MITTO_SEC_HEADER_HELPERS_H_
 
-#include <optional>
 #include <string_view>
 
 #include "base/types/optional_ref.h"
 #include "mitto/request_options.h"
 #include "url/gurl.h"
-#include "url/origin.h"
 
 namespace net {
 struct RedirectInfo;
@@ -28,14 +26,6 @@ bool IsClientHintHeader(std::string_view name);
 
 // Removes the sec-ch- and sec-fetch- lines that are not a caller's.
 void RemoveSecHeaders(net::URLRequest& request, const FetchParams& params);
-
-// url_loader_util::SetRequestCredentials(). The decision not to send
-// credentials lasts for the rest of the request. `url` is the URL it is about
-// to go to.
-void SetRequestCredentials(net::URLRequest& request,
-                           const FetchParams& params,
-                           const std::optional<url::Origin>& initiator,
-                           const GURL& url);
 
 // Sets the Fetch Metadata headers for the next hop of `request`: the one that
 // `pending_redirect` leads to, or else its URL. As upstream, this only adds

@@ -83,7 +83,7 @@ void FetchRules::ConfigureRequest(net::URLRequest& request) {
                                    *initiator_, *initiator_, site_for_cookies));
   }
   request.set_initiator(initiator_);
-  SetRequestCredentials(request, params_, initiator_, url);
+  SetRequestCredentials(request, url);
 
   if (!IsFixed(net::HttpRequestHeaders::kReferer)) {
     // Blink's SecurityPolicy::GenerateReferrer(), and //net from there on.
@@ -173,9 +173,17 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
   }
 
   // URLLoader::FollowRedirect() and what comes before it.
-  SetRequestCredentials(request, params_, initiator_, new_url);
+  SetRequestCredentials(request, new_url);
   MaybeRemoveSecHeaders(request, params_, new_url);
   SetFetchMetadataHeaders(request, params_, redirect_info);
+}
+
+void FetchRules::SetRequestCredentials(net::URLRequest& request,
+                                       const GURL& url) const {
+  if (params_.credentials_mode == CredentialsMode::kSameOrigin && initiator_ &&
+      !initiator_->IsSameOriginWith(url)) {
+    request.set_disallow_credentials();
+  }
 }
 
 void FetchRules::SetCorsFlagIfNeeded(const GURL& url) {

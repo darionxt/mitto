@@ -55,6 +55,11 @@ class FetchRules {
                           net::HttpRequestHeaders& modified_headers);
 
  private:
+  // url_loader_util::SetRequestCredentials(). The decision not to send
+  // credentials lasts for the rest of the request. `url` is the URL it is about
+  // to go to.
+  void SetRequestCredentials(net::URLRequest& request, const GURL& url) const;
+
   // A cross-origin request in cors mode, once and for all: `fetch_cors_flag_`
   // in network::cors::CorsURLLoader.
   void SetCorsFlagIfNeeded(const GURL& url);

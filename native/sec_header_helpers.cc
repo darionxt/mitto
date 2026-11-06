@@ -8,6 +8,7 @@
 #include "mitto/sec_header_helpers.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include "net/http/http_request_headers.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
+#include "url/origin.h"
 
 namespace mitto {
 
@@ -199,16 +201,6 @@ void RemoveSecHeaders(net::URLRequest& request, const FetchParams& params) {
                          base::CompareCase::INSENSITIVE_ASCII)) {
       RemoveHeader(request, params, header.key);
     }
-  }
-}
-
-void SetRequestCredentials(net::URLRequest& request,
-                           const FetchParams& params,
-                           const std::optional<url::Origin>& initiator,
-                           const GURL& url) {
-  if (params.credentials_mode == CredentialsMode::kSameOrigin && initiator &&
-      !initiator->IsSameOriginWith(url)) {
-    request.set_disallow_credentials();
   }
 }
 
