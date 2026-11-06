@@ -94,6 +94,27 @@ The first Session in a process waits up to a second for the system's DNS setting
 
 No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and the public Session takes it only through `_settings`. Such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
 
+## Certificate verification
+
+No Parity Check can see how a certificate is verified, because the verdict is not on the wire. A **Session** uses the verifier in `//net` that Chrome uses, with the Chrome Root Store, which at Chrome 157 is the only choice on Windows, macOS and Linux (`chrome_root_store_only`). `native/mitto_core.cc` wraps it in the same `CoalescingCertVerifier` and `CachingCertVerifier` that `NetworkContext` does.
+
+A chain that arrives without an intermediate gets it from the URL in the certificate's Authority Information Access extension. Chrome's fetcher, `CertNetFetcherURLLoader`, lives in `services/cert_verifier`, outside the source export, so a Session has `CertNetFetcherURLRequest` from `//net`. They are written alike: HTTP only, no credentials and no secure DNS, 15 seconds and 64 KiB for an intermediate, and a request on the same context as the page's. A Session's fetcher shuts down with it, which ends a fetch that a worker thread is waiting for.
+
+`Session(additional_trust_anchors=[pem, ...])` adds roots beside the Chrome Root Store, through `CertVerifyProc::InstanceParams`, which is how Chrome receives its own additional certificates. Each entry is the text of a PEM file. A self-signed server certificate can be its own anchor, and an anchor's own dates and constraints are not enforced. This is what mitto offers in place of the roots that Linux users add to the system, which it does not read ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)). On macOS the verifier also reads the roots a user has added to the Keychain, as Chrome does.
+
+`//net` refuses QUIC to a root that is not known, which means one outside the Chrome Root Store, with `ERR_QUIC_CERT_ROOT_NOT_KNOWN`. So a server whose chain ends at an added root stays on HTTP/1.1 or HTTP/2, whatever its `Alt-Svc` says, as it does in Chrome. Only `origins_to_force_quic_on` lifts that, which is what a Parity Check of `h3` uses, and the public Session does not offer it.
+
+### What stays different
+
+| | Chrome | A Session |
+|---|---|---|
+| Certificate Transparency | `MultiLogCTVerifier` checks SCTs against the logs in `ct_known_logs`, and `ChromeCTPolicyEnforcer` refuses a chain to a known root that has too few, with `ERR_CERTIFICATE_TRANSPARENCY_REQUIRED` | `DoNothingCTVerifier` and `DefaultCTPolicyEnforcer`. The enforcer and the log list live in `components/certificate_transparency`, outside the source export, so a Session accepts a certificate that Chrome would refuse for missing SCTs |
+| Revocation | A CRLSet that a component keeps up to date | `CRLSet::BuiltinCRLSet()`, the fixed list compiled into `//net` |
+| Root store | The compiled-in list, until a component brings a newer one | The compiled-in list of the **Engine Release** |
+| `User-Agent` of a fetch for a certificate | The one the network service holds | An empty value, because `//net` takes it from the context, and a Session's context holds no `User-Agent` yet |
+
+The first three let a Session accept what Chrome would refuse. None of them changes what a server sees: the ClientHello still offers SCTs, and it does not depend on `additional_trust_anchors`. The last one shows only on the server that an Authority Information Access URL names. That fetch otherwise sends the same lines as Chrome 156 on macOS, in the same order: `Host`, `Connection`, `User-Agent`, `Accept-Encoding` and `Accept-Language`.
+
 ## Tests of the comparison
 
 Real Baselines are recorded by hand on a Windows machine, so `tests/parity` tests the comparison itself with a sample: the real normal forms of Chrome 156 on macOS in `tests/capture/data`. It changes that sample on purpose and expects the run to fail, both through the native core and, where there is no native library, through a stand-in for it.

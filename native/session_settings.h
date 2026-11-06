@@ -8,6 +8,7 @@
 
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "net/base/ip_endpoint.h"
+#include "third_party/boringssl/src/pki/parsed_certificate.h"
 #include "url/scheme_host_port.h"
 
 namespace mitto {
@@ -22,6 +23,9 @@ struct SessionSettings {
   // Certificate chains that hold one of these keys are accepted without being
   // verified.
   SPKIHashSet ignore_certificate_errors_spki_list;
+
+  // Certificates to trust as roots, beside the Chrome Root Store.
+  bssl::ParsedCertificateList additional_trust_anchors;
 
   // The value of the Accept-Language header that //net adds to a request that
   // has none. Empty adds no header.

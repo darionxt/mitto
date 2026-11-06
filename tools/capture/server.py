@@ -316,6 +316,13 @@ class CaptureServer:
         return self._certificate.spki_hash
 
     @property
+    def certificate_pem(self) -> str:
+        """The self-signed certificate that every port presents, which a client can add as a trust anchor."""
+        if self._certificate is None:
+            raise RuntimeError("the server has not started")
+        return self._certificate.certificate_pem.decode()
+
+    @property
     def host_resolver_rules(self) -> str:
         """The value for Chrome's --host-resolver-rules, and the like, which sends the case pages' names here."""
         return ",".join(f"MAP {name} {_LOOPBACKS[0][1]}" for name in HOST_NAMES)
