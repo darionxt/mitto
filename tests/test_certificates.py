@@ -14,6 +14,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._native import Finished, PrivateSettings
+from mitto._persona import WINDOWS_PERSONAS, load_persona
 from tests.local_certificates import (
     ISSUER_PATH,
     AiaServer,
@@ -158,24 +159,27 @@ def test_a_missing_intermediate_is_fetched_from_its_aia_url(tmp_path: Path) -> N
     assert [path for path, _ in aia.requests] == [ISSUER_PATH]
 
 
-def test_a_certificate_fetch_sends_the_lines_chrome_sends(tmp_path: Path) -> None:
+@pytest.mark.parametrize("persona", WINDOWS_PERSONAS.values())
+def test_a_certificate_fetch_sends_the_lines_chrome_sends(tmp_path: Path, persona: str) -> None:
     root = generate_root()
     intermediate = generate_intermediate(root)
     with (
         serving(AiaServer(intermediate.der)) as aia,
         serving(TlsServer(tmp_path, generate_leaf(intermediate, HOST, aia.url))) as server,
-        mitto.Session(additional_trust_anchors=[root.pem]) as session,
+        mitto.Session(persona=persona, additional_trust_anchors=[root.pem]) as session,
     ):
         session.get(url_of(server))
 
     # Recorded from Chrome 156 on macOS, with no cookies: //net builds this request, so the order is its own.
-    assert [name for name, _ in aia.requests[0][1]] == [
+    headers = aia.requests[0][1]
+    assert [name for name, _ in headers] == [
         "Host",
         "Connection",
         "User-Agent",
         "Accept-Encoding",
         "Accept-Language",
     ]
+    assert dict(headers)["User-Agent"] == load_persona(persona).user_agent
 
 
 def test_a_missing_intermediate_with_no_aia_url_is_refused(tmp_path: Path) -> None:

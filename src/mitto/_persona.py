@@ -92,6 +92,7 @@ class _PersonaData(TypedDict):
     release: str
     operating_system: str
     accept_language: str
+    user_agent: str
     kinds: dict[str, _KindData]
 
 
@@ -103,11 +104,14 @@ class Persona:
         release: The Chrome Release, such as "157".
         operating_system: The operating system that the Persona claims, independent of the Host.
         accept_language: The Session's setting of the same name.
+        user_agent: The native Session's setting of the same name, which is what its Chrome sends where no request's
+            headers reach: in a CONNECT and in a fetch for a certificate.
     """
 
     release: str
     operating_system: str
     accept_language: str
+    user_agent: str
     _kinds: dict[RequestKind, _KindData]
 
     def request_defaults(self, kind: RequestKind, *, with_body: bool = False) -> RequestDefaults:
@@ -165,6 +169,7 @@ def load_persona(name: str) -> Persona:
         release=data["release"],
         operating_system=data["operating_system"],
         accept_language=data["accept_language"],
+        user_agent=data["user_agent"],
         _kinds={RequestKind(kind): kind_data for kind, kind_data in data["kinds"].items()},
     )
 

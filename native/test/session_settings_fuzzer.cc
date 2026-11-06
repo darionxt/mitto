@@ -12,7 +12,10 @@
 #include "mitto/session_settings.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/proxy_chain.h"
 #include "net/http/http_request_headers.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_list.h"
 #include "url/scheme_host_port.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
@@ -27,11 +30,19 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   // What a Session relies on in settings that were accepted. //net CHECKs the
   // value of each header it adds, an invalid origin would make it accept
-  // unknown roots for every host, and the verifier uses each anchor without
-  // checking it.
+  // unknown roots for every host, the verifier uses each anchor without
+  // checking it, //net takes a proxy to be valid, and credentials need one to
+  // answer.
   net::HttpRequestHeaders headers;
   headers.SetHeader(net::HttpRequestHeaders::kAcceptLanguage,
                     settings->accept_language);
+  headers.SetHeader(net::HttpRequestHeaders::kUserAgent, settings->user_agent);
+  const net::ProxyList& proxies =
+      settings->proxy_config.proxy_rules().single_proxies;
+  for (const net::ProxyChain& chain : proxies.AllChains()) {
+    CHECK(chain.IsValid());
+  }
+  CHECK(!settings->proxy_credentials || !proxies.IsEmpty());
   for (const url::SchemeHostPort& origin : settings->origins_to_force_quic_on) {
     CHECK(origin.IsValid());
   }

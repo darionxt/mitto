@@ -39,6 +39,7 @@ class Session:
         additional_trust_anchors: Sequence[str] = (),
         timeout: float | Timeout | None = None,
         cookie_file: str | os.PathLike[str] | None = None,
+        proxy: str | None = None,
         _settings: PrivateSettings | None = None,
     ) -> None:
         """Create the Session.
@@ -55,12 +56,19 @@ class Session:
             cookie_file: A file to keep the cookies in. They load from it now, if it exists, and close() saves them to it,
                 as Cookies.save() does. A crash loses what came after the last save, which a caller can make more often
                 with `session.cookies.save(path)`. The default keeps them only until the Session closes.
+            proxy: The proxy for every request, as a URL: "http://user:password@host:port", or the same with the scheme
+                https or socks5. A username and password are percent-encoded, and answer the proxy when it asks, as they do
+                in Chrome once a person has typed them. A SOCKS5 proxy cannot take them yet. As in Chrome, a request to
+                localhost, a *.localhost name or a loopback address goes around the proxy, and a proxy that fails is an
+                error and not a reason to go directly. The default reaches each server directly, whatever the system's
+                proxy settings say.
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
-                `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds or
-                `cookie_file` does not hold cookies that this Session can use.
+                `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
+                `cookie_file` does not hold cookies that this Session can use or `proxy` cannot be used. The message leaves
+                out `proxy`, which may hold a password.
             OSError: If `cookie_file` exists and cannot be read.
             NativeLibraryError: If the native library cannot be used.
         """
@@ -71,7 +79,9 @@ class Session:
         self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
         self._native = _native.Session(
             accept_language=self._persona.accept_language if accept_language is None else accept_language,
+            user_agent=self._persona.user_agent,
             additional_trust_anchors=additional_trust_anchors,
+            proxy=proxy,
             **(PrivateSettings() if _settings is None else _settings),
         )
         self.cookies = Cookies(self._native)
@@ -118,9 +128,10 @@ class Session:
                 number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds a
                 NaN or an infinity, or a body goes with GET or HEAD or with a Request Kind that Chrome sends none with.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
-                that runs out is a RequestTimeoutError. An HTTP error status such as 404 is a response, which
-                Response.raise_for_status() turns into an error. An invalid header or method, or an `initiator` that is not
-                a valid URL, ends the request with ERR_INVALID_ARGUMENT.
+                that runs out is a RequestTimeoutError. A proxy that asks for credentials this Session does not have, or
+                refuses those it has, is a ProxyError with ERR_PROXY_AUTH_REQUESTED. An HTTP error status such as 404 is a
+                response, which Response.raise_for_status() turns into an error. An invalid header or method, or an
+                `initiator` that is not a valid URL, ends the request with ERR_INVALID_ARGUMENT.
         """
         options.setdefault("timeout", self._timeout)
         built = build_request(self._persona, method, url, **options)

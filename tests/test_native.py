@@ -21,6 +21,7 @@ from mitto import _native
 from tests.local_server import LocalHTTPServer
 
 HEADER = Path(__file__).parents[1] / "native" / "include" / "mitto" / "mitto.h"
+_SETTINGS_FUZZ_SEEDS = Path(__file__).parents[1] / "native" / "test" / "session_settings_corpus"
 
 COMPLETE_STUB = """
 #include <stdint.h>
@@ -340,6 +341,53 @@ def test_session_create_accepts_an_accept_language(native_library: ctypes.CDLL) 
     native_library.mitto_session_destroy(handle)
 
 
+def test_session_create_accepts_a_user_agent(native_library: ctypes.CDLL) -> None:
+    error, handle = create_session(native_library, b'{"version": 1, "user_agent": "Mozilla/5.0"}')
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
+@pytest.mark.parametrize("seed", sorted(_SETTINGS_FUZZ_SEEDS.glob("*.json")), ids=lambda path: path.stem)
+def test_session_create_accepts_each_seed_of_the_fuzzer(native_library: ctypes.CDLL, seed: Path) -> None:
+    # The parser stops at the first key it refuses, so a seed that is refused says nothing about those after it.
+    error, handle = create_session(native_library, seed.read_bytes())
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
+@pytest.mark.parametrize(
+    "proxy",
+    [
+        "http://proxy.test",
+        "http://proxy.test/",
+        "http://proxy.test:8080",
+        "HTTP://PROXY.TEST:8080",
+        "http://user:password@proxy.test:8080",
+        "http://user@proxy.test:8080",
+        "http://:password@proxy.test:8080",
+        "http://us%40er:p%3Ass@proxy.test:8080",
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+        "https://proxy.test",
+        "https://user:password@proxy.test:8443",
+        "socks5://proxy.test",
+        "socks5://proxy.test/",
+        "socks5://proxy.test:1080",
+        "SOCKS5://PROXY.TEST:1080",
+        "socks5://127.0.0.1:80",
+        "socks5://[::1]:1080",
+    ],
+)
+def test_session_create_accepts_a_proxy(native_library: ctypes.CDLL, proxy: str) -> None:
+    settings = f'{{"version": 1, "proxy": "{proxy}"}}'.encode()
+    error, handle = create_session(native_library, settings)
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
 @pytest.mark.parametrize("origin", ["example.com:443", "capture.localhost:8445", "127.0.0.1:8445", "*"])
 def test_session_create_accepts_an_origin_to_force_quic_on(native_library: ctypes.CDLL, origin: str) -> None:
     settings = f'{{"version": 1, "origins_to_force_quic_on": ["{origin}"]}}'.encode()
@@ -408,6 +456,34 @@ def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.
         pytest.param(b'{"version": 1, "accept_language": 1}', id="accept-language-is-a-number"),
         pytest.param(b'{"version": 1, "accept_language": "a\\r\\nb"}', id="crlf-in-accept-language"),
         pytest.param(b'{"version": 1, "accept_language": "a\\u0000b"}', id="nul-in-accept-language"),
+        pytest.param(b'{"version": 1, "user_agent": 1}', id="user-agent-is-a-number"),
+        pytest.param(b'{"version": 1, "user_agent": "a\\r\\nb"}', id="crlf-in-user-agent"),
+        pytest.param(b'{"version": 1, "user_agent": "a\\u0000b"}', id="nul-in-user-agent"),
+        pytest.param(b'{"version": 1, "proxy": 1}', id="proxy-is-a-number"),
+        pytest.param(b'{"version": 1, "proxy": null}', id="proxy-is-null"),
+        pytest.param(b'{"version": 1, "proxy": ""}', id="proxy-is-empty"),
+        pytest.param(b'{"version": 1, "proxy": "proxy.test:8080"}', id="proxy-has-no-scheme"),
+        pytest.param(b'{"version": 1, "proxy": "ftp://proxy.test"}', id="proxy-of-another-scheme"),
+        pytest.param(b'{"version": 1, "proxy": "socks4://proxy.test"}', id="proxy-is-socks4"),
+        pytest.param(b'{"version": 1, "proxy": "socks://proxy.test"}', id="proxy-is-socks"),
+        pytest.param(b'{"version": 1, "proxy": "quic://proxy.test"}', id="proxy-is-quic"),
+        pytest.param(b'{"version": 1, "proxy": "direct://"}', id="proxy-is-direct"),
+        pytest.param(b'{"version": 1, "proxy": "http://"}', id="proxy-has-no-host"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://"}', id="socks5-proxy-has-no-host"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://:1080"}', id="socks5-proxy-has-only-a-port"),
+        pytest.param(b'{"version": 1, "proxy": "http://proxy.test:0"}', id="proxy-on-port-0"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://proxy.test:0"}', id="socks5-proxy-on-port-0"),
+        pytest.param(b'{"version": 1, "proxy": "http://proxy.test:65536"}', id="proxy-has-a-large-port"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://proxy.test:65536"}', id="socks5-proxy-has-a-large-port"),
+        pytest.param(b'{"version": 1, "proxy": "http://proxy.test:port"}', id="proxy-has-a-bad-port"),
+        pytest.param(b'{"version": 1, "proxy": "http://proxy.test/path"}', id="proxy-has-a-path"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://proxy.test/path"}', id="socks5-proxy-has-a-path"),
+        pytest.param(b'{"version": 1, "proxy": "http://proxy.test?query"}', id="proxy-has-a-query"),
+        pytest.param(b'{"version": 1, "proxy": "http://proxy.test#fragment"}', id="proxy-has-a-fragment"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://a b:1080"}', id="socks5-proxy-has-a-space-in-its-host"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://user:password@proxy.test"}', id="socks5-with-credentials"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://user@proxy.test"}', id="socks5-with-a-username"),
+        pytest.param(b'{"version": 1, "proxy": "socks5://:password@proxy.test"}', id="socks5-with-a-password"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": "a.test:443"}', id="origins-is-a-string"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": [1]}', id="origin-is-a-number"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": [""]}', id="origin-is-empty"),

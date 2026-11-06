@@ -12,9 +12,15 @@
 #include "net/base/host_mapping_rules.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_address.h"
+#include "net/base/proxy_chain.h"
+#include "net/base/proxy_server.h"
+#include "net/base/url_util.h"
 #include "net/cert/x509_util.h"
 #include "net/http/http_util.h"
+#include "net/proxy_resolution/proxy_list.h"
 #include "third_party/boringssl/src/pki/pem.h"
+#include "url/gurl.h"
+#include "url/url_constants.h"
 
 namespace mitto {
 namespace {
@@ -26,6 +32,9 @@ constexpr std::string_view kAdditionalTrustAnchorsKey =
     "additional_trust_anchors";
 constexpr std::string_view kPemBlockTypes[] = {"CERTIFICATE"};
 constexpr std::string_view kAcceptLanguageKey = "accept_language";
+constexpr std::string_view kUserAgentKey = "user_agent";
+constexpr std::string_view kProxyKey = "proxy";
+constexpr std::string_view kSocks5Scheme = "socks5";
 constexpr std::string_view kOriginsToForceQuicOnKey =
     "origins_to_force_quic_on";
 constexpr std::string_view kEveryOrigin = "*";
@@ -150,6 +159,58 @@ bool ReadHostResolverRules(const base::Value& value,
   return true;
 }
 
+std::optional<net::ProxyServer::Scheme> ReadProxyScheme(const GURL& url) {
+  if (url.SchemeIs(url::kHttpScheme)) {
+    return net::ProxyServer::SCHEME_HTTP;
+  }
+  if (url.SchemeIs(url::kHttpsScheme)) {
+    return net::ProxyServer::SCHEME_HTTPS;
+  }
+  if (url.SchemeIs(kSocks5Scheme)) {
+    return net::ProxyServer::SCHEME_SOCKS5;
+  }
+  return std::nullopt;
+}
+
+// Reads the proxy as the one entry of Chrome's --proxy-server, which comes to
+// the same rules, except that a URL may also hold what to answer the proxy
+// with. //net has no use for anything else in a URL, so that is a mistake here,
+// and so is any scheme but those named. Credentials for SOCKS5 are refused
+// because SOCKS5ClientSocket offers only "no authentication".
+bool ReadProxy(const base::Value& value, SessionSettings& settings) {
+  if (!value.is_string()) {
+    return false;
+  }
+  const GURL url(value.GetString());
+  if (!url.is_valid() || !url.has_host() || url.IntPort() == 0 ||
+      url.has_query() || url.has_ref() ||
+      (url.has_path() && url.GetPath() != "/")) {
+    return false;
+  }
+  const std::optional<net::ProxyServer::Scheme> scheme = ReadProxyScheme(url);
+  if (!scheme) {
+    return false;
+  }
+  const net::ProxyServer server = net::ProxyServer::FromSchemeHostAndPort(
+      *scheme, url.GetHost(), url.GetPort());
+  if (!server.is_valid()) {
+    return false;
+  }
+  if (url.has_username() || url.has_password()) {
+    if (*scheme == net::ProxyServer::SCHEME_SOCKS5) {
+      return false;
+    }
+    std::u16string username;
+    std::u16string password;
+    net::GetIdentityFromURL(url, &username, &password);
+    settings.proxy_credentials.emplace(username, password);
+  }
+  net::ProxyConfig::ProxyRules& rules = settings.proxy_config.proxy_rules();
+  rules.type = net::ProxyConfig::ProxyRules::Type::PROXY_LIST;
+  rules.single_proxies.SetSingleProxyChain(net::ProxyChain(server));
+  return true;
+}
+
 }  // namespace
 
 SessionSettings::SessionSettings() = default;
@@ -185,6 +246,21 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
         return std::nullopt;
       }
       settings.accept_language = value.GetString();
+      continue;
+    }
+    if (key == kUserAgentKey) {
+      // The same goes for this one.
+      if (!value.is_string() ||
+          !net::HttpUtil::IsValidHeaderValue(value.GetString())) {
+        return std::nullopt;
+      }
+      settings.user_agent = value.GetString();
+      continue;
+    }
+    if (key == kProxyKey) {
+      if (!ReadProxy(value, settings)) {
+        return std::nullopt;
+      }
       continue;
     }
     if (key == kOriginsToForceQuicOnKey) {

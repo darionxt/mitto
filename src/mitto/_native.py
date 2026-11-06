@@ -74,6 +74,9 @@ _ERR_IO_PENDING = -1
 # How much a read asks for: as much as the native core holds at a time.
 _READ_SIZE = 64 * 1024
 
+_SOCKS5_SCHEME = "socks5"
+_PROXY_SCHEMES = frozenset({"http", "https", _SOCKS5_SCHEME})
+
 
 class Priority(enum.IntEnum):
     """A request's priority, with the values of the C header's MITTO_PRIORITY constants."""
@@ -242,6 +245,23 @@ def encode_url(url: str) -> bytes:
     if b"\0" in encoded_url:
         raise ValueError("url holds a NUL character")
     return encoded_url
+
+
+def _check_proxy(proxy: str) -> None:
+    """Refuse the proxies whose fault a message can name, which the native core refuses too with only a net error.
+
+    A proxy's URL may hold a password, and until it parses nothing says which part that is, so neither message repeats any
+    of it.
+
+    Raises:
+        ValueError: If `proxy` has no scheme that names a kind of proxy, or asks for a SOCKS5 proxy with credentials.
+    """
+    scheme, separator, rest = proxy.partition("://")
+    scheme = scheme.lower()
+    if not separator or scheme not in _PROXY_SCHEMES:
+        raise ValueError("a proxy is a URL whose scheme is http, https or socks5")
+    if scheme == _SOCKS5_SCHEME and "@" in rest.partition("/")[0].partition("?")[0].partition("#")[0]:
+        raise ValueError("a SOCKS5 proxy cannot take a username or password yet")
 
 
 def timeout_options(timeout: Timeout) -> dict[str, int]:
@@ -488,9 +508,11 @@ class Session:
         ignore_certificate_errors_spki_list: Sequence[str] = (),
         additional_trust_anchors: Sequence[str] = (),
         accept_language: str = "",
+        user_agent: str = "",
         origins_to_force_quic_on: Sequence[str] = (),
         dns_nameserver: str | None = None,
         host_resolver_rules: str = "",
+        proxy: str | None = None,
     ) -> None:
         """Create the Session.
 
@@ -502,6 +524,9 @@ class Session:
                 text of a PEM file that holds at least one.
             accept_language: The value of the Accept-Language header that //net adds to each request whose headers do not
                 hold one. An empty string adds no header.
+            user_agent: The value of the User-Agent header that //net adds to each request whose headers do not hold one,
+                and sends in what it makes by itself: a CONNECT and a fetch for a certificate. An empty string adds an empty
+                header to a request, and none to a CONNECT.
             origins_to_force_quic_on: Reach these HTTPS origins, each written "host:port", over QUIC and nothing else,
                 with the meaning of Chrome's --origin-to-force-quic-on. It also lifts //net's refusal of QUIC to a
                 certificate from an unknown root, for each of their hosts. The certificate still has to verify. "*"
@@ -511,27 +536,36 @@ class Session:
             host_resolver_rules: Rules that change which address a name resolves to, separated by commas, with the meaning
                 of Chrome's --host-resolver-rules. Only the name's resolution changes, so SNI, the certificate check and
                 the Host header keep the name.
+            proxy: The proxy for every request, as a URL with the scheme http, https or socks5. A username and password in
+                it answer the proxy when it asks. None reaches each server directly, whatever the system's settings say.
 
         Raises:
-            ValueError: If the native core refuses the settings.
+            ValueError: If the native core refuses the settings. The message leaves out `proxy`, which may hold a password.
             NativeLibraryError: If the native library cannot be used.
         """
+        # Before the library, so that this fault is named whether or not there is one.
+        if proxy is not None:
+            _check_proxy(proxy)
         self._library = load_library()
         settings_dict: dict[str, object] = {
             "version": SETTINGS_VERSION,
             "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
             "additional_trust_anchors": list(additional_trust_anchors),
             "accept_language": accept_language,
+            "user_agent": user_agent,
             "origins_to_force_quic_on": list(origins_to_force_quic_on),
             "host_resolver_rules": host_resolver_rules,
         }
         if dns_nameserver is not None:
             settings_dict["dns_nameserver"] = dns_nameserver
+        if proxy is not None:
+            settings_dict["proxy"] = proxy
         settings = json.dumps(settings_dict).encode()
         self._handle = ctypes.POINTER(MittoSession)()
         net_error: int = self._library.mitto_session_create(settings, len(settings), ctypes.byref(self._handle))
         if net_error != 0:
-            raise ValueError(f"the native core refused the settings {settings!r} with net error {net_error}")
+            shown = settings_dict if proxy is None else {**settings_dict, "proxy": "<not shown>"}
+            raise ValueError(f"the native core refused the settings {shown!r} with net error {net_error}")
 
     def __enter__(self) -> Self:
         return self

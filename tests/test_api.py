@@ -437,6 +437,21 @@ def test_none_removes_the_personas_referer_from_the_wire(server: AnyMethodServer
 
 
 @pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("persona", WINDOWS_PERSONAS.values())
+def test_none_for_the_user_agent_leaves_the_personas_for_net_to_add_in_its_own_place(
+    server: AnyMethodServer, persona: str
+) -> None:
+    with mitto.Session(persona=persona) as session:
+        session.get(server.url, headers={"User-Agent": None})
+
+    lines = on_the_wire(server, persona, RequestKind.NAVIGATION)
+    line = ("User-Agent", load_persona(persona).user_agent)
+    without = [item for item in lines if item != line]
+    # //net adds it before the two that come last.
+    assert server.received[0].headers == [*without[:-2], line, *without[-2:]]
+
+
+@pytest.mark.usefixtures("native_library")
 def test_an_accept_language_among_the_headers_replaces_the_sessions(server: AnyMethodServer) -> None:
     with mitto.Session() as session:
         session.get(server.url, headers={"Accept-Language": "fr"})

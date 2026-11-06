@@ -384,6 +384,33 @@ def test_headers_arrive_in_the_given_order(http_server: RecordingServer) -> None
     ]
 
 
+def test_the_user_agent_setting_is_what_net_adds_in_the_same_place(http_server: RecordingServer) -> None:
+    given = [("Zebra", "1"), ("Alpha", "2")]
+
+    with Session(user_agent="test agent") as session:
+        session.request(f"http://{http_server.base_url}", headers=given)
+
+    assert http_server.received[0].headers == [
+        ("Host", http_server.base_url.rstrip("/")),
+        ("Connection", "keep-alive"),
+        *given,
+        ("User-Agent", "test agent"),
+        ACCEPT_ENCODING,
+    ]
+
+
+def test_a_user_agent_among_the_headers_replaces_the_setting(http_server: RecordingServer) -> None:
+    with Session(user_agent="test agent") as session:
+        session.request(f"http://{http_server.base_url}", headers=[("User-Agent", "given")])
+
+    assert [value for name, value in http_server.received[0].headers if name == "User-Agent"] == ["given"]
+
+
+def test_an_invalid_user_agent_is_refused() -> None:
+    with pytest.raises(ValueError, match="refused the settings"):
+        Session(user_agent="a\r\nX-Injected: b")
+
+
 def test_a_header_that_net_would_add_stays_where_it_was_given(http_server: RecordingServer) -> None:
     given = [
         ("Zebra", "1"),

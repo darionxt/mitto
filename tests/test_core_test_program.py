@@ -4,6 +4,7 @@ A sanitizer report ends the program with an error. These run with a sanitized pr
 load a sanitized library: the sanitizers' runtime is linked into the program that starts, not into the library.
 """
 
+import base64
 import json
 import os
 import socket
@@ -14,7 +15,9 @@ import pytest
 
 from mitto._native import SETTINGS_VERSION
 from tests.local_certificates import AiaServer, TlsServer, generate_intermediate, generate_leaf, generate_root, serving
+from tests.local_proxy import LocalProxy
 from tools.capture import (
+    CASE_HOST,
     CASES,
     COOKIE_SET_PATH,
     HTTP1,
@@ -30,8 +33,9 @@ from tools.parity.replay import run_of, session_settings
 
 _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
-_ERR_INVALID_URL = -300
+_ERR_PROXY_AUTH_REQUESTED = -127
 _ERR_CERT_AUTHORITY_INVALID = -202
+_ERR_INVALID_URL = -300
 _TIMEOUT_SECONDS = 120
 _HOST = "localhost"
 _FETCH_PATH = KIND_PATHS[RequestKind.FETCH]
@@ -74,6 +78,28 @@ def test_a_request_over_each_protocol(program: Path, protocol: str, scenario: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+def test_a_request_through_a_proxy_that_asks_for_credentials(program: Path, protocol: str) -> None:
+    authorization = "Basic " + base64.b64encode(b"user:password").decode()
+    with serving(LocalProxy(authorization=authorization)) as proxy, CaptureServer() as server:
+        settings = {**_settings(server, protocol), "proxy": f"http://user:password@127.0.0.1:{proxy.port}"}
+        result = _run(program, server.url(protocol, host=CASE_HOST), settings)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+    assert proxy.requests[1].header("Proxy-Authorization") == authorization
+
+
+def test_a_request_through_a_proxy_that_refuses_its_credentials(program: Path) -> None:
+    with serving(LocalProxy(authorization="Basic other")) as proxy, CaptureServer() as server:
+        settings = {**_settings(server, HTTP2), "proxy": f"http://user:password@127.0.0.1:{proxy.port}"}
+        result = _run(program, server.url(HTTP2, host=CASE_HOST), settings)
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_PROXY_AUTH_REQUESTED}" in result.stderr
+    assert len(proxy.requests) == 2
 
 
 def _redirect_url(server: CaptureServer, protocol: str) -> tuple[str, dict[str, object]]:

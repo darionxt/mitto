@@ -22,6 +22,7 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `release` | The Chrome Release |
 | `operating_system` | The operating system the Persona claims, independent of the **Host** |
 | `accept_language` | The value for `Accept-Language`, which is a Session setting |
+| `user_agent` | The value for `User-Agent` where no request's headers reach: a `CONNECT` and a fetch for a certificate. `//net` takes it from the Session's context. It is also the `User-Agent` line of each kind |
 | `kinds.KIND.credentials_mode` | `same-origin`, as a page's `fetch()` has unless it asks otherwise, or `include`, as an element has |
 | `kinds.KIND.priority` | The request's priority, such as `HIGHEST`, as in the C API's `MITTO_PRIORITY_HIGHEST` |
 | `kinds.KIND.priority_incremental` | Whether the response can be used as it arrives |
@@ -97,6 +98,7 @@ From the page and the URL of each hop, the native core sets these, in code porte
 | Another name | After the Persona's lines, in the order given, before what `//net` adds |
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
+| `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's `user_agent` after the other lines, because a request always gets one from the context |
 | `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what the Initiator would make of it. `//net` still decides where it goes |
 | A line that the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop, also over plain HTTP. `//net` still changes an `Origin` on a redirect, as it does in Chrome: `null` for another origin, and gone when the method changes |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
