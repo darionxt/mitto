@@ -1238,6 +1238,30 @@ def test_a_cookie_file_that_cannot_be_read_raises(tmp_path: Path) -> None:
         new_session(tmp_path)
 
 
+def test_a_cookie_file_that_cannot_be_named_leaves_no_native_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenPath:
+        def __fspath__(self) -> str:
+            raise OSError("no such path")
+
+    def fail(**settings: object) -> None:
+        pytest.fail("a native Session was created, and nothing would close it")
+
+    monkeypatch.setattr(_native, "Session", fail)
+
+    with pytest.raises(OSError, match="no such path"):
+        mitto.Session(cookie_file=BrokenPath())
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_cookie_file_in_a_loop_of_links_raises(tmp_path: Path) -> None:
+    loop = tmp_path / "cookies.json"
+    loop.symlink_to(loop)
+
+    # Path.resolve() raises RuntimeError on Python 3.12. Later, it lets the path through and reading it raises OSError.
+    with pytest.raises((RuntimeError, OSError)):
+        new_session(loop)
+
+
 @pytest.mark.usefixtures("native_library")
 def test_a_save_that_fails_at_close_raises_and_still_closes(servers: Servers, tmp_path: Path) -> None:
     file = tmp_path / "gone" / "cookies.json"

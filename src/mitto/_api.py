@@ -65,14 +65,15 @@ class Session:
         """
         self._persona = load_persona(persona)
         self._timeout = to_timeout(timeout)
+        # Before anything that needs closing exists, because this can raise. The working directory may change before the
+        # Session closes.
+        self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
         self._native = _native.Session(
             accept_language=self._persona.accept_language if accept_language is None else accept_language,
             additional_trust_anchors=additional_trust_anchors,
             **(PrivateSettings() if _settings is None else _settings),
         )
         self.cookies = Cookies(self._native)
-        # The working directory may change before the Session closes.
-        self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
         if self._cookie_file is not None:
             self._load_cookie_file(self._cookie_file)
 
