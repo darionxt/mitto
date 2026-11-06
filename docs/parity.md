@@ -30,7 +30,7 @@ The native core of the **Engine Release** presents every Chrome Release in turn,
 
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json`, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Request Kind in it, and the protocol comes from the file's `protocol` key. [baselines.md](baselines.md) is how to record them.
 
-Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
+Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines. So is `RELEASE/cases`, which holds the **Recording Cases** beyond the main **Request Kinds**. No check compares those yet.
 
 ## Gaps
 
@@ -92,7 +92,7 @@ The trust anchors come from the root store compiled into `//net`, as they do in 
 
 The first Session in a process waits up to a second for the system's DNS settings, which Chrome does not do, because Chrome has them long before a page asks for a host. A program's first request can come right away, and without those settings it would go to the system's resolver, which sees no HTTPS records.
 
-No Parity Check can see any of this. The capture server's name ends in `.localhost`, which is never looked up, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
+No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
 
 ## Tests of the comparison
 

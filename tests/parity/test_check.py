@@ -176,3 +176,12 @@ def test_a_changed_baseline_is_a_mismatch_with_the_list_made_before_the_change(
     found = mismatches(find_gaps(load_baselines(sample_baselines), identical_to_the_sample), listed)
 
     assert [(gap.field, gap.baseline) for gap in found.unlisted] == [("request.flags", ["END_HEADERS"])]
+
+
+def test_the_recording_cases_of_a_release_are_left_alone_for_now(sample_baselines: Path) -> None:
+    before = load_baselines(sample_baselines)
+    cases = sample_baselines / SAMPLE_RELEASE / "cases"
+    cases.mkdir()
+    (cases / "http1.json").write_text('{"protocol": "http/1.1", "requests": {"cookie": {}}}')
+
+    assert load_baselines(sample_baselines) == before

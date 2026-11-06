@@ -1,0 +1,11 @@
+# The words of the format described at mitto_request_start() in mitto.h.
+"\"version\""
+"\"method\""
+"\"priority\""
+"\"priority_incremental\""
+"\"referrer\""
+"\"GET\""
+"\"CONNECT\""
+"\"https://a.test/\""
+"true"
+"null"

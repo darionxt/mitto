@@ -35,6 +35,9 @@ struct SessionSettings {
 
   // The one DNS server to ask, in place of the system's. For tests only.
   std::optional<net::IPEndPoint> dns_nameserver;
+
+  // What Chrome's --host-resolver-rules takes, each rule known to be valid.
+  std::string host_resolver_rules;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns

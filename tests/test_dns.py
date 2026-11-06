@@ -62,9 +62,12 @@ def outer_ech(hello: ClientHello) -> OuterEch:
 
 
 def client_hellos(server: CaptureServer) -> list[ClientHello]:
-    connections = server.recording(HTTP2).connections
-    assert all(isinstance(connection, ConnectionRecord) for connection in connections)
-    return [connection.client_hello.hello for connection in connections if isinstance(connection, ConnectionRecord)]
+    hellos: list[ClientHello] = []
+    for connection in server.recording(HTTP2).connections:
+        assert isinstance(connection, ConnectionRecord)
+        assert connection.client_hello is not None
+        hellos.append(connection.client_hello.hello)
+    return hellos
 
 
 @pytest.fixture

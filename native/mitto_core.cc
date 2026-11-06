@@ -1,8 +1,10 @@
+#include <stdint.h>
 #include <stdlib.h>
 
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -12,17 +14,19 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
-#include "base/strings/string_view_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
@@ -33,6 +37,9 @@
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
 #include "mitto/network_session_configurator.h"
+#include "mitto/ready_requests.h"
+#include "mitto/request_channel.h"
+#include "mitto/request_options.h"
 #include "mitto/session_settings.h"
 #include "mitto/ssl_config_service_mojo.h"
 #include "mitto/stub_resolver_config_reader.h"
@@ -57,6 +64,7 @@
 #include "net/quic/quic_context.h"
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
@@ -69,11 +77,19 @@ static_assert(MITTO_PRIORITY_LOW == net::LOW);
 static_assert(MITTO_PRIORITY_MEDIUM == net::MEDIUM);
 static_assert(MITTO_PRIORITY_HIGHEST == net::HIGHEST);
 
-// The handle the C API hands out. It is created, used and destroyed only on the
-// network thread. Other threads just hold the pointer.
+namespace mitto {
+class RequestJob;
+}  // namespace mitto
+
+// The handle the C API hands out for a Session. It is created, used and
+// destroyed only on the network thread, except for `ready_requests`. Other
+// threads just hold the pointer.
 struct MittoSession {
   MittoSession();
   ~MittoSession();
+
+  // Ends each running request, with its last event.
+  void CancelJobs();
 
   // The resolver of a Session with a DNS server of its own, which the others
   // must not ask. `context` points to it, so it has to come first.
@@ -81,15 +97,27 @@ struct MittoSession {
   std::unique_ptr<net::URLRequestContext> context;
   std::unique_ptr<net::HostResolver::ProbeRequest> doh_probes_request;
   base::OneShotTimer doh_probes_timer;
+  // After `context`, because a request has to go before its context does.
+  std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
+  mitto::ReadyRequests ready_requests;
 };
 
-MittoSession::MittoSession() = default;
-MittoSession::~MittoSession() = default;
+// The handle the C API hands out for a request. Whichever thread holds it talks
+// to the request through `channel`, and has the network thread act on `job`,
+// which goes away when the request ends.
+struct MittoRequest {
+  MittoRequest();
+  ~MittoRequest();
+
+  scoped_refptr<mitto::RequestChannel> channel;
+  base::WeakPtr<mitto::RequestJob> job;
+};
+
+MittoRequest::MittoRequest() = default;
+MittoRequest::~MittoRequest() = default;
 
 namespace mitto {
 namespace {
-
-constexpr int kReadBufferSize = 64 * 1024;
 
 // How long a Session waits to start DoH probes after the process has created
 // the network core: the default of kDelayInitialDohProbeTimeoutParam, which
@@ -102,54 +130,95 @@ constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation(
-        "mitto_session_request",
-        "A GET requested by the application that loaded the library.");
+        "mitto_request",
+        "A request made by the application that loaded the library.");
 
-// One GET. The calling thread owns the job and blocks in Wait() while the
-// network thread runs the request. The results may be read once Wait() returns.
+std::string HeaderLines(const net::HttpResponseHeaders& headers) {
+  std::string lines;
+  size_t iterator = 0;
+  std::string name;
+  std::string value;
+  while (headers.EnumerateHeaderLines(&iterator, &name, &value)) {
+    base::StrAppend(&lines, {name, ": ", value, "\r\n"});
+  }
+  return lines;
+}
+
+}  // namespace
+
+// One request on the network thread. It is made on the thread that starts the
+// request, and after that lives only on the network thread, where its Session
+// owns it until the request ends. It never waits for the thread that holds the
+// request's handle, and what it has to say goes through the channel.
 class RequestJob final : public net::URLRequest::Delegate {
  public:
-  // An empty `referrer` means that the request has none.
-  RequestJob(const char* url,
+  // `handle` names the request in the Session's ReadyRequests.
+  RequestJob(MittoSession& session,
+             uintptr_t handle,
+             scoped_refptr<RequestChannel> channel,
+             GURL url,
              net::HttpRequestHeaders headers,
-             net::RequestPriority priority,
-             bool priority_incremental,
-             GURL referrer)
-      : url_(url),
+             RequestOptions options)
+      : session_(session),
+        handle_(handle),
+        channel_(std::move(channel)),
+        url_(std::move(url)),
         request_headers_(std::move(headers)),
-        priority_(priority),
-        priority_incremental_(priority_incremental),
-        referrer_(std::move(referrer)),
-        read_buffer_(
-            base::MakeRefCounted<net::IOBufferWithSize>(kReadBufferSize)) {}
+        options_(std::move(options)) {}
 
   RequestJob(const RequestJob&) = delete;
   RequestJob& operator=(const RequestJob&) = delete;
 
   ~RequestJob() override = default;
 
-  // Called on the network thread.
-  void Start(const net::URLRequestContext& context) {
-    request_ = context.CreateRequest(url_, priority_, this, kTrafficAnnotation,
-                                     net::handles::kInvalidNetworkHandle);
+  // May be called on any thread until the first time the pointer is used.
+  base::WeakPtr<RequestJob> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+  void Start() {
+    request_ = session_->context->CreateRequest(
+        url_, options_.priority, this, kTrafficAnnotation,
+        net::handles::kInvalidNetworkHandle);
+    request_->set_method(options_.method);
     // A Session does not hold cookies or credentials yet. Without this, cookies
     // from one request would be sent on later ones.
     request_->set_disallow_credentials();
     request_->SetExtraRequestHeaders(request_headers_);
-    request_->SetPriorityIncremental(priority_incremental_);
-    request_->SetReferrer(referrer_.spec());
+    request_->SetPriorityIncremental(options_.priority_incremental);
+    request_->SetReferrer(options_.referrer.spec());
     request_->Start();
   }
 
-  void Wait() { done_.Wait(); }
+  // Reads the next part of the body, as the caller has asked. The result goes to
+  // OnReadCompleted(), and no more is read until the caller asks again.
+  void ReadBody() {
+    if (!response_started_) {
+      read_wanted_ = true;
+      return;
+    }
+    const int result =
+        request_->Read(channel_->read_buffer(), RequestChannel::kReadBufferSize);
+    if (result != net::ERR_IO_PENDING) {
+      OnReadCompleted(request_.get(), result);
+    }
+  }
 
-  int net_error() const { return net_error_; }
-  int status() const { return status_; }
-  std::string_view protocol() const { return protocol_; }
-  std::string_view headers() const { return headers_; }
-  std::string_view body() const { return body_; }
+  void Cancel() { Finish(net::ERR_ABORTED); }
 
   // net::URLRequest::Delegate:
+  void OnReceivedRedirect(net::URLRequest* request,
+                          const net::RedirectInfo& redirect_info,
+                          bool* defer_redirect) override {
+    RequestEvent event;
+    event.type = MITTO_EVENT_REDIRECT_FOLLOWED;
+    event.status = redirect_info.status_code;
+    event.url = redirect_info.new_url.spec();
+    event.headers = HeaderLines(*request->response_headers());
+    channel_->Push(std::move(event));
+    session_->ready_requests.Add(handle_);
+  }
+
   void OnSSLCertificateError(net::URLRequest* request,
                              int net_error,
                              const net::SSLInfo& ssl_info,
@@ -163,7 +232,20 @@ class RequestJob final : public net::URLRequest::Delegate {
       Finish(net_error);
       return;
     }
-    ReadBody();
+    RequestEvent event;
+    event.type = MITTO_EVENT_RESPONSE_STARTED;
+    event.status = request->GetResponseCode();
+    event.protocol = net::HttpConnectionInfoToString(
+        request->response_info().connection_info);
+    event.url = request->url().spec();
+    event.headers = HeaderLines(*request->response_headers());
+    channel_->Push(std::move(event));
+    session_->ready_requests.Add(handle_);
+
+    response_started_ = true;
+    if (read_wanted_) {
+      ReadBody();
+    }
   }
 
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override {
@@ -171,69 +253,46 @@ class RequestJob final : public net::URLRequest::Delegate {
       Finish(bytes_read);
       return;
     }
-    AppendToBody(bytes_read);
-    ReadBody();
+    channel_->BodyArrived(static_cast<size_t>(bytes_read));
+    session_->ready_requests.Add(handle_);
   }
 
  private:
-  // Reads until the request has to wait for the network, which continues in
-  // OnReadCompleted(), or until the body ends.
-  void ReadBody() {
-    while (true) {
-      const int result = request_->Read(read_buffer_.get(), kReadBufferSize);
-      if (result == net::ERR_IO_PENDING) {
-        return;
-      }
-      if (result <= 0) {
-        Finish(result);
-        return;
-      }
-      AppendToBody(result);
-    }
-  }
-
-  void AppendToBody(int size) {
-    body_.append(
-        base::as_string_view(read_buffer_->first(static_cast<size_t>(size))));
-  }
-
-  // `result` is net::OK when the body ended, otherwise a net error.
+  // `result` is net::OK when the body ended, otherwise a net error. This deletes
+  // the job, so nothing may touch it afterwards.
   void Finish(int result) {
-    if (result == net::OK) {
-      status_ = request_->GetResponseCode();
-      protocol_ = net::HttpConnectionInfoToString(
-          request_->response_info().connection_info);
-      size_t iterator = 0;
-      std::string name;
-      std::string value;
-      while (request_->response_headers()->EnumerateHeaderLines(
-          &iterator, &name, &value)) {
-        base::StrAppend(&headers_, {name, ": ", value, "\r\n"});
-      }
-    }
-    net_error_ = result;
-    // Deleting the request from its delegate's callback is allowed. The signal
-    // has to come last, because the calling thread may delete this job after
-    // it.
+    // Deleting the request from its delegate's callback is allowed.
     request_.reset();
-    done_.Signal();
+    channel_->Finish(result);
+    session_->ready_requests.Add(handle_);
+    session_->jobs.erase(session_->jobs.find(this));
   }
 
+  const raw_ref<MittoSession> session_;
+  const uintptr_t handle_;
+  const scoped_refptr<RequestChannel> channel_;
   const GURL url_;
   const net::HttpRequestHeaders request_headers_;
-  const net::RequestPriority priority_;
-  const bool priority_incremental_;
-  const GURL referrer_;
-  const scoped_refptr<net::IOBufferWithSize> read_buffer_;
+  const RequestOptions options_;
   std::unique_ptr<net::URLRequest> request_;
-  base::WaitableEvent done_;
-
-  int net_error_ = net::ERR_FAILED;
-  int status_ = 0;
-  std::string protocol_;
-  std::string headers_;
-  std::string body_;
+  bool response_started_ = false;
+  bool read_wanted_ = false;
+  base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};
 };
+
+}  // namespace mitto
+
+MittoSession::MittoSession() = default;
+MittoSession::~MittoSession() = default;
+
+void MittoSession::CancelJobs() {
+  while (!jobs.empty()) {
+    (*jobs.begin())->Cancel();
+  }
+}
+
+namespace mitto {
+namespace {
 
 // As NetworkContext::ActivateDohProbes() does it. Without probes, secure mode
 // automatic never finds a DoH server that it can use.
@@ -267,6 +326,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   builder.set_enable_brotli(true);
   builder.set_enable_zstd(true);
   builder.set_accept_language(settings.accept_language);
+  builder.set_host_mapping_rules(std::move(settings.host_resolver_rules));
   // Proxies are not supported yet, so ignore the system's settings.
   builder.set_proxy_config_service(
       std::make_unique<net::ProxyConfigServiceFixed>(
@@ -355,18 +415,24 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   }
 
   void DestroySession(std::unique_ptr<MittoSession> session) {
-    RunAndWait(base::BindOnce([](std::unique_ptr<MittoSession> session) {},
-                              std::move(session)));
+    RunAndWait(base::BindOnce(
+        [](std::unique_ptr<MittoSession> session) { session->CancelJobs(); },
+        std::move(session)));
   }
 
-  // Runs `job` on the network thread and blocks until it finishes.
-  void RunRequest(MittoSession& session, RequestJob& job) {
-    network_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::BindOnce([](MittoSession* session,
-                          RequestJob* job) { job->Start(*session->context); },
-                       base::Unretained(&session), base::Unretained(&job)));
-    job.Wait();
+  void StartJob(MittoSession& session, std::unique_ptr<RequestJob> job) {
+    PostTask(base::BindOnce(
+        [](MittoSession* session, std::unique_ptr<RequestJob> job) {
+          RequestJob* const started_job = job.get();
+          session->jobs.insert(std::move(job));
+          started_job->Start();
+        },
+        base::Unretained(&session), std::move(job)));
+  }
+
+  // Runs `task` on the network thread and returns without waiting for it.
+  void PostTask(base::OnceClosure task) {
+    network_thread_.task_runner()->PostTask(FROM_HERE, std::move(task));
   }
 
  private:
@@ -488,20 +554,52 @@ void mitto_session_destroy(MittoSession* session) {
   }
 }
 
-int32_t mitto_session_request(MittoSession* session,
-                              const char* url,
-                              const MittoHeader* headers,
-                              size_t header_count,
-                              int32_t priority,
-                              bool priority_incremental,
-                              const char* referrer,
-                              MittoResponse* response) {
-  if (!response) {
+int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd) {
+  if (!fd) {
     return net::ERR_INVALID_ARGUMENT;
   }
-  *response = {};
-  if (!session || !url || (!headers && header_count != 0) ||
-      priority < net::MINIMUM_PRIORITY || priority > net::MAXIMUM_PRIORITY) {
+  *fd = -1;
+  if (!session) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  const std::optional<int> descriptor =
+      session->ready_requests.GetFileDescriptor();
+  if (!descriptor) {
+    return net::ERR_INSUFFICIENT_RESOURCES;
+  }
+  *fd = *descriptor;
+  return net::OK;
+}
+
+int32_t mitto_session_next_ready_request(MittoSession* session,
+                                         MittoRequest** request) {
+  if (!request) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *request = nullptr;
+  if (!session) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  const std::optional<uintptr_t> ready = session->ready_requests.Take();
+  if (!ready) {
+    return net::ERR_IO_PENDING;
+  }
+  *request = reinterpret_cast<MittoRequest*>(*ready);
+  return net::OK;
+}
+
+int32_t mitto_request_start(MittoSession* session,
+                            const char* url,
+                            const MittoHeader* headers,
+                            size_t header_count,
+                            const char* options,
+                            size_t options_size,
+                            MittoRequest** request) {
+  if (!request) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *request = nullptr;
+  if (!session || !url || (!headers && header_count != 0) || !options) {
     return net::ERR_INVALID_ARGUMENT;
   }
   // SAFETY: The C API says `headers` holds `header_count` elements. A span can
@@ -509,44 +607,98 @@ int32_t mitto_session_request(MittoSession* session,
   std::optional<net::HttpRequestHeaders> request_headers =
       mitto::ToRequestHeaders(
           UNSAFE_BUFFERS(base::span(headers, header_count)));
-  if (!request_headers) {
+  // SAFETY: The C API says `options` holds `options_size` bytes.
+  std::optional<mitto::RequestOptions> parsed_options =
+      mitto::ParseRequestOptions(
+          UNSAFE_BUFFERS(std::string_view(options, options_size)));
+  if (!request_headers || !parsed_options) {
     return net::ERR_INVALID_ARGUMENT;
   }
-  // //net would silently send no Referer for a URL that it cannot send as one.
-  GURL referrer_url;
-  if (referrer) {
-    referrer_url = GURL(referrer).GetAsReferrer();
-    if (!referrer_url.is_valid()) {
-      return net::ERR_INVALID_ARGUMENT;
-    }
-  }
 
-  mitto::RequestJob job(url, std::move(*request_headers),
-                        static_cast<net::RequestPriority>(priority),
-                        priority_incremental, std::move(referrer_url));
-  mitto::NetworkCore::Get().RunRequest(*session, job);
-  if (job.net_error() != net::OK) {
-    return job.net_error();
-  }
-
-  response->status = job.status();
-  response->protocol = mitto::CopyToNewBuffer(job.protocol());
-  response->headers = mitto::CopyToNewBuffer(job.headers());
-  response->headers_size = job.headers().size();
-  response->body =
-      reinterpret_cast<uint8_t*>(mitto::CopyToNewBuffer(job.body()));
-  response->body_size = job.body().size();
+  auto handle = std::make_unique<MittoRequest>();
+  handle->channel = base::MakeRefCounted<mitto::RequestChannel>();
+  auto job = std::make_unique<mitto::RequestJob>(
+      *session, reinterpret_cast<uintptr_t>(handle.get()), handle->channel,
+      GURL(url), std::move(*request_headers), std::move(*parsed_options));
+  handle->job = job->GetWeakPtr();
+  mitto::NetworkCore::Get().StartJob(*session, std::move(job));
+  *request = handle.release();
   return net::OK;
 }
 
-void mitto_response_free(MittoResponse* response) {
-  if (!response) {
+int32_t mitto_request_next_event(MittoRequest* request,
+                                 int64_t timeout_ms,
+                                 MittoEvent* event) {
+  if (!event) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *event = {};
+  if (!request) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  std::optional<base::TimeDelta> timeout;
+  if (timeout_ms >= 0) {
+    timeout = base::Milliseconds(timeout_ms);
+  }
+  mitto::RequestEvent next;
+  const int result = request->channel->NextEvent(timeout, next);
+  if (result != net::OK) {
+    return result;
+  }
+  event->type = next.type;
+  event->status = next.status;
+  event->net_error = next.net_error;
+  if (next.type == MITTO_EVENT_RESPONSE_STARTED) {
+    event->protocol = mitto::CopyToNewBuffer(next.protocol);
+  }
+  if (next.type == MITTO_EVENT_RESPONSE_STARTED ||
+      next.type == MITTO_EVENT_REDIRECT_FOLLOWED) {
+    event->url = mitto::CopyToNewBuffer(next.url);
+    event->headers = mitto::CopyToNewBuffer(next.headers);
+    event->headers_size = next.headers.size();
+  }
+  return net::OK;
+}
+
+int32_t mitto_request_read(MittoRequest* request,
+                           uint8_t* buffer,
+                           size_t size) {
+  if (!request || !buffer || size == 0) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  bool start_reading = false;
+  // SAFETY: The C API says `buffer` holds `size` bytes.
+  const int result = request->channel->Read(
+      UNSAFE_BUFFERS(base::span(buffer, size)), start_reading);
+  if (start_reading) {
+    mitto::NetworkCore::Get().PostTask(
+        base::BindOnce(&mitto::RequestJob::ReadBody, request->job));
+  }
+  return result;
+}
+
+void mitto_request_cancel(MittoRequest* request) {
+  if (request) {
+    mitto::NetworkCore::Get().PostTask(
+        base::BindOnce(&mitto::RequestJob::Cancel, request->job));
+  }
+}
+
+void mitto_request_release(MittoRequest* request) {
+  if (request) {
+    mitto_request_cancel(request);
+    delete request;
+  }
+}
+
+void mitto_event_free(MittoEvent* event) {
+  if (!event) {
     return;
   }
-  free(response->protocol);
-  free(response->headers);
-  free(response->body);
-  *response = {};
+  free(event->protocol);
+  free(event->url);
+  free(event->headers);
+  *event = {};
 }
 
 }  // extern "C"

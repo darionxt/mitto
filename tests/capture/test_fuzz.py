@@ -21,12 +21,12 @@ from tests.capture import samples
 from tools.capture import http3
 from tools.capture.certificate import generate_certificate
 from tools.capture.client_hello import ClientHelloAssembler, ClientHelloRecords, parse_client_hello
-from tools.capture.http1 import Http1Connection, parse_request_head
+from tools.capture.http1 import Http1Connection, Http1Request, parse_request_head
 from tools.capture.http2 import PREFACE, Frame, Http2Connection, serialize_frame
 from tools.capture.http3 import Http3Connection, serialize_varint
 from tools.capture.names import EXTENSIONS, TRANSPORT_PARAMETERS
 from tools.capture.normal_form import RecordingError, normal_client_hello, normal_form, normal_hello
-from tools.capture.page import KIND_PATHS, respond
+from tools.capture.page import KIND_PATHS, RequestKind, respond
 from tools.capture.quic import (
     InitialAssembler,
     QuicClientHello,
@@ -161,13 +161,17 @@ def fuzz_http1(chunks: list[bytes]) -> None:
     with contextlib.suppress(ParseError):
         for chunk in chunks:
             connection.receive(chunk)
-    _exercise_forms(ConnectionRecord(1, _CLIENT_HELLO, None, None, "http/1.1", (), tuple(connection.requests), None))
+    requests = tuple(connection.requests)
+    _exercise_forms(ConnectionRecord(1, _CLIENT_HELLO, None, None, "http/1.1", (), requests, None))
+    _exercise_forms(ConnectionRecord(1, None, None, None, None, (), requests, None))
 
 
 def fuzz_request_head(head: bytes) -> None:
-    """Target: a request head into the HTTP/1.1 parser."""
+    """Target: a request head into the HTTP/1.1 parser, then, as what opened a tunnel, into the normal form."""
     with contextlib.suppress(ParseError):
-        parse_request_head(head)
+        request = parse_request_head(head)
+        carried = Http1Request("GET", KIND_PATHS[RequestKind.FETCH], "HTTP/1.1", ())
+        _exercise_forms(ConnectionRecord(1, _CLIENT_HELLO, None, None, "http/1.1", (), (carried,), None, None, request))
 
 
 _INTERESTING_BYTES = (0x00, 0x01, 0x7F, 0x80, 0xFF)
@@ -266,7 +270,9 @@ def _structured_http1_stream(draw: st.DrawFn) -> bytes:
     requests: list[bytes] = []
     for _ in range(draw(st.integers(0, 3))):
         target = draw(st.sampled_from([*KIND_PATHS.values(), "/other"]))
-        requests.append(f"GET {target} HTTP/1.1\r\n".encode() + draw(_HEADER_LINES) + b"\r\n")
+        body = draw(st.binary(max_size=32))
+        length = f"Content-Length: {len(body)}\r\n".encode() if body else b""
+        requests.append(f"GET {target} HTTP/1.1\r\n".encode() + length + draw(_HEADER_LINES) + b"\r\n" + body)
     return b"".join(requests)
 
 

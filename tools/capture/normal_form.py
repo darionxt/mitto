@@ -6,9 +6,11 @@ See docs/capture.md for what stays, what goes, and why.
 
 import contextlib
 import json
+import re
 from collections.abc import Callable, Iterable
 
 from tools.capture import http3
+from tools.capture.cases import CASES, PROXY_CONNECT, Case
 from tools.capture.client_hello import ClientHello, ClientHelloRecords, Extension
 from tools.capture.http1 import Http1Request
 from tools.capture.http2 import (
@@ -22,6 +24,7 @@ from tools.capture.http2 import (
     WINDOW_UPDATE,
     Frame,
     Http2Request,
+    parse_data,
     parse_priority,
     parse_settings,
     parse_window_update,
@@ -51,7 +54,6 @@ from tools.capture.names import (
     transport_parameter_name,
     version_name,
 )
-from tools.capture.page import RequestKind, kind_of
 from tools.capture.quic import parse_transport_parameters
 from tools.capture.recording import (
     HTTP1,
@@ -72,38 +74,52 @@ _IP_AND_UDP_HEADER_SIZES = {4: 20 + 8, 6: 40 + 8}
 HOST_PLACEHOLDER = "<host>"
 AUTHORITY_PLACEHOLDER = "<authority>"
 ORIGIN_PLACEHOLDER = "<origin>"
+SAME_SITE_AUTHORITY_PLACEHOLDER = "<same-site-authority>"
+SAME_SITE_ORIGIN_PLACEHOLDER = "<same-site-origin>"
+CROSS_SITE_AUTHORITY_PLACEHOLDER = "<cross-site-authority>"
+CROSS_SITE_ORIGIN_PLACEHOLDER = "<cross-site-origin>"
+
+_MULTIPART_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
+_MULTIPART_BOUNDARY_PLACEHOLDER = r"\1<random>"
 
 
 class RecordingError(Exception):
     """A recording has no single normal form."""
 
 
-def normal_form(recording: Recording) -> dict[str, Json]:
+def normal_form(recording: Recording, cases: Iterable[Case] = CASES) -> dict[str, Json]:
     """Return the normal form of a recording, as JSON data.
 
-    It holds what the connections that carried a Request Kind have in common and, for each Request Kind recorded,
-    that kind's first request.
+    It holds what the connections that carried one of the cases have in common and, for each of those cases that was
+    recorded, its first request.
+
+    Args:
+        recording: What to write.
+        cases: The Recording Cases to look for, in the order to list them. Other requests count for nothing.
 
     Raises:
-        RecordingError: No connection carried a Request Kind, or those that did do not look the same.
+        RecordingError: No connection carried one of the cases, or those that did do not look the same.
     """
+    cases = tuple(cases)
     carriers = [
         connection
         for connection in recording.connections
-        if any(kind_of(request.target) is not None for request in connection.requests)
+        if any(case.matches(request) for case in cases for request in connection.requests)
     ]
     if not carriers:
-        raise RecordingError("no connection carried a request of any Request Kind")
+        raise RecordingError("no connection carried a request of any Recording Case")
     first, *others = carriers
     connection_form = _normal_connection(first)
     for other in others:
         if _normal_connection(other) != connection_form:
             raise RecordingError(f"connections {first.id} and {other.id} carried requests but look different")
     requests: dict[str, Json] = {}
-    for kind in RequestKind:
-        found = _first_request(carriers, kind)
+    for case in cases:
+        found = _first_request(carriers, case)
         if found is not None:
-            requests[kind.value] = _normal_request(*found, recording)
+            requests[case.name] = _normal_request(*found, recording)
+        elif _was_refused(recording, case):
+            requests[case.name] = {"refused": True}
     return {"format": FORMAT_VERSION, **connection_form, "requests": requests}
 
 
@@ -113,22 +129,32 @@ def dumps_normal_form(form: dict[str, Json]) -> str:
 
 
 def _first_request(
-    connections: Iterable[ConnectionRecord | QuicConnectionRecord], kind: RequestKind
+    connections: Iterable[ConnectionRecord | QuicConnectionRecord], case: Case
 ) -> tuple[ConnectionRecord | QuicConnectionRecord, Http1Request | Http2Request | Http3Request] | None:
     for connection in connections:
+        if case is PROXY_CONNECT:
+            if isinstance(connection, ConnectionRecord) and connection.connect is not None:
+                return connection, connection.connect
+            continue
         for request in connection.requests:
-            if kind_of(request.target) is kind:
+            if case.matches(request):
                 return connection, request
     return None
+
+
+def _was_refused(recording: Recording, case: Case) -> bool:
+    """Return whether the page said that the client refused to send the case's request."""
+    return any(
+        request.target == case.refused_path for connection in recording.connections for request in connection.requests
+    )
 
 
 def _normal_connection(connection: ConnectionRecord | QuicConnectionRecord) -> dict[str, Json]:
     if isinstance(connection, QuicConnectionRecord):
         return _normal_quic_connection(connection)
-    form: dict[str, Json] = {
-        "protocol": HTTP2 if connection.alpn == HTTP2 else HTTP1,
-        "tls": normal_client_hello(connection.client_hello),
-    }
+    form: dict[str, Json] = {"protocol": HTTP2 if connection.alpn == HTTP2 else HTTP1}
+    if connection.client_hello is not None:
+        form["tls"] = normal_client_hello(connection.client_hello)
     if connection.alpn == HTTP2:
         form["http2"] = {"preface": _normal_preface(connection.frames)}
     return form
@@ -496,6 +522,14 @@ def _normal_http3_request(
         form["earlier_frames"] = earlier
     if later:
         form["later_frames"] = later
+    _add_body(
+        form,
+        b"".join(
+            frame.payload
+            for frame in connection.frames
+            if frame.stream_id == request.stream_id and frame.type == http3.DATA
+        ),
+    )
     return form
 
 
@@ -506,12 +540,15 @@ def _normal_request(
 ) -> dict[str, Json]:
     headers = header_lines(tuple((name, _placeholders(value, recording)) for name, value in request.headers))
     if isinstance(request, Http1Request):
-        return {"request_line": f"{request.method} {request.target} {request.version}", "headers": headers}
+        line = _placeholders(f"{request.method} {request.target} {request.version}", recording)
+        form: dict[str, Json] = {"request_line": line, "headers": headers}
+        _add_body(form, request.body)
+        return form
     if isinstance(request, Http3Request):
         assert isinstance(connection, QuicConnectionRecord)
         return _normal_http3_request(connection, request, headers)
     assert isinstance(connection, ConnectionRecord)
-    form: dict[str, Json] = {"flags": list[Json](frame_flag_names(HEADERS, request.flags))}
+    form = {"flags": list[Json](frame_flag_names(HEADERS, request.flags))}
     if request.priority is not None:
         # The dependency is left out: it names whichever stream happened to be open when this one started.
         form["priority"] = {"exclusive": request.priority.exclusive, "weight": request.priority.weight}
@@ -519,7 +556,24 @@ def _normal_request(
     later_frames = _later_frames(connection.frames, request.stream_id)
     if later_frames:
         form["later_frames"] = later_frames
+    _add_body(form, _http2_body(connection.frames, request.stream_id))
     return form
+
+
+def _add_body(form: dict[str, Json], body: bytes) -> None:
+    """Add a request's body, if it has any, as text that keeps every byte and hides what the client made up."""
+    if body:
+        form["body"] = _MULTIPART_BOUNDARY.sub(_MULTIPART_BOUNDARY_PLACEHOLDER, body.decode("latin-1"))
+
+
+def _http2_body(frames: Iterable[Frame], stream_id: int) -> bytes:
+    body = bytearray()
+    for frame in frames:
+        if frame.type == DATA and frame.stream_id == stream_id:
+            # The connection ended on such a frame, but what came before it still counts.
+            with contextlib.suppress(ParseError):
+                body += parse_data(frame)
+    return bytes(body)
 
 
 def _later_frames(frames: Iterable[Frame], stream_id: int) -> list[Json]:
@@ -547,7 +601,14 @@ def _later_frame(frame: Frame) -> dict[str, Json]:
 
 
 def _placeholders(value: str, recording: Recording) -> str:
-    """Hide where the server happened to be, which says nothing about the client."""
-    return value.replace(f"https://{recording.authority}", ORIGIN_PLACEHOLDER).replace(
-        recording.authority, AUTHORITY_PLACEHOLDER
-    )
+    """Hide where the server happened to be, and what the client made up, which say nothing about the client."""
+    # The same-site name goes first, because it ends in the page's name.
+    for authority, origin_placeholder, authority_placeholder in (
+        (recording.same_site_authority, SAME_SITE_ORIGIN_PLACEHOLDER, SAME_SITE_AUTHORITY_PLACEHOLDER),
+        (recording.cross_site_authority, CROSS_SITE_ORIGIN_PLACEHOLDER, CROSS_SITE_AUTHORITY_PLACEHOLDER),
+        (recording.authority, ORIGIN_PLACEHOLDER, AUTHORITY_PLACEHOLDER),
+    ):
+        if authority is not None:
+            value = value.replace(f"{recording.scheme}://{authority}", origin_placeholder)
+            value = value.replace(authority, authority_placeholder)
+    return _MULTIPART_BOUNDARY.sub(_MULTIPART_BOUNDARY_PLACEHOLDER, value)

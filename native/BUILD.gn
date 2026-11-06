@@ -18,6 +18,12 @@ shared_library("mitto_core") {
     "mitto_core.cc",
     "network_session_configurator.cc",
     "network_session_configurator.h",
+    "ready_requests.cc",
+    "ready_requests.h",
+    "request_channel.cc",
+    "request_channel.h",
+    "request_options.cc",
+    "request_options.h",
     "session_settings.cc",
     "session_settings.h",
     "ssl_config_service_mojo.cc",
@@ -77,6 +83,22 @@ executable("mitto_core_test") {
 if (use_libfuzzer) {
   import("//testing/libfuzzer/fuzzer_test.gni")
 
+  fuzzer_test("request_options_fuzzer") {
+    # The parser and not the library, whose exports list hides everything but the
+    # C API.
+    sources = [
+      "request_options.cc",
+      "request_options.h",
+      "test/request_options_fuzzer.cc",
+    ]
+    additional_configs = [ ":public_api" ]
+    deps = [
+      "//base",
+      "//net",
+      "//url",
+    ]
+  }
+
   fuzzer_test("session_settings_fuzzer") {
     # The parser and not the library, whose exports list hides everything but the
     # C API.
@@ -102,6 +124,9 @@ group("mitto") {
     ":mitto_core_test",
   ]
   if (use_libfuzzer) {
-    deps += [ ":session_settings_fuzzer" ]
+    deps += [
+      ":request_options_fuzzer",
+      ":session_settings_fuzzer",
+    ]
   }
 }

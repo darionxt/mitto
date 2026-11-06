@@ -1,5 +1,11 @@
 _mitto_abi_version
-_mitto_response_free
+_mitto_event_free
+_mitto_request_cancel
+_mitto_request_next_event
+_mitto_request_read
+_mitto_request_release
+_mitto_request_start
 _mitto_session_create
 _mitto_session_destroy
-_mitto_session_request
+_mitto_session_event_fd
+_mitto_session_next_ready_request

@@ -17,6 +17,7 @@ from tools.capture.http2 import (
     END_HEADERS,
     END_STREAM,
     HEADERS,
+    PADDED,
     PRIORITY,
     PRIORITY_FLAG,
     SETTINGS,
@@ -386,6 +387,34 @@ def test_later_frames_do_not_say_which_stream_or_hold_what_the_application_sent(
         {"type": "DATA", "flags": []},
         {"type": "HEADERS", "flags": ["END_STREAM", "END_HEADERS"]},
     ]
+
+
+def test_an_http2_body_shows_with_its_request_and_leaves_out_padding() -> None:
+    block = Encoder().encode([(":method", "POST"), (":path", "/fetch")])
+    form = normal_form(
+        _http2_recording(
+            serialize_frame(HEADERS, END_HEADERS, 1, block),
+            serialize_frame(DATA, 0, 1, b"bo"),
+            serialize_frame(DATA, PADDED, 1, b"\x01dy\x00"),
+            serialize_frame(DATA, END_STREAM, 1),
+        )
+    )
+
+    requests = form["requests"]
+    assert isinstance(requests, dict)
+    fetch = requests["fetch"]
+    assert isinstance(fetch, dict)
+    assert fetch["body"] == "body"
+
+
+def test_a_request_with_no_body_has_no_body_key() -> None:
+    form = normal_form(_http2_recording(samples.http2_request_frame("/fetch")))
+
+    requests = form["requests"]
+    assert isinstance(requests, dict)
+    fetch = requests["fetch"]
+    assert isinstance(fetch, dict)
+    assert "body" not in fetch
 
 
 @pytest.mark.parametrize(
@@ -815,6 +844,17 @@ def test_http3_stream_ids_drop_out_of_requests() -> None:
         )
 
     assert normal_form(recording(0)) == normal_form(recording(8))
+
+
+def test_an_http3_body_shows_with_its_request() -> None:
+    stream = http3_request_frame() + http3.serialize_frame(http3.DATA, b"bo") + http3.serialize_frame(http3.DATA, b"dy")
+
+    requests = normal_form(quic_recording(quic_connection([(0, stream), (4, http3_request_frame())])))["requests"]
+
+    assert isinstance(requests, dict)
+    fetch = requests["fetch"]
+    assert isinstance(fetch, dict)
+    assert fetch["body"] == "body"
 
 
 def test_http3_frames_around_a_request_stay_with_it() -> None:

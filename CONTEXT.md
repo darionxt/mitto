@@ -37,7 +37,7 @@ Which kind of Chrome request is being reproduced, such as a top-level navigation
 _Avoid_: request type, mode
 
 **Initiator**:
-The page a non-navigation request is made from. It decides whether the request counts as same-origin, same-site or cross-site.
+The page a request is made from, such as the page that holds a clicked link. It decides whether the request counts as same-origin, same-site or cross-site. A navigation the user starts elsewhere, such as from the address bar, has none.
 _Avoid_: referrer, document URL, origin
 
 ### Fidelity
@@ -46,8 +46,12 @@ _Avoid_: referrer, document URL, origin
 Everything a server can observe about a request below the application payload: the TLS handshake, HTTP/2 and QUIC parameters, and the header names, order and values.
 _Avoid_: TLS fingerprint, JA3, JA4
 
+**Recording Case**:
+One situation in which real Chrome is recorded: a Request Kind, how its Initiator relates to where it goes, and what it carries, such as a cross-site fetch with a text body. A hop of a redirect chain is a Recording Case of its own, and so is a same-origin request of each main Request Kind.
+_Avoid_: scenario, test case, fixture
+
 **Baseline**:
-A recorded Wire Fingerprint of real Chrome for one Persona and Request Kind, used as ground truth.
+A recorded Wire Fingerprint of real Chrome for one Persona and Recording Case, used as ground truth.
 _Avoid_: golden file, reference capture
 
 **Normal Form**:

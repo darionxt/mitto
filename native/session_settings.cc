@@ -4,9 +4,11 @@
 
 #include "base/json/json_reader.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/values.h"
 #include "mitto/mitto.h"
 #include "net/base/hash_value.h"
+#include "net/base/host_mapping_rules.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_address.h"
 #include "net/http/http_util.h"
@@ -22,6 +24,7 @@ constexpr std::string_view kOriginsToForceQuicOnKey =
     "origins_to_force_quic_on";
 constexpr std::string_view kEveryOrigin = "*";
 constexpr std::string_view kDnsNameserverKey = "dns_nameserver";
+constexpr std::string_view kHostResolverRulesKey = "host_resolver_rules";
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -87,6 +90,28 @@ std::optional<net::IPEndPoint> ReadDnsNameserver(const base::Value& value) {
   return net::IPEndPoint(*address, host_port.port());
 }
 
+// Reads the rules the way net::HostMappingRules::SetRulesFromString() does,
+// except that a rule it cannot parse is refused. It would log that and go on
+// without the rule, so the name would reach the real resolver.
+bool ReadHostResolverRules(const base::Value& value,
+                           SessionSettings& settings) {
+  if (!value.is_string()) {
+    return false;
+  }
+  net::HostMappingRules rules;
+  if (!value.GetString().empty()) {
+    for (std::string_view rule :
+         base::SplitStringPiece(value.GetString(), ",", base::TRIM_WHITESPACE,
+                                base::SPLIT_WANT_ALL)) {
+      if (!rules.AddRuleFromString(rule)) {
+        return false;
+      }
+    }
+  }
+  settings.host_resolver_rules = value.GetString();
+  return true;
+}
+
 }  // namespace
 
 SessionSettings::SessionSettings() = default;
@@ -124,6 +149,12 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
     if (key == kDnsNameserverKey) {
       settings.dns_nameserver = ReadDnsNameserver(value);
       if (!settings.dns_nameserver) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kHostResolverRulesKey) {
+      if (!ReadHostResolverRules(value, settings)) {
         return std::nullopt;
       }
       continue;
