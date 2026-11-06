@@ -118,6 +118,7 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   {
 //     "version": 1,
 //     "ignore_certificate_errors_spki_list": ["<SPKI hash>"],
+//     "additional_trust_anchors": ["<text of a PEM file>"],
 //     "accept_language": "en-US,en;q=0.9",
 //     "origins_to_force_quic_on": ["<host>:<port>"],
 //     "dns_nameserver": "<IP address>:<port>",
@@ -130,6 +131,11 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   --ignore-certificate-errors-spki-list. Each entry is the Base64 form of the
 //   SHA-256 hash of a DER-encoded SubjectPublicKeyInfo. The default is an empty
 //   list.
+// - "additional_trust_anchors" trusts the listed certificates as roots, beside
+//   the Chrome Root Store. Each entry is the text of a PEM file that holds at
+//   least one. //net refuses QUIC to a root that is not known, so a chain that
+//   ends at one of these goes over TCP unless "origins_to_force_quic_on" lifts
+//   that. The default is an empty list.
 // - "accept_language" is the value of the Accept-Language header that //net adds
 //   to each request whose headers do not hold one. The default is an empty
 //   string, which adds no header.

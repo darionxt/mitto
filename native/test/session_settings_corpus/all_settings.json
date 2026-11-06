@@ -1,6 +1,7 @@
 {
   "version": 1,
   "ignore_certificate_errors_spki_list": ["47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="],
+  "additional_trust_anchors": ["-----BEGIN CERTIFICATE-----\nMIIBLjCB1qADAgECAgEBMAoGCCqGSM49BAMCMBcxFTATBgNVBAMMDGNhcHR1cmUg\ncm9vdDAeFw0yNjAxMDEwMDAwMDBaFw0zNjAxMDEwMDAwMDBaMBcxFTATBgNVBAMM\nDGNhcHR1cmUgcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABGumRMuy2EEQ\nx3RjRCPh/AgZPCpecjCUuleh7L4N8c3NqbDLl3JEiw1r2AZ2y1YCxXeN3hVO8fZd\nPizWJgYVfL2jEzARMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIg\nWGVWWb+2KFQUUGxDpEMUi3QM7pcVKvOD+/FOTwQlNz8CID/VsZ99ysHsO+zrkkuB\n/Dj2MZHt+W94UzFv6wZcex9J\n-----END CERTIFICATE-----\n"],
   "accept_language": "en-US,en;q=0.9",
   "origins_to_force_quic_on": ["capture.localhost:8445", "[::1]:443", "*"],
   "dns_nameserver": "127.0.0.1:53",

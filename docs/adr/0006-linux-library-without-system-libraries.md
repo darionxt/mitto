@@ -16,7 +16,7 @@ The manylinux wheel has to work on machines that have no desktop libraries, and 
 
 ## Consequences
 
-- On Linux, roots added to an NSS database, or through p11-kit where it replaces `libnssckbi`, are ignored, and requests to servers that rely on them fail. This loses nothing the Persona does, because Chrome on Windows reads the Windows stores, not NSS. An option to add trust anchors is planned instead.
+- On Linux, roots added to an NSS database, or through p11-kit where it replaces `libnssckbi`, are ignored, and requests to servers that rely on them fail. This loses nothing the Persona does, because Chrome on Windows reads the Windows stores, not NSS. `Session(additional_trust_anchors=...)` is the way to add a root instead.
 - NSS client certificates and smart cards are not available on Linux, and GNOME's proxy settings would be ignored if mitto ever read the system's proxy settings.
 - `tools/workspace/patches` is the only place where mitto changes Chromium's source. A patch there may only make a build configuration possible. It must not change what Chrome's own builds run, or the stack stops being right by construction ([ADR-0001](0001-chromium-network-stack.md)). A patch goes away once upstream has the change.
 - Chromium's bots do not build Linux without NSS, so any Engine Release can break this: the patch stops applying, `//net` stops compiling, or a test finds a new system library.

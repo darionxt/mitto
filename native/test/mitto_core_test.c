@@ -308,6 +308,29 @@ static int TotalTimeout(const char* url) {
   return ExpectTimeout(url, kTotalTimeoutOptions);
 }
 
+// Waits for a byte on stdin. The caller sends one when the request has reached a
+// point that no event shows, such as a certificate fetch. Returns 0 if it came.
+static int WaitToBeTold(void) {
+  return getchar() == EOF;
+}
+
+static int DestroySessionWhenTold(const char* url) {
+  if (Start(url) != 0 || WaitToBeTold() != 0) {
+    return 1;
+  }
+  mitto_session_destroy(g_session);
+  g_session = NULL;
+  return ExpectCancelled();
+}
+
+static int ExitWhenTold(const char* url) {
+  if (Start(url) != 0 || WaitToBeTold() != 0) {
+    return 1;
+  }
+  printf("exiting\n");
+  return EXIT_NOW;
+}
+
 static const struct {
   const char* name;
   int (*run)(const char* url);
@@ -323,6 +346,8 @@ static const struct {
     {"connect-timeout", ConnectTimeout},
     {"read-timeout", ReadTimeout},
     {"total-timeout", TotalTimeout},
+    {"destroy-session-when-told", DestroySessionWhenTold},
+    {"exit-when-told", ExitWhenTold},
 };
 
 int main(int argc, char** argv) {

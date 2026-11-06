@@ -1,6 +1,7 @@
 """The public API: a Session, and get() as a shortcut on a default one."""
 
 import functools
+from collections.abc import Sequence
 from types import TracebackType
 from typing import Self, Unpack
 
@@ -28,6 +29,7 @@ class Session:
         *,
         persona: str = ENGINE_RELEASE_PERSONA,
         accept_language: str | None = None,
+        additional_trust_anchors: Sequence[str] = (),
         timeout: float | Timeout | None = None,
         _settings: PrivateSettings | None = None,
     ) -> None:
@@ -36,19 +38,24 @@ class Session:
         Args:
             persona: The Persona to present, such as "chrome_157_windows". The default is the Engine Release's.
             accept_language: The value of the Accept-Language header in place of the Persona's. An empty string sends none.
+            additional_trust_anchors: Root certificates that this Session trusts beside the Chrome Root Store. Each entry is
+                the text of a PEM file that holds at least one. A self-signed server certificate can be its own root. The
+                network stack refuses QUIC to a root that is not known, so a server whose chain ends at one of these is
+                reached over HTTP/1.1 or HTTP/2, whatever its Alt-Svc says.
             timeout: What a request's `timeout` defaults to: a number is the total time in seconds, and a Timeout sets each
                 timer. The default runs no timer, leaving what //net has of its own.
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
-            ValueError: If there is no such Persona, the native core refuses `accept_language` or `timeout` is not a positive
-                number of at most 2,000,000 seconds.
+            ValueError: If there is no such Persona, the native core refuses `accept_language` or
+                `additional_trust_anchors`, or `timeout` is not a positive number of at most 2,000,000 seconds.
             NativeLibraryError: If the native library cannot be used.
         """
         self._persona = load_persona(persona)
         self._timeout = to_timeout(timeout)
         self._native = _native.Session(
             accept_language=self._persona.accept_language if accept_language is None else accept_language,
+            additional_trust_anchors=additional_trust_anchors,
             **(PrivateSettings() if _settings is None else _settings),
         )
 

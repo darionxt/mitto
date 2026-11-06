@@ -417,6 +417,7 @@ class Session:
         self,
         *,
         ignore_certificate_errors_spki_list: Sequence[str] = (),
+        additional_trust_anchors: Sequence[str] = (),
         accept_language: str = "",
         origins_to_force_quic_on: Sequence[str] = (),
         dns_nameserver: str | None = None,
@@ -428,6 +429,8 @@ class Session:
             ignore_certificate_errors_spki_list: Accept any certificate chain that holds one of these keys, with the
                 meaning of Chrome's --ignore-certificate-errors-spki-list. Each entry is the Base64 form of the SHA-256
                 hash of a DER-encoded SubjectPublicKeyInfo.
+            additional_trust_anchors: Trust these certificates as roots, beside the Chrome Root Store. Each entry is the
+                text of a PEM file that holds at least one.
             accept_language: The value of the Accept-Language header that //net adds to each request whose headers do not
                 hold one. An empty string adds no header.
             origins_to_force_quic_on: Reach these HTTPS origins, each written "host:port", over QUIC and nothing else,
@@ -448,6 +451,7 @@ class Session:
         settings_dict: dict[str, object] = {
             "version": SETTINGS_VERSION,
             "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
+            "additional_trust_anchors": list(additional_trust_anchors),
             "accept_language": accept_language,
             "origins_to_force_quic_on": list(origins_to_force_quic_on),
             "host_resolver_rules": host_resolver_rules,

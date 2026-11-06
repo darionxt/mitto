@@ -51,7 +51,12 @@
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
 #include "net/base/transport_info.h"
+#include "net/cert/caching_cert_verifier.h"
+#include "net/cert/cert_net_fetcher.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/cert_verify_proc.h"
+#include "net/cert/coalescing_cert_verifier.h"
+#include "net/cert_net/cert_net_fetcher_url_request.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
 #include "net/dns/system_dns_config_change_notifier.h"
@@ -98,6 +103,9 @@ struct MittoSession {
   // must not ask. `context` points to it, so it has to come first.
   std::unique_ptr<net::HostResolverManager> own_host_resolver_manager;
   std::unique_ptr<net::URLRequestContext> context;
+  // The verifier in `context` holds this, and this makes its requests in
+  // `context`, until the destructor shuts it down.
+  scoped_refptr<net::CertNetFetcherURLRequest> cert_net_fetcher;
   std::unique_ptr<net::HostResolver::ProbeRequest> doh_probes_request;
   base::OneShotTimer doh_probes_timer;
   // After `context`, because a request has to go before its context does.
@@ -343,7 +351,13 @@ class RequestJob final : public net::URLRequest::Delegate {
 }  // namespace mitto
 
 MittoSession::MittoSession() = default;
-MittoSession::~MittoSession() = default;
+
+MittoSession::~MittoSession() {
+  // This ends its requests, which have to go before `context` does. A worker
+  // thread that is waiting for one of them goes on with an error, and may hold
+  // the fetcher for longer, but it starts nothing more.
+  cert_net_fetcher->Shutdown();
+}
 
 void MittoSession::CancelJobs() {
   while (!jobs.empty()) {
@@ -362,12 +376,35 @@ void ActivateDohProbes(MittoSession* session) {
   session->doh_probes_request->Start();
 }
 
+// What CertVerifier::CreateDefault() makes and what NetworkContext wraps
+// Chrome's verifier in, with the trust anchors that a Session adds. //net's own
+// factory still chooses the rest, and rebuilds the verifier's CertVerifyProc for
+// them.
+std::unique_ptr<net::CertVerifier> CreateCertVerifier(
+    scoped_refptr<net::CertNetFetcher> cert_net_fetcher,
+    bssl::ParsedCertificateList additional_trust_anchors) {
+  std::unique_ptr<net::CertVerifierWithUpdatableProc> verifier =
+      net::CertVerifier::CreateDefaultWithoutCaching(cert_net_fetcher);
+  if (!additional_trust_anchors.empty()) {
+    net::CertVerifyProc::InstanceParams instance_params;
+    instance_params.additional_trust_anchors =
+        std::move(additional_trust_anchors);
+    verifier->UpdateVerifyProcData(std::move(cert_net_fetcher),
+                                   net::CertVerifyProc::ImplParams(),
+                                   instance_params);
+  }
+  return std::make_unique<net::CachingCertVerifier>(
+      std::make_unique<net::CoalescingCertVerifier>(std::move(verifier)));
+}
+
 // Called on the network thread.
 std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     SessionSettings settings,
     net::HostResolverManager* host_resolver_manager,
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
+  session->cert_net_fetcher =
+      base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
     session->own_host_resolver_manager =
         std::make_unique<net::HostResolverManager>(
@@ -391,11 +428,14 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   builder.set_proxy_config_service(
       std::make_unique<net::ProxyConfigServiceFixed>(
           net::ProxyConfigWithAnnotation::CreateDirect()));
+  std::unique_ptr<net::CertVerifier> cert_verifier = CreateCertVerifier(
+      session->cert_net_fetcher, std::move(settings.additional_trust_anchors));
   if (!settings.ignore_certificate_errors_spki_list.empty()) {
-    builder.SetCertVerifier(std::make_unique<IgnoreErrorsCertVerifier>(
-        net::CertVerifier::CreateDefault(/*cert_net_fetcher=*/nullptr),
-        std::move(settings.ignore_certificate_errors_spki_list)));
+    cert_verifier = std::make_unique<IgnoreErrorsCertVerifier>(
+        std::move(cert_verifier),
+        std::move(settings.ignore_certificate_errors_spki_list));
   }
+  builder.SetCertVerifier(std::move(cert_verifier));
   builder.set_ssl_config_service(
       std::make_unique<SSLConfigServiceMojo>(GetNewSSLConfig()));
 
@@ -411,6 +451,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   builder.set_quic_context(std::move(quic_context));
 
   session->context = builder.Build();
+  session->cert_net_fetcher->SetURLRequestContext(session->context.get());
   ConfigureQuicHints(session->context->http_server_properties());
   // The timer belongs to the Session, so it can only run while the Session
   // exists. NetworkService does this with one timer and a list of contexts.
