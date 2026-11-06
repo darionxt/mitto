@@ -428,6 +428,60 @@ def test_a_body_that_stops_halfway_is_not_served_as_whole(server: CacheServer, c
     assert after.from_cache is False
 
 
+def test_a_stream_says_where_its_body_comes_from(server: CacheServer, cache: str | Path) -> None:
+    url = server.url("/big")
+
+    with mitto.Session(cache=cache) as session:
+        with session.stream("GET", url) as first:
+            first_body = first.read()
+        with session.stream("GET", url) as second:
+            second_body = b"".join(second.iter_bytes())
+
+    assert server.paths() == ["/big"]
+    assert first.from_cache is False
+    assert second.from_cache is True
+    assert first_body == second_body == BIG_BODY
+
+
+def test_a_stream_says_so_after_a_revalidation_too(server: CacheServer, cache: str | Path) -> None:
+    url = server.url("/etag")
+
+    with mitto.Session(cache=cache) as session:
+        session.get(url)
+        with session.stream("GET", url) as second:
+            body = second.read()
+
+    assert server.received[1].headers["if-none-match"] == ETAG
+    assert second.from_cache is True
+    assert body == b"answer 1"
+
+
+def test_a_stream_left_halfway_is_not_served_as_whole(server: CacheServer, cache: str | Path) -> None:
+    url = server.url("/big")
+
+    with mitto.Session(cache=cache) as session:
+        with session.stream("GET", url) as stream:
+            assert next(stream.iter_bytes())
+        after = session.get(url)
+
+    assert after.from_cache is False
+    assert after.content == BIG_BODY
+
+
+def test_a_body_of_parts_passes_through_the_cache_and_drops_what_it_holds(
+    server: CacheServer, cache: str | Path
+) -> None:
+    url = server.url("/fresh")
+
+    with mitto.Session(cache=cache) as session:
+        session.get(url)
+        session.post(url, data=iter([b"first ", b"second"]), headers={"Content-Length": "12"})
+        after = session.get(url)
+
+    assert [request.method for request in server.received] == ["GET", "POST", "GET"]
+    assert after.from_cache is False
+
+
 def test_a_memory_cache_goes_with_its_session(server: CacheServer) -> None:
     url = server.url("/fresh")
 

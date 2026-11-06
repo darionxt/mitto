@@ -146,6 +146,8 @@ class ResponseStream:
         protocol: The protocol the response arrived over, for example "http/1.1", "h2" or "h3".
         headers: The final response's headers.
         history: The redirects that led here, the first one first.
+        from_cache: Whether the body comes from the Session's HTTP cache. That goes for a response the server only had to
+            confirm with a 304 too, so True does not say that no request went out.
     """
 
     status: int
@@ -153,6 +155,7 @@ class ResponseStream:
     protocol: str
     headers: Headers
     history: tuple[Redirect, ...]
+    from_cache: bool
     _chunks: Iterator[bytes] = field(repr=False)
 
     def iter_bytes(self) -> Iterator[bytes]:
@@ -215,6 +218,7 @@ def to_response_stream(
         protocol=started.protocol,
         headers=Headers(started.headers),
         history=_to_redirects(history),
+        from_cache=started.from_cache,
         _chunks=chunks,
     )
 
