@@ -11,12 +11,13 @@ import json
 import math
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Buffer, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self, TypedDict
 
+from mitto._body import StreamBody
 from mitto._errors import NativeLibraryError, RequestError, request_error
 from mitto._timeout import NO_TIMEOUT, Timeout
 
@@ -28,6 +29,7 @@ __all__ = [
     "REQUEST_OPTIONS_VERSION",
     "SETTINGS_VERSION",
     "BodyAvailable",
+    "BodyWanted",
     "EventType",
     "FetchParams",
     "Finished",
@@ -47,8 +49,10 @@ __all__ = [
     "Session",
     "encode_url",
     "find_library",
+    "iter_body",
     "load_library",
     "timeout_options",
+    "wait_for_response",
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
@@ -73,6 +77,9 @@ _ERR_IO_PENDING = -1
 
 # How much a read asks for: as much as the native core holds at a time.
 _READ_SIZE = 64 * 1024
+
+# How much a write gives: as much as the native core holds at a time.
+_WRITE_SIZE = 64 * 1024
 
 _PROXY_SCHEMES = frozenset({"http", "https", "socks5"})
 
@@ -103,6 +110,7 @@ class EventType(enum.IntEnum):
     REDIRECT_FOLLOWED = 2
     BODY_AVAILABLE = 3
     FINISHED = 4
+    BODY_WANTED = 5
 
 
 class MittoHeader(ctypes.Structure):
@@ -221,6 +229,10 @@ def load_library() -> ctypes.CDLL:
         library.mitto_request_next_event.restype = ctypes.c_int32
         library.mitto_request_read.argtypes = (request_pointer, ctypes.c_char_p, ctypes.c_size_t)
         library.mitto_request_read.restype = ctypes.c_int32
+        library.mitto_request_write_body.argtypes = (request_pointer, ctypes.c_char_p, ctypes.c_size_t)
+        library.mitto_request_write_body.restype = ctypes.c_int32
+        library.mitto_request_end_body.argtypes = (request_pointer,)
+        library.mitto_request_end_body.restype = ctypes.c_int32
         library.mitto_request_cancel.argtypes = (request_pointer,)
         library.mitto_request_cancel.restype = None
         library.mitto_request_release.argtypes = (request_pointer,)
@@ -325,7 +337,12 @@ class Finished:
     net_error: int
 
 
-NativeEvent = ResponseStarted | RedirectFollowed | BodyAvailable | Finished
+@dataclass(frozen=True, slots=True)
+class BodyWanted:
+    """//net has taken all of a stream body so far, and NativeRequest.send_body() gives it more."""
+
+
+NativeEvent = ResponseStarted | RedirectFollowed | BodyAvailable | Finished | BodyWanted
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,11 +377,15 @@ class NativeRequest:
         identity: What Session.next_ready_request() names this request by.
     """
 
-    def __init__(self, library: ctypes.CDLL, handle: Any, url: str, method: str) -> None:
+    def __init__(
+        self, library: ctypes.CDLL, handle: Any, url: str, method: str, body_chunks: Iterator[memoryview] | None = None
+    ) -> None:
         self._library = library
         self._handle = handle
         self._url = url
         self._method = method
+        self._body_chunks = body_chunks
+        self._unsent_body = memoryview(b"")
         self.identity: int = ctypes.addressof(handle.contents)
 
     def __enter__(self) -> Self:
@@ -423,6 +444,64 @@ class NativeRequest:
         if result < 0:
             raise self.error(result)
         return ctypes.string_at(buffer, result)
+
+    def write_body(self, data: Buffer) -> int | None:
+        """Give the native core bytes of a stream body, without waiting.
+
+        Args:
+            data: The bytes, of which it takes as much as it holds.
+
+        Returns:
+            How many it took. 0 if nothing more of the body is wanted, because the request has finished or a 303 has dropped
+            the body. None if it has no room, and a BodyWanted event says when to call this again.
+
+        Raises:
+            RequestError: If `data` is empty, the request has no stream, the body has ended, `data` goes past the size of the
+                stream or this request has been closed.
+        """
+        chunk = bytes(data)
+        result: int = self._library.mitto_request_write_body(self._handle, chunk, len(chunk))
+        if result == _ERR_IO_PENDING:
+            return None
+        if result < 0:
+            raise self.error(result)
+        return result
+
+    def end_body(self) -> None:
+        """Say that nothing more of a stream body will come, without waiting.
+
+        Raises:
+            RequestError: If the request has no stream, the body has ended already or this request has been closed.
+        """
+        result: int = self._library.mitto_request_end_body(self._handle)
+        if result != 0:
+            raise self.error(result)
+
+    def send_body(self) -> None:
+        """Answer a BodyWanted event from the stream body given to Session.start().
+
+        This waits for nothing but the caller's file or iterable, so that whatever waits for events can decide where that
+        wait belongs. Any part too large for the native core waits for the next event.
+
+        Raises:
+            RequestError: If this request has been closed.
+            Exception: Whatever the caller's file or iterable raises, after which the request should be closed, so that
+                what has gone does not count as the whole body.
+        """
+        if self._body_chunks is None:
+            return
+        while not self._unsent_body.nbytes:
+            chunk = next(self._body_chunks, None)
+            if chunk is None:
+                self._body_chunks = None
+                self.end_body()
+                return
+            self._unsent_body = chunk
+        written = self.write_body(self._unsent_body[:_WRITE_SIZE])
+        if written == 0:
+            self._body_chunks = None
+        elif written is not None:
+            self._unsent_body = self._unsent_body[written:]
 
     def error(self, net_error: int) -> RequestError:
         """Return the error that a Finished event's net error stands for."""
@@ -676,7 +755,7 @@ class Session:
         priority_incremental: bool = True,
         referrer: str | None = None,
         timeout: Timeout = NO_TIMEOUT,
-        body: bytes | None = None,
+        body: bytes | StreamBody | None = None,
         follow_redirects: bool = True,
         fetch: FetchParams | None = None,
     ) -> NativeRequest:
@@ -697,9 +776,10 @@ class Session:
                 headers it adds, and leaves out any username, password and fragment. None leaves it to `fetch`, or sends
                 none if there is none.
             timeout: The timers of the request. One that runs out arrives as the Finished event.
-            body: The bytes to send as the request's body, which the native core copies before this returns. None sends
-                no body, and //net still sends a Content-Length of 0 with POST and PUT. //net adds a Content-Length for a
-                body, also an empty one.
+            body: What to send as the request's body. The native core copies bytes before this returns. A stream goes as the
+                caller of NativeRequest.send_body() gives it, on each BodyWanted event. None sends no body, and //net still
+                sends a Content-Length of 0 with POST and PUT. //net adds a Content-Length for a body, also an empty one, but
+                for a stream with no size.
             follow_redirects: False makes a redirect the response, with an empty body, because //net does not read the body
                 of a redirect. A redirect to a URL that is not valid still ends the request with ERR_INVALID_REDIRECT.
             fetch: What the request says of itself, from which the native core sets the headers that follow the Initiator,
@@ -727,6 +807,11 @@ class Session:
             options["referrer"] = referrer
         if fetch is not None:
             options["fetch"] = fetch.to_option()
+        stream = body if isinstance(body, StreamBody) else None
+        if stream is not None:
+            options["stream_body"] = True
+            if stream.size is not None:
+                options["stream_body_size"] = stream.size
         encoded_options = json.dumps(options).encode()
         # This list keeps the bytes alive during the call, since the structs only point to them.
         encoded_headers = [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers]
@@ -734,6 +819,7 @@ class Session:
             *(MittoHeader(name, len(name), value, len(value)) for name, value in encoded_headers)
         )
 
+        bytes_of_body = None if isinstance(body, StreamBody) else body
         handle = ctypes.POINTER(MittoRequest)()
         net_error: int = self._library.mitto_request_start(
             self._handle,
@@ -742,13 +828,13 @@ class Session:
             len(native_headers),
             encoded_options,
             len(encoded_options),
-            body,
-            0 if body is None else len(body),
+            bytes_of_body,
+            0 if bytes_of_body is None else len(bytes_of_body),
             ctypes.byref(handle),
         )
         if net_error != 0:
             raise _request_error(self._library, url, net_error, method)
-        return NativeRequest(self._library, handle, url, method)
+        return NativeRequest(self._library, handle, url, method, None if stream is None else stream.chunks)
 
     def request(
         self,
@@ -761,7 +847,7 @@ class Session:
         priority_incremental: bool = True,
         referrer: str | None = None,
         timeout: Timeout = NO_TIMEOUT,
-        body: bytes | None = None,
+        body: bytes | StreamBody | None = None,
         follow_redirects: bool = True,
         fetch: FetchParams | None = None,
     ) -> NativeResponse:
@@ -782,33 +868,59 @@ class Session:
             return _collect_response(request)
 
 
+def wait_for_response(request: NativeRequest) -> tuple[ResponseStarted, tuple[RedirectFollowed, ...]]:
+    """Block until the final response has started, giving `request` its stream body meanwhile.
+
+    Returns:
+        The final response, and the redirects that led to it, the first one first.
+
+    Raises:
+        RequestError: If the request ends without a response.
+    """
+    history: list[RedirectFollowed] = []
+    while not isinstance(event := request.next_event(), ResponseStarted):
+        if isinstance(event, Finished):
+            raise request.error(event.net_error)
+        if isinstance(event, RedirectFollowed):
+            history.append(event)
+        if isinstance(event, BodyWanted):
+            request.send_body()
+    return event, tuple(history)
+
+
+def iter_body(request: NativeRequest) -> Iterator[bytes]:
+    """Yield the response's body as it arrives, once wait_for_response() has returned. Each part is read when asked for.
+
+    Raises:
+        RequestError: If the request ends before the end of the body.
+    """
+    while True:
+        # This stops at the point where a read asks for more, which leads to the next event.
+        while chunk := request.read():
+            yield chunk
+        while not isinstance(event := request.next_event(), BodyAvailable | Finished):
+            if isinstance(event, BodyWanted):
+                request.send_body()
+        if isinstance(event, Finished):
+            if event.net_error != 0:
+                raise request.error(event.net_error)
+            return
+
+
 def _collect_response(request: NativeRequest) -> NativeResponse:
     """Drive `request` to its end and return the whole response.
 
     Raises:
         RequestError: If the request ends without a response.
     """
-    started: ResponseStarted | None = None
-    history: list[RedirectFollowed] = []
-    chunks: list[bytes] = []
-    while not isinstance(event := request.next_event(), Finished):
-        if isinstance(event, RedirectFollowed):
-            history.append(event)
-        if isinstance(event, ResponseStarted):
-            started = event
-        if isinstance(event, ResponseStarted | BodyAvailable):
-            # This stops at the point where a read asks for more, which leads to the next event.
-            while chunk := request.read():
-                chunks.append(chunk)
-    if event.net_error != 0 or started is None:
-        raise request.error(event.net_error)
+    started, history = wait_for_response(request)
     return NativeResponse(
         status=started.status,
         protocol=started.protocol,
         url=started.url,
         headers=started.headers,
-        body=b"".join(chunks),
-        history=tuple(history),
+        body=b"".join(iter_body(request)),
+        history=history,
     )
 
 
@@ -832,6 +944,8 @@ def _copy_event(native: MittoEvent) -> NativeEvent:
             return BodyAvailable()
         case EventType.FINISHED:
             return Finished(net_error=native.net_error)
+        case EventType.BODY_WANTED:
+            return BodyWanted()
 
 
 def _parse_headers(block: bytes) -> tuple[tuple[str, str], ...]:

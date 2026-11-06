@@ -36,6 +36,7 @@
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "mitto/body_stream.h"
 #include "mitto/cookie_json.h"
 #include "mitto/feature_list.h"
 #include "mitto/fetch_rules.h"
@@ -78,6 +79,7 @@
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
+#include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
@@ -183,7 +185,8 @@ std::string HeaderLines(const net::HttpResponseHeaders& headers) {
 // request, and after that lives only on the network thread, where its Session
 // owns it until the request ends. It never waits for the thread that holds the
 // request's handle, and what it has to say goes through the channel.
-class RequestJob final : public net::URLRequest::Delegate {
+class RequestJob final : public net::URLRequest::Delegate,
+                         public BodyStream::Delegate {
  public:
   // `handle` names the request in the Session's ReadyRequests.
   RequestJob(MittoSession& session,
@@ -238,6 +241,12 @@ class RequestJob final : public net::URLRequest::Delegate {
       request_->set_upload(net::ElementsUploadDataStream::CreateWithReader(
           std::make_unique<net::UploadOwnedBytesElementReader>(&*body_)));
     }
+    if (options_.stream_body) {
+      auto body_stream = std::make_unique<BodyStream>(
+          channel_, options_.stream_body_size, *this);
+      body_stream_ = body_stream->GetWeakPtr();
+      request_->set_upload(std::move(body_stream));
+    }
     if (options_.total_timeout) {
       total_timer_.Start(FROM_HERE, *options_.total_timeout,
                          base::BindOnce(&RequestJob::Finish,
@@ -264,7 +273,24 @@ class RequestJob final : public net::URLRequest::Delegate {
     OnReadCompleted(request_.get(), result);
   }
 
+  // Goes on with a read of the stream body that waits for the caller, who has now
+  // answered. This may delete the job, so nothing may touch it afterwards.
+  void SendBody() {
+    // A 303 drops the body, and with it the stream.
+    if (body_stream_) {
+      body_stream_->OnCallerAnswered();
+    }
+  }
+
   void Cancel() { Finish(net::ERR_ABORTED); }
+
+  // BodyStream::Delegate:
+  void OnBodyWanted() override { session_->ready_requests.Add(handle_); }
+
+  // A wait for the caller is not a wait for the server. //net reads no response
+  // until it has the whole body, so nothing else needs this timer in that time.
+  void OnWaitForCallerStarted() override { read_timer_.Stop(); }
+  void OnWaitForCallerEnded() override { StartReadTimer(); }
 
   // net::URLRequest::Delegate:
   int OnConnected(net::URLRequest* request,
@@ -367,6 +393,14 @@ class RequestJob final : public net::URLRequest::Delegate {
       Finish(net::OK);
       return;
     }
+    // Step 11 of https://fetch.spec.whatwg.org/#http-redirect-fetch, which Chrome
+    // does in CorsURLLoader. A stream cannot start again, and a 303 is the one
+    // redirect that needs no body. Once a 303 has dropped it, later hops have none
+    // to send again.
+    if (body_stream_ && request_->GetResponseCode() != net::HTTP_SEE_OTHER) {
+      Finish(net::ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED);
+      return;
+    }
     PushResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED);
 
     // Step 13 of https://fetch.spec.whatwg.org/#http-redirect-fetch, which
@@ -442,6 +476,8 @@ class RequestJob final : public net::URLRequest::Delegate {
   std::optional<FetchRules> fetch_rules_;
   // What to send as the body, until Start() hands it to `request_`.
   std::optional<std::vector<char>> body_;
+  // The stream body, which `request_` owns and drops on a 303.
+  base::WeakPtr<BodyStream> body_stream_;
   std::unique_ptr<net::URLRequest> request_;
   bool response_started_ = false;
   bool read_wanted_ = false;
@@ -989,7 +1025,8 @@ int32_t mitto_request_start(MittoSession* session,
   std::optional<mitto::RequestOptions> parsed_options =
       mitto::ParseRequestOptions(
           UNSAFE_BUFFERS(std::string_view(options, options_size)));
-  if (!request_headers || !parsed_options) {
+  if (!request_headers || !parsed_options ||
+      (parsed_options->stream_body && body)) {
     return net::ERR_INVALID_ARGUMENT;
   }
 
@@ -1003,6 +1040,9 @@ int32_t mitto_request_start(MittoSession* session,
 
   auto handle = std::make_unique<MittoRequest>();
   handle->channel = base::MakeRefCounted<mitto::RequestChannel>();
+  if (parsed_options->stream_body) {
+    handle->channel->OpenBody(parsed_options->stream_body_size);
+  }
   auto job = std::make_unique<mitto::RequestJob>(
       *session, reinterpret_cast<uintptr_t>(handle.get()), handle->channel,
       GURL(url), std::move(*request_headers), std::move(*parsed_options),
@@ -1060,6 +1100,36 @@ int32_t mitto_request_read(MittoRequest* request,
   if (start_reading) {
     mitto::NetworkCore::Get().PostTask(
         base::BindOnce(&mitto::RequestJob::ReadBody, request->job));
+  }
+  return result;
+}
+
+int32_t mitto_request_write_body(MittoRequest* request,
+                                 const uint8_t* data,
+                                 size_t size) {
+  if (!request || !data || size == 0) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  bool wake_network_thread = false;
+  // SAFETY: The C API says `data` holds `size` bytes.
+  const int result = request->channel->WriteBody(
+      UNSAFE_BUFFERS(base::span(data, size)), wake_network_thread);
+  if (wake_network_thread) {
+    mitto::NetworkCore::Get().PostTask(
+        base::BindOnce(&mitto::RequestJob::SendBody, request->job));
+  }
+  return result;
+}
+
+int32_t mitto_request_end_body(MittoRequest* request) {
+  if (!request) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  bool wake_network_thread = false;
+  const int result = request->channel->EndBody(wake_network_thread);
+  if (wake_network_thread) {
+    mitto::NetworkCore::Get().PostTask(
+        base::BindOnce(&mitto::RequestJob::SendBody, request->job));
   }
   return result;
 }

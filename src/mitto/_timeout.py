@@ -18,7 +18,8 @@ class Timeout:
         connect: The time from the start of the request, or from a redirect, until a connection is ready for it: the name
             is resolved, a connection is free and any proxy tunnel and TLS handshake are done.
         read: The longest wait for bytes from the server. The response's headers count as one wait, since //net does not
-            report them a byte at a time, and it does not run out while the request's body is still moving.
+            report them a byte at a time, and it does not run out while the request's body is still moving. A wait for the
+            next part of a stream body is a wait for the caller, and does not count.
         total: The time from the start of the request to its end, over all its redirects.
 
     Raises:

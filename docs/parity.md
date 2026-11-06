@@ -41,7 +41,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `navigation`, `fetch`, `script`, `image` | The case's path at the server's own name, with no **Initiator** | Nothing |
 | `navigation_link_*`, `fetch_get_*`, `script_*`, `image_*` | The case's path at its name, from the page it came from | Nothing |
 | `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with the case's body, from the same fields as the page's form or script, and from the page it came from | Nothing |
-| `fetch_post_stream` | `POST` with no body, from the page it came from | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
+| `fetch_post_stream` | `POST` with the case's bytes as a stream, from the page it came from | Nothing. Over HTTP/1.1 the Baseline is `{"refused": true}`, and the replay fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire, which matches it |
 | `cookie` | `/case/cookie-set`, then the case's path, both from the page it came from | Nothing. A case counts a request without what it should carry when none has it, so a Session that lost its cookie would show one gap in `Cookie` |
 | `revalidation` | The case's path twice, from the page it came from | Keep a response, so `If-None-Match` is a gap in the same way |
 | `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is, from the page it came from. `//net` follows the rest, and the native core changes the headers on each | Nothing |
@@ -254,6 +254,42 @@ On each hop it first changes the headers that follow the page a request comes fr
 A caller's `Authorization` does not go to another origin, and stays gone if a later hop comes back. This is step 13 of [HTTP-redirect fetch](https://fetch.spec.whatwg.org/#http-redirect-fetch), which `ResourceLoader` does in Blink, so the native core does it in the same place, as a header to remove when it continues. A caller's `Cookie` goes the same way. Fetch does not name it, because a page cannot send one, but it has no domain to keep it where it belongs. The cookies that `//net` adds from a **Session**'s store are not touched, because `//net` decides those on each hop.
 
 `follow_redirects=False` makes a redirect the response, also from a task of its own, so the stream ends as it does when a redirect is followed. Its content is empty because `//net` does not read the body of a redirect, as with `redirect: "manual"` in Fetch. A redirect to a URL that is not valid still ends the request with `ERR_INVALID_REDIRECT`, because `//net` checks that before it tells its delegate.
+
+## Streams
+
+`Session.stream()` gives a response's body as the caller reads it, and `data=` takes a file object or an iterable of bytes as a request's body. Neither holds more of a body than a few buffers, so a body of any size takes the same memory, and `tests/test_big_transfers.py` moves 1 GiB each way to show it. A reader that stops makes the server wait through flow control, and so does a server that stops reading a body. Leaving the `with` statement ends the request.
+
+A request's stream is a subclass of `net::UploadDataStream` of mitto's own, `BodyStream`, written like `ChunkedDataPipeUploadDataStream`, which is what Chrome's network service makes of a page's `ReadableStream`. `net::ChunkedUploadDataStream` will not do: it keeps every byte until the request ends, and it lets a stream go over HTTP/1.1.
+
+The caller's file or iterable is read in the thread that waits for the response, and only when `//net` wants more. That has three results: a request that fails before `//net` can use a body has read none of it, an error the iterable raises reaches the caller and ends the request so that the server does not take what went for the whole body, and nothing on the network thread ever waits for Python.
+
+| The body | What it sends | Over HTTP/1.1 | Which Chrome does the same |
+|---|---|---|---|
+| An iterable, or a file that cannot seek | No `Content-Length`, over HTTP/2 or HTTP/3 | Refused, with `ERR_ALPN_NEGOTIATION_FAILED` and nothing on the wire | `fetch()` with a `ReadableStream`, which the Baselines of `fetch_post_stream` hold |
+| A file that can seek, or an iterable with a `Content-Length` in `headers` | `Content-Length`, in the place `//net` gives it on any body | Sent | `fetch()` with a `File`, which no Baseline holds. `//net` writes the header from the size of the body, whatever kind of body it is, so nothing here decides its place |
+
+A refusal raises a `TLSError`, which is a `RequestError`, named `ERR_ALPN_NEGOTIATION_FAILED`. That net error has that type everywhere, so it has it over plain HTTP too, where no TLS is involved.
+
+A stream of a size that does not keep to it fails. An iterable that gives more or less than its `Content-Length` raises a `ValueError`, and a file that turns out shorter than it was fails with `ERR_UPLOAD_FILE_CHANGED`, as `//net` says of a `File`. One that has grown goes no further than its size, also as for a `File`.
+
+Over HTTP/2 the end of a stream of unknown size is a `DATA` frame of its own with nothing in it, and over HTTP/3 the end of the QUIC stream. The Baselines show it, so a part never goes in the same read as the end. The body comes in parts as they come, each in a frame, so one page's stream of one part makes the same frames as a replay's.
+
+`//net` reads no response until the whole body has gone or the server has ended the stream, so a response does not arrive during a body, as it does not in Chrome, where a page has to ask for `duplex: "half"`. The caller's iterable has to end for the response to come, except for a `Session.stream()` of a server that ends it.
+
+A wait for the caller's next part is not a wait for the server, so the `read` timer stops during it, and the `total` timer does not. A file or iterable that blocks holds up the thread that reads it, so a timer's error waits until it gives the next part.
+
+### A stream goes once
+
+Fetch fails a request with a body that has no source on any redirect but a 303, in [step 11 of HTTP-redirect fetch](https://fetch.spec.whatwg.org/#http-redirect-fetch), which Chrome does in `CorsURLLoader`. A Session does the same with `ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED`. A 303 drops the body as it does in Chrome, so later redirects of that request have nothing to send again, and `follow_redirects=False` makes any redirect the response. A 421 is the response too, where `//net` would send any other body again, because Chrome tells it that the body has no source.
+
+`//net` goes on a new connection when a reused one turns out to be gone, and sends the body again. So `BodyStream` keeps the first 64 KiB of a stream, as Chrome keeps the same amount of a page's. A stream that has gone further fails with the same error, where Chrome's says `ERR_FAILED`.
+
+### What stays different
+
+| | Chrome | A Session |
+|---|---|---|
+| The error when a stream cannot go again | `ERR_INVALID_ARGUMENT` for a redirect and `ERR_FAILED` for another attempt, which a page sees only as `TypeError: Failed to fetch` | `ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED`, which says what happened. A caller who sends a bad argument gets `ERR_INVALID_ARGUMENT` |
+| A `File` on a 307 or another attempt | `//net` reads the file again | Any stream goes once, so a file fails as an iterable does. A caller who needs that sends bytes |
 
 ## Certificate verification
 
