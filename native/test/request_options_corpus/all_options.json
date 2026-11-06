@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "method": "POST",
+  "priority": 4,
+  "priority_incremental": false,
+  "referrer": "https://user:secret@a.test/page#fragment"
+}

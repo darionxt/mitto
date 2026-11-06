@@ -17,9 +17,12 @@ and PRIVATE_CERTIFICATE_SPKI_HASH with:
 
 import concurrent.futures
 import http.server
+import select
 import socket
 import socketserver
 import ssl
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -30,7 +33,17 @@ from typing import Any, cast
 import pytest
 
 import mitto
-from mitto._native import Priority, RequestError, Session
+from mitto._native import (
+    BodyAvailable,
+    Finished,
+    NativeEvent,
+    NativeRequest,
+    Priority,
+    RedirectFollowed,
+    RequestError,
+    ResponseStarted,
+    Session,
+)
 from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
 from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP2, HTTP3, KIND_PATHS, CaptureServer, normal_form
@@ -38,7 +51,10 @@ from tools.capture import RequestKind as CaptureRequestKind
 
 pytestmark = pytest.mark.usefixtures("native_library")
 
+ERR_ABORTED = -3
 ERR_INVALID_ARGUMENT = -4
+ERR_TOO_MANY_REDIRECTS = -310
+ERR_CONTENT_LENGTH_MISMATCH = -354
 ERR_CERT_AUTHORITY_INVALID = -202
 
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
@@ -555,3 +571,638 @@ def test_the_priority_and_whether_it_is_incremental_reach_the_priority_header(
 
     form = cast(dict[str, Any], normal_form(server.recording(HTTP2)))
     assert line in form["requests"][kind.value]["headers"]
+
+
+# How long a test waits for one thing to happen, so that a bug fails the test and does not hang it.
+EVENT_TIMEOUT_SECONDS = 30.0
+
+# Larger by far than what the socket buffers of a local connection hold on either Host, so that a body that nobody reads
+# has to stall.
+LARGE_BODY_SIZE = 64 * 1024 * 1024
+LARGE_BODY_CHUNK = bytes(64 * 1024)
+
+# How long a server has to send nothing to count as stalled. Too short only makes a test prove less.
+STALL_SECONDS = 0.5
+
+
+class ScriptedServer(LocalHTTPServer):
+    """An HTTP/1.1 server whose paths behave in the ways that a request's events have to cope with."""
+
+    request_queue_size = socket.SOMAXCONN
+
+    def __init__(self, server_address: tuple[str, int]) -> None:
+        super().__init__(server_address, ScriptedHandler)
+        self.requests_seen = threading.Semaphore(0)
+        self.methods: list[str] = []
+        self.stop_holding = threading.Event()
+        self.bytes_sent = 0
+        self.large_body_sent = threading.Event()
+
+    def url(self, path: str) -> str:
+        return f"http://127.0.0.1:{self.server_port}{path}"
+
+    def wait_for_requests(self, count: int) -> None:
+        for _ in range(count):
+            assert self.requests_seen.acquire(timeout=EVENT_TIMEOUT_SECONDS)
+
+    def wait_until_stalled(self) -> int:
+        """Return how many bytes of the large body have gone out, once that has stopped growing."""
+        deadline = time.monotonic() + EVENT_TIMEOUT_SECONDS
+        previous = -1
+        while previous != self.bytes_sent or previous == 0:
+            assert time.monotonic() < deadline
+            previous = self.bytes_sent
+            time.sleep(STALL_SECONDS)
+        return previous
+
+
+class ScriptedHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self) -> None:
+        server = cast(ScriptedServer, self.server)
+        server.methods.append(self.command)
+        server.requests_seen.release()
+        match self.path:
+            case "/hold":
+                # The timeout only stops a thread from outliving a test that failed.
+                server.stop_holding.wait(timeout=EVENT_TIMEOUT_SECONDS * 2)
+                self.send_small_body()
+            case "/large":
+                self.send_large_body()
+            case "/redirect":
+                self.send_redirect("/small")
+            case "/loop":
+                self.send_redirect("/loop")
+            case "/truncated":
+                self.send_response(200)
+                self.send_header("Content-Length", "1000")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(b"too short")
+            case _:
+                self.send_small_body()
+
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
+    def do_PUT(self) -> None:
+        self.do_GET()
+
+    def send_small_body(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", "5")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(b"small")
+
+    def send_redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def send_large_body(self) -> None:
+        server = cast(ScriptedServer, self.server)
+        self.send_response(200)
+        self.send_header("Content-Length", str(LARGE_BODY_SIZE))
+        self.end_headers()
+        remaining = LARGE_BODY_SIZE
+        while remaining > 0:
+            self.wfile.write(LARGE_BODY_CHUNK)
+            remaining -= len(LARGE_BODY_CHUNK)
+            server.bytes_sent += len(LARGE_BODY_CHUNK)
+        server.large_body_sent.set()
+
+    def handle(self) -> None:
+        # A client that cancels goes away in the middle of what this sends.
+        try:
+            super().handle()
+        except ConnectionError:
+            self.close_connection = True
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+@pytest.fixture
+def scripted_server() -> Iterator[ScriptedServer]:
+    """Run the local server with the paths above."""
+    with ScriptedServer(("127.0.0.1", 0)) as server:
+        serve(server)
+        yield server
+        server.stop_holding.set()
+        server.shutdown()
+
+
+def next_event(request: NativeRequest) -> NativeEvent:
+    event = request.next_event(EVENT_TIMEOUT_SECONDS)
+    assert event is not None
+    return event
+
+
+def read_available(request: NativeRequest) -> int:
+    """Read what has arrived, which asks for more once that is gone, and return how many bytes came."""
+    size = 0
+    while chunk := request.read():
+        size += len(chunk)
+    return size
+
+
+def run_to_end(request: NativeRequest) -> tuple[list[NativeEvent], int]:
+    """Read the whole body, and return the events on the way and the size of the body."""
+    events: list[NativeEvent] = []
+    size = 0
+    while True:
+        event = next_event(request)
+        events.append(event)
+        if isinstance(event, Finished):
+            return events, size
+        if isinstance(event, ResponseStarted | BodyAvailable):
+            size += read_available(request)
+
+
+def finished_net_error(request: NativeRequest) -> int:
+    """Take events until the last one, without reading, and return its net error."""
+    while True:
+        event = next_event(request)
+        if isinstance(event, Finished):
+            return event.net_error
+
+
+def is_readable(fd: int, timeout: float = 0) -> bool:
+    return bool(select.select([fd], [], [], timeout)[0])
+
+
+def test_a_response_arrives_as_events(scripted_server: ScriptedServer) -> None:
+    url = scripted_server.url("/small")
+
+    with Session() as session, session.start(url) as request:
+        started = next_event(request)
+        assert isinstance(started, ResponseStarted)
+        assert started.status == 200
+        assert started.protocol == "http/1.1"
+        assert started.url == url
+        assert ("Content-Length", "5") in started.headers
+
+        assert request.read() is None
+        assert isinstance(next_event(request), BodyAvailable)
+        assert request.read() == b"small"
+
+        assert request.read() is None
+        assert next_event(request) == Finished(net_error=0)
+        assert request.read() == b""
+
+
+def test_a_body_can_be_read_in_small_pieces(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/small")) as request:
+        assert isinstance(next_event(request), ResponseStarted)
+        assert request.read(2) is None
+        assert isinstance(next_event(request), BodyAvailable)
+
+        assert request.read(2) == b"sm"
+        assert request.read(2) == b"al"
+        assert request.read(2) == b"l"
+
+
+def test_a_read_before_the_response_starts_the_body_when_it_can(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/small")) as request:
+        assert request.read() is None
+
+        assert isinstance(next_event(request), ResponseStarted)
+        assert isinstance(next_event(request), BodyAvailable)
+        assert request.read() == b"small"
+
+
+def test_a_read_of_nothing_is_refused(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/small")) as request:
+        for size in [0, -1]:
+            with pytest.raises(RequestError) as caught:
+                request.read(size)
+            assert caught.value.net_error == ERR_INVALID_ARGUMENT
+
+
+def test_a_redirect_arrives_as_an_event(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/redirect")) as request:
+        events, size = run_to_end(request)
+
+    redirect, started, *_ = events
+    assert isinstance(redirect, RedirectFollowed)
+    assert redirect.status == 302
+    assert redirect.url == scripted_server.url("/small")
+    assert ("Location", "/small") in redirect.headers
+    assert isinstance(started, ResponseStarted)
+    assert started.url == scripted_server.url("/small")
+    assert size == len(b"small")
+
+
+def test_a_blocking_request_ends_at_the_final_url(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        response = session.request(scripted_server.url("/redirect"))
+
+    assert response.url == scripted_server.url("/small")
+    assert response.body == b"small"
+
+
+def test_too_many_redirects_finish_with_the_net_error(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/loop")) as request:
+        events, _ = run_to_end(request)
+
+    assert events[-1] == Finished(net_error=ERR_TOO_MANY_REDIRECTS)
+    assert all(isinstance(event, RedirectFollowed) for event in events[:-1])
+
+
+def test_a_body_that_ends_early_finishes_with_the_net_error(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/truncated")) as request:
+        events, size = run_to_end(request)
+
+    assert events[-1] == Finished(net_error=ERR_CONTENT_LENGTH_MISMATCH)
+    assert size == len(b"too short")
+
+
+def test_a_blocking_request_raises_when_the_body_ends_early(scripted_server: ScriptedServer) -> None:
+    with Session() as session, pytest.raises(RequestError) as caught:
+        session.request(scripted_server.url("/truncated"))
+
+    assert caught.value.net_error == ERR_CONTENT_LENGTH_MISMATCH
+
+
+def test_next_event_returns_none_when_none_arrives_in_time(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/hold")) as request:
+        scripted_server.wait_for_requests(1)
+
+        assert request.next_event(0) is None
+        assert request.next_event(0.01) is None
+
+
+def test_next_event_raises_after_the_last_event(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start("not a url") as request:
+        assert isinstance(next_event(request), Finished)
+
+        with pytest.raises(RequestError):
+            request.next_event()
+
+
+def test_a_closed_request_refuses_what_needs_it(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        request = session.start(scripted_server.url("/small"))
+        request.close()
+
+        with pytest.raises(RequestError):
+            request.next_event()
+        with pytest.raises(RequestError):
+            request.read()
+        request.cancel()
+        request.close()
+
+
+@pytest.mark.parametrize("method", ["HEAD", "PUT"])
+def test_the_method_reaches_the_wire(scripted_server: ScriptedServer, method: str) -> None:
+    with Session() as session:
+        response = session.request(scripted_server.url("/small"), method=method)
+
+    assert response.status == 200
+    assert scripted_server.methods == [method]
+
+
+@pytest.mark.parametrize("method", ["CONNECT", "TRACE", "track", "no spaces", ""])
+def test_a_method_chrome_would_not_send_is_refused(scripted_server: ScriptedServer, method: str) -> None:
+    with Session() as session, pytest.raises(RequestError) as caught:
+        session.request(scripted_server.url("/small"), method=method)
+
+    assert caught.value.net_error == ERR_INVALID_ARGUMENT
+    assert str(caught.value).startswith(method)
+    assert scripted_server.methods == []
+
+
+def test_a_server_sending_a_large_body_stalls_until_the_caller_reads(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/large")) as request:
+        assert isinstance(next_event(request), ResponseStarted)
+
+        assert scripted_server.wait_until_stalled() < LARGE_BODY_SIZE
+        assert not scripted_server.large_body_sent.is_set()
+
+        assert request.read() is None
+        events, size = run_to_end(request)
+
+    assert events[-1] == Finished(net_error=0)
+    assert size == LARGE_BODY_SIZE
+    assert scripted_server.large_body_sent.wait(timeout=EVENT_TIMEOUT_SECONDS)
+
+
+def test_a_request_is_cancelled_before_its_response(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        with (
+            session.start(scripted_server.url("/hold")) as other,
+            session.start(scripted_server.url("/hold")) as cancelled,
+        ):
+            scripted_server.wait_for_requests(2)
+
+            cancelled.cancel()
+
+            assert next_event(cancelled) == Finished(net_error=ERR_ABORTED)
+            assert other.next_event(0) is None
+            scripted_server.stop_holding.set()
+            events, size = run_to_end(other)
+            assert events[-1] == Finished(net_error=0)
+            assert size == len(b"small")
+
+        assert session.request(scripted_server.url("/small")).body == b"small"
+
+
+def test_a_request_is_cancelled_in_the_middle_of_its_body(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        with (
+            session.start(scripted_server.url("/large")) as other,
+            session.start(scripted_server.url("/large")) as cancelled,
+        ):
+            assert isinstance(next_event(cancelled), ResponseStarted)
+            assert cancelled.read() is None
+            assert isinstance(next_event(cancelled), BodyAvailable)
+            assert cancelled.read()
+
+            cancelled.cancel()
+
+            assert finished_net_error(cancelled) == ERR_ABORTED
+            events, size = run_to_end(other)
+            assert events[-1] == Finished(net_error=0)
+            assert size == LARGE_BODY_SIZE
+
+        assert session.request(scripted_server.url("/small")).body == b"small"
+
+
+def test_cancelling_a_finished_request_changes_nothing(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/small")) as request:
+        events, _ = run_to_end(request)
+
+        request.cancel()
+
+        assert events[-1] == Finished(net_error=0)
+        assert request.read() == b""
+
+
+def test_a_cancelled_request_can_read_what_had_arrived(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/small")) as request:
+        assert request.read() is None
+        assert isinstance(next_event(request), ResponseStarted)
+        assert isinstance(next_event(request), BodyAvailable)
+
+        request.cancel()
+
+        assert next_event(request) == Finished(net_error=ERR_ABORTED)
+        assert request.read() == b"small"
+        assert request.read() == b""
+
+
+def test_cancel_ends_a_wait_on_another_thread(scripted_server: ScriptedServer) -> None:
+    with (
+        Session() as session,
+        session.start(scripted_server.url("/hold")) as request,
+        concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        scripted_server.wait_for_requests(1)
+        waiting = executor.submit(request.next_event)
+
+        request.cancel()
+
+        assert waiting.result(timeout=EVENT_TIMEOUT_SECONDS) == Finished(net_error=ERR_ABORTED)
+
+
+def test_a_request_that_is_closed_running_leaves_the_session_working(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        session.start(scripted_server.url("/large")).close()
+
+        assert session.request(scripted_server.url("/small")).body == b"small"
+
+
+def test_closing_a_session_ends_its_running_requests(scripted_server: ScriptedServer) -> None:
+    session = Session()
+    held = session.start(scripted_server.url("/hold"))
+    with session.start(scripted_server.url("/large")) as large:
+        assert isinstance(next_event(large), ResponseStarted)
+        scripted_server.wait_for_requests(2)
+
+        session.close()
+
+        assert finished_net_error(large) == ERR_ABORTED
+    assert next_event(held) == Finished(net_error=ERR_ABORTED)
+    held.close()
+
+
+def test_closing_a_session_ends_a_blocking_request_on_another_thread(scripted_server: ScriptedServer) -> None:
+    session = Session()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        blocking = executor.submit(session.request, scripted_server.url("/hold"))
+        scripted_server.wait_for_requests(1)
+
+        session.close()
+
+        error = blocking.exception(timeout=EVENT_TIMEOUT_SECONDS)
+    assert isinstance(error, RequestError)
+    assert error.net_error == ERR_ABORTED
+
+
+def test_the_event_fd_is_readable_while_an_event_is_waiting(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        fd = session.event_fd()
+        assert session.event_fd() == fd
+        assert not is_readable(fd)
+        assert session.next_ready_request() is None
+
+        with session.start(scripted_server.url("/small")) as request:
+            assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
+            assert session.next_ready_request() == request.identity
+            assert not is_readable(fd)
+            assert isinstance(request.next_event(0), ResponseStarted)
+            assert session.next_ready_request() is None
+
+            # The body waits to be asked for, so nothing else can arrive yet.
+            assert not is_readable(fd, timeout=0.05)
+            assert request.read() is None
+
+            assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
+            assert session.next_ready_request() == request.identity
+            assert isinstance(request.next_event(0), BodyAvailable)
+            assert request.read() == b"small"
+            assert request.read() is None
+
+            assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
+            assert session.next_ready_request() == request.identity
+            assert request.next_event(0) == Finished(net_error=0)
+            assert not is_readable(fd)
+
+
+def test_the_event_fd_serves_all_the_requests_of_a_session(scripted_server: ScriptedServer) -> None:
+    url = scripted_server.url("/small")
+
+    with Session() as session:
+        fd = session.event_fd()
+        requests = {request.identity: request for request in [session.start(url) for _ in range(8)]}
+        remaining = set(requests)
+        while remaining:
+            assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
+            identity = session.next_ready_request()
+            assert identity is not None
+            event = requests[identity].next_event(0)
+            if isinstance(event, ResponseStarted | BodyAvailable):
+                read_available(requests[identity])
+            elif isinstance(event, Finished):
+                assert event.net_error == 0
+                remaining.remove(identity)
+        for request in requests.values():
+            request.close()
+
+
+def test_a_request_closed_with_an_event_waiting_can_still_come_up(scripted_server: ScriptedServer) -> None:
+    with Session() as session:
+        fd = session.event_fd()
+        request = session.start(scripted_server.url("/small"))
+        identity = request.identity
+        assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
+
+        request.close()
+
+        assert session.next_ready_request() == identity
+        assert session.request(scripted_server.url("/small")).body == b"small"
+
+
+# Each of these starts a request and exits with it running. Each waits to be told to exit, once the request has reached
+# the server. What the test wants to see is how the interpreter's shutdown and the network thread get along: a thread
+# that is waiting for an event when Python goes away must not stop the network thread or the process.
+EXIT_PROGRAMS = {
+    "a-body-that-nobody-reads": """
+import sys
+from mitto._native import ResponseStarted, Session
+
+request = Session().start(sys.argv[1])
+while not isinstance(request.next_event(), ResponseStarted):
+    pass
+sys.stdin.readline()
+""",
+    "a-thread-blocked-in-a-request": """
+import sys
+import threading
+from mitto._native import Session
+
+threading.Thread(target=Session().request, args=(sys.argv[1],), daemon=True).start()
+sys.stdin.readline()
+""",
+    "a-thread-in-the-middle-of-reading": """
+import sys
+import threading
+from mitto._native import Session
+
+threading.Thread(target=Session().request, args=(sys.argv[1],), daemon=True).start()
+sys.stdin.readline()
+""",
+    "several-requests": """
+import sys
+from mitto._native import Session
+
+session = Session()
+requests = [session.start(sys.argv[1]) for _ in range(8)]
+sys.stdin.readline()
+""",
+}
+
+EXIT_PROGRAM_PATHS = {
+    "a-body-that-nobody-reads": "/large",
+    "a-thread-blocked-in-a-request": "/hold",
+    "a-thread-in-the-middle-of-reading": "/large",
+    "several-requests": "/hold",
+}
+
+
+@pytest.mark.parametrize("name", EXIT_PROGRAMS)
+def test_a_process_exits_cleanly_with_a_request_running(scripted_server: ScriptedServer, name: str) -> None:
+    process = subprocess.Popen(
+        [sys.executable, "-c", EXIT_PROGRAMS[name], scripted_server.url(EXIT_PROGRAM_PATHS[name])],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        scripted_server.wait_for_requests(1)
+        # So that a response arrives while the process is on its way out.
+        scripted_server.stop_holding.set()
+        stdout, stderr = process.communicate("\n", timeout=EVENT_TIMEOUT_SECONDS)
+    finally:
+        process.kill()
+        process.wait()
+
+    assert process.returncode == 0
+    assert stdout == ""
+    assert stderr == ""
+
+
+HTTP2_RST_STREAM = 0x3
+
+
+class MultiplexingHttp2Server(socketserver.ThreadingTCPServer):
+    """A server that speaks just enough HTTP/2 to hold a connection's streams open until the client resets one."""
+
+    daemon_threads = True
+
+    def __init__(self, server_address: tuple[str, int]) -> None:
+        super().__init__(server_address, MultiplexingHttp2Handler)
+        self.connections = 0
+        self.hold_streams = False
+        self.streams_held = threading.Semaphore(0)
+        self.resets: list[int] = []
+
+
+class MultiplexingHttp2Handler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        server = cast(MultiplexingHttp2Server, self.server)
+        if self.rfile.read(len(HTTP2_PREFACE)) != HTTP2_PREFACE:
+            return
+        server.connections += 1
+        self.wfile.write(http2_frame(HTTP2_SETTINGS, 0, 0, b""))
+
+        held: list[int] = []
+        while len(header := self.rfile.read(9)) == 9:
+            frame_type = header[3]
+            stream_id = int.from_bytes(header[5:9])
+            self.rfile.read(int.from_bytes(header[:3]))
+            if frame_type == HTTP2_HEADERS and server.hold_streams:
+                held.append(stream_id)
+                server.streams_held.release()
+            elif frame_type == HTTP2_HEADERS:
+                self.answer(stream_id)
+            elif frame_type == HTTP2_RST_STREAM:
+                server.resets.append(stream_id)
+                held.remove(stream_id)
+                for other in held:
+                    self.answer(other)
+
+    def answer(self, stream_id: int) -> None:
+        self.wfile.write(http2_frame(HTTP2_HEADERS, HTTP2_END_HEADERS | HTTP2_END_STREAM, stream_id, HPACK_STATUS_200))
+
+
+def test_cancelling_a_stream_leaves_the_others_on_its_connection() -> None:
+    context = private_certificate_context()
+    context.set_alpn_protocols(["h2"])
+    with MultiplexingHttp2Server(("127.0.0.1", 0)) as server:
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        serve(server)
+        url = f"https://127.0.0.1:{server.server_address[1]}/"
+        with Session(ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH]) as session:
+            # Without a connection to share, the two requests below could each open one.
+            assert session.request(url).protocol == "h2"
+            server.hold_streams = True
+            with session.start(url) as cancelled, session.start(url) as other:
+                for _ in range(2):
+                    assert server.streams_held.acquire(timeout=EVENT_TIMEOUT_SECONDS)
+
+                cancelled.cancel()
+
+                assert next_event(cancelled) == Finished(net_error=ERR_ABORTED)
+                started = next_event(other)
+                assert isinstance(started, ResponseStarted)
+                assert started.status == 200
+                assert started.protocol == "h2"
+        server.shutdown()
+
+    assert server.connections == 1
+    assert len(server.resets) == 1

@@ -1,10 +1,16 @@
 {
   global:
     mitto_abi_version;
-    mitto_response_free;
+    mitto_event_free;
+    mitto_request_cancel;
+    mitto_request_next_event;
+    mitto_request_read;
+    mitto_request_release;
+    mitto_request_start;
     mitto_session_create;
     mitto_session_destroy;
-    mitto_session_request;
+    mitto_session_event_fd;
+    mitto_session_next_ready_request;
   local:
     *;
 };

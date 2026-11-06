@@ -38,7 +38,7 @@ jobs:
           - config: ubsan
             files: mitto_core_test libmitto_core.so
           - config: fuzz
-            files: session_settings_fuzzer libsanitizer_shared_hooks.so
+            files: request_options_fuzzer session_settings_fuzzer libsanitizer_shared_hooks.so
     env:
       UV_LOCKED: "1"
     steps:
@@ -81,21 +81,24 @@ jobs:
           MITTO_CORE_TEST: ${{ runner.temp }}/native-core/mitto_core_test
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
-      - name: Fuzz the code that reads a Session's settings
+      - name: Fuzz the code that reads a Session's settings and a request's options
         if: matrix.config == 'fuzz'
         run: |
-          mkdir "$RUNNER_TEMP/corpus" "$RUNNER_TEMP/crashes"
-          "$RUNNER_TEMP/native-core/session_settings_fuzzer" \
-            -max_total_time=300 \
-            -dict=native/test/session_settings_fuzzer.dict \
-            -artifact_prefix="$RUNNER_TEMP/crashes/" \
-            "$RUNNER_TEMP/corpus" native/test/session_settings_corpus
+          mkdir "$RUNNER_TEMP/crashes"
+          for target in session_settings request_options; do
+            mkdir "$RUNNER_TEMP/corpus-$target"
+            "$RUNNER_TEMP/native-core/${target}_fuzzer" \
+              -max_total_time=300 \
+              -dict="native/test/${target}_fuzzer.dict" \
+              -artifact_prefix="$RUNNER_TEMP/crashes/$target-" \
+              "$RUNNER_TEMP/corpus-$target" "native/test/${target}_corpus"
+          done
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       # A run is random, so the input that crashed it is the only way to repeat it.
       - if: failure() && matrix.config == 'fuzz'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: session-settings-fuzzer-crashes
+          name: fuzzer-crashes
           path: ${{ runner.temp }}/crashes
           if-no-files-found: ignore
