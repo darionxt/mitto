@@ -5,8 +5,8 @@ import pickle
 
 import pytest
 
-from mitto import Headers, HTTPStatusError, MittoError, Response
-from mitto._native import NativeResponse
+from mitto import Headers, HTTPStatusError, MittoError, Redirect, Response
+from mitto._native import NativeResponse, RedirectFollowed
 from mitto._response import to_response
 
 PAIRS = (
@@ -188,3 +188,20 @@ def test_a_status_error_survives_pickling() -> None:
 
     assert restored.response == with_status(404)
     assert restored.status == 404
+
+
+def test_the_public_response_holds_each_redirect() -> None:
+    hops = (
+        RedirectFollowed(status=301, url="https://example.test/a", headers=(("Location", "/b"),)),
+        RedirectFollowed(status=307, url="https://example.test/b", headers=(("Location", "/c"),)),
+    )
+    native = NativeResponse(status=200, protocol="h2", url="https://example.test/c", headers=(), body=b"", history=hops)
+
+    assert to_response(native).history == (
+        Redirect(status=301, url="https://example.test/a", headers=Headers((("Location", "/b"),))),
+        Redirect(status=307, url="https://example.test/b", headers=Headers((("Location", "/c"),))),
+    )
+
+
+def test_a_response_with_no_redirects_has_an_empty_history() -> None:
+    assert response(b"").history == ()

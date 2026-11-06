@@ -4,6 +4,7 @@
 "\"priority\""
 "\"priority_incremental\""
 "\"referrer\""
+"\"follow_redirects\""
 "\"connect_timeout_ms\""
 "\"read_timeout_ms\""
 "\"total_timeout_ms\""

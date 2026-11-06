@@ -63,12 +63,16 @@ class RequestOptions(BodyOptions, total=False):
             methods.
         timeout: A number is the total time in seconds, and a Timeout sets each timer. None runs no timer, in place of the
             Session's default. The default is the Session's.
+        follow_redirects: False makes a redirect the response, with empty content, because the network stack does not read
+            the body of a redirect. A redirect to a URL that is not valid still ends the request with a RequestError. The
+            default is True.
     """
 
     params: QueryParams | None
     headers: RequestHeaders | None
     kind: RequestKind | str | None
     timeout: float | Timeout | None
+    follow_redirects: bool
 
 
 class BuiltRequest(RequestDefaults):
@@ -78,12 +82,14 @@ class BuiltRequest(RequestDefaults):
         url: The URL to fetch, with the query from `params`.
         method: The HTTP method to send.
         timeout: The timers of the request.
+        follow_redirects: Whether a redirect is followed, or is the response.
         body: The bytes to send as the request's body, or None for no body.
     """
 
     url: str
     method: str
     timeout: Timeout
+    follow_redirects: bool
     body: bytes | None
 
 
@@ -96,6 +102,7 @@ def build_request(
     headers: RequestHeaders | None = None,
     kind: RequestKind | str | None = None,
     timeout: float | Timeout | None = None,
+    follow_redirects: bool = True,
     data: RequestData | None = None,
     json: object = None,
     files: FileFields | None = None,
@@ -111,6 +118,7 @@ def build_request(
         headers: See RequestOptions.
         kind: See RequestOptions.
         timeout: See RequestOptions. A Session's default is the caller's to put in place of a `timeout` that was not given.
+        follow_redirects: See RequestOptions.
         data: See BodyOptions.
         json: See BodyOptions.
         files: See BodyOptions.
@@ -144,6 +152,7 @@ def build_request(
         priority_incremental=defaults["priority_incremental"],
         referrer=referrer,
         timeout=to_timeout(timeout),
+        follow_redirects=follow_redirects,
         body=None if body is None else body.content,
     )
 

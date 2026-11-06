@@ -51,7 +51,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 5
+ABI_VERSION = 6
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -278,9 +278,11 @@ class ResponseStarted:
 class RedirectFollowed:
     """A redirect arrived and //net follows it.
 
+    The next event's URL says where it led, unless the request ends first.
+
     Attributes:
         status: The HTTP status code of the redirect.
-        url: The URL that it leads to.
+        url: The URL that answered with the redirect.
         headers: The (name, value) pairs of the redirect, as in ResponseStarted.
     """
 
@@ -321,6 +323,7 @@ class NativeResponse:
             Headers have no fixed encoding, so they are decoded as Latin-1, which keeps every byte:
             value.encode("latin-1") gives back what the server sent.
         body: The final response's body, after any content decoding. It stays out of repr(), since it can be large.
+        history: The redirects that led here, the first one first.
     """
 
     status: int
@@ -328,6 +331,7 @@ class NativeResponse:
     url: str
     headers: tuple[tuple[str, str], ...]
     body: bytes = field(repr=False)
+    history: tuple[RedirectFollowed, ...] = ()
 
 
 class NativeRequest:
@@ -600,6 +604,7 @@ class Session:
         referrer: str | None = None,
         timeout: Timeout = NO_TIMEOUT,
         body: bytes | None = None,
+        follow_redirects: bool = True,
     ) -> NativeRequest:
         """Start a request for `url` and return without waiting for it.
 
@@ -620,6 +625,8 @@ class Session:
             body: The bytes to send as the request's body, which the native core copies before this returns. None sends
                 no body, and //net still sends a Content-Length of 0 with POST and PUT. //net adds a Content-Length for a
                 body, also an empty one.
+            follow_redirects: False makes a redirect the response, with an empty body, because //net does not read the body
+                of a redirect. A redirect to a URL that is not valid still ends the request with ERR_INVALID_REDIRECT.
 
         Raises:
             ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
@@ -633,6 +640,7 @@ class Session:
             "method": method,
             "priority": int(priority),
             "priority_incremental": priority_incremental,
+            "follow_redirects": follow_redirects,
             **timeout_options(timeout),
         }
         if referrer is not None:
@@ -673,6 +681,7 @@ class Session:
         referrer: str | None = None,
         timeout: Timeout = NO_TIMEOUT,
         body: bytes | None = None,
+        follow_redirects: bool = True,
     ) -> NativeResponse:
         """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
 
@@ -685,7 +694,9 @@ class Session:
                 status such as 404 is a response. An invalid header or method, or a `referrer` that //net cannot send,
                 ends the request with ERR_INVALID_ARGUMENT.
         """
-        with self.start(url, headers, method, priority, priority_incremental, referrer, timeout, body) as request:
+        with self.start(
+            url, headers, method, priority, priority_incremental, referrer, timeout, body, follow_redirects
+        ) as request:
             return _collect_response(request)
 
 
@@ -696,8 +707,11 @@ def _collect_response(request: NativeRequest) -> NativeResponse:
         RequestError: If the request ends without a response.
     """
     started: ResponseStarted | None = None
+    history: list[RedirectFollowed] = []
     chunks: list[bytes] = []
     while not isinstance(event := request.next_event(), Finished):
+        if isinstance(event, RedirectFollowed):
+            history.append(event)
         if isinstance(event, ResponseStarted):
             started = event
         if isinstance(event, ResponseStarted | BodyAvailable):
@@ -712,6 +726,7 @@ def _collect_response(request: NativeRequest) -> NativeResponse:
         url=started.url,
         headers=started.headers,
         body=b"".join(chunks),
+        history=tuple(history),
     )
 
 

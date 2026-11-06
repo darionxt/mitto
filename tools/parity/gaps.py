@@ -13,9 +13,6 @@ KNOWN_GAPS_FILE_NAME = "known_gaps.json"
 
 _ORDER = "<order>"
 _NOTHING = "(nothing)"
-_REDIRECT_PREFIX = "redirect_"
-_LATER_FRAMES_FIELD = "request.later_frames"
-_CANCEL: Json = [{"type": "RST_STREAM", "flags": [], "payload": "00000008"}]
 
 type _Identified = dict[tuple[str, int], Json]
 """The items of a list by what identifies them: a name, and which item of that name it is, counted from 1."""
@@ -194,30 +191,12 @@ class Mismatches:
 
 
 def mismatches(found: Iterable[Gap], listed: Iterable[Gap]) -> Mismatches:
-    """Compare the gaps a run found with the known-gaps list. A gap whose value has changed is a different gap.
-
-    A gap that comes and goes between runs of the same native core counts for nothing, whichever way it went.
-    """
+    """Compare the gaps a run found with the known-gaps list. A gap whose value has changed is a different gap."""
     found_by_text = {_identity_text(gap): gap for gap in found}
     listed_by_text = {_identity_text(gap): gap for gap in listed}
     return Mismatches(
-        unlisted=[
-            gap for text, gap in found_by_text.items() if text not in listed_by_text and not _depends_on_timing(gap)
-        ],
-        gone=[gap for text, gap in listed_by_text.items() if text not in found_by_text and not _depends_on_timing(gap)],
-    )
-
-
-def _depends_on_timing(gap: Gap) -> bool:
-    """Return whether a gap is the cancel that a redirect's HTTP/2 stream only usually gets.
-
-    The native core follows a redirect at once, which cancels the stream while //net is still reading the frame that
-    ends it. If the response came before //net asked for it, the stream has already ended, and nothing is cancelled.
-    """
-    return (
-        gap.case.startswith(_REDIRECT_PREFIX)
-        and gap.field == _LATER_FRAMES_FIELD
-        and (gap.baseline, gap.mitto) in ((None, _CANCEL), (_CANCEL, None))
+        unlisted=[gap for text, gap in found_by_text.items() if text not in listed_by_text],
+        gone=[gap for text, gap in listed_by_text.items() if text not in found_by_text],
     )
 
 
