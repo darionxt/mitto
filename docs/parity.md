@@ -272,7 +272,29 @@ A proxy that asks a Session with no credentials, or asks again after their answe
 
 A server's own `401` stays a response, because the proxy's credentials are not for it. A `407` from a server behind a tunnel ends the request with `ERR_UNEXPECTED_PROXY_AUTH`, because `//net` lets only the proxy ask.
 
-A proxy's URL may hold a password, so no message and no `repr` repeats it. A Session does not keep the URL in Python. `SOCKS5ClientSocket` in `//net` offers only "no authentication", so real Chrome cannot use a SOCKS5 proxy that needs credentials, and a `socks5` URL that holds any is refused for now.
+A proxy's URL may hold a password, so no message and no `repr` repeats it. A Session does not keep the URL in Python.
+
+### Credentials over SOCKS5
+
+`SOCKS5ClientSocket` in `//net` offers only "no authentication", so real Chrome cannot use a SOCKS5 proxy that needs credentials. A Session whose `socks5` URL holds some does the username and password of [RFC 1929](https://www.rfc-editor.org/rfc/rfc1929) below `//net`, in `native/socks5_auth_socket_factory.cc`, with no patch and no local port. Only such a Session has this code: every other one has nothing between `//net` and its sockets.
+
+Each TCP socket of that Session is a wrapper. Nothing tells a `ClientSocketFactory` which socket goes to the proxy, because it only sees an address, which a connection around the proxy may share, and a NetLog source, which is the same for a tunnel of HTTPS and for HTTPS with no proxy. So the first write decides. A Session has one proxy and only `SOCKS5ClientSocket` starts a connection with its three bytes of greeting, which neither TLS nor HTTP can do, so credentials reach no other peer. Any other first write makes the wrapper pass everything on.
+
+On that greeting, the wrapper has its own exchange with the proxy in `native/socks5_auth_exchange.cc`, and then answers that the proxy needs nothing, as `SOCKS5ClientSocket` expects. That one goes on to send the name, so the proxy finds it as it does with no credentials. What follows inside the tunnel does not change, so a target has the same normal form as through any other proxy. A test holds that against the Baseline of `proxy_navigation`.
+
+This runs from the write and not from `Connect()`, because `SOCKSConnectJob` turns any error of `Connect()` into `ERR_PROXY_CONNECTION_FAILED`, and tries the proxy's next address. From here an error stays what it is, and the job's 30 seconds for the SOCKS5 handshake cover the exchange.
+
+The greeting offers "no authentication" and "username and password". A proxy that picks the first never gets the credentials, as an HTTP proxy that does not ask never does. SOCKS5 has nothing to remember, so each new connection to the proxy gives them again.
+
+| What the proxy answers | The request ends with |
+|---|---|
+| A status other than success | `ERR_PROXY_AUTH_REQUESTED`, as from an HTTP proxy that refuses |
+| Neither of the methods offered | `ERR_PROXY_AUTH_UNSUPPORTED` |
+| Another version, or it closes the connection during the exchange | `ERR_SOCKS_CONNECTION_FAILED`, as in `SOCKS5ClientSocket` |
+
+These are all a `ProxyError`. A read or a write that fails during the exchange keeps its own error, as in `SOCKS5ClientSocket`, so a reset connection is a `ConnectionFailedError`. A proxy that asks a Session with no credentials sees the greeting of `//net`, and ends the request with `ERR_SOCKS_CONNECTION_FAILED`, as it does in Chrome.
+
+RFC 1929 sends bytes and names no encoding, so a percent-escape in the URL stands for its own byte, and `%FF` is a byte that is not text. HTTP's credentials go through `GetIdentityFromURL()`, which keeps such an escape as text. RFC 1929 has one byte for each length, so anything over 255 bytes once decoded is refused when the Session is created. It lists 1 as the shortest, but a URL with only a username or only a password sends the other with a length of 0 and leaves the choice to the proxy.
 
 ## Redirects
 

@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "mitto/ignore_errors_cert_verifier.h"
+#include "mitto/socks5_auth_exchange.h"
 #include "net/base/auth.h"
 #include "net/base/ip_endpoint.h"
 #include "net/proxy_resolution/proxy_config.h"
@@ -45,8 +46,11 @@ struct SessionSettings {
   // settings say.
   net::ProxyConfig proxy_config;
 
-  // What to answer that proxy with when it asks.
+  // What to answer that proxy with when it asks, over HTTP.
   std::optional<net::AuthCredentials> proxy_credentials;
+
+  // The same for a SOCKS5 proxy, which //net has no way to answer.
+  std::optional<Socks5Credentials> socks5_credentials;
 
   // Origins that are reached over QUIC, and over nothing else, and whether that
   // goes for every origin. //net accepts a certificate from an unknown root

@@ -49,6 +49,7 @@
 #include "mitto/request_channel.h"
 #include "mitto/request_options.h"
 #include "mitto/session_settings.h"
+#include "mitto/socks5_auth_socket_factory.h"
 #include "mitto/ssl_config_service_mojo.h"
 #include "mitto/stub_resolver_config_reader.h"
 #include "net/base/auth.h"
@@ -674,6 +675,12 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
                                          kProxyTrafficAnnotation)));
   session->proxy_credentials = std::move(settings.proxy_credentials);
   session->accept_ch_via_alps = std::move(settings.accept_ch_via_alps);
+  // Only for such a Session, so that no other has anything between //net and its
+  // sockets.
+  if (settings.socks5_credentials) {
+    builder.set_client_socket_factory(std::make_unique<Socks5AuthSocketFactory>(
+        *std::move(settings.socks5_credentials)));
+  }
   std::unique_ptr<net::CertVerifier> cert_verifier = CreateCertVerifier(
       session->cert_net_fetcher, std::move(settings.additional_trust_anchors));
   if (!settings.ignore_certificate_errors_spki_list.empty()) {

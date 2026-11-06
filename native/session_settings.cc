@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
+#include "base/strings/escape.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
@@ -190,8 +191,8 @@ std::optional<net::ProxyServer::Scheme> ReadProxyScheme(const GURL& url) {
 // Reads the proxy as the one entry of Chrome's --proxy-server, which comes to
 // the same rules, except that a URL may also hold what to answer the proxy
 // with. //net has no use for anything else in a URL, so that is a mistake here,
-// and so is any scheme but those named. Credentials for SOCKS5 are refused
-// because SOCKS5ClientSocket offers only "no authentication".
+// and so is any scheme but those named. Credentials too long for SOCKS5 are
+// refused, because RFC 1929 has one byte for each length.
 bool ReadProxy(const base::Value& value, SessionSettings& settings) {
   if (!value.is_string()) {
     return false;
@@ -213,12 +214,22 @@ bool ReadProxy(const base::Value& value, SessionSettings& settings) {
   }
   if (url.has_username() || url.has_password()) {
     if (*scheme == net::ProxyServer::SCHEME_SOCKS5) {
-      return false;
+      // RFC 1929 sends bytes, so each escape stands for its own byte. What HTTP
+      // uses keeps an escape that is not valid UTF-8 as text.
+      Socks5Credentials credentials{
+          base::UnescapeBinaryURLComponent(url.GetUsername()),
+          base::UnescapeBinaryURLComponent(url.GetPassword())};
+      if (credentials.username.size() > kMaxSocks5CredentialSize ||
+          credentials.password.size() > kMaxSocks5CredentialSize) {
+        return false;
+      }
+      settings.socks5_credentials = std::move(credentials);
+    } else {
+      std::u16string username;
+      std::u16string password;
+      net::GetIdentityFromURL(url, &username, &password);
+      settings.proxy_credentials.emplace(username, password);
     }
-    std::u16string username;
-    std::u16string password;
-    net::GetIdentityFromURL(url, &username, &password);
-    settings.proxy_credentials.emplace(username, password);
   }
   net::ProxyConfig::ProxyRules& rules = settings.proxy_config.proxy_rules();
   rules.type = net::ProxyConfig::ProxyRules::Type::PROXY_LIST;

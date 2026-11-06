@@ -61,10 +61,10 @@ class Session:
                 with `session.cookies.save(path)`. The default keeps them only until the Session closes.
             proxy: The proxy for every request, as a URL: "http://user:password@host:port", or the same with the scheme
                 https or socks5. A username and password are percent-encoded, and answer the proxy when it asks, as they do
-                in Chrome once a person has typed them. A SOCKS5 proxy cannot take them yet. As in Chrome, a request to
-                localhost, a *.localhost name or a loopback address goes around the proxy, and a proxy that fails is an
-                error and not a reason to go directly. The default reaches each server directly, whatever the system's
-                proxy settings say.
+                in Chrome once a person has typed them. A SOCKS5 proxy, which Chrome has no way to answer, gets them by
+                RFC 1929, each at most 255 bytes once decoded. As in Chrome, a request to localhost, a *.localhost name or
+                a loopback address goes around the proxy, and a proxy that fails is an error and not a reason to go
+                directly. The default reaches each server directly, whatever the system's proxy settings say.
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
@@ -134,9 +134,10 @@ class Session:
                 stream does not keep to its `Content-Length`.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
                 that runs out is a RequestTimeoutError. A proxy that asks for credentials this Session does not have, or
-                refuses those it has, is a ProxyError with ERR_PROXY_AUTH_REQUESTED. An HTTP error status such as 404 is a
-                response, which Response.raise_for_status() turns into an error. An invalid header or method, or an
-                `initiator` that is not a valid URL, ends the request with ERR_INVALID_ARGUMENT.
+                refuses those it has, is a ProxyError with ERR_PROXY_AUTH_REQUESTED, except that a SOCKS5 proxy asking a
+                Session with none ends in ERR_SOCKS_CONNECTION_FAILED. An HTTP error status such as 404 is a response,
+                which Response.raise_for_status() turns into an error. An invalid header or method, or an `initiator` that
+                is not a valid URL, ends the request with ERR_INVALID_ARGUMENT.
             Exception: Whatever a stream's file or iterable raises, which ends the request.
         """
         options.setdefault("timeout", self._timeout)
