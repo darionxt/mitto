@@ -48,9 +48,9 @@ class FetchRules {
     GURL url;
     net::HttpRequestHeaders headers;
 
-    // Whether it goes back to the method and the body the navigation started
-    // with, or takes those that it has come to.
-    bool from_the_start = false;
+    // Whether it carries on the chain of URLs of the request it replaces, or
+    // starts a new one.
+    bool keeps_url_chain = false;
   };
 
   // `url` is the URL the request starts at. `client_hints_store` is the
@@ -86,7 +86,8 @@ class FetchRules {
   // To call for what takes the place of `old_request`, once it has its URL,
   // method and headers, and before it starts.
   void ConfigureRestartedRequest(net::URLRequest& request,
-                                 const net::URLRequest& old_request);
+                                 const net::URLRequest& old_request,
+                                 bool keeps_url_chain);
 
   // To call on a redirect that the request is about to follow. This changes
   // some of the request's headers, and says what to do with others when it
@@ -161,6 +162,13 @@ class FetchRules {
   // CriticalClientHintsThrottle::WillStartRequest() keeps.
   GURL original_url_;
   EnabledClientHints initial_client_hints_;
+
+  // Whether it started with a method for which Chrome makes that throttle at
+  // all.
+  bool has_critical_client_hints_throttle_ = false;
+
+  // What a restart for Critical-CH sent, which also goes to the next hop.
+  std::vector<std::pair<std::string, std::string>> client_hints_of_restart_;
 
   // The origins that restarted this navigation for a Critical-CH, once each.
   std::set<url::Origin> restarted_origins_;

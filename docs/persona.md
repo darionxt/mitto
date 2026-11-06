@@ -99,7 +99,7 @@ Chrome sends `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` to everyon
 | `Accept-CH` on the response to a navigation | Replaces what the origin of that response has asked for. A redirect on the way counts, at once, for its own origin, and a 204 or 205 does not count, because Chrome shows nothing for it. An empty value takes everything back |
 | `Accept-CH` on the response to a script, an image or a fetch | Nothing |
 | `Accept-CH` that is not a list of tokens, or over plain HTTP to a host that is not local | Nothing. A token that names no hint counts for nothing, and names go in any case |
-| A hint in both `Accept-CH` and `Critical-CH` that the navigation did not send | The navigation starts over from its first URL, with the hint, and the caller sees only the end of it. It does this once for each origin |
+| A hint in both `Accept-CH` and `Critical-CH` that the navigation did not send | A navigation that started with `GET` or another safe method starts over from its first URL, with the hint, and the caller sees only the end of it. It does this once for each origin. A `POST` goes on, and the next navigation has the hint |
 | `Clear-Site-Data` with `"clientHints"`, `"cookies"`, `"cache"` or `"*"` | Takes everything back for that origin, unless a subresource says it from another site, and `Accept-CH` and `Critical-CH` beside it count for nothing |
 | The `ACCEPT_CH` frame in ALPS, for a navigation | The navigation sends those hints too, and nothing has gone out without them. They count for that request alone, as they do in Chrome, so what a server wants kept it says in `Accept-CH` |
 
@@ -114,7 +114,7 @@ Over plain HTTP to a host that is not local, a request sends no client hints at 
 
 ### Where they go
 
-A navigation sends them in the order of `headers`, and on a later hop in that same order after `Sec-Fetch-Dest`. A restart for `Critical-CH` sends them after `Accept` and before `Sec-Fetch-Site`. One for the frame in ALPS leaves the lines it had in place, and adds the new ones there.
+A navigation sends them in the order of `headers`, and on a later hop in that same order after `Sec-Fetch-Dest`. A restart for `Critical-CH` sends them after `Accept` and before `Sec-Fetch-Site`. The hop right after it sends those again first, and then what is new, [as Chrome does](parity.md#starting-over). One for the frame in ALPS leaves the lines it had in place, and adds the new ones there.
 
 A script, image or fetch has no order of its own to write down. Blink holds those lines in a hash table, so their order depends on which lines there are, and the same two hints can swap places when a server asks for a third. In `headers`, a subresource therefore has its lines in the order they go with no hint added, then the hints. Once a hint goes, the native core [works out the order](parity.md#the-order-of-a-subresources-lines) of `User-Agent`, `Content-Type` and the hints, ahead of the other lines, as Blink's table gives it.
 

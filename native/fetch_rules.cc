@@ -17,6 +17,7 @@
 #include "net/cookies/site_for_cookies.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
+#include "net/http/http_util.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/referrer_policy.h"
 #include "net/url_request/url_request.h"
@@ -196,6 +197,10 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
 void FetchRules::ConfigureRequest(net::URLRequest& request) {
   const GURL& url = request.url();
   ConfigureSiteAndReferrer(request);
+  // content::CreateContentBrowserURLLoaderThrottles().
+  has_critical_client_hints_throttle_ =
+      params_.mode == RequestMode::kNavigate &&
+      net::HttpUtil::IsMethodSafe(request.method());
 
   if (!IsFixed(net::HttpRequestHeaders::kOrigin)) {
     std::optional<std::string> origin;
@@ -297,7 +302,8 @@ void FetchRules::ParseAndPersistAcceptCHForNavigation(
 
 bool FetchRules::MaybeRestartWithHints(const GURL& url,
                                        const ParsedClientHintsHeaders& parsed) {
-  if (!parsed.accept_ch || !parsed.critical_ch) {
+  if (!has_critical_client_hints_throttle_ || !parsed.accept_ch ||
+      !parsed.critical_ch) {
     return false;
   }
   const url::Origin response_origin = url::Origin::Create(url);
@@ -362,6 +368,7 @@ std::optional<FetchRules::Restart> FetchRules::OnConnected(
   // the others go last. Only restart if new headers are actually added.
   Restart restart;
   restart.url = request.url();
+  restart.keeps_url_chain = true;
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
        headers.GetHeaderVector()) {
     if (!IsFetchMetadataHeader(header.key)) {
@@ -432,7 +439,6 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   Restart restart;
   restart.url = original_url_;
-  restart.from_the_start = true;
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
        headers.GetHeaderVector()) {
     const bool is_ours = IsClientHintHeader(header.key) && !IsFixed(header.key);
@@ -440,9 +446,11 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
       restart.headers.SetHeader(header.key, header.value);
     }
   }
+  client_hints_of_restart_.clear();
   for (const auto& [name, value] : client_hints_) {
     if (ShouldAddClientHint(original_url_, name, no_additional_hints)) {
       restart.headers.SetHeader(name, value);
+      client_hints_of_restart_.emplace_back(name, value);
     }
   }
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
@@ -455,20 +463,19 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
 }
 
 void FetchRules::ConfigureRestartedRequest(net::URLRequest& request,
-                                           const net::URLRequest& old_request) {
+                                           const net::URLRequest& old_request,
+                                           bool keeps_url_chain) {
   ConfigureSiteAndReferrer(request);
-  // A Referer that has shrunk on the way here stays that way, unless the
-  // request goes back to where it started.
-  if (request.url() == old_request.url() &&
-      !IsFixed(net::HttpRequestHeaders::kReferer)) {
+  // ThrottlingURLLoader and NavigationURLLoaderImpl keep the Referer that the
+  // navigation has come to, so one that has shrunk stays that way.
+  if (!IsFixed(net::HttpRequestHeaders::kReferer)) {
     request.SetReferrer(old_request.referrer());
   }
-  // What a restart to the start is upstream: one hop more of the same chain.
-  std::vector<GURL> url_chain = old_request.url_chain();
-  if (url_chain.back() != request.url()) {
-    url_chain.push_back(request.url());
+  // A restart for Critical-CH has only the chain that the loader started with,
+  // so Sec-Fetch-Site knows nothing of where the navigation went before it.
+  if (keeps_url_chain) {
+    request.SetURLChain(old_request.url_chain());
   }
-  request.SetURLChain(url_chain);
   SetFetchMetadataHeaders(request, params_,
                           /*pending_redirect=*/std::nullopt);
 }
@@ -498,6 +505,17 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
   // `modified_headers`, which //net merges last, so they land after the rest.
   const EnabledClientHints no_additional_hints;
   if (params_.mode == RequestMode::kNavigate) {
+    // ThrottlingURLLoader::FollowRedirect() goes on from a restart with what
+    // that said still in `headers_update_params_`, which it clears only after
+    // the next real redirect. So on that hop those hints come first, and go
+    // whether or not the next URL's origin has asked for them. Real Chrome
+    // shows this.
+    if (net::IsUrlPotentiallyTrustworthy(new_url)) {
+      for (const auto& [name, value] : client_hints_of_restart_) {
+        modified_headers.SetHeader(name, value);
+      }
+    }
+    client_hints_of_restart_.clear();
     for (const auto& [name, value] : client_hints_) {
       removed_headers.push_back(name);
       if (ShouldAddClientHint(new_url, name, no_additional_hints)) {

@@ -448,13 +448,11 @@ class RequestJob final : public net::URLRequest::Delegate,
   // navigation's, whose rules have said what it goes on with.
   void RestartRequest(FetchRules::Restart restart) {
     std::unique_ptr<net::URLRequest> old_request = std::move(request_);
-    const bool has_body =
-        restart.from_the_start ? body_.has_value() : old_request->has_upload();
-    request_ = CreateRequest(
-        restart.url,
-        restart.from_the_start ? options_.method : old_request->method(),
-        restart.headers);
-    fetch_rules_->ConfigureRestartedRequest(*request_, *old_request);
+    const bool has_body = old_request->has_upload();
+    request_ =
+        CreateRequest(restart.url, old_request->method(), restart.headers);
+    fetch_rules_->ConfigureRestartedRequest(*request_, *old_request,
+                                            restart.keeps_url_chain);
     old_request.reset();
     SetCallersReferrer();
     if (has_body) {

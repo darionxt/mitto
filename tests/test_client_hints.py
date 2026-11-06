@@ -112,11 +112,12 @@ class RecordingHandler(http.server.BaseHTTPRequestHandler):
         server.received.append(Received(self.command, self.path, self.headers.items(), body))
         query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
         destination = query.get("to")
+        if self.headers.get(query.get("when_sent", [""])[0]) is not None:
+            # A request that holds this hint gets another answer: one that asks for another hint, or a redirect.
+            query["Accept-CH"] = query["Critical-CH"] = query.get("then", [])
+            destination = query.get("then_to", destination)
         status = int(query["status"][0]) if "status" in query else (302 if destination else 200)
         self.send_response(status)
-        if self.headers.get(query.get("when_sent", [""])[0]) is not None:
-            # A request that holds this hint gets an answer that asks for another one instead.
-            query["Accept-CH"] = query["Critical-CH"] = query["then"]
         for name in ("Accept-CH", "Critical-CH", "Clear-Site-Data"):
             for value in query.get(name, []):
                 self.send_header(name, value)
@@ -775,15 +776,66 @@ def test_a_critical_hint_on_a_later_hop_starts_over_from_the_first_url(servers: 
     assert response.status == 200
 
 
-def test_a_critical_hint_sends_the_body_again(servers: Servers) -> None:
+def test_a_navigation_that_starts_with_a_post_does_not_start_over_for_a_critical_hint(servers: Servers) -> None:
     url = servers.https(accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
     with new_session() as session:
         session.post(url, kind="navigation", data={"a": "b"})
+        session.get(servers.https())
 
     first, second = servers.received
     assert (first.method, first.body) == ("POST", b"a=b")
-    assert (second.method, second.body) == ("POST", b"a=b")
-    assert second.header("Content-Type") == "application/x-www-form-urlencoded"
+    assert ASKED_FOR not in first.hints
+    assert ASKED_FOR in second.hints
+
+
+@pytest.mark.parametrize("status", ["302", "303", "307"])
+def test_a_navigation_that_started_with_a_post_does_not_start_over_on_a_later_hop(
+    servers: Servers, status: str
+) -> None:
+    last = servers.https(path="/last", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
+    with new_session() as session:
+        session.post(redirect(servers.https(path="/first"), last, status=status), kind="navigation", data={"a": "b"})
+
+    assert [received.path.partition("?")[0] for received in servers.received] == ["/first", "/last"]
+
+
+def test_a_later_hop_keeps_the_place_of_the_hints_of_a_restart_and_adds_its_own_after_them(servers: Servers) -> None:
+    last = servers.https(CROSS_SITE, "/last", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
+    with new_session() as session:
+        session.get(redirect(servers.https(HOST, "/first"), last))
+
+    assert servers.received[3].hints == ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", ASKED_FOR]
+
+
+def test_the_hop_after_a_restart_also_gets_what_the_first_url_had_and_the_hop_after_that_does_not(
+    servers: Servers,
+) -> None:
+    # As real Chrome does: `model` goes to an origin that only asked for `arch`, once.
+    end = servers.https(CROSS_SITE, "/end")
+    last = servers.https(
+        CROSS_SITE, "/last", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR, when_sent=ASKED_FOR, then_to=end
+    )
+    with new_session() as session:
+        asks(servers, session, HOST, hints=ASKED_FOR_TOO)
+        session.get(redirect(servers.https(HOST, "/first"), last))
+
+    restart, next_hop, hop_after = servers.received[3:]
+    assert restart.hints == ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", ASKED_FOR_TOO]
+    assert next_hop.hints == ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", ASKED_FOR_TOO, ASKED_FOR]
+    assert hop_after.hints == ["sec-ch-ua", "sec-ch-ua-mobile", ASKED_FOR, "sec-ch-ua-platform"]
+
+
+def test_a_restart_for_a_critical_hint_keeps_the_referer_and_forgets_where_the_chain_has_been(servers: Servers) -> None:
+    page = servers.https(HOST, "/page")
+    last = servers.https(CROSS_SITE, "/last", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
+    with new_session() as session:
+        session.get(redirect(servers.https(HOST, "/first"), last), initiator=page)
+
+    first, second, restart, again = servers.received
+    assert (first.header("Sec-Fetch-Site"), first.header("Referer")) == ("same-origin", page)
+    assert (second.header("Sec-Fetch-Site"), second.header("Referer")) == ("cross-site", servers.https(HOST))
+    assert (restart.header("Sec-Fetch-Site"), restart.header("Referer")) == ("same-origin", servers.https(HOST))
+    assert (again.header("Sec-Fetch-Site"), again.header("Referer")) == ("cross-site", servers.https(HOST))
 
 
 @pytest.mark.parametrize("kind", SUBRESOURCES)
@@ -892,18 +944,6 @@ def test_alps_cannot_keep_a_navigation_going_for_ever(servers: Servers) -> None:
 
 
 # A body that cannot go twice
-
-
-def test_a_stream_goes_on_for_a_critical_hint_and_the_next_navigation_has_it(servers: Servers) -> None:
-    url = servers.https(accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
-    with new_session() as session:
-        session.post(url, kind="navigation", data=iter([b"a=b"]), headers={"Content-Length": "3"})
-        session.get(servers.https())
-
-    first, second = servers.received
-    assert first.body == b"a=b"
-    assert ASKED_FOR not in first.hints
-    assert ASKED_FOR in second.hints
 
 
 def test_a_stream_goes_on_with_what_it_has_for_alps(servers: Servers) -> None:
