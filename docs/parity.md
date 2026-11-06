@@ -38,19 +38,19 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 
 | Recording Cases | A replay asks for | What it cannot do yet, and how that shows |
 |---|---|---|
-| `navigation`, `fetch`, `script`, `image` | The case's path at the server's own name | Nothing |
-| `navigation_link_*`, `fetch_get_*`, `script_*`, `image_*` | The case's path at its name | Say which page the request comes from, so `Sec-Fetch-Site`, `Referer`, `Origin` and `Sec-Fetch-Storage-Access` are those of a same-origin **Initiator**, or of none for a navigation |
-| `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with the case's body, from the same fields as the page's form or script | Say which page the request comes from, as for the row above, so `Referer` and `Sec-Fetch-Site` are those of a same-origin **Initiator**, or of none for a navigation, and `Origin` is that of the requested URL |
-| `fetch_post_stream` | `POST` with no body | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
-| `cookie` | `/case/cookie-set`, then the case's path | Say which page the request comes from, so `Referer` is that of a same-origin **Initiator** at `/`. A case counts a request without what it should carry when none has it, so a Session that lost its cookie would show one gap in `Cookie` |
-| `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |
-| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop |
-| `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
+| `navigation`, `fetch`, `script`, `image` | The case's path at the server's own name, with no **Initiator** | Nothing |
+| `navigation_link_*`, `fetch_get_*`, `script_*`, `image_*` | The case's path at its name, from the page it came from | Nothing |
+| `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with the case's body, from the same fields as the page's form or script, and from the page it came from | Nothing |
+| `fetch_post_stream` | `POST` with no body, from the page it came from | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
+| `cookie` | `/case/cookie-set`, then the case's path, both from the page it came from | Nothing. A case counts a request without what it should carry when none has it, so a Session that lost its cookie would show one gap in `Cookie` |
+| `revalidation` | The case's path twice, from the page it came from | Keep a response, so `If-None-Match` is a gap in the same way |
+| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is, from the page it came from. `//net` follows the rest, and the native core changes the headers on each | Nothing |
+| `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 
-When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
+The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
 
-Every case made from a page has the gaps of an Initiator as well, whatever else it lacks. So `cookie` differs in `Referer`, until a request can say which page it comes from.
+When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
 
 ## Gaps
 
@@ -100,6 +100,8 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 | `native/network_session_configurator.cc` | HTTP/2 connection settings, what its connections do on a network change, and with `enable_http2` the ALPN list. QUIC parameters, and the origins that a field trial tells Chrome speak QUIC | `components/network_session_configurator`, and the hints in `net/http/http_server_properties.cc` |
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
 | `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
+| `native/fetch_rules.cc`, `native/sec_header_helpers.cc` | [The headers that follow the page a request comes from](#the-initiator-and-each-hop), and what `//net` is told about that page | `SetFetchMetadataHeaders` and `MaybeRemoveSecHeaders` in `services/network/sec_header_helpers.cc`, `CorsURLLoader` and `URLLoader` in `services/network`, and the parts of the browser process and Blink that the section names |
+| `native/mitto_core.cc` | That network state is partitioned, in [the call Chrome makes](#partitioning) | `ChromeMainDelegate::CommonEarlyInitialization()` |
 | `native/stub_resolver_config_reader.cc` | The stub resolver: the built-in DNS client, additional query types, which is what asks for HTTPS records, secure mode automatic, and the upgrade to DNS over HTTPS | `ConfigureStubHostResolver` in `services/network/network_service.cc`, with the defaults in `chrome/browser/net/stub_resolver_config_reader.cc` |
 
 A value stated here stays when a new **Engine Release** changes a default, so a Parity Check fails instead of mitto moving with the engine. That matters because an older **Chrome Release** must keep sending what it sent. All of this holds for every Persona, since Chrome 155, 156 and 157 [send the same in it](persona.md#what-differs-between-chrome-releases).
@@ -115,6 +117,34 @@ The notifier is also what makes a state of the HTTP/2 connections take effect: `
 The first Session in a process waits up to a second for the system's DNS settings, which Chrome does not do, because Chrome has them long before a page asks for a host. A program's first request can come right away, and without those settings it would go to the system's resolver, which sees no HTTPS records.
 
 No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and the public Session takes it only through `_settings`. Such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
+
+## The Initiator and each hop
+
+What the headers say ([the rules](persona.md#the-initiator)) depends on the page a request comes from and on each URL it goes through. In Chrome several layers decide that. All of them but `//net` are outside the source export, so `native/fetch_rules.cc` and `native/sec_header_helpers.cc` port them, with their names kept, and run them at the start and on each hop:
+
+| Rule | In Chrome | Where |
+| --- | --- | --- |
+| `Sec-Fetch-*` | `SetFetchMetadataHeaders`, and `MaybeRemoveSecHeaders` on a hop | `services/network/sec_header_helpers.cc` |
+| `Origin` on a fetch | `CorsURLLoader::MaybeSetOriginHeader`, `ShouldIncludeOriginHeader` and `CheckTainted` | `services/network/cors/cors_url_loader.cc` |
+| Whether a request sends and stores cookies | `url_loader_util::SetRequestCredentials` | `services/network/url_loader_util.cc` |
+| `Sec-Fetch-Storage-Access: active` | `CookieSettingsBase::GetStorageAccessStatus`, which a Session answers as a Chrome with no setting that blocks a cookie does | `components/content_settings` |
+| `Origin` on a navigation | `AddAdditionalRequestHeaders` and `Referrer::SanitizeOriginForRequest` | `content/browser/renderer_host/navigation_request.cc`, `content/public/common/referrer.cc` |
+| `sec-ch-*` moving on a navigation's hop | `NavigationRequest::OnRequestRedirected` removes every client hint and adds those of the next URL as modified headers, and `//net` merges those last | `content/browser/renderer_host/navigation_request.cc` |
+| `sec-ch-*` staying on a subresource's hop | `FrameFetchContext::AddClientHintsIfNecessary` runs when a request starts, and not on a redirect | Blink |
+| `Referer` of the first hop | `SecurityPolicy::GenerateReferrer`, which `URLRequestJob::ComputeReferrerForPolicy` answers the same way | Blink, and `//net` from the second hop |
+| `IsUrlPotentiallyTrustworthy` | Already in `//net` at this Engine Release, so it needs no port | `net/base/is_potentially_trustworthy.cc` |
+
+So the last four rows hold what comes from outside `//net` and `services/network`. `Sec-Fetch-Frame-Top` and `Sec-Fetch-Frame-Ancestors` are behind features that are off by default and in the Baselines, so they are not ported, and no **Request Kind** is a subframe's, so a page always counts as top-level.
+
+A **Persona**'s lines arrive at the native core with the rest of the headers, each in its place, along with what `network::ResourceRequest` would say: `mode`, `destination`, `credentials_mode`, `has_user_activation` and `initiator`. `fixed_headers` names what a caller gave or removed, which no rule touches. A request with none of this, which only `mitto._native` can make, sends what its headers say.
+
+## Partitioning
+
+Chrome partitions connections, TLS sessions, DNS results and more by the top-level site, because `ChromeMainDelegate::CommonEarlyInitialization()` calls `NetworkAnonymizationKey::PartitionByDefault()` ([what was measured](baselines.md#features-on-in-chromes-own-code)). `NetworkCore` makes the same call, right after the feature list exists and before anything can ask whether partitioning is on. Its comment marks the place for the same call that the split cache needs.
+
+Each request has an `IsolationInfo`, as in Chrome: a navigation's follows it as a top frame on each hop, and a subresource's stays that of its page. So over each protocol, a subresource from one top-level site does not share a connection with one from another, and a navigation shares one with what its own page asks of its own site. A cross-origin `fetch()` has no credentials, so `//net` gives it a connection apart from one that has them.
+
+No normal form can show this, so `tests/test_initiator.py` counts the connections at the server, over HTTP/1.1, HTTP/2 and HTTP/3. `Partitioned` cookies go in the partition of the same site.
 
 ## Cookies
 
@@ -135,7 +165,24 @@ The second way is why a saved list always loads, whatever a server sent. The che
 
 ### Which site a request belongs to
 
-Chrome gives each request a `site_for_cookies` and an `initiator`, and `//net` decides from those which `SameSite` cookies go. A request here cannot say yet which page it comes from, so each counts as one the user started at its URL: `site_for_cookies` is that URL, a redirect moves it to the next one, and there is no `initiator`. Without this `//net` would call each request cross-site, and would not even store a cookie with no `SameSite`, which counts as `Lax`. So for now every cookie of a site goes to that site and a response can set any of them, as on a navigation from the address bar.
+Chrome gives each request a `site_for_cookies`, an `initiator` and an `isolation_info`, and `//net` decides from those which `SameSite` cookies go. The native core does the same, from `initiator=`:
+
+| Request | `site_for_cookies` and `isolation_info` | `initiator` |
+| --- | --- | --- |
+| A navigation | Its own URL, as a top frame. `//net` moves them to the next URL on each hop | The page's origin, or none if the browser started it |
+| A subresource | The page's site on every hop | The page's origin |
+
+That is all that `//net` needs to apply its rules, which `tests/test_initiator.py` checks through real responses. A cookie is set by a response under the same rule as it goes on a request:
+
+| `SameSite` | Same-site navigation or subresource | Cross-site navigation | Cross-site subresource |
+| --- | --- | --- | --- |
+| `Strict` | Goes, and can be set | Does not go, and can be set | Neither |
+| `Lax` | Goes, and can be set | Goes on `GET`, and can be set | Neither |
+| `None` | Goes, and can be set | Goes, and can be set | Goes, and can be set |
+
+A `fetch` has the `credentials_mode` of a page's `fetch()` that does not ask for one, `same-origin`. So once a request of that kind goes to another origin than the page's, it sends and stores no cookie for the rest of its chain, whatever its `SameSite`. A request of any kind with no `initiator=` counts as above, so a navigation sends every cookie of its site, as from the address bar.
+
+`force_main_frame_for_same_site_cookies` is not set. Chrome only sets it on a navigation that a service worker passes on, and `//net` takes a request with a top frame's `isolation_info` as a main frame navigation anyway.
 
 ### Saved cookies
 
@@ -148,8 +195,7 @@ Session cookies are saved too, as a browser does that restores its last session.
 | | Chrome | A Session |
 | --- | --- | --- |
 | A `Secure` cookie on `http://localhost` | `CookieAccessDelegateImpl`, in `services/network`, treats a potentially trustworthy URL as secure, so it can set one and receive it | `//net` with no delegate needs HTTPS |
-| `SameSite` | Follows the page a request comes from | See [above](#which-site-a-request-belongs-to) |
-| A `Partitioned` cookie | Goes in a partition of the page's top-level site | A request has no partition yet, so `//net` stores it as an ordinary cookie. A cookie that a caller sets with a `partition_key` stays apart, and no request sends it |
+| A page in a frame | Its `site_for_cookies` can be null, and its partition holds its ancestors | A page always counts as top-level |
 | Settings that block a cookie, and First-Party Sets | `CookieSettings` and `FirstPartySetsManager`, in `services/network` | None, which is what a Chrome with no such settings does for a first-party cookie |
 | When the store is written | Every 30 seconds, by `SQLitePersistentCookieStore` | When a caller saves, or at close |
 
@@ -180,6 +226,8 @@ A proxy's URL may hold a password, so no message and no `repr` repeats it. A Ses
 `//net` decides what a redirect does, as it does in Chrome: the limit of 20, the method of the next hop and when a body goes. The native core defers each redirect in `OnReceivedRedirect()` and continues it with `FollowDeferredRedirect()`, as `URLLoader` in Chrome's network service does.
 
 It continues from a task of its own, and that shows on the wire. Over HTTP/2 a redirect's `HEADERS` frame usually holds `END_STREAM`, and `//net` tells its delegate about the headers before it handles that. Following the redirect from inside that call would cancel a stream that is about to end, with an `RST_STREAM` that a server can see. Chrome's answer to a redirect comes back from another process, so it sends none.
+
+On each hop it first changes the headers that follow the page a request comes from ([which](#the-initiator-and-each-hop)).
 
 A caller's `Authorization` does not go to another origin, and stays gone if a later hop comes back. This is step 13 of [HTTP-redirect fetch](https://fetch.spec.whatwg.org/#http-redirect-fetch), which `ResourceLoader` does in Blink, so the native core does it in the same place, as a header to remove when it continues. A caller's `Cookie` goes the same way. Fetch does not name it, because a page cannot send one, but it has no domain to keep it where it belongs. The cookies that `//net` adds from a **Session**'s store are not touched, because `//net` decides those on each hop.
 

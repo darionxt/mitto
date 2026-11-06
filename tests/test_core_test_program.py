@@ -35,6 +35,7 @@ _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
 _ERR_PROXY_AUTH_REQUESTED = -127
 _ERR_CERT_AUTHORITY_INVALID = -202
+_ERR_INVALID_URL = -300
 _TIMEOUT_SECONDS = 120
 _HOST = "localhost"
 _FETCH_PATH = KIND_PATHS[RequestKind.FETCH]
@@ -123,6 +124,28 @@ def test_a_request_that_follows_redirects(program: Path, protocol: str) -> None:
     assert [line.split(" from ")[0] for line in lines[:3]] == ["redirect 302"] * 3
     assert lines[0] == f"redirect 302 from {url}"
     assert lines[3] == f"status 200 over {protocol}"
+
+
+@pytest.mark.parametrize("scenario", ["navigation-from-a-page", "cors-from-a-page", "no-cors-with-no-initiator"])
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_from_a_page_that_follows_redirects(program: Path, protocol: str, scenario: str) -> None:
+    # The rules of each hop run, under the sanitizers. tests/test_initiator.py has what they send.
+    with CaptureServer() as server:
+        url, settings = _redirect_url(server, protocol)
+        result = _run(program, url, settings, scenario)
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert [line.split(" from ")[0] for line in lines[:3]] == ["redirect 302"] * 3
+    assert lines[3] == f"status 200 over {protocol}"
+
+
+@pytest.mark.parametrize("scenario", ["navigation-from-a-page", "cors-from-a-page", "no-cors-with-no-initiator"])
+def test_a_url_that_is_not_valid_from_a_page_fails_as_any_other(program: Path, scenario: str) -> None:
+    result = _run(program, "not a url", {"version": SETTINGS_VERSION}, scenario)
+
+    assert result.returncode != 0
+    assert f"net error {_ERR_INVALID_URL}" in result.stderr + result.stdout
 
 
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])

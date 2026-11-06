@@ -29,7 +29,7 @@ CROSS_SITE_HOST = "cross-site.test"
 HOST_NAMES = (CASE_HOST, SAME_SITE_HOST, CROSS_SITE_HOST)
 
 START_PATH = "/case/start"
-_FORMS_PATH = "/case/forms"
+FORMS_PATH = "/case/forms"
 _DONE_PATH = "/case/done"
 _PLAIN_HTTP_DONE_PATH = "/case/plain-http-done"
 _PROXY_DONE_PATH = "/case/proxy-done"
@@ -361,8 +361,8 @@ def _responses(scheme: str, port: int) -> dict[str, Response]:
         START_PATH: _start_page(page, same_site, cross_site),
         _LINK_SAME_ORIGIN.path: _link_page(same_site + _LINK_SAME_SITE.path),
         _LINK_SAME_SITE.path: _link_page(cross_site + _LINK_CROSS_SITE.path),
-        _LINK_CROSS_SITE.path: _link_page(page + _FORMS_PATH),
-        _FORMS_PATH: _page(
+        _LINK_CROSS_SITE.path: _link_page(page + FORMS_PATH),
+        FORMS_PATH: _page(
             f'<form method="post" action="{_FORM_URLENCODED.path}">{_URLENCODED_FIELDS}{_SUBMIT}</form>',
         ),
         _FORM_URLENCODED.path: _page(

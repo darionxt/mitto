@@ -1,6 +1,7 @@
 #include "mitto/request_options.h"
 
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -23,6 +24,13 @@ constexpr std::string_view kFollowRedirectsKey = "follow_redirects";
 constexpr std::string_view kConnectTimeoutKey = "connect_timeout_ms";
 constexpr std::string_view kReadTimeoutKey = "read_timeout_ms";
 constexpr std::string_view kTotalTimeoutKey = "total_timeout_ms";
+constexpr std::string_view kFetchKey = "fetch";
+constexpr std::string_view kModeKey = "mode";
+constexpr std::string_view kDestinationKey = "destination";
+constexpr std::string_view kCredentialsModeKey = "credentials_mode";
+constexpr std::string_view kHasUserActivationKey = "has_user_activation";
+constexpr std::string_view kInitiatorKey = "initiator";
+constexpr std::string_view kFixedHeadersKey = "fixed_headers";
 
 // Chrome's network service refuses the methods that the Fetch standard forbids,
 // in network::cors::IsForbiddenMethod(), so Chrome never sends them.
@@ -58,7 +66,103 @@ std::optional<base::TimeDelta> ParseTimeout(const base::Value& value) {
   return base::Milliseconds(*milliseconds);
 }
 
+std::optional<RequestMode> ParseRequestMode(const base::Value& value) {
+  if (!value.is_string()) {
+    return std::nullopt;
+  }
+  if (value.GetString() == "navigate") {
+    return RequestMode::kNavigate;
+  }
+  if (value.GetString() == "cors") {
+    return RequestMode::kCors;
+  }
+  if (value.GetString() == "no-cors") {
+    return RequestMode::kNoCors;
+  }
+  return std::nullopt;
+}
+
+std::optional<CredentialsMode> ParseCredentialsMode(const base::Value& value) {
+  if (!value.is_string()) {
+    return std::nullopt;
+  }
+  if (value.GetString() == "same-origin") {
+    return CredentialsMode::kSameOrigin;
+  }
+  if (value.GetString() == "include") {
+    return CredentialsMode::kInclude;
+  }
+  return std::nullopt;
+}
+
+std::optional<FetchParams> ParseFetchParams(const base::Value& value) {
+  if (!value.is_dict()) {
+    return std::nullopt;
+  }
+  FetchParams params;
+  bool has_mode = false;
+  bool has_credentials_mode = false;
+  for (const auto [key, item] : value.GetDict()) {
+    if (key == kModeKey) {
+      const std::optional<RequestMode> mode = ParseRequestMode(item);
+      if (!mode) {
+        return std::nullopt;
+      }
+      params.mode = *mode;
+      has_mode = true;
+    } else if (key == kDestinationKey) {
+      if (!item.is_string() || !net::HttpUtil::IsToken(item.GetString())) {
+        return std::nullopt;
+      }
+      params.destination = item.GetString();
+    } else if (key == kCredentialsModeKey) {
+      const std::optional<CredentialsMode> credentials_mode =
+          ParseCredentialsMode(item);
+      if (!credentials_mode) {
+        return std::nullopt;
+      }
+      params.credentials_mode = *credentials_mode;
+      has_credentials_mode = true;
+    } else if (key == kHasUserActivationKey) {
+      const std::optional<bool> has_user_activation = item.GetIfBool();
+      if (!has_user_activation) {
+        return std::nullopt;
+      }
+      params.has_user_activation = *has_user_activation;
+    } else if (key == kInitiatorKey) {
+      if (!item.is_string()) {
+        return std::nullopt;
+      }
+      params.initiator = GURL(item.GetString());
+      if (!params.initiator->is_valid()) {
+        return std::nullopt;
+      }
+    } else if (key == kFixedHeadersKey) {
+      if (!item.is_list()) {
+        return std::nullopt;
+      }
+      for (const base::Value& name : item.GetList()) {
+        if (!name.is_string()) {
+          return std::nullopt;
+        }
+        params.fixed_headers.insert(base::ToLowerASCII(name.GetString()));
+      }
+    } else {
+      return std::nullopt;
+    }
+  }
+  if (!has_mode || !has_credentials_mode || params.destination.empty()) {
+    return std::nullopt;
+  }
+  return params;
+}
+
 }  // namespace
+
+FetchParams::FetchParams() = default;
+FetchParams::FetchParams(FetchParams&&) = default;
+FetchParams& FetchParams::operator=(FetchParams&&) = default;
+FetchParams::~FetchParams() = default;
 
 RequestOptions::RequestOptions() = default;
 RequestOptions::RequestOptions(RequestOptions&&) = default;
@@ -113,6 +217,13 @@ std::optional<RequestOptions> ParseRequestOptions(std::string_view json) {
             FindTimeout(options, key)) {
       *timeout = ParseTimeout(value);
       if (!*timeout) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kFetchKey) {
+      options.fetch = ParseFetchParams(value);
+      if (!options.fetch) {
         return std::nullopt;
       }
       continue;

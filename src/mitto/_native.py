@@ -29,6 +29,7 @@ __all__ = [
     "SETTINGS_VERSION",
     "BodyAvailable",
     "EventType",
+    "FetchParams",
     "Finished",
     "MittoEvent",
     "MittoHeader",
@@ -441,6 +442,47 @@ class NativeRequest:
         self._handle = ctypes.POINTER(MittoRequest)()
 
 
+@dataclass(frozen=True, slots=True)
+class FetchParams:
+    """What a request made for a page says of itself, in the terms of Chrome's network::ResourceRequest.
+
+    Attributes:
+        mode: "navigate", "cors" or "no-cors".
+        destination: What Sec-Fetch-Dest says, such as "document" or "empty".
+        credentials_mode: "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
+        has_user_activation: Whether Sec-Fetch-User says that the user started it.
+        initiator: The URL of the page it comes from. Without one, a navigation counts as started by the browser and a
+            subresource as coming from the page at the root of the origin of its URL.
+        fixed_headers: The names of the headers that are the caller's, in any case, which keep what they say on each hop.
+            A name that the headers do not hold stays out of them.
+    """
+
+    mode: str
+    destination: str
+    credentials_mode: str
+    has_user_activation: bool = False
+    initiator: str | None = None
+    fixed_headers: tuple[str, ...] = ()
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "fetch" option of mitto_request_start().
+
+        Raises:
+            ValueError: If `initiator` holds a NUL character or cannot be encoded as UTF-8.
+        """
+        option: dict[str, object] = {
+            "mode": self.mode,
+            "destination": self.destination,
+            "credentials_mode": self.credentials_mode,
+            "has_user_activation": self.has_user_activation,
+            "fixed_headers": list(self.fixed_headers),
+        }
+        if self.initiator is not None:
+            encode_url(self.initiator)
+            option["initiator"] = self.initiator
+        return option
+
+
 class PrivateSettings(TypedDict, total=False):
     """The Session settings that the public API does not offer, for tests to pass to the public Session as `_settings`.
 
@@ -639,6 +681,7 @@ class Session:
         timeout: Timeout = NO_TIMEOUT,
         body: bytes | None = None,
         follow_redirects: bool = True,
+        fetch: FetchParams | None = None,
     ) -> NativeRequest:
         """Start a request for `url` and return without waiting for it.
 
@@ -647,26 +690,31 @@ class Session:
             headers: The (name, value) pairs to send, in the order they are to reach the wire, encoded as Latin-1. A
                 name may appear only once, ignoring case. //net adds its own headers as it does in Chrome, such as Host
                 before these and Accept-Encoding after them, unless they are among these. Referer cannot be among these,
-                because //net only sends `referrer`.
+                because //net only sends the one that `referrer` or `fetch` gives it.
             method: The HTTP method, sent as it is written here. Chrome never sends CONNECT, TRACE or TRACK, so they are
                 refused.
             priority: The priority of the request.
             priority_incremental: Whether the response can be used as it arrives. With `priority`, this decides the
                 HTTP/2 weight, the priority header and the HTTP/3 PRIORITY_UPDATE.
-            referrer: The URL to send as the Referer header, or None to send none. //net puts it after `headers` and
-                before the headers it adds, and leaves out any username, password and fragment.
+            referrer: The URL to send as the Referer header on each hop. //net puts it after `headers` and before the
+                headers it adds, and leaves out any username, password and fragment. None leaves it to `fetch`, or sends
+                none if there is none.
             timeout: The timers of the request. One that runs out arrives as the Finished event.
             body: The bytes to send as the request's body, which the native core copies before this returns. None sends
                 no body, and //net still sends a Content-Length of 0 with POST and PUT. //net adds a Content-Length for a
                 body, also an empty one.
             follow_redirects: False makes a redirect the response, with an empty body, because //net does not read the body
                 of a redirect. A redirect to a URL that is not valid still ends the request with ERR_INVALID_REDIRECT.
+            fetch: What the request says of itself, from which the native core sets the headers that follow the Initiator,
+                at the start and on each hop. None sends what `headers` and `referrer` say and no more, and the request
+                counts as a navigation that the browser started.
 
         Raises:
-            ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
-                encoded as Latin-1.
+            ValueError: If `url`, `referrer` or the initiator in `fetch` holds a NUL character or cannot be encoded as UTF-8,
+                or a header cannot be encoded as Latin-1.
             RequestError: If the native core refuses the request with ERR_INVALID_ARGUMENT, because of an invalid header or
-                method, or a `referrer` that //net cannot send. What goes wrong later arrives as the Finished event.
+                method, a `referrer` that //net cannot send, or an initiator that is not a valid URL. What goes wrong later
+                arrives as the Finished event.
         """
         encoded_url = encode_url(url)
         options: dict[str, object] = {
@@ -680,6 +728,8 @@ class Session:
         if referrer is not None:
             encode_url(referrer)
             options["referrer"] = referrer
+        if fetch is not None:
+            options["fetch"] = fetch.to_option()
         encoded_options = json.dumps(options).encode()
         # This list keeps the bytes alive during the call, since the structs only point to them.
         encoded_headers = [(name.encode("latin-1"), value.encode("latin-1")) for name, value in headers]
@@ -716,20 +766,21 @@ class Session:
         timeout: Timeout = NO_TIMEOUT,
         body: bytes | None = None,
         follow_redirects: bool = True,
+        fetch: FetchParams | None = None,
     ) -> NativeResponse:
         """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
 
         The arguments are those of start().
 
         Raises:
-            ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
-                encoded as Latin-1.
+            ValueError: If `url`, `referrer` or the initiator in `fetch` holds a NUL character or cannot be encoded as UTF-8,
+                or a header cannot be encoded as Latin-1.
             RequestError: If the request ends without a response, of the subclass that suits its net error. An HTTP error
-                status such as 404 is a response. An invalid header or method, or a `referrer` that //net cannot send,
-                ends the request with ERR_INVALID_ARGUMENT.
+                status such as 404 is a response. An invalid header or method, a `referrer` that //net cannot send, or an
+                initiator that is not a valid URL, ends the request with ERR_INVALID_ARGUMENT.
         """
         with self.start(
-            url, headers, method, priority, priority_incremental, referrer, timeout, body, follow_redirects
+            url, headers, method, priority, priority_incremental, referrer, timeout, body, follow_redirects, fetch
         ) as request:
             return _collect_response(request)
 
