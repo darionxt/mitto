@@ -210,7 +210,7 @@ A wait for the caller's next part is not a wait for the server, so the `read` ti
 
 ### A stream goes once
 
-Fetch fails a request with a body that has no source on any redirect but a 303, in [step 11 of HTTP-redirect fetch](https://fetch.spec.whatwg.org/#http-redirect-fetch), which Chrome does in `CorsURLLoader`. A Session does the same with `ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED`. A 303 drops the body as it does in Chrome, and `follow_redirects=False` makes any redirect the response. A 421 is the response too, where `//net` would send any other body again, because Chrome tells it that the body has no source.
+Fetch fails a request with a body that has no source on any redirect but a 303, in [step 11 of HTTP-redirect fetch](https://fetch.spec.whatwg.org/#http-redirect-fetch), which Chrome does in `CorsURLLoader`. A Session does the same with `ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED`. A 303 drops the body as it does in Chrome, so later redirects of that request have nothing to send again, and `follow_redirects=False` makes any redirect the response. A 421 is the response too, where `//net` would send any other body again, because Chrome tells it that the body has no source.
 
 `//net` goes on a new connection when a reused one turns out to be gone, and sends the body again. So `BodyStream` keeps the first 64 KiB of a stream, as Chrome keeps the same amount of a page's. A stream that has gone further fails with the same error, where Chrome's says `ERR_FAILED`.
 

@@ -385,9 +385,9 @@ class RequestJob final : public net::URLRequest::Delegate,
     }
     // Step 11 of https://fetch.spec.whatwg.org/#http-redirect-fetch, which Chrome
     // does in CorsURLLoader. A stream cannot start again, and a 303 is the one
-    // redirect that needs no body.
-    if (options_.stream_body &&
-        request_->GetResponseCode() != net::HTTP_SEE_OTHER) {
+    // redirect that needs no body. Once a 303 has dropped it, later hops have none
+    // to send again.
+    if (body_stream_ && request_->GetResponseCode() != net::HTTP_SEE_OTHER) {
       Finish(net::ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED);
       return;
     }

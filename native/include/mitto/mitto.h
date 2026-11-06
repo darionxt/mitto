@@ -400,8 +400,9 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   with ERR_ALPN_NEGOTIATION_FAILED and nothing of it reaches the server. A stream
 //   can be read only once, so any redirect but a 303 finishes the request with
 //   ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED, as Fetch fails it, and so does another
-//   attempt on a new connection once more than 64 KiB has gone. The default is
-//   false.
+//   attempt on a new connection once more than 64 KiB has gone. A 303 drops the
+//   stream, and later redirects of that request go as they do with no body. The
+//   default is false.
 // - "stream_body_size" is how many bytes the stream holds, a whole number up to
 //   2^53, which needs "stream_body" as well. //net sends it as the Content-Length,
 //   over any protocol. A write past it is refused, and ending the body before it

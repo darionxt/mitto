@@ -16,7 +16,7 @@ from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 
@@ -618,6 +618,18 @@ def test_a_303_drops_a_stream_as_it_drops_any_body(server: StreamServer) -> None
     assert server.received[0].body == WHOLE
     assert server.received[1].body == b""
     assert "content-length" not in server.received[1].headers
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_a_redirect_after_a_303_has_no_stream_to_send_again(server: StreamServer, status: int) -> None:
+    second = f"/redirect?status={status}&to=/body"
+    url = server.url(f"/redirect?{urlencode({'status': 303, 'to': second})}")
+    with mitto.Session() as session:
+        response = session.post(url, data=io.BytesIO(WHOLE))
+
+    assert response.content == BODY
+    assert [hop.status for hop in response.history] == [303, status]
+    assert [received.method for received in server.received] == ["POST", "GET", "GET"]
 
 
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
