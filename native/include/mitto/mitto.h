@@ -137,7 +137,8 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //     "origins_to_force_quic_on": ["<host>:<port>"],
 //     "dns_nameserver": "<IP address>:<port>",
 //     "host_resolver_rules": "MAP <host> <address>",
-//     "proxy": "http://<username>:<password>@<host>:<port>"
+//     "proxy": "http://<username>:<password>@<host>:<port>",
+//     "accept_ch_via_alps": {"https://<host>:<port>": "<hints>"}
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -181,6 +182,9 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   neither of them, because //net only offers it "no authentication". The
 //   default is to reach each server directly, whatever the system's proxy
 //   settings say.
+// - "accept_ch_via_alps" says what each origin counts as having said in the
+//   ACCEPT_CH frame in ALPS, for tests, in place of what //net read. The default
+//   holds nothing, so what //net read counts.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.

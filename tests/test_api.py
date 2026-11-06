@@ -22,6 +22,7 @@ from mitto import _native
 from mitto._native import PrivateSettings
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, RequestKind, load_persona
 from mitto._request import BodyOptions
+from tests.client_hints import until_a_server_asks
 from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, MAIN_CASES, CaptureServer, normal_form
 from tools.capture import RequestKind as CaptureRequestKind
@@ -246,7 +247,7 @@ def on_the_wire(server: AnyMethodServer, persona_name: str, kind: RequestKind) -
     return [
         ("Host", server.authority),
         ("Connection", "keep-alive"),
-        *[line for line in persona.request_defaults(kind)["headers"] if line[0] != "Origin"],
+        *[line for line in until_a_server_asks(persona.request_defaults(kind)["headers"]) if line[0] != "Origin"],
         *([("Referer", server.url)] if kind != RequestKind.NAVIGATION else []),
         ACCEPT_ENCODING,
         ("Accept-Language", persona.accept_language),

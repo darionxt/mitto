@@ -79,6 +79,28 @@ SAME_SITE_ORIGIN_PLACEHOLDER = "<same-site-origin>"
 CROSS_SITE_AUTHORITY_PLACEHOLDER = "<cross-site-authority>"
 CROSS_SITE_ORIGIN_PLACEHOLDER = "<cross-site-origin>"
 
+MACHINE_PLACEHOLDER = "<machine>"
+"""What a normal form holds for the value of a client hint that says something of the machine and not of Chrome."""
+
+HINTS_FROM_THE_MACHINE = frozenset(
+    {
+        "device-memory",
+        "downlink",
+        "dpr",
+        "ect",
+        "rtt",
+        "sec-ch-device-memory",
+        "sec-ch-dpr",
+        "sec-ch-prefers-color-scheme",
+        "sec-ch-prefers-reduced-motion",
+        "sec-ch-prefers-reduced-transparency",
+        "sec-ch-viewport-height",
+        "sec-ch-viewport-width",
+        "viewport-width",
+    }
+)
+"""The client hints that follow the machine's memory, display, window and network, and the settings of its user."""
+
 _MULTIPART_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
 _MULTIPART_BOUNDARY_PLACEHOLDER = r"\1<random>"
 
@@ -538,7 +560,7 @@ def _normal_request(
     request: Http1Request | Http2Request | Http3Request,
     recording: Recording,
 ) -> dict[str, Json]:
-    headers = header_lines(tuple((name, _placeholders(value, recording)) for name, value in request.headers))
+    headers = header_lines(tuple((name, _header_value(name, value, recording)) for name, value in request.headers))
     if isinstance(request, Http1Request):
         line = _placeholders(f"{request.method} {request.target} {request.version}", recording)
         form: dict[str, Json] = {"request_line": line, "headers": headers}
@@ -598,6 +620,10 @@ def _later_frame(frame: Frame) -> dict[str, Json]:
     if frame.type in {DATA, HEADERS}:
         form.pop("payload", None)
     return form
+
+
+def _header_value(name: str, value: str, recording: Recording) -> str:
+    return MACHINE_PLACEHOLDER if name.lower() in HINTS_FROM_THE_MACHINE else _placeholders(value, recording)
 
 
 def _placeholders(value: str, recording: Recording) -> str:

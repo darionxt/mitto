@@ -11,7 +11,7 @@ import json
 import math
 import os
 import sys
-from collections.abc import Buffer, Iterator, Sequence
+from collections.abc import Buffer, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
@@ -572,6 +572,7 @@ class PrivateSettings(TypedDict, total=False):
     origins_to_force_quic_on: Sequence[str]
     dns_nameserver: str | None
     host_resolver_rules: str
+    accept_ch_via_alps: Mapping[str, str]
 
 
 class Session:
@@ -592,6 +593,7 @@ class Session:
         dns_nameserver: str | None = None,
         host_resolver_rules: str = "",
         proxy: str | None = None,
+        accept_ch_via_alps: Mapping[str, str] | None = None,
     ) -> None:
         """Create the Session.
 
@@ -617,6 +619,9 @@ class Session:
                 the Host header keep the name.
             proxy: The proxy for every request, as a URL with the scheme http, https or socks5. A username and password in
                 it answer the proxy when it asks. None reaches each server directly, whatever the system's settings say.
+            accept_ch_via_alps: What each origin counts as having said in the ACCEPT_CH frame in ALPS, by the URL of its
+                origin. No server in the tests can say anything there, so this stands for what //net would read. It is for
+                tests, so the public API does not offer it.
 
         Raises:
             ValueError: If the native core refuses the settings. The message leaves out `proxy`, which may hold a password.
@@ -634,6 +639,7 @@ class Session:
             "user_agent": user_agent,
             "origins_to_force_quic_on": list(origins_to_force_quic_on),
             "host_resolver_rules": host_resolver_rules,
+            "accept_ch_via_alps": dict(accept_ch_via_alps or {}),
         }
         if dns_nameserver is not None:
             settings_dict["dns_nameserver"] = dns_nameserver

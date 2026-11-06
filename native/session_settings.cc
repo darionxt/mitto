@@ -40,6 +40,7 @@ constexpr std::string_view kOriginsToForceQuicOnKey =
 constexpr std::string_view kEveryOrigin = "*";
 constexpr std::string_view kDnsNameserverKey = "dns_nameserver";
 constexpr std::string_view kHostResolverRulesKey = "host_resolver_rules";
+constexpr std::string_view kAcceptCHViaALPSKey = "accept_ch_via_alps";
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -156,6 +157,20 @@ bool ReadHostResolverRules(const base::Value& value,
     }
   }
   settings.host_resolver_rules = value.GetString();
+  return true;
+}
+
+bool ReadAcceptCHViaALPS(const base::Value& value, SessionSettings& settings) {
+  if (!value.is_dict()) {
+    return false;
+  }
+  for (const auto [origin, frame] : value.GetDict()) {
+    const GURL url(origin);
+    if (!url.is_valid() || !frame.is_string()) {
+      return false;
+    }
+    settings.accept_ch_via_alps[url::Origin::Create(url)] = frame.GetString();
+  }
   return true;
 }
 
@@ -278,6 +293,12 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
     }
     if (key == kHostResolverRulesKey) {
       if (!ReadHostResolverRules(value, settings)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kAcceptCHViaALPSKey) {
+      if (!ReadAcceptCHViaALPS(value, settings)) {
         return std::nullopt;
       }
       continue;

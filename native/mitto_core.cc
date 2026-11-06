@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -37,6 +38,7 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "mitto/body_stream.h"
+#include "mitto/client_hints.h"
 #include "mitto/cookie_json.h"
 #include "mitto/feature_list.h"
 #include "mitto/fetch_rules.h"
@@ -126,6 +128,9 @@ struct MittoSession {
   base::OneShotTimer doh_probes_timer;
   // What to answer the Session's proxy with when it asks.
   std::optional<net::AuthCredentials> proxy_credentials;
+  mitto::ClientHintsStore client_hints_store;
+  // Stands for what //net reads from a server's ALPS. For tests only.
+  std::map<url::Origin, std::string> accept_ch_via_alps;
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
   mitto::ReadyRequests ready_requests;
@@ -203,7 +208,8 @@ class RequestJob final : public net::URLRequest::Delegate,
         options_(std::move(options)),
         body_(std::move(body)) {
     if (options_.fetch) {
-      fetch_rules_.emplace(*std::move(options_.fetch), url_);
+      fetch_rules_.emplace(*std::move(options_.fetch), url_,
+                           session_->client_hints_store);
     }
   }
 
@@ -218,27 +224,15 @@ class RequestJob final : public net::URLRequest::Delegate,
   }
 
   void Start() {
-    request_ = session_->context->CreateRequest(
-        url_, options_.priority, this, kTrafficAnnotation,
-        net::handles::kInvalidNetworkHandle);
-    request_->set_method(options_.method);
-    request_->SetExtraRequestHeaders(request_headers_);
-    request_->SetPriorityIncremental(options_.priority_incremental);
+    request_ = CreateRequest(url_, options_.method, request_headers_);
     if (fetch_rules_) {
       fetch_rules_->ConfigureRequest(*request_);
     } else {
       SetUpTopLevelNavigation(*request_);
     }
-    if (!options_.referrer.is_empty()) {
-      // The caller's, so no rule changes it, on any hop.
-      request_->set_referrer_policy(net::ReferrerPolicy::NEVER_CLEAR);
-      request_->SetReferrer(options_.referrer.spec());
-    }
+    SetCallersReferrer();
     if (body_) {
-      // What Chrome's network service makes of a body held in memory. //net adds
-      // the Content-Length from it, and rewinds it for a redirect or a retry.
-      request_->set_upload(net::ElementsUploadDataStream::CreateWithReader(
-          std::make_unique<net::UploadOwnedBytesElementReader>(&*body_)));
+      SetBody();
     }
     if (options_.stream_body) {
       auto body_stream = std::make_unique<BodyStream>(
@@ -297,6 +291,33 @@ class RequestJob final : public net::URLRequest::Delegate,
                   net::CompletionOnceCallback callback) override {
     connect_timer_.Stop();
     StartReadTimer();
+    // A stream cannot go twice, so a request with one goes on as it is.
+    if (!fetch_rules_ || options_.stream_body) {
+      return net::OK;
+    }
+
+    // Nothing has gone out on this request yet, so going on from a later task
+    // shows nothing on the wire:
+    // NavigationURLLoaderImpl::OnAcceptCHFrameReceived() answers from another
+    // process too.
+    std::optional<FetchRules::Restart> restart =
+        fetch_rules_->OnConnected(*request, AcceptCHFrame(info));
+    if (fetch_rules_->request_restarts_exceeded()) {
+      read_timer_.Stop();
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&RequestJob::Finish, weak_ptr_factory_.GetWeakPtr(),
+                         net::ERR_TOO_MANY_ACCEPT_CH_RESTARTS));
+      return net::ERR_IO_PENDING;
+    }
+    if (restart) {
+      read_timer_.Stop();
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&RequestJob::RestartRequest,
+                         weak_ptr_factory_.GetWeakPtr(), *std::move(restart)));
+      return net::ERR_IO_PENDING;
+    }
     return net::OK;
   }
 
@@ -351,6 +372,18 @@ class RequestJob final : public net::URLRequest::Delegate,
     // A response from a cache comes with no connection.
     connect_timer_.Stop();
     read_timer_.Stop();
+    if (fetch_rules_) {
+      if (std::optional<FetchRules::Restart> restart =
+              fetch_rules_->OnResponseHeaders(*request_);
+          restart && !options_.stream_body) {
+        // As with a redirect, Chrome answers this from a later task.
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&RequestJob::RestartRequest,
+                                      weak_ptr_factory_.GetWeakPtr(),
+                                      *std::move(restart)));
+        return;
+      }
+    }
     PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
 
     response_started_ = true;
@@ -370,6 +403,68 @@ class RequestJob final : public net::URLRequest::Delegate,
   }
 
  private:
+  // Returns a request that has what every request of this job has, and is not
+  // set up any further.
+  std::unique_ptr<net::URLRequest> CreateRequest(
+      const GURL& url,
+      const std::string& method,
+      const net::HttpRequestHeaders& headers) {
+    std::unique_ptr<net::URLRequest> request = session_->context->CreateRequest(
+        url, options_.priority, this, kTrafficAnnotation,
+        net::handles::kInvalidNetworkHandle);
+    request->set_method(method);
+    request->SetExtraRequestHeaders(headers);
+    request->SetPriorityIncremental(options_.priority_incremental);
+    return request;
+  }
+
+  void SetCallersReferrer() {
+    if (!options_.referrer.is_empty()) {
+      // The caller's, so no rule changes it, on any hop.
+      request_->set_referrer_policy(net::ReferrerPolicy::NEVER_CLEAR);
+      request_->SetReferrer(options_.referrer.spec());
+    }
+  }
+
+  // What Chrome's network service makes of a body held in memory. //net adds
+  // the Content-Length from it, and rewinds it for a redirect or a retry. The
+  // job outlives the request, and a restart needs the body again.
+  void SetBody() {
+    request_->set_upload(net::ElementsUploadDataStream::CreateWithReader(
+        std::make_unique<net::UploadBytesElementReader>(
+            base::as_byte_span(*body_))));
+  }
+
+  std::string_view AcceptCHFrame(const net::TransportInfo& info) const {
+    const auto found =
+        session_->accept_ch_via_alps.find(url::Origin::Create(request_->url()));
+    return found == session_->accept_ch_via_alps.end()
+               ? std::string_view(info.accept_ch_frame)
+               : std::string_view(found->second);
+  }
+
+  // Puts a new request in the place of the one that has to start over, as
+  // ThrottlingURLLoader and NavigationURLLoaderImpl do. It only ever is a
+  // navigation's, whose rules have said what it goes on with.
+  void RestartRequest(FetchRules::Restart restart) {
+    std::unique_ptr<net::URLRequest> old_request = std::move(request_);
+    const bool has_body =
+        restart.from_the_start ? body_.has_value() : old_request->has_upload();
+    request_ = CreateRequest(
+        restart.url,
+        restart.from_the_start ? options_.method : old_request->method(),
+        restart.headers);
+    fetch_rules_->ConfigureRestartedRequest(*request_, *old_request);
+    old_request.reset();
+    SetCallersReferrer();
+    if (has_body) {
+      SetBody();
+    }
+    proxy_auth_answered_ = false;
+    StartConnectTimer();
+    request_->Start();
+  }
+
   // Pushes an event of `type` that describes the response so far.
   void PushResponseEvent(int32_t type) {
     RequestEvent event;
@@ -386,6 +481,14 @@ class RequestJob final : public net::URLRequest::Delegate,
   // Goes on from a redirect that OnReceivedRedirect() deferred. This may delete
   // the job, so nothing may touch it afterwards.
   void ContinueAfterRedirect(const net::RedirectInfo& redirect_info) {
+    if (fetch_rules_) {
+      if (std::optional<FetchRules::Restart> restart =
+              fetch_rules_->OnResponseHeaders(*request_);
+          restart && !options_.stream_body) {
+        RestartRequest(*std::move(restart));
+        return;
+      }
+    }
     if (!options_.follow_redirects) {
       PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
       // //net does not read the body of a redirect, so this is all there is.
@@ -473,7 +576,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   RequestOptions options_;
   // What a request made for a page does at its start and on each hop.
   std::optional<FetchRules> fetch_rules_;
-  // What to send as the body, until Start() hands it to `request_`.
+  // What to send as the body, which `request_` reads from.
   std::optional<std::vector<char>> body_;
   // The stream body, which `request_` owns and drops on a 303.
   base::WeakPtr<BodyStream> body_stream_;
@@ -572,6 +675,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
           net::ProxyConfigWithAnnotation(settings.proxy_config,
                                          kProxyTrafficAnnotation)));
   session->proxy_credentials = std::move(settings.proxy_credentials);
+  session->accept_ch_via_alps = std::move(settings.accept_ch_via_alps);
   std::unique_ptr<net::CertVerifier> cert_verifier = CreateCertVerifier(
       session->cert_net_fetcher, std::move(settings.additional_trust_anchors));
   if (!settings.ignore_certificate_errors_spki_list.empty()) {

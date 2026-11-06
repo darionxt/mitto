@@ -45,6 +45,7 @@ from mitto._native import (
     Session,
 )
 from mitto._persona import CHROME_157_WINDOWS, RequestKind, load_persona
+from tests.client_hints import until_a_server_asks
 from tests.local_server import LocalHTTPServer
 from tools.capture import CASE_HOST, HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, normal_form
 from tools.capture import RequestKind as CaptureRequestKind
@@ -544,7 +545,11 @@ def test_get_presents_chrome_157_with_the_navigation_request_kind(http_server: R
     assert headers == [
         ("Host", http_server.base_url.rstrip("/")),
         ("Connection", "keep-alive"),
-        *[line for line in persona.request_defaults(RequestKind.NAVIGATION)["headers"] if line[0] != "Origin"],
+        *[
+            line
+            for line in until_a_server_asks(persona.request_defaults(RequestKind.NAVIGATION)["headers"])
+            if line[0] != "Origin"
+        ],
         ACCEPT_ENCODING,
         ("Accept-Language", persona.accept_language),
     ]

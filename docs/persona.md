@@ -30,7 +30,7 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `kinds.KIND.body.lines` | The names in `headers` that only a request with a body has. A kind without `body` cannot have one, so a body with `script` or `image` is refused |
 | `kinds.KIND.body.content_types` | The value for `Content-Type`, by what the body is: `text`, `form`, `json` or `multipart`. `<boundary>` stands for the boundary of a multipart body |
 
-In `headers`, `<content-type>` stands for what the body says of itself or what a caller gives. `<origin>` is never sent, because the native core writes that line's value or removes the line. `Sec-Fetch-Mode` and `Sec-Fetch-Dest` say what the request is for, which the native core also needs on a later hop, and `Sec-Fetch-User` says that the user started it.
+In `headers`, `<content-type>` stands for what the body says of itself or what a caller gives. `<origin>` is never sent, because the native core writes that line's value or removes the line. `Sec-Fetch-Mode` and `Sec-Fetch-Dest` say what the request is for, which the native core also needs on a later hop, and `Sec-Fetch-User` says that the user started it. `headers` also holds each [client hint](#client-hints) that a server can ask for, which the native core removes until one has.
 
 ## What comes from where
 
@@ -40,7 +40,7 @@ The file does not hold everything on the wire, because Chrome does not decide ev
 | --- | --- |
 | `Host`, `Connection`, and the pseudo-headers of HTTP/2 and HTTP/3 | `//net` |
 | The lines in `headers` | The C API's `headers`. HTTP/2 and HTTP/3 send the names in lower case |
-| The values of `Origin` and `Sec-Fetch-*`, and whether those and `sec-ch-*` go at all | The native core, from the page a request comes from ([below](#the-initiator)). A line in `headers` keeps its place, and one that the native core adds goes after the others |
+| The values of `Origin` and `Sec-Fetch-*`, and whether those and `sec-ch-*` go at all | The native core, from the page a request comes from ([below](#the-initiator)) and what its origin [has asked for](#client-hints). A line in `headers` keeps its place, and one that the native core adds goes after the others |
 | `Content-Length` | `//net`, after `Connection` or the pseudo-headers, from the C API's `body`. It says 0 for `POST` and `PUT` with no body at all, and for any method with an empty one |
 | `Referer` | The native core, from the page a request comes from, or the C API's `referrer` for a caller's. `//net` drops a `Referer` among the headers, and sends this one after them |
 | `Accept-Encoding` | `//net`, after `Referer`. The native core turns on Brotli and Zstandard as Chrome does, and `//net` advertises them only over HTTPS and to localhost |
@@ -86,9 +86,52 @@ From the page and the URL of each hop, the native core sets these, in code porte
 | `Origin` on a script or image | Nothing for `GET` and `HEAD` |
 | `Sec-Fetch-Storage-Access` | `active` with `credentials_mode` of `include`, for a URL that is not of the same site as the page. So a cross-site `script` or `image` sends it, and a `fetch()` does not. A navigation becomes the first party, so it does not either |
 | `sec-ch-*` and `Sec-Fetch-*` | Only for a URL that is potentially trustworthy, so not over plain HTTP to a host that is not local. A redirect to such a URL takes them away. A redirect from one adds `Sec-Fetch-*` on any kind, and `sec-ch-*` only on a navigation |
-| The place of `sec-ch-*` | A navigation sends them again on each hop, after `Sec-Fetch-Dest`. A subresource keeps them in the Persona's place |
+| The place of `sec-ch-*` | A navigation sends them again on each hop, after `Sec-Fetch-Dest`. A subresource keeps them where they are |
 
 `//net` decides from the same page which cookies go ([cookies](parity.md#which-site-a-request-belongs-to)) and which connections a request can use ([partitioning](parity.md#partitioning)).
+
+## Client hints
+
+Chrome sends `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` to everyone. The other hints go once a server has asked, so a server that asks and gets nothing could tell. A **Session** keeps what each origin has asked for, for as long as the Session lasts. Which code this follows is [in parity.md](parity.md#client-hints).
+
+| What a server says | What it does |
+| --- | --- |
+| `Accept-CH` on the response to a navigation | Replaces what the origin of that response has asked for. A redirect on the way counts, at once, for its own origin, and a 204 or 205 does not count, because Chrome shows nothing for it. An empty value takes everything back |
+| `Accept-CH` on the response to a script, an image or a fetch | Nothing |
+| `Accept-CH` that is not a list of tokens, or over plain HTTP to a host that is not local | Nothing. A token that names no hint counts for nothing, and names go in any case |
+| A hint in both `Accept-CH` and `Critical-CH` that the navigation did not send | The navigation starts over from its first URL, with the hint, and the caller sees only the end of it. It does this once for each origin |
+| `Clear-Site-Data` with `"clientHints"`, `"cookies"`, `"cache"` or `"*"` | Takes everything back for that origin, unless a subresource says it from another site, and `Accept-CH` and `Critical-CH` beside it count for nothing |
+| The `ACCEPT_CH` frame in ALPS, for a navigation | The navigation sends those hints too, and nothing has gone out without them. They count for that request alone, as they do in Chrome, so what a server wants kept it says in `Accept-CH` |
+
+| Request | Which of those hints it sends |
+| --- | --- |
+| A navigation | What the origin of its URL has asked for, on each hop. So `initiator=` plays no part |
+| A script, image or fetch to its page's origin | What that origin has asked for, at its start |
+| A script, image or fetch to another origin | None, because a page's permissions policy keeps them for its own origin and a Session has no other policy to go by |
+| One of those on a redirect | Keeps what it has within its page's origin. Elsewhere it loses them, and does not get them back if it returns |
+
+Over plain HTTP to a host that is not local, a request sends no client hints at all.
+
+### Where they go
+
+A navigation sends them in the order of `headers`, and on a later hop in that same order after `Sec-Fetch-Dest`. A restart for `Critical-CH` sends them after `Accept` and before `Sec-Fetch-Site`. One for the frame in ALPS leaves the lines it had in place, and adds the new ones there.
+
+A script, image or fetch has no order of its own to write down. Blink holds those lines in a hash table, so their order depends on which lines there are, and the same two hints can swap places when a server asks for a third. In `headers`, a subresource therefore has its lines in the order they go with no hint added, then the hints. Once a hint goes, the native core [works out the order](parity.md#the-order-of-a-subresources-lines) of `User-Agent`, `Content-Type` and the hints, ahead of the other lines, as Blink's table gives it.
+
+### What they say
+
+| Hints | The Persona says | Because |
+| --- | --- | --- |
+| `sec-ch-ua-full-version`, `sec-ch-ua-full-version-list` | The build that recorded the Baselines of the Chrome Release | The Baselines hold this |
+| `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64`, `sec-ch-ua-model`, `sec-ch-ua-form-factors` | `"x86"`, `"64"`, `?0`, `""`, `"Desktop"` | The Baselines hold this, and it is the same for a 64-bit Chrome on any x64 desktop PC with Windows |
+| `sec-ch-ua-platform-version` | `"19.0.0"` | The Baselines hold this. Chrome reads it from Windows, so it follows the machine too. It only says how new Windows is, and Windows 11 24H2 says the same |
+| `device-memory`, `sec-ch-device-memory` | `8` | A value [no Baseline holds](capture.md#what-stays-and-what-does-not). A common size, where the real value is the machine's, rounded |
+| `dpr`, `sec-ch-dpr` | `1` | No Baseline holds it. The scale of a display at 100% |
+| `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height` | `1920`, `1920`, `945` | No Baseline holds it. A Chrome window that fills a 1920 by 1080 display at that scale |
+| `rtt`, `downlink`, `ect` | `50`, `10`, `4g` | No Baseline holds it. A good connection. In Chrome they follow what it measures, with some noise for each host |
+| `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` | `light`, `no-preference`, `no-preference` | No Baseline holds it. What Windows has as it comes |
+
+`width` and `sec-ch-width` say how wide an image is laid out, which only a page knows, and Chrome sends neither for an image with no width of its own. `save-data` needs a setting that a Persona does not have on. So a Persona has no line for them, and they do not go.
 
 ## What a caller changes
 
@@ -103,19 +146,22 @@ From the page and the URL of each hop, the native core sets these, in code porte
 | `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's `user_agent` after the other lines, because a request always gets one from the context |
 | `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what the Initiator would make of it. `//net` still decides where it goes |
 | A line that the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop, also over plain HTTP. `//net` still changes an `Origin` on a redirect, as it does in Chrome: `null` for another origin, and gone when the method changes |
+| A client hint that no server has asked for | Goes as given, on each hop |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
+
+On a script, image or fetch that sends a hint a server asked for, `User-Agent`, `Content-Type` and the hints go [in the order of Blink's table](#where-they-go), so a caller's own `Content-Type` goes there too, as a page's does.
 
 A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone. `Cookie` is the exception: it keeps that place, but `//net` writes over its value whenever the store holds a cookie for the URL, and it does not follow a redirect to another origin.
 
 ## Write one
 
-Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`.
+Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with [the values above](#what-they-say) for what a Baseline does not hold.
 
 [`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
 
 ## What differs between Chrome Releases
 
-An older Chrome Release runs on the network code of the **Engine Release**, and differs only by its Persona ([ADR-0005](adr/0005-older-releases-as-data.md)). Chrome 155 and 156 need nothing else: [their Baselines](baselines.md#what-differs-from-chrome-157) differ from Chrome 157's in `sec-ch-ua` and `User-Agent` only, so those two lines are all that differs between the three files. The Baselines of [the Recording Cases](baselines.md#the-recording-cases) agree, with redirects, bodies, cookies, plain HTTP and a proxy: every case differs in those two lines only. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so there it is `User-Agent` alone.
+An older Chrome Release runs on the network code of the **Engine Release**, and differs only by its Persona ([ADR-0005](adr/0005-older-releases-as-data.md)). Chrome 155 and 156 need nothing else: [their Baselines](baselines.md#what-differs-from-chrome-157) differ from Chrome 157's in `sec-ch-ua` and `User-Agent` only, along with `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` where a server has asked, so those four lines are all that differs between the three files. The Baselines of [the Recording Cases](baselines.md#the-recording-cases) agree, with redirects, bodies, cookies, plain HTTP and a proxy: every case differs in those lines only. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so there it is `User-Agent` alone.
 
 [`tools/workspace/compare`](building.md#compare-two-releases), run from each of 155.0.8059.85 and 156.0.8078.80 to 157.0.8103.27, agrees with that. These files are the same in all three, so what sets up a connection did not move:
 

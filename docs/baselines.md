@@ -134,7 +134,7 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ Comma
 Get-Content "$env:USERPROFILE\mitto\record-a.log"
 ```
 
-It takes about a minute, and ends with `Done:` or with an error. Windows of Chrome open and close on the desktop meanwhile. If a case page fails, the reason is in `server-errors.log` in the output directory. A line there that ends in `bytes that did not wait for an answer to CONNECT` is no failure: during the starts through the proxy, Chrome's component updater sends its `POST` to `update.googleapis.com` over plain HTTP through the proxy, and the proxy drops it.
+It takes about a minute and a half, and ends with `Done:` or with an error. Windows of Chrome open and close on the desktop meanwhile. If a case page fails, the reason is in `server-errors.log` in the output directory. A line there that ends in `bytes that did not wait for an answer to CONNECT` is no failure: during the starts through the proxy, Chrome's component updater sends its `POST` to `update.googleapis.com` over plain HTTP through the proxy, and the proxy drops it.
 
 ### What it does
 
@@ -166,7 +166,7 @@ It takes about a minute, and ends with `Done:` or with an error. Windows of Chro
 2. Check that the files hold nothing personal. A normal form has placeholders for the host and no paths. `chrome.txt` has no paths, and the script leaves the page's command line and profile path out. Search both for the machine's name, the user's name and anything like a path or an address, in place of `NAME` here:
 
    ```bash
-   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?}.json recordings/a/chrome.txt
+   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?,client_hints_*}.json recordings/a/chrome.txt
    ```
 
 3. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, and the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
@@ -271,7 +271,7 @@ Five directories are few for a field trial as rare as `IncreaseAmplificationFact
 
 ## The Recording Cases
 
-`tests/baselines/RELEASE/cases` and `chrome.txt` come from the first of three sessions of each Chrome Release, recorded on 2026-11-06 through `record.ps1` with [the same builds](#where-each-chrome-release-comes-from), on the same Windows machine, windowed.
+`tests/baselines/RELEASE/cases` comes from the first of three sessions of each Chrome Release, recorded on 2026-11-06 through `record.ps1` with [the same builds](#where-each-chrome-release-comes-from), on the same Windows machine, windowed.
 
 The three sessions of each Chrome Release gave identical normal forms in all nine files, and none drew [the field trial that reaches the wire](#chrome-157). In each, `http1.json`, `http2.json` and `http3.json` came out byte for byte the same as the Baselines already there, so neither the extended kit nor a newer seed moved them. The checks in [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording hold for all nine sessions, so each case is what it says it is in windowed Chrome too.
 
@@ -279,13 +279,33 @@ A connection looks the same in every file of a protocol. `tls`, `quic`, `http2` 
 
 ### What differs between Chrome Releases
 
-Only `sec-ch-ua` and `User-Agent`, with [the values above](#what-differs-from-chrome-157). Over the six files in `cases` that is 76 fields of `sec-ch-ua` and 82 of `User-Agent` per Chrome Release. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so they differ in `User-Agent` alone.
+Only `sec-ch-ua` and `User-Agent`, with [the values above](#what-differs-from-chrome-157). Over the six files in `cases` from that day that is 76 fields of `sec-ch-ua` and 82 of `User-Agent` per Chrome Release. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so they differ in `User-Agent` alone.
 
 ### Their seed
 
 Version `20261106-010110.492000-production`, a day newer than [the one above](#their-variations-seeds), with 630, 618 and 584 studies for Chrome 155, 156 and 157. All sessions of a Chrome Release got the same bytes. `IncreaseHttp3Usage` is the same group as before in all of them.
 
 Field trials differ between sessions as they did before, with no effect on the normal form. These are new in that list: `PrioritizeResizeTaskRunnerOnStartupStudy` and `WinSboxCsrssLockdown` between user data directories and `CacheGurlSchemeIsHttpOrHttpsResult` between starts in Chrome 155, `SearchPrefetchHighPriorityPrefetches` between user data directories in Chrome 156, and `PreconnectManagerDirectFastPath` between starts in Chrome 157.
+
+### Client hints
+
+`cases/client_hints_http1.json`, `cases/client_hints_http2.json`, `cases/client_hints_http3.json`, `cases/client_hints_plain_http.json` and `chrome.txt` come from the first of three later sessions of each Chrome Release, recorded on 2026-11-07, on the same machine with the same builds and the same seed.
+
+The three sessions of each Chrome Release gave identical normal forms in all thirteen files, and none drew [the field trial that reaches the wire](#chrome-157). The nine files from before came out byte for byte the same in all nine sessions, so neither these runs nor another day moved them. The checks in [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording hold for these cases in each Chrome Release. A connection looks the same here as in the main file of its protocol, so these cases too differ from the others in their requests only.
+
+The values that [follow the machine](capture.md#what-stays-and-what-does-not) are `<machine>` in these files, and they differ from what [a Persona claims](persona.md#what-they-say) on purpose. `sec-ch-ua-platform-version` stays as it was, `"19.0.0"`, from the same Windows build as the Baselines above.
+
+Between Chrome Releases these files differ only in `sec-ch-ua`, `User-Agent`, `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list`:
+
+| Chrome | `sec-ch-ua-full-version` | `sec-ch-ua-full-version-list` |
+|---|---|---|
+| 155 | `"155.0.8059.85"` | `"Google Chrome";v="155.0.8059.85", "Chromium";v="155.0.8059.85", "Not(A:Brand";v="24.0.0.0"` |
+| 156 | `"156.0.8078.80"` | `"Not:A-Brand";v="8.0.0.0", "Chromium";v="156.0.8078.80", "Google Chrome";v="156.0.8078.80"` |
+| 157 | `"157.0.8103.39"` | `"Not-A.Brand";v="99.0.0.0", "Google Chrome";v="157.0.8103.39", "Chromium";v="157.0.8103.39"` |
+
+Over the four files that is 123 fields of `sec-ch-ua`, 125 of `User-Agent` and 42 each of the other two per Chrome Release.
+
+The seed's version is the same as [the day before](#their-seed), and so is the part of its serial number after the `#`, so the studies have not changed. The part before the `#` has grown. `OptimisticDnsForTcp` is in the `chrome.txt` of some user data directories and in none of the starts of others, which goes beyond [what Chrome 157 showed](#chrome-157), and the normal form is the same in both.
 
 ## A Chrome that has run for a while
 

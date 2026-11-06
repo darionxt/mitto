@@ -57,6 +57,7 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
 - Cookies (optionally persisted), redirects, an optional HTTP cache, and proxies: HTTP, HTTPS and SOCKS5, with authentication.
 - DNS and certificate verification as Chrome does them, including the Chrome Root Store. Also an option to add trust anchors, because on Linux the Chrome Root Store is otherwise the only source of trust ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
 - Headers that follow the **Initiator**: `Sec-Fetch-Site`, `Referer`, `Origin` and same-site cookie rules.
+- Client hints that follow what each origin asks for, in `Accept-CH`, `Critical-CH` or the `ACCEPT_CH` frame in ALPS, with their values in Persona data. See [persona.md](persona.md#client-hints).
 - An asyncio API that shares the same Session machinery.
 - **Exit:** feature tests and Parity Checks pass, and the API reference is written.
 

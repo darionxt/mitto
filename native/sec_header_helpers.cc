@@ -187,16 +187,12 @@ bool IsFixedHeader(const FetchParams& params, std::string_view name) {
   return params.fixed_headers.contains(base::ToLowerASCII(name));
 }
 
-bool IsClientHintHeader(std::string_view name) {
-  return base::StartsWith(name, kClientHintPrefix,
-                          base::CompareCase::INSENSITIVE_ASCII);
-}
-
 void RemoveSecHeaders(net::URLRequest& request, const FetchParams& params) {
   const net::HttpRequestHeaders::HeaderVector request_headers =
       request.extra_request_headers().GetHeaderVector();
   for (const auto& header : request_headers) {
-    if (IsClientHintHeader(header.key) ||
+    if (base::StartsWith(header.key, kClientHintPrefix,
+                         base::CompareCase::INSENSITIVE_ASCII) ||
         base::StartsWith(header.key, kFetchMetadataPrefix,
                          base::CompareCase::INSENSITIVE_ASCII)) {
       RemoveHeader(request, params, header.key);

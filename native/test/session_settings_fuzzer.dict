@@ -13,6 +13,7 @@
 "\"origins_to_force_quic_on\""
 "\"dns_nameserver\""
 "\"host_resolver_rules\""
+"\"accept_ch_via_alps\""
 "MAP "
 "EXCLUDE "
 "\"*\""

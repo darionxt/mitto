@@ -23,6 +23,7 @@ from mitto._body import (
     encode_query,
     with_declared_size,
 )
+from tools.capture import HINTS_ASKED
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.parity.replay import REPLAYS
 
@@ -67,6 +68,9 @@ def test_the_recorded_cases_hold_a_body_of_each_kind_that_a_baseline_has() -> No
         "fetch_post_text_same_origin",
         "fetch_post_text_cross_site",
         "fetch_post_json_same_origin",
+        "client_hints_fetch_post",
+        "client_hints_form",
+        *(asked.post.name for asked in HINTS_ASKED),
     }
 
 

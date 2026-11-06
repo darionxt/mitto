@@ -22,6 +22,8 @@ __all__ = ["Session", "get"]
 class Session:
     """A long-lived client that holds one Chrome-like browsing state: its Persona, cookies and open connections.
 
+    It also keeps which client hints each origin has asked for, and sends those as Chrome does. See docs/persona.md.
+
     One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
     requests still running, but not while another thread is starting one or using its cookies.
 

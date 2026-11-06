@@ -22,6 +22,7 @@ _PAGE_TIMEOUT_SECONDS = 60.0
 _EXIT_TIMEOUT_SECONDS = 10.0
 _RUNS_BY_NAME = {run.name: run for run in RUNS}
 _TLS_RUNS = ("cases/http1", "cases/http2", "cases/http3")
+_CLIENT_HINTS_RUNS = ("cases/client_hints_http1", "cases/client_hints_http2", "cases/client_hints_http3")
 _PROXY_RUNS = ("cases/proxy_http1", "cases/proxy_http2")
 _PROTOCOLS = {
     "http1": "http/1.1",
@@ -33,6 +34,10 @@ _PROTOCOLS = {
     "cases/plain_http": "http/1.1",
     "cases/proxy_http1": "http/1.1",
     "cases/proxy_http2": "h2",
+    "cases/client_hints_http1": "http/1.1",
+    "cases/client_hints_http2": "h2",
+    "cases/client_hints_http3": "h3",
+    "cases/client_hints_plain_http": "http/1.1",
 }
 _NAVIGATE = ("navigate", "document")
 _CORS = ("cors", "empty")
@@ -214,3 +219,70 @@ def test_https_through_a_proxy_starts_with_connect(chrome: str, name: str) -> No
     assert headers["host"] == "<authority>"
     assert headers_of(form, "proxy_navigation")["sec-fetch-site"] == "none"
     assert "tls" in form
+
+
+_SENT_BY_DEFAULT = {"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"}
+_ASKED_FOR = "sec-ch-ua-arch"
+
+
+def _hints_of(headers: dict[str, str]) -> set[str]:
+    return {name for name in headers if name.startswith("sec-ch-")}
+
+
+@pytest.mark.parametrize("name", _CLIENT_HINTS_RUNS)
+def test_chrome_sends_what_a_server_asked_for_only_to_that_origin(chrome: str, name: str) -> None:
+    form = recorded(chrome, name)
+
+    assert _hints_of(headers_of(form, "client_hints_first")) == _SENT_BY_DEFAULT
+    for case in (
+        "client_hints_script",
+        "client_hints_image",
+        "client_hints_fetch",
+        "client_hints_fetch_post",
+        "client_hints_navigation",
+        "client_hints_navigation_back",
+        "client_hints_form",
+        "client_hints_redirect_fetch_1",
+        "client_hints_redirect_navigation_1",
+        "client_hints_redirect_navigation_3",
+        "client_hints_redirect_navigation_5",
+    ):
+        assert _ASKED_FOR in headers_of(form, case), case
+    for case in (
+        "client_hints_script_same_site",
+        "client_hints_script_cross_site",
+        "client_hints_image_same_site",
+        "client_hints_image_cross_site",
+        "client_hints_fetch_same_site",
+        "client_hints_fetch_cross_site",
+        "client_hints_redirect_fetch_2",
+        "client_hints_redirect_fetch_3",
+        "client_hints_redirect_fetch_4",
+        "client_hints_navigation_same_site",
+        "client_hints_navigation_cross_site",
+        "client_hints_redirect_navigation_2",
+        "client_hints_redirect_navigation_4",
+        "client_hints_none_fetch",
+        "client_hints_none_navigation",
+    ):
+        assert _hints_of(headers_of(form, case)) == _SENT_BY_DEFAULT, case
+
+
+@pytest.mark.parametrize("name", _CLIENT_HINTS_RUNS)
+def test_chrome_sends_no_width_for_an_image_with_no_width(chrome: str, name: str) -> None:
+    headers = headers_of(recorded(chrome, name), "client_hints_image")
+
+    assert "width" not in headers
+    assert "sec-ch-width" not in headers
+
+
+@pytest.mark.parametrize("name", _CLIENT_HINTS_RUNS)
+def test_chrome_starts_a_navigation_over_for_a_critical_hint(chrome: str, name: str) -> None:
+    assert _ASKED_FOR in headers_of(recorded(chrome, name), "client_hints_critical")
+
+
+def test_plain_http_cannot_ask_for_hints(chrome: str) -> None:
+    form = recorded(chrome, "cases/client_hints_plain_http")
+
+    for case in ("client_hints_plain_http_fetch", "client_hints_plain_http_navigation"):
+        assert not _hints_of(headers_of(form, case))

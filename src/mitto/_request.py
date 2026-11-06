@@ -73,9 +73,10 @@ class RequestOptions(BodyOptions, total=False):
         kind: A Request Kind, which decides what the Persona sends. The default is navigation for GET and fetch for other
             methods.
         initiator: The URL of the page the request is made from, which counts as a top-level page. It decides Referer,
-            Origin and Sec-Fetch-Site on each hop, which SameSite cookies go, and which connections and partitioned cookies
-            the request can use. Without it, a navigation counts as started by the browser, and a subresource as coming from
-            the page at the root of the origin of its URL. A URL that is not valid ends the request with ERR_INVALID_ARGUMENT.
+            Origin and Sec-Fetch-Site on each hop, which SameSite cookies go, which connections and partitioned cookies the
+            request can use, and for a kind other than navigation, which client hints it sends. Without it, a navigation
+            counts as started by the browser, and a subresource as coming from the page at the root of the origin of its
+            URL. A URL that is not valid ends the request with ERR_INVALID_ARGUMENT.
         timeout: A number is the total time in seconds, and a Timeout sets each timer. None runs no timer, in place of the
             Session's default. The default is the Session's.
         follow_redirects: False makes a redirect the response, with empty content, because the network stack does not read

@@ -1,6 +1,7 @@
 #ifndef MITTO_SESSION_SETTINGS_H_
 #define MITTO_SESSION_SETTINGS_H_
 
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -11,6 +12,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/proxy_resolution/proxy_config.h"
 #include "third_party/boringssl/src/pki/parsed_certificate.h"
+#include "url/origin.h"
 #include "url/scheme_host_port.h"
 
 namespace mitto {
@@ -57,6 +59,10 @@ struct SessionSettings {
 
   // What Chrome's --host-resolver-rules takes, each rule known to be valid.
   std::string host_resolver_rules;
+
+  // What each origin counts as having said in ALPS, where //net would have read
+  // it. No server in the tests can say anything there. For tests only.
+  std::map<url::Origin, std::string> accept_ch_via_alps;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns

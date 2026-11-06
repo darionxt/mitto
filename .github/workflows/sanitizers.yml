@@ -38,7 +38,7 @@ jobs:
           - config: ubsan
             files: mitto_core_test libmitto_core.so
           - config: fuzz
-            files: cookies_fuzzer request_options_fuzzer session_settings_fuzzer libsanitizer_shared_hooks.so
+            files: client_hints_fuzzer cookies_fuzzer request_options_fuzzer session_settings_fuzzer libsanitizer_shared_hooks.so
     env:
       UV_LOCKED: "1"
     steps:
@@ -98,11 +98,11 @@ jobs:
           MITTO_CORE_TEST: ${{ runner.temp }}/native-core/mitto_core_test
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
-      - name: Fuzz the code that reads a Session's settings, a request's options and cookies
+      - name: Fuzz the code that reads a Session's settings, a request's options, cookies and client hints
         if: matrix.config == 'fuzz'
         run: |
           mkdir "$RUNNER_TEMP/crashes"
-          for target in session_settings request_options cookies; do
+          for target in session_settings request_options cookies client_hints; do
             mkdir "$RUNNER_TEMP/corpus-$target"
             "$RUNNER_TEMP/native-core/${target}_fuzzer" \
               -max_total_time="$FUZZ_SECONDS" \

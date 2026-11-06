@@ -11,6 +11,7 @@ from mitto._body import encode_query
 from mitto._persona import WINDOWS_PERSONAS, Persona, RequestKind, load_persona
 from mitto._request import BodyOptions, BuiltRequest, build_request
 from mitto._timeout import Timeout
+from tests.client_hints import until_a_server_asks
 
 URL = "https://example.test:8444/any/path"
 
@@ -210,7 +211,7 @@ def test_changes_to_several_lines_at_once() -> None:
         headers={"X-New": "1", "Accept": "text/plain", "sec-ch-ua-mobile": None},
     )
 
-    names = [name for name, _ in built["headers"]]
+    names = [name for name, _ in until_a_server_asks(built["headers"])]
     assert names == [
         "sec-ch-ua-platform",
         "User-Agent",

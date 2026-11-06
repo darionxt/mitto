@@ -11,9 +11,11 @@ from mitto._native import PrivateSettings
 from mitto._request import BodyOptions
 from tools.capture import (
     CASES,
+    CLIENT_HINTS_PLAIN_HTTP_START_PATH,
     COOKIE_SET_PATH,
     CROSS_SITE_HOST,
     FORMS_PATH,
+    HINTS_ASKED,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -44,6 +46,7 @@ class Replay:
         start: The name of the case to ask for, if asking for that is what makes this one: the first hop of a redirect
             chain for a later hop, and what goes through a tunnel for what opens the tunnel.
         before: The paths to ask for first, on the same Session and with the same kind.
+        asks: The paths to navigate to first, on the same Session and from no page, so that their origin asks for hints.
         body: What makes the body, from what the page's form or script gives Chrome in tools/capture/cases.py.
         page: The path of the page the request came from in tools/capture/cases.py, or nothing for what a request with no
             Initiator is.
@@ -55,6 +58,7 @@ class Replay:
     host: str | None = None
     start: str | None = None
     before: tuple[str, ...] = ()
+    asks: tuple[str, ...] = ()
     body: BodyOptions = field(default_factory=BodyOptions)
     page: str | None = None
     page_host: str | None = None
@@ -62,6 +66,74 @@ class Replay:
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
     return {f"{prefix}_{hop}": Replay(kind, start=f"{prefix}_1", page=page) for hop in range(1, 5)}
+
+
+def _client_hints_replays() -> dict[str, Replay]:
+    """Return what produces each case of the client hints runs, after the page's origin has asked."""
+    first = _PATHS["client_hints_first"]
+    asks = (first,)
+    replays = {
+        "client_hints_first": Replay(RequestKind.NAVIGATION),
+        "client_hints_fetch_post": Replay(RequestKind.FETCH, _POST, body=_TEXT, asks=asks, page=first),
+        "client_hints_navigation": Replay(RequestKind.NAVIGATION, asks=asks, page=first),
+        "client_hints_navigation_same_site": Replay(
+            RequestKind.NAVIGATION, host=SAME_SITE_HOST, asks=asks, page=_PATHS["client_hints_navigation"]
+        ),
+        "client_hints_navigation_cross_site": Replay(
+            RequestKind.NAVIGATION,
+            host=CROSS_SITE_HOST,
+            asks=asks,
+            page=_PATHS["client_hints_navigation_same_site"],
+            page_host=SAME_SITE_HOST,
+        ),
+        "client_hints_navigation_back": Replay(
+            RequestKind.NAVIGATION,
+            asks=asks,
+            page=_PATHS["client_hints_navigation_cross_site"],
+            page_host=CROSS_SITE_HOST,
+        ),
+        "client_hints_form": Replay(
+            RequestKind.NAVIGATION,
+            _POST,
+            body={"data": {"name": "mitto", "a b&c": "d e&f+g"}},
+            asks=asks,
+            page=_PATHS["client_hints_navigation_back"],
+        ),
+        "client_hints_critical": Replay(
+            RequestKind.NAVIGATION, host=CROSS_SITE_HOST, page=HINTS_ASKED[-1].navigation.path
+        ),
+        "client_hints_plain_http_fetch": Replay(
+            RequestKind.FETCH, asks=(CLIENT_HINTS_PLAIN_HTTP_START_PATH,), page=CLIENT_HINTS_PLAIN_HTTP_START_PATH
+        ),
+        "client_hints_plain_http_navigation": Replay(
+            RequestKind.NAVIGATION, asks=(CLIENT_HINTS_PLAIN_HTTP_START_PATH,), page=CLIENT_HINTS_PLAIN_HTTP_START_PATH
+        ),
+    }
+    for kind, suffix in (
+        (RequestKind.SCRIPT, "script"),
+        (RequestKind.IMAGE, "image"),
+        (RequestKind.FETCH, "fetch"),
+    ):
+        replays[f"client_hints_{suffix}"] = Replay(kind, asks=asks, page=first)
+        replays[f"client_hints_{suffix}_same_site"] = Replay(kind, host=SAME_SITE_HOST, asks=asks, page=first)
+        replays[f"client_hints_{suffix}_cross_site"] = Replay(kind, host=CROSS_SITE_HOST, asks=asks, page=first)
+    for hop in range(1, 5):
+        replays[f"client_hints_redirect_fetch_{hop}"] = Replay(
+            RequestKind.FETCH, start="client_hints_redirect_fetch_1", asks=asks, page=first
+        )
+    for hop in range(1, 6):
+        replays[f"client_hints_redirect_navigation_{hop}"] = Replay(
+            RequestKind.NAVIGATION,
+            start="client_hints_redirect_navigation_1",
+            asks=asks,
+            page=_PATHS["client_hints_form"],
+        )
+    for asked in HINTS_ASKED:
+        page_asks = (asked.path,)
+        replays[asked.fetch.name] = Replay(RequestKind.FETCH, asks=page_asks, page=asked.path)
+        replays[asked.post.name] = Replay(RequestKind.FETCH, _POST, body=_TEXT, asks=page_asks, page=asked.path)
+        replays[asked.navigation.name] = Replay(RequestKind.NAVIGATION, asks=page_asks, page=asked.path)
+    return replays
 
 
 REPLAYS = {
@@ -111,6 +183,7 @@ REPLAYS = {
     "plain_http_image": Replay(RequestKind.IMAGE, page=_PATHS["plain_http_navigation"]),
     "proxy_connect": Replay(RequestKind.NAVIGATION, start="proxy_navigation"),
     "proxy_navigation": Replay(RequestKind.NAVIGATION),
+    **_client_hints_replays(),
 }
 """How to replay each Recording Case, by its name."""
 
@@ -166,6 +239,8 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
     initiator = None
     if steps.page is not None:
         initiator = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
+    for path in steps.asks:
+        session.get(server.url(run.route, host=run.host, path=path), kind=RequestKind.NAVIGATION.value)
     for path in steps.before:
         session.get(server.url(run.route, host=run.host, path=path), kind=kind, initiator=initiator)
     path = _PATHS[steps.start or case]

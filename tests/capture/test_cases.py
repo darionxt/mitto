@@ -37,7 +37,7 @@ from tools.capture import (
     normal_form,
     raw_form,
 )
-from tools.capture.cases import HOST_NAMES, PROXY_CONNECT, START_PATH
+from tools.capture.cases import HINTS_ASKED, HOST_NAMES, PROXY_CONNECT, START_PATH, respond_on
 from tools.capture.page import KIND_PATHS, RequestKind
 from tools.capture.recording import ConnectionRecord, Json
 
@@ -46,6 +46,11 @@ _TIMEOUT_SECONDS = 10.0
 _BOUNDARY = "----WebKitFormBoundaryAbCdEfGh01234567"
 _RUNS_BY_NAME = {run.name: run for run in RUNS}
 _TLS_ROUTES = {"cases/http1": HTTP1, "cases/http2": HTTP2, "cases/http3": HTTP3}
+_CLIENT_HINTS_ROUTES = {
+    "cases/client_hints_http1": HTTP1,
+    "cases/client_hints_http2": HTTP2,
+    "cases/client_hints_http3": HTTP3,
+}
 _REQUEST_OF: dict[str, tuple[str, tuple[tuple[str, str], ...], bytes]] = {
     "navigation_form_urlencoded": ("POST", (("Content-Type", "application/x-www-form-urlencoded"),), b"a=b"),
     "navigation_form_multipart": (
@@ -59,6 +64,7 @@ _REQUEST_OF: dict[str, tuple[str, tuple[tuple[str, str], ...], bytes]] = {
     "fetch_post_stream": ("POST", (), b"stream body"),
     "cookie": ("GET", (("Cookie", "mitto=1"),), b""),
     "revalidation": ("GET", (("If-None-Match", '"mitto"'),), b""),
+    "client_hints_critical": ("GET", (("sec-ch-ua-arch", '"x86"'),), b""),
 }
 
 
@@ -186,6 +192,67 @@ def test_a_client_can_produce_every_case_of_a_run_directly(name: str, protocol: 
             assert request_of(form, case_name)["body"] == body.decode()
     assert header_lines_of(form, "cookie")[-1].lower() == "cookie: mitto=1"
     assert header_lines_of(form, "revalidation")[-1].lower() == 'if-none-match: "mitto"'
+
+
+@pytest.mark.parametrize(("name", "protocol"), _CLIENT_HINTS_ROUTES.items())
+def test_a_client_can_produce_every_client_hints_case_of_a_run_directly(name: str, protocol: str) -> None:
+    run = _RUNS_BY_NAME[name]
+    with CaptureServer() as server:
+        authority = server.authority(protocol, host=CASE_HOST)
+        if protocol == HTTP3:
+            with Http3Client(server.port(HTTP3), host=CASE_HOST) as client:
+                send_cases(client, run, authority)
+        else:
+            offered = ("h2",) if protocol == HTTP2 else ("http/1.1",)
+            with connect(server.port(protocol), offered=offered, host=CASE_HOST) as sock:
+                send_cases(Http2Client(sock) if protocol == HTTP2 else _Http1Client(sock), run, authority)
+        assert server.wait_for_page(protocol, _TIMEOUT_SECONDS, done_path=run.done_path)
+        form = normal_form(server.recording(protocol, host=CASE_HOST), run.cases)
+
+    assert list(requests_of(form)) == [case.name for case in run.cases]
+
+
+def _answer_to(path: str, scheme: str = "https", port: int = 8443) -> dict[str, str]:
+    class Head:
+        target = path
+        headers: tuple[tuple[str, str], ...] = ()
+
+    return dict(respond_on(scheme, port, Head()).headers)
+
+
+def test_the_first_page_of_the_client_hints_runs_asks_for_every_hint() -> None:
+    asked = _answer_to("/case/client-hints-first")["Accept-CH"].split(", ")
+
+    assert len(asked) == len(set(asked)) == 27
+    assert {"sec-ch-ua-full-version-list", "device-memory", "save-data", "sec-ch-width"} <= set(asked)
+
+
+@pytest.mark.parametrize("kind", ["script", "image", "fetch"])
+@pytest.mark.parametrize("where", ["same-site", "cross-site"])
+def test_a_subresource_of_another_origin_asks_too_which_shows_that_it_counts_for_nothing(kind: str, where: str) -> None:
+    assert "Accept-CH" in _answer_to(f"/case/client-hints-{kind}-{where}")
+
+
+def test_each_set_of_hints_is_asked_for_by_its_own_page_and_only_there() -> None:
+    assert [_answer_to(asked.path)["Accept-CH"] for asked in HINTS_ASKED] == [asked.accept_ch for asked in HINTS_ASKED]
+    for asked in HINTS_ASKED:
+        assert "Accept-CH" not in _answer_to(asked.fetch.path)
+        assert "Accept-CH" not in _answer_to(asked.navigation.path)
+
+
+def test_the_page_that_takes_back_what_was_asked_for_sends_an_empty_header() -> None:
+    assert _answer_to(HINTS_ASKED[-1].path)["Accept-CH"] == ""
+
+
+def test_the_last_page_of_the_client_hints_runs_asks_for_a_critical_hint() -> None:
+    answer = _answer_to("/case/client-hints-critical")
+
+    assert answer["Accept-CH"] == answer["Critical-CH"] == "sec-ch-ua-arch"
+
+
+def test_a_redirect_asks_for_every_hint_at_the_other_origin_of_the_site() -> None:
+    assert "Accept-CH" in _answer_to("/case/client-hints-redirect-navigation-2")
+    assert "Accept-CH" not in _answer_to("/case/client-hints-redirect-navigation-1")
 
 
 def test_a_client_can_produce_every_case_over_plain_http() -> None:
