@@ -2,17 +2,18 @@
 
 import functools
 import os
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
 from typing import Self, Unpack
 
 from mitto import _native
 from mitto._cookies import Cookies
-from mitto._native import PrivateSettings, encode_url
+from mitto._native import PrivateSettings, encode_url, iter_body, wait_for_response
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
 from mitto._request import RequestOptions, build_request
-from mitto._response import Response, to_response
+from mitto._response import Response, ResponseStream, to_response, to_response_stream
 from mitto._timeout import Timeout, to_timeout
 
 __all__ = ["Session", "get"]
@@ -122,20 +123,48 @@ class Session:
             **options: See RequestOptions.
 
         Raises:
-            TypeError: If `data` is of no type that makes a body, or `json` holds a value that JSON has no form of.
+            TypeError: If `data` is of no type that makes a body or a stream gives something other than bytes, or `json`
+                holds a value that JSON has no form of.
             ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1,
                 `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a positive
                 number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds a
-                NaN or an infinity, or a body goes with GET or HEAD or with a Request Kind that Chrome sends none with.
+                NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or a
+                stream does not keep to its `Content-Length`.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
                 that runs out is a RequestTimeoutError. A proxy that asks for credentials this Session does not have, or
                 refuses those it has, is a ProxyError with ERR_PROXY_AUTH_REQUESTED. An HTTP error status such as 404 is a
                 response, which Response.raise_for_status() turns into an error. An invalid header or method, or an
                 `initiator` that is not a valid URL, ends the request with ERR_INVALID_ARGUMENT.
+            Exception: Whatever a stream's file or iterable raises, which ends the request.
         """
         options.setdefault("timeout", self._timeout)
         built = build_request(self._persona, method, url, **options)
         return to_response(self._native.request(**built))
+
+    @contextmanager
+    def stream(self, method: str, url: str, **options: Unpack[RequestOptions]) -> Generator[ResponseStream]:
+        """Fetch `url` in a with statement, and read the response's body as it arrives.
+
+        Entering the with statement blocks until the response's headers have arrived, with any stream body gone by then,
+        and the GIL released while it waits. Leaving it ends the request if that is still running.
+
+        Args:
+            method: The HTTP method, as for request().
+            url: The URL to fetch.
+            **options: See RequestOptions.
+
+        Raises:
+            TypeError: As for request().
+            ValueError: As for request().
+            RequestError: As for request(), on entering the with statement. An end before the end of the body is raised by
+                what reads it.
+            Exception: Whatever a stream's file or iterable raises, which ends the request.
+        """
+        options.setdefault("timeout", self._timeout)
+        built = build_request(self._persona, method, url, **options)
+        with self._native.start(**built) as request:
+            started, history = wait_for_response(request)
+            yield to_response_stream(started, history, iter_body(request))
 
     def get(self, url: str, **options: Unpack[RequestOptions]) -> Response:
         """Send a GET request, as request() does."""

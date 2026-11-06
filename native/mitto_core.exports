@@ -3,10 +3,12 @@ _mitto_cookies_free
 _mitto_event_free
 _mitto_net_error_name
 _mitto_request_cancel
+_mitto_request_end_body
 _mitto_request_next_event
 _mitto_request_read
 _mitto_request_release
 _mitto_request_start
+_mitto_request_write_body
 _mitto_session_create
 _mitto_session_delete_cookies
 _mitto_session_destroy

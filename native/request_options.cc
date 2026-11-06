@@ -21,6 +21,8 @@ constexpr std::string_view kPriorityKey = "priority";
 constexpr std::string_view kPriorityIncrementalKey = "priority_incremental";
 constexpr std::string_view kReferrerKey = "referrer";
 constexpr std::string_view kFollowRedirectsKey = "follow_redirects";
+constexpr std::string_view kStreamBodyKey = "stream_body";
+constexpr std::string_view kStreamBodySizeKey = "stream_body_size";
 constexpr std::string_view kConnectTimeoutKey = "connect_timeout_ms";
 constexpr std::string_view kReadTimeoutKey = "read_timeout_ms";
 constexpr std::string_view kTotalTimeoutKey = "total_timeout_ms";
@@ -31,6 +33,9 @@ constexpr std::string_view kCredentialsModeKey = "credentials_mode";
 constexpr std::string_view kHasUserActivationKey = "has_user_activation";
 constexpr std::string_view kInitiatorKey = "initiator";
 constexpr std::string_view kFixedHeadersKey = "fixed_headers";
+
+// 2^53, the largest whole number up to which a double holds every one exactly.
+constexpr double kMaxSize = 9007199254740992.0;
 
 // Chrome's network service refuses the methods that the Fetch standard forbids,
 // in network::cors::IsForbiddenMethod(), so Chrome never sends them.
@@ -64,6 +69,20 @@ std::optional<base::TimeDelta> ParseTimeout(const base::Value& value) {
     return std::nullopt;
   }
   return base::Milliseconds(*milliseconds);
+}
+
+// Returns nullopt if `value` is not a whole number of bytes that a double holds
+// exactly, which is what base::Value makes of an integer that does not fit an int.
+std::optional<uint64_t> ParseSize(const base::Value& value) {
+  const std::optional<double> size = value.GetIfDouble();
+  if (!size || *size < 0 || *size > kMaxSize) {
+    return std::nullopt;
+  }
+  const uint64_t whole_size = static_cast<uint64_t>(*size);
+  if (static_cast<double>(whole_size) != *size) {
+    return std::nullopt;
+  }
+  return whole_size;
 }
 
 std::optional<RequestMode> ParseRequestMode(const base::Value& value) {
@@ -213,6 +232,21 @@ std::optional<RequestOptions> ParseRequestOptions(std::string_view json) {
       options.follow_redirects = *follow_redirects;
       continue;
     }
+    if (key == kStreamBodyKey) {
+      const std::optional<bool> stream_body = value.GetIfBool();
+      if (!stream_body) {
+        return std::nullopt;
+      }
+      options.stream_body = *stream_body;
+      continue;
+    }
+    if (key == kStreamBodySizeKey) {
+      options.stream_body_size = ParseSize(value);
+      if (!options.stream_body_size) {
+        return std::nullopt;
+      }
+      continue;
+    }
     if (std::optional<base::TimeDelta>* const timeout =
             FindTimeout(options, key)) {
       *timeout = ParseTimeout(value);
@@ -236,6 +270,9 @@ std::optional<RequestOptions> ParseRequestOptions(std::string_view json) {
     if (!options.referrer.is_valid()) {
       return std::nullopt;
     }
+  }
+  if (options.stream_body_size && !options.stream_body) {
+    return std::nullopt;
   }
   return options;
 }

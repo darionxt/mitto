@@ -5,10 +5,12 @@
     mitto_event_free;
     mitto_net_error_name;
     mitto_request_cancel;
+    mitto_request_end_body;
     mitto_request_next_event;
     mitto_request_read;
     mitto_request_release;
     mitto_request_start;
+    mitto_request_write_body;
     mitto_session_create;
     mitto_session_delete_cookies;
     mitto_session_destroy;

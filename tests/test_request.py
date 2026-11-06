@@ -365,7 +365,7 @@ def test_a_multipart_body_names_its_boundary_in_its_content_type(kind: RequestKi
     assert content_type is not None
     media_type, boundary = content_type.split("; boundary=")
     assert media_type == "multipart/form-data"
-    assert built["body"] is not None
+    assert isinstance(built["body"], bytes)
     assert built["body"].startswith(f"--{boundary}\r\n".encode())
     assert built["body"].endswith(f"--{boundary}--\r\n".encode())
 

@@ -20,6 +20,7 @@
 #define STRINGIFY(value) STRINGIFY_VALUE(value)
 
 #define ERR_ABORTED (-3)
+#define ERR_UPLOAD_FILE_CHANGED (-14)
 
 // What a scenario returns to have the process exit with everything still running.
 #define EXIT_NOW (-1)
@@ -58,6 +59,18 @@ static const char kNoCorsWithNoInitiatorOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"fetch\": {\"mode\": \"no-cors\", \"destination\": \"script\", "
     "\"credentials_mode\": \"include\"}}";
+
+static const char kStreamOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"method\": \"POST\", \"stream_body\": true}";
+static const char kSizedStreamOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"method\": \"POST\", \"stream_body\": true, "
+    "\"stream_body_size\": 21}";
+
+// What a stream sends, a few bytes at a time. kSizedStreamOptions has its size.
+static const char kStreamBody[] = "the body of a request";
+#define STREAM_PIECE_SIZE 8
 
 // Each with one timer, for a server that accepts a connection and never answers.
 static const char kConnectTimeoutOptions[] =
@@ -232,6 +245,65 @@ static int Post(const char* url) {
   return FinishInBlockingCalls(url);
 }
 
+// Writes the next piece of a stream, or ends it if none is left.
+static int SendNextPiece(size_t* sent) {
+  const size_t left = strlen(kStreamBody) - *sent;
+  if (left == 0) {
+    const int32_t error = mitto_request_end_body(g_request);
+    if (error != 0) {
+      fprintf(stderr, "ending a body failed with net error %" PRId32 "\n", error);
+      return 1;
+    }
+    return 0;
+  }
+  const size_t size = left < STREAM_PIECE_SIZE ? left : STREAM_PIECE_SIZE;
+  const int32_t written = mitto_request_write_body(
+      g_request, (const uint8_t*)kStreamBody + *sent, size);
+  if (written < 0) {
+    fprintf(stderr, "writing a body failed with net error %" PRId32 "\n",
+            written);
+    return 1;
+  }
+  *sent += (size_t)written;
+  return 0;
+}
+
+static int PostStreamWithOptions(const char* url, const char* options) {
+  if (StartWithOptions(url, options) != 0) {
+    return 1;
+  }
+  size_t sent = 0;
+  size_t body_size = 0;
+  int32_t result = 0;
+  while (1) {
+    MittoEvent event;
+    const int32_t error = mitto_request_next_event(g_request, -1, &event);
+    if (error != 0) {
+      fprintf(stderr, "next event failed with net error %" PRId32 "\n", error);
+      return 1;
+    }
+    if (event.type == MITTO_EVENT_BODY_WANTED) {
+      mitto_event_free(&event);
+      if (SendNextPiece(&sent) != 0) {
+        return 1;
+      }
+      continue;
+    }
+    if (HandleEvent(&event, &body_size, &result)) {
+      printf("sent: %zu bytes\n", sent);
+      return FinishFetch(url, body_size, result);
+    }
+  }
+}
+
+static int PostStream(const char* url) {
+  return PostStreamWithOptions(url, kStreamOptions);
+}
+
+static int PostSizedStream(const char* url) {
+  return PostStreamWithOptions(url, kSizedStreamOptions);
+}
+
 // Waits on the file descriptor, as an event loop does.
 static int FetchWithFileDescriptor(const char* url) {
   int32_t fd;
@@ -291,6 +363,25 @@ static int WaitFor(int32_t type) {
   }
 }
 
+// Waits for the request's last event, and stores its net error.
+static int WaitForFinished(int32_t* net_error) {
+  while (1) {
+    MittoEvent event;
+    const int32_t error =
+        mitto_request_next_event(g_request, EVENT_TIMEOUT_MS, &event);
+    if (error != 0) {
+      fprintf(stderr, "next event failed with net error %" PRId32 "\n", error);
+      return 1;
+    }
+    const int32_t event_type = event.type;
+    *net_error = event.net_error;
+    mitto_event_free(&event);
+    if (event_type == MITTO_EVENT_FINISHED) {
+      return 0;
+    }
+  }
+}
+
 // Checks that the request ends as a cancelled one does, and releases it.
 static int ExpectCancelled(void) {
   while (1) {
@@ -315,6 +406,112 @@ static int ExpectCancelled(void) {
       return 0;
     }
   }
+}
+
+static int StartStreamAndWaitForIt(const char* url, const char* options) {
+  if (StartWithOptions(url, options) != 0) {
+    return 1;
+  }
+  return WaitFor(MITTO_EVENT_BODY_WANTED);
+}
+
+// A stream takes nothing more once its request has ended.
+static int CancelStreamWhileItWaits(const char* url) {
+  if (StartStreamAndWaitForIt(url, kStreamOptions) != 0) {
+    return 1;
+  }
+  mitto_request_cancel(g_request);
+  int32_t net_error = 0;
+  if (WaitForFinished(&net_error) != 0) {
+    return 1;
+  }
+  const int32_t written =
+      mitto_request_write_body(g_request, (const uint8_t*)kStreamBody, 1);
+  const int32_t ended = mitto_request_end_body(g_request);
+  if (net_error != ERR_ABORTED || written != 0 || ended != 0) {
+    fprintf(stderr,
+            "finished with %" PRId32 ", wrote %" PRId32 ", ended with %" PRId32
+            "\n",
+            net_error, written, ended);
+    return 1;
+  }
+  printf("cancelled\n");
+  return 0;
+}
+
+static int ReleaseStreamWhileItWaits(const char* url) {
+  if (StartStreamAndWaitForIt(url, kStreamOptions) != 0) {
+    return 1;
+  }
+  mitto_request_release(g_request);
+  g_request = NULL;
+  printf("released\n");
+  return Fetch(url);
+}
+
+static int DestroySessionWhileStreamWaits(const char* url) {
+  if (StartStreamAndWaitForIt(url, kStreamOptions) != 0) {
+    return 1;
+  }
+  mitto_session_destroy(g_session);
+  g_session = NULL;
+  return ExpectCancelled();
+}
+
+// A write takes as much as it can before anything has asked for it.
+static int WriteStreamBeforeItIsWanted(const char* url) {
+  if (StartWithOptions(url, kStreamOptions) != 0) {
+    return 1;
+  }
+  size_t sent = 0;
+  if (SendNextPiece(&sent) != 0) {
+    return 1;
+  }
+  const int32_t refused = mitto_request_write_body(
+      g_request, (const uint8_t*)kStreamBody + sent, 1);
+  if (refused != -1) {
+    fprintf(stderr, "a second write gave %" PRId32 "\n", refused);
+    return 1;
+  }
+  size_t body_size = 0;
+  int32_t result = 0;
+  while (1) {
+    MittoEvent event;
+    const int32_t error = mitto_request_next_event(g_request, -1, &event);
+    if (error != 0) {
+      fprintf(stderr, "next event failed with net error %" PRId32 "\n", error);
+      return 1;
+    }
+    if (event.type == MITTO_EVENT_BODY_WANTED) {
+      mitto_event_free(&event);
+      if (SendNextPiece(&sent) != 0) {
+        return 1;
+      }
+      continue;
+    }
+    if (HandleEvent(&event, &body_size, &result)) {
+      printf("sent: %zu bytes\n", sent);
+      return FinishFetch(url, body_size, result);
+    }
+  }
+}
+
+// A body that ends before its size fails the request.
+static int EndStreamBeforeItsSize(const char* url) {
+  if (StartStreamAndWaitForIt(url, kSizedStreamOptions) != 0) {
+    return 1;
+  }
+  const int32_t error = mitto_request_end_body(g_request);
+  int32_t net_error = 0;
+  if (error != 0 || WaitForFinished(&net_error) != 0) {
+    return 1;
+  }
+  if (net_error != ERR_UPLOAD_FILE_CHANGED) {
+    fprintf(stderr, "finished with net error %" PRId32 "\n", net_error);
+    return 1;
+  }
+  printf("too short\n");
+  return 0;
 }
 
 static int CancelAtOnce(const char* url) {
@@ -523,6 +720,13 @@ static const struct {
 } kScenarios[] = {
     {"fetch", Fetch},
     {"post", Post},
+    {"post-stream", PostStream},
+    {"post-sized-stream", PostSizedStream},
+    {"cancel-stream-while-it-waits", CancelStreamWhileItWaits},
+    {"release-stream-while-it-waits", ReleaseStreamWhileItWaits},
+    {"destroy-session-while-stream-waits", DestroySessionWhileStreamWaits},
+    {"write-stream-before-it-is-wanted", WriteStreamBeforeItIsWanted},
+    {"end-stream-before-its-size", EndStreamBeforeItsSize},
     {"fetch-with-file-descriptor", FetchWithFileDescriptor},
     {"fetch-without-redirects", FetchWithoutRedirects},
     {"navigation-from-a-page", NavigationFromAPage},
