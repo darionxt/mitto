@@ -48,7 +48,9 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
 | `proxy_connect`, `proxy_navigation` | Nothing | Use a proxy, so each is [one gap](#gaps) in the field `request` |
 
-When a **Session** gains what a case needs, change its replay to pass it on, if it does not follow by itself, and write the list again. `cookie`, `revalidation` and the hops of a redirect need no change to their replay.
+When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
+
+Every case made from a page has the gaps of an Initiator as well, whatever else it lacks. So `cookie` still differs in `Referer` when a Session keeps its cookie, until a request can say which page it comes from.
 
 ## Gaps
 
