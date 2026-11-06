@@ -22,6 +22,7 @@ from mitto._timeout import NO_TIMEOUT, Timeout
 
 __all__ = [
     "ABI_VERSION",
+    "COOKIES_VERSION",
     "LIBRARY_ENV_VAR",
     "LIBRARY_NAME",
     "REQUEST_OPTIONS_VERSION",
@@ -57,6 +58,9 @@ SETTINGS_VERSION = 1
 
 # The MITTO_REQUEST_OPTIONS_VERSION of the C header this module is written against.
 REQUEST_OPTIONS_VERSION = 1
+
+# The MITTO_COOKIES_VERSION of the C header this module is written against.
+COOKIES_VERSION = 1
 
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
@@ -177,6 +181,23 @@ def load_library() -> ctypes.CDLL:
         library.mitto_session_create.restype = ctypes.c_int32
         library.mitto_session_destroy.argtypes = (session_pointer,)
         library.mitto_session_destroy.restype = None
+        library.mitto_session_list_cookies.argtypes = (
+            session_pointer,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_char)),
+            ctypes.POINTER(ctypes.c_size_t),
+        )
+        library.mitto_session_list_cookies.restype = ctypes.c_int32
+        library.mitto_session_set_cookies.argtypes = (session_pointer, ctypes.c_char_p, ctypes.c_size_t)
+        library.mitto_session_set_cookies.restype = ctypes.c_int32
+        library.mitto_session_delete_cookies.argtypes = (
+            session_pointer,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint32),
+        )
+        library.mitto_session_delete_cookies.restype = ctypes.c_int32
+        library.mitto_cookies_free.argtypes = (ctypes.POINTER(ctypes.c_char),)
+        library.mitto_cookies_free.restype = None
         library.mitto_session_event_fd.argtypes = (session_pointer, ctypes.POINTER(ctypes.c_int32))
         library.mitto_session_event_fd.restype = ctypes.c_int32
         library.mitto_session_next_ready_request.argtypes = (session_pointer, ctypes.POINTER(request_pointer))
@@ -485,6 +506,63 @@ class Session:
         """
         self._library.mitto_session_destroy(self._handle)
         self._handle = ctypes.POINTER(MittoSession)()
+
+    def list_cookies(self) -> bytes:
+        """Return all this Session's cookies, as the JSON that the C API's mitto_session_list_cookies() writes.
+
+        Raises:
+            ValueError: If this Session has been closed.
+        """
+        self._require_open()
+        buffer = ctypes.POINTER(ctypes.c_char)()
+        size = ctypes.c_size_t()
+        net_error: int = self._library.mitto_session_list_cookies(
+            self._handle, ctypes.byref(buffer), ctypes.byref(size)
+        )
+        if net_error != 0:
+            raise ValueError(f"the native core refused to list the cookies with net error {net_error}")
+        try:
+            return ctypes.string_at(buffer, size.value)
+        finally:
+            self._library.mitto_cookies_free(buffer)
+
+    def set_cookies(self, cookies: bytes) -> None:
+        """Put cookies in this Session's store, each replacing any with the same name, domain, path and partition key.
+
+        Args:
+            cookies: The JSON that the C API's mitto_session_set_cookies() reads.
+
+        Raises:
+            ValueError: If the native core refuses them, in which case none is set, or this Session has been closed. The
+                message leaves out the cookies, which may be secrets.
+        """
+        self._require_open()
+        net_error: int = self._library.mitto_session_set_cookies(self._handle, cookies, len(cookies))
+        if net_error != 0:
+            raise ValueError(f"the native core refused the cookies with net error {net_error}")
+
+    def delete_cookies(self, cookie_filter: bytes) -> int:
+        """Delete this Session's cookies that match a filter, and return how many went.
+
+        Args:
+            cookie_filter: The JSON that the C API's mitto_session_delete_cookies() reads.
+
+        Raises:
+            ValueError: If the native core refuses the filter, or this Session has been closed.
+        """
+        self._require_open()
+        deleted = ctypes.c_uint32()
+        net_error: int = self._library.mitto_session_delete_cookies(
+            self._handle, cookie_filter, len(cookie_filter), ctypes.byref(deleted)
+        )
+        if net_error != 0:
+            raise ValueError(f"the native core refused the filter of cookies with net error {net_error}")
+        return deleted.value
+
+    def _require_open(self) -> None:
+        """Raise a ValueError if this Session has been closed, as a closed file does."""
+        if not self._handle:
+            raise ValueError("this Session has been closed")
 
     def event_fd(self) -> int:
         """Return a file descriptor that is readable while any of this Session's requests has an event waiting.

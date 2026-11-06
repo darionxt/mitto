@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "cookies": [
+    {
+      "name": "__Host-id",
+      "value": "café",
+      "domain": "a.test",
+      "path": "/",
+      "secure": true,
+      "http_only": true,
+      "same_site": "strict",
+      "priority": "high",
+      "expires_us": 1800000000000000
+    }
+  ]
+}

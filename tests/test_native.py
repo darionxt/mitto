@@ -28,6 +28,10 @@ uint32_t mitto_abi_version(void) {{ return {abi_version}; }}
 const char* mitto_net_error_name(int32_t net_error) {{ return "ERR_STUB"; }}
 int32_t mitto_session_create(const char* settings, unsigned long size, void** session) {{ return -2; }}
 void mitto_session_destroy(void* session) {{}}
+int32_t mitto_session_list_cookies(void* session, char** cookies, unsigned long* size) {{ return -2; }}
+int32_t mitto_session_set_cookies(void* session, const char* cookies, unsigned long size) {{ return -2; }}
+int32_t mitto_session_delete_cookies(void* session, const char* filter, unsigned long size, uint32_t* deleted) {{ return -2; }}
+void mitto_cookies_free(char* cookies) {{}}
 int32_t mitto_session_event_fd(void* session, int32_t* fd) {{ return -2; }}
 int32_t mitto_session_next_ready_request(void* session, void** request) {{ return -2; }}
 int32_t mitto_request_start(void* session, const char* url, const void* headers, unsigned long header_count,
@@ -553,6 +557,53 @@ def test_event_fd_refuses_null_arguments(native_library: ctypes.CDLL, session_ha
     assert native_library.mitto_session_event_fd(None, ctypes.byref(fd)) == ERR_INVALID_ARGUMENT
     assert fd.value == -1
     assert native_library.mitto_session_event_fd(session_handle, None) == ERR_INVALID_ARGUMENT
+
+
+def test_list_cookies_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    cookies = ctypes.POINTER(ctypes.c_char)(ctypes.c_char(b"x"))
+    size = ctypes.c_size_t(1)
+
+    assert (
+        native_library.mitto_session_list_cookies(None, ctypes.byref(cookies), ctypes.byref(size))
+        == ERR_INVALID_ARGUMENT
+    )
+    assert not cookies
+    assert size.value == 0
+    assert native_library.mitto_session_list_cookies(session_handle, None, ctypes.byref(size)) == ERR_INVALID_ARGUMENT
+    assert (
+        native_library.mitto_session_list_cookies(session_handle, ctypes.byref(cookies), None) == ERR_INVALID_ARGUMENT
+    )
+
+
+def test_set_cookies_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    cookies = f'{{"version": {_native.COOKIES_VERSION}, "cookies": []}}'.encode()
+
+    assert native_library.mitto_session_set_cookies(None, cookies, len(cookies)) == ERR_INVALID_ARGUMENT
+    assert native_library.mitto_session_set_cookies(session_handle, None, 0) == ERR_INVALID_ARGUMENT
+    assert native_library.mitto_session_set_cookies(session_handle, cookies, len(cookies)) == 0
+
+
+def test_delete_cookies_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    cookie_filter = f'{{"version": {_native.COOKIES_VERSION}}}'.encode()
+    deleted = ctypes.c_uint32(1)
+
+    assert (
+        native_library.mitto_session_delete_cookies(None, cookie_filter, len(cookie_filter), ctypes.byref(deleted))
+        == ERR_INVALID_ARGUMENT
+    )
+    assert deleted.value == 0
+    assert (
+        native_library.mitto_session_delete_cookies(session_handle, None, 0, ctypes.byref(deleted))
+        == ERR_INVALID_ARGUMENT
+    )
+    assert (
+        native_library.mitto_session_delete_cookies(session_handle, cookie_filter, len(cookie_filter), None)
+        == ERR_INVALID_ARGUMENT
+    )
+
+
+def test_cookies_free_takes_null(native_library: ctypes.CDLL) -> None:
+    native_library.mitto_cookies_free(None)
 
 
 def test_next_ready_request_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:

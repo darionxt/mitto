@@ -16,6 +16,7 @@ from mitto._native import SETTINGS_VERSION
 from tests.local_certificates import AiaServer, TlsServer, generate_intermediate, generate_leaf, generate_root, serving
 from tools.capture import (
     CASES,
+    COOKIE_SET_PATH,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -184,6 +185,17 @@ def test_a_process_that_exits_with_a_request_running(program: Path, protocol: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["exiting"]
+
+
+def test_the_calls_for_cookies(program: Path) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(HTTP1, path=COOKIE_SET_PATH), _settings(server, HTTP1), "cookies")
+
+    assert result.returncode == 0, result.stderr
+    listed = [line for line in result.stdout.splitlines() if line.startswith("cookies")]
+    names = [[cookie["name"] for cookie in json.loads(line.partition(": ")[2])["cookies"]] for line in listed]
+    assert names == [["mitto"], ["mitto", "added"], ["mitto"]]
+    assert "deleted 1" in result.stdout
 
 
 def test_settings_that_are_refused(program: Path) -> None:

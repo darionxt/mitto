@@ -329,13 +329,18 @@ def test_get_does_not_share_a_connection_with_another_session(http_server: Recor
     assert first.client_address != second.client_address
 
 
-def test_get_does_not_send_cookies_from_an_earlier_response(http_server: RecordingServer) -> None:
+def test_a_cookie_goes_after_what_net_adds_of_its_own_over_http1(http_server: RecordingServer) -> None:
     url = f"http://{http_server.base_url}"
 
-    mitto.get(url)
-    mitto.get(url)
+    with Session(accept_language="en") as session:
+        session.request(url)
+        session.request(url)
 
-    assert "cookie" not in {name.lower() for name, _ in http_server.received[-1].headers}
+    assert [name for name, _ in http_server.received[-1].headers][-3:] == [
+        "Accept-Encoding",
+        "Accept-Language",
+        "Cookie",
+    ]
 
 
 def test_closing_a_session_closes_its_connections(http_server: RecordingServer) -> None:

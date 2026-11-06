@@ -53,6 +53,15 @@ static const char kTotalTimeoutOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"total_timeout_ms\": 100}";
 
+static const char kCookies[] =
+    "{\"version\": " STRINGIFY(MITTO_COOKIES_VERSION) ", \"cookies\": ["
+    "{\"name\": \"added\", \"value\": \"1\", \"domain\": \".a.test\"}]}";
+static const char kInvalidCookies[] =
+    "{\"version\": " STRINGIFY(MITTO_COOKIES_VERSION) ", \"cookies\": ["
+    "{\"name\": \"added\", \"value\": \"1\"}]}";
+static const char kCookieFilter[] =
+    "{\"version\": " STRINGIFY(MITTO_COOKIES_VERSION) ", \"name\": \"added\"}";
+
 static const MittoHeader kHeaders[] = {
     {"Accept", sizeof("Accept") - 1, "*/*", sizeof("*/*") - 1},
 };
@@ -410,6 +419,52 @@ static int ExitWhenTold(const char* url) {
   return EXIT_NOW;
 }
 
+static int PrintCookies(void) {
+  char* cookies;
+  size_t size;
+  const int32_t error = mitto_session_list_cookies(g_session, &cookies, &size);
+  if (error != 0) {
+    fprintf(stderr, "listing cookies failed with net error %" PRId32 "\n",
+            error);
+    return 1;
+  }
+  printf("cookies, %zu bytes: %s\n", size, cookies);
+  mitto_cookies_free(cookies);
+  return 0;
+}
+
+// Lists what a response has set, and then adds and deletes a cookie.
+static int Cookies(const char* url) {
+  if (Fetch(url) != 0 || PrintCookies() != 0) {
+    return 1;
+  }
+  int32_t error =
+      mitto_session_set_cookies(g_session, kCookies, strlen(kCookies));
+  if (error != 0) {
+    fprintf(stderr, "setting a cookie failed with net error %" PRId32 "\n",
+            error);
+    return 1;
+  }
+  if (PrintCookies() != 0) {
+    return 1;
+  }
+  uint32_t deleted;
+  error = mitto_session_delete_cookies(g_session, kCookieFilter,
+                                       strlen(kCookieFilter), &deleted);
+  if (error != 0) {
+    fprintf(stderr, "deleting a cookie failed with net error %" PRId32 "\n",
+            error);
+    return 1;
+  }
+  printf("deleted %" PRIu32 "\n", deleted);
+  if (mitto_session_set_cookies(g_session, kInvalidCookies,
+                                strlen(kInvalidCookies)) == 0) {
+    fprintf(stderr, "a cookie with no domain was set\n");
+    return 1;
+  }
+  return PrintCookies();
+}
+
 static const struct {
   const char* name;
   int (*run)(const char* url);
@@ -431,6 +486,7 @@ static const struct {
     {"total-timeout", TotalTimeout},
     {"destroy-session-when-told", DestroySessionWhenTold},
     {"exit-when-told", ExitWhenTold},
+    {"cookies", Cookies},
 };
 
 int main(int argc, char** argv) {

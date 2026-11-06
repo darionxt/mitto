@@ -11,6 +11,8 @@ config("public_api") {
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
   sources = [
+    "cookie_json.cc",
+    "cookie_json.h",
     "feature_list.cc",
     "feature_list.h",
     "ignore_errors_cert_verifier.cc",
@@ -83,6 +85,22 @@ executable("mitto_core_test") {
 if (use_libfuzzer) {
   import("//testing/libfuzzer/fuzzer_test.gni")
 
+  fuzzer_test("cookies_fuzzer") {
+    # The parser and not the library, whose exports list hides everything but the
+    # C API.
+    sources = [
+      "cookie_json.cc",
+      "cookie_json.h",
+      "test/cookies_fuzzer.cc",
+    ]
+    additional_configs = [ ":public_api" ]
+    deps = [
+      "//base",
+      "//net",
+      "//url",
+    ]
+  }
+
   fuzzer_test("request_options_fuzzer") {
     # The parser and not the library, whose exports list hides everything but the
     # C API.
@@ -125,6 +143,7 @@ group("mitto") {
   ]
   if (use_libfuzzer) {
     deps += [
+      ":cookies_fuzzer",
       ":request_options_fuzzer",
       ":session_settings_fuzzer",
     ]

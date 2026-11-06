@@ -44,6 +44,7 @@ The file does not hold everything on the wire, because Chrome does not decide ev
 | `Referer` | The C API's `referrer`. `//net` drops a `Referer` among the headers, and sends this one after them |
 | `Accept-Encoding` | `//net`, after `Referer`. The native core turns on Brotli and Zstandard as Chrome does, and `//net` advertises them only over HTTPS and to localhost |
 | `Accept-Language` | `//net`, after `Accept-Encoding`, from the Session setting |
+| `Cookie` | `//net`, after `Accept-Language`, from the Session's cookie store ([cookies](parity.md#cookies)) |
 | The `priority` header, last in HTTP/2 and HTTP/3 and absent in HTTP/1.1 | `//net`, from `priority` and `priority_incremental` |
 | The HTTP/2 stream weight and the HTTP/3 `PRIORITY_UPDATE` | `//net`, from the same two values |
 
@@ -80,7 +81,7 @@ Fetch refuses a body with `GET` or `HEAD`, so a Session does too.
 | `Referer` | Replaces or, with `None`, removes the Persona's `referrer`. `//net` still decides where it goes |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
 
-A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone.
+A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone. `Cookie` is the exception: it keeps that place, but `//net` writes over its value whenever the store holds a cookie for the URL, and it does not follow a redirect to another origin.
 
 ## Write one
 

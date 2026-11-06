@@ -1,6 +1,7 @@
 """An HTTP client whose traffic matches real Chrome, built on Chromium's network stack."""
 
 from mitto._api import Session, get
+from mitto._cookies import Cookie, CookiePartitionKey, Cookies
 from mitto._errors import (
     CertificateError,
     ConnectionFailedError,
@@ -21,6 +22,9 @@ from mitto._timeout import Timeout
 __all__ = [
     "CertificateError",
     "ConnectionFailedError",
+    "Cookie",
+    "CookiePartitionKey",
+    "Cookies",
     "HTTPStatusError",
     "Headers",
     "MittoError",
