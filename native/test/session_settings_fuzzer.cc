@@ -10,6 +10,7 @@
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "mitto/session_settings.h"
+#include "mitto/socks5_auth_exchange.h"
 #include "net/base/host_mapping_rules.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/proxy_chain.h"
@@ -31,8 +32,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // What a Session relies on in settings that were accepted. //net CHECKs the
   // value of each header it adds, an invalid origin would make it accept
   // unknown roots for every host, the verifier uses each anchor without
-  // checking it, //net takes a proxy to be valid, and credentials need one to
-  // answer.
+  // checking it, //net takes a proxy to be valid, credentials need one to answer,
+  // and the exchange with a SOCKS5 proxy CHECKs their sizes.
   net::HttpRequestHeaders headers;
   headers.SetHeader(net::HttpRequestHeaders::kAcceptLanguage,
                     settings->accept_language);
@@ -43,6 +44,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     CHECK(chain.IsValid());
   }
   CHECK(!settings->proxy_credentials || !proxies.IsEmpty());
+  if (settings->socks5_credentials) {
+    CHECK(!proxies.IsEmpty());
+    const mitto::Socks5AuthExchange exchange(*settings->socks5_credentials);
+  }
   for (const url::SchemeHostPort& origin : settings->origins_to_force_quic_on) {
     CHECK(origin.IsValid());
   }

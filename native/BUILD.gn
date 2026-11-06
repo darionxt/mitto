@@ -28,6 +28,10 @@ shared_library("mitto_core") {
     "request_options.h",
     "session_settings.cc",
     "session_settings.h",
+    "socks5_auth_exchange.cc",
+    "socks5_auth_exchange.h",
+    "socks5_auth_socket_factory.cc",
+    "socks5_auth_socket_factory.h",
     "ssl_config_service_mojo.cc",
     "ssl_config_service_mojo.h",
     "stub_resolver_config_reader.cc",
@@ -124,6 +128,8 @@ if (use_libfuzzer) {
       "ignore_errors_cert_verifier.h",
       "session_settings.cc",
       "session_settings.h",
+      "socks5_auth_exchange.cc",
+      "socks5_auth_exchange.h",
       "test/session_settings_fuzzer.cc",
     ]
     additional_configs = [ ":public_api" ]
@@ -131,6 +137,20 @@ if (use_libfuzzer) {
       "//base",
       "//net",
       "//url",
+    ]
+  }
+
+  fuzzer_test("socks5_auth_fuzzer") {
+    # The parser and not the library, whose exports list hides everything but the
+    # C API.
+    sources = [
+      "socks5_auth_exchange.cc",
+      "socks5_auth_exchange.h",
+      "test/socks5_auth_fuzzer.cc",
+    ]
+    deps = [
+      "//base",
+      "//net",
     ]
   }
 }
@@ -146,6 +166,7 @@ group("mitto") {
       ":cookies_fuzzer",
       ":request_options_fuzzer",
       ":session_settings_fuzzer",
+      ":socks5_auth_fuzzer",
     ]
   }
 }

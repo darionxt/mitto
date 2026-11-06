@@ -30,11 +30,19 @@ _PROXY_HOST = "localhost"
 _TARGET_HOST = "target.test"
 _ORIGIN = f"http://{_TARGET_HOST}"
 _AUTH_REQUESTED = "ERR_PROXY_AUTH_REQUESTED"
+_AUTH_UNSUPPORTED = "ERR_PROXY_AUTH_UNSUPPORTED"
+_SOCKS_FAILED = "ERR_SOCKS_CONNECTION_FAILED"
+_SOCKS5_LOGIN = (_USER.encode(), _PASSWORD.encode())
+_SOCKS5_GREETING = b"\x05\x02\x00\x02"
 _ENVIRONMENT_PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
 
 
 def _with_credentials(proxy: LocalProxy) -> str:
     return f"http://{_USER}:{_PASSWORD}@127.0.0.1:{proxy.port}"
+
+
+def _socks5_with_credentials(proxy: LocalProxy) -> str:
+    return f"socks5://{_USER}:{_PASSWORD}@127.0.0.1:{proxy.port}"
 
 
 def _private_settings(server: CaptureServer) -> PrivateSettings:
@@ -94,6 +102,12 @@ def _socks5_proxy(_: Path) -> Generator[_RunningProxy]:
         yield _RunningProxy(f"socks5://127.0.0.1:{proxy.port}")
 
 
+@contextmanager
+def _socks5_proxy_with_credentials(_: Path) -> Generator[_RunningProxy]:
+    with serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy:
+        yield _RunningProxy(_socks5_with_credentials(proxy))
+
+
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
 @pytest.mark.parametrize(
@@ -104,6 +118,7 @@ def _socks5_proxy(_: Path) -> Generator[_RunningProxy]:
         pytest.param(_https_proxy, id="https"),
         pytest.param(_https_proxy_with_credentials, id="https-with-credentials"),
         pytest.param(_socks5_proxy, id="socks5"),
+        pytest.param(_socks5_proxy_with_credentials, id="socks5-with-credentials"),
     ],
 )
 def test_a_target_sees_what_chrome_sends_through_each_kind_of_proxy(
@@ -300,15 +315,208 @@ def test_a_socks5_proxy_gets_the_name_and_finds_it_itself() -> None:
 
 
 @pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+def test_a_socks5_proxy_that_asks_gets_the_credentials_and_then_the_name(protocol: str) -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+    ):
+        response = session.get(server.url(protocol, host=CASE_HOST))
+        target = server.authority(protocol, host=CASE_HOST)
+
+    assert response.status == 200
+    assert response.protocol == protocol
+    assert proxy.socks_greetings == [_SOCKS5_GREETING]
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+    assert proxy.socks_targets == [target]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+def test_credentials_a_socks5_proxy_refuses_end_the_request_after_one_answer(protocol: str) -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=(_USER.encode(), b"other"))) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+        pytest.raises(mitto.ProxyError) as caught,
+    ):
+        session.get(server.url(protocol, host=CASE_HOST))
+
+    assert caught.value.name == _AUTH_REQUESTED
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+    assert proxy.socks_targets == []
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_socks5_proxy_that_needs_nothing_never_gets_the_credentials() -> None:
+    with (
+        serving(LocalProxy(socks=True)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+    ):
+        response = session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert response.status == 200
+    assert proxy.socks_greetings == [_SOCKS5_GREETING]
+    assert proxy.socks_logins == []
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_session_with_no_credentials_offers_a_socks5_proxy_what_chrome_does_and_fails_if_it_asks() -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=f"socks5://127.0.0.1:{proxy.port}", _settings=_private_settings(server)) as session,
+        pytest.raises(mitto.ProxyError) as caught,
+    ):
+        session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert caught.value.name == _SOCKS_FAILED
+    assert proxy.socks_greetings == [b"\x05\x01\x00"]
+
+
+@pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize(
-    "scheme", [pytest.param("http", id="http"), pytest.param("https", id="https"), pytest.param("socks5", id="socks5")]
+    ("written", "meant"),
+    [
+        pytest.param("us%40er:p%3Ass", (b"us@er", b"p:ss"), id="percent-encoded"),
+        pytest.param("user", (b"user", b""), id="no-password"),
+        pytest.param("user:", (b"user", b""), id="empty-password"),
+        pytest.param(":pass", (b"", b"pass"), id="no-username"),
+        pytest.param("%C3%A9:%E2%82%AC", ("é".encode(), "€".encode()), id="utf-8"),
+        pytest.param("é:€", ("é".encode(), "€".encode()), id="not-percent-encoded"),
+        pytest.param("%FF:a%00b", (b"\xff", b"a\x00b"), id="bytes-that-are-not-text"),
+        pytest.param(f"{'u' * 255}:{'%FF' * 255}", (b"u" * 255, b"\xff" * 255), id="longest"),
+    ],
 )
-def test_a_proxy_that_is_down_is_an_error_and_not_a_reason_to_go_directly(scheme: str) -> None:
+def test_the_credentials_of_a_socks5_url_are_the_bytes_it_gets(written: str, meant: tuple[bytes, bytes]) -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=meant)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(
+            proxy=f"socks5://{written}@127.0.0.1:{proxy.port}", _settings=_private_settings(server)
+        ) as session,
+    ):
+        response = session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert response.status == 200
+    assert proxy.socks_logins == [meant]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_socks5_proxy_may_send_its_answers_a_byte_at_a_time() -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN, socks_splits_answers=True)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+    ):
+        response = session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert response.status == 200
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("splits_answers", [False, True])
+@pytest.mark.parametrize(
+    ("method_answer", "status_answer", "name"),
+    [
+        pytest.param(b"\x05\xff", None, _AUTH_UNSUPPORTED, id="no-acceptable-method"),
+        pytest.param(b"\x05\x01", None, _AUTH_UNSUPPORTED, id="another-method"),
+        pytest.param(b"\x04\x02", None, _SOCKS_FAILED, id="another-version"),
+        pytest.param(b"\x05", None, _SOCKS_FAILED, id="closes-inside-the-answer-to-the-greeting"),
+        pytest.param(b"", None, _SOCKS_FAILED, id="closes-after-the-greeting"),
+        pytest.param(None, b"\x01\x01", _AUTH_REQUESTED, id="refuses"),
+        pytest.param(None, b"\x01\xff", _AUTH_REQUESTED, id="refuses-with-another-status"),
+        pytest.param(None, b"\x05\x00", _SOCKS_FAILED, id="status-of-another-version"),
+        pytest.param(None, b"\x01", _SOCKS_FAILED, id="closes-inside-the-status"),
+        pytest.param(None, b"", _SOCKS_FAILED, id="closes-after-the-credentials"),
+    ],
+)
+def test_what_a_socks5_proxy_answers_decides_the_error(
+    method_answer: bytes | None, status_answer: bytes | None, name: str, splits_answers: bool
+) -> None:
+    proxy = LocalProxy(
+        socks=True,
+        socks_credentials=_SOCKS5_LOGIN,
+        socks_method_answer=method_answer,
+        socks_status_answer=status_answer,
+        socks_splits_answers=splits_answers,
+    )
+    with (
+        serving(proxy),
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+        pytest.raises(mitto.ProxyError) as caught,
+    ):
+        session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert caught.value.name == name
+    assert proxy.socks_logins == ([] if method_answer is not None else [_SOCKS5_LOGIN])
+    assert proxy.socks_targets == []
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_socks5_proxy_that_fails_the_request_after_the_credentials_is_an_error_of_the_proxy() -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN, socks_refuses_requests=True)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+        pytest.raises(mitto.ProxyError) as caught,
+    ):
+        session.get(server.url(HTTP2, host=CASE_HOST))
+
+    assert caught.value.name == _SOCKS_FAILED
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_each_tunnel_through_a_socks5_proxy_gives_the_credentials_again() -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+    ):
+        session.get(server.url(HTTP1, host=CASE_HOST))
+        session.get(server.url(HTTP1, host=SAME_SITE_HOST))
+        targets = [server.authority(HTTP1, host=host) for host in (CASE_HOST, SAME_SITE_HOST)]
+
+    assert proxy.socks_logins == [_SOCKS5_LOGIN, _SOCKS5_LOGIN]
+    assert proxy.socks_targets == targets
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+def test_a_request_around_a_socks5_proxy_goes_on_as_with_no_proxy_and_gives_it_nothing(protocol: str) -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+    ):
+        response = session.get(server.url(protocol))
+
+    assert response.status == 200
+    assert response.protocol == protocol
+    assert proxy.socks_greetings == []
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    "start",
+    [
+        pytest.param("http://", id="http"),
+        pytest.param("https://", id="https"),
+        pytest.param("socks5://", id="socks5"),
+        pytest.param(f"socks5://{_USER}:{_PASSWORD}@", id="socks5-with-credentials"),
+    ],
+)
+def test_a_proxy_that_is_down_is_an_error_and_not_a_reason_to_go_directly(start: str) -> None:
     with CaptureServer() as server:
         settings = _private_settings(server)
         settings["host_resolver_rules"] = server.host_resolver_rules
         with (
-            mitto.Session(proxy=f"{scheme}://127.0.0.1:{_free_port()}", _settings=settings) as session,
+            mitto.Session(proxy=f"{start}127.0.0.1:{_free_port()}", _settings=settings) as session,
             pytest.raises(mitto.ProxyError) as caught,
         ):
             session.get(server.url(HTTP2, host=CASE_HOST))
@@ -355,10 +563,17 @@ def test_a_certificate_the_proxy_cannot_prove_is_an_error_of_the_proxy(tmp_path:
 
 
 @pytest.mark.usefixtures("native_library")
-def test_the_connect_timer_covers_a_proxy_that_does_not_answer() -> None:
+@pytest.mark.parametrize(
+    "start",
+    [
+        pytest.param("http://", id="http"),
+        pytest.param(f"socks5://{_USER}:{_PASSWORD}@", id="socks5-with-credentials"),
+    ],
+)
+def test_the_connect_timer_covers_a_proxy_that_does_not_answer(start: str) -> None:
     with (
         socket.create_server(("127.0.0.1", 0)) as silent,
-        mitto.Session(proxy=f"http://127.0.0.1:{silent.getsockname()[1]}") as session,
+        mitto.Session(proxy=f"{start}127.0.0.1:{silent.getsockname()[1]}") as session,
         pytest.raises(mitto.RequestTimeoutError) as caught,
     ):
         session.get(f"https://{_TARGET_HOST}/", timeout=mitto.Timeout(connect=0.2))
@@ -366,17 +581,24 @@ def test_the_connect_timer_covers_a_proxy_that_does_not_answer() -> None:
     assert caught.value.name == "ERR_CONNECTION_TIMED_OUT"
 
 
+def _proxy_that_takes_credentials(scheme: str) -> LocalProxy:
+    if scheme == "socks5":
+        return LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)
+    return LocalProxy(authorization=_BASIC)
+
+
 @pytest.mark.usefixtures("native_library")
-def test_a_server_behind_a_tunnel_cannot_ask_for_the_proxys_credentials(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scheme", ["http", "socks5"])
+def test_a_server_behind_a_tunnel_cannot_ask_for_the_proxys_credentials(scheme: str, tmp_path: Path) -> None:
     root = generate_root()
     target = TlsServer(tmp_path, generate_leaf(root, _TARGET_HOST))
     target.status = 407
     target.response_headers = [("Proxy-Authenticate", 'Basic realm="not the proxy"')]
     with (
-        serving(LocalProxy(authorization=_BASIC)) as proxy,
+        serving(_proxy_that_takes_credentials(scheme)) as proxy,
         serving(target),
         mitto.Session(
-            proxy=f"http://{_USER}:{_PASSWORD}@127.0.0.1:{proxy.port}", additional_trust_anchors=[root.pem]
+            proxy=f"{scheme}://{_USER}:{_PASSWORD}@127.0.0.1:{proxy.port}", additional_trust_anchors=[root.pem]
         ) as session,
         pytest.raises(mitto.ProxyError) as caught,
     ):
@@ -386,16 +608,19 @@ def test_a_server_behind_a_tunnel_cannot_ask_for_the_proxys_credentials(tmp_path
 
 
 @pytest.mark.usefixtures("native_library")
-def test_a_servers_own_challenge_is_a_response_that_the_proxys_credentials_do_not_answer(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scheme", ["http", "socks5"])
+def test_a_servers_own_challenge_is_a_response_that_the_proxys_credentials_do_not_answer(
+    scheme: str, tmp_path: Path
+) -> None:
     root = generate_root()
     target = TlsServer(tmp_path, generate_leaf(root, _TARGET_HOST))
     target.status = 401
     target.response_headers = [("WWW-Authenticate", 'Basic realm="the server"')]
     with (
-        serving(LocalProxy(authorization=_BASIC)) as proxy,
+        serving(_proxy_that_takes_credentials(scheme)) as proxy,
         serving(target),
         mitto.Session(
-            proxy=f"http://{_USER}:{_PASSWORD}@127.0.0.1:{proxy.port}", additional_trust_anchors=[root.pem]
+            proxy=f"{scheme}://{_USER}:{_PASSWORD}@127.0.0.1:{proxy.port}", additional_trust_anchors=[root.pem]
         ) as session,
     ):
         response = session.get(f"https://{_TARGET_HOST}:{target.server_port}/")
@@ -425,26 +650,19 @@ def test_a_proxy_of_no_kind_that_a_session_has_is_refused_by_name(proxy: str) ->
     assert _USER not in str(caught.value)
 
 
+@pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize(
     "proxy",
     [
-        pytest.param(f"socks5://{_USER}:{_PASSWORD}@host:1080", id="both"),
-        pytest.param(f"socks5://{_USER}@host:1080", id="username"),
-        pytest.param(f"socks5://:{_PASSWORD}@host:1080", id="password"),
-        pytest.param(f"SOCKS5://{_USER}:{_PASSWORD}@host:1080", id="upper-case-scheme"),
+        pytest.param(f"http://{_USER}:{_PASSWORD}@host:99999", id="bad-port"),
+        pytest.param(f"socks5://{_USER}:{_PASSWORD}@host:99999", id="socks5-bad-port"),
+        pytest.param(f"socks5://{_USER}:{_PASSWORD}{'x' * 255}@host:1080", id="socks5-password-does-not-fit"),
+        pytest.param(f"socks5://{_USER}{'x' * 255}:{_PASSWORD}@host:1080", id="socks5-username-does-not-fit"),
     ],
 )
-def test_a_socks5_proxy_with_credentials_is_refused_by_name(proxy: str) -> None:
-    with pytest.raises(ValueError, match="SOCKS5 proxy cannot take a username or password yet") as caught:
-        mitto.Session(proxy=proxy)
-
-    assert _PASSWORD not in str(caught.value)
-
-
-@pytest.mark.usefixtures("native_library")
-def test_a_refused_proxy_keeps_its_password_out_of_the_error() -> None:
+def test_a_refused_proxy_keeps_its_password_out_of_the_error(proxy: str) -> None:
     with pytest.raises(ValueError, match="refused the settings") as caught:
-        mitto.Session(proxy=f"http://{_USER}:{_PASSWORD}@host:99999")
+        mitto.Session(proxy=proxy)
 
     assert _PASSWORD not in str(caught.value)
     assert _USER not in str(caught.value)
@@ -452,9 +670,10 @@ def test_a_refused_proxy_keeps_its_password_out_of_the_error() -> None:
 
 
 @pytest.mark.usefixtures("native_library")
-def test_a_request_that_fails_keeps_the_proxys_password_out_of_everything_it_shows() -> None:
+@pytest.mark.parametrize("scheme", ["http", "socks5"])
+def test_a_request_that_fails_keeps_the_proxys_password_out_of_everything_it_shows(scheme: str) -> None:
     with (
-        mitto.Session(proxy=f"http://{_USER}:{_PASSWORD}@127.0.0.1:{_free_port()}") as session,
+        mitto.Session(proxy=f"{scheme}://{_USER}:{_PASSWORD}@127.0.0.1:{_free_port()}") as session,
         pytest.raises(mitto.ProxyError) as caught,
     ):
         session.get(f"{_ORIGIN}/")
@@ -463,3 +682,18 @@ def test_a_request_that_fails_keeps_the_proxys_password_out_of_everything_it_sho
     assert _PASSWORD not in str(caught.value)
     assert _PASSWORD not in repr(caught.value)
     assert caught.value.args == (f"{_ORIGIN}/", caught.value.net_error, "GET", caught.value.name)
+
+
+@pytest.mark.usefixtures("native_library")
+def test_credentials_a_socks5_proxy_refuses_stay_out_of_everything_a_failure_shows() -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=(_USER.encode(), b"other"))) as proxy,
+        CaptureServer() as server,
+        mitto.Session(proxy=_socks5_with_credentials(proxy), _settings=_private_settings(server)) as session,
+        pytest.raises(mitto.ProxyError) as caught,
+    ):
+        session.get(server.url(HTTP2, host=CASE_HOST))
+
+    for shown in (repr(session), str(caught.value), repr(caught.value)):
+        assert _USER not in shown
+        assert _PASSWORD not in shown
