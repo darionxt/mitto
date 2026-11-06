@@ -30,6 +30,7 @@ struct RequestEvent {
   int32_t type = 0;
   int32_t status = 0;
   int32_t net_error = 0;
+  bool from_cache = false;
   std::string protocol;
   std::string url;
   std::string headers;

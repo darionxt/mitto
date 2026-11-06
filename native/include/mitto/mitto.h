@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 6
+#define MITTO_ABI_VERSION 7
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -94,8 +94,11 @@ typedef struct MittoEvent {
   // A proxy that asks for credentials the Session does not have, or refuses
   // those it has, ends it with -127 (ERR_PROXY_AUTH_REQUESTED).
   int32_t net_error;
+  // RESPONSE_STARTED: 1 if its body comes from the Session's HTTP cache, also
+  // when the server has answered a revalidation with a 304. Otherwise 0.
+  int32_t from_cache;
   // RESPONSE_STARTED: the protocol it arrived over, for example "http/1.1" or
-  // "h2".
+  // "h2". From the cache, the one it arrived over then.
   char* protocol;
   // RESPONSE_STARTED: the final URL, after redirects. REDIRECT_FOLLOWED: the URL
   // that answered with the redirect.
@@ -133,7 +136,8 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //     "origins_to_force_quic_on": ["<host>:<port>"],
 //     "dns_nameserver": "<IP address>:<port>",
 //     "host_resolver_rules": "MAP <host> <address>",
-//     "proxy": "http://<username>:<password>@<host>:<port>"
+//     "proxy": "http://<username>:<password>@<host>:<port>",
+//     "http_cache": "<absolute path of a directory>"
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -177,18 +181,31 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   neither of them, because //net only offers it "no authentication". The
 //   default is to reach each server directly, whatever the system's proxy
 //   settings say.
+// - "http_cache" keeps responses as Chrome's HTTP cache does, split by
+//   top-level site. "memory" keeps them until the Session is destroyed. An
+//   absolute path keeps them in that directory, which is made if it does not
+//   exist, for any later Session too. //net only touches its subdirectory
+//   Cache_Data, so the directory may hold other things. One Session at a time
+//   can have it, in any process, and it stays locked until
+//   mitto_session_destroy() returns or the process ends. Over HTTP/2, a cache in
+//   memory cancels the stream of a 304 with an RST_STREAM, as Chrome's Incognito
+//   mode does, and a directory does not, as Chrome on Windows does not. The
+//   default is no cache.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.
 //
 // Returns 0 on success and stores the new Session in `session`. On failure,
-// returns a negative Chromium net error code, -4 (ERR_INVALID_ARGUMENT) for
-// invalid settings, and stores null.
+// returns a negative Chromium net error code and stores null: -4
+// (ERR_INVALID_ARGUMENT) for invalid settings, -409 (ERR_CACHE_LOCK_TIMEOUT) if
+// another Session has the directory of "http_cache", without waiting for it, and
+// -404 (ERR_CACHE_OPEN_FAILURE) if a cache cannot be kept there.
 MITTO_EXPORT int32_t mitto_session_create(const char* settings,
                                           size_t settings_size,
                                           MittoSession** session);
 
-// Releases `session` and closes its connections, blocking until that is done.
+// Releases `session`, closes its connections and any cache on disk, blocking
+// until that is done, so that another Session can open the same cache.
 // May be called from any thread. Each request still running on it ends, with a
 // last event that holds -3 (ERR_ABORTED), and its handle stays valid until it is
 // released. No request may start and no call for cookies may be made once this

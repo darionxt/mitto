@@ -90,6 +90,8 @@ class Response:
         headers: The final response's headers.
         content: The final response's body, after any content decoding. It stays out of repr(), since it can be large.
         history: The redirects that led here, the first one first.
+        from_cache: Whether the body comes from the Session's HTTP cache. That goes for a response the server only had to
+            confirm with a 304 too, so True does not say that no request went out.
     """
 
     status: int
@@ -98,6 +100,7 @@ class Response:
     headers: Headers
     content: bytes = field(repr=False)
     history: tuple[Redirect, ...] = ()
+    from_cache: bool = False
 
     @property
     def text(self) -> str:
@@ -158,6 +161,7 @@ def to_response(native: NativeResponse) -> Response:
         headers=Headers(native.headers),
         content=native.body,
         history=tuple(Redirect(hop.status, hop.url, Headers(hop.headers)) for hop in native.history),
+        from_cache=native.from_cache,
     )
 
 

@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/files/file_path.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "net/base/auth.h"
 #include "net/base/ip_endpoint.h"
@@ -57,6 +58,14 @@ struct SessionSettings {
 
   // What Chrome's --host-resolver-rules takes, each rule known to be valid.
   std::string host_resolver_rules;
+
+  // Whether the Session keeps responses in memory.
+  bool http_cache_in_memory = false;
+
+  // The directory that the Session keeps responses in, which is absolute. It is
+  // what Chrome calls http_cache_directory before
+  // PopulateHttpCacheDirectories() adds Cache_Data to it.
+  std::optional<base::FilePath> http_cache_directory;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns
