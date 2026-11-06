@@ -42,7 +42,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `navigation_link_*`, `fetch_get_*`, `script_*`, `image_*` | The case's path at its name | Say which page the request comes from, so `Sec-Fetch-Site`, `Referer`, `Origin` and `Sec-Fetch-Storage-Access` are those of a same-origin **Initiator**, or of none for a navigation |
 | `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with no body | Send a body, so `//net` adds `Content-Length: 0` and `Content-Type`, `body` and the frames that hold it are missing. `Origin` and `Cache-Control` go with those |
 | `fetch_post_stream` | `POST` with no body | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
-| `cookie` | `/case/cookie-set`, then the case's path | Keep a cookie, so `Cookie` is a gap in that one line, because a case counts a request without what it should carry when none has it |
+| `cookie` | `/case/cookie-set`, then the case's path | Say which page the request comes from, so `Referer` is that of a same-origin **Initiator** at `/`. A case counts a request without what it should carry when none has it, so a Session that lost its cookie would show one gap in `Cookie` |
 | `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |
 | `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop. Wait before it follows a redirect, so over HTTP/2 every hop but the last usually has `RST_STREAM` in `later_frames`, where Chrome follows the redirect later and has none ([why only usually](#the-known-gaps-list)) |
 | `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
@@ -50,7 +50,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 
 When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
 
-Every case made from a page has the gaps of an Initiator as well, whatever else it lacks. So `cookie` still differs in `Referer` when a Session keeps its cookie, until a request can say which page it comes from.
+Every case made from a page has the gaps of an Initiator as well, whatever else it lacks. So `cookie` differs in `Referer`, until a request can say which page it comes from.
 
 ## Gaps
 
@@ -117,6 +117,41 @@ The notifier is also what makes a state of the HTTP/2 connections take effect: `
 The first Session in a process waits up to a second for the system's DNS settings, which Chrome does not do, because Chrome has them long before a page asks for a host. A program's first request can come right away, and without those settings it would go to the system's resolver, which sees no HTTPS records.
 
 No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and the public Session takes it only through `_settings`. Such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
+
+## Cookies
+
+A **Session** has `CookieMonster`, the cookie store in `//net` that Chrome uses, so `//net` decides which cookies a response sets, which a request sends and in what order. The `cookie` **Recording Case** shows that one reaches the wire in the place Chrome puts it, over each protocol. `tests/test_cookies.py` checks what no **Baseline** holds: `Secure`, `HttpOnly`, `__Host-` and the other prefixes, `Domain`, `Path` and expiry, all through a real response.
+
+`session.cookies` reads and changes that store through the C API, whose JSON [mitto.h](../native/include/mitto/mitto.h) describes. A cookie has no fixed encoding, so its name, value and path hold one character for each byte, as a `Response`'s headers do. Nothing a server sends is lost that way.
+
+A cookie crosses the C API in one of two ways, which are those of `//net`:
+
+| The JSON | `//net` builds it with | Which checks |
+| --- | --- | --- |
+| Has no `created_us`, so it is new | `CanonicalCookie::CreateSanitizedCookie()`, as DevTools does | Those of a server at its domain: a `__Host-` cookie must be `Secure`, a dot before a public suffix gives a cookie for that one name, and a path is encoded as a URL does |
+| Has `created_us`, so it has been in a store | `CanonicalCookie::FromStorage()`, as Chrome's own store does | That it is canonical, which every cookie `//net` has stored is |
+
+The second way is why a saved list always loads, whatever a server sent. The checks of a new cookie refuse a path that grows too long once it is encoded, and they would change the path of any other that a URL has to encode. A cookie stored with such a path never matches a request, and it should stay that way after a load. Either way it counts as coming from `https://` at its domain, so that a caller can replace a `Secure` cookie, and a list that holds a `Secure` cookie and a cookie from HTTP of the same name loads in any order.
+
+### Which site a request belongs to
+
+Chrome gives each request a `site_for_cookies` and an `initiator`, and `//net` decides from those which `SameSite` cookies go. A request here cannot say yet which page it comes from, so each counts as one the user started at its URL: `site_for_cookies` is that URL, a redirect moves it to the next one, and there is no `initiator`. Without this `//net` would call each request cross-site, and would not even store a cookie with no `SameSite`, which counts as `Lax`. So for now every cookie of a site goes to that site and a response can set any of them, as on a navigation from the address bar.
+
+### Saved cookies
+
+`session.cookies.save(path)` writes what the C API lists to a JSON file, in the Python layer. That keeps SQLite out of the build. The file has mode 0600 whatever the umask, and the values are not encrypted. A new file takes the old one's place by a rename, so a crash leaves one or the other whole. `Session(cookie_file=path)` loads when it opens and saves when it closes, so a crash loses what came after the last save. A file that holds anything else stops the Session from opening, because closing it would otherwise overwrite that file.
+
+Session cookies are saved too, as a browser does that restores its last session. A cookie that has expired by the time it loads stays out, because the store removes it on the next read.
+
+### What stays different
+
+| | Chrome | A Session |
+| --- | --- | --- |
+| A `Secure` cookie on `http://localhost` | `CookieAccessDelegateImpl`, in `services/network`, treats a potentially trustworthy URL as secure, so it can set one and receive it | `//net` with no delegate needs HTTPS |
+| `SameSite` | Follows the page a request comes from | See [above](#which-site-a-request-belongs-to) |
+| A `Partitioned` cookie | Goes in a partition of the page's top-level site | A request has no partition yet, so `//net` stores it as an ordinary cookie. A cookie that a caller sets with a `partition_key` stays apart, and no request sends it |
+| Settings that block a cookie, and First-Party Sets | `CookieSettings` and `FirstPartySetsManager`, in `services/network` | None, which is what a Chrome with no such settings does for a first-party cookie |
+| When the store is written | Every 30 seconds, by `SQLitePersistentCookieStore` | When a caller saves, or at close |
 
 ## Certificate verification
 

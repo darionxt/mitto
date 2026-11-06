@@ -24,6 +24,12 @@
 // option changes its meaning.
 #define MITTO_REQUEST_OPTIONS_VERSION 1
 
+// The version of the cookies that mitto_session_list_cookies() writes, and that
+// mitto_session_set_cookies() and mitto_session_delete_cookies() read. Adding a
+// key changes neither this nor MITTO_ABI_VERSION. Increase this one when an
+// existing key changes its meaning.
+#define MITTO_COOKIES_VERSION 1
+
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
 #define MITTO_PRIORITY_IDLE 1
@@ -167,9 +173,127 @@ MITTO_EXPORT int32_t mitto_session_create(const char* settings,
 // Releases `session` and closes its connections, blocking until that is done.
 // May be called from any thread. Each request still running on it ends, with a
 // last event that holds -3 (ERR_ABORTED), and its handle stays valid until it is
-// released. No request may start once this has been called. The file descriptor
-// from mitto_session_event_fd() closes. Does nothing if `session` is null.
+// released. No request may start and no call for cookies may be made once this
+// has been called. The file descriptor from mitto_session_event_fd() closes.
+// Does nothing if `session` is null.
 MITTO_EXPORT void mitto_session_destroy(MittoSession* session);
+
+// Stores all the Session's cookies, in the order the store lists them: longest
+// path first, then earliest creation. May be called from any thread, and blocks
+// only the calling thread, until the network thread has answered.
+//
+// `cookies` receives a buffer of `cookies_size` bytes that holds one UTF-8 JSON
+// object, with a trailing NUL byte that the size does not count. The caller
+// releases it with mitto_cookies_free(). The format is that of
+// mitto_session_set_cookies(), so what is written here can be set again. An
+// expired cookie is left out, and so is one whose partition key means nothing
+// beyond the frame that made it.
+//
+// Returns 0 on success. On failure, returns -4 (ERR_INVALID_ARGUMENT) and
+// stores null and 0.
+MITTO_EXPORT int32_t mitto_session_list_cookies(MittoSession* session,
+                                                char** cookies,
+                                                size_t* cookies_size);
+
+// Puts cookies in the Session's store, as a response's Set-Cookie would, where
+// each replaces a cookie with the same name, domain, path and partition key.
+// May be called from any thread, and blocks only the calling thread, until the
+// network thread has done it.
+//
+// `cookies` is a buffer of `cookies_size` bytes that holds one UTF-8 JSON
+// object and needs no trailing NUL byte:
+//
+//   {
+//     "version": 1,
+//     "cookies": [
+//       {
+//         "name": "id",
+//         "value": "1",
+//         "domain": ".example.com",
+//         "path": "/",
+//         "secure": true,
+//         "http_only": true,
+//         "same_site": "lax",
+//         "priority": "medium",
+//         "expires_us": 1800000000000000,
+//         "partition_key": {
+//           "top_level_site": "https://example.com",
+//           "has_cross_site_ancestor": false
+//         },
+//         "created_us": 1790000000000000,
+//         "last_accessed_us": 1790000000000000,
+//         "last_updated_us": 1790000000000000,
+//         "source_scheme": "secure",
+//         "source_port": 443,
+//         "source_type": "http"
+//       }
+//     ]
+//   }
+//
+// - "version" is required and must be MITTO_COOKIES_VERSION.
+// - "name", "value" and "domain" are required.
+// - "name", "value" and "path" are bytes, because a cookie has no fixed
+//   encoding. Each character stands for the byte of that number, so one above
+//   U+00FF is refused.
+// - "domain" with a leading dot is a domain cookie, which also goes to
+//   subdomains. Without one it is a host-only cookie.
+// - "path" defaults to "/".
+// - "secure" and "http_only" default to false.
+// - "same_site" is "unspecified", "none", "lax" or "strict", and defaults to
+//   "unspecified".
+// - "priority" is "low", "medium" or "high", and defaults to "medium".
+// - Each time is a whole number of microseconds since the Unix epoch, up to
+//   2^53. Without "expires_us" a cookie is a session cookie.
+// - "partition_key" is absent for a cookie that is not partitioned.
+//
+// Without "created_us" this is a new cookie, made now, which //net checks as if
+// a server at its domain had sent it, and the keys below are refused.
+//
+// With "created_us" this is a cookie that has been in a store, so //net only
+// asks that it is canonical, and brings an "expires_us" that is further away
+// than it allows nearer. Any cookie that mitto_session_list_cookies() has
+// written passes this. It takes these:
+// - "last_accessed_us" and "last_updated_us" default to "created_us".
+// - "source_scheme" is "unset", "non_secure" or "secure", and defaults to
+//   "secure".
+// - "source_port" is a port, -1 for none or -2 for an invalid one, and defaults
+//   to 443.
+// - "source_type" is "http", "script" or "other", and defaults to "other".
+//
+// An unknown key or an invalid value is refused, and then no cookie is set, so
+// a mistake cannot go unnoticed.
+//
+// Returns 0 on success. On failure, returns -4 (ERR_INVALID_ARGUMENT).
+MITTO_EXPORT int32_t mitto_session_set_cookies(MittoSession* session,
+                                               const char* cookies,
+                                               size_t cookies_size);
+
+// Deletes the Session's cookies that match a filter, and stores how many went.
+// May be called from any thread, and blocks only the calling thread, until the
+// network thread has done it.
+//
+// `filter` is a buffer of `filter_size` bytes that holds one UTF-8 JSON object
+// and needs no trailing NUL byte:
+//
+//   {"version": 1, "name": "id", "domain": ".example.com", "path": "/"}
+//
+// - "version" is required and must be MITTO_COOKIES_VERSION.
+// - Each of the others must equal the cookie's, written as in
+//   mitto_session_set_cookies(), so "example.com" does not match a cookie of
+//   ".example.com". Without any of them, every cookie matches.
+//
+// An unknown key or an invalid value is refused.
+//
+// Returns 0 on success. On failure, returns -4 (ERR_INVALID_ARGUMENT) and
+// stores 0.
+MITTO_EXPORT int32_t mitto_session_delete_cookies(MittoSession* session,
+                                                  const char* filter,
+                                                  size_t filter_size,
+                                                  uint32_t* deleted);
+
+// Releases a buffer from mitto_session_list_cookies(). Does nothing if
+// `cookies` is null.
+MITTO_EXPORT void mitto_cookies_free(char* cookies);
 
 // Stores a file descriptor that is readable while any of the Session's requests
 // has an event that has not been named by mitto_session_next_ready_request().

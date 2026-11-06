@@ -8,8 +8,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/at_exit.h"
+#include "base/barrier_closure.h"
 #include "base/byte_size.h"
 #include "base/check.h"
 #include "base/command_line.h"
@@ -34,6 +36,7 @@
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "mitto/cookie_json.h"
 #include "mitto/feature_list.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
@@ -57,6 +60,11 @@
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/coalescing_cert_verifier.h"
 #include "net/cert_net/cert_net_fetcher_url_request.h"
+#include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_options.h"
+#include "net/cookies/cookie_store.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
 #include "net/dns/system_dns_config_change_notifier.h"
@@ -192,9 +200,12 @@ class RequestJob final : public net::URLRequest::Delegate {
         url_, options_.priority, this, kTrafficAnnotation,
         net::handles::kInvalidNetworkHandle);
     request_->set_method(options_.method);
-    // A Session does not hold cookies or credentials yet. Without this, cookies
-    // from one request would be sent on later ones.
-    request_->set_disallow_credentials();
+    // A request cannot say yet which page it comes from, so each counts as one
+    // that the user started at its URL, like a link typed into the address bar.
+    // That makes every cookie of its site go out, whatever its SameSite.
+    request_->set_site_for_cookies(net::SiteForCookies::FromUrl(url_));
+    request_->set_first_party_url_policy(
+        net::RedirectInfo::FirstPartyURLPolicy::UPDATE_URL_ON_REDIRECT);
     request_->SetExtraRequestHeaders(request_headers_);
     request_->SetPriorityIncremental(options_.priority_incremental);
     request_->SetReferrer(options_.referrer.spec());
@@ -531,6 +542,84 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
         base::Unretained(&session), std::move(job)));
   }
 
+  std::string ListCookies(MittoSession& session) {
+    std::string cookies;
+    base::WaitableEvent done;
+    PostTask(base::BindOnce(
+        [](MittoSession* session, std::string* cookies,
+           base::WaitableEvent* done) {
+          session->context->cookie_store()->GetAllCookiesAsync(base::BindOnce(
+              [](std::string* cookies, base::WaitableEvent* done,
+                 const net::CookieList& list) {
+                *cookies = WriteCookies(list);
+                done->Signal();
+              },
+              base::Unretained(cookies), base::Unretained(done)));
+        },
+        base::Unretained(&session), base::Unretained(&cookies),
+        base::Unretained(&done)));
+    done.Wait();
+    return cookies;
+  }
+
+  // Returns whether the store took every one of them.
+  bool SetCookies(MittoSession& session, std::vector<CookieToSet> cookies) {
+    bool all_set = true;
+    base::WaitableEvent done;
+    PostTask(base::BindOnce(
+        [](MittoSession* session, std::vector<CookieToSet> cookies,
+           bool* all_set, base::WaitableEvent* done) {
+          const base::RepeatingClosure one_done = base::BarrierClosure(
+              cookies.size(), base::BindOnce(&base::WaitableEvent::Signal,
+                                             base::Unretained(done)));
+          for (CookieToSet& cookie : cookies) {
+            // The caller owns this store, so no rule about where a request
+            // comes from stands in its way.
+            session->context->cookie_store()->SetCanonicalCookieAsync(
+                std::move(cookie.cookie), cookie.source_url,
+                net::CookieOptions::MakeAllInclusive(),
+                base::BindOnce(
+                    [](bool* all_set, const base::RepeatingClosure& one_done,
+                       net::CookieAccessResult result) {
+                      *all_set = *all_set && result.status.IsInclude();
+                      one_done.Run();
+                    },
+                    base::Unretained(all_set), one_done),
+                /*cookie_access_result=*/std::nullopt);
+          }
+        },
+        base::Unretained(&session), std::move(cookies),
+        base::Unretained(&all_set), base::Unretained(&done)));
+    done.Wait();
+    return all_set;
+  }
+
+  // Returns how many cookies went.
+  uint32_t DeleteCookies(MittoSession& session, CookieFilter filter) {
+    uint32_t deleted = 0;
+    base::WaitableEvent done;
+    PostTask(base::BindOnce(
+        [](MittoSession* session, CookieFilter filter, uint32_t* deleted,
+           base::WaitableEvent* done) {
+          session->context->cookie_store()->DeleteMatchingCookiesAsync(
+              base::BindRepeating(
+                  &CookieFilter::Matches,
+                  base::Owned(
+                      std::make_unique<CookieFilter>(std::move(filter)))),
+              base::BindOnce(
+                  [](uint32_t* deleted, base::WaitableEvent* done,
+                     uint32_t count) {
+                    *deleted = count;
+                    done->Signal();
+                  },
+                  base::Unretained(deleted), base::Unretained(done)));
+        },
+        base::Unretained(&session), std::move(filter),
+        base::Unretained(&deleted), base::Unretained(&done)));
+    done.Wait();
+    return deleted;
+  }
+
   // Runs `task` on the network thread and returns without waiting for it.
   void PostTask(base::OnceClosure task) {
     network_thread_.task_runner()->PostTask(FROM_HERE, std::move(task));
@@ -669,6 +758,65 @@ void mitto_session_destroy(MittoSession* session) {
   if (session) {
     mitto::NetworkCore::Get().DestroySession(base::WrapUnique(session));
   }
+}
+
+int32_t mitto_session_list_cookies(MittoSession* session,
+                                   char** cookies,
+                                   size_t* cookies_size) {
+  if (!cookies || !cookies_size) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *cookies = nullptr;
+  *cookies_size = 0;
+  if (!session) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  const std::string json = mitto::NetworkCore::Get().ListCookies(*session);
+  *cookies = mitto::CopyToNewBuffer(json);
+  *cookies_size = json.size();
+  return net::OK;
+}
+
+int32_t mitto_session_set_cookies(MittoSession* session,
+                                  const char* cookies,
+                                  size_t cookies_size) {
+  if (!session || !cookies) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  mitto::NetworkCore& core = mitto::NetworkCore::Get();
+  // SAFETY: The C API says `cookies` holds `cookies_size` bytes.
+  std::optional<std::vector<mitto::CookieToSet>> parsed = mitto::ParseCookies(
+      UNSAFE_BUFFERS(std::string_view(cookies, cookies_size)));
+  if (!parsed || !core.SetCookies(*session, *std::move(parsed))) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  return net::OK;
+}
+
+int32_t mitto_session_delete_cookies(MittoSession* session,
+                                     const char* filter,
+                                     size_t filter_size,
+                                     uint32_t* deleted) {
+  if (!deleted) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *deleted = 0;
+  if (!session || !filter) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  mitto::NetworkCore& core = mitto::NetworkCore::Get();
+  // SAFETY: The C API says `filter` holds `filter_size` bytes.
+  std::optional<mitto::CookieFilter> parsed = mitto::ParseCookieFilter(
+      UNSAFE_BUFFERS(std::string_view(filter, filter_size)));
+  if (!parsed) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *deleted = core.DeleteCookies(*session, *std::move(parsed));
+  return net::OK;
+}
+
+void mitto_cookies_free(char* cookies) {
+  free(cookies);
 }
 
 int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd) {

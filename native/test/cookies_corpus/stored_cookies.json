@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "cookies": [
+    {
+      "name": "id",
+      "value": "1",
+      "domain": ".a.test",
+      "path": "/path with a space",
+      "secure": true,
+      "http_only": false,
+      "same_site": "none",
+      "priority": "low",
+      "expires_us": 1800000000000000,
+      "created_us": 1790000000000000,
+      "last_accessed_us": 1790000000000001,
+      "last_updated_us": 1790000000000002,
+      "partition_key": {
+        "top_level_site": "https://a.test",
+        "has_cross_site_ancestor": true
+      },
+      "source_scheme": "secure",
+      "source_port": 8443,
+      "source_type": "http"
+    },
+    {
+      "name": "",
+      "value": "no name",
+      "domain": "[::1]",
+      "created_us": 1790000000000000,
+      "source_scheme": "non_secure",
+      "source_port": -1,
+      "source_type": "script"
+    }
+  ]
+}

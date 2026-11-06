@@ -1,11 +1,14 @@
 """The public API: a Session, and get() as a shortcut on a default one."""
 
 import functools
+import os
 from collections.abc import Sequence
+from pathlib import Path
 from types import TracebackType
 from typing import Self, Unpack
 
 from mitto import _native
+from mitto._cookies import Cookies
 from mitto._native import PrivateSettings, encode_url
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
 from mitto._request import RequestOptions, build_request
@@ -16,12 +19,15 @@ __all__ = ["Session", "get"]
 
 
 class Session:
-    """A long-lived client that holds one Chrome-like browsing state: its Persona and its open connections.
+    """A long-lived client that holds one Chrome-like browsing state: its Persona, cookies and open connections.
 
     One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
-    requests still running, but not while another thread is starting one.
+    requests still running, but not while another thread is starting one or using its cookies.
 
     Each method takes the keyword arguments of RequestOptions: `params`, `headers`, `kind` and `timeout`.
+
+    Attributes:
+        cookies: The cookies, which //net sets from responses and sends with requests.
     """
 
     def __init__(
@@ -31,6 +37,7 @@ class Session:
         accept_language: str | None = None,
         additional_trust_anchors: Sequence[str] = (),
         timeout: float | Timeout | None = None,
+        cookie_file: str | os.PathLike[str] | None = None,
         _settings: PrivateSettings | None = None,
     ) -> None:
         """Create the Session.
@@ -44,11 +51,16 @@ class Session:
                 reached over HTTP/1.1 or HTTP/2, whatever its Alt-Svc says.
             timeout: What a request's `timeout` defaults to: a number is the total time in seconds, and a Timeout sets each
                 timer. The default runs no timer, leaving what //net has of its own.
+            cookie_file: A file to keep the cookies in. They load from it now, if it exists, and close() saves them to it,
+                as Cookies.save() does. A crash loses what came after the last save, which a caller can make more often
+                with `session.cookies.save(path)`. The default keeps them only until the Session closes.
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
-                `additional_trust_anchors`, or `timeout` is not a positive number of at most 2,000,000 seconds.
+                `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds or
+                `cookie_file` does not hold cookies that this Session can use.
+            OSError: If `cookie_file` exists and cannot be read.
             NativeLibraryError: If the native library cannot be used.
         """
         self._persona = load_persona(persona)
@@ -58,6 +70,11 @@ class Session:
             additional_trust_anchors=additional_trust_anchors,
             **(PrivateSettings() if _settings is None else _settings),
         )
+        self.cookies = Cookies(self._native)
+        # The working directory may change before the Session closes.
+        self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
+        if self._cookie_file is not None:
+            self._load_cookie_file(self._cookie_file)
 
     def __enter__(self) -> Self:
         return self
@@ -68,8 +85,20 @@ class Session:
         self.close()
 
     def close(self) -> None:
-        """Close the Session's connections. Requests still running end with a RequestError, and so do later ones."""
-        self._native.close()
+        """Save the cookies to `cookie_file`, if it has one, and close the Session's connections.
+
+        Requests still running end with a RequestError, and so do later ones. A response that arrives during this call
+        may not reach the file. The connections close even if the save fails, and a second call does nothing.
+
+        Raises:
+            OSError: If `cookie_file` cannot be written.
+        """
+        cookie_file, self._cookie_file = self._cookie_file, None
+        try:
+            if cookie_file is not None:
+                self.cookies.save(cookie_file)
+        finally:
+            self._native.close()
 
     def request(self, method: str, url: str, **options: Unpack[RequestOptions]) -> Response:
         """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
@@ -120,6 +149,16 @@ class Session:
     def options(self, url: str, **options: Unpack[RequestOptions]) -> Response:
         """Send an OPTIONS request, as request() does."""
         return self.request("OPTIONS", url, **options)
+
+    def _load_cookie_file(self, path: Path) -> None:
+        """Load what `path` holds, where a file that does not exist yet holds nothing. Close the Session if that fails."""
+        try:
+            self.cookies.load(path)
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            self._native.close()
+            raise
 
 
 @functools.cache

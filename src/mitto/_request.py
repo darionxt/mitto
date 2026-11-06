@@ -35,7 +35,8 @@ class RequestOptions(TypedDict, total=False):
             and comes first.
         headers: A header replaces the Persona's line of that name in place, which keeps the Persona's spelling of the
             name. Other names follow the Persona's lines, before what //net adds. None removes a Persona's line, and does
-            nothing to what //net adds. Referer counts as a line of the Persona's, although //net decides where it goes.
+            nothing to what //net adds. Referer counts as a line of the Persona's, although //net decides where it goes. A
+            Cookie goes only if the Session holds no cookie for the URL, because //net writes over it otherwise.
         kind: A Request Kind, which decides what the Persona sends. The default is navigation for GET and fetch for other
             methods.
         timeout: A number is the total time in seconds, and a Timeout sets each timer. None runs no timer, in place of the
