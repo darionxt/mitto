@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/time/time.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
@@ -24,6 +25,12 @@ struct RequestOptions {
 
   // The URL to send as the Referer header. Empty sends none.
   GURL referrer;
+
+  // What each timer allows, as mitto_request_start() describes. nullopt runs no
+  // timer. A value is always positive.
+  std::optional<base::TimeDelta> connect_timeout;
+  std::optional<base::TimeDelta> read_timeout;
+  std::optional<base::TimeDelta> total_timeout;
 };
 
 // Reads the JSON format described at mitto_request_start() in mitto.h. Returns

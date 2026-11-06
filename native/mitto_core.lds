@@ -2,6 +2,7 @@
   global:
     mitto_abi_version;
     mitto_event_free;
+    mitto_net_error_name;
     mitto_request_cancel;
     mitto_request_next_event;
     mitto_request_read;

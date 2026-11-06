@@ -1,5 +1,6 @@
 _mitto_abi_version
 _mitto_event_free
+_mitto_net_error_name
 _mitto_request_cancel
 _mitto_request_next_event
 _mitto_request_read

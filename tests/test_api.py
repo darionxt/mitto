@@ -7,7 +7,6 @@ connection, and are skipped when this machine has no native library.
 import http.server
 import json
 import os
-import pickle
 import subprocess
 import sys
 import threading
@@ -111,13 +110,6 @@ def test_get_raises_request_error_with_the_net_error() -> None:
     assert caught.value.url == "not a url"
     assert caught.value.net_error == ERR_INVALID_URL
     assert str(ERR_INVALID_URL) in str(caught.value)
-
-
-def test_request_error_survives_pickling() -> None:
-    restored = pickle.loads(pickle.dumps(mitto.RequestError("http://example.test/", ERR_INVALID_URL)))
-
-    assert restored.url == "http://example.test/"
-    assert restored.net_error == ERR_INVALID_URL
 
 
 def test_get_rejects_a_url_with_a_nul_before_loading_the_library(

@@ -17,6 +17,9 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self, TypedDict
 
+from mitto._errors import NativeLibraryError, RequestError, request_error
+from mitto._timeout import NO_TIMEOUT, Timeout
+
 __all__ = [
     "ABI_VERSION",
     "LIBRARY_ENV_VAR",
@@ -43,6 +46,7 @@ __all__ = [
     "encode_url",
     "find_library",
     "load_library",
+    "timeout_options",
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
@@ -64,30 +68,6 @@ _ERR_IO_PENDING = -1
 
 # How much a read asks for: as much as the native core holds at a time.
 _READ_SIZE = 64 * 1024
-
-
-class NativeLibraryError(RuntimeError):
-    """The native library is missing, cannot be loaded or was built for another ABI version."""
-
-
-class RequestError(Exception):
-    """A request ended without a response.
-
-    Attributes:
-        url: The URL that was requested.
-        net_error: The negative Chromium net error code, such as -105 for ERR_NAME_NOT_RESOLVED.
-        method: The HTTP method of the request.
-    """
-
-    def __init__(self, url: str, net_error: int, method: str = "GET") -> None:
-        # Exception pickles its args, so they have to be what __init__ takes.
-        super().__init__(url, net_error, method)
-        self.url = url
-        self.net_error = net_error
-        self.method = method
-
-    def __str__(self) -> str:
-        return f"{self.method} {self.url} failed with net error {self.net_error}"
 
 
 class Priority(enum.IntEnum):
@@ -189,6 +169,8 @@ def load_library() -> ctypes.CDLL:
         if version != ABI_VERSION:
             raise NativeLibraryError(f"{path} has ABI version {version}, but this package needs {ABI_VERSION}")
 
+        library.mitto_net_error_name.argtypes = (ctypes.c_int32,)
+        library.mitto_net_error_name.restype = ctypes.c_char_p
         session_pointer = ctypes.POINTER(MittoSession)
         request_pointer = ctypes.POINTER(MittoRequest)
         library.mitto_session_create.argtypes = (ctypes.c_char_p, ctypes.c_size_t, ctypes.POINTER(session_pointer))
@@ -236,6 +218,18 @@ def encode_url(url: str) -> bytes:
     if b"\0" in encoded_url:
         raise ValueError("url holds a NUL character")
     return encoded_url
+
+
+def timeout_options(timeout: Timeout) -> dict[str, int]:
+    """Return the timers that are set, as the options of the C API's mitto_request_start()."""
+    timers = {"connect_timeout_ms": timeout.connect, "read_timeout_ms": timeout.read, "total_timeout_ms": timeout.total}
+    return {key: math.ceil(seconds * 1000) for key, seconds in timers.items() if seconds is not None}
+
+
+def _request_error(library: ctypes.CDLL, url: str, net_error: int, method: str) -> RequestError:
+    """Return the error for a net error, with its name from the native core, which spells it as the Engine Release does."""
+    name: bytes = library.mitto_net_error_name(net_error)
+    return request_error(url, net_error, method, name.decode())
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,7 +349,7 @@ class NativeRequest:
         if result == _ERR_IO_PENDING:
             return None
         if result != 0:
-            raise RequestError(self._url, result, self._method)
+            raise self.error(result)
         try:
             return _copy_event(native)
         finally:
@@ -383,8 +377,12 @@ class NativeRequest:
         if result == _ERR_IO_PENDING:
             return None
         if result < 0:
-            raise RequestError(self._url, result, self._method)
+            raise self.error(result)
         return ctypes.string_at(buffer, result)
+
+    def error(self, net_error: int) -> RequestError:
+        """Return the error that a Finished event's net error stands for."""
+        return _request_error(self._library, self._url, net_error, self._method)
 
     def cancel(self) -> None:
         """End the request, without waiting for that. Unless it finishes first, its Finished event holds ERR_ABORTED."""
@@ -520,6 +518,7 @@ class Session:
         # The value of kDefaultPriorityIncremental in //net.
         priority_incremental: bool = True,
         referrer: str | None = None,
+        timeout: Timeout = NO_TIMEOUT,
     ) -> NativeRequest:
         """Start a request for `url` and return without waiting for it.
 
@@ -536,6 +535,7 @@ class Session:
                 HTTP/2 weight, the priority header and the HTTP/3 PRIORITY_UPDATE.
             referrer: The URL to send as the Referer header, or None to send none. //net puts it after `headers` and
                 before the headers it adds, and leaves out any username, password and fragment.
+            timeout: The timers of the request. One that runs out arrives as the Finished event.
 
         Raises:
             ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
@@ -549,6 +549,7 @@ class Session:
             "method": method,
             "priority": int(priority),
             "priority_incremental": priority_incremental,
+            **timeout_options(timeout),
         }
         if referrer is not None:
             encode_url(referrer)
@@ -571,7 +572,7 @@ class Session:
             ctypes.byref(handle),
         )
         if net_error != 0:
-            raise RequestError(url, net_error, method)
+            raise _request_error(self._library, url, net_error, method)
         return NativeRequest(self._library, handle, url, method)
 
     def request(
@@ -584,6 +585,7 @@ class Session:
         # The value of kDefaultPriorityIncremental in //net.
         priority_incremental: bool = True,
         referrer: str | None = None,
+        timeout: Timeout = NO_TIMEOUT,
     ) -> NativeResponse:
         """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
 
@@ -592,15 +594,15 @@ class Session:
         Raises:
             ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
                 encoded as Latin-1.
-            RequestError: If the request ends without a response. An HTTP error status such as 404 is a response. An
-                invalid header or method, or a `referrer` that //net cannot send, ends the request with
-                ERR_INVALID_ARGUMENT.
+            RequestError: If the request ends without a response, of the subclass that suits its net error. An HTTP error
+                status such as 404 is a response. An invalid header or method, or a `referrer` that //net cannot send,
+                ends the request with ERR_INVALID_ARGUMENT.
         """
-        with self.start(url, headers, method, priority, priority_incremental, referrer) as request:
-            return _collect_response(request, url, method)
+        with self.start(url, headers, method, priority, priority_incremental, referrer, timeout) as request:
+            return _collect_response(request)
 
 
-def _collect_response(request: NativeRequest, url: str, method: str) -> NativeResponse:
+def _collect_response(request: NativeRequest) -> NativeResponse:
     """Drive `request` to its end and return the whole response.
 
     Raises:
@@ -616,7 +618,7 @@ def _collect_response(request: NativeRequest, url: str, method: str) -> NativeRe
             while chunk := request.read():
                 chunks.append(chunk)
     if event.net_error != 0 or started is None:
-        raise RequestError(url, event.net_error, method)
+        raise request.error(event.net_error)
     return NativeResponse(
         status=started.status,
         protocol=started.protocol,

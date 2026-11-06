@@ -9,6 +9,7 @@ from typing import TypedDict, cast
 from urllib.parse import quote_plus
 
 from mitto._persona import Persona, RequestDefaults, RequestKind
+from mitto._timeout import Timeout, to_timeout
 
 __all__ = ["BuiltRequest", "QueryParams", "RequestHeaders", "RequestOptions", "build_request", "encode_query"]
 
@@ -37,11 +38,14 @@ class RequestOptions(TypedDict, total=False):
             nothing to what //net adds. Referer counts as a line of the Persona's, although //net decides where it goes.
         kind: A Request Kind, which decides what the Persona sends. The default is navigation for GET and fetch for other
             methods.
+        timeout: A number is the total time in seconds, and a Timeout sets each timer. None runs no timer, in place of the
+            Session's default. The default is the Session's.
     """
 
     params: QueryParams | None
     headers: RequestHeaders | None
     kind: RequestKind | str | None
+    timeout: float | Timeout | None
 
 
 class BuiltRequest(RequestDefaults):
@@ -50,10 +54,12 @@ class BuiltRequest(RequestDefaults):
     Attributes:
         url: The URL to fetch, with the query from `params`.
         method: The HTTP method to send.
+        timeout: The timers of the request.
     """
 
     url: str
     method: str
+    timeout: Timeout
 
 
 def build_request(
@@ -64,6 +70,7 @@ def build_request(
     params: QueryParams | None = None,
     headers: RequestHeaders | None = None,
     kind: RequestKind | str | None = None,
+    timeout: float | Timeout | None = None,
 ) -> BuiltRequest:
     """Return what to ask the native core for, given a caller's arguments as described in RequestOptions.
 
@@ -75,9 +82,11 @@ def build_request(
         params: See RequestOptions.
         headers: See RequestOptions.
         kind: See RequestOptions.
+        timeout: See RequestOptions. A Session's default is the caller's to put in place of a `timeout` that was not given.
 
     Raises:
-        ValueError: If `kind` is not a Request Kind, or two names in `headers` differ only in case.
+        ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a
+            positive number of at most 2,000,000 seconds.
     """
     method = method.upper() if method.upper() in _METHODS_FETCH_NORMALIZES else method
     url = _with_query(url, encode_query(params)) if params is not None else url
@@ -93,6 +102,7 @@ def build_request(
         priority=defaults["priority"],
         priority_incremental=defaults["priority_incremental"],
         referrer=referrer,
+        timeout=to_timeout(timeout),
     )
 
 

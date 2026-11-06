@@ -3,5 +3,8 @@
   "method": "POST",
   "priority": 4,
   "priority_incremental": false,
-  "referrer": "https://user:secret@a.test/page#fragment"
+  "referrer": "https://user:secret@a.test/page#fragment",
+  "connect_timeout_ms": 1000,
+  "read_timeout_ms": 2000,
+  "total_timeout_ms": 3000
 }

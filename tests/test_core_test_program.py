@@ -6,6 +6,7 @@ load a sanitized library: the sanitizers' runtime is linked into the program tha
 
 import json
 import os
+import socket
 import subprocess
 from pathlib import Path
 
@@ -115,6 +116,25 @@ def test_a_request_that_fails(program: Path) -> None:
 
     assert result.returncode == 1
     assert f"net error {_ERR_CERT_AUTHORITY_INVALID}" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("scenario", "scheme", "name"),
+    [
+        # Over https:// a server that never answers never finishes the TLS handshake, which the connect timer runs through.
+        ("connect-timeout", "https", "ERR_CONNECTION_TIMED_OUT"),
+        ("read-timeout", "http", "ERR_TIMED_OUT"),
+        ("total-timeout", "http", "ERR_TIMED_OUT"),
+    ],
+)
+def test_a_timer_that_runs_out(program: Path, scenario: str, scheme: str, name: str) -> None:
+    # The system accepts the connection, and nothing here reads from it.
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        url = f"{scheme}://127.0.0.1:{listener.getsockname()[1]}/"
+        result = _run(program, url, {"version": SETTINGS_VERSION}, scenario)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [f"timed out with {name}"]
 
 
 def test_a_missing_intermediate_is_fetched_from_its_aia_url(program: Path, tmp_path: Path) -> None:

@@ -13,7 +13,7 @@ import pytest
 
 import mitto
 from mitto import _native
-from mitto._native import Finished, PrivateSettings, RequestError
+from mitto._native import Finished, PrivateSettings
 from tests.local_certificates import (
     ISSUER_PATH,
     AiaServer,
@@ -30,12 +30,16 @@ pytestmark = pytest.mark.usefixtures("native_library")
 HOST = "localhost"
 ERR_ABORTED = -3
 ERR_CERT_AUTHORITY_INVALID = -202
+ERR_CONNECTION_TIMED_OUT = -118
 
 # Longer than a request to loopback takes, and shorter than the fetcher's own timeout of 15 seconds.
 FETCH_TIMEOUT_SECONDS = 10
 
 # How long a Session may take to try QUIC once Alt-Svc has advertised it. A slow CI runner needs more than a local build.
 ALT_SVC_TIMEOUT_SECONDS = 30
+
+# Long enough to reach the certificate fetch, which a request does within milliseconds.
+CONNECT_TIMEOUT_SECONDS = 2.0
 
 # How long a Session gets to finish a QUIC handshake that the server has seen, so that a later request could use it.
 QUIC_HANDSHAKE_SECONDS = 0.5
@@ -50,7 +54,7 @@ def test_a_private_chain_is_refused_without_its_anchor(tmp_path: Path) -> None:
     with (
         serving(TlsServer(tmp_path, generate_leaf(root, HOST))) as server,
         mitto.Session() as session,
-        pytest.raises(RequestError) as caught,
+        pytest.raises(mitto.CertificateError) as caught,
     ):
         session.get(url_of(server))
 
@@ -74,7 +78,7 @@ def test_a_private_chain_is_refused_with_another_anchor(tmp_path: Path) -> None:
     with (
         serving(TlsServer(tmp_path, generate_leaf(root, HOST))) as server,
         mitto.Session(additional_trust_anchors=[other.pem]) as session,
-        pytest.raises(RequestError) as caught,
+        pytest.raises(mitto.CertificateError) as caught,
     ):
         session.get(url_of(server))
 
@@ -89,7 +93,7 @@ def test_an_anchor_holds_only_for_the_session_that_added_it(tmp_path: Path) -> N
         mitto.Session() as other,
     ):
         assert adding.get(url_of(server)).status == 200
-        with pytest.raises(RequestError) as caught:
+        with pytest.raises(mitto.CertificateError) as caught:
             other.get(url_of(server))
 
     assert caught.value.net_error == ERR_CERT_AUTHORITY_INVALID
@@ -180,7 +184,7 @@ def test_a_missing_intermediate_with_no_aia_url_is_refused(tmp_path: Path) -> No
     with (
         serving(TlsServer(tmp_path, generate_leaf(intermediate, HOST))) as server,
         mitto.Session(additional_trust_anchors=[root.pem]) as session,
-        pytest.raises(RequestError) as caught,
+        pytest.raises(mitto.CertificateError) as caught,
     ):
         session.get(url_of(server))
 
@@ -194,7 +198,7 @@ def test_a_missing_intermediate_whose_aia_url_fails_is_refused(tmp_path: Path) -
         serving(AiaServer(None)) as aia,
         serving(TlsServer(tmp_path, generate_leaf(intermediate, HOST, aia.url))) as server,
         mitto.Session(additional_trust_anchors=[root.pem]) as session,
-        pytest.raises(RequestError) as caught,
+        pytest.raises(mitto.CertificateError) as caught,
     ):
         session.get(url_of(server))
 
@@ -209,7 +213,7 @@ def test_a_fetched_intermediate_does_not_make_a_chain_trusted(tmp_path: Path) ->
         serving(AiaServer(intermediate.der)) as aia,
         serving(TlsServer(tmp_path, generate_leaf(intermediate, HOST, aia.url))) as server,
         mitto.Session() as session,
-        pytest.raises(RequestError) as caught,
+        pytest.raises(mitto.CertificateError) as caught,
     ):
         session.get(url_of(server))
 
@@ -258,6 +262,25 @@ def test_a_session_closes_with_the_fetch_of_a_request_that_was_cancelled(tmp_pat
         aia.released.set()
 
     assert finished.net_error == ERR_ABORTED
+
+
+def test_the_connect_timer_ends_a_certificate_fetch(tmp_path: Path) -> None:
+    root = generate_root()
+    intermediate = generate_intermediate(root)
+    with (
+        serving(AiaServer(hang=True)) as aia,
+        serving(TlsServer(tmp_path, generate_leaf(intermediate, HOST, aia.url))) as server,
+    ):
+        with (
+            mitto.Session(additional_trust_anchors=[root.pem]) as session,
+            pytest.raises(mitto.RequestTimeoutError) as caught,
+        ):
+            session.get(url_of(server), timeout=mitto.Timeout(connect=CONNECT_TIMEOUT_SECONDS))
+        aia.released.set()
+
+    # The fetch is part of the TLS handshake, so the request had no connection yet.
+    assert aia.requested.is_set()
+    assert caught.value.net_error == ERR_CONNECTION_TIMED_OUT
 
 
 def test_quic_is_refused_to_an_added_root(tmp_path: Path) -> None:

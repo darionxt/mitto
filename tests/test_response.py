@@ -1,10 +1,11 @@
 """Tests of a Response and its headers. They need no native library and no connection, so they run on every machine."""
 
 import dataclasses
+import pickle
 
 import pytest
 
-from mitto import Headers, Response
+from mitto import Headers, HTTPStatusError, MittoError, Response
 from mitto._native import NativeResponse
 from mitto._response import to_response
 
@@ -156,3 +157,34 @@ def test_a_native_response_becomes_a_response() -> None:
     assert to_response(native) == Response(
         status=201, url="https://example.test/a", protocol="h3", headers=Headers(PAIRS), content=b"body"
     )
+
+
+def with_status(status: int) -> Response:
+    return dataclasses.replace(response(b"body"), status=status)
+
+
+@pytest.mark.parametrize("status", [200, 204, 301, 304, 399])
+def test_a_status_that_is_no_failure_raises_nothing(status: int) -> None:
+    with_status(status).raise_for_status()
+
+
+@pytest.mark.parametrize("status", [400, 404, 451, 500, 503, 599, 999])
+def test_a_status_that_says_the_request_failed_raises(status: int) -> None:
+    failed = with_status(status)
+
+    with pytest.raises(HTTPStatusError) as caught:
+        failed.raise_for_status()
+
+    assert isinstance(caught.value, MittoError)
+    assert caught.value.response is failed
+    assert caught.value.status == status
+    assert caught.value.url == failed.url
+    assert str(status) in str(caught.value)
+    assert failed.url in str(caught.value)
+
+
+def test_a_status_error_survives_pickling() -> None:
+    restored = pickle.loads(pickle.dumps(HTTPStatusError(with_status(404))))
+
+    assert restored.response == with_status(404)
+    assert restored.status == 404

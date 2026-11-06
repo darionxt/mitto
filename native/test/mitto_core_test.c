@@ -34,6 +34,17 @@ static const char kOptions[] =
     "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
     "\"priority\": " STRINGIFY(MITTO_PRIORITY_MEDIUM) "}";
 
+// Each with one timer, for a server that accepts a connection and never answers.
+static const char kConnectTimeoutOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"connect_timeout_ms\": 100}";
+static const char kReadTimeoutOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"read_timeout_ms\": 100}";
+static const char kTotalTimeoutOptions[] =
+    "{\"version\": " STRINGIFY(MITTO_REQUEST_OPTIONS_VERSION) ", "
+    "\"total_timeout_ms\": 100}";
+
 static const MittoHeader kHeaders[] = {
     {"Accept", sizeof("Accept") - 1, "*/*", sizeof("*/*") - 1},
 };
@@ -42,15 +53,19 @@ static const MittoHeader kHeaders[] = {
 static MittoSession* g_session;
 static MittoRequest* g_request;
 
-static int32_t Start(const char* url) {
+static int32_t StartWithOptions(const char* url, const char* options) {
   const int32_t error = mitto_request_start(
-      g_session, url, kHeaders, sizeof(kHeaders) / sizeof(kHeaders[0]),
-      kOptions, sizeof(kOptions) - 1, &g_request);
+      g_session, url, kHeaders, sizeof(kHeaders) / sizeof(kHeaders[0]), options,
+      strlen(options), &g_request);
   if (error != 0) {
     fprintf(stderr, "starting %s failed with net error %" PRId32 "\n", url,
             error);
   }
   return error;
+}
+
+static int32_t Start(const char* url) {
+  return StartWithOptions(url, kOptions);
 }
 
 // Reads what has arrived, and asks for more once that is gone.
@@ -258,6 +273,41 @@ static int ExitWhileRunning(const char* url) {
   return EXIT_NOW;
 }
 
+// Starts a request that a timer has to end, and prints how it ended.
+static int ExpectTimeout(const char* url, const char* options) {
+  if (StartWithOptions(url, options) != 0) {
+    return 1;
+  }
+  while (1) {
+    MittoEvent event;
+    const int32_t error =
+        mitto_request_next_event(g_request, EVENT_TIMEOUT_MS, &event);
+    if (error != 0) {
+      fprintf(stderr, "next event failed with net error %" PRId32 "\n", error);
+      return 1;
+    }
+    const int32_t event_type = event.type;
+    const int32_t net_error = event.net_error;
+    mitto_event_free(&event);
+    if (event_type == MITTO_EVENT_FINISHED) {
+      printf("timed out with %s\n", mitto_net_error_name(net_error));
+      return 0;
+    }
+  }
+}
+
+static int ConnectTimeout(const char* url) {
+  return ExpectTimeout(url, kConnectTimeoutOptions);
+}
+
+static int ReadTimeout(const char* url) {
+  return ExpectTimeout(url, kReadTimeoutOptions);
+}
+
+static int TotalTimeout(const char* url) {
+  return ExpectTimeout(url, kTotalTimeoutOptions);
+}
+
 // Waits for a byte on stdin. The caller sends one when the request has reached a
 // point that no event shows, such as a certificate fetch. Returns 0 if it came.
 static int WaitToBeTold(void) {
@@ -293,6 +343,9 @@ static const struct {
     {"release-after-response", ReleaseAfterResponse},
     {"destroy-session-while-running", DestroySessionWhileRunning},
     {"exit-while-running", ExitWhileRunning},
+    {"connect-timeout", ConnectTimeout},
+    {"read-timeout", ReadTimeout},
+    {"total-timeout", TotalTimeout},
     {"destroy-session-when-told", DestroySessionWhenTold},
     {"exit-when-told", ExitWhenTold},
 };

@@ -9,6 +9,7 @@
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
+#include "base/time/time.h"
 #include "mitto/request_options.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_util.h"
@@ -25,10 +26,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   // What a request relies on in options that were accepted. //net writes the
   // method into the request line as it is, takes a priority as an index, and
-  // would silently send no Referer for a URL that it cannot send as one.
+  // would silently send no Referer for a URL that it cannot send as one. A timer
+  // that cannot wait would end the request at once.
   CHECK(net::HttpUtil::IsToken(options->method));
   CHECK_GE(options->priority, net::MINIMUM_PRIORITY);
   CHECK_LE(options->priority, net::MAXIMUM_PRIORITY);
   CHECK(options->referrer.is_empty() || options->referrer.is_valid());
+  for (const std::optional<base::TimeDelta>& timeout :
+       {options->connect_timeout, options->read_timeout,
+        options->total_timeout}) {
+    CHECK(!timeout || timeout->is_positive());
+  }
   return 0;
 }

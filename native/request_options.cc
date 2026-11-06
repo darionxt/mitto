@@ -1,9 +1,12 @@
 #include "mitto/request_options.h"
 
+#include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/json/json_reader.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "mitto/mitto.h"
 #include "net/http/http_util.h"
@@ -16,6 +19,9 @@ constexpr std::string_view kMethodKey = "method";
 constexpr std::string_view kPriorityKey = "priority";
 constexpr std::string_view kPriorityIncrementalKey = "priority_incremental";
 constexpr std::string_view kReferrerKey = "referrer";
+constexpr std::string_view kConnectTimeoutKey = "connect_timeout_ms";
+constexpr std::string_view kReadTimeoutKey = "read_timeout_ms";
+constexpr std::string_view kTotalTimeoutKey = "total_timeout_ms";
 
 // Chrome's network service refuses the methods that the Fetch standard forbids,
 // in network::cors::IsForbiddenMethod(), so Chrome never sends them.
@@ -25,6 +31,30 @@ bool IsValidMethod(std::string_view method) {
          upper_method != net::HttpRequestHeaders::kConnectMethod &&
          upper_method != net::HttpRequestHeaders::kTraceMethod &&
          upper_method != net::HttpRequestHeaders::kTrackMethod;
+}
+
+// Returns where the timer that `key` names goes, or null if it names none.
+std::optional<base::TimeDelta>* FindTimeout(RequestOptions& options,
+                                            std::string_view key) {
+  if (key == kConnectTimeoutKey) {
+    return &options.connect_timeout;
+  }
+  if (key == kReadTimeoutKey) {
+    return &options.read_timeout;
+  }
+  if (key == kTotalTimeoutKey) {
+    return &options.total_timeout;
+  }
+  return nullptr;
+}
+
+// Returns nullopt if `value` is not a positive number of milliseconds.
+std::optional<base::TimeDelta> ParseTimeout(const base::Value& value) {
+  const std::optional<int> milliseconds = value.GetIfInt();
+  if (!milliseconds || *milliseconds <= 0) {
+    return std::nullopt;
+  }
+  return base::Milliseconds(*milliseconds);
 }
 
 }  // namespace
@@ -68,6 +98,14 @@ std::optional<RequestOptions> ParseRequestOptions(std::string_view json) {
         return std::nullopt;
       }
       options.priority_incremental = *priority_incremental;
+      continue;
+    }
+    if (std::optional<base::TimeDelta>* const timeout =
+            FindTimeout(options, key)) {
+      *timeout = ParseTimeout(value);
+      if (!*timeout) {
+        return std::nullopt;
+      }
       continue;
     }
     if (key != kReferrerKey || !value.is_string()) {
