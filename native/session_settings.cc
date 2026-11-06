@@ -8,6 +8,7 @@
 #include "mitto/mitto.h"
 #include "net/base/hash_value.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/ip_address.h"
 #include "net/http/http_util.h"
 
 namespace mitto {
@@ -20,6 +21,7 @@ constexpr std::string_view kAcceptLanguageKey = "accept_language";
 constexpr std::string_view kOriginsToForceQuicOnKey =
     "origins_to_force_quic_on";
 constexpr std::string_view kEveryOrigin = "*";
+constexpr std::string_view kDnsNameserverKey = "dns_nameserver";
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -69,6 +71,22 @@ bool ReadOriginsToForceQuicOn(const base::Value& value,
   return true;
 }
 
+std::optional<net::IPEndPoint> ReadDnsNameserver(const base::Value& value) {
+  if (!value.is_string()) {
+    return std::nullopt;
+  }
+  const net::HostPortPair host_port =
+      net::HostPortPair::FromString(value.GetString());
+  const std::optional<net::IPAddress> address =
+      net::IPAddress::FromIPLiteral(host_port.host());
+  // Nothing listens on port 0, which is also what an entry without a valid port
+  // comes to.
+  if (!address || host_port.port() == 0) {
+    return std::nullopt;
+  }
+  return net::IPEndPoint(*address, host_port.port());
+}
+
 }  // namespace
 
 SessionSettings::SessionSettings() = default;
@@ -99,6 +117,13 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
     }
     if (key == kOriginsToForceQuicOnKey) {
       if (!ReadOriginsToForceQuicOn(value, settings)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kDnsNameserverKey) {
+      settings.dns_nameserver = ReadDnsNameserver(value);
+      if (!settings.dns_nameserver) {
         return std::nullopt;
       }
       continue;

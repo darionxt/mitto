@@ -222,6 +222,7 @@ class Session:
         ignore_certificate_errors_spki_list: Sequence[str] = (),
         accept_language: str = "",
         origins_to_force_quic_on: Sequence[str] = (),
+        dns_nameserver: str | None = None,
     ) -> None:
         """Create the Session.
 
@@ -235,20 +236,23 @@ class Session:
                 with the meaning of Chrome's --origin-to-force-quic-on. It also lifts //net's refusal of QUIC to a
                 certificate from an unknown root, for each of their hosts. The certificate still has to verify. "*"
                 stands for every origin. Without any, a request learns of QUIC from Alt-Svc.
+            dns_nameserver: Ask only this DNS server, written "address:port" with an IPv6 address in brackets, in place of
+                what the system's settings name. It is for tests, so the public API does not offer it.
 
         Raises:
             ValueError: If the native core refuses the settings.
             NativeLibraryError: If the native library cannot be used.
         """
         self._library = load_library()
-        settings = json.dumps(
-            {
-                "version": SETTINGS_VERSION,
-                "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
-                "accept_language": accept_language,
-                "origins_to_force_quic_on": list(origins_to_force_quic_on),
-            }
-        ).encode()
+        settings_dict: dict[str, object] = {
+            "version": SETTINGS_VERSION,
+            "ignore_certificate_errors_spki_list": list(ignore_certificate_errors_spki_list),
+            "accept_language": accept_language,
+            "origins_to_force_quic_on": list(origins_to_force_quic_on),
+        }
+        if dns_nameserver is not None:
+            settings_dict["dns_nameserver"] = dns_nameserver
+        settings = json.dumps(settings_dict).encode()
         self._handle = ctypes.POINTER(MittoSession)()
         net_error: int = self._library.mitto_session_create(settings, len(settings), ctypes.byref(self._handle))
         if net_error != 0:

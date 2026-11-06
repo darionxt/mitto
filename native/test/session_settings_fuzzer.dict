@@ -3,6 +3,7 @@
 "\"ignore_certificate_errors_spki_list\""
 "\"accept_language\""
 "\"origins_to_force_quic_on\""
+"\"dns_nameserver\""
 "\"*\""
 "null"
 "true"

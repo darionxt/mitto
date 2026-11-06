@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "mitto/ignore_errors_cert_verifier.h"
+#include "net/base/ip_endpoint.h"
 #include "url/scheme_host_port.h"
 
 namespace mitto {
@@ -31,6 +32,9 @@ struct SessionSettings {
   // over QUIC only for a host named here.
   std::set<url::SchemeHostPort> origins_to_force_quic_on;
   bool force_quic_everywhere = false;
+
+  // The one DNS server to ask, in place of the system's. For tests only.
+  std::optional<net::IPEndPoint> dns_nameserver;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns

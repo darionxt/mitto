@@ -2,5 +2,6 @@
   "version": 1,
   "ignore_certificate_errors_spki_list": ["47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="],
   "accept_language": "en-US,en;q=0.9",
-  "origins_to_force_quic_on": ["capture.localhost:8445", "[::1]:443", "*"]
+  "origins_to_force_quic_on": ["capture.localhost:8445", "[::1]:443", "*"],
+  "dns_nameserver": "127.0.0.1:53"
 }

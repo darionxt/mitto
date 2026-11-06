@@ -1,5 +1,6 @@
 #include <stdlib.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,23 +27,31 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "mitto/feature_list.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
 #include "mitto/network_session_configurator.h"
 #include "mitto/session_settings.h"
 #include "mitto/ssl_config_service_mojo.h"
+#include "mitto/stub_resolver_config_reader.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_change_notifier.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
 #include "net/cert/cert_verifier.h"
+#include "net/dns/host_resolver.h"
+#include "net/dns/host_resolver_manager.h"
+#include "net/dns/system_dns_config_change_notifier.h"
 #include "net/http/http_connection_info.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_util.h"
+#include "net/log/net_log.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/quic/quic_context.h"
@@ -66,7 +75,12 @@ struct MittoSession {
   MittoSession();
   ~MittoSession();
 
+  // The resolver of a Session with a DNS server of its own, which the others
+  // must not ask. `context` points to it, so it has to come first.
+  std::unique_ptr<net::HostResolverManager> own_host_resolver_manager;
   std::unique_ptr<net::URLRequestContext> context;
+  std::unique_ptr<net::HostResolver::ProbeRequest> doh_probes_request;
+  base::OneShotTimer doh_probes_timer;
 };
 
 MittoSession::MittoSession() = default;
@@ -76,6 +90,15 @@ namespace mitto {
 namespace {
 
 constexpr int kReadBufferSize = 64 * 1024;
+
+// How long a Session waits to start DoH probes after the process has created
+// the network core: the default of kDelayInitialDohProbeTimeoutParam, which
+// lives outside //net.
+constexpr base::TimeDelta kDelayInitialDohProbeTimeout = base::Seconds(5);
+
+// How long the first Session waits for the system's DNS settings. Reading them
+// takes milliseconds, and a machine where it fails never answers.
+constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation(
@@ -212,10 +235,32 @@ class RequestJob final : public net::URLRequest::Delegate {
   std::string body_;
 };
 
+// As NetworkContext::ActivateDohProbes() does it. Without probes, secure mode
+// automatic never finds a DoH server that it can use.
+void ActivateDohProbes(MittoSession* session) {
+  session->doh_probes_request =
+      session->context->host_resolver()->CreateDohProbeRequest();
+  session->doh_probes_request->Start();
+}
+
 // Called on the network thread.
 std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
-    SessionSettings settings) {
+    SessionSettings settings,
+    net::HostResolverManager* host_resolver_manager,
+    base::TimeTicks doh_probes_start_time) {
+  auto session = std::make_unique<MittoSession>();
+  if (settings.dns_nameserver) {
+    session->own_host_resolver_manager =
+        std::make_unique<net::HostResolverManager>(
+            net::HostResolver::ManagerOptions(),
+            net::NetworkChangeNotifier::GetSystemDnsConfigNotifier(),
+            net::NetLog::Get());
+    host_resolver_manager = session->own_host_resolver_manager.get();
+    ConfigureStubHostResolver(*host_resolver_manager, settings.dns_nameserver);
+  }
+
   net::URLRequestContextBuilder builder;
+  builder.set_host_resolver_manager(host_resolver_manager);
   builder.DisableHttpCache();
   // Chrome's network service turns these on. They add to what //net puts in
   // Accept-Encoding, over HTTPS and to localhost only.
@@ -245,9 +290,15 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   builder.set_http_network_session_params(session_params);
   builder.set_quic_context(std::move(quic_context));
 
-  auto session = std::make_unique<MittoSession>();
   session->context = builder.Build();
   ConfigureQuicHints(session->context->http_server_properties());
+  // The timer belongs to the Session, so it can only run while the Session
+  // exists. NetworkService does this with one timer and a list of contexts.
+  session->doh_probes_timer.Start(
+      FROM_HERE,
+      std::max(doh_probes_start_time - base::TimeTicks::Now(),
+               base::TimeDelta()),
+      base::BindOnce(&ActivateDohProbes, base::Unretained(session.get())));
   return session;
 }
 
@@ -255,7 +306,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
 // thread that all Sessions live on. It is never destroyed, because the library
 // cannot know when the process that loaded it stops using it. That is why the
 // library is built to stay loaded until the process exits.
-class NetworkCore {
+class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
  public:
   static NetworkCore& Get() {
     static base::NoDestructor<NetworkCore> instance;
@@ -273,15 +324,33 @@ class NetworkCore {
     base::ThreadPoolInstance::CreateAndStartWithDefaultParams("mitto");
     CHECK(network_thread_.StartWithOptions(
         base::Thread::Options(base::MessagePumpType::IO, 0)));
+    RunAndWait(base::BindOnce(&NetworkCore::CreateNetworkChangeNotifier,
+                              base::Unretained(this)));
+    // Chrome has read these settings by the time a page asks for a host, but a
+    // program's first request can come right away. Until the
+    // HostResolverManager has them it goes to the system's resolver, which sees
+    // no HTTPS records.
+    system_dns_config_read_.TimedWait(kSystemDnsConfigTimeout);
+    RunAndWait(base::BindOnce(&NetworkCore::CreateHostResolverManager,
+                              base::Unretained(this)));
+  }
+
+  // net::SystemDnsConfigChangeNotifier::Observer:
+  void OnSystemDnsConfigChanged(const net::DnsConfig& config) override {
+    system_dns_config_read_.Signal();
   }
 
   std::unique_ptr<MittoSession> CreateSession(SessionSettings settings) {
     std::unique_ptr<MittoSession> session;
     RunAndWait(base::BindOnce(
-        [](SessionSettings settings, std::unique_ptr<MittoSession>* session) {
-          *session = CreateSessionOnNetworkThread(std::move(settings));
+        [](NetworkCore* core, SessionSettings settings,
+           std::unique_ptr<MittoSession>* session) {
+          *session = CreateSessionOnNetworkThread(
+              std::move(settings), core->host_resolver_manager_.get(),
+              core->doh_probes_start_time_);
         },
-        std::move(settings), base::Unretained(&session)));
+        base::Unretained(this), std::move(settings),
+        base::Unretained(&session)));
     return session;
   }
 
@@ -301,6 +370,28 @@ class NetworkCore {
   }
 
  private:
+  // As the network service does it, on the thread that uses it. This also
+  // starts the reading of the system's DNS settings.
+  void CreateNetworkChangeNotifier() {
+    network_change_notifier_ = net::NetworkChangeNotifier::CreateIfNeeded();
+    net::NetworkChangeNotifier::GetSystemDnsConfigNotifier()->AddObserver(this);
+  }
+
+  // If the settings have arrived, the new HostResolverManager's copy of them is
+  // now in the network thread's queue, ahead of any task that creates a
+  // Session.
+  void CreateHostResolverManager() {
+    net::SystemDnsConfigChangeNotifier* const notifier =
+        net::NetworkChangeNotifier::GetSystemDnsConfigNotifier();
+    notifier->RemoveObserver(this);
+    host_resolver_manager_ = std::make_unique<net::HostResolverManager>(
+        net::HostResolver::ManagerOptions(), notifier, net::NetLog::Get());
+    ConfigureStubHostResolver(*host_resolver_manager_,
+                              /*dns_nameserver=*/std::nullopt);
+    doh_probes_start_time_ =
+        base::TimeTicks::Now() + kDelayInitialDohProbeTimeout;
+  }
+
   void RunAndWait(base::OnceClosure task) {
     base::WaitableEvent done;
     network_thread_.task_runner()->PostTask(
@@ -311,6 +402,12 @@ class NetworkCore {
 
   base::AtExitManager at_exit_manager_;
   base::Thread network_thread_;
+  base::WaitableEvent system_dns_config_read_;
+
+  // These are used only on the network thread.
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
+  std::unique_ptr<net::HostResolverManager> host_resolver_manager_;
+  base::TimeTicks doh_probes_start_time_;
 };
 
 // Returns `headers` in the same order, or nullopt if they cannot be sent as
