@@ -18,7 +18,7 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise;
+2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise. For a Baseline recorded through the capture server's proxy it has that proxy, and then the proxy is what finds the names;
 3. [replays](#replaying-a-recording-case) the Baseline's **Recording Case** through the public API, with what the Persona sends for that case's **Request Kind** ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
@@ -46,7 +46,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |
 | `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop |
 | `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
-| `proxy_connect`, `proxy_navigation` | Nothing | Use a proxy, so each is [one gap](#gaps) in the field `request` |
+| `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 
 When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
 
@@ -153,6 +153,28 @@ Session cookies are saved too, as a browser does that restores its last session.
 | Settings that block a cookie, and First-Party Sets | `CookieSettings` and `FirstPartySetsManager`, in `services/network` | None, which is what a Chrome with no such settings does for a first-party cookie |
 | When the store is written | Every 30 seconds, by `SQLitePersistentCookieStore` | When a caller saves, or at close |
 
+## Proxies
+
+`Session(proxy="http://user:password@host:port")`, or with the scheme `https` or `socks5`, sends every request of a **Session** through that proxy. There is no proxy per request. `native/mitto_core.cc` gives `//net` a `ProxyConfigServiceFixed`, with this proxy or with none, so the system's proxy settings and the environment stay ignored. The rules that come of it are those of `--proxy-server` with that one proxy:
+
+- A request to `localhost`, a `*.localhost` name or a loopback address goes around the proxy, because `ProxyBypassRules` has those as implicit rules. So the tests ask for names that exist nowhere, and the proxy finds them.
+- A proxy that fails is an error, a `ProxyError`, and never a reason to go directly.
+- HTTPS goes through a tunnel, and plain HTTP goes to the proxy with the whole URL. Over `https`, what `//net` says to the proxy is inside TLS, and the proxy's certificate is verified as a server's is, with `additional_trust_anchors` for a private one.
+- `//net` uses QUIC only through a QUIC proxy, which a Session does not offer, so a request through a proxy stays on HTTP/1.1 or HTTP/2, whatever `Alt-Svc` says.
+- Over `socks5`, the proxy gets the name and finds it.
+
+What `CONNECT` sends comes from `//net`: `Host`, `Proxy-Connection` and `User-Agent`, in that order. A request's headers never reach it, so its `User-Agent` comes from `HttpUserAgentSettings` on the context, which holds the **Persona**'s. A fetch for a certificate takes its `User-Agent` from the same place.
+
+### Credentials
+
+A username and password go in the URL, percent-encoded. As in Chrome, the first `CONNECT` holds none, and they go when the proxy answers with a `407`. Chrome then asks a person, and a Session answers `URLRequest::Delegate::OnAuthRequired` from its settings with `SetAuth()`, so `//net` runs the challenge as it does in Chrome, with whichever scheme the proxy names. It keeps them for the Session's later tunnels, so those send them at once.
+
+A proxy that asks a Session with no credentials, or asks again after their answer, ends the request with `ERR_PROXY_AUTH_REQUESTED`. Chrome would ask a person, and show the proxy's `407` over plain HTTP or `ERR_TUNNEL_CONNECTION_FAILED` through a tunnel if they cancel. A Session has nobody to ask, and a caller needs one error for both. The answer is good once for each hop of a redirect, because the next hop may reach the proxy in another way.
+
+A server's own `401` stays a response, because the proxy's credentials are not for it. A `407` from a server behind a tunnel ends the request with `ERR_UNEXPECTED_PROXY_AUTH`, because `//net` lets only the proxy ask.
+
+A proxy's URL may hold a password, so no message and no `repr` repeats it. A Session does not keep the URL in Python. `SOCKS5ClientSocket` in `//net` offers only "no authentication", so real Chrome cannot use a SOCKS5 proxy that needs credentials, and a `socks5` URL that holds any is refused for now.
+
 ## Redirects
 
 `//net` decides what a redirect does, as it does in Chrome: the limit of 20, the method of the next hop and when a body goes. The native core defers each redirect in `OnReceivedRedirect()` and continues it with `FollowDeferredRedirect()`, as `URLLoader` in Chrome's network service does.
@@ -216,9 +238,8 @@ A chain that arrives without an intermediate gets it from the URL in the certifi
 | Certificate Transparency | `MultiLogCTVerifier` checks SCTs against the logs in `ct_known_logs`, and `ChromeCTPolicyEnforcer` refuses a chain to a known root that has too few, with `ERR_CERTIFICATE_TRANSPARENCY_REQUIRED` | `DoNothingCTVerifier` and `DefaultCTPolicyEnforcer`. The enforcer and the log list live in `components/certificate_transparency`, outside the source export, so a Session accepts a certificate that Chrome would refuse for missing SCTs |
 | Revocation | A CRLSet that a component keeps up to date | `CRLSet::BuiltinCRLSet()`, the fixed list compiled into `//net` |
 | Root store | The compiled-in list, until a component brings a newer one | The compiled-in list of the **Engine Release** |
-| `User-Agent` of a fetch for a certificate | The one the network service holds | An empty value, because `//net` takes it from the context, and a Session's context holds no `User-Agent` yet |
 
-The first three let a Session accept what Chrome would refuse. None of them changes what a server sees: the ClientHello still offers SCTs, and it does not depend on `additional_trust_anchors`. The last one shows only on the server that an Authority Information Access URL names. That fetch otherwise sends the same lines as Chrome 156 on macOS, in the same order: `Host`, `Connection`, `User-Agent`, `Accept-Encoding` and `Accept-Language`.
+These let a Session accept what Chrome would refuse. None of them changes what a server sees: the ClientHello still offers SCTs, and it does not depend on `additional_trust_anchors`. A fetch for a certificate sends the same lines as Chrome 156 on macOS, in the same order: `Host`, `Connection`, `User-Agent`, `Accept-Encoding` and `Accept-Language`. Its `User-Agent` is the **Persona**'s, as Chrome's is its own.
 
 ## Tests of the comparison
 

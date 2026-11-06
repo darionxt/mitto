@@ -48,6 +48,7 @@
 #include "mitto/session_settings.h"
 #include "mitto/ssl_config_service_mojo.h"
 #include "mitto/stub_resolver_config_reader.h"
+#include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
@@ -121,6 +122,8 @@ struct MittoSession {
   scoped_refptr<net::CertNetFetcherURLRequest> cert_net_fetcher;
   std::unique_ptr<net::HostResolver::ProbeRequest> doh_probes_request;
   base::OneShotTimer doh_probes_timer;
+  // What to answer the Session's proxy with when it asks.
+  std::optional<net::AuthCredentials> proxy_credentials;
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
   mitto::ReadyRequests ready_requests;
@@ -156,6 +159,11 @@ constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation(
         "mitto_request",
         "A request made by the application that loaded the library.");
+
+constexpr net::NetworkTrafficAnnotationTag kProxyTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation(
+        "mitto_proxy",
+        "The proxy, if any, that the application named for a Session.");
 
 std::string HeaderLines(const net::HttpResponseHeaders& headers) {
   std::string lines;
@@ -293,10 +301,29 @@ class RequestJob final : public net::URLRequest::Delegate,
     *defer_redirect = true;
     connect_timer_.Stop();
     read_timer_.Stop();
+    // The next hop may reach the proxy another way, and be asked again.
+    proxy_auth_answered_ = false;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(&RequestJob::ContinueAfterRedirect,
                        weak_ptr_factory_.GetWeakPtr(), redirect_info.new_url));
+  }
+
+  void OnAuthRequired(net::URLRequest* request,
+                      const net::AuthChallengeInfo& auth_info) override {
+    // A server's challenge goes to the caller, as a response.
+    if (!auth_info.is_proxy) {
+      request->CancelAuth();
+      return;
+    }
+    // Chrome would ask a person here. Asked again after an answer, the proxy
+    // has refused it, and //net would ask for as long as this answers.
+    if (!session_->proxy_credentials || proxy_auth_answered_) {
+      request->CancelWithError(net::ERR_PROXY_AUTH_REQUESTED);
+      return;
+    }
+    proxy_auth_answered_ = true;
+    request->SetAuth(*session_->proxy_credentials);
   }
 
   void OnSSLCertificateError(net::URLRequest* request,
@@ -438,6 +465,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   std::unique_ptr<net::URLRequest> request_;
   bool response_started_ = false;
   bool read_wanted_ = false;
+  bool proxy_auth_answered_ = false;
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
@@ -521,11 +549,14 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   builder.set_enable_brotli(true);
   builder.set_enable_zstd(true);
   builder.set_accept_language(settings.accept_language);
+  builder.set_user_agent(settings.user_agent);
   builder.set_host_mapping_rules(std::move(settings.host_resolver_rules));
-  // Proxies are not supported yet, so ignore the system's settings.
+  // Only what the settings name, so that the system's settings stay ignored.
   builder.set_proxy_config_service(
       std::make_unique<net::ProxyConfigServiceFixed>(
-          net::ProxyConfigWithAnnotation::CreateDirect()));
+          net::ProxyConfigWithAnnotation(settings.proxy_config,
+                                         kProxyTrafficAnnotation)));
+  session->proxy_credentials = std::move(settings.proxy_credentials);
   std::unique_ptr<net::CertVerifier> cert_verifier = CreateCertVerifier(
       session->cert_net_fetcher, std::move(settings.additional_trust_anchors));
   if (!settings.ignore_certificate_errors_spki_list.empty()) {
