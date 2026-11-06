@@ -14,13 +14,14 @@ import pytest
 
 from mitto._native import SETTINGS_VERSION
 from tests.local_certificates import AiaServer, TlsServer, generate_intermediate, generate_leaf, generate_root, serving
-from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer
+from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, MAIN_CASES, CaptureServer, RequestKind, normal_form
 
 _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
 _ERR_CERT_AUTHORITY_INVALID = -202
 _TIMEOUT_SECONDS = 120
 _HOST = "localhost"
+_FETCH_PATH = KIND_PATHS[RequestKind.FETCH]
 
 
 @pytest.fixture
@@ -60,6 +61,20 @@ def test_a_request_over_each_protocol(program: Path, protocol: str, scenario: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_body_goes_out_after_its_caller_has_reused_the_memory(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol, path=_FETCH_PATH), _settings(server, protocol), "post")
+        form = normal_form(server.recording(protocol), MAIN_CASES)
+
+    assert result.returncode == 0, result.stderr
+    requests = form["requests"]
+    assert isinstance(requests, dict)
+    request = requests["fetch"]
+    assert isinstance(request, dict)
+    assert request["body"] == "the body of a request"
 
 
 @pytest.mark.parametrize("scenario", ["cancel-at-once", "cancel-after-response"])

@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 4
+#define MITTO_ABI_VERSION 5
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -245,8 +245,9 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   a byte at a time. Others run while mitto_request_read() has asked for body
 //   bytes that have not come, so a caller who does not read never hits it. Bytes
 //   that a content decoder holds back still count as arriving, which can stretch
-//   a wait to almost twice the limit. Past it, the request finishes with
-//   ERR_TIMED_OUT.
+//   a wait to almost twice the limit. Bytes of the body on their way to the server
+//   count too, so a large body can take longer than the limit, as long as it keeps
+//   moving. Past it, the request finishes with ERR_TIMED_OUT.
 // - "total_timeout_ms" limits the time from the start of the request to its end,
 //   over all its redirects and however fast the caller reads. Past it, the request
 //   finishes with ERR_TIMED_OUT.
@@ -255,6 +256,13 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //
 // An unknown key or an invalid value is refused, so a mistake cannot go
 // unnoticed.
+//
+// `body` points to `body_size` bytes to send as the request's body, which this
+// copies before it returns. //net adds a Content-Length, and sends the bytes as
+// it does in Chrome. Null sends no body, and needs a `body_size` of 0, and then
+// //net adds a Content-Length of 0 only for POST and PUT. A body that is not null
+// and has a `body_size` of 0 is an empty body, which adds a Content-Length of 0
+// for any method.
 //
 // Returns 0 on success and stores the handle of the new request, which the
 // caller later passes to mitto_request_release(). What goes wrong after that,
@@ -267,6 +275,8 @@ MITTO_EXPORT int32_t mitto_request_start(MittoSession* session,
                                          size_t header_count,
                                          const char* options,
                                          size_t options_size,
+                                         const uint8_t* body,
+                                         size_t body_size,
                                          MittoRequest** request);
 
 // Takes the request's next event into `event`, which the caller then passes to

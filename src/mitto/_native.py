@@ -50,7 +50,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 4
+ABI_VERSION = 5
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -185,6 +185,8 @@ def load_library() -> ctypes.CDLL:
             session_pointer,
             ctypes.c_char_p,
             ctypes.POINTER(MittoHeader),
+            ctypes.c_size_t,
+            ctypes.c_char_p,
             ctypes.c_size_t,
             ctypes.c_char_p,
             ctypes.c_size_t,
@@ -519,6 +521,7 @@ class Session:
         priority_incremental: bool = True,
         referrer: str | None = None,
         timeout: Timeout = NO_TIMEOUT,
+        body: bytes | None = None,
     ) -> NativeRequest:
         """Start a request for `url` and return without waiting for it.
 
@@ -536,6 +539,9 @@ class Session:
             referrer: The URL to send as the Referer header, or None to send none. //net puts it after `headers` and
                 before the headers it adds, and leaves out any username, password and fragment.
             timeout: The timers of the request. One that runs out arrives as the Finished event.
+            body: The bytes to send as the request's body, which the native core copies before this returns. None sends
+                no body, and //net still sends a Content-Length of 0 with POST and PUT. //net adds a Content-Length for a
+                body, also an empty one.
 
         Raises:
             ValueError: If `url` or `referrer` holds a NUL character or cannot be encoded as UTF-8, or a header cannot be
@@ -569,6 +575,8 @@ class Session:
             len(native_headers),
             encoded_options,
             len(encoded_options),
+            body,
+            0 if body is None else len(body),
             ctypes.byref(handle),
         )
         if net_error != 0:
@@ -586,6 +594,7 @@ class Session:
         priority_incremental: bool = True,
         referrer: str | None = None,
         timeout: Timeout = NO_TIMEOUT,
+        body: bytes | None = None,
     ) -> NativeResponse:
         """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
 
@@ -598,7 +607,7 @@ class Session:
                 status such as 404 is a response. An invalid header or method, or a `referrer` that //net cannot send,
                 ends the request with ERR_INVALID_ARGUMENT.
         """
-        with self.start(url, headers, method, priority, priority_incremental, referrer, timeout) as request:
+        with self.start(url, headers, method, priority, priority_incremental, referrer, timeout, body) as request:
             return _collect_response(request)
 
 
