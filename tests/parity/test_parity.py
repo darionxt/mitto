@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
-from mitto._native import LIBRARY_ENV_VAR, Session
+from mitto import Session
+from mitto._native import LIBRARY_ENV_VAR, PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS, load_persona
-from mitto._persona import RequestKind as PersonaRequestKind
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
 from tools.parity import (
@@ -185,14 +185,15 @@ def test_a_baseline_recorded_from_the_native_core_has_no_gaps(tmp_path: Path, pr
     with (
         CaptureServer() as server,
         Session(
-            ignore_certificate_errors_spki_list=[server.spki_hash],
-            accept_language=persona.accept_language,
-            origins_to_force_quic_on=[server.authority(HTTP3)],
+            persona=CHROME_157_WINDOWS,
+            _settings=PrivateSettings(
+                ignore_certificate_errors_spki_list=[server.spki_hash],
+                origins_to_force_quic_on=[server.authority(HTTP3)],
+            ),
         ) as session,
     ):
         for kind in RequestKind:
-            url = f"https://{server.authority(protocol)}{KIND_PATHS[kind]}"
-            session.request(url, **persona.request_defaults(PersonaRequestKind(kind.value), url))
+            session.get(f"https://{server.authority(protocol)}{KIND_PATHS[kind]}", kind=kind.value)
     release = tmp_path / persona.release
     release.mkdir()
     (release / f"{stem}.json").write_text(dumps_normal_form(normal_form(server.recording(protocol))))

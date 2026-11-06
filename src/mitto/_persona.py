@@ -18,6 +18,7 @@ __all__ = [
     "CHROME_155_WINDOWS",
     "CHROME_156_WINDOWS",
     "CHROME_157_WINDOWS",
+    "ENGINE_RELEASE_PERSONA",
     "WINDOWS_PERSONAS",
     "Persona",
     "RequestDefaults",
@@ -31,6 +32,9 @@ CHROME_157_WINDOWS = "chrome_157_windows"
 
 WINDOWS_PERSONAS = {"155": CHROME_155_WINDOWS, "156": CHROME_156_WINDOWS, "157": CHROME_157_WINDOWS}
 """The file of the Persona of each Chrome Release in the Supported Window, on Windows."""
+
+ENGINE_RELEASE_PERSONA = CHROME_157_WINDOWS
+"""The Persona of the Engine Release, which a Session presents unless it is told otherwise."""
 
 _PERSONAS_DIRECTORY = Path(__file__).with_name("personas")
 _ORIGIN_PLACEHOLDER = "<origin>"
@@ -46,7 +50,7 @@ class RequestKind(StrEnum):
 
 
 class RequestDefaults(TypedDict):
-    """What Chrome sends by default for one request, as the keyword arguments of Session.request().
+    """What Chrome sends by default for one request, as keyword arguments of the native Session's start() and request().
 
     Attributes:
         headers: The (name, value) pairs to send, in the order they reach the wire.
@@ -102,8 +106,9 @@ class Persona:
         data = self._kinds[kind]
         referrer = data["referrer"]
         if referrer is not None:
-            parts = urlsplit(url)
-            referrer = referrer.replace(_ORIGIN_PLACEHOLDER, f"{parts.scheme}://{parts.netloc}")
+            origin = _origin_of(url)
+            # A URL without an origin gets no referrer, which would be refused and hide what is wrong with the URL.
+            referrer = None if origin is None else referrer.replace(_ORIGIN_PLACEHOLDER, origin)
         return RequestDefaults(
             headers=tuple(_parse_header(line) for line in data["headers"]),
             priority=Priority[data["priority"]],
@@ -114,7 +119,13 @@ class Persona:
 
 @functools.cache
 def load_persona(name: str) -> Persona:
-    """Return the Persona in the file of this name, such as CHROME_157_WINDOWS."""
+    """Return the Persona in the file of this name, such as CHROME_157_WINDOWS.
+
+    Raises:
+        ValueError: If there is no Persona of this name.
+    """
+    if name not in WINDOWS_PERSONAS.values():
+        raise ValueError(f"no Persona is named {name!r}, only {', '.join(WINDOWS_PERSONAS.values())}")
     data: _PersonaData = json.loads((_PERSONAS_DIRECTORY / f"{name}.json").read_text(encoding="utf-8"))
     return Persona(
         release=data["release"],
@@ -122,6 +133,15 @@ def load_persona(name: str) -> Persona:
         accept_language=data["accept_language"],
         _kinds={RequestKind(kind): kind_data for kind, kind_data in data["kinds"].items()},
     )
+
+
+def _origin_of(url: str) -> str | None:
+    """Return the scheme and authority of `url`, or None if it does not have both."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else None
 
 
 def _parse_header(line: str) -> tuple[str, str]:

@@ -2,7 +2,13 @@
 
 A **Persona** is the browser identity mitto presents to servers. Its data says what one **Chrome Release** on one operating system sends by default for each **Request Kind**. It is package data, so changing it needs no native rebuild. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
 
-There is one Persona for each Chrome Release in the **Supported Window**, all on Windows: `chrome_155_windows`, `chrome_156_windows` and `chrome_157_windows`. `mitto.get()` presents Chrome 157 with the navigation Request Kind. Choosing a Persona or a Request Kind publicly comes with the Session API.
+There is one Persona for each Chrome Release in the **Supported Window**, all on Windows: `chrome_155_windows`, `chrome_156_windows` and `chrome_157_windows`. A **Session** takes one when it is created, and `mitto.Session()` and `mitto.get()` present the **Engine Release**'s. A request takes its Request Kind as `kind`, which is navigation for `GET` and fetch for other methods by default:
+
+```python
+with mitto.Session(persona="chrome_155_windows") as session:
+    session.get(url)
+    session.get(url, kind="script")
+```
 
 ## The file
 
@@ -18,7 +24,7 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `kinds.KIND.referrer` | The value for `Referer`, or `null`. `<origin>` stands for the origin of the requested URL |
 | `kinds.KIND.headers` | `name: value` lines in the order Chrome sends them, with the case HTTP/1.1 sends |
 
-Subresource kinds describe one same-origin **Initiator**, the page at the root of the origin. Other Initiators come with the Session API.
+Subresource kinds describe one same-origin **Initiator**, the page at the root of the origin. A Session offers no other Initiator yet.
 
 ## What comes from where
 
@@ -35,6 +41,20 @@ The file does not hold everything on the wire, because Chrome does not decide ev
 | The HTTP/2 stream weight and the HTTP/3 `PRIORITY_UPDATE` | `//net`, from the same two values |
 
 So a line for `Referer`, `Accept-Encoding`, `Accept-Language` or `priority` does not belong in `headers`. Giving `Referer` there is an error, and giving the others would put them in the wrong place, or send `priority` over HTTP/1.1 as well.
+
+## What a caller changes
+
+`Session(accept_language=...)` replaces the Persona's `accept_language`, and an empty string sends no `Accept-Language`. For one request, `headers` changes the Persona's lines, by name in any case:
+
+| In `headers` | On the wire |
+| --- | --- |
+| A name the Persona has | Takes the place of the Persona's line, which keeps the Persona's spelling of the name, as HTTP/1.1 shows |
+| Another name | After the Persona's lines, in the order given, before what `//net` adds |
+| A name the Persona has, with `None` | The line is gone |
+| Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
+| `Referer` | Replaces or, with `None`, removes the Persona's `referrer`. `//net` still decides where it goes |
+
+A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone.
 
 ## Write one
 

@@ -5,22 +5,43 @@ connection, and are skipped when this machine has no native library.
 """
 
 import http.server
+import json
 import os
 import pickle
 import subprocess
 import sys
 import threading
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 import mitto
 from mitto import _native
+from mitto._native import PrivateSettings
+from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, RequestKind, load_persona
 from tests.local_server import LocalHTTPServer
+from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, CaptureServer
+from tools.capture import RequestKind as CaptureRequestKind
 
+ERR_INVALID_ARGUMENT = -4
 ERR_INVALID_URL = -300
+
+# What //net advertises to localhost, which is where the test server is.
+ACCEPT_ENCODING = ("Accept-Encoding", "gzip, deflate, br, zstd")
+
+# Every method of a Session, and what it sends.
+METHODS = {
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+    "head": "HEAD",
+    "options": "OPTIONS",
+}
 
 # The NUL shows that the body is read by its size, not as a C string.
 BODY = b"a body with a \x00 inside"
@@ -62,7 +83,7 @@ def test_get_returns_the_status(server_url: str) -> None:
 
 @pytest.mark.usefixtures("native_library")
 def test_get_returns_headers_in_the_order_received(server_url: str) -> None:
-    assert mitto.get(server_url).headers == (
+    assert mitto.get(server_url).headers.pairs == (
         ("Set-Cookie", "a=1"),
         ("X-Colon", "one: two"),
         ("X-Empty", ""),
@@ -74,7 +95,7 @@ def test_get_returns_headers_in_the_order_received(server_url: str) -> None:
 
 @pytest.mark.usefixtures("native_library")
 def test_get_returns_the_body_as_bytes(server_url: str) -> None:
-    assert mitto.get(server_url).body == BODY
+    assert mitto.get(server_url).content == BODY
 
 
 @pytest.mark.usefixtures("native_library")
@@ -121,3 +142,423 @@ def test_import_does_not_load_the_library(tmp_path: Path) -> None:
     env = os.environ | {_native.LIBRARY_ENV_VAR: str(tmp_path / "missing")}
 
     subprocess.run([sys.executable, "-c", "import mitto"], env=env, check=True)
+
+
+@dataclass(frozen=True, slots=True)
+class ReceivedRequest:
+    """What the server saw of one request."""
+
+    method: str
+    path: str
+    headers: list[tuple[str, str]]
+
+    def header(self, name: str) -> str | None:
+        return dict(self.headers).get(name)
+
+
+class AnyMethodServer(LocalHTTPServer):
+    """An HTTP/1.1 server that takes every method a Session has, and records each request."""
+
+    def __init__(self, server_address: tuple[str, int]) -> None:
+        super().__init__(server_address, AnyMethodHandler)
+        self.received: list[ReceivedRequest] = []
+
+    @property
+    def authority(self) -> str:
+        return f"127.0.0.1:{self.server_port}"
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.authority}/"
+
+
+class AnyMethodHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def answer(self) -> None:
+        server = cast(AnyMethodServer, self.server)
+        server.received.append(ReceivedRequest(self.command, self.path, self.headers.items()))
+        if self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "/final")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = b""
+        content_type = None
+        if self.path == "/json":
+            body, content_type = json.dumps({"key": ["value", 1]}).encode(), "application/json"
+        elif self.path == "/latin-1":
+            body, content_type = b"caf\xe9", "text/plain; charset=iso-8859-1"
+        self.send_response(201)
+        self.send_header("X-Repeated", "one")
+        self.send_header("X-Repeated", "two")
+        if content_type is not None:
+            self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        self.answer()
+
+    def do_POST(self) -> None:
+        self.answer()
+
+    def do_PUT(self) -> None:
+        self.answer()
+
+    def do_PATCH(self) -> None:
+        self.answer()
+
+    def do_DELETE(self) -> None:
+        self.answer()
+
+    def do_HEAD(self) -> None:
+        self.answer()
+
+    def do_OPTIONS(self) -> None:
+        self.answer()
+
+    def do_PROPFIND(self) -> None:
+        self.answer()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+@pytest.fixture
+def server() -> Iterator[AnyMethodServer]:
+    """Run a local server that takes every method."""
+    with AnyMethodServer(("127.0.0.1", 0)) as running:
+        threading.Thread(target=running.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+        yield running
+        running.shutdown()
+
+
+def on_the_wire(server: AnyMethodServer, persona_name: str, kind: RequestKind) -> list[tuple[str, str]]:
+    """Return what a GET to the server sends for a Persona and a Request Kind, when the caller changes nothing."""
+    persona = load_persona(persona_name)
+    defaults = persona.request_defaults(kind, server.url)
+    referrer = defaults["referrer"]
+    return [
+        ("Host", server.authority),
+        ("Connection", "keep-alive"),
+        *defaults["headers"],
+        *([("Referer", referrer)] if referrer is not None else []),
+        ACCEPT_ENCODING,
+        ("Accept-Language", persona.accept_language),
+    ]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("name", "method"), METHODS.items())
+def test_each_method_sends_its_http_method(server: AnyMethodServer, name: str, method: str) -> None:
+    with mitto.Session() as session:
+        response = getattr(session, name)(server.url)
+
+    assert response.status == 201
+    assert server.received[0].method == method
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("name", "method"), METHODS.items())
+def test_each_method_takes_each_argument(server: AnyMethodServer, name: str, method: str) -> None:
+    with mitto.Session() as session:
+        getattr(session, name)(server.url, params={"q": "a b"}, headers={"X-Thing": "1"}, kind="script")
+
+    received = server.received[0]
+    assert (received.method, received.path) == (method, "/?q=a+b")
+    assert received.header("X-Thing") == "1"
+    assert received.header("Sec-Fetch-Dest") == "script"
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("name", "method"), METHODS.items())
+def test_request_does_what_the_method_of_that_name_does(server: AnyMethodServer, name: str, method: str) -> None:
+    with mitto.Session() as session:
+        getattr(session, name)(server.url)
+        session.request(method, server.url)
+
+    first, second = server.received
+    assert first == second
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    ("name", "mode"), [("get", "navigate"), *((name, "cors") for name in METHODS if name != "get")]
+)
+def test_the_default_kind_is_navigation_for_get_and_fetch_for_other_methods(
+    server: AnyMethodServer, name: str, mode: str
+) -> None:
+    with mitto.Session() as session:
+        getattr(session, name)(server.url)
+
+    assert server.received[0].header("Sec-Fetch-Mode") == mode
+
+
+@pytest.mark.usefixtures("native_library")
+def test_request_sends_a_method_with_no_function_of_its_own(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.request("PROPFIND", server.url)
+
+    assert server.received[0].method == "PROPFIND"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_method_that_chrome_never_sends_is_refused(server: AnyMethodServer) -> None:
+    with mitto.Session() as session, pytest.raises(mitto.RequestError) as caught:
+        session.request("TRACE", server.url)
+
+    assert caught.value.net_error == ERR_INVALID_ARGUMENT
+    assert server.received == []
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("persona", WINDOWS_PERSONAS.values())
+@pytest.mark.parametrize("kind", RequestKind)
+def test_a_session_presents_its_persona_and_the_kind_it_is_given(
+    server: AnyMethodServer, persona: str, kind: RequestKind
+) -> None:
+    with mitto.Session(persona=persona) as session:
+        session.get(server.url, kind=kind)
+
+    assert server.received[0].headers == on_the_wire(server, persona, kind)
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("release", "persona"), WINDOWS_PERSONAS.items())
+def test_a_session_says_the_chrome_release_of_its_persona(server: AnyMethodServer, release: str, persona: str) -> None:
+    with mitto.Session(persona=persona) as session:
+        session.get(server.url)
+
+    assert f"Chrome/{release}.0.0.0" in (server.received[0].header("User-Agent") or "")
+
+
+@pytest.mark.usefixtures("native_library")
+def test_the_default_persona_is_the_engine_releases(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.get(server.url)
+
+    assert WINDOWS_PERSONAS["157"] == ENGINE_RELEASE_PERSONA
+    assert server.received[0].headers == on_the_wire(server, ENGINE_RELEASE_PERSONA, RequestKind.NAVIGATION)
+
+
+@pytest.mark.parametrize("persona", ["chrome_154_windows", "../chrome_157_windows", ""])
+def test_an_unknown_persona_is_refused_before_loading_the_library(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, persona: str
+) -> None:
+    monkeypatch.setenv(_native.LIBRARY_ENV_VAR, str(tmp_path / "missing"))
+
+    with pytest.raises(ValueError, match="no Persona"):
+        mitto.Session(persona=persona)
+
+
+def test_a_session_without_a_library_raises_native_library_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(_native.LIBRARY_ENV_VAR, str(tmp_path / "missing"))
+
+    with pytest.raises(mitto.NativeLibraryError, match=_native.LIBRARY_ENV_VAR):
+        mitto.Session()
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("persona", WINDOWS_PERSONAS.values())
+def test_accept_language_overrides_the_personas(server: AnyMethodServer, persona: str) -> None:
+    with mitto.Session(persona=persona, accept_language="fr-CH, fr;q=0.9") as session:
+        session.get(server.url)
+
+    assert server.received[0].headers == [
+        *on_the_wire(server, persona, RequestKind.NAVIGATION)[:-1],
+        ("Accept-Language", "fr-CH, fr;q=0.9"),
+    ]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_an_empty_accept_language_sends_none(server: AnyMethodServer) -> None:
+    with mitto.Session(accept_language="") as session:
+        session.get(server.url)
+
+    assert server.received[0].header("Accept-Language") is None
+
+
+@pytest.mark.usefixtures("native_library")
+def test_an_invalid_accept_language_is_refused() -> None:
+    with pytest.raises(ValueError, match="refused"):
+        mitto.Session(accept_language="a\r\nX-Injected: b")
+
+
+@pytest.mark.usefixtures("native_library")
+def test_params_reach_the_wire_as_url_search_params_writes_them(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        response = session.get(f"{server.url}?a=1#part", params={"q": "é ~*"})
+
+    assert server.received[0].path == "/?a=1&q=%C3%A9+%7E*"
+    assert response.url == f"{server.url}?a=1&q=%C3%A9+%7E*#part"
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("persona", WINDOWS_PERSONAS.values())
+def test_a_callers_headers_reach_the_wire_where_the_persona_and_net_put_them(
+    server: AnyMethodServer, persona: str
+) -> None:
+    expected = on_the_wire(server, persona, RequestKind.FETCH)
+    accept = expected.index(("Accept", "*/*"))
+    expected[accept] = ("Accept", "text/plain")
+    expected.remove(("sec-ch-ua-mobile", "?0"))
+    referer = next(index for index, (name, _) in enumerate(expected) if name == "Referer")
+    expected[referer] = ("Referer", "http://example.test/page")
+    expected[referer:referer] = [("X-Thing", "1")]
+
+    with mitto.Session(persona=persona) as session:
+        session.get(
+            server.url,
+            kind="fetch",
+            headers={
+                "X-Thing": "1",
+                "accept": "text/plain",
+                "Sec-CH-UA-Mobile": None,
+                "referer": "http://example.test/page",
+            },
+        )
+
+    assert server.received[0].headers == expected
+
+
+@pytest.mark.usefixtures("native_library")
+def test_none_removes_the_personas_referer_from_the_wire(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.get(server.url, kind="fetch", headers={"Referer": None})
+
+    assert server.received[0].header("Referer") is None
+
+
+@pytest.mark.usefixtures("native_library")
+def test_an_accept_language_among_the_headers_replaces_the_sessions(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.get(server.url, headers={"Accept-Language": "fr"})
+
+    assert [value for name, value in server.received[0].headers if name == "Accept-Language"] == ["fr"]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_header_that_is_not_valid_is_refused(server: AnyMethodServer) -> None:
+    with mitto.Session() as session, pytest.raises(mitto.RequestError) as caught:
+        session.get(server.url, headers={"X-Thing": "a\r\nX-Injected: b"})
+
+    assert caught.value.net_error == ERR_INVALID_ARGUMENT
+    assert server.received == []
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_header_that_cannot_be_encoded_is_refused(server: AnyMethodServer) -> None:
+    with mitto.Session() as session, pytest.raises(ValueError, match="latin-1"):
+        session.get(server.url, headers={"X-Thing": "€"})
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_response_says_what_arrived(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        response = session.get(f"{server.url}json")
+
+    assert response.status == 201
+    assert response.url == f"{server.url}json"
+    assert response.protocol == "http/1.1"
+    assert response.headers["content-type"] == "application/json"
+    assert response.headers["x-repeated"] == "one, two"
+    assert response.headers.get_all("X-REPEATED") == ["one", "two"]
+    assert [name for name, _ in response.headers][-3:] == ["X-Repeated", "Content-Type", "Content-Length"]
+    assert response.content == b'{"key": ["value", 1]}'
+    assert response.text == '{"key": ["value", 1]}'
+    assert response.json() == {"key": ["value", 1]}
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_response_decodes_its_text_with_its_charset(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        assert session.get(f"{server.url}latin-1").text == "café"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_response_to_head_has_no_body(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        response = session.head(f"{server.url}json")
+
+    assert response.headers["Content-Length"] == "21"
+    assert response.content == b""
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_response_gives_the_url_it_ended_at(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        response = session.get(f"{server.url}redirect")
+
+    assert response.url == f"{server.url}final"
+    assert response.status == 201
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("route", "protocol"), [(HTTP1, "http/1.1"), (HTTP2, "h2"), (HTTP3, "h3")])
+def test_a_session_takes_private_settings_and_says_the_protocol(route: str, protocol: str) -> None:
+    with (
+        CaptureServer() as capture_server,
+        mitto.Session(
+            _settings=PrivateSettings(
+                ignore_certificate_errors_spki_list=[capture_server.spki_hash],
+                origins_to_force_quic_on=[capture_server.authority(HTTP3)],
+            )
+        ) as session,
+    ):
+        response = session.get(f"https://{capture_server.authority(route)}{KIND_PATHS[CaptureRequestKind.FETCH]}")
+
+    assert response.protocol == protocol
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_session_closes_at_the_end_of_a_with_statement(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        session.get(server.url)
+
+    with pytest.raises(mitto.RequestError):
+        session.get(server.url)
+
+
+@pytest.mark.usefixtures("native_library")
+def test_closing_a_session_twice_does_no_harm() -> None:
+    session = mitto.Session()
+
+    session.close()
+    session.close()
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("name", METHODS)
+def test_an_invalid_url_is_reported_by_each_method(name: str) -> None:
+    with mitto.Session() as session, pytest.raises(mitto.RequestError) as caught:
+        getattr(session, name)("not a url")
+
+    assert caught.value.net_error == ERR_INVALID_URL
+    assert caught.value.method == METHODS[name]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_get_takes_the_arguments_of_a_sessions_get(server: AnyMethodServer) -> None:
+    response = mitto.get(server.url, params={"q": "x"}, headers={"X-Thing": "1"}, kind="image")
+
+    received = server.received[0]
+    assert response.url == f"{server.url}?q=x"
+    assert received.path == "/?q=x"
+    assert received.header("X-Thing") == "1"
+    assert received.header("Sec-Fetch-Dest") == "image"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_get_sends_what_a_default_session_sends(server: AnyMethodServer) -> None:
+    mitto.get(server.url)
+    with mitto.Session() as session:
+        session.get(server.url)
+
+    first, second = server.received
+    assert first == second
