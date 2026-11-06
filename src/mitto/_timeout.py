@@ -19,7 +19,8 @@ class Timeout:
             is resolved, a connection is free and any proxy tunnel and TLS handshake are done. In a Session with a cache, this
             also counts a wait for another request's response to the same URL, and a response from the cache stops it.
         read: The longest wait for bytes from the server. The response's headers count as one wait, since //net does not
-            report them a byte at a time, and it does not run out while the request's body is still moving.
+            report them a byte at a time, and it does not run out while the request's body is still moving. A wait for the
+            next part of a stream body is a wait for the caller, and does not count.
         total: The time from the start of the request to its end, over all its redirects.
 
     Raises:

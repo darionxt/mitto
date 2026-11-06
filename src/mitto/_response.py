@@ -1,14 +1,14 @@
-"""A finished response, as the public API returns it."""
+"""A response, as the public API returns it: finished, or with a body that arrives as the caller reads it."""
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 from mitto._errors import MittoError
-from mitto._native import NativeResponse
+from mitto._native import NativeResponse, RedirectFollowed, ResponseStarted
 
-__all__ = ["HTTPStatusError", "Headers", "Redirect", "Response", "to_response"]
+__all__ = ["HTTPStatusError", "Headers", "Redirect", "Response", "ResponseStream", "to_response", "to_response_stream"]
 
 _DEFAULT_CHARSET = "utf-8"
 
@@ -132,6 +132,46 @@ class Response:
             raise HTTPStatusError(self)
 
 
+@dataclass(frozen=True, slots=True)
+class ResponseStream:
+    """A response whose body arrives as the caller reads it, from Session.stream().
+
+    Nothing more of the body comes off the network until it is asked for, so a slow reader makes the server wait, and a body
+    of any size takes no more memory than the part in hand. What has been read is gone, so the two ways of reading take
+    turns on the same bytes. Once the with statement has ended, reading raises a RequestError.
+
+    Attributes:
+        status: The HTTP status code of the final response, after redirects.
+        url: The final URL, after redirects.
+        protocol: The protocol the response arrived over, for example "http/1.1", "h2" or "h3".
+        headers: The final response's headers.
+        history: The redirects that led here, the first one first.
+    """
+
+    status: int
+    url: str
+    protocol: str
+    headers: Headers
+    history: tuple[Redirect, ...]
+    _chunks: Iterator[bytes] = field(repr=False)
+
+    def iter_bytes(self) -> Iterator[bytes]:
+        """Return an iterator over the rest of the body, after any content decoding, in parts as they arrive.
+
+        Iterating raises a RequestError if the request ends before the end of the body, and that is the only way to learn
+        that it did.
+        """
+        return self._chunks
+
+    def read(self) -> bytes:
+        """Return the rest of the body, after any content decoding, once all of it has arrived.
+
+        Raises:
+            RequestError: If the request ends before the end of the body.
+        """
+        return b"".join(self._chunks)
+
+
 class HTTPStatusError(MittoError):
     """A response's status says that the request failed, as raised by Response.raise_for_status().
 
@@ -160,9 +200,27 @@ def to_response(native: NativeResponse) -> Response:
         protocol=native.protocol,
         headers=Headers(native.headers),
         content=native.body,
-        history=tuple(Redirect(hop.status, hop.url, Headers(hop.headers)) for hop in native.history),
+        history=_to_redirects(native.history),
         from_cache=native.from_cache,
     )
+
+
+def to_response_stream(
+    started: ResponseStarted, history: Iterable[RedirectFollowed], chunks: Iterator[bytes]
+) -> ResponseStream:
+    """Return the public form of a response from the native core that has started, and whose body `chunks` gives."""
+    return ResponseStream(
+        status=started.status,
+        url=started.url,
+        protocol=started.protocol,
+        headers=Headers(started.headers),
+        history=_to_redirects(history),
+        _chunks=chunks,
+    )
+
+
+def _to_redirects(history: Iterable[RedirectFollowed]) -> tuple[Redirect, ...]:
+    return tuple(Redirect(hop.status, hop.url, Headers(hop.headers)) for hop in history)
 
 
 def _declared_charset(content_type: str) -> str | None:

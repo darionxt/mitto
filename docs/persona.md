@@ -62,6 +62,8 @@ So a line for `Referer`, `Accept-Encoding`, `Accept-Language` or `priority` does
 | `data={...}` | As `URLSearchParams` writes it | `application/x-www-form-urlencoded;charset=UTF-8` | `application/x-www-form-urlencoded` |
 | `json=...` | As `JSON.stringify` writes it, except that a float keeps Python's text. NaN and the infinities are refused, where `JSON.stringify` would write `null` | `application/json` | `application/json` |
 | `files={...}`, with text fields in a mapping in `data` | As Blink's `FormData` writes it, with text fields first | `multipart/form-data; boundary=...` | The same |
+| `data=file`, a file object in binary mode | From where it stands, and with a `Content-Length` if it can seek. See [Streams](parity.md#streams) | None, as for a `File` with no type | None |
+| `data=parts`, an iterable of bytes | Each part as it comes, and with no `Content-Length` unless `headers` gives one. See [Streams](parity.md#streams) | None, as for a `ReadableStream` | None |
 
 A mapping follows `URLSearchParams` on a navigation too. A real form writes a line break in a value as `%0D%0A`, where `URLSearchParams` keeps a lone `%0A`, so a caller who wants the form's writes `\r\n`.
 

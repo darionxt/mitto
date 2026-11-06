@@ -1,6 +1,8 @@
 #ifndef MITTO_REQUEST_OPTIONS_H_
 #define MITTO_REQUEST_OPTIONS_H_
 
+#include <stdint.h>
+
 #include <optional>
 #include <set>
 #include <string>
@@ -68,6 +70,11 @@ struct RequestOptions {
 
   // False makes a redirect the response, as mitto_request_start() describes.
   bool follow_redirects = true;
+
+  // A stream body follows, of `stream_body_size` bytes if that is known, as
+  // mitto_request_start() describes.
+  bool stream_body = false;
+  std::optional<uint64_t> stream_body_size;
 
   // What each timer allows, as mitto_request_start() describes. nullopt runs no
   // timer. A value is always positive.

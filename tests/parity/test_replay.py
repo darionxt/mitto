@@ -1,5 +1,6 @@
 """Tests of replaying the Recording Cases. Tests that take the native_library fixture need a native library."""
 
+from dataclasses import replace
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
@@ -147,6 +148,22 @@ def test_another_error_is_a_gap_when_the_baseline_has_a_refusal(monkeypatch: pyt
     ]
 
 
+@pytest.mark.usefixtures("native_library")
+def test_a_stream_is_refused_over_http1_as_the_baseline_shows() -> None:
+    baseline = Baseline(_RELEASE, "fetch_post_stream", HTTP1, {"protocol": HTTP1, "tls": {}, "request": _REFUSED})
+
+    assert record(baseline)["request"] == _REFUSED
+    assert find_gaps([baseline]) == []
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_stream_that_goes_over_http1_is_not_taken_for_a_refusal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(REPLAYS, "fetch_post_stream", replace(REPLAYS["fetch_post_stream"], body={"data": b"bytes"}))
+    baseline = Baseline(_RELEASE, "fetch_post_stream", HTTP1, {"protocol": HTTP1, "tls": {}, "request": _REFUSED})
+
+    assert record(baseline)["request"] != _REFUSED
+
+
 def test_no_known_gap_says_that_a_replay_went_somewhere_else() -> None:
     """A gap in these lines would mean the replay is wrong, and that what it shows is not about the native core."""
     for gap in _listed_gaps():
@@ -199,6 +216,8 @@ def test_a_replay_goes_to_the_path_of_its_case_and_shows_no_gaps_against_itself(
     protocol = protocol_of(run.route)
     baselines: list[Baseline] = []
     for case in run.cases:
+        if case.refused_path is not None and protocol == HTTP1:
+            continue
         recorded = record(Baseline(_RELEASE, case.name, protocol, {}))
         assert recorded["protocol"] == protocol
         # What opens a tunnel has no path, because it names a server instead.

@@ -1,16 +1,19 @@
-"""Encoding a request's body as Chrome does, with no I/O.
+"""Encoding a request's body as Chrome does.
 
 A mapping follows URLSearchParams, and a multipart body follows Blink's FormDataEncoder. What a body adds to a request's
-headers comes from the Persona, as docs/persona.md says.
+headers comes from the Persona, as docs/persona.md says. Only a stream does I/O, on a caller's file or iterable, and not
+until something iterates it.
 """
 
+import io
 import json
+import os
 import re
 import secrets
-from collections.abc import Buffer, Iterable, Mapping
+from collections.abc import Buffer, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import cast
+from typing import BinaryIO, Protocol, cast, runtime_checkable
 from urllib.parse import quote_plus
 
 __all__ = [
@@ -19,16 +22,27 @@ __all__ = [
     "FileFields",
     "FilePart",
     "QueryParams",
+    "ReadableFile",
     "RequestData",
+    "StreamBody",
     "encode_body",
     "encode_query",
+    "with_declared_size",
 ]
 
 type QueryParams = Mapping[str, str] | Iterable[tuple[str, str]]
 """A query as names and values. Pairs can repeat a name."""
 
-type RequestData = Buffer | str | Mapping[str, str]
-"""A body as bytes, as text, or as form fields by name."""
+
+@runtime_checkable
+class ReadableFile(Protocol):
+    """A file object opened in binary mode, which is all a stream asks of one. It may also seek, to tell its size."""
+
+    def read(self, size: int, /) -> Buffer: ...
+
+
+type RequestData = Buffer | str | Mapping[str, str] | ReadableFile | Iterable[Buffer]
+"""A body as bytes, as text, as form fields by name, or as a stream from a file object or an iterable of bytes."""
 
 type FilePart = bytes | tuple[str, bytes] | tuple[str, bytes, str]
 """A file's content, or (file name, content), or (file name, content, media type)."""
@@ -45,6 +59,9 @@ _LOW_SIX_BITS = 0x3F
 # What Blink calls a Blob that has no file name when it goes into a FormData, and a file that has no type.
 _BLOB_FILE_NAME = "blob"
 _NO_MEDIA_TYPE = "application/octet-stream"
+
+# How much of a file a stream reads at a time: as much as the native core holds.
+_FILE_READ_SIZE = 64 * 1024
 
 _LINE_BREAK = re.compile(r"\r\n|\r|\n")
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
@@ -75,18 +92,36 @@ class EncodedBody:
     boundary: str = ""
 
 
-def encode_body(data: RequestData | None, json_value: object, files: FileFields | None) -> EncodedBody | None:
+@dataclass(frozen=True, slots=True)
+class StreamBody:
+    """A request's body that comes a part at a time, as the network stack asks for it. It goes only once.
+
+    Attributes:
+        chunks: What gives the bytes, which reads the caller's file or iterable as it goes.
+        size: How many bytes it gives, or None if that is not known, which leaves out a Content-Length, and which Chrome
+            refuses to send over HTTP/1.1.
+    """
+
+    chunks: Iterator[memoryview] = field(repr=False)
+    size: int | None = None
+
+
+def encode_body(
+    data: RequestData | None, json_value: object, files: FileFields | None
+) -> EncodedBody | StreamBody | None:
     """Return the body that a caller's arguments make, or None if they make none.
 
     Args:
         data: Bytes go as they are. Text goes as UTF-8. A mapping is encoded as URLSearchParams does, or with `files`, it
-            holds the text fields of the multipart body.
+            holds the text fields of the multipart body. A file object goes from where it stands, and has a size if it can
+            seek. An iterable gives parts of the body, and has no size.
         json_value: The value to write as JSON.stringify does, or None for none. So it writes no JSON null, which `data`
             can send.
         files: The files of a multipart body, which follow any text fields in `data`.
 
     Raises:
-        TypeError: If `data` is of no type that makes a body, or `json_value` holds a value that JSON has no form of.
+        TypeError: If `data` is of no type that makes a body, such as a file in text mode, or `json_value` holds a value
+            that JSON has no form of. A stream raises it later, if a part it gives is not bytes.
         ValueError: If the arguments do not go together, because `json_value` is given beside another, or `data` is not a
             mapping beside `files`, or `json_value` holds a NaN or an infinity, which JSON cannot hold.
     """
@@ -102,11 +137,67 @@ def encode_body(data: RequestData | None, json_value: object, files: FileFields 
         case str():
             return EncodedBody(_well_formed(data).encode(), BodyEncoding.TEXT)
         case Mapping():
-            return EncodedBody(encode_query(data).encode(), BodyEncoding.FORM)
+            return EncodedBody(encode_query(cast(Mapping[str, str], data)).encode(), BodyEncoding.FORM)
         case Buffer():
             return EncodedBody(bytes(data))
+        case ReadableFile():
+            return _file_stream(data)
+        case Iterable():
+            return StreamBody(_byte_view(chunk) for chunk in data)
         case _:
-            raise TypeError(f"data has to be bytes, text or a mapping, not {type(data).__name__}")
+            raise TypeError(f"data has to be bytes, text, a mapping, a file or an iterable, not {type(data).__name__}")
+
+
+def with_declared_size(body: StreamBody, size: int) -> StreamBody:
+    """Return `body` with the size that a caller gave for it, which the stream raises a ValueError if it does not keep."""
+    return StreamBody(_exactly(body.chunks, size), size)
+
+
+def _file_stream(file: ReadableFile) -> StreamBody:
+    if isinstance(file, io.TextIOBase):
+        raise TypeError("data has to be a file opened in binary mode, because a stream sends bytes")
+    size = _size_left(cast(BinaryIO, file))
+    return StreamBody(_file_chunks(file, size), size)
+
+
+def _size_left(file: BinaryIO) -> int | None:
+    """Return how many bytes `file` holds from where it stands, or None if it cannot say, as a pipe cannot."""
+    try:
+        position = file.tell()
+        file.seek(0, os.SEEK_END)
+        end = file.tell()
+        file.seek(position)
+    except (AttributeError, OSError):
+        return None
+    return max(end - position, 0)
+
+
+def _file_chunks(file: ReadableFile, size: int | None) -> Iterator[memoryview]:
+    """Yield what `file` holds, up to `size`. A file that has grown goes no further, as with a File in Chrome."""
+    left = size
+    while left != 0:
+        chunk = _byte_view(file.read(_FILE_READ_SIZE if left is None else min(left, _FILE_READ_SIZE)))
+        if not chunk.nbytes:
+            return
+        left = None if left is None else left - chunk.nbytes
+        yield chunk
+
+
+def _byte_view(chunk: object) -> memoryview:
+    if not isinstance(chunk, Buffer):
+        raise TypeError(f"a stream has to give bytes, not {type(chunk).__name__}")
+    return memoryview(chunk).cast("B")
+
+
+def _exactly(chunks: Iterator[memoryview], size: int) -> Iterator[memoryview]:
+    total = 0
+    for chunk in chunks:
+        total += chunk.nbytes
+        if total > size:
+            raise ValueError(f"data gave more bytes than its Content-Length of {size}")
+        yield chunk
+    if total < size:
+        raise ValueError(f"data gave {total} bytes, fewer than its Content-Length of {size}")
 
 
 def encode_query(params: QueryParams) -> str:
@@ -135,7 +226,7 @@ def _fields_beside_files(data: RequestData | None) -> Mapping[str, str]:
         case None:
             return {}
         case Mapping():
-            return data
+            return cast(Mapping[str, str], data)
         case _:
             raise ValueError("beside files, data has to be a mapping of text fields")
 
