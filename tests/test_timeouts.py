@@ -27,6 +27,8 @@ from mitto._native import BodyAvailable, ResponseStarted
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
 from mitto._request import build_request
 from tests.local_server import LocalHTTPServer
+from tools.capture import HTTP2, HTTP3, CaptureServer
+from tools.parity.replay import run_of, session_settings
 
 ERR_CONNECTION_TIMED_OUT = -118
 ERR_INVALID_ARGUMENT = -4
@@ -548,6 +550,84 @@ def test_a_body_that_keeps_moving_after_a_redirect_does_not_run_out_the_read_tim
 
     assert response.status == 200
     assert len(response.history) == 1
+
+
+def _slow_parts(count: int, pause_seconds: float) -> Iterator[bytes]:
+    for _ in range(count):
+        time.sleep(pause_seconds)
+        yield BODY
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_wait_for_the_next_part_of_a_stream_does_not_run_out_the_read_timer() -> None:
+    parts = 4
+    # Each pause is longer than the read timer allows, and all of them far longer than a turn that notices moving bytes.
+    with _server_of_one_slow_upload(READ_A_HEAD_SIZE, 0) as port, mitto.Session() as session:
+        response = session.post(
+            f"http://127.0.0.1:{port}/",
+            data=_slow_parts(parts, SHORT_SECONDS * 3),
+            headers={"Content-Length": str(len(BODY) * parts)},
+            timeout=Timeout(read=SHORT_SECONDS, total=LONG_SECONDS),
+        )
+
+    assert response.status == 200
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("protocol", [HTTP2, HTTP3])
+def test_a_wait_for_the_next_part_of_a_stream_does_not_run_out_the_read_timer_over(protocol: str) -> None:
+    with CaptureServer() as server:
+        run = run_of("fetch_post_stream", protocol)
+        assert run is not None
+        with mitto.Session(_settings=session_settings(server, run)) as session:
+            response = session.post(
+                server.url(run.route, host=run.host, path="/case/fetch-post-stream"),
+                data=_slow_parts(3, SHORT_SECONDS * 3),
+                timeout=Timeout(read=SHORT_SECONDS, total=LONG_SECONDS),
+            )
+
+    assert response.status == 200
+    assert response.protocol == protocol
+
+
+@pytest.mark.usefixtures("native_library")
+def test_the_read_timer_covers_the_wait_for_an_answer_after_the_last_part_of_a_stream(silent_port: int) -> None:
+    with mitto.Session() as session, pytest.raises(mitto.RequestTimeoutError) as caught:
+        session.post(
+            f"http://127.0.0.1:{silent_port}/",
+            data=[BODY],
+            headers={"Content-Length": str(len(BODY))},
+            timeout=Timeout(read=SHORT_SECONDS, total=LONG_SECONDS),
+        )
+
+    assert caught.value.net_error == ERR_TIMED_OUT
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_stream_that_a_server_stops_taking_runs_out_the_read_timer(silent_port: int) -> None:
+    parts = LARGE_BODY_SIZE // READ_SIZE_OF_A_SLOW_SERVER
+    with mitto.Session() as session, pytest.raises(mitto.RequestTimeoutError) as caught:
+        session.post(
+            f"http://127.0.0.1:{silent_port}/",
+            data=[bytes(READ_SIZE_OF_A_SLOW_SERVER)] * parts,
+            headers={"Content-Length": str(LARGE_BODY_SIZE)},
+            timeout=Timeout(read=SHORT_SECONDS, total=LONG_SECONDS),
+        )
+
+    assert caught.value.net_error == ERR_TIMED_OUT
+
+
+@pytest.mark.usefixtures("native_library")
+def test_the_total_timer_covers_a_wait_for_the_next_part_of_a_stream(silent_port: int) -> None:
+    with mitto.Session() as session, pytest.raises(mitto.RequestTimeoutError) as caught:
+        session.post(
+            f"http://127.0.0.1:{silent_port}/",
+            data=_slow_parts(100, SHORT_SECONDS),
+            headers={"Content-Length": str(len(BODY) * 100)},
+            timeout=Timeout(total=SHORT_SECONDS * 3),
+        )
+
+    assert caught.value.net_error == ERR_TIMED_OUT
 
 
 @pytest.mark.usefixtures("native_library")

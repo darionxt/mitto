@@ -42,7 +42,8 @@
 // which of them use it.
 //
 // Any number of redirects come first, then the response, and last of all the
-// end of the request, which may come at any point.
+// end of the request, which may come at any point. A request with a stream body
+// also gets a MITTO_EVENT_BODY_WANTED now and then, until it has the whole body.
 //
 // The final response has started. Its body waits until mitto_request_read()
 // asks for it.
@@ -54,6 +55,9 @@
 #define MITTO_EVENT_BODY_AVAILABLE 3
 // The request has ended. No event comes after this one.
 #define MITTO_EVENT_FINISHED 4
+// //net has taken all that mitto_request_write_body() gave it, and it is time to
+// write more or to call mitto_request_end_body().
+#define MITTO_EVENT_BODY_WANTED 5
 
 #define MITTO_EXPORT __attribute__((visibility("default")))
 
@@ -349,6 +353,8 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //     "priority_incremental": true,
 //     "referrer": "https://example.com/",
 //     "follow_redirects": false,
+//     "stream_body": true,
+//     "stream_body_size": 1073741824,
 //     "connect_timeout_ms": 5000,
 //     "read_timeout_ms": 5000,
 //     "total_timeout_ms": 30000
@@ -370,6 +376,19 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   empty because //net does not read the body of a redirect. A redirect to a URL
 //   that is not valid still ends the request with ERR_INVALID_REDIRECT, because
 //   //net checks that first. The default is true.
+// - "stream_body" set to true says that the body comes through
+//   mitto_request_write_body(), and `body` has to be null. Without a
+//   "stream_body_size" it is chunked, with no Content-Length, and //net refuses to
+//   send it over HTTP/1.1, as it does for a stream in Chrome: the request finishes
+//   with ERR_ALPN_NEGOTIATION_FAILED and nothing of it reaches the server. A stream
+//   can be read only once, so any redirect but a 303 finishes the request with
+//   ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED, as Fetch fails it, and so does another
+//   attempt on a new connection once more than 64 KiB has gone. The default is
+//   false.
+// - "stream_body_size" is how many bytes the stream holds, a whole number up to
+//   2^53, which needs "stream_body" as well. //net sends it as the Content-Length,
+//   over any protocol. A write past it is refused, and ending the body before it
+//   finishes the request with ERR_UPLOAD_FILE_CHANGED.
 // - "connect_timeout_ms" limits the time from the start of the request, or from a
 //   redirect, until net::URLRequest::Delegate::OnConnected() runs: the name is
 //   resolved, a connection is free and any proxy tunnel and TLS handshake are
@@ -381,7 +400,8 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   that a content decoder holds back still count as arriving, which can stretch
 //   a wait to almost twice the limit. Bytes of the body on their way to the server
 //   count too, so a large body can take longer than the limit, as long as it keeps
-//   moving. Past it, the request finishes with ERR_TIMED_OUT.
+//   moving. A wait for the next bytes of a stream body is a wait for the caller and
+//   does not count. Past it, the request finishes with ERR_TIMED_OUT.
 // - "total_timeout_ms" limits the time from the start of the request to its end,
 //   over all its redirects and however fast the caller reads. Past it, the request
 //   finishes with ERR_TIMED_OUT.
@@ -447,6 +467,35 @@ MITTO_EXPORT int32_t mitto_request_next_event(MittoRequest* request,
 MITTO_EXPORT int32_t mitto_request_read(MittoRequest* request,
                                         uint8_t* buffer,
                                         size_t size);
+
+// Hands over the next bytes of a stream body, which the "stream_body" option of
+// mitto_request_start() announces. Copies up to `size` bytes from `data` and
+// returns how many. May be called from any thread, and never blocks.
+//
+// The library holds a small part of the body at most, and takes no more until
+// //net has taken all of that, so a server that does not read makes the caller
+// wait through flow control. The first MITTO_EVENT_BODY_WANTED event comes when
+// //net can use the first bytes, so a request that fails before that has read none
+// of the body. Each later one says that all that was written has gone. Writing
+// before an event is allowed, and returns -1 (ERR_IO_PENDING) if there is no room
+// yet, which the next event will say has changed.
+//
+// Returns 0 if nothing more of the body is wanted, because the request has
+// finished or a 303 has dropped the body. Returns -4 (ERR_INVALID_ARGUMENT) for an
+// invalid argument, such as a `size` of 0, for a request with no stream, after
+// mitto_request_end_body() and for bytes past "stream_body_size".
+MITTO_EXPORT int32_t mitto_request_write_body(MittoRequest* request,
+                                              const uint8_t* data,
+                                              size_t size);
+
+// Says that nothing more of the stream body will come. May be called from any
+// thread, and never blocks. A body that has failed on the caller's side ends with
+// mitto_request_cancel() instead, so that the server does not take it for the
+// whole body.
+//
+// Returns 0 on success, also if the request has finished. Returns -4
+// (ERR_INVALID_ARGUMENT) for a request with no stream, and after the first call.
+MITTO_EXPORT int32_t mitto_request_end_body(MittoRequest* request);
 
 // Ends the request and returns without waiting for that. May be called from any
 // thread, and does nothing if the request has finished or `request` is null. Its

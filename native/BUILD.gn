@@ -11,6 +11,8 @@ config("public_api") {
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
   sources = [
+    "body_stream.cc",
+    "body_stream.h",
     "cookie_json.cc",
     "cookie_json.h",
     "feature_list.cc",

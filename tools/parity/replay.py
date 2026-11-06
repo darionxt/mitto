@@ -80,7 +80,7 @@ REPLAYS = {
     "fetch_post_text_same_origin": Replay(RequestKind.FETCH, _POST, body=_TEXT),
     "fetch_post_text_cross_site": Replay(RequestKind.FETCH, _POST, host=CROSS_SITE_HOST, body=_TEXT),
     "fetch_post_json_same_origin": Replay(RequestKind.FETCH, _POST, body={"json": {"json": "body"}}),
-    "fetch_post_stream": Replay(RequestKind.FETCH, _POST),
+    "fetch_post_stream": Replay(RequestKind.FETCH, _POST, body={"data": [b"stream body"]}),
     "script_same_site": Replay(RequestKind.SCRIPT, host=SAME_SITE_HOST),
     "script_cross_site": Replay(RequestKind.SCRIPT, host=CROSS_SITE_HOST),
     "image_same_site": Replay(RequestKind.IMAGE, host=SAME_SITE_HOST),

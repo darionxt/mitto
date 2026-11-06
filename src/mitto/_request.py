@@ -7,7 +7,7 @@ where.
 from collections.abc import Iterable, Mapping
 from typing import TypedDict
 
-from mitto._body import FileFields, QueryParams, RequestData, encode_body, encode_query
+from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
 
@@ -27,6 +27,7 @@ _METHODS_WITHOUT_A_BODY = frozenset({"GET", "HEAD"})
 _REFERER = "referer"
 
 _CONTENT_TYPE = "Content-Type"
+_CONTENT_LENGTH = "content-length"
 
 
 class BodyOptions(TypedDict, total=False):
@@ -35,7 +36,13 @@ class BodyOptions(TypedDict, total=False):
     Attributes:
         data: Bytes go as they are, with no Content-Type of their own. Text goes as UTF-8, and a mapping is encoded as
             URLSearchParams does. Chrome's Content-Type for those depends on the Request Kind: a fetch says what a page's
-            script would send, and a navigation what a form would.
+            script would send, and a navigation what a form would. A file object in binary mode or an iterable of bytes is
+            a stream, with no Content-Type of its own, which reads it only as the network stack asks for more, in the
+            thread that waits for the response. A stream goes once, so any redirect but a 303 raises a RequestError, as
+            Fetch fails it. A file that can seek sends a Content-Length, for what it holds from where it stands. Without a
+            known size a stream goes as Chrome sends a page's ReadableStream, which it refuses over HTTP/1.1, so that
+            raises a RequestError named ERR_ALPN_NEGOTIATION_FAILED. A `Content-Length` in `headers` gives the size, and the
+            stream raises a ValueError if it does not keep to it.
         json: A value that goes as JSON.stringify writes it, with a Content-Type of application/json. A float keeps
             Python's text, so 1.0 stays "1.0". None sends no JSON.
         files: Files by field name, or pairs that can repeat a name, which make a multipart body as Blink's FormData does.
@@ -84,14 +91,14 @@ class BuiltRequest(RequestDefaults):
         method: The HTTP method to send.
         timeout: The timers of the request.
         follow_redirects: Whether a redirect is followed, or is the response.
-        body: The bytes to send as the request's body, or None for no body.
+        body: What to send as the request's body, as bytes or a stream, or None for no body.
     """
 
     url: str
     method: str
     timeout: Timeout
     follow_redirects: bool
-    body: bytes | None
+    body: bytes | StreamBody | None
 
 
 def build_request(
@@ -128,7 +135,8 @@ def build_request(
         TypeError: If `data` is of no type that makes a body, or `json` holds a value that JSON has no form of.
         ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a
             positive number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds
-            a NaN or an infinity, or a body goes with GET or HEAD or with a Request Kind that Chrome sends none with.
+            a NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or the
+            `Content-Length` of a stream is not a number of bytes.
     """
     method = method.upper() if method.upper() in _METHODS_FETCH_NORMALIZES else method
     url = _with_query(url, encode_query(params)) if params is not None else url
@@ -141,6 +149,8 @@ def build_request(
     defaults = persona.request_defaults(request_kind, url, with_body=body is not None)
     changes = _changes_by_name(headers or {})
     _, referrer = changes.pop(_REFERER, (_REFERER, defaults["referrer"]))
+    if isinstance(body, StreamBody):
+        body = _with_size_from_headers(body, changes)
     if body is not None:
         # This takes the place of the Persona's line, as a caller's would. Having no type removes the line, while a type
         # that a caller gives for bytes still goes where Chrome puts it.
@@ -154,8 +164,24 @@ def build_request(
         referrer=referrer,
         timeout=to_timeout(timeout),
         follow_redirects=follow_redirects,
-        body=None if body is None else body.content,
+        body=body if body is None or isinstance(body, StreamBody) else body.content,
     )
+
+
+def _with_size_from_headers(body: StreamBody, changes: dict[str, tuple[str, str | None]]) -> StreamBody:
+    """Return a stream with the size in a caller's Content-Length, which //net writes in its own place from that size.
+
+    This takes the header out of `changes`.
+
+    Raises:
+        ValueError: If the value is not a number of bytes.
+    """
+    _, value = changes.pop(_CONTENT_LENGTH, (_CONTENT_LENGTH, None))
+    if value is None:
+        return body
+    if not (value.isascii() and value.isdigit()):
+        raise ValueError(f"the Content-Length of a stream has to be a number of bytes, not {value!r}")
+    return with_declared_size(body, int(value))
 
 
 def _with_query(url: str, query: str) -> str:

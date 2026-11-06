@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import NotRequired, TypedDict
 from urllib.parse import urlsplit
 
-from mitto._body import EncodedBody
+from mitto._body import EncodedBody, StreamBody
 from mitto._native import Priority
 
 __all__ = [
@@ -136,7 +136,7 @@ class Persona:
             referrer=referrer,
         )
 
-    def content_type(self, kind: RequestKind, body: EncodedBody) -> str | None:
+    def content_type(self, kind: RequestKind, body: EncodedBody | StreamBody) -> str | None:
         """Return the Content-Type that this Persona's Chrome gives `body` on a request of `kind`, or None for none.
 
         Raises:
@@ -145,7 +145,7 @@ class Persona:
         data = self._kinds[kind].get("body")
         if data is None:
             raise ValueError(f"Chrome sends no body with a request of the kind {kind.value!r}")
-        if body.encoding is None:
+        if isinstance(body, StreamBody) or body.encoding is None:
             return None
         return data["content_types"][body.encoding].replace(_BOUNDARY_PLACEHOLDER, body.boundary)
 

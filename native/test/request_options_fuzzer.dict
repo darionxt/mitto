@@ -5,6 +5,8 @@
 "\"priority_incremental\""
 "\"referrer\""
 "\"follow_redirects\""
+"\"stream_body\""
+"\"stream_body_size\""
 "\"connect_timeout_ms\""
 "\"read_timeout_ms\""
 "\"total_timeout_ms\""

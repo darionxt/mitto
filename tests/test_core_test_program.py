@@ -4,16 +4,19 @@ A sanitizer report ends the program with an error. These run with a sanitized pr
 load a sanitized library: the sanitizers' runtime is linked into the program that starts, not into the library.
 """
 
+import http.server
 import json
 import os
 import socket
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from mitto._native import SETTINGS_VERSION
 from tests.local_certificates import AiaServer, TlsServer, generate_intermediate, generate_leaf, generate_root, serving
+from tests.local_server import LocalHTTPServer
 from tools.capture import (
     CASES,
     COOKIE_SET_PATH,
@@ -31,9 +34,13 @@ from tools.parity.replay import run_of, session_settings
 _PROGRAM_ENV_VAR = "MITTO_CORE_TEST"
 _ERR_INVALID_ARGUMENT = -4
 _ERR_CERT_AUTHORITY_INVALID = -202
+_ERR_ALPN_NEGOTIATION_FAILED = -122
+_ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED = -25
 _TIMEOUT_SECONDS = 120
 _HOST = "localhost"
 _FETCH_PATH = KIND_PATHS[RequestKind.FETCH]
+_STREAM_CASE = next(case for case in CASES if case.name == "fetch_post_stream")
+_STREAM_BODY = "the body of a request"
 
 
 @pytest.fixture
@@ -130,6 +137,122 @@ def test_a_session_destroyed_at_a_redirect(program: Path, protocol: str) -> None
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["ended"]
+
+
+def _stream_form(server: CaptureServer, protocol: str) -> Any:
+    return cast(Any, normal_form(server.recording(protocol), [_STREAM_CASE])["requests"])[_STREAM_CASE.name]
+
+
+@pytest.mark.parametrize("scenario", ["post-stream", "write-stream-before-it-is-wanted"])
+@pytest.mark.parametrize("protocol", [HTTP2, HTTP3])
+def test_a_stream_goes_in_parts_over(program: Path, protocol: str, scenario: str) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol, path=_STREAM_CASE.path), _settings(server, protocol), scenario)
+        request = _stream_form(server, protocol)
+
+    assert result.returncode == 0, result.stderr
+    assert f"status 200 over {protocol}" in result.stdout
+    assert f"sent: {len(_STREAM_BODY)} bytes" in result.stdout
+    assert request["body"] == _STREAM_BODY
+    assert not any(line.lower().startswith("content-length") for line in request["headers"])
+
+
+def test_a_stream_of_no_known_size_is_refused_over_http1(program: Path) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(HTTP1, path=_STREAM_CASE.path), _settings(server, HTTP1), "post-stream")
+        recording = server.recording(HTTP1)
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_ALPN_NEGOTIATION_FAILED}" in result.stderr
+    assert not any(connection.requests for connection in recording.connections)
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_stream_of_a_known_size_goes_with_that_size(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        result = _run(
+            program, server.url(protocol, path=_STREAM_CASE.path), _settings(server, protocol), "post-sized-stream"
+        )
+        request = _stream_form(server, protocol)
+
+    assert result.returncode == 0, result.stderr
+    assert request["body"] == _STREAM_BODY
+    assert any(line.lower() == f"content-length: {len(_STREAM_BODY)}" for line in request["headers"])
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "cancel-stream-while-it-waits",
+        "release-stream-while-it-waits",
+        "destroy-session-while-stream-waits",
+    ],
+)
+@pytest.mark.parametrize("protocol", [HTTP2, HTTP3])
+def test_a_stream_can_stop_while_it_waits_for_its_caller(program: Path, protocol: str, scenario: str) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol, path=_STREAM_CASE.path), _settings(server, protocol), scenario)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_stream_that_ends_before_its_size_fails(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        result = _run(
+            program,
+            server.url(protocol, path=_STREAM_CASE.path),
+            _settings(server, protocol),
+            "end-stream-before-its-size",
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["too short"]
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_stream_that_a_redirect_would_send_again_fails(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        url, settings = _redirect_url(server, protocol)
+        result = _run(program, url, settings, "post-sized-stream")
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED}" in result.stderr
+    assert "redirect" not in result.stdout
+
+
+class _SeeOtherHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers["Content-Length"]))
+        self.send_response(303)
+        self.send_header("Location", "/after")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass
+
+
+def test_a_303_drops_a_stream_and_goes_on(program: Path) -> None:
+    with serving(LocalHTTPServer(("127.0.0.1", 0), _SeeOtherHandler)) as server:
+        result = _run(
+            program,
+            f"http://127.0.0.1:{server.server_port}/",
+            {"version": SETTINGS_VERSION},
+            "post-sized-stream",
+        )
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("redirect 303")
+    assert "status 200 over http/1.1" in lines
 
 
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])

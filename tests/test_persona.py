@@ -25,7 +25,12 @@ BASELINES = [
     if baseline.case in {kind.value for kind in RequestKind}
 ]
 
-BODY_BASELINES = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if REPLAYS[baseline.case].body]
+# A Baseline of a refusal holds no headers.
+BODY_BASELINES = [
+    baseline
+    for baseline in load_baselines(BASELINES_DIRECTORY)
+    if REPLAYS[baseline.case].body and baseline.fingerprint["request"] != {"refused": True}
+]
 
 _ANY_URL = "https://example.test:8444/any/path?query"
 

@@ -39,6 +39,8 @@ int32_t mitto_request_start(void* session, const char* url, const void* headers,
                             unsigned long body_size, void** request) {{ return -2; }}
 int32_t mitto_request_next_event(void* request, int64_t timeout_ms, void* event) {{ return -2; }}
 int32_t mitto_request_read(void* request, char* buffer, unsigned long size) {{ return -2; }}
+int32_t mitto_request_write_body(void* request, const char* data, unsigned long size) {{ return -2; }}
+int32_t mitto_request_end_body(void* request) {{ return -2; }}
 void mitto_request_cancel(void* request) {{}}
 void mitto_request_release(void* request) {{}}
 void mitto_event_free(void* event) {{}}

@@ -5,19 +5,34 @@ Chrome 156 on macOS: a page's fetch() and forms sent these to a local server, an
 source at Chrome 157 says the same: FormData::EncodeMultiPartFormData() and FormDataEncoder.
 """
 
+import io
 import re
-from typing import Any
+from collections.abc import Iterable
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from mitto._body import BodyEncoding, EncodedBody, FileFields, RequestData, encode_body, encode_query
+from mitto._body import (
+    BodyEncoding,
+    EncodedBody,
+    FileFields,
+    RequestData,
+    StreamBody,
+    encode_body,
+    encode_query,
+    with_declared_size,
+)
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.parity.replay import REPLAYS
 
 _BOUNDARY_PREFIX = "----WebKitFormBoundary"
 _BOUNDARY = re.compile(rf"{_BOUNDARY_PREFIX}[0-9A-Za-z]{{16}}")
 
-_BASELINES = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if REPLAYS[baseline.case].body]
+_STREAM_CASE = "fetch_post_stream"
+_ALL_BASELINES = load_baselines(BASELINES_DIRECTORY)
+_BASELINES = [baseline for baseline in _ALL_BASELINES if REPLAYS[baseline.case].body and baseline.case != _STREAM_CASE]
+_STREAM_BASELINES = [baseline for baseline in _ALL_BASELINES if baseline.case == _STREAM_CASE]
 
 
 def _name(baseline: Baseline) -> str:
@@ -26,8 +41,18 @@ def _name(baseline: Baseline) -> str:
 
 def _encode(data: RequestData | None = None, json_value: object = None, files: FileFields | None = None) -> EncodedBody:
     body = encode_body(data, json_value, files)
-    assert body is not None
+    assert isinstance(body, EncodedBody)
     return body
+
+
+def _stream(data: RequestData) -> StreamBody:
+    body = encode_body(data, None, None)
+    assert isinstance(body, StreamBody)
+    return body
+
+
+def _bytes_of(body: StreamBody) -> bytes:
+    return b"".join(body.chunks)
 
 
 def _with_marker(body: EncodedBody) -> bytes:
@@ -208,10 +233,191 @@ def test_arguments_that_do_not_go_together_are_refused(
         encode_body(data, json_value, files)
 
 
-@pytest.mark.parametrize("data", [1, [("a", "b")], object()], ids=["number", "pairs", "object"])
+@pytest.mark.parametrize("data", [1, object()], ids=["number", "object"])
 def test_data_of_another_type_is_refused(data: Any) -> None:
     with pytest.raises(TypeError, match="data"):
         encode_body(data, None, None)
+
+
+@pytest.mark.parametrize("baseline", _STREAM_BASELINES, ids=_name)
+def test_a_stream_is_the_one_that_chrome_sent_in_the_baseline(baseline: Baseline) -> None:
+    data: Any = REPLAYS[_STREAM_CASE].body.get("data")
+    body = _stream(data)
+    request: Any = baseline.fingerprint["request"]
+
+    assert body.size is None
+    # Over HTTP/1.1 Chrome refused it, so the Baseline holds no body.
+    if "refused" not in request:
+        assert _bytes_of(body).decode() == request["body"]
+
+
+def test_an_iterable_gives_its_parts_as_they_are_and_has_no_size() -> None:
+    body = _stream([b"first", bytearray(b"second"), memoryview(b"third")])
+
+    assert body.size is None
+    assert [bytes(chunk) for chunk in body.chunks] == [b"first", b"second", b"third"]
+
+
+def test_an_iterable_is_not_touched_until_something_asks() -> None:
+    started = False
+
+    def chunks() -> Iterable[bytes]:
+        nonlocal started
+        started = True
+        yield b"part"
+
+    body = _stream(chunks())
+
+    assert not started
+    assert _bytes_of(body) == b"part"
+    assert started
+
+
+def test_a_part_that_holds_something_other_than_bytes_counts_its_bytes() -> None:
+    body = _stream([memoryview(b"\0\0\0\0").cast("I")])
+
+    assert [chunk.nbytes for chunk in body.chunks] == [4]
+
+
+@pytest.mark.parametrize("part", ["text", 1, ("a", "b"), None], ids=["text", "number", "pair", "none"])
+def test_a_part_that_is_not_bytes_is_refused_when_it_comes(part: Any) -> None:
+    body = _stream([part])
+
+    with pytest.raises(TypeError, match="has to give bytes"):
+        next(body.chunks)
+
+
+def test_a_file_goes_from_where_it_stands_with_a_size() -> None:
+    file = io.BytesIO(b"skipped, then the rest")
+    file.seek(len(b"skipped, "))
+
+    body = _stream(file)
+
+    assert file.tell() == len(b"skipped, ")
+    assert body.size == len(b"then the rest")
+    assert _bytes_of(body) == b"then the rest"
+
+
+def test_a_file_on_disk_goes_with_its_size(tmp_path: Path) -> None:
+    path = tmp_path / "body"
+    path.write_bytes(b"on disk")
+
+    with path.open("rb") as file:
+        body = _stream(file)
+        assert body.size == len(b"on disk")
+        assert _bytes_of(body) == b"on disk"
+
+
+def test_a_file_past_its_end_is_empty() -> None:
+    file = io.BytesIO(b"short")
+    file.seek(100)
+
+    body = _stream(file)
+
+    assert body.size == 0
+    assert _bytes_of(body) == b""
+
+
+def test_a_file_that_grows_goes_no_further_than_its_size() -> None:
+    file = io.BytesIO(b"first")
+    body = _stream(file)
+    file.seek(0, io.SEEK_END)
+    file.write(b" and more")
+    file.seek(0)
+
+    assert _bytes_of(body) == b"first"
+
+
+class _ReadOnly:
+    """What a pipe offers: it reads, and cannot say how much it holds."""
+
+    def __init__(self, content: bytes) -> None:
+        self._content = io.BytesIO(content)
+
+    def read(self, size: int, /) -> bytes:
+        return self._content.read(size)
+
+
+def test_a_file_that_cannot_seek_has_no_size() -> None:
+    body = _stream(_ReadOnly(b"from a pipe"))
+
+    assert body.size is None
+    assert _bytes_of(body) == b"from a pipe"
+
+
+def test_a_raw_file_that_says_it_cannot_seek_has_no_size(tmp_path: Path) -> None:
+    class NotSeekable(io.RawIOBase):
+        def readable(self) -> bool:
+            return True
+
+        def readinto(self, buffer: Any) -> int:
+            return 0
+
+    assert _stream(NotSeekable()).size is None
+
+
+def test_a_file_in_text_mode_is_refused_at_once(tmp_path: Path) -> None:
+    path = tmp_path / "body"
+    path.write_text("text")
+
+    with path.open() as file, pytest.raises(TypeError, match="binary"):
+        encode_body(cast(Any, file), None, None)
+
+
+def test_a_file_that_gives_text_is_refused_when_it_comes() -> None:
+    class GivesText:
+        def read(self, size: int, /) -> Any:
+            return "text"
+
+    body = _stream(GivesText())
+
+    with pytest.raises(TypeError, match="has to give bytes"):
+        next(body.chunks)
+
+
+def test_a_file_with_no_bytes_yet_is_refused_rather_than_taken_for_its_end() -> None:
+    class NonBlocking:
+        def read(self, size: int, /) -> Any:
+            return None
+
+    body = _stream(NonBlocking())
+
+    with pytest.raises(TypeError, match="NoneType"):
+        next(body.chunks)
+
+
+def test_a_declared_size_is_the_size() -> None:
+    body = with_declared_size(_stream([b"12", b"345"]), 5)
+
+    assert body.size == 5
+    assert _bytes_of(body) == b"12345"
+
+
+def test_a_stream_that_gives_more_than_it_declared_is_refused_at_that_part() -> None:
+    body = with_declared_size(_stream([b"12", b"345"]), 4)
+
+    assert bytes(next(body.chunks)) == b"12"
+    with pytest.raises(ValueError, match="more bytes than its Content-Length of 4"):
+        next(body.chunks)
+
+
+def test_a_stream_that_gives_less_than_it_declared_is_refused_at_its_end() -> None:
+    body = with_declared_size(_stream([b"12"]), 3)
+
+    assert bytes(next(body.chunks)) == b"12"
+    with pytest.raises(ValueError, match="gave 2 bytes, fewer than its Content-Length of 3"):
+        next(body.chunks)
+
+
+def test_a_stream_cannot_go_beside_json_or_files() -> None:
+    with pytest.raises(ValueError, match="json"):
+        encode_body(io.BytesIO(b""), {"a": 1}, None)
+    with pytest.raises(ValueError, match="mapping"):
+        encode_body(io.BytesIO(b""), None, {"file": b"a"})
+
+
+def test_what_a_stream_reads_stays_out_of_its_repr() -> None:
+    assert "secret" not in repr(_stream([b"secret"]))
 
 
 @pytest.mark.parametrize("file", ["text", ("a",), (b"a", b"b"), ("a", "b"), ("a", b"b", 1)])
