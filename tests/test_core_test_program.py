@@ -29,31 +29,75 @@ def program() -> Path:
     return Path(path)
 
 
-def _run(program: Path, url: str, settings: dict[str, object]) -> subprocess.CompletedProcess[str]:
+def _run(
+    program: Path, url: str, settings: dict[str, object], scenario: str = "fetch"
+) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        [program, url, json.dumps(settings)], capture_output=True, text=True, timeout=_TIMEOUT_SECONDS
+        [program, url, json.dumps(settings), scenario], capture_output=True, text=True, timeout=_TIMEOUT_SECONDS
     )
     # A report can come after the program has done its work, and it exits with the same code as the program's failures.
     assert "Sanitizer" not in result.stderr, result.stderr
     return result
 
 
+def _settings(server: CaptureServer, protocol: str) -> dict[str, object]:
+    return {
+        "version": SETTINGS_VERSION,
+        "ignore_certificate_errors_spki_list": [server.spki_hash],
+        "accept_language": "en-US,en;q=0.9",
+        "origins_to_force_quic_on": [server.authority(HTTP3)] if protocol == HTTP3 else [],
+    }
+
+
+@pytest.mark.parametrize("scenario", ["fetch", "fetch-with-file-descriptor"])
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
-def test_a_request_over_each_protocol(program: Path, protocol: str) -> None:
+def test_a_request_over_each_protocol(program: Path, protocol: str, scenario: str) -> None:
     with CaptureServer() as server:
-        result = _run(
-            program,
-            server.url(protocol),
-            {
-                "version": SETTINGS_VERSION,
-                "ignore_certificate_errors_spki_list": [server.spki_hash],
-                "accept_language": "en-US,en;q=0.9",
-                "origins_to_force_quic_on": [server.authority(HTTP3)] if protocol == HTTP3 else [],
-            },
-        )
+        result = _run(program, server.url(protocol), _settings(server, protocol), scenario)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == f"status 200 over {protocol}"
+
+
+@pytest.mark.parametrize("scenario", ["cancel-at-once", "cancel-after-response"])
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_that_is_cancelled_leaves_the_session_working(program: Path, protocol: str, scenario: str) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol), _settings(server, protocol), scenario)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "cancelled"
+    assert f"status 200 over {protocol}" in result.stdout
+
+
+@pytest.mark.parametrize("scenario", ["release-at-once", "release-after-response"])
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_that_is_released_running_leaves_the_session_working(
+    program: Path, protocol: str, scenario: str
+) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol), _settings(server, protocol), scenario)
+
+    assert result.returncode == 0, result.stderr
+    assert f"status 200 over {protocol}" in result.stdout
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_session_destroyed_with_a_request_running(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol), _settings(server, protocol), "destroy-session-while-running")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["cancelled"]
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_process_that_exits_with_a_request_running(program: Path, protocol: str) -> None:
+    with CaptureServer() as server:
+        result = _run(program, server.url(protocol), _settings(server, protocol), "exit-while-running")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["exiting"]
 
 
 def test_settings_that_are_refused(program: Path) -> None:

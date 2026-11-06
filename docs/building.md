@@ -74,7 +74,7 @@ autoninja -C out/mitto mitto
 This builds two targets from [`native/`](../native), about 4,200 steps in all:
 
 - `mitto_core`, the shared library `out/mitto/libmitto_core.dylib` (`.so` on Linux). It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h).
-- `mitto_core_test`, a small C program that creates a Session, fetches one URL through it and prints the result.
+- `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result.
 
 Run the test program, which needs a network connection:
 
@@ -82,7 +82,7 @@ Run the test program, which needs a network connection:
 out/mitto/mitto_core_test
 ```
 
-It fetches `https://example.com/` unless given another URL, and a second argument gives it the settings that `mitto_session_create()` reads. The first line of its output shows the status and the protocol:
+It fetches `https://example.com/` unless given another URL, a second argument gives it the settings that `mitto_session_create()` reads, and a third names one of the scenarios at the end of its source, such as `cancel-after-response`. The first line of its output shows the status and the protocol:
 
 ```text
 status 200 over h2
@@ -168,11 +168,11 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer` | 2.2 GiB |
 
 Each of them stops at the first report.
 
-The fuzz target has a build of its own because Chromium's fuzzing builds define `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`, which changes what BoringSSL does, so the library in that build is not the one that ships.
+The fuzz targets have a build of their own because Chromium's fuzzing builds define `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`, which changes what BoringSSL does, so the library in that build is not the one that ships.
 
 To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:
 
@@ -181,16 +181,16 @@ export MITTO_CORE_TEST=/absolute/path/to/new/directory/chromium-<tag>/src/out/as
 ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 ```
 
-It makes a request over HTTP/1.1, HTTP/2 and HTTP/3, one that fails on the certificate, and one with settings that are refused. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
+Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, and tries settings that are refused. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, with the files of that name:
 
 ```bash
 mkdir corpus
 ASAN_OPTIONS=detect_leaks=1 /absolute/path/to/new/directory/chromium-<tag>/src/out/fuzz/session_settings_fuzzer -max_total_time=60 -dict=native/test/session_settings_fuzzer.dict corpus native/test/session_settings_corpus
 ```
 
-[`.github/workflows/sanitizers.yml`](../.github/workflows/sanitizers.yml) runs one job per build on `ubuntu-latest`. It runs when a pull request or `main` changes `native/` or `tools/workspace/`, and every day, when the unchanged builds come from the cache and only the fuzzing takes real time. It fuzzes for five minutes and keeps any input that crashed the target as an artifact of the run. These jobs are not required checks, because they do not run on every pull request.
+[`.github/workflows/sanitizers.yml`](../.github/workflows/sanitizers.yml) runs one job per build on `ubuntu-latest`. It runs when a pull request or `main` changes `native/` or `tools/workspace/`, and every day, when the unchanged builds come from the cache and only the fuzzing takes real time. It fuzzes each target for five minutes and keeps any input that crashed one as an artifact of the run. These jobs are not required checks, because they do not run on every pull request.
 
 Times are from two runs from a cold cache.
 
