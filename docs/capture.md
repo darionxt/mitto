@@ -247,6 +247,7 @@ Only connections that carried a request of a Recording Case count, and a run's n
 
 ### What it does not capture yet
 
+- **Which requests share a connection.** The normal form describes one connection and then each request, so it cannot show how a client spreads its requests over connections, such as [partitioning](baselines.md#features-on-in-chromes-own-code). The raw recording can.
 - **ALPS.** Python's `ssl` cannot negotiate it, so the normal form has Chrome's offer but not the settings Chrome would then send.
 - **Resumed connections.** The server gives out no tickets, so the normal form describes fresh connections only.
 - **Frames that depend on the response or on timing.** The normal form leaves out frames sent after the first request on stream 0, such as a later `SETTINGS` or `PING`. They remain in the raw recording.
@@ -273,13 +274,13 @@ This part comes from reading Chromium 157's source. `SSLConfigServiceManager` st
 
 #### What we measured
 
-From a new user data directory, with the flags of a Baseline, `chrome://components` showed PKI Metadata at `0.0.0.0`, `Checking` after a minute, and `1825`, `Updated`, after 335 seconds. Its `crs.pb` has the same IDs as the Baselines. From that directory, [`record.ps1`](baselines.md#a-chrome-that-has-run-for-a-while) gave normal forms identical to `tests/baselines/157` over all three protocols and, for every run, to a new session of the same hour. That was two sessions straight after a start and two with Chrome settled first.
+From a new user data directory, with the flags of a Baseline, `chrome://components` showed PKI Metadata at `0.0.0.0`, `Checking` after a minute, and `1825`, `Updated`, after 335 seconds. Its `crs.pb` has the same IDs as the Baselines. From that directory, [`record.ps1`](baselines.md#a-chrome-that-has-run-for-a-while) gave normal forms identical to `tests/baselines/157` in all nine files. That was two sessions straight after a start and two with Chrome settled first.
 
 With the lists equal, that alone cannot show that the wire follows the component. So in a copy of that directory, we took the ID `d6790901` off its anchor in `crs.pb`. The anchor stays, so what Chrome trusts does not change. No real Chrome has this file.
 
 | Session from the copy | Result |
 |---|---|
-| Chrome settled for 20 seconds before each page | All 28 connections sent 27 IDs. In the normal forms, that ID is the only difference from a new session |
+| Chrome settled for 20 seconds before each page | All 28 connections sent 27 IDs. That ID is the only difference from the Baselines, in each of the eight files with TLS |
 | Three starts, each with a new connection about every second for 5 minutes | The list went from 28 to 27 IDs 1.6 to 1.9 seconds after the start, and stayed there |
 | Two sessions straight after a start | All 95 connections sent 28 IDs, because a recording is over by then |
 

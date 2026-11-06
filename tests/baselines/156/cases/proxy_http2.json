@@ -1,0 +1,243 @@
+{
+  "format": 1,
+  "protocol": "h2",
+  "tls": {
+    "record_version": "TLS 1.0",
+    "legacy_version": "TLS 1.2",
+    "session_id_length": 32,
+    "cipher_suites": [
+      "GREASE",
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+      "TLS_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_RSA_WITH_AES_256_CBC_SHA"
+    ],
+    "compression_methods": [
+      "null"
+    ],
+    "extensions": [
+      {
+        "type": "GREASE",
+        "length": 0
+      },
+      {
+        "type": "GREASE",
+        "length": 1
+      },
+      {
+        "type": "server_name",
+        "names": [
+          "<host>"
+        ]
+      },
+      {
+        "type": "status_request",
+        "data": "0100000000"
+      },
+      {
+        "type": "supported_groups",
+        "groups": [
+          "GREASE",
+          "X25519MLKEM768",
+          "x25519",
+          "secp256r1",
+          "secp384r1"
+        ]
+      },
+      {
+        "type": "ec_point_formats",
+        "formats": [
+          "uncompressed"
+        ]
+      },
+      {
+        "type": "signature_algorithms",
+        "algorithms": [
+          "GREASE",
+          "mldsa44",
+          "mldsa65",
+          "mldsa87",
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256",
+          "ecdsa_secp384r1_sha384",
+          "rsa_pss_rsae_sha384",
+          "rsa_pkcs1_sha384",
+          "rsa_pss_rsae_sha512",
+          "rsa_pkcs1_sha512"
+        ]
+      },
+      {
+        "type": "application_layer_protocol_negotiation",
+        "protocols": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      {
+        "type": "signed_certificate_timestamp"
+      },
+      {
+        "type": "extended_master_secret"
+      },
+      {
+        "type": "compress_certificate",
+        "algorithms": [
+          "brotli"
+        ]
+      },
+      {
+        "type": "session_ticket"
+      },
+      {
+        "type": "supported_versions",
+        "versions": [
+          "GREASE",
+          "TLS 1.3",
+          "TLS 1.2"
+        ]
+      },
+      {
+        "type": "psk_key_exchange_modes",
+        "modes": [
+          "psk_dhe_ke"
+        ]
+      },
+      {
+        "type": "key_share",
+        "shares": [
+          {
+            "group": "GREASE",
+            "key_length": 1
+          },
+          {
+            "group": "X25519MLKEM768",
+            "key_length": 1216
+          },
+          {
+            "group": "x25519",
+            "key_length": 32
+          }
+        ]
+      },
+      {
+        "type": "application_settings",
+        "protocols": [
+          "h2"
+        ]
+      },
+      {
+        "type": "trust_anchors",
+        "anchors": [
+          "82df130201",
+          "82df130206",
+          "82df13020d",
+          "82df13020e",
+          "82df13020f",
+          "82df130212",
+          "82df130213",
+          "82df130214",
+          "839a648c9b2d0107",
+          "839a648c9b2d0108",
+          "839a648c9b2d0109",
+          "839a648c9b2d010a",
+          "839a648c9b2d010b",
+          "839a648c9b2d010c",
+          "839a648c9b2d010d",
+          "839a648c9b2d0112",
+          "839a648c9b2d0113",
+          "d6790901",
+          "d6790904",
+          "d6790905",
+          "d6790906",
+          "d6790907",
+          "d6790908",
+          "d679090a",
+          "d679090b",
+          "d679090c",
+          "d679090d",
+          "d679090f"
+        ]
+      },
+      {
+        "type": "encrypted_client_hello",
+        "client_hello": "outer",
+        "kdf": "HKDF-SHA256",
+        "aead": "AES-128-GCM"
+      },
+      {
+        "type": "renegotiation_info",
+        "data": "00"
+      }
+    ]
+  },
+  "http2": {
+    "preface": [
+      {
+        "type": "SETTINGS",
+        "settings": [
+          "HEADER_TABLE_SIZE: 65536",
+          "ENABLE_PUSH: 0",
+          "INITIAL_WINDOW_SIZE: 6291456",
+          "MAX_HEADER_LIST_SIZE: 262144"
+        ]
+      },
+      {
+        "type": "WINDOW_UPDATE",
+        "stream": 0,
+        "increment": 15663105
+      }
+    ]
+  },
+  "requests": {
+    "proxy_connect": {
+      "request_line": "CONNECT <authority> HTTP/1.1",
+      "headers": [
+        "Host: <authority>",
+        "Proxy-Connection: keep-alive",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+      ]
+    },
+    "proxy_navigation": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/proxy-navigation",
+        "sec-ch-ua: \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: none",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-user: ?1",
+        "sec-fetch-dest: document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    }
+  }
+}

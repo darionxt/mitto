@@ -106,6 +106,16 @@ Capture traffic stays out of all this. Chrome resolves `*.localhost` itself and 
 
 `chrome.txt` shows what one session drew, and only names that look network-related. The seed holds every study. To read it, take `VariationsSafeSeedV2` from the user data directory: zstd over a protocol buffer whose field 1 is the `VariationsSeed` of `components/variations/proto/variations_seed.proto`, with the serial number that `chrome.txt` names. In the seed of 2026-11-05, no study names a feature that decides the ClientHello over TCP.
 
+### Features on in Chrome's own code
+
+`PartitionConnectionsByNetworkIsolationKey` and `SplitCacheByNetworkIsolationKey` are off in `//net` and on in Chrome, with no seed involved. `ChromeMainDelegate::CommonEarlyInitialization` in `chrome/app/chrome_main_delegate.cc` calls `NetworkAnonymizationKey::PartitionByDefault()` and `HttpCache::SplitCacheFeatureEnableByDefault()`, in 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39 alike. These turn the features on unless the command line or a field trial overrides them.
+
+Neither name is in any seed we read: those of 2026-11-05 and 2026-11-06, for all three Chrome Releases. A search of the decompressed seed finds no study or feature with `NetworkIsolationKey`, `NetworkAnonymizationKey`, `PartitionConnections` or `SplitCache` in its name, while `TryQuicByDefault` is there.
+
+`chrome://version` lists overrides and not what is on by default, so `$NetworkNames`, which matches both names, has nothing to find there. That is why `chrome.txt` has a line for each under each run, saying `not overridden` or naming the switch that overrides it. A session started with `--enable-features=PartitionConnectionsByNetworkIsolationKey --disable-features=SplitCacheByNetworkIsolationKey` shows `--enable-features` and `--disable-features` on those lines, and both names in those lists.
+
+Partitioning shows on the wire, although [not in a normal form](capture.md#what-it-does-not-capture-yet). Over HTTP/2 and HTTP/3, `navigation_link_cross_site` opens a connection of its own, although the certificate of an open connection to the same address covers its name. With `--disable-features=PartitionConnectionsByNetworkIsolationKey` it goes over the same connection as the navigations before it. The normal forms of those two sessions are identical in all nine files. The `connections` in a raw recording show the difference.
+
 ## Record a session
 
 From the repository's root on the Windows machine, with a new directory for both paths. `recordings` is ignored by Git:
@@ -124,7 +134,7 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ Comma
 Get-Content "$env:USERPROFILE\mitto\record-a.log"
 ```
 
-It takes about two minutes, and ends with `Done:` or with an error. Windows of Chrome open and close on the desktop meanwhile. If a case page fails, the reason is in `server-errors.log` in the output directory.
+It takes about a minute, and ends with `Done:` or with an error. Windows of Chrome open and close on the desktop meanwhile. If a case page fails, the reason is in `server-errors.log` in the output directory. A line there that ends in `bytes that did not wait for an answer to CONNECT` is no failure: during the starts through the proxy, Chrome's component updater sends its `POST` to `update.googleapis.com` over plain HTTP through the proxy, and the proxy drops it.
 
 ### What it does
 
@@ -134,7 +144,7 @@ It takes about two minutes, and ends with `Done:` or with an error. Windows of C
 2. It starts the capture server, `uv run python -m tools.capture --out recordings\a --click-in USER_DATA_DIRECTORY`, which writes the address and flags of [each run](capture.md#recording-cases) to `runs.json`.
 3. For each run, it starts Chrome again with its flags and its address, in the order of that list. The server clicks what the case pages ask to have clicked, through the debugging port. The script waits until the server has written that run's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. The server exits after the last.
 4. It checks that every client's address is loopback, that `Accept-Language` is `en-US`, that Chrome lists active variations, and that Chrome's version did not change.
-5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list.
+5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list. Each run also gets a line for each of [the two features Chrome turns on in its own code](#features-on-in-chromes-own-code).
 
 | Flag | On | Why |
 |---|---|---|
@@ -178,7 +188,7 @@ A recording of an older Chrome Release gets the seed of the day it is recorded, 
 
 ## Chrome 157
 
-Build 157.0.8103.39, recorded on 2026-11-05 and 2026-11-06 on Windows 11 build 26300, with a Windows display language other than English. The files in `tests/baselines/157` come from the first session.
+Build 157.0.8103.39, recorded on 2026-11-05 and 2026-11-06 on Windows 11 build 26300, with a Windows display language other than English. `http1.json`, `http2.json` and `http3.json` in `tests/baselines/157` come from the first session. The [Recording Cases](#the-recording-cases) came a day later.
 
 Five sessions from new user data directories gave identical normal forms for all four **Request Kinds** over all three protocols. One of them used `-NoDebuggingPort`, so the debugging port leaves no trace on the wire.
 
@@ -201,7 +211,7 @@ What can still move without a new Chrome Release is in [capture.md](capture.md#w
 
 ## Chrome 155 and 156
 
-Builds 155.0.8059.85 and 156.0.8078.80, [unpacked](#an-older-chrome-release), recorded on 2026-11-06 on the same Windows machine as Chrome 157. The files in `tests/baselines/155` and `tests/baselines/156` come from the first session of each.
+Builds 155.0.8059.85 and 156.0.8078.80, [unpacked](#an-older-chrome-release), recorded on 2026-11-06 on the same Windows machine as Chrome 157. `http1.json`, `http2.json` and `http3.json` in `tests/baselines/155` and `tests/baselines/156` come from the first session of each. The [Recording Cases](#the-recording-cases) came later that day.
 
 Five sessions of each Chrome Release, from new user data directories, gave identical normal forms for all four **Request Kinds** over all three protocols. None of the ten drew [the field trial that reaches the wire](#chrome-157).
 
@@ -231,7 +241,7 @@ So what Chrome 157 showed does not simply carry over, because the older seeds ha
 
 `IncreaseAmplificationFactor` is one of the shared studies, so what [Chrome 157](#chrome-157) shows about it holds here too. It has the same groups, the same `quic_options` and the same slots of its layer.
 
-The serial number in `chrome.txt` can differ between sessions of one Chrome Release, in the part before the `#`. The studies stay the same when it does.
+The serial number in `chrome.txt` can differ between sessions of one Chrome Release, in the part before the `#`. The studies stay the same when it does. The `chrome.txt` files in the repository now come from [a later seed](#their-seed).
 
 ### Their field trials
 
@@ -258,6 +268,24 @@ These apply to the older Chrome Releases and never appeared in the 10 sessions o
 `IncreaseHttp3Usage` is the same in all three: the group `EnabledWithConfigureMinimalQuicHints`, with `quic_hints` naming `google.com` and `www.google.com` on port 443, under each protocol in each `chrome.txt`. So [the hints](#chrome-157) that [`native/network_session_configurator.cc`](../native/network_session_configurator.cc) states hold for Chrome 155 and 156 as well.
 
 Five directories are few for a field trial as rare as `IncreaseAmplificationFactor`, so another rare one could still be there. The check on each session's HTTP/3 normal form stays.
+
+## The Recording Cases
+
+`tests/baselines/RELEASE/cases` and `chrome.txt` come from the first of three sessions of each Chrome Release, recorded on 2026-11-06 through `record.ps1` with [the same builds](#where-each-chrome-release-comes-from), on the same Windows machine, windowed.
+
+The three sessions of each Chrome Release gave identical normal forms in all nine files, and none drew [the field trial that reaches the wire](#chrome-157). In each, `http1.json`, `http2.json` and `http3.json` came out byte for byte the same as the Baselines already there, so neither the extended kit nor a newer seed moved them. The checks in [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording hold for all nine sessions, so each case is what it says it is in windowed Chrome too.
+
+A connection looks the same in every file of a protocol. `tls`, `quic`, `http2` and `http3` are the same in a main file, in its file in `cases` and, over HTTP/1.1 and HTTP/2, in the file through the proxy. So the cases differ from each other in their requests only.
+
+### What differs between Chrome Releases
+
+Only `sec-ch-ua` and `User-Agent`, with [the values above](#what-differs-from-chrome-157). Over the six files in `cases` that is 76 fields of `sec-ch-ua` and 82 of `User-Agent` per Chrome Release. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so they differ in `User-Agent` alone.
+
+### Their seed
+
+Version `20261106-010110.492000-production`, a day newer than [the one above](#their-variations-seeds), with 630, 618 and 584 studies for Chrome 155, 156 and 157. All sessions of a Chrome Release got the same bytes. `IncreaseHttp3Usage` is the same group as before in all of them.
+
+Field trials differ between sessions as they did before, with no effect on the normal form. These are new in that list: `PrioritizeResizeTaskRunnerOnStartupStudy` and `WinSboxCsrssLockdown` between user data directories and `CacheGurlSchemeIsHttpOrHttpsResult` between starts in Chrome 155, `SearchPrefetchHighPriorityPrefetches` between user data directories in Chrome 156, and `PreconnectManagerDirectFastPath` between starts in Chrome 157.
 
 ## A Chrome that has run for a while
 
