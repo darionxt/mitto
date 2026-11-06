@@ -168,7 +168,9 @@ def test_read_gives_the_rest_of_what_iter_bytes_has_not_given(server: StreamServ
         assert second
 
     with mitto.Session() as session, session.stream("GET", server.url("/body")) as response:
-        assert next(response.iter_bytes()) == BODY
+        start = next(response.iter_bytes())
+        assert start
+        assert start + response.read() == BODY
         assert response.read() == b""
         assert list(response.iter_bytes()) == []
 
@@ -268,8 +270,8 @@ def test_arguments_are_checked_as_for_any_request(server: StreamServer) -> None:
 def test_the_timeout_of_the_session_applies(server: StreamServer) -> None:
     with (
         mitto.Session(timeout=0.2) as session,
-        session.stream("GET", server.url("/held")) as response,
         pytest.raises(mitto.RequestTimeoutError),
+        session.stream("GET", server.url("/held")) as response,
     ):
         response.read()
 
@@ -782,14 +784,21 @@ def test_the_event_fd_says_when_a_stream_is_wanted(server: StreamServer) -> None
     assert server.received[-1].body == WHOLE
 
 
-def test_nothing_is_wanted_until_net_can_use_it() -> None:
+def test_a_stream_is_not_touched_if_no_connection_comes() -> None:
+    started = False
+
+    def parts() -> Iterator[bytes]:
+        nonlocal started
+        started = True
+        yield b"part"
+
     with socket.create_server(("127.0.0.1", 0)) as listener:
         port = listener.getsockname()[1]
-        with _native.Session() as session, _start_stream(session, f"http://127.0.0.1:{port}/", 1) as request:
-            # The server has not accepted, and //net has not read any of the body before OnConnected either way. The event
-            # of a connection that goes through may arrive soon. A wait this short only shows that it is not at once.
-            event = request.next_event(0)
-            assert event is None or isinstance(event, BodyWanted)
+
+    with mitto.Session() as session, pytest.raises(mitto.ConnectionFailedError):
+        session.post(f"http://127.0.0.1:{port}/", data=parts(), headers={"Content-Length": "4"})
+
+    assert not started
 
 
 def test_a_write_takes_what_the_native_core_holds_and_then_no_more(server: StreamServer) -> None:

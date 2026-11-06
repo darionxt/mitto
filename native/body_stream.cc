@@ -9,11 +9,9 @@
 namespace mitto {
 namespace {
 
-// How much of the body stays here. //net goes on a new connection when a reused
-// one turns out to be gone, and has to send the body again from its start. This
-// is ChunkedDataPipeUploadDataStream::kDefaultDestinationWindowSize, which Chrome
-// keeps for a page's stream for the same reason. //net cannot have sent more than
-// about this much before it finds out, unless the server read it.
+// How much of the body stays here, for //net to send again on a new connection
+// when a reused one turns out to be gone. This is what Chrome keeps of a page's
+// stream, ChunkedDataPipeUploadDataStream::kDefaultDestinationWindowSize.
 constexpr size_t kKeptSize = 65535;
 
 }  // namespace
@@ -96,9 +94,9 @@ int BodyStream::ReadInternal(net::IOBuffer* buf, int buf_len) {
   if (size_) {
     return net::ERR_UPLOAD_FILE_CHANGED;
   }
-  // These bytes never go in the same read as the last of the body. That is what
-  // the Baselines of a page's stream show: over HTTP/2, a last DATA frame with
-  // nothing in it.
+  // The end never comes in the same read as the last bytes of the body, as the
+  // Baselines of a page's stream show: over HTTP/2, a last DATA frame with nothing
+  // in it.
   SetIsFinalChunk();
   return 0;
 }

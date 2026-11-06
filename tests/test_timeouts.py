@@ -592,7 +592,11 @@ def test_a_wait_for_the_next_part_of_a_stream_does_not_run_out_the_read_timer_ov
 
 @pytest.mark.usefixtures("native_library")
 def test_the_read_timer_covers_the_wait_for_an_answer_after_the_last_part_of_a_stream(silent_port: int) -> None:
-    with mitto.Session() as session, pytest.raises(mitto.RequestTimeoutError) as caught:
+    with (
+        mitto.Session() as session,
+        takes_at_least(SHORT_SECONDS),
+        pytest.raises(mitto.RequestTimeoutError) as caught,
+    ):
         session.post(
             f"http://127.0.0.1:{silent_port}/",
             data=[BODY],
@@ -606,7 +610,11 @@ def test_the_read_timer_covers_the_wait_for_an_answer_after_the_last_part_of_a_s
 @pytest.mark.usefixtures("native_library")
 def test_a_stream_that_a_server_stops_taking_runs_out_the_read_timer(silent_port: int) -> None:
     parts = LARGE_BODY_SIZE // READ_SIZE_OF_A_SLOW_SERVER
-    with mitto.Session() as session, pytest.raises(mitto.RequestTimeoutError) as caught:
+    with (
+        mitto.Session() as session,
+        takes_at_least(SHORT_SECONDS),
+        pytest.raises(mitto.RequestTimeoutError) as caught,
+    ):
         session.post(
             f"http://127.0.0.1:{silent_port}/",
             data=[bytes(READ_SIZE_OF_A_SLOW_SERVER)] * parts,
