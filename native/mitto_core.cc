@@ -54,7 +54,6 @@
 #include "net/base/request_priority.h"
 #include "net/base/transport_info.h"
 #include "net/base/upload_bytes_element_reader.h"
-#include "net/base/upload_progress.h"
 #include "net/cert/caching_cert_verifier.h"
 #include "net/cert/cert_net_fetcher.h"
 #include "net/cert/cert_verifier.h"
@@ -348,8 +347,7 @@ class RequestJob final : public net::URLRequest::Delegate {
   void StartReadTimer() {
     if (options_.read_timeout) {
       received_bytes_at_read_timer_start_ = request_->GetTotalReceivedBytes();
-      uploaded_bytes_at_read_timer_start_ =
-          request_->GetUploadProgress().position();
+      sent_bytes_at_read_timer_start_ = request_->GetTotalSentBytes();
       read_timer_.Start(FROM_HERE, *options_.read_timeout,
                         base::BindOnce(&RequestJob::OnReadTimerFired,
                                        base::Unretained(this)));
@@ -362,8 +360,7 @@ class RequestJob final : public net::URLRequest::Delegate {
     // that is still taking the body has no reason to answer yet either.
     if (request_->GetTotalReceivedBytes() !=
             received_bytes_at_read_timer_start_ ||
-        request_->GetUploadProgress().position() !=
-            uploaded_bytes_at_read_timer_start_) {
+        request_->GetTotalSentBytes() != sent_bytes_at_read_timer_start_) {
       StartReadTimer();
       return;
     }
@@ -395,7 +392,7 @@ class RequestJob final : public net::URLRequest::Delegate {
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
   base::ByteSize received_bytes_at_read_timer_start_;
-  uint64_t uploaded_bytes_at_read_timer_start_ = 0;
+  base::ByteSize sent_bytes_at_read_timer_start_;
   base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};
 };
 

@@ -12,7 +12,7 @@ import pytest
 import mitto
 from mitto._native import PrivateSettings
 from tests.local_server import LocalHTTPServer
-from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer
+from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer, normal_form
 from tools.capture.http2 import RST_STREAM
 from tools.parity.replay import run_of, session_settings
 
@@ -28,6 +28,7 @@ REDIRECT_LIMIT = 20
 REDIRECT_STATUSES = [301, 302, 303, 307, 308]
 FINAL_BODY = b"final"
 REDIRECT_BODY = b"unwanted"
+REQUEST_BODY = b"the body of a request"
 SECRET = "Bearer secret"
 
 
@@ -172,6 +173,92 @@ def test_net_decides_the_method_of_the_next_hop(
 
     assert response.status == 200
     assert _methods(server) == [method, next_method]
+
+
+@pytest.mark.parametrize(
+    ("status", "next_method", "next_body"),
+    [
+        (301, "GET", b""),
+        (302, "GET", b""),
+        (303, "GET", b""),
+        (307, "POST", REQUEST_BODY),
+        (308, "POST", REQUEST_BODY),
+    ],
+)
+def test_a_body_goes_on_only_with_its_method(
+    server: RedirectServer, status: int, next_method: str, next_body: bytes
+) -> None:
+    with mitto.Session() as session:
+        response = session.post(f"{server.url}/status/{status}?to=/final", data=REQUEST_BODY.decode())
+
+    assert response.content == FINAL_BODY
+    first, second = server.received
+    assert (first.method, first.body) == ("POST", REQUEST_BODY)
+    assert (second.method, second.body) == (next_method, next_body)
+
+
+@pytest.mark.parametrize("status", [301, 302, 303])
+def test_a_method_that_changes_leaves_out_what_describes_the_body(server: RedirectServer, status: int) -> None:
+    with mitto.Session() as session:
+        session.post(f"{server.url}/status/{status}?to=/final", data=REQUEST_BODY.decode())
+
+    first, second = server.received
+    assert first.headers["content-length"] == str(len(REQUEST_BODY))
+    assert "content-type" in first.headers
+    assert {"content-length", "content-type", "origin"}.isdisjoint(second.headers)
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_a_method_that_stays_keeps_what_describes_the_body(server: RedirectServer, status: int) -> None:
+    with mitto.Session() as session:
+        session.post(f"{server.url}/status/{status}?to=/final", data=REQUEST_BODY.decode())
+
+    first, second = server.received
+    assert second.headers["content-length"] == str(len(REQUEST_BODY))
+    assert second.headers["content-type"] == first.headers["content-type"]
+
+
+@pytest.mark.parametrize("status", [307, 308])
+def test_a_body_is_sent_again_at_each_hop(server: RedirectServer, status: int) -> None:
+    second = f"{server.url}/status/{status}?to=/final"
+
+    with mitto.Session() as session:
+        session.post(f"{server.url}/status/{status}?to={second}", data=REQUEST_BODY.decode())
+
+    assert [request.body for request in server.received] == [REQUEST_BODY] * 3
+
+
+def test_a_body_with_no_bytes_goes_on_as_well(server: RedirectServer) -> None:
+    with mitto.Session() as session:
+        session.post(f"{server.url}/status/307?to=/final", data=b"")
+
+    assert [request.headers["content-length"] for request in server.received] == ["0", "0"]
+
+
+def test_a_body_goes_to_another_origin_without_authorization(
+    server: RedirectServer, other_origin: RedirectServer
+) -> None:
+    with mitto.Session() as session:
+        session.post(
+            f"{server.url}/status/307?to={other_origin.url}/final",
+            data=REQUEST_BODY.decode(),
+            headers={"Authorization": SECRET},
+        )
+
+    [received] = other_origin.received
+    assert received.body == REQUEST_BODY
+    assert "authorization" not in received.headers
+
+
+@pytest.mark.parametrize("status", REDIRECT_STATUSES)
+def test_a_body_is_sent_once_when_a_redirect_is_not_followed(server: RedirectServer, status: int) -> None:
+    with mitto.Session() as session:
+        response = session.post(
+            f"{server.url}/status/{status}?to=/final", data=REQUEST_BODY.decode(), follow_redirects=False
+        )
+
+    assert response.status == status
+    assert [(request.method, request.body) for request in server.received] == [("POST", REQUEST_BODY)]
 
 
 def test_the_history_holds_each_hop_in_order(server: RedirectServer, other_origin: RedirectServer) -> None:
@@ -340,6 +427,22 @@ def test_a_redirect_over_each_protocol(protocol: str, hops: int) -> None:
     assert response.protocol == protocol
     assert len(response.history) == hops
     assert response.status == (200 if hops else 302)
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_body_is_dropped_at_a_redirect_over_each_protocol(protocol: str) -> None:
+    with CaptureServer() as server:
+        url, settings, route, host = _chain_over(server, protocol)
+        with mitto.Session(_settings=settings) as session:
+            response = session.post(url, kind=mitto.RequestKind.FETCH, data=REQUEST_BODY.decode())
+        hops_of_a_fetch = [case for case in CASES if case.name.startswith("redirect_fetch_")]
+        form = normal_form(server.recording(route, host=host), hops_of_a_fetch)
+
+    assert response.protocol == protocol
+    assert len(response.history) == 3
+    requests = cast(dict[str, dict[str, Any]], form["requests"])
+    assert requests["redirect_fetch_1"]["body"] == REQUEST_BODY.decode()
+    assert all("body" not in requests[f"redirect_fetch_{hop}"] for hop in (2, 3, 4))
 
 
 @pytest.mark.parametrize("hops", [3, 0], ids=["followed", "not followed"])

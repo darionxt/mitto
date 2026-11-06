@@ -489,8 +489,10 @@ def test_a_native_timer_takes_any_positive_32_bit_number(native_library: ctypes.
 
 
 @contextmanager
-def _server_of_one_slow_upload(read_size: int, pause_seconds: float) -> Generator[int]:
-    """Accept one connection, read a body slowly and answer once it has all come. Yield the port."""
+def _server_of_one_slow_upload(
+    read_size: int, pause_seconds: float, answer: bytes = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
+) -> Generator[int]:
+    """Accept one connection, read a body slowly and give `answer` once it has all come. Yield the port."""
 
     def serve(listener: socket.socket) -> None:
         connection, _ = listener.accept()
@@ -504,7 +506,7 @@ def _server_of_one_slow_upload(read_size: int, pause_seconds: float) -> Generato
             while remaining > 0:
                 time.sleep(pause_seconds)
                 remaining -= len(connection.recv(read_size))
-            connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            connection.sendall(answer)
 
     with socket.create_server(("127.0.0.1", 0)) as listener:
         thread = threading.Thread(target=serve, args=(listener,), daemon=True)
@@ -525,6 +527,27 @@ def test_a_body_that_keeps_moving_does_not_run_out_the_read_timer() -> None:
 
     assert response.status == 200
     assert time.monotonic() - started_at > ROOMY_SECONDS
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_body_that_keeps_moving_after_a_redirect_does_not_run_out_the_read_timer() -> None:
+    # //net keeps the upload progress of the first hop, which a read timer must not take for a stalled server.
+    body = bytes(LARGE_BODY_SIZE)
+    with (
+        _server_of_one_slow_upload(READ_SIZE_OF_A_SLOW_SERVER, PAUSE_SECONDS) as slow_port,
+        _server_of_one_slow_upload(
+            LARGE_BODY_SIZE,
+            0,
+            f"HTTP/1.1 307 Redirect\r\nLocation: http://127.0.0.1:{slow_port}/\r\nContent-Length: 0\r\n\r\n".encode(),
+        ) as port,
+        mitto.Session() as session,
+    ):
+        response = session.post(
+            f"http://127.0.0.1:{port}/", data=body, timeout=Timeout(read=ROOMY_SECONDS, total=LONG_SECONDS)
+        )
+
+    assert response.status == 200
+    assert len(response.history) == 1
 
 
 @pytest.mark.usefixtures("native_library")
