@@ -450,6 +450,32 @@ def test_an_iterable_that_does_not_keep_to_its_length_is_refused(server: StreamS
         assert session.get(server.url("/body")).content == BODY
 
 
+def test_an_iterable_with_a_length_of_zero_has_to_give_nothing(server: StreamServer) -> None:
+    # //net reads nothing of a body with this size, and the check still has to come.
+    with mitto.Session() as session:
+        with pytest.raises(ValueError, match="more bytes"):
+            session.post(server.url("/"), data=[b"part"], headers={"Content-Length": "0"})
+
+        response = session.post(server.url("/"), data=[b"", b""], headers={"Content-Length": "0"})
+
+    assert response.status == 200
+    assert server.received[-1].body == b""
+
+
+def test_an_iterable_with_a_length_of_zero_gets_to_end(server: StreamServer) -> None:
+    ended = False
+
+    def parts() -> Iterator[bytes]:
+        nonlocal ended
+        yield from ()
+        ended = True
+
+    with mitto.Session() as session:
+        session.post(server.url("/"), data=parts(), headers={"Content-Length": "0"})
+
+    assert ended
+
+
 def test_a_stream_that_gives_less_than_its_size_fails_the_request(server: StreamServer) -> None:
     # What a file that becomes shorter on the way does, which encode_body() does not check.
     stream = StreamBody(iter([memoryview(b"half")]), len(b"half") * 2)

@@ -494,9 +494,10 @@ MITTO_EXPORT int32_t mitto_request_read(MittoRequest* request,
 // //net has taken all of that, so a server that does not read makes the caller
 // wait through flow control. The first MITTO_EVENT_BODY_WANTED event comes when
 // //net can use the first bytes, so a request that fails before that has read none
-// of the body. Each later one says that all that was written has gone. Writing
-// before an event is allowed, and returns -1 (ERR_IO_PENDING) if there is no room
-// yet, which the next event will say has changed.
+// of the body, and a "stream_body_size" of 0 gets one at that same point. Each
+// later one says that all that was written has gone. Writing before an event is
+// allowed, and returns -1 (ERR_IO_PENDING) if there is no room yet, which the next
+// event will say has changed.
 //
 // Returns 0 if nothing more of the body is wanted, because the request has
 // finished or a 303 has dropped the body. Returns -4 (ERR_INVALID_ARGUMENT) for an

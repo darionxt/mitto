@@ -57,6 +57,15 @@ int BodyStream::InitInternal(const net::NetLogWithSource& net_log) {
   if (size_) {
     SetSize(*size_);
   }
+  // //net never reads a body of no bytes. The caller still gets its turn to end
+  // it, which is also its turn to find that it holds more.
+  if (size_ == 0u) {
+    bool event_pushed = false;
+    channel_->TakeBody(base::span<uint8_t>(), event_pushed);
+    if (event_pushed) {
+      delegate_->OnBodyWanted();
+    }
+  }
   return net::OK;
 }
 
