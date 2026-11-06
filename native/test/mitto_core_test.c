@@ -1,17 +1,20 @@
 // Fetches one URL through the native core and prints the result. Exits with 1
 // if the library does not match this header or the request fails.
 //
-// Usage: mitto_core_test [url]
+// Usage: mitto_core_test [url [settings]]
+//
+// `settings` is the JSON that mitto_session_create() reads.
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "mitto/mitto.h"
 
 #define STRINGIFY_VALUE(value) #value
 #define STRINGIFY(value) STRINGIFY_VALUE(value)
 
-static const char kSettings[] =
+static const char kDefaultSettings[] =
     "{\"version\": " STRINGIFY(MITTO_SETTINGS_VERSION) "}";
 
 static const MittoHeader kHeaders[] = {
@@ -20,6 +23,7 @@ static const MittoHeader kHeaders[] = {
 
 int main(int argc, char** argv) {
   const char* url = argc > 1 ? argv[1] : "https://example.com/";
+  const char* settings = argc > 2 ? argv[2] : kDefaultSettings;
 
   if (mitto_abi_version() != MITTO_ABI_VERSION) {
     fprintf(stderr, "ABI version %" PRIu32 " does not match the header's %d\n",
@@ -28,8 +32,7 @@ int main(int argc, char** argv) {
   }
 
   MittoSession* session;
-  int32_t error =
-      mitto_session_create(kSettings, sizeof(kSettings) - 1, &session);
+  int32_t error = mitto_session_create(settings, strlen(settings), &session);
   if (error != 0) {
     fprintf(stderr, "creating a Session failed with net error %" PRId32 "\n",
             error);

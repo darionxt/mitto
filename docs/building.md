@@ -82,7 +82,7 @@ Run the test program, which needs a network connection:
 out/mitto/mitto_core_test
 ```
 
-It fetches `https://example.com/` unless given another URL. The first line of its output shows the status and the protocol:
+It fetches `https://example.com/` unless given another URL, and a second argument gives it the settings that `mitto_session_create()` reads. The first line of its output shows the status and the protocol:
 
 ```text
 status 200 over h2
@@ -121,7 +121,7 @@ On macOS the file is `libmitto_core.dylib`.
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.5 MiB compressed, 174 MiB unpacked, about 12,300 files.
+Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.6 MiB compressed, 174 MiB unpacked, about 12,400 files.
 
 | Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked |
 | --- | --- | --- | --- | --- | --- |
@@ -155,6 +155,49 @@ A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs
 The job keeps only the library, in the Actions cache: 28 MB on Linux and 12 MB on macOS, compressed. The key is the runner's name and a hash of `native/` and `tools/workspace/`, which holds the pin of the export. When none of that has changed, the job skips the build. A pull request can read the caches of `main` and its own, so one that changes neither directory uses the library that `main` built. One that changes either builds once, and `main` builds again after the merge.
 
 `xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use. The Python jobs use it as well, because 9 of 90 jobs on `macos-latest` got no runner within 15 minutes and were cancelled, and none of 36 on `xcode-27` did.
+
+### Sanitizer builds and the fuzz target
+
+On Linux x86_64 the same export also makes the builds that look for memory bugs. Each one has its own directory under `out/`, so one directory can hold them all, and they share about 2.4 GiB of sources and toolchain there. macOS refuses them, because only Linux traces them.
+
+```bash
+uv run tools/workspace/export.py build /absolute/path/to/new/directory --config asan
+```
+
+| `--config` | Turns on | Also builds | Build directory |
+| --- | --- | --- | --- |
+| `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
+| `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer` | 2.2 GiB |
+
+Each of them stops at the first report.
+
+The fuzz target has a build of its own because Chromium's fuzzing builds define `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`, which changes what BoringSSL does, so the library in that build is not the one that ships.
+
+To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:
+
+```bash
+export MITTO_CORE_TEST=/absolute/path/to/new/directory/chromium-<tag>/src/out/asan/mitto_core_test
+ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
+```
+
+It makes a request over HTTP/1.1, HTTP/2 and HTTP/3, one that fails on the certificate, and one with settings that are refused. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
+
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own:
+
+```bash
+mkdir corpus
+ASAN_OPTIONS=detect_leaks=1 /absolute/path/to/new/directory/chromium-<tag>/src/out/fuzz/session_settings_fuzzer -max_total_time=60 -dict=native/test/session_settings_fuzzer.dict corpus native/test/session_settings_corpus
+```
+
+[`.github/workflows/sanitizers.yml`](../.github/workflows/sanitizers.yml) runs one job per build on `ubuntu-latest`. It runs when a pull request or `main` changes `native/` or `tools/workspace/`, and every day, when the unchanged builds come from the cache and only the fuzzing takes real time. It fuzzes for five minutes and keeps any input that crashed the target as an artifact of the run. These jobs are not required checks, because they do not run on every pull request.
+
+Times are from two runs from a cold cache.
+
+| | `asan` | `ubsan` | `fuzz` |
+| --- | --- | --- | --- |
+| Build | 19 and 26 minutes | 17 and 20 minutes | 24 and 26 minutes |
+| Cached, compressed | 59 MiB | 43 MiB | 39 MiB |
 
 ## Work on the Python package
 
@@ -253,10 +296,10 @@ The repositories keep every tag and commit they fetch. Delete `$MITTO_WORKSPACE/
 
 - the **Engine Release** moves;
 - a patch in [`tools/workspace/patches`](../tools/workspace/patches) or a value in [`tools/workspace/args.gn`](../tools/workspace/args.gn) changes;
-- a new build configuration, such as a sanitizer build, needs files that this one does not;
+- a new build configuration, such as another sanitizer, needs files that this one does not;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's inputs, so each Host contributes a **slice**. The steps take about 15 minutes on two machines that have built the native core before.
+What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's inputs, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: only the plain one on macOS, and also `asan`, `ubsan` and `fuzz` on Linux. The steps take about 45 minutes on two machines that have built the native core before.
 
 1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository:
 
@@ -265,7 +308,7 @@ What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's 
    uv run tools/workspace/export.py slice
    ```
 
-   This builds the native core from nothing in `out/export-trace`, with depot_tools off the `PATH`, and then copies what the build used to `$MITTO_WORKSPACE/export/<tag>/<host>`. It removes `out/export-trace` afterwards, and `out/mitto` stays as it was.
+   This builds the native core from nothing in `out/export-trace-<config>`, once per build configuration, with depot_tools off the `PATH`, and then copies what those builds used to `$MITTO_WORKSPACE/export/<tag>/<host>`. It removes each build directory afterwards, and `out/mitto` stays as it was.
 
 2. Copy the macOS slice to the same place on the Linux machine, for example with `rsync -az`.
 
@@ -277,7 +320,7 @@ What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's 
 
    This writes `$MITTO_WORKSPACE/export/<tag>/mitto-chromium-<tag>.tar.xz` and prints its size, its hash and its contents per directory. The same slices give the same bytes.
 
-4. On each Host, [build from that archive](#build-from-the-source-export) with `--archive` in a new directory, and run the tests. The build must not find its way back to the checkout: keep depot_tools off the `PATH` and `MITTO_WORKSPACE` unset. The command must also say that the library is the same as the one the slice built. A difference means that a file the export left out changed the result without stopping the build, for example through `path_exists()` in GN or `__has_include` in C++. On Linux the comparison covers the whole file. On macOS it covers the file's sections, because the rest holds the absolute paths of the object files.
+4. On each Host, [build from that archive](#build-from-the-source-export) with `--archive` in a new directory, once with each `--config` that the Host has, and run the tests. The build must not find its way back to the checkout: keep depot_tools off the `PATH` and `MITTO_WORKSPACE` unset. The command must also say each time that the library is the same as the one the slice built. A difference means that a file the export left out changed the result without stopping the build, for example through `path_exists()` in GN or `__has_include` in C++. On Linux the comparison covers the whole file. On macOS it covers the file's sections, because the rest holds the absolute paths of the object files.
 
 5. Publish the archive, with the owner's OK:
 
@@ -285,7 +328,7 @@ What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's 
    gh release create chromium-<tag> "$MITTO_WORKSPACE/export/<tag>/mitto-chromium-<tag>.tar.xz" --prerelease --title "Source export of Chromium <tag>" --notes "Chromium's files for building the native core. See docs/building.md."
    ```
 
-   A later export of the same Engine Release gets a new asset name in the same release, such as `mitto-chromium-<tag>-2.tar.xz`, because commits that name the earlier asset must still build.
+   A later export of the same Engine Release gets a new asset name in the same release, because commits that name the earlier asset must still build. Copy the archive to a name such as `mitto-chromium-<tag>-2.tar.xz` and add it with `gh release upload chromium-<tag>`.
 
 6. Write the asset's URL and SHA-256 into [`tools/workspace/source_export.json`](../tools/workspace/source_export.json).
 

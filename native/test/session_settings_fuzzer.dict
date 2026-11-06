@@ -1,0 +1,8 @@
+# The words of the format described at mitto_session_create() in mitto.h.
+"\"version\""
+"\"ignore_certificate_errors_spki_list\""
+"\"accept_language\""
+"\"origins_to_force_quic_on\""
+"\"*\""
+"null"
+"true"
