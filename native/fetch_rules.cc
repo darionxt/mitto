@@ -476,6 +476,10 @@ void FetchRules::ConfigureRestartedRequest(net::URLRequest& request,
   if (keeps_url_chain) {
     request.SetURLChain(old_request.url_chain());
   }
+  // As at a start. The lines came from a hop that may have been trustworthy.
+  if (!net::IsUrlPotentiallyTrustworthy(request.url())) {
+    RemoveSecHeaders(request, params_);
+  }
   SetFetchMetadataHeaders(request, params_,
                           /*pending_redirect=*/std::nullopt);
 }

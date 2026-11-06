@@ -825,6 +825,19 @@ def test_the_hop_after_a_restart_also_gets_what_the_first_url_had_and_the_hop_af
     assert hop_after.hints == ["sec-ch-ua", "sec-ch-ua-mobile", ASKED_FOR, "sec-ch-ua-platform"]
 
 
+def test_a_restart_at_plain_http_sends_what_the_first_request_there_did(servers: Servers) -> None:
+    last = servers.https(path="/last", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
+    with new_session() as session:
+        session.get(redirect(servers.http(path="/first"), last))
+
+    first, restart = servers.plain.received
+    assert restart.names == first.names
+    assert not [name for name in restart.names if name.startswith(("sec-fetch-", "sec-ch-"))]
+    assert ASKED_FOR not in servers.received[0].hints
+    assert ASKED_FOR in servers.received[1].hints
+    assert servers.received[1].header("Sec-Fetch-Site") == "none"
+
+
 def test_a_restart_for_a_critical_hint_keeps_the_referer_and_forgets_where_the_chain_has_been(servers: Servers) -> None:
     page = servers.https(HOST, "/page")
     last = servers.https(CROSS_SITE, "/last", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR)
