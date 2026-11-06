@@ -28,6 +28,8 @@ shared_library("mitto_core") {
     "session_settings.h",
     "ssl_config_service_mojo.cc",
     "ssl_config_service_mojo.h",
+    "stub_resolver_config_reader.cc",
+    "stub_resolver_config_reader.h",
   ]
   public_configs = [ ":public_api" ]
   deps = [

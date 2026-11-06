@@ -80,12 +80,19 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 | `native/network_session_configurator.cc` | HTTP/2 connection settings, and with `enable_http2` the ALPN list. QUIC parameters, and the origins that a field trial tells Chrome speak QUIC | `components/network_session_configurator`, and the hints in `net/http/http_server_properties.cc` |
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
 | `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
+| `native/stub_resolver_config_reader.cc` | The stub resolver: the built-in DNS client, additional query types, which is what asks for HTTPS records, secure mode automatic, and the upgrade to DNS over HTTPS | `ConfigureStubHostResolver` in `services/network/network_service.cc`, with the defaults in `chrome/browser/net/stub_resolver_config_reader.cc` |
 
 A value stated here stays when a new **Engine Release** changes a default, so a Parity Check fails instead of mitto moving with the engine. That matters because an older **Chrome Release** must keep sending what it sent. All of this holds for every Persona, since Chrome 155, 156 and 157 [send the same in it](persona.md#what-differs-between-chrome-releases).
 
 When new Baselines list a feature in `chrome.txt` that the native core's build holds, add it to `native/feature_list.cc`. A feature outside that build, such as one in `//content`, does nothing in the native core. `chrome.txt` holds only names that look network-related, and a recording draws one group of each study, so a study with a small group may not show. The variations seed itself holds every study.
 
 The trust anchors come from the root store compiled into `//net`, as they do in a Chrome that has just started. mitto has no component updates, so the list stays that of the Engine Release until the next one, whatever a Chrome that has run for a while has moved to ([what can differ](capture.md#what-can-differ-between-chrome-installations)).
+
+`native/mitto_core.cc` creates one `NetworkChangeNotifier` and one `HostResolverManager` per process, as the network service does, and each **Session** has its own cache of answers on that manager. A Session starts DoH probes 5 seconds after the process created them, the default of `kDelayInitialDohProbeTimeoutParam`.
+
+The first Session in a process waits up to a second for the system's DNS settings, which Chrome does not do, because Chrome has them long before a page asks for a host. A program's first request can come right away, and without those settings it would go to the system's resolver, which sees no HTTPS records.
+
+No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
 
 ## Tests of the comparison
 

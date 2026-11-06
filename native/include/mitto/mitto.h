@@ -101,7 +101,9 @@ typedef struct MittoEvent {
 // version they were written for before making any other call.
 MITTO_EXPORT uint32_t mitto_abi_version(void);
 
-// Creates a Session. May be called from any thread.
+// Creates a Session. May be called from any thread. The first call in a process
+// also waits for the system's DNS settings, for up to a second, so that the
+// first request can already see HTTPS records.
 //
 // `settings` is a buffer of `settings_size` bytes that holds one UTF-8 JSON
 // object and needs no trailing NUL byte:
@@ -111,6 +113,7 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //     "ignore_certificate_errors_spki_list": ["<SPKI hash>"],
 //     "accept_language": "en-US,en;q=0.9",
 //     "origins_to_force_quic_on": ["<host>:<port>"],
+//     "dns_nameserver": "<IP address>:<port>",
 //     "host_resolver_rules": "MAP <host> <address>"
 //   }
 //
@@ -129,6 +132,9 @@ MITTO_EXPORT uint32_t mitto_abi_version(void);
 //   for each of their hosts. The certificate still has to verify. "*" stands
 //   for every origin. The default is an empty list, so that a request learns of
 //   QUIC from Alt-Svc.
+// - "dns_nameserver" asks this one server in place of what the system's settings
+//   name, for tests. An IPv6 address is written in brackets. The default is to
+//   use the system's settings.
 // - "host_resolver_rules" holds rules that change which address a name resolves
 //   to, separated by commas, with the meaning of Chrome's
 //   --host-resolver-rules. Only the name's resolution changes, so SNI, the

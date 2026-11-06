@@ -334,6 +334,16 @@ def test_session_create_accepts_an_origin_to_force_quic_on(native_library: ctype
     native_library.mitto_session_destroy(handle)
 
 
+@pytest.mark.parametrize("nameserver", ["127.0.0.1:53", "[::1]:5353"])
+def test_session_create_accepts_a_dns_nameserver(native_library: ctypes.CDLL, nameserver: str) -> None:
+    settings = f'{{"version": 1, "dns_nameserver": "{nameserver}"}}'.encode()
+
+    error, handle = create_session(native_library, settings)
+
+    assert error == 0
+    native_library.mitto_session_destroy(handle)
+
+
 @pytest.mark.parametrize(
     "rules",
     [
@@ -388,6 +398,14 @@ def test_session_create_reads_the_settings_by_their_size(native_library: ctypes.
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["A.test:443"]}', id="origin-is-not-canonical"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["[::1]:443"]}', id="origin-is-ipv6"),
         pytest.param(b'{"version": 1, "origins_to_force_quic_on": ["a\\u0000.test:443"]}', id="nul-in-origin"),
+        pytest.param(b'{"version": 1, "dns_nameserver": 53}', id="nameserver-is-a-number"),
+        pytest.param(b'{"version": 1, "dns_nameserver": null}', id="nameserver-is-null"),
+        pytest.param(b'{"version": 1, "dns_nameserver": ""}', id="nameserver-is-empty"),
+        pytest.param(b'{"version": 1, "dns_nameserver": "127.0.0.1"}', id="nameserver-has-no-port"),
+        pytest.param(b'{"version": 1, "dns_nameserver": "127.0.0.1:0"}', id="nameserver-has-port-zero"),
+        pytest.param(b'{"version": 1, "dns_nameserver": "127.0.0.1:65536"}', id="nameserver-has-a-large-port"),
+        pytest.param(b'{"version": 1, "dns_nameserver": "dns.test:53"}', id="nameserver-is-a-name"),
+        pytest.param(b'{"version": 1, "dns_nameserver": "::1:53"}', id="nameserver-ipv6-without-brackets"),
         pytest.param(b'{"version": 1, "host_resolver_rules": 1}', id="rules-are-a-number"),
         pytest.param(b'{"version": 1, "host_resolver_rules": ["MAP a.test 127.0.0.1"]}', id="rules-are-a-list"),
         pytest.param(b'{"version": 1, "host_resolver_rules": "nonsense"}', id="rule-is-nonsense"),
