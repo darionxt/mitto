@@ -37,6 +37,10 @@
 .PARAMETER ExistingUserDataDir
     Records with a user data directory that has run before and holds a variations seed, to see what a Chrome that has
     been running for a while sends. Close its Chrome first. What this records is a comparison, not a Baseline.
+
+.PARAMETER SettleSeconds
+    Lets each start of Chrome run this long on an empty tab before the page opens. In its first seconds, Chrome has not
+    loaded its components yet and a recording is over by then. What this records is a comparison, not a Baseline.
 #>
 [CmdletBinding()]
 param(
@@ -47,7 +51,8 @@ param(
     [switch]$NoDebuggingPort,
     [switch]$NoVariationsSeed,
     [string[]]$ExtraFlags = @(),
-    [switch]$ExistingUserDataDir
+    [switch]$ExistingUserDataDir,
+    [int]$SettleSeconds = 0
 )
 
 Set-StrictMode -Version Latest
@@ -276,7 +281,7 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $installed = (Get-Item $Chrome).VersionInfo.ProductVersion
 $product = (Get-Item $Chrome).VersionInfo.ProductName
-$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0) -and (-not $ExistingUserDataDir)
+$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0) -and (-not $ExistingUserDataDir) -and ($SettleSeconds -eq 0)
 Write-Step "$product $installed"
 
 $BaseFlags = @(
@@ -329,6 +334,11 @@ try {
         Write-Step "Recording $($run.label)"
         $flags = @($run.flags | ForEach-Object { Format-Flag $_ }) + $RecordingFlags
         Remove-Item (Join-Path $UserDataDir 'DevToolsActivePort') -ErrorAction SilentlyContinue
+        if ($SettleSeconds -gt 0) {
+            # The second start only hands the address to the Chrome that is running.
+            Start-Chrome $flags 'about:blank'
+            Start-Sleep -Seconds $SettleSeconds
+        }
         Start-Chrome $flags $run.url
         $written = Join-Path $Out "$($run.name).json"
         Wait-Until "the page at $($run.url)" $PageTimeoutSeconds {
