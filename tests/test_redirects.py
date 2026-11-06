@@ -374,38 +374,53 @@ def test_a_redirect_to_a_scheme_that_net_does_not_speak(server: RedirectServer) 
     assert caught.value.net_error == ERR_UNKNOWN_URL_SCHEME
 
 
-def test_authorization_stays_on_the_same_origin(server: RedirectServer) -> None:
+@pytest.mark.parametrize("name", ["Authorization", "Cookie"])
+def test_a_callers_credentials_stay_on_the_same_origin(server: RedirectServer, name: str) -> None:
     with mitto.Session() as session:
-        session.get(f"{server.url}/status/302?to=/final", headers={"Authorization": SECRET})
+        session.get(f"{server.url}/status/302?to=/final", headers={name: SECRET})
 
-    assert [request.headers.get("authorization") for request in server.received] == [SECRET, SECRET]
+    assert [request.headers.get(name.lower()) for request in server.received] == [SECRET, SECRET]
 
 
-@pytest.mark.parametrize("name", ["Authorization", "authorization"])
-def test_authorization_does_not_go_to_another_origin(
+@pytest.mark.parametrize("name", ["Authorization", "authorization", "Cookie", "cookie"])
+def test_a_callers_credentials_do_not_go_to_another_origin(
     server: RedirectServer, other_origin: RedirectServer, name: str
 ) -> None:
     with mitto.Session() as session:
         session.get(f"{server.url}/status/302?to={other_origin.url}/final", headers={name: SECRET, "X-Other": "stays"})
 
-    assert server.received[0].headers["authorization"] == SECRET
+    assert server.received[0].headers[name.lower()] == SECRET
     [received] = other_origin.received
-    assert "authorization" not in received.headers
+    assert name.lower() not in received.headers
     assert received.headers["x-other"] == "stays"
 
 
-def test_authorization_stays_gone_when_a_hop_comes_back(server: RedirectServer, other_origin: RedirectServer) -> None:
+@pytest.mark.parametrize("name", ["Authorization", "Cookie"])
+def test_a_callers_credentials_stay_gone_when_a_hop_comes_back(
+    server: RedirectServer, other_origin: RedirectServer, name: str
+) -> None:
     back = f"{server.url}/final"
 
     with mitto.Session() as session:
-        session.get(
-            f"{server.url}/status/302?to={other_origin.url}/status/302%3Fto={back}", headers={"Authorization": SECRET}
-        )
+        session.get(f"{server.url}/status/302?to={other_origin.url}/status/302%3Fto={back}", headers={name: SECRET})
 
     first, last = server.received
-    assert first.headers["authorization"] == SECRET
+    assert first.headers[name.lower()] == SECRET
     assert last.path == "/final"
-    assert "authorization" not in last.headers
+    assert name.lower() not in last.headers
+
+
+def test_a_cookie_from_the_store_goes_to_each_origin_it_fits(
+    server: RedirectServer, other_origin: RedirectServer
+) -> None:
+    # A cookie ignores the port, so it fits both servers, which are different origins.
+    with mitto.Session() as session:
+        session.cookies.set(mitto.Cookie("stored", "1", domain="127.0.0.1"))
+
+        session.get(f"{server.url}/status/302?to={other_origin.url}/final")
+
+    assert server.received[0].headers["cookie"] == "stored=1"
+    assert other_origin.received[0].headers["cookie"] == "stored=1"
 
 
 def _chain_over(server: CaptureServer, protocol: str) -> tuple[str, PrivateSettings, str, str | None]:

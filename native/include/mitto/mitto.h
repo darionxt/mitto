@@ -328,8 +328,10 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 // network thread, and returns without waiting for it. May be called from any
 // thread, also while other requests run on the same Session. //net decides what
 // a redirect does to the method and the body, as it does in Chrome, and ends the
-// request with ERR_TOO_MANY_REDIRECTS after 20 of them. An Authorization header
-// does not go to another origin, and stays gone if a later redirect comes back.
+// request with ERR_TOO_MANY_REDIRECTS after 20 of them. An Authorization or
+// Cookie header in `headers` does not go to another origin, and stays gone if a
+// later redirect comes back. The cookies that //net adds from the store go as
+// //net decides on each hop.
 //
 // `headers` points to `header_count` headers, in the order they are to reach
 // the wire, and may be null if the count is 0. A name may appear only once,

@@ -81,7 +81,7 @@ Fetch refuses a body with `GET` or `HEAD`, so a Session does too.
 | `Referer` | Replaces or, with `None`, removes the Persona's `referrer`. `//net` still decides where it goes |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
 
-A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone. `Cookie` is the exception: it keeps that place, but `//net` writes over its value whenever the store holds a cookie for the URL.
+A name that `//net` would add, such as `Accept-Encoding`, counts as another name: it follows the Persona's lines, and `//net` then leaves it alone. `Cookie` is the exception: it keeps that place, but `//net` writes over its value whenever the store holds a cookie for the URL, and it does not follow a redirect to another origin.
 
 ## Write one
 

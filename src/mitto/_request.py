@@ -58,7 +58,8 @@ class RequestOptions(BodyOptions, total=False):
         headers: A header replaces the Persona's line of that name in place, which keeps the Persona's spelling of the
             name. Other names follow the Persona's lines, before what //net adds. None removes a Persona's line, and does
             nothing to what //net adds. Referer counts as a line of the Persona's, although //net decides where it goes. A
-            Cookie goes only if the Session holds no cookie for the URL, because //net writes over it otherwise.
+            Cookie goes only if the Session holds no cookie for the URL, because //net writes over it otherwise. Authorization
+            and Cookie do not follow a redirect to another origin, and stay gone if a later hop comes back.
         kind: A Request Kind, which decides what the Persona sends. The default is navigation for GET and fetch for other
             methods.
         timeout: A number is the total time in seconds, and a Timeout sets each timer. None runs no timer, in place of the

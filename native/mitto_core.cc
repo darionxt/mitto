@@ -334,10 +334,14 @@ class RequestJob final : public net::URLRequest::Delegate {
 
     // Step 13 of https://fetch.spec.whatwg.org/#http-redirect-fetch, which
     // Chrome does in ResourceLoader::WillFollowRedirect() in Blink. The header
-    // stays gone if a later hop comes back to this origin.
+    // stays gone if a later hop comes back to this origin. Fetch does not name
+    // Cookie, because a page cannot send one, but a caller's has no domain to
+    // keep it where it belongs. //net adds the store's cookies on each hop, so
+    // this does not touch them.
     std::vector<std::string> removed_headers;
     if (!url::IsSameOriginWith(request_->url(), new_url)) {
       removed_headers.emplace_back(net::HttpRequestHeaders::kAuthorization);
+      removed_headers.emplace_back(net::HttpRequestHeaders::kCookie);
     }
     // The next hop has its own connection to get.
     StartConnectTimer();
