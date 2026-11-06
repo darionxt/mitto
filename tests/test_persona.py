@@ -5,15 +5,18 @@ the Parity Checks show that //net does add it.
 """
 
 import itertools
+import re
 
 import pytest
 
 from mitto._native import Priority
 from mitto._persona import WINDOWS_PERSONAS, RequestDefaults, RequestKind, load_persona
+from mitto._request import build_request
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS
 from tools.capture import RequestKind as CaptureRequestKind
 from tools.capture.normal_form import AUTHORITY_PLACEHOLDER, ORIGIN_PLACEHOLDER
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
+from tools.parity.replay import REPLAYS
 
 PERSONAS = {release: load_persona(name) for release, name in WINDOWS_PERSONAS.items()}
 BASELINES = [
@@ -22,7 +25,26 @@ BASELINES = [
     if baseline.case in {kind.value for kind in RequestKind}
 ]
 
+BODY_BASELINES = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if REPLAYS[baseline.case].body]
+
 _ANY_URL = "https://example.test:8444/any/path?query"
+
+# What //net adds, and what says where a request went.
+_NOT_FROM_THE_PERSONA = {
+    "host",
+    "connection",
+    "content-length",
+    "referer",
+    "accept-encoding",
+    "accept-language",
+    "priority",
+}
+
+# The values that depend on the Initiator, which a Session cannot name yet. Their lines still have to be in place.
+_VALUES_OF_THE_INITIATOR = {"origin", "sec-fetch-site"}
+
+# The boundary as a normal form writes it.
+_RANDOM_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
 
 # The default urgency, which //net leaves out of the priority header.
 _DEFAULT_URGENCY = 3
@@ -118,3 +140,30 @@ def test_the_persona_says_which_chrome_it_presents(release: str) -> None:
 
 def test_the_request_kinds_are_those_of_the_capture_kit() -> None:
     assert [kind.value for kind in RequestKind] == [kind.value for kind in CaptureRequestKind]
+
+
+def _from_the_persona(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return the lines that a Persona decides, by lower-case name, with what depends on the Initiator left out."""
+    found: list[tuple[str, str]] = []
+    for name, value in lines:
+        lower_name = name.lower()
+        if lower_name in _NOT_FROM_THE_PERSONA or lower_name.startswith(":"):
+            continue
+        found.append((lower_name, "" if lower_name in _VALUES_OF_THE_INITIATOR else value))
+    return found
+
+
+@pytest.mark.parametrize("baseline", BODY_BASELINES, ids=_name)
+def test_a_body_adds_the_lines_of_the_baseline_in_its_order(baseline: Baseline) -> None:
+    replay = REPLAYS[baseline.case]
+    built = build_request(PERSONAS[baseline.release], "POST", _ANY_URL, kind=replay.kind.value, **replay.body)
+    request = baseline.fingerprint["request"]
+    assert isinstance(request, dict)
+    recorded = request["headers"]
+    assert isinstance(recorded, list)
+
+    sent = [(name, _RANDOM_BOUNDARY.sub(r"\1<random>", value)) for name, value in built["headers"]]
+
+    assert _from_the_persona(sent) == _from_the_persona(
+        [(name, value) for name, _, value in (str(line).partition(": ") for line in recorded)]
+    )

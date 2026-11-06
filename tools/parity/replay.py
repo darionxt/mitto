@@ -4,10 +4,11 @@ A replay does what a caller of the public API can do today, and what it cannot d
 gains something a case needs, the replay here passes it on, and those gaps leave the known-gaps list. See docs/parity.md.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from mitto import Session
 from mitto._native import PrivateSettings
+from mitto._request import BodyOptions
 from tools.capture import (
     CASES,
     COOKIE_SET_PATH,
@@ -27,6 +28,7 @@ from tools.capture import (
 
 _PATHS = {case.name: case.path for case in CASES}
 _POST = "POST"
+_TEXT: BodyOptions = {"data": "text body"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,7 @@ class Replay:
         host: The name to ask for, or nothing for the name the case's run starts at.
         start: The name of the case to ask for, if this one is a later hop of a redirect chain.
         before: The paths to ask for first, on the same Session and with the same kind.
+        body: What makes the body, from what the page's form or script gives Chrome in tools/capture/cases.py.
     """
 
     kind: RequestKind
@@ -46,6 +49,7 @@ class Replay:
     host: str | None = None
     start: str | None = None
     before: tuple[str, ...] = ()
+    body: BodyOptions = field(default_factory=BodyOptions)
 
 
 def _hops(prefix: str, kind: RequestKind) -> dict[str, Replay]:
@@ -60,13 +64,22 @@ REPLAYS = {
     "navigation_link_same_origin": Replay(RequestKind.NAVIGATION),
     "navigation_link_same_site": Replay(RequestKind.NAVIGATION, host=SAME_SITE_HOST),
     "navigation_link_cross_site": Replay(RequestKind.NAVIGATION, host=CROSS_SITE_HOST),
-    "navigation_form_urlencoded": Replay(RequestKind.NAVIGATION, _POST),
-    "navigation_form_multipart": Replay(RequestKind.NAVIGATION, _POST),
+    "navigation_form_urlencoded": Replay(
+        RequestKind.NAVIGATION, _POST, body={"data": {"name": "mitto", "a b&c": "d e&f+g"}}
+    ),
+    "navigation_form_multipart": Replay(
+        RequestKind.NAVIGATION,
+        _POST,
+        body={
+            "data": {"name": "mitto", 'a "b"': "d e&f+g"},
+            "files": {"file": ('file "name".txt', b"file text\n", "text/plain")},
+        },
+    ),
     "fetch_get_same_site": Replay(RequestKind.FETCH, host=SAME_SITE_HOST),
     "fetch_get_cross_site": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST),
-    "fetch_post_text_same_origin": Replay(RequestKind.FETCH, _POST),
-    "fetch_post_text_cross_site": Replay(RequestKind.FETCH, _POST, host=CROSS_SITE_HOST),
-    "fetch_post_json_same_origin": Replay(RequestKind.FETCH, _POST),
+    "fetch_post_text_same_origin": Replay(RequestKind.FETCH, _POST, body=_TEXT),
+    "fetch_post_text_cross_site": Replay(RequestKind.FETCH, _POST, host=CROSS_SITE_HOST, body=_TEXT),
+    "fetch_post_json_same_origin": Replay(RequestKind.FETCH, _POST, body={"json": {"json": "body"}}),
     "fetch_post_stream": Replay(RequestKind.FETCH, _POST),
     "script_same_site": Replay(RequestKind.SCRIPT, host=SAME_SITE_HOST),
     "script_cross_site": Replay(RequestKind.SCRIPT, host=CROSS_SITE_HOST),
@@ -135,4 +148,5 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
     for path in steps.before:
         session.get(server.url(run.route, host=run.host, path=path), kind=kind)
     path = _PATHS[steps.start or case]
-    session.request(steps.method, server.url(run.route, host=steps.host or run.host, path=path), kind=kind)
+    url = server.url(run.route, host=steps.host or run.host, path=path)
+    session.request(steps.method, url, kind=kind, **steps.body)

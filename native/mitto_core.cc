@@ -48,12 +48,15 @@
 #include "mitto/ssl_config_service_mojo.h"
 #include "mitto/stub_resolver_config_reader.h"
 #include "net/base/completion_once_callback.h"
+#include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_handle.h"
 #include "net/base/request_priority.h"
 #include "net/base/transport_info.h"
+#include "net/base/upload_bytes_element_reader.h"
+#include "net/base/upload_progress.h"
 #include "net/cert/caching_cert_verifier.h"
 #include "net/cert/cert_net_fetcher.h"
 #include "net/cert/cert_verifier.h"
@@ -177,13 +180,15 @@ class RequestJob final : public net::URLRequest::Delegate {
              scoped_refptr<RequestChannel> channel,
              GURL url,
              net::HttpRequestHeaders headers,
-             RequestOptions options)
+             RequestOptions options,
+             std::optional<std::vector<char>> body)
       : session_(session),
         handle_(handle),
         channel_(std::move(channel)),
         url_(std::move(url)),
         request_headers_(std::move(headers)),
-        options_(std::move(options)) {}
+        options_(std::move(options)),
+        body_(std::move(body)) {}
 
   RequestJob(const RequestJob&) = delete;
   RequestJob& operator=(const RequestJob&) = delete;
@@ -209,6 +214,12 @@ class RequestJob final : public net::URLRequest::Delegate {
     request_->SetExtraRequestHeaders(request_headers_);
     request_->SetPriorityIncremental(options_.priority_incremental);
     request_->SetReferrer(options_.referrer.spec());
+    if (body_) {
+      // What Chrome's network service makes of a body held in memory. //net adds
+      // the Content-Length from it, and rewinds it for a redirect or a retry.
+      request_->set_upload(net::ElementsUploadDataStream::CreateWithReader(
+          std::make_unique<net::UploadOwnedBytesElementReader>(&*body_)));
+    }
     if (options_.total_timeout) {
       total_timer_.Start(FROM_HERE, *options_.total_timeout,
                          base::BindOnce(&RequestJob::Finish,
@@ -316,6 +327,8 @@ class RequestJob final : public net::URLRequest::Delegate {
   void StartReadTimer() {
     if (options_.read_timeout) {
       received_bytes_at_read_timer_start_ = request_->GetTotalReceivedBytes();
+      uploaded_bytes_at_read_timer_start_ =
+          request_->GetUploadProgress().position();
       read_timer_.Start(FROM_HERE, *options_.read_timeout,
                         base::BindOnce(&RequestJob::OnReadTimerFired,
                                        base::Unretained(this)));
@@ -324,9 +337,12 @@ class RequestJob final : public net::URLRequest::Delegate {
 
   void OnReadTimerFired() {
     // A content decoder can take bytes and give nothing back yet, and then //net
-    // does not complete the read, although the server is still sending.
+    // does not complete the read, although the server is still sending. A server
+    // that is still taking the body has no reason to answer yet either.
     if (request_->GetTotalReceivedBytes() !=
-        received_bytes_at_read_timer_start_) {
+            received_bytes_at_read_timer_start_ ||
+        request_->GetUploadProgress().position() !=
+            uploaded_bytes_at_read_timer_start_) {
       StartReadTimer();
       return;
     }
@@ -349,6 +365,8 @@ class RequestJob final : public net::URLRequest::Delegate {
   const GURL url_;
   const net::HttpRequestHeaders request_headers_;
   const RequestOptions options_;
+  // What to send as the body, until Start() hands it to `request_`.
+  std::optional<std::vector<char>> body_;
   std::unique_ptr<net::URLRequest> request_;
   bool response_started_ = false;
   bool read_wanted_ = false;
@@ -356,6 +374,7 @@ class RequestJob final : public net::URLRequest::Delegate {
   base::OneShotTimer read_timer_;
   base::OneShotTimer total_timer_;
   base::ByteSize received_bytes_at_read_timer_start_;
+  uint64_t uploaded_bytes_at_read_timer_start_ = 0;
   base::WeakPtrFactory<RequestJob> weak_ptr_factory_{this};
 };
 
@@ -859,12 +878,15 @@ int32_t mitto_request_start(MittoSession* session,
                             size_t header_count,
                             const char* options,
                             size_t options_size,
+                            const uint8_t* body,
+                            size_t body_size,
                             MittoRequest** request) {
   if (!request) {
     return net::ERR_INVALID_ARGUMENT;
   }
   *request = nullptr;
-  if (!session || !url || (!headers && header_count != 0) || !options) {
+  if (!session || !url || (!headers && header_count != 0) || !options ||
+      (!body && body_size != 0)) {
     return net::ERR_INVALID_ARGUMENT;
   }
   // SAFETY: The C API says `headers` holds `header_count` elements. A span can
@@ -880,11 +902,20 @@ int32_t mitto_request_start(MittoSession* session,
     return net::ERR_INVALID_ARGUMENT;
   }
 
+  std::optional<std::vector<char>> request_body;
+  if (body) {
+    // SAFETY: The C API says `body` holds `body_size` bytes.
+    const base::span<const char> bytes =
+        base::as_chars(UNSAFE_BUFFERS(base::span(body, body_size)));
+    request_body.emplace(bytes.begin(), bytes.end());
+  }
+
   auto handle = std::make_unique<MittoRequest>();
   handle->channel = base::MakeRefCounted<mitto::RequestChannel>();
   auto job = std::make_unique<mitto::RequestJob>(
       *session, reinterpret_cast<uintptr_t>(handle.get()), handle->channel,
-      GURL(url), std::move(*request_headers), std::move(*parsed_options));
+      GURL(url), std::move(*request_headers), std::move(*parsed_options),
+      std::move(request_body));
   handle->job = job->GetWeakPtr();
   mitto::NetworkCore::Get().StartJob(*session, std::move(job));
   *request = handle.release();

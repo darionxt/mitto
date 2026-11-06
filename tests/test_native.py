@@ -35,7 +35,8 @@ void mitto_cookies_free(char* cookies) {{}}
 int32_t mitto_session_event_fd(void* session, int32_t* fd) {{ return -2; }}
 int32_t mitto_session_next_ready_request(void* session, void** request) {{ return -2; }}
 int32_t mitto_request_start(void* session, const char* url, const void* headers, unsigned long header_count,
-                            const char* options, unsigned long options_size, void** request) {{ return -2; }}
+                            const char* options, unsigned long options_size, const char* body,
+                            unsigned long body_size, void** request) {{ return -2; }}
 int32_t mitto_request_next_event(void* request, int64_t timeout_ms, void* event) {{ return -2; }}
 int32_t mitto_request_read(void* request, char* buffer, unsigned long size) {{ return -2; }}
 void mitto_request_cancel(void* request) {{}}
@@ -142,12 +143,22 @@ def start_request(
     headers: Any = None,
     header_count: int = 0,
     options: bytes | None = NO_OPTIONS,
+    body: bytes | None = None,
+    body_size: int | None = None,
 ) -> tuple[int, Any]:
     """Call mitto_request_start and return its result and the handle it stored."""
     # The handle starts out as something other than null, to show that a failed call stores null.
     handle = ctypes.pointer(_native.MittoRequest())
     error: int = library.mitto_request_start(
-        session, url, headers, header_count, options, len(options or b""), ctypes.byref(handle)
+        session,
+        url,
+        headers,
+        header_count,
+        options,
+        len(options or b""),
+        body,
+        len(body or b"") if body_size is None else body_size,
+        ctypes.byref(handle),
     )
     return error, handle
 
@@ -649,10 +660,28 @@ def test_request_start_refuses_null_options(native_library: ctypes.CDLL, session
 
 def test_request_start_refuses_a_null_result(native_library: ctypes.CDLL, session_handle: Any, server_url: str) -> None:
     error = native_library.mitto_request_start(
-        session_handle, server_url.encode(), None, 0, NO_OPTIONS, len(NO_OPTIONS), None
+        session_handle, server_url.encode(), None, 0, NO_OPTIONS, len(NO_OPTIONS), None, 0, None
     )
 
     assert error == ERR_INVALID_ARGUMENT
+
+
+def test_request_start_refuses_a_size_for_a_body_that_is_null(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str
+) -> None:
+    error, handle = start_request(native_library, session_handle, server_url.encode(), body=None, body_size=1)
+
+    assert error == ERR_INVALID_ARGUMENT
+    assert not handle
+
+
+def test_request_start_reads_the_body_by_its_size(
+    native_library: ctypes.CDLL, session_handle: Any, server_url: str
+) -> None:
+    error, handle = start_request(native_library, session_handle, server_url.encode(), body=b"a\0body", body_size=3)
+
+    assert error == 0
+    native_library.mitto_request_release(handle)
 
 
 def test_request_start_reads_the_options_by_their_size(
@@ -661,7 +690,15 @@ def test_request_start_reads_the_options_by_their_size(
     handle = ctypes.POINTER(_native.MittoRequest)()
 
     error = native_library.mitto_request_start(
-        session_handle, server_url.encode(), None, 0, NO_OPTIONS + b"not json", len(NO_OPTIONS), ctypes.byref(handle)
+        session_handle,
+        server_url.encode(),
+        None,
+        0,
+        NO_OPTIONS + b"not json",
+        len(NO_OPTIONS),
+        None,
+        0,
+        ctypes.byref(handle),
     )
 
     assert error == 0

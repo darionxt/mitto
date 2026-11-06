@@ -47,6 +47,11 @@ PAUSE_SECONDS = 0.1
 TRICKLE_CHUNKS = 15
 BODY = b"the whole body"
 
+# A body larger than the socket buffers of a loopback connection hold, and how a slow server reads it.
+LARGE_BODY_SIZE = 32 * 1024 * 1024
+READ_SIZE_OF_A_SLOW_SERVER = 1024 * 1024
+READ_A_HEAD_SIZE = 4096
+
 MAX_TIMEOUT_SECONDS = 2_000_000
 MAX_TIMEOUT_MS = 2**31 - 1
 
@@ -454,7 +459,7 @@ def start_with_options(library: ctypes.CDLL, session: _native.Session, options: 
     # The private handle is the point: the public API refuses most of these before they get here.
     native_session = session._handle  # pyright: ignore[reportPrivateUsage]
     error: int = library.mitto_request_start(
-        native_session, b"http://127.0.0.1:9/", None, 0, options, len(options), ctypes.byref(handle)
+        native_session, b"http://127.0.0.1:9/", None, 0, options, len(options), None, 0, ctypes.byref(handle)
     )
     return error, handle
 
@@ -481,3 +486,54 @@ def test_a_native_timer_takes_any_positive_32_bit_number(native_library: ctypes.
         native_library.mitto_request_release(handle)
 
     assert error == 0
+
+
+@contextmanager
+def _server_of_one_slow_upload(read_size: int, pause_seconds: float) -> Generator[int]:
+    """Accept one connection, read a body slowly and answer once it has all come. Yield the port."""
+
+    def serve(listener: socket.socket) -> None:
+        connection, _ = listener.accept()
+        with connection:
+            head = b""
+            while b"\r\n\r\n" not in head:
+                head += connection.recv(READ_A_HEAD_SIZE)
+            _, _, read_ahead = head.partition(b"\r\n\r\n")
+            size = int(next(line for line in head.split(b"\r\n") if line.startswith(b"Content-Length:")).split(b":")[1])
+            remaining = size - len(read_ahead)
+            while remaining > 0:
+                time.sleep(pause_seconds)
+                remaining -= len(connection.recv(read_size))
+            connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        thread = threading.Thread(target=serve, args=(listener,), daemon=True)
+        thread.start()
+        yield listener.getsockname()[1]
+        thread.join(LONG_SECONDS)
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_body_that_keeps_moving_does_not_run_out_the_read_timer() -> None:
+    # The socket buffers of a loopback connection take a few megabytes, and this reads the rest in about four seconds.
+    body = bytes(LARGE_BODY_SIZE)
+    with _server_of_one_slow_upload(READ_SIZE_OF_A_SLOW_SERVER, PAUSE_SECONDS) as port, mitto.Session() as session:
+        started_at = time.monotonic()
+        response = session.post(
+            f"http://127.0.0.1:{port}/", data=body, timeout=Timeout(read=ROOMY_SECONDS, total=LONG_SECONDS)
+        )
+
+    assert response.status == 200
+    assert time.monotonic() - started_at > ROOMY_SECONDS
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_body_that_a_server_stops_taking_runs_out_the_read_timer(silent_port: int) -> None:
+    with mitto.Session() as session, pytest.raises(mitto.RequestTimeoutError) as caught:
+        session.post(
+            f"http://127.0.0.1:{silent_port}/",
+            data=bytes(LARGE_BODY_SIZE),
+            timeout=Timeout(read=SHORT_SECONDS, total=LONG_SECONDS),
+        )
+
+    assert caught.value.net_error == ERR_TIMED_OUT

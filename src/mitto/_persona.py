@@ -6,12 +6,14 @@ for the format, and for the parts of a request that come from //net rather than 
 
 import functools
 import json
+from collections.abc import Container, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 from urllib.parse import urlsplit
 
+from mitto._body import EncodedBody
 from mitto._native import Priority
 
 __all__ = [
@@ -38,6 +40,8 @@ ENGINE_RELEASE_PERSONA = CHROME_157_WINDOWS
 
 _PERSONAS_DIRECTORY = Path(__file__).with_name("personas")
 _ORIGIN_PLACEHOLDER = "<origin>"
+_BOUNDARY_PLACEHOLDER = "<boundary>"
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 class RequestKind(StrEnum):
@@ -65,6 +69,13 @@ class RequestDefaults(TypedDict):
     referrer: str | None
 
 
+class _BodyData(TypedDict):
+    """What a body adds to one Request Kind in a Persona's file."""
+
+    lines: list[str]
+    content_types: dict[str, str]
+
+
 class _KindData(TypedDict):
     """One Request Kind in a Persona's file."""
 
@@ -72,6 +83,7 @@ class _KindData(TypedDict):
     priority_incremental: bool
     referrer: str | None
     headers: list[str]
+    body: NotRequired[_BodyData]
 
 
 class _PersonaData(TypedDict):
@@ -98,23 +110,44 @@ class Persona:
     accept_language: str
     _kinds: dict[RequestKind, _KindData]
 
-    def request_defaults(self, kind: RequestKind, url: str) -> RequestDefaults:
+    def request_defaults(self, kind: RequestKind, url: str, *, with_body: bool = False) -> RequestDefaults:
         """Return what this Persona's Chrome sends by default for a request of `kind` to `url`.
 
-        A subresource's Initiator is the page at the root of the origin of `url`, which is what its Referer names.
+        A subresource's Initiator is the page at the root of the origin of `url`, which is what its Referer names, and so
+        is the page that sends a body, which is what its Origin names.
+
+        Args:
+            kind: The Request Kind.
+            url: The URL to fetch.
+            with_body: Whether the request has a body, which adds lines. Whoever asks for this replaces the value of the
+                Content-Type line, or removes the line, with content_type() or what a caller gives.
         """
         data = self._kinds[kind]
+        origin = _origin_of(url)
         referrer = data["referrer"]
         if referrer is not None:
-            origin = _origin_of(url)
             # A URL without an origin gets no referrer, which would be refused and hide what is wrong with the URL.
             referrer = None if origin is None else referrer.replace(_ORIGIN_PLACEHOLDER, origin)
+        only_with_a_body = () if with_body or "body" not in data else data["body"]["lines"]
         return RequestDefaults(
-            headers=tuple(_parse_header(line) for line in data["headers"]),
+            headers=_header_lines(data["headers"], only_with_a_body, origin),
             priority=Priority[data["priority"]],
             priority_incremental=data["priority_incremental"],
             referrer=referrer,
         )
+
+    def content_type(self, kind: RequestKind, body: EncodedBody) -> str | None:
+        """Return the Content-Type that this Persona's Chrome gives `body` on a request of `kind`, or None for none.
+
+        Raises:
+            ValueError: If Chrome sends no body with this Request Kind.
+        """
+        data = self._kinds[kind].get("body")
+        if data is None:
+            raise ValueError(f"Chrome sends no body with a request of the kind {kind.value!r}")
+        if body.encoding is None:
+            return None
+        return data["content_types"][body.encoding].replace(_BOUNDARY_PLACEHOLDER, body.boundary)
 
 
 @functools.cache
@@ -136,14 +169,32 @@ def load_persona(name: str) -> Persona:
 
 
 def _origin_of(url: str) -> str | None:
-    """Return the scheme and authority of `url`, or None if it does not have both."""
+    """Return the origin of `url`, written as Chrome writes it, or None if it does not have one.
+
+    So it holds no username or password, its host is in lower case and in ASCII, and it leaves out the scheme's default
+    port. Unlike //net, this writes a name by IDNA 2003, which only differs for a few characters such as "ß".
+    """
     try:
         parts = urlsplit(url)
+        host = parts.hostname
+        port = parts.port
+        if not parts.scheme or not host:
+            return None
+        ascii_host = f"[{host}]" if ":" in host else host.encode("idna").decode()
     except ValueError:
         return None
-    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else None
+    return f"{parts.scheme}://{ascii_host}" + ("" if port in (None, _DEFAULT_PORTS.get(parts.scheme)) else f":{port}")
 
 
-def _parse_header(line: str) -> tuple[str, str]:
-    name, _, value = line.partition(": ")
-    return name, value
+def _header_lines(lines: Iterable[str], left_out: Container[str], origin: str | None) -> tuple[tuple[str, str], ...]:
+    """Return the (name, value) pairs of a Persona's lines, but for those named in `left_out`.
+
+    A line that names the origin needs one. Without it the line goes, as the referrer does.
+    """
+    pairs: list[tuple[str, str]] = []
+    for line in lines:
+        name, _, value = line.partition(": ")
+        if name in left_out or (_ORIGIN_PLACEHOLDER in value and origin is None):
+            continue
+        pairs.append((name, value if origin is None else value.replace(_ORIGIN_PLACEHOLDER, origin)))
+    return tuple(pairs)
