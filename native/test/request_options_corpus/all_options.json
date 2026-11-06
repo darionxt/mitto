@@ -7,5 +7,13 @@
   "follow_redirects": false,
   "connect_timeout_ms": 1000,
   "read_timeout_ms": 2000,
-  "total_timeout_ms": 3000
+  "total_timeout_ms": 3000,
+  "fetch": {
+    "mode": "cors",
+    "destination": "empty",
+    "credentials_mode": "same-origin",
+    "has_user_activation": true,
+    "initiator": "https://a.test/page",
+    "fixed_headers": ["Accept", "referer"]
+  }
 }

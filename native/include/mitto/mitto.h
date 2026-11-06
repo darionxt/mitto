@@ -350,13 +350,14 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 // request with ERR_TOO_MANY_REDIRECTS after 20 of them. An Authorization or
 // Cookie header in `headers` does not go to another origin, and stays gone if a
 // later redirect comes back. The cookies that //net adds from the store go as
-// //net decides on each hop.
+// //net decides on each hop, from what the "fetch" option says.
 //
 // `headers` points to `header_count` headers, in the order they are to reach
 // the wire, and may be null if the count is 0. A name may appear only once,
 // ignoring case. //net adds its own headers as it does in Chrome, such as Host
 // before these and Accept-Encoding after them, unless they are among these.
-// Referer cannot be among these, because //net only sends the "referrer" option.
+// Referer cannot be among these, because //net only sends the one that
+// "referrer" or "fetch" gives it.
 //
 // `options` is a buffer of `options_size` bytes that holds one UTF-8 JSON object
 // and needs no trailing NUL byte:
@@ -370,7 +371,15 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //     "follow_redirects": false,
 //     "connect_timeout_ms": 5000,
 //     "read_timeout_ms": 5000,
-//     "total_timeout_ms": 30000
+//     "total_timeout_ms": 30000,
+//     "fetch": {
+//       "mode": "cors",
+//       "destination": "empty",
+//       "credentials_mode": "same-origin",
+//       "has_user_activation": false,
+//       "initiator": "https://example.com/page",
+//       "fixed_headers": ["accept"]
+//     }
 //   }
 //
 // - "version" is required and must be MITTO_REQUEST_OPTIONS_VERSION.
@@ -381,10 +390,11 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   decide the HTTP/2 weight, the priority header and the HTTP/3
 //   PRIORITY_UPDATE. The defaults are those of //net: MITTO_PRIORITY_LOWEST and
 //   true.
-// - "referrer" is the URL to send as the Referer header. //net puts it after
-//   `headers` and before the headers it adds, and leaves out any username,
-//   password and fragment. A URL that //net cannot send as a referrer, such as
-//   one that is not valid, is refused. The default is to send none.
+// - "referrer" is the URL to send as the Referer header, on each hop. //net puts
+//   it after `headers` and before the headers it adds, and leaves out any
+//   username, password and fragment. A URL that //net cannot send as a referrer,
+//   such as one that is not valid, is refused. The default leaves it to "fetch",
+//   or sends none if there is no "fetch".
 // - "follow_redirects" set to false makes a redirect the response, whose body is
 //   empty because //net does not read the body of a redirect. A redirect to a URL
 //   that is not valid still ends the request with ERR_INVALID_REDIRECT, because
@@ -406,6 +416,28 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 //   finishes with ERR_TIMED_OUT.
 // - Each timer takes a positive number of milliseconds up to 2147483647. The
 //   default is no timer, which leaves only the limits that //net has of its own.
+// - "fetch" says what a request made for a page says of itself, in the terms of
+//   Chrome's network::ResourceRequest, so that this does to it what Chrome does,
+//   at its start and on each hop. A line in `headers` keeps its place and gets its
+//   value from these rules, or goes, and one they add goes last. See below for
+//   what is in it. Without it, a request sends what `headers` and "referrer" say
+//   and no more, and counts as a navigation that the browser started.
+//
+// In "fetch":
+// - "mode" is "navigate", "cors" or "no-cors", and "destination" is what
+//   Sec-Fetch-Dest says. "credentials_mode" is "same-origin" or "include". All
+//   three are required.
+// - "has_user_activation" says whether Sec-Fetch-User goes. The default is false.
+// - "initiator" is the URL of the page the request comes from, which counts as a
+//   top-level page. It decides Sec-Fetch-Site, Referer and Origin, which SameSite
+//   cookies go, and the partition of connections and of partitioned cookies. A URL
+//   that is not valid is refused. Without it, a "navigate" counts as started by
+//   the browser, and another as coming from the page at the root of the origin of
+//   its URL.
+// - "fixed_headers" holds names in any case. A line of one of these names stays as
+//   `headers` says, or stays absent, on each hop, whatever the rules would make of
+//   it. //net still changes an Origin on a redirect as it does in Chrome. "referer"
+//   here with no "referrer" sends none.
 //
 // An unknown key or an invalid value is refused, so a mistake cannot go
 // unnoticed.

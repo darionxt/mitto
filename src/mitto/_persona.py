@@ -11,10 +11,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import NotRequired, TypedDict
-from urllib.parse import urlsplit
 
 from mitto._body import EncodedBody
-from mitto._native import Priority
+from mitto._native import FetchParams, Priority
 
 __all__ = [
     "CHROME_155_WINDOWS",
@@ -39,13 +38,14 @@ ENGINE_RELEASE_PERSONA = CHROME_157_WINDOWS
 """The Persona of the Engine Release, which a Session presents unless it is told otherwise."""
 
 _PERSONAS_DIRECTORY = Path(__file__).with_name("personas")
-_ORIGIN_PLACEHOLDER = "<origin>"
 _BOUNDARY_PLACEHOLDER = "<boundary>"
-_DEFAULT_PORTS = {"http": 80, "https": 443}
+_SEC_FETCH_MODE = "Sec-Fetch-Mode"
+_SEC_FETCH_DEST = "Sec-Fetch-Dest"
+_SEC_FETCH_USER = "Sec-Fetch-User"
 
 
 class RequestKind(StrEnum):
-    """Which kind of Chrome request is being reproduced. Subresource kinds have a same-origin Initiator."""
+    """Which kind of Chrome request is being reproduced."""
 
     NAVIGATION = "navigation"
     FETCH = "fetch"
@@ -60,13 +60,13 @@ class RequestDefaults(TypedDict):
         headers: The (name, value) pairs to send, in the order they reach the wire.
         priority: The priority of the request.
         priority_incremental: Whether the response can be used as it arrives.
-        referrer: The URL to send as the Referer header, or None to send none.
+        fetch: What the request says of itself, from which the native core sets some of those lines.
     """
 
     headers: tuple[tuple[str, str], ...]
     priority: Priority
     priority_incremental: bool
-    referrer: str | None
+    fetch: FetchParams
 
 
 class _BodyData(TypedDict):
@@ -79,9 +79,9 @@ class _BodyData(TypedDict):
 class _KindData(TypedDict):
     """One Request Kind in a Persona's file."""
 
+    credentials_mode: str
     priority: str
     priority_incremental: bool
-    referrer: str | None
     headers: list[str]
     body: NotRequired[_BodyData]
 
@@ -114,30 +114,31 @@ class Persona:
     user_agent: str
     _kinds: dict[RequestKind, _KindData]
 
-    def request_defaults(self, kind: RequestKind, url: str, *, with_body: bool = False) -> RequestDefaults:
-        """Return what this Persona's Chrome sends by default for a request of `kind` to `url`.
+    def request_defaults(self, kind: RequestKind, *, with_body: bool = False) -> RequestDefaults:
+        """Return what this Persona's Chrome sends by default for a request of `kind`.
 
-        A subresource's Initiator is the page at the root of the origin of `url`, which is what its Referer names, and so
-        is the page that sends a body, which is what its Origin names.
+        The lines keep their places, and the native core gives some of them their values or removes them, from what
+        `fetch` says and where the request goes.
 
         Args:
             kind: The Request Kind.
-            url: The URL to fetch.
             with_body: Whether the request has a body, which adds lines. Whoever asks for this replaces the value of the
                 Content-Type line, or removes the line, with content_type() or what a caller gives.
         """
         data = self._kinds[kind]
-        origin = _origin_of(url)
-        referrer = data["referrer"]
-        if referrer is not None:
-            # A URL without an origin gets no referrer, which would be refused and hide what is wrong with the URL.
-            referrer = None if origin is None else referrer.replace(_ORIGIN_PLACEHOLDER, origin)
         only_with_a_body = () if with_body or "body" not in data else data["body"]["lines"]
+        lines = _header_lines(data["headers"], only_with_a_body)
+        values = dict(lines)
         return RequestDefaults(
-            headers=_header_lines(data["headers"], only_with_a_body, origin),
+            headers=lines,
             priority=Priority[data["priority"]],
             priority_incremental=data["priority_incremental"],
-            referrer=referrer,
+            fetch=FetchParams(
+                mode=values[_SEC_FETCH_MODE],
+                destination=values[_SEC_FETCH_DEST],
+                credentials_mode=data["credentials_mode"],
+                has_user_activation=_SEC_FETCH_USER in values,
+            ),
         )
 
     def content_type(self, kind: RequestKind, body: EncodedBody) -> str | None:
@@ -173,33 +174,7 @@ def load_persona(name: str) -> Persona:
     )
 
 
-def _origin_of(url: str) -> str | None:
-    """Return the origin of `url`, written as Chrome writes it, or None if it does not have one.
-
-    So it holds no username or password, its host is in lower case and in ASCII, and it leaves out the scheme's default
-    port. Unlike //net, this writes a name by IDNA 2003, which only differs for a few characters such as "ß".
-    """
-    try:
-        parts = urlsplit(url)
-        host = parts.hostname
-        port = parts.port
-        if not parts.scheme or not host:
-            return None
-        ascii_host = f"[{host}]" if ":" in host else host.encode("idna").decode()
-    except ValueError:
-        return None
-    return f"{parts.scheme}://{ascii_host}" + ("" if port in (None, _DEFAULT_PORTS.get(parts.scheme)) else f":{port}")
-
-
-def _header_lines(lines: Iterable[str], left_out: Container[str], origin: str | None) -> tuple[tuple[str, str], ...]:
-    """Return the (name, value) pairs of a Persona's lines, but for those named in `left_out`.
-
-    A line that names the origin needs one. Without it the line goes, as the referrer does.
-    """
-    pairs: list[tuple[str, str]] = []
-    for line in lines:
-        name, _, value = line.partition(": ")
-        if name in left_out or (_ORIGIN_PLACEHOLDER in value and origin is None):
-            continue
-        pairs.append((name, value if origin is None else value.replace(_ORIGIN_PLACEHOLDER, origin)))
-    return tuple(pairs)
+def _header_lines(lines: Iterable[str], left_out: Container[str]) -> tuple[tuple[str, str], ...]:
+    """Return the (name, value) pairs of a Persona's lines, but for those named in `left_out`."""
+    pairs = (line.partition(": ") for line in lines)
+    return tuple((name, value) for name, _, value in pairs if name not in left_out)

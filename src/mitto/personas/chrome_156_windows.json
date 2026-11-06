@@ -5,9 +5,9 @@
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
   "kinds": {
     "navigation": {
+      "credentials_mode": "include",
       "priority": "HIGHEST",
       "priority_incremental": true,
-      "referrer": null,
       "headers": [
         "Cache-Control: max-age=0",
         "sec-ch-ua: \"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\", \"Google Chrome\";v=\"156\"",
@@ -26,8 +26,7 @@
       "body": {
         "lines": [
           "Cache-Control",
-          "Content-Type",
-          "Origin"
+          "Content-Type"
         ],
         "content_types": {
           "text": "text/plain",
@@ -38,9 +37,9 @@
       }
     },
     "fetch": {
+      "credentials_mode": "same-origin",
       "priority": "MEDIUM",
       "priority_incremental": true,
-      "referrer": "<origin>/",
       "headers": [
         "sec-ch-ua-platform: \"Windows\"",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
@@ -55,8 +54,7 @@
       ],
       "body": {
         "lines": [
-          "Content-Type",
-          "Origin"
+          "Content-Type"
         ],
         "content_types": {
           "text": "text/plain;charset=UTF-8",
@@ -67,9 +65,9 @@
       }
     },
     "script": {
+      "credentials_mode": "include",
       "priority": "MEDIUM",
       "priority_incremental": false,
-      "referrer": "<origin>/",
       "headers": [
         "sec-ch-ua-platform: \"Windows\"",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
@@ -82,9 +80,9 @@
       ]
     },
     "image": {
+      "credentials_mode": "include",
       "priority": "LOWEST",
       "priority_incremental": true,
-      "referrer": "<origin>/",
       "headers": [
         "sec-ch-ua-platform: \"Windows\"",
         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",

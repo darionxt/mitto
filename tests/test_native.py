@@ -804,6 +804,20 @@ def test_request_start_reads_the_options_by_their_size(
         pytest.param(b'{"version": 1, "priority": 5}', id="highest-value-of-priority"),
         pytest.param(b'{"version": 1, "priority_incremental": false}', id="priority-incremental"),
         pytest.param(b'{"version": 1, "referrer": "https://a.test/page"}', id="referrer"),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "navigate", "destination": "document", "credentials_mode": "include"}}',
+            id="fetch-with-what-it-needs",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "same-origin", '
+            b'"has_user_activation": true, "initiator": "https://a.test/page", "fixed_headers": ["Accept", "a b"]}}',
+            id="fetch-with-everything",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "no-cors", "destination": "script", "credentials_mode": "include", '
+            b'"initiator": "data:text/plain,hello"}}',
+            id="fetch-from-an-opaque-origin",
+        ),
     ],
 )
 def test_request_start_accepts_valid_options(
@@ -844,6 +858,67 @@ def test_request_start_accepts_valid_options(
         pytest.param(b'{"version": 1, "referrer": ""}', id="referrer-is-empty"),
         pytest.param(b'{"version": 1, "referrer": "not a url"}', id="referrer-is-not-a-url"),
         pytest.param(b'{"version": 1, "referrer": "about:blank"}', id="referrer-has-another-scheme"),
+        pytest.param(b'{"version": 1, "fetch": null}', id="fetch-is-null"),
+        pytest.param(b'{"version": 1, "fetch": {}}', id="fetch-is-empty"),
+        pytest.param(b'{"version": 1, "fetch": {"mode": "cors"}}', id="fetch-without-the-rest"),
+        pytest.param(
+            b'{"version": 1, "fetch": {"destination": "empty", "credentials_mode": "include"}}',
+            id="fetch-without-a-mode",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "credentials_mode": "include"}}',
+            id="fetch-without-a-destination",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty"}}',
+            id="fetch-without-a-credentials-mode",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "same-origin", "destination": "empty", "credentials_mode": "include"}}',
+            id="another-mode",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "em pty", "credentials_mode": "include"}}',
+            id="destination-is-no-token",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "", "credentials_mode": "include"}}',
+            id="destination-is-empty",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "omit"}}',
+            id="another-credentials-mode",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"has_user_activation": 1}}',
+            id="has-user-activation-is-a-number",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"initiator": "not a url"}}',
+            id="initiator-is-not-a-url",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"initiator": null}}',
+            id="initiator-is-null",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"fixed_headers": "accept"}}',
+            id="fixed-headers-is-a-string",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"fixed_headers": [1]}}',
+            id="fixed-headers-holds-a-number",
+        ),
+        pytest.param(
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "include", '
+            b'"unknown": true}}',
+            id="unknown-key-in-fetch",
+        ),
     ],
 )
 def test_request_start_refuses_invalid_options(

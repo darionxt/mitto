@@ -4,6 +4,7 @@ Building is apart from waiting, so that every API that makes requests shares it.
 where.
 """
 
+import dataclasses
 from collections.abc import Iterable, Mapping
 from typing import TypedDict
 
@@ -23,7 +24,7 @@ _METHODS_FETCH_NORMALIZES = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "POST
 # Fetch refuses a body with these, so Chrome never sends one.
 _METHODS_WITHOUT_A_BODY = frozenset({"GET", "HEAD"})
 
-# The native core sends a Referer from its own option, and refuses one among the headers.
+# The native core sends a caller's Referer from its own option, and refuses one among the headers.
 _REFERER = "referer"
 
 _CONTENT_TYPE = "Content-Type"
@@ -57,11 +58,17 @@ class RequestOptions(BodyOptions, total=False):
             and comes first.
         headers: A header replaces the Persona's line of that name in place, which keeps the Persona's spelling of the
             name. Other names follow the Persona's lines, before what //net adds. None removes a Persona's line, and does
-            nothing to what //net adds. Referer counts as a line of the Persona's, although //net decides where it goes. A
-            Cookie goes only if the Session holds no cookie for the URL, because //net writes over it otherwise. Authorization
-            and Cookie do not follow a redirect to another origin, and stay gone if a later hop comes back.
+            nothing to what //net adds. A line given here stays as it is on each hop, and what `initiator` would make of it
+            no longer applies, so a Referer goes as it is given, to every hop. //net still decides where a Referer goes, and
+            still changes an Origin on a redirect as it does in Chrome. A Cookie goes only if the Session holds no cookie
+            for the URL, because //net writes over it otherwise. Authorization and Cookie do not follow a redirect to another
+            origin, and stay gone if a later hop comes back.
         kind: A Request Kind, which decides what the Persona sends. The default is navigation for GET and fetch for other
             methods.
+        initiator: The URL of the page the request is made from, which counts as a top-level page. It decides Referer,
+            Origin and Sec-Fetch-Site on each hop, which SameSite cookies go, and which connections and partitioned cookies
+            the request can use. Without it, a navigation counts as started by the browser, and a subresource as coming from
+            the page at the root of the origin of its URL. A URL that is not valid ends the request with ERR_INVALID_ARGUMENT.
         timeout: A number is the total time in seconds, and a Timeout sets each timer. None runs no timer, in place of the
             Session's default. The default is the Session's.
         follow_redirects: False makes a redirect the response, with empty content, because the network stack does not read
@@ -72,6 +79,7 @@ class RequestOptions(BodyOptions, total=False):
     params: QueryParams | None
     headers: RequestHeaders | None
     kind: RequestKind | str | None
+    initiator: str | None
     timeout: float | Timeout | None
     follow_redirects: bool
 
@@ -82,6 +90,7 @@ class BuiltRequest(RequestDefaults):
     Attributes:
         url: The URL to fetch, with the query from `params`.
         method: The HTTP method to send.
+        referrer: The Referer that a caller gives, or None to leave it to `fetch`, or to send none if a caller removed it.
         timeout: The timers of the request.
         follow_redirects: Whether a redirect is followed, or is the response.
         body: The bytes to send as the request's body, or None for no body.
@@ -89,6 +98,7 @@ class BuiltRequest(RequestDefaults):
 
     url: str
     method: str
+    referrer: str | None
     timeout: Timeout
     follow_redirects: bool
     body: bytes | None
@@ -102,6 +112,7 @@ def build_request(
     params: QueryParams | None = None,
     headers: RequestHeaders | None = None,
     kind: RequestKind | str | None = None,
+    initiator: str | None = None,
     timeout: float | Timeout | None = None,
     follow_redirects: bool = True,
     data: RequestData | None = None,
@@ -118,6 +129,7 @@ def build_request(
         params: See RequestOptions.
         headers: See RequestOptions.
         kind: See RequestOptions.
+        initiator: See RequestOptions.
         timeout: See RequestOptions. A Session's default is the caller's to put in place of a `timeout` that was not given.
         follow_redirects: See RequestOptions.
         data: See BodyOptions.
@@ -138,9 +150,10 @@ def build_request(
     body = encode_body(data, json, files)
     if body is not None and method in _METHODS_WITHOUT_A_BODY:
         raise ValueError(f"Fetch refuses a body with {method}, so Chrome never sends one")
-    defaults = persona.request_defaults(request_kind, url, with_body=body is not None)
+    defaults = persona.request_defaults(request_kind, with_body=body is not None)
     changes = _changes_by_name(headers or {})
-    _, referrer = changes.pop(_REFERER, (_REFERER, defaults["referrer"]))
+    fetch = dataclasses.replace(defaults["fetch"], initiator=initiator, fixed_headers=tuple(changes))
+    _, referrer = changes.pop(_REFERER, (_REFERER, None))
     if body is not None:
         # This takes the place of the Persona's line, as a caller's would. Having no type removes the line, while a type
         # that a caller gives for bytes still goes where Chrome puts it.
@@ -151,6 +164,7 @@ def build_request(
         headers=_merge_headers(defaults["headers"], changes),
         priority=defaults["priority"],
         priority_incremental=defaults["priority_incremental"],
+        fetch=fetch,
         referrer=referrer,
         timeout=to_timeout(timeout),
         follow_redirects=follow_redirects,
