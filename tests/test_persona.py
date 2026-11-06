@@ -19,13 +19,10 @@ from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.parity.replay import REPLAYS
 
 PERSONAS = {release: load_persona(name) for release, name in WINDOWS_PERSONAS.items()}
-BASELINES = [
-    baseline
-    for baseline in load_baselines(BASELINES_DIRECTORY)
-    if baseline.case in {kind.value for kind in RequestKind}
-]
+ALL_BASELINES = load_baselines(BASELINES_DIRECTORY)
+BASELINES = [baseline for baseline in ALL_BASELINES if baseline.case in {kind.value for kind in RequestKind}]
 
-BODY_BASELINES = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if REPLAYS[baseline.case].body]
+BODY_BASELINES = [baseline for baseline in ALL_BASELINES if REPLAYS[baseline.case].body]
 
 _ANY_URL = "https://example.test:8444/any/path?query"
 
@@ -136,6 +133,26 @@ def test_a_navigation_has_no_referrer(release: str) -> None:
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
 def test_the_persona_says_which_chrome_it_presents(release: str) -> None:
     assert (PERSONAS[release].release, PERSONAS[release].operating_system) == (release, "Windows")
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+@pytest.mark.parametrize("kind", RequestKind)
+def test_the_user_agent_is_the_one_of_every_request_kind(release: str, kind: RequestKind) -> None:
+    headers = dict(PERSONAS[release].request_defaults(kind, _ANY_URL)["headers"])
+
+    assert headers["User-Agent"] == PERSONAS[release].user_agent
+
+
+@pytest.mark.parametrize("baseline", [item for item in ALL_BASELINES if item.case == "proxy_connect"], ids=_name)
+def test_the_user_agent_is_the_one_that_chrome_sends_in_a_connect(baseline: Baseline) -> None:
+    request = baseline.fingerprint["request"]
+
+    assert isinstance(request, dict)
+    assert request["headers"] == [
+        f"Host: {AUTHORITY_PLACEHOLDER}",
+        "Proxy-Connection: keep-alive",
+        f"User-Agent: {PERSONAS[baseline.release].user_agent}",
+    ]
 
 
 def test_the_request_kinds_are_those_of_the_capture_kit() -> None:

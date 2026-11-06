@@ -11,7 +11,7 @@ from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
-from tools.parity.replay import can_reach, replay, run_of, session_settings
+from tools.parity.replay import proxy_of, replay, run_of, session_settings
 
 BASELINES_DIRECTORY = Path(__file__).parents[2] / "tests" / "baselines"
 
@@ -115,8 +115,8 @@ def record(baseline: Baseline) -> dict[str, Json]:
     """Replay the Recording Case of a Baseline through a new Session to a new capture server.
 
     The request presents the Persona of the Baseline's Chrome Release, and goes where the Chrome that recorded the Baseline
-    went. The Session accepts the server's private certificate and finds the case pages' names, in settings that the public
-    API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, because //net refuses QUIC to that
+    went, also through the server's proxy. The Session accepts the server's private certificate and finds the case pages'
+    names, in settings that the public API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, because //net refuses QUIC to that
     certificate otherwise.
 
     Returns:
@@ -133,10 +133,11 @@ def record(baseline: Baseline) -> dict[str, Json]:
     run = run_of(baseline.case, baseline.protocol)
     if run is None:
         raise BaselineError(f"no run records {baseline.case} over {baseline.protocol}")
-    if not can_reach(run):
-        return {**baseline.fingerprint, _REQUEST: None}
     refused: Json = None
-    with CaptureServer() as server, Session(persona=persona, _settings=session_settings(server, run)) as session:
+    with (
+        CaptureServer() as server,
+        Session(persona=persona, proxy=proxy_of(server, run), _settings=session_settings(server, run)) as session,
+    ):
         try:
             replay(session, server, run, baseline.case)
         except RequestError as error:

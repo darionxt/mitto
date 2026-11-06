@@ -2,6 +2,7 @@
 
 import http.server
 import socketserver
+from typing import Any
 
 
 class LocalHTTPServer(http.server.ThreadingHTTPServer):
@@ -14,3 +15,12 @@ class LocalHTTPServer(http.server.ThreadingHTTPServer):
     def server_bind(self) -> None:
         socketserver.TCPServer.server_bind(self)
         self.server_port = self.server_address[1]
+
+
+class QuietServer(LocalHTTPServer):
+    """A local server whose handlers can outlive it, and whose clients may drop a connection at any point."""
+
+    daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        pass

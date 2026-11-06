@@ -21,6 +21,7 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `release` | The Chrome Release |
 | `operating_system` | The operating system the Persona claims, independent of the **Host** |
 | `accept_language` | The value for `Accept-Language`, which is a Session setting |
+| `user_agent` | The value for `User-Agent` where no request's headers reach: a `CONNECT` and a fetch for a certificate. `//net` takes it from the Session's context. It is also the `User-Agent` line of each kind |
 | `kinds.KIND.priority` | The request's priority, such as `HIGHEST`, as in the C API's `MITTO_PRIORITY_HIGHEST` |
 | `kinds.KIND.priority_incremental` | Whether the response can be used as it arrives |
 | `kinds.KIND.referrer` | The value for `Referer`, or `null`. `<origin>` stands for the origin of the requested URL |
@@ -78,6 +79,7 @@ Fetch refuses a body with `GET` or `HEAD`, so a Session does too.
 | Another name | After the Persona's lines, in the order given, before what `//net` adds |
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
+| `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's `user_agent` after the other lines, because a request always gets one from the context |
 | `Referer` | Replaces or, with `None`, removes the Persona's `referrer`. `//net` still decides where it goes |
 | `Content-Type`, with a body | Takes the place of the line in the file, whatever the body is, so a type for bytes goes where a text body's would. `None` removes it |
 
