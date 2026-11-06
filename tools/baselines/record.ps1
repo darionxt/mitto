@@ -285,6 +285,11 @@ $UserDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFrom
 if (-not (Test-Path $Chrome)) { throw "No Chrome at $Chrome." }
 $Chrome = (Resolve-Path $Chrome).Path
 if ((Test-Path $UserDataDir) -and -not $ExistingUserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
+if ($ExistingUserDataDir) {
+    # Before the try below, whose cleanup closes every Chrome on this directory.
+    if (@(Get-OurChromeProcesses).Count -gt 0) { throw "A Chrome is still running from $UserDataDir." }
+    if (-not (Test-SeedArrived)) { throw "$UserDataDir holds no variations seed." }
+}
 # A file that is there already would count as that run's recording, with nothing recorded.
 if ((Test-Path $Out) -and @(Get-ChildItem $Out -Recurse -File -Filter '*.json').Count -gt 0) {
     throw "$Out already holds a recording."
@@ -309,8 +314,7 @@ $server = $null
 $pages = @{}
 try {
     if ($ExistingUserDataDir) {
-        if (@(Get-OurChromeProcesses).Count -gt 0) { throw "A Chrome is still running from $UserDataDir." }
-        if (-not (Test-SeedArrived)) { throw "$UserDataDir holds no variations seed." }
+        Write-Step 'The directory holds a variations seed already'
     } elseif ($NoVariationsSeed) {
         Write-Step 'First start, with no variations seed to wait for'
         Start-Chrome @() 'about:blank'

@@ -274,7 +274,7 @@ This part comes from reading Chromium 157's source. `SSLConfigServiceManager` st
 
 #### What we measured
 
-From a new user data directory, with the flags of a Baseline, `chrome://components` showed PKI Metadata at `0.0.0.0`, `Checking` after a minute, and `1825`, `Updated`, after 335 seconds. Its `crs.pb` has the same IDs as the Baselines. From that directory, [`record.ps1`](baselines.md#a-chrome-that-has-run-for-a-while) gave normal forms identical to `tests/baselines/157` in all nine files. That was two sessions straight after a start and two with Chrome settled first.
+From a new user data directory, with the flags of a Baseline, `chrome://components` showed PKI Metadata at `0.0.0.0`, `Checking` after a minute, and `1825`, `Updated`, after 335 seconds. Its `crs.pb` has the same IDs as the Baselines. From that directory, [`record.ps1`](baselines.md#a-chrome-that-has-run-for-a-while) gave normal forms identical to `tests/baselines/157` in all nine files. That was three sessions straight after a start and two with Chrome settled first.
 
 With the lists equal, that alone cannot show that the wire follows the component. So in a copy of that directory, we took the ID `d6790901` off its anchor in `crs.pb`. The anchor stays, so what Chrome trusts does not change. No real Chrome has this file.
 
