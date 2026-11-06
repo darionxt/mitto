@@ -44,7 +44,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `fetch_post_stream` | `POST` with no body | Send a stream. Over HTTP/1.1 the Baseline is `{"refused": true}`, so everything the replay sends is a gap. A replay that fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire matches it |
 | `cookie` | `/case/cookie-set`, then the case's path | Keep a cookie, so `Cookie` is a gap in that one line, because a case counts a request without what it should carry when none has it |
 | `revalidation` | The case's path twice | Keep a response, so `If-None-Match` is a gap in the same way |
-| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop. Wait before it follows a redirect, so over HTTP/2 every hop but the last usually has `RST_STREAM` in `later_frames`, where Chrome follows the redirect later and has none ([why only usually](#the-known-gaps-list)) |
+| `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is. `//net` follows the rest | Change headers on a hop, so `Sec-Fetch-Site`, `Origin`, `Referer` and the place of the `sec-ch-*` lines stay those of the first hop |
 | `plain_http_*` | The case's path over plain HTTP | Leave out `sec-ch-*` and `Sec-Fetch-*` for a URL that is not potentially trustworthy |
 | `proxy_connect`, `proxy_navigation` | Nothing | Use a proxy, so each is [one gap](#gaps) in the field `request` |
 
@@ -83,8 +83,6 @@ A run fails on a gap that is not in the list and on a gap in the list that no lo
 
 There is one list for both **Hosts**, because a Wire Fingerprint must not depend on the Host. A gap on only one Host fails the run on the other.
 
-One gap comes and goes on any Host, so a run accepts it whichever way it went: a redirect hop whose `later_frames` is one `RST_STREAM` with the error `CANCEL`. The native core follows a redirect at once, from inside the callback that `//net` runs when the response headers arrive, and `//net` cancels the stream because it has not read the frame's end of stream yet. If the response arrived before `//net` asked for it, the stream has already ended and nothing is cancelled, which happened in about one replay in 600 on a loaded machine. So the list has this line for each such hop, and writing the list again can lose one, which needs no attention. When the native core no longer follows a redirect from inside that callback, these lines should go for good, and `_depends_on_timing()` in `tools/parity/gaps.py` with them.
-
 To write the list again from what the native core does now:
 
 ```bash
@@ -117,6 +115,16 @@ The notifier is also what makes a state of the HTTP/2 connections take effect: `
 The first Session in a process waits up to a second for the system's DNS settings, which Chrome does not do, because Chrome has them long before a page asks for a host. A program's first request can come right away, and without those settings it would go to the system's resolver, which sees no HTTPS records.
 
 No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and the public Session takes it only through `_settings`. Such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
+
+## Redirects
+
+`//net` decides what a redirect does, as it does in Chrome: the limit of 20, the method of the next hop and when a body goes. The native core defers each redirect in `OnReceivedRedirect()` and continues it with `FollowDeferredRedirect()`, as `URLLoader` in Chrome's network service does.
+
+It continues from a task of its own, and that shows on the wire. Over HTTP/2 a redirect's `HEADERS` frame usually holds `END_STREAM`, and `//net` tells its delegate about the headers before it handles that. Following the redirect from inside that call would cancel a stream that is about to end, with an `RST_STREAM` that a server can see. Chrome's answer to a redirect comes back from another process, so it sends none.
+
+A caller's `Authorization` does not go to another origin, and stays gone if a later hop comes back. This is step 13 of [HTTP-redirect fetch](https://fetch.spec.whatwg.org/#http-redirect-fetch), which `ResourceLoader` does in Blink, so the native core does it in the same place, as a header to remove when it continues.
+
+`follow_redirects=False` makes a redirect the response, also from a task of its own, so the stream ends as it does when a redirect is followed. Its content is empty because `//net` does not read the body of a redirect, as with `redirect: "manual"` in Fetch. A redirect to a URL that is not valid still ends the request with `ERR_INVALID_REDIRECT`, because `//net` checks that before it tells its delegate.
 
 ## Certificate verification
 

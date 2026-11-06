@@ -19,6 +19,7 @@ constexpr std::string_view kMethodKey = "method";
 constexpr std::string_view kPriorityKey = "priority";
 constexpr std::string_view kPriorityIncrementalKey = "priority_incremental";
 constexpr std::string_view kReferrerKey = "referrer";
+constexpr std::string_view kFollowRedirectsKey = "follow_redirects";
 constexpr std::string_view kConnectTimeoutKey = "connect_timeout_ms";
 constexpr std::string_view kReadTimeoutKey = "read_timeout_ms";
 constexpr std::string_view kTotalTimeoutKey = "total_timeout_ms";
@@ -98,6 +99,14 @@ std::optional<RequestOptions> ParseRequestOptions(std::string_view json) {
         return std::nullopt;
       }
       options.priority_incremental = *priority_incremental;
+      continue;
+    }
+    if (key == kFollowRedirectsKey) {
+      const std::optional<bool> follow_redirects = value.GetIfBool();
+      if (!follow_redirects) {
+        return std::nullopt;
+      }
+      options.follow_redirects = *follow_redirects;
       continue;
     }
     if (std::optional<base::TimeDelta>* const timeout =

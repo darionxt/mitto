@@ -842,7 +842,7 @@ def test_a_redirect_arrives_as_an_event(scripted_server: ScriptedServer) -> None
     redirect, started, *_ = events
     assert isinstance(redirect, RedirectFollowed)
     assert redirect.status == 302
-    assert redirect.url == scripted_server.url("/small")
+    assert redirect.url == scripted_server.url("/redirect")
     assert ("Location", "/small") in redirect.headers
     assert isinstance(started, ResponseStarted)
     assert started.url == scripted_server.url("/small")
@@ -855,6 +855,25 @@ def test_a_blocking_request_ends_at_the_final_url(scripted_server: ScriptedServe
 
     assert response.url == scripted_server.url("/small")
     assert response.body == b"small"
+    assert [hop.url for hop in response.history] == [scripted_server.url("/redirect")]
+
+
+def test_a_redirect_that_is_not_followed_starts_and_finishes(scripted_server: ScriptedServer) -> None:
+    with Session() as session, session.start(scripted_server.url("/redirect"), follow_redirects=False) as request:
+        events, size = run_to_end(request)
+
+    started, finished = events
+    assert isinstance(started, ResponseStarted)
+    assert started.status == 302
+    assert started.url == scripted_server.url("/redirect")
+    assert finished == Finished(net_error=0)
+    assert size == 0
+
+
+def test_an_option_that_is_not_a_boolean_is_refused(scripted_server: ScriptedServer) -> None:
+    with Session() as session, pytest.raises(RequestError) as caught:
+        session.start(scripted_server.url("/small"), follow_redirects=cast(bool, "no"))
+    assert caught.value.net_error == ERR_INVALID_ARGUMENT
 
 
 def test_too_many_redirects_finish_with_the_net_error(scripted_server: ScriptedServer) -> None:

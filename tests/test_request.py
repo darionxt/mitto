@@ -33,6 +33,7 @@ def test_a_request_of_a_kind_is_what_the_persona_sends_for_that_kind(persona: Pe
         "url": URL,
         "method": "GET",
         "timeout": Timeout(),
+        "follow_redirects": True,
         "body": None,
         **persona.request_defaults(kind, URL),
     }
@@ -260,6 +261,13 @@ def test_a_url_without_an_origin_gets_no_referrer(url: str) -> None:
     assert build_request(ENGINE_PERSONA, "POST", url)["referrer"] is None
 
 
+@pytest.mark.parametrize("follow_redirects", [True, False])
+def test_follow_redirects_goes_to_the_native_core(follow_redirects: bool) -> None:
+    built = build_request(ENGINE_PERSONA, "GET", URL, follow_redirects=follow_redirects)
+
+    assert built["follow_redirects"] is follow_redirects
+
+
 def test_building_leaves_the_callers_headers_alone() -> None:
     headers = {"Accept": "text/plain", "Referer": None, "X-New": "1"}
 
@@ -273,6 +281,7 @@ def test_a_built_request_needs_no_argument_but_the_method_and_url() -> None:
 
     assert sorted(built) == [
         "body",
+        "follow_redirects",
         "headers",
         "method",
         "priority",

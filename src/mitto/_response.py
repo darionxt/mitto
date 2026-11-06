@@ -8,7 +8,7 @@ from typing import Any
 from mitto._errors import MittoError
 from mitto._native import NativeResponse
 
-__all__ = ["HTTPStatusError", "Headers", "Response", "to_response"]
+__all__ = ["HTTPStatusError", "Headers", "Redirect", "Response", "to_response"]
 
 _DEFAULT_CHARSET = "utf-8"
 
@@ -65,6 +65,21 @@ class Headers:
 
 
 @dataclass(frozen=True, slots=True)
+class Redirect:
+    """A redirect that a request followed on its way to the response.
+
+    Attributes:
+        status: The HTTP status code of the redirect.
+        url: The URL that answered with the redirect.
+        headers: The redirect's headers.
+    """
+
+    status: int
+    url: str
+    headers: Headers
+
+
+@dataclass(frozen=True, slots=True)
 class Response:
     """A finished response.
 
@@ -74,6 +89,7 @@ class Response:
         protocol: The protocol the response arrived over, for example "http/1.1", "h2" or "h3".
         headers: The final response's headers.
         content: The final response's body, after any content decoding. It stays out of repr(), since it can be large.
+        history: The redirects that led here, the first one first.
     """
 
     status: int
@@ -81,6 +97,7 @@ class Response:
     protocol: str
     headers: Headers
     content: bytes = field(repr=False)
+    history: tuple[Redirect, ...] = ()
 
     @property
     def text(self) -> str:
@@ -140,6 +157,7 @@ def to_response(native: NativeResponse) -> Response:
         protocol=native.protocol,
         headers=Headers(native.headers),
         content=native.body,
+        history=tuple(Redirect(hop.status, hop.url, Headers(hop.headers)) for hop in native.history),
     )
 
 

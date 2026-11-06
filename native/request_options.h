@@ -26,6 +26,9 @@ struct RequestOptions {
   // The URL to send as the Referer header. Empty sends none.
   GURL referrer;
 
+  // False makes a redirect the response, as mitto_request_start() describes.
+  bool follow_redirects = true;
+
   // What each timer allows, as mitto_request_start() describes. nullopt runs no
   // timer. A value is always positive.
   std::optional<base::TimeDelta> connect_timeout;
