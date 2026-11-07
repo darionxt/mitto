@@ -121,6 +121,7 @@ if (use_libfuzzer) {
     sources = [
       "cookie_json.cc",
       "cookie_json.h",
+      "include/mitto/mitto.h",
       "test/cookies_fuzzer.cc",
     ]
     additional_configs = [ ":public_api" ]
@@ -135,6 +136,7 @@ if (use_libfuzzer) {
     # The parser and not the library, whose exports list hides everything but the
     # C API.
     sources = [
+      "include/mitto/mitto.h",
       "request_options.cc",
       "request_options.h",
       "test/request_options_fuzzer.cc",
@@ -152,6 +154,7 @@ if (use_libfuzzer) {
     # C API.
     sources = [
       "ignore_errors_cert_verifier.h",
+      "include/mitto/mitto.h",
       "session_settings.cc",
       "session_settings.h",
       "socks5_auth_exchange.cc",

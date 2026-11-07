@@ -63,6 +63,8 @@ Nothing in the Chromium tree refers to `//mitto`, and with these arguments the t
 gn check out/mitto --root-target=//mitto '--root-pattern=//mitto:*'
 ```
 
+A build from the [source export](#build-from-the-source-export) runs this check itself, for every `--config`, and CI builds that way. `autoninja` in a checkout does not, so run the check by hand there.
+
 ## Build the native core
 
 From `$MITTO_WORKSPACE/chromium-<tag>/src`, with depot_tools on your `PATH`:
@@ -108,7 +110,8 @@ The command:
 2. unpacks it as `chromium-<tag>`, with `src` next to an `export.json` that lists the toolchain;
 3. downloads this Host's toolchain from Chromium's own storage and checks each package's hash;
 4. links the repository's `native/` in as `//mitto` and copies [`tools/workspace/args.gn`](../tools/workspace/args.gn), so that these two come from the repository and not from the export;
-5. runs `gn gen` and `ninja`, says whether the library is the same as the one the export's slice built, as it is until `native/` changes, and prints the library's path.
+5. runs `gn gen --check`, so that an include that `gn check` refuses stops the build before it compiles anything;
+6. runs `ninja`, says whether the library is the same as the one the export's slice built, as it is until `native/` changes, and prints the library's path.
 
 Running it again continues where it stopped, and rebuilds what changed in `native/`. It refuses a directory that holds another export of the same release, so a new export needs a new directory. To run the tests against the library:
 
