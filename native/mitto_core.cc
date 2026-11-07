@@ -81,9 +81,12 @@
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
-#include "net/dns/host_resolver.h"
-#include "net/dns/host_resolver_manager.h"
-#include "net/dns/system_dns_config_change_notifier.h"
+// //net/dns keeps these three headers to the targets on its friend lists, to
+// track who uses them outside the network stack. //mitto uses them as
+// //services/network does.
+#include "net/dns/host_resolver.h"                      // nogncheck
+#include "net/dns/host_resolver_manager.h"              // nogncheck
+#include "net/dns/system_dns_config_change_notifier.h"  // nogncheck
 #include "net/http/http_cache.h"
 #include "net/http/http_connection_info.h"
 #include "net/http/http_network_session.h"
