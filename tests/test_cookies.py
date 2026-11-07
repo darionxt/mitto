@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
@@ -626,6 +626,94 @@ def test_a_cookie_that_the_native_core_refuses(cookie: Cookie) -> None:
 def test_an_attribute_outside_its_values_is_refused(changes: dict[str, Any]) -> None:
     with new_session() as session, pytest.raises(ValueError, match="refused"):
         session.cookies.set(dataclasses.replace(Cookie("a", "1", domain=HOST), **changes))
+
+
+@pytest.mark.parametrize(
+    ("attributes", "message"),
+    [
+        ({"name": 5}, "name has to be text, not int"),
+        ({"value": b"1"}, "value has to be text, not bytes"),
+        ({"domain": None}, "domain has to be text, not NoneType"),
+        ({"path": 5}, "path has to be text, not int"),
+        ({"secure": "yes"}, "secure has to be True or False, not str"),
+        ({"http_only": 1}, "http_only has to be True or False, not int"),
+        ({"same_site": None}, "same_site has to be 'unspecified', 'none', 'lax' or 'strict', not NoneType"),
+        ({"priority": 5}, "priority has to be 'low', 'medium' or 'high', not int"),
+        ({"expires": 1_800_000_000}, "expires has to be a datetime or None, not int"),
+        ({"expires": date(2030, 1, 1)}, "expires has to be a datetime or None, not date"),
+        ({"partition_key": "https://example.test"}, "partition_key has to be a CookiePartitionKey or None, not str"),
+        ({"created": "2030-01-01T00:00:00Z"}, "created has to be a datetime or None, not str"),
+        ({"last_accessed": 5.0}, "last_accessed has to be a datetime or None, not float"),
+        ({"last_updated": 5}, "last_updated has to be a datetime or None, not int"),
+        ({"source_scheme": 5}, "source_scheme has to be 'unset', 'non_secure', 'secure' or None, not int"),
+        ({"source_port": "443"}, "source_port has to be a whole number or None, not str"),
+        ({"source_port": 443.0}, "source_port has to be a whole number or None, not float"),
+        ({"source_port": True}, "source_port has to be a whole number or None, not bool"),
+        ({"source_type": 5}, "source_type has to be 'http', 'script', 'other' or None, not int"),
+    ],
+)
+def test_an_attribute_of_the_wrong_type_is_named(attributes: dict[str, Any], message: str) -> None:
+    arguments: dict[str, Any] = {"name": "a", "value": "1", "domain": HOST, **attributes}
+
+    with pytest.raises(TypeError) as caught:
+        Cookie(**arguments)
+
+    assert str(caught.value) == message
+
+
+def test_a_value_of_the_wrong_type_stays_out_of_the_message() -> None:
+    with pytest.raises(TypeError) as caught:
+        Cookie("a", b"a secret", domain=HOST)  # pyright: ignore[reportArgumentType]
+
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("attributes", "message"),
+    [
+        ({"top_level_site": 5}, "top_level_site has to be text, not int"),
+        ({"has_cross_site_ancestor": "no"}, "has_cross_site_ancestor has to be True or False, not str"),
+        ({"has_cross_site_ancestor": 0}, "has_cross_site_ancestor has to be True or False, not int"),
+    ],
+)
+def test_a_partition_key_of_the_wrong_type_is_named(attributes: dict[str, Any], message: str) -> None:
+    arguments: dict[str, Any] = {
+        "top_level_site": "https://example.test",
+        "has_cross_site_ancestor": False,
+        **attributes,
+    }
+
+    with pytest.raises(TypeError) as caught:
+        CookiePartitionKey(**arguments)
+
+    assert str(caught.value) == message
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    ("method", "arguments", "message"),
+    [
+        ("get", {"name": 5}, "name has to be text, not int"),
+        ("get", {"name": "a", "domain": 5}, "domain has to be text or None, not int"),
+        ("get", {"name": "a", "path": b"/"}, "path has to be text or None, not bytes"),
+        ("delete", {"name": None}, "name has to be text, not NoneType"),
+        ("delete", {"name": "a", "domain": [HOST]}, "domain has to be text or None, not list"),
+        ("delete", {"name": "a", "path": 5}, "path has to be text or None, not int"),
+        ("set", {"cookie": {"name": "a", "value": "2"}}, "cookie has to be a Cookie, not dict"),
+        ("save", {"path": 5}, "path has to be text or a path, not int"),
+        ("load", {"path": b"cookies.json"}, "path has to be text or a path, not bytes"),
+    ],
+)
+def test_an_argument_of_the_wrong_type_is_named_and_the_store_stays_as_it_was(
+    method: str, arguments: dict[str, Any], message: str
+) -> None:
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST))
+        with pytest.raises(TypeError) as caught:
+            getattr(session.cookies, method)(**arguments)
+
+        assert [(cookie.name, cookie.value) for cookie in session.cookies] == [("a", "1")]
+    assert str(caught.value) == message
 
 
 @pytest.mark.usefixtures("native_library")

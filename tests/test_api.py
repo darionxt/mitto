@@ -4,14 +4,20 @@ Tests that take the native_library fixture go through the real native core to a 
 connection, and are skipped when this machine has no native library.
 """
 
+import functools
 import http.server
+import inspect
 import json
+import operator
 import os
+import re
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
-from dataclasses import dataclass
+import typing
+from collections.abc import AsyncIterable, Buffer, Callable, Iterator, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,9 +25,11 @@ import pytest
 
 import mitto
 from mitto import _native
+from mitto._body import FileFields, QueryParams, RequestData
+from mitto._cookies import CookiePriority, CookieSourceScheme, CookieSourceType, SameSite
 from mitto._native import PrivateSettings
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, RequestKind, load_persona
-from mitto._request import BodyOptions
+from mitto._request import BodyOptions, RequestHeaders
 from tests.client_hints import until_a_server_asks
 from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, MAIN_CASES, CaptureServer, normal_form
@@ -765,6 +773,256 @@ def test_get_names_an_argument_of_the_wrong_type(server: AnyMethodServer) -> Non
         mitto.get(server.url, params={"page": 2})  # pyright: ignore[reportArgumentType]
 
     assert server.received == []
+
+
+class _BytesPath:
+    """A path whose text is bytes, which pathlib does not take."""
+
+    def __fspath__(self) -> bytes:
+        return b"cookies.json"
+
+
+@pytest.mark.parametrize(
+    ("settings", "message"),
+    [
+        ({"persona": 5}, "persona has to be text, not int"),
+        ({"persona": [ENGINE_RELEASE_PERSONA]}, "persona has to be text, not list"),
+        ({"accept_language": 5}, "accept_language has to be text or None, not int"),
+        ({"accept_language": ["de-DE"]}, "accept_language has to be text or None, not list"),
+        (
+            {"additional_trust_anchors": "one PEM"},
+            "additional_trust_anchors has to be a sequence of PEM texts, not str",
+        ),
+        (
+            {"additional_trust_anchors": b"one PEM"},
+            "additional_trust_anchors has to be a sequence of PEM texts, not bytes",
+        ),
+        ({"additional_trust_anchors": 5}, "additional_trust_anchors has to be a sequence of PEM texts, not int"),
+        ({"additional_trust_anchors": [b"one PEM"]}, "an item of additional_trust_anchors has to be text, not bytes"),
+        (
+            {"additional_trust_anchors": ("one PEM", None)},
+            "an item of additional_trust_anchors has to be text, not NoneType",
+        ),
+        ({"cookie_file": 5}, "cookie_file has to be text, a path or None, not int"),
+        ({"cookie_file": b"cookies.json"}, "cookie_file has to be text, a path or None, not bytes"),
+        ({"cookie_file": _BytesPath()}, "cookie_file has to be text, a path or None, not _BytesPath"),
+        ({"proxy": 5}, "proxy has to be text or None, not int"),
+        ({"proxy": b"http://user:a-secret@proxy.test:8080"}, "proxy has to be text or None, not bytes"),
+        ({"cache": 5}, "cache has to be text, a path or None, not int"),
+        ({"cache": b"memory"}, "cache has to be text, a path or None, not bytes"),
+    ],
+)
+def test_a_setting_of_the_wrong_type_is_named_before_the_library_loads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, settings: dict[str, Any], message: str
+) -> None:
+    monkeypatch.setenv(_native.LIBRARY_ENV_VAR, str(tmp_path / "missing"))
+
+    with pytest.raises(TypeError) as caught:
+        mitto.Session(**settings)
+
+    assert str(caught.value) == message
+
+
+# The walk of every public argument. It reads them from the signatures, so a new argument is walked as soon as it exists,
+# and fails here until it has a check.
+
+# A value of the wrong type for each annotation that a public argument has, of a kind that code from `requests` might give.
+WRONG_VALUES: dict[object, object] = {
+    str: 5,
+    str | None: 5,
+    bool: "no",
+    int | None: "443",
+    float | None: "5",
+    float | mitto.Timeout | None: (3, 10),
+    Sequence[str]: b"-----BEGIN CERTIFICATE-----",
+    str | os.PathLike[str]: 5,
+    str | os.PathLike[str] | None: 5,
+    QueryParams | None: "page=2",
+    RequestHeaders | None: [("X-A", "1")],
+    RequestKind | str | None: 5,
+    RequestData | None: 5,
+    RequestData | AsyncIterable[Buffer] | None: 5,
+    FileFields | None: "report.csv",
+    # Any value is an object, which is what json takes, but JSON has no form of a set.
+    object: {"a"},
+    datetime | None: 1_800_000_000,
+    mitto.Cookie: {"a": "1"},
+    mitto.CookiePartitionKey | None: "https://example.test",
+    SameSite: 5,
+    CookiePriority: 5,
+    CookieSourceScheme | None: 5,
+    CookieSourceType | None: 5,
+}
+
+# The classes of each API, which the both_apis fixture puts behind mitto.Session.
+API_CLASSES = {"sync": (mitto.Session, mitto.Cookies), "asyncio": (mitto.AsyncSession, mitto.AsyncCookies)}
+
+# Each public name, from before the both_apis fixture puts another Session in place of mitto.Session.
+PUBLIC = {name: getattr(mitto, name) for name in mitto.__all__}
+
+_ERRORS = [name for name, item in PUBLIC.items() if inspect.isclass(item) and issubclass(item, Exception)]
+
+# The public callables that take arguments and that the walk leaves out, each with the reason.
+NOT_WALKED = {
+    "Response()": "mitto builds what a response holds, and a caller never does",
+    "ResponseStream()": "mitto builds what a response holds, and a caller never does",
+    "AsyncResponseStream()": "mitto builds what a response holds, and a caller never does",
+    "Redirect()": "mitto builds what a response holds, and a caller never does",
+    "Headers()": "mitto builds what a response holds, and a caller never does",
+    "Cookies()": "a Session makes its own, and a caller never does",
+    "AsyncCookies()": "an AsyncSession makes its own, and a caller never does",
+    "RequestKind()": "a value that is not a Request Kind raises a ValueError, as an Enum does, whatever its type",
+    **dict.fromkeys((f"{name}()" for name in _ERRORS), "mitto raises its errors, and a caller never builds one"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Callee:
+    """A public callable that takes arguments, and how the walk calls it.
+
+    Attributes:
+        name: Its name, as docs/api.md heads it.
+        signature: What has its signature, whose arguments the walk reads.
+        target: What gives the callable, from the Session that the walk makes.
+        needs: A valid value for each argument that it needs, which the wrong one takes the place of in turn.
+    """
+
+    name: str
+    signature: Callable[..., object]
+    target: Callable[[Any], Callable[..., object]]
+    needs: dict[str, object] = field(default_factory=dict[str, object])
+
+
+def callees(api: str, url: str) -> list[Callee]:
+    """Return each public callable that takes arguments, but those in NOT_WALKED, as the walk calls it through `api`."""
+    session_class, cookies_class = API_CLASSES[api]
+    walked = [
+        Callee(f"{session_class.__name__}()", session_class, lambda _: mitto.Session),
+        Callee("get()", mitto.get, lambda _: mitto.get, {"url": url}),
+        Callee("Timeout()", mitto.Timeout, lambda _: mitto.Timeout),
+        Callee("Cookie()", mitto.Cookie, lambda _: mitto.Cookie, {"name": "a", "value": "1", "domain": "example.test"}),
+        Callee(
+            "CookiePartitionKey()",
+            mitto.CookiePartitionKey,
+            lambda _: mitto.CookiePartitionKey,
+            {"top_level_site": "https://example.test", "has_cross_site_ancestor": False},
+        ),
+        Callee("Headers.get()", mitto.Headers.get, lambda _: mitto.Headers().get, {"name": "a"}),
+        Callee("Headers.get_all()", mitto.Headers.get_all, lambda _: mitto.Headers().get_all, {"name": "a"}),
+    ]
+    for name in ["request", "stream", *METHODS]:
+        needs: dict[str, object] = {"method": "POST", "url": url} if name in {"request", "stream"} else {"url": url}
+        walked.append(
+            Callee(f"{session_class.__name__}.{name}()", getattr(session_class, name), operator.attrgetter(name), needs)
+        )
+    for name in ["get", "set", "delete", "save", "load"]:
+        needs = {"name": "a"} if name in {"get", "delete"} else {}
+        walked.append(
+            Callee(
+                f"{cookies_class.__name__}.{name}()",
+                getattr(cookies_class, name),
+                operator.attrgetter(f"cookies.{name}"),
+                needs,
+            )
+        )
+    return walked
+
+
+def walked_arguments(signature: Callable[..., object]) -> Iterator[tuple[str, object]]:
+    """Yield the name and annotation of each public argument, with the keys of an Unpack[TypedDict] as arguments."""
+    for parameter in inspect.signature(signature).parameters.values():
+        if parameter.name == "self" or parameter.name.startswith("_"):
+            continue
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            (options,) = typing.get_args(parameter.annotation)
+            yield from typing.get_type_hints(options).items()
+        else:
+            yield parameter.name, parameter.annotation
+
+
+def fault_of(call: Callable[[], object], argument: str, wrong: object) -> str | None:
+    """Return what is wrong with how `call` takes `wrong` as `argument`, or None if it raises a TypeError as it should.
+
+    That TypeError names the argument and the type it got, and leaves out the value. Something to enter is entered.
+    """
+    try:
+        result: Any = call()
+        if hasattr(result, "__enter__"):
+            with result:
+                pass
+    except TypeError as error:
+        message = str(error)
+        if not re.search(rf"\b{argument}\b", message) or not re.search(rf"\b{type(wrong).__name__}\b", message):
+            return f"the TypeError does not name it and its type: {message}"
+        if repr(wrong) in message:
+            return f"the TypeError shows the value: {message}"
+        return None
+    except Exception as error:
+        return f"it raises {type(error).__name__}: {error}"
+    return "it raises nothing"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_each_public_argument_of_the_wrong_type_is_named_with_nothing_sent(
+    both_apis: str, server: AnyMethodServer
+) -> None:
+    faults: list[str] = []
+    with mitto.Session() as session:
+        for callee in callees(both_apis, server.url):
+            for argument, annotation in walked_arguments(callee.signature):
+                if annotation not in WRONG_VALUES:
+                    faults.append(f"{callee.name} {argument}=: WRONG_VALUES has nothing for {annotation}")
+                    continue
+                wrong = WRONG_VALUES[annotation]
+                call = functools.partial(callee.target(session), **{**callee.needs, argument: wrong})
+                if (fault := fault_of(call, argument, wrong)) is not None:
+                    faults.append(f"{callee.name} {argument}=: {fault}")
+
+    assert faults == []
+    assert server.received == []
+
+
+def _takes_arguments(item: Callable[..., object]) -> bool:
+    try:
+        parameters = inspect.signature(item).parameters
+    except ValueError:
+        # A builtin type such as Exception has no signature to read, and takes any arguments.
+        return True
+    return any(name != "self" and not name.startswith("_") for name in parameters)
+
+
+def public_callables() -> set[str]:
+    """Return each function, class and method in PUBLIC that takes arguments, named as callees() names them."""
+    names: set[str] = set()
+    for name, item in PUBLIC.items():
+        if _takes_arguments(item):
+            names.add(f"{name}()")
+        if inspect.isclass(item):
+            names |= {
+                f"{name}.{method_name}()"
+                for method_name, method in inspect.getmembers(item, inspect.isfunction)
+                if not method_name.startswith("_") and _takes_arguments(method)
+            }
+    return names
+
+
+def test_the_walk_reaches_each_public_callable_that_takes_arguments() -> None:
+    walked = {callee.name for api in API_CLASSES for callee in callees(api, "")}
+
+    assert sorted(public_callables() - walked - NOT_WALKED.keys()) == []
+    assert sorted((walked | NOT_WALKED.keys()) - public_callables()) == []
+
+
+def test_the_walk_finds_an_argument_with_no_check() -> None:
+    def unchecked(text: object) -> None:
+        pass
+
+    def checked(text: object) -> None:
+        if not isinstance(text, str):
+            raise TypeError(f"text has to be text, not {type(text).__name__}")
+
+    assert fault_of(functools.partial(unchecked, 5), "text", 5) == "it raises nothing"
+    assert fault_of(functools.partial(checked, 5), "text", 5) is None
 
 
 @pytest.mark.usefixtures("native_library")

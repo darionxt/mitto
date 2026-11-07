@@ -5,10 +5,12 @@ closing can block for a moment, on the system's DNS settings, a cache on disk or
 """
 
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Buffer, Callable, Iterable, Sequence
 from pathlib import Path
+from typing import cast
 
 from mitto import _native
+from mitto._arguments import require_path, require_type
 from mitto._cookies import Cookies, write_cookie_file
 from mitto._native import MEMORY_CACHE, PrivateSettings
 from mitto._persona import load_persona
@@ -46,6 +48,13 @@ class SessionState:
             OSError: As Session() does.
             NativeLibraryError: If the native library cannot be used.
         """
+        # Before the library, so that these faults are named whether or not there is one.
+        require_type("persona", persona, str, "text")
+        require_type("accept_language", accept_language, str | None, "text or None")
+        anchors = _trust_anchors(additional_trust_anchors)
+        require_path("cookie_file", cookie_file, or_none=True)
+        require_type("proxy", proxy, str | None, "text or None")
+        require_path("cache", cache, or_none=True)
         self._persona = load_persona(persona)
         self._timeout = to_timeout(timeout)
         # Before anything that needs closing exists, because this can raise. The working directory may change before the
@@ -54,7 +63,7 @@ class SessionState:
         self.native = _native.Session(
             accept_language=self._persona.accept_language if accept_language is None else accept_language,
             user_agent=self._persona.user_agent,
-            additional_trust_anchors=additional_trust_anchors,
+            additional_trust_anchors=anchors,
             proxy=proxy,
             http_cache=_http_cache_setting(cache),
             **(PrivateSettings() if settings is None else settings),
@@ -111,6 +120,22 @@ class SessionState:
         except BaseException:
             self.native.close()
             raise
+
+
+def _trust_anchors(anchors: object) -> tuple[str, ...]:
+    """Return what Session() takes as `additional_trust_anchors`, each the text of a PEM file.
+
+    Raises:
+        TypeError: If it is text or bytes, whose every character would be an anchor of its own, or anything else that is
+            not an iterable, or an anchor is not text.
+    """
+    if isinstance(anchors, str | Buffer) or not isinstance(anchors, Iterable):
+        raise TypeError(f"additional_trust_anchors has to be a sequence of PEM texts, not {type(anchors).__name__}")
+    # A generator goes once, so its anchors are kept for the native Session.
+    texts = tuple(cast(Iterable[object], anchors))
+    for anchor in texts:
+        require_type("an item of additional_trust_anchors", anchor, str, "text")
+    return cast(tuple[str, ...], texts)
 
 
 def _http_cache_setting(cache: str | os.PathLike[str] | None) -> str | None:

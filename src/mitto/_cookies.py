@@ -12,9 +12,11 @@ from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import UnionType
 from typing import Any, Literal
 
 from mitto import _native
+from mitto._arguments import require_path, require_type
 
 __all__ = ["AsyncCookies", "Cookie", "CookiePartitionKey", "Cookies", "write_cookie_file"]
 
@@ -41,10 +43,38 @@ class CookiePartitionKey:
     Attributes:
         top_level_site: The site, such as "https://example.com".
         has_cross_site_ancestor: Whether a frame between it and the cookie's frame is cross-site.
+
+    Raises:
+        TypeError: If `top_level_site` is not text, or `has_cross_site_ancestor` is neither True nor False.
     """
 
     top_level_site: str
     has_cross_site_ancestor: bool
+
+    def __post_init__(self) -> None:
+        require_type("top_level_site", self.top_level_site, str, "text")
+        require_type("has_cross_site_ancestor", self.has_cross_site_ancestor, bool, "True or False")
+
+
+# What each attribute of a Cookie takes. Text outside the values of its Literal type is the native core's to refuse.
+_COOKIE_ATTRIBUTES: tuple[tuple[str, type | UnionType, str], ...] = (
+    ("name", str, "text"),
+    ("value", str, "text"),
+    ("domain", str, "text"),
+    ("path", str, "text"),
+    ("secure", bool, "True or False"),
+    ("http_only", bool, "True or False"),
+    ("same_site", str, "'unspecified', 'none', 'lax' or 'strict'"),
+    ("priority", str, "'low', 'medium' or 'high'"),
+    ("expires", datetime | None, "a datetime or None"),
+    ("partition_key", CookiePartitionKey | None, "a CookiePartitionKey or None"),
+    ("created", datetime | None, "a datetime or None"),
+    ("last_accessed", datetime | None, "a datetime or None"),
+    ("last_updated", datetime | None, "a datetime or None"),
+    ("source_scheme", str | None, "'unset', 'non_secure', 'secure' or None"),
+    ("source_port", int | None, "a whole number or None"),
+    ("source_type", str | None, "'http', 'script', 'other' or None"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +107,9 @@ class Cookie:
         source_scheme: The kind of scheme it came from.
         source_port: The port it came from, -1 for none, or -2 if that was not valid.
         source_type: What it came from.
+
+    Raises:
+        TypeError: If an attribute is of a type it does not take, which the message names. True and False are no port.
     """
 
     name: str
@@ -96,6 +129,13 @@ class Cookie:
     source_scheme: CookieSourceScheme | None = None
     source_port: int | None = None
     source_type: CookieSourceType | None = None
+
+    def __post_init__(self) -> None:
+        for argument, expected, what in _COOKIE_ATTRIBUTES:
+            require_type(argument, getattr(self, argument), expected, what)
+        # True and False are ints to Python, but no port.
+        if isinstance(self.source_port, bool):
+            raise TypeError("source_port has to be a whole number or None, not bool")
 
 
 class _CookieStore:
@@ -128,7 +168,11 @@ class _CookieStore:
 
         Returns:
             The first that matches, if several do, which is the one that goes first in a Cookie header.
+
+        Raises:
+            TypeError: If `name` is not text, or `domain` or `path` is neither text nor None.
         """
+        _require_keys(name, domain, path)
         for cookie in self._list():
             if cookie.name == name and domain in (None, cookie.domain) and path in (None, cookie.path):
                 return cookie
@@ -143,8 +187,9 @@ class _CookieStore:
         Raises:
             ValueError: If the native core refuses it, such as a __Host- cookie that is not Secure or a domain that holds a
                 port or a path.
-            TypeError: If one of its times has no timezone.
+            TypeError: If `cookie` is not a Cookie, or one of its times has no timezone.
         """
+        require_type("cookie", cookie, Cookie, "a Cookie")
         self._native.set_cookies(
             json.dumps({"version": _native.COOKIES_VERSION, "cookies": [_to_native(cookie)]}).encode()
         )
@@ -156,7 +201,11 @@ class _CookieStore:
             name: The name.
             domain: The domain, written as Cookie.domain is, or None for any.
             path: The path, or None for any.
+
+        Raises:
+            TypeError: If `name` is not text, or `domain` or `path` is neither text nor None.
         """
+        _require_keys(name, domain, path)
         keys = {"name": name, "domain": domain, "path": path}
         return self._delete({key: value for key, value in keys.items() if value is not None})
 
@@ -191,17 +240,21 @@ class Cookies(_CookieStore):
         A crash during this call leaves the file as it was.
 
         Raises:
+            TypeError: If `path` is neither text nor a path.
             OSError: If the file cannot be written.
         """
+        require_path("path", path)
         write_cookie_file(path, self._native.list_cookies())
 
     def load(self, path: str | os.PathLike[str]) -> None:
         """Add the cookies of a file from save(), each with the attributes it had there, replacing any of the same name.
 
         Raises:
+            TypeError: If `path` is neither text nor a path.
             OSError: If the file cannot be read, such as a FileNotFoundError.
             ValueError: If the native core refuses what the file holds, in which case no cookie is added.
         """
+        require_path("path", path)
         self._set_from_file(path, Path(path).read_bytes())
 
 
@@ -216,8 +269,10 @@ class AsyncCookies(_CookieStore):
         """Write all the cookies to a file off the event loop, as Cookies.save() does.
 
         Raises:
+            TypeError: As Cookies.save() does.
             OSError: If the file cannot be written.
         """
+        require_path("path", path)
         # This asks the network thread here, so that nothing off the loop can use a native Session that is closing.
         await asyncio.to_thread(write_cookie_file, path, self._native.list_cookies())
 
@@ -225,10 +280,23 @@ class AsyncCookies(_CookieStore):
         """Read a file from save() off the event loop and add its cookies, as Cookies.load() does.
 
         Raises:
+            TypeError: As Cookies.load() does.
             OSError: If the file cannot be read, such as a FileNotFoundError.
             ValueError: If the native core refuses what the file holds, in which case no cookie is added.
         """
+        require_path("path", path)
         self._set_from_file(path, await asyncio.to_thread(Path(path).read_bytes))
+
+
+def _require_keys(name: object, domain: object, path: object) -> None:
+    """Refuse what picks out cookies, unless `name` is text, and `domain` and `path` are text or None.
+
+    Raises:
+        TypeError: If one of them is of another type.
+    """
+    require_type("name", name, str, "text")
+    require_type("domain", domain, str | None, "text or None")
+    require_type("path", path, str | None, "text or None")
 
 
 def write_cookie_file(path: str | os.PathLike[str], contents: bytes) -> None:

@@ -8,6 +8,7 @@ import dataclasses
 from collections.abc import AsyncIterable, Buffer, Iterable, Mapping
 from typing import TypedDict, cast
 
+from mitto._arguments import require_type
 from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
@@ -167,15 +168,20 @@ def build_request(
         files: See BodyOptions.
 
     Raises:
-        TypeError: If `params`, `headers` or `timeout` is of a type it does not take, or a name or value in `params` or a
-            mapping in `data` is not text, or a name in `headers` is not text, or a value in it is neither text nor None.
-            The message names the argument. Also if `data` is of no type that makes a body, `files` is not a mapping or
-            pairs with text for names, a file has another form, or `json` holds a value that JSON has no form of.
+        TypeError: If an argument is of a type it does not take, as Session.request() says, which the message names. A
+            name or value in `params` or a mapping in `data` that is not text, a name in `headers` that is not text or a
+            value in it that is neither text nor None, a file in `files` of another form and a value in `json` that JSON
+            has no form of count as well.
         ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a
             positive number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds
             a NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or the
             `Content-Length` of a stream is not a number of bytes.
     """
+    require_type("method", method, str, "text")
+    require_type("url", url, str, "text")
+    require_type("kind", kind, str | None, "a RequestKind, its value or None")
+    require_type("initiator", initiator, str | None, "text or None")
+    require_type("follow_redirects", follow_redirects, bool, "True or False")
     method = method.upper() if method.upper() in _METHODS_FETCH_NORMALIZES else method
     url = _with_query(url, encode_query(params)) if params is not None else url
     if kind is None:
