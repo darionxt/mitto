@@ -121,12 +121,15 @@ class BuildConfig:
 
 # The build that ships.
 PLAIN = BuildConfig("mitto")
-ASAN = BuildConfig("asan", "is_asan = true\nis_lsan = true\n")
-UBSAN = BuildConfig("ubsan", "is_ubsan = true\nis_ubsan_no_recover = true\n")
+# A sanitizer's report needs the unwind tables that args.gn leaves out of the
+# library that ships.
+UNSHRUNK = "exclude_unwind_tables = false\n"
+ASAN = BuildConfig("asan", UNSHRUNK + "is_asan = true\nis_lsan = true\n")
+UBSAN = BuildConfig("ubsan", UNSHRUNK + "is_ubsan = true\nis_ubsan_no_recover = true\n")
 # The fuzz target has a build of its own, because Chromium's fuzzing builds define
 # FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION, which changes BoringSSL's random numbers
 # among other things. Its owners files would ask git, and an export has no git.
-FUZZ = BuildConfig("fuzz", "is_asan = true\nuse_libfuzzer = true\ngenerate_fuzzer_owners = false\n")
+FUZZ = BuildConfig("fuzz", UNSHRUNK + "is_asan = true\nuse_libfuzzer = true\ngenerate_fuzzer_owners = false\n")
 CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ)
 
 
