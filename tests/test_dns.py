@@ -6,9 +6,12 @@ tests need no network connection, and are skipped when this machine has no nativ
 
 import dataclasses
 from collections.abc import Iterator
+from typing import cast
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
+from mitto import RequestError
 from mitto._native import Session
 from tests.local_dns_server import (
     ECH_AEAD_AES_128_GCM,
@@ -20,9 +23,11 @@ from tests.local_dns_server import (
     ech_config_list,
     https_record,
 )
+from tests.local_ech import EchKey
 from tools.capture import HTTP2, HTTP3, CaptureServer
 from tools.capture.client_hello import ClientHello
-from tools.capture.recording import ConnectionRecord
+from tools.capture.normal_form import normal_hello
+from tools.capture.recording import ConnectionRecord, Json, QuicConnectionRecord
 from tools.capture.wire import Reader
 
 pytestmark = pytest.mark.usefixtures("native_library")
@@ -34,6 +39,14 @@ ECH_CONFIG_ID = 42
 _EXTENSION_SERVER_NAME = 0
 _EXTENSION_ENCRYPTED_CLIENT_HELLO = 65037
 _ECH_OUTER = 0
+
+# What Chrome 157 left out of its ClientHelloInner over TCP on 2026-11-07, next to its outer ClientHello: all that is
+# for TLS 1.2 only. See docs/capture.md.
+_TLS_1_2_EXTENSIONS = frozenset({"ec_point_formats", "extended_master_secret", "renegotiation_info", "session_ticket"})
+_TLS_1_3_CIPHER_SUITES = frozenset(
+    {"GREASE", "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256"}
+)
+_INNER_ECH: Json = {"type": "encrypted_client_hello", "client_hello": "inner"}
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -70,6 +83,54 @@ def client_hellos(server: CaptureServer) -> list[ClientHello]:
     return hellos
 
 
+def quic_client_hellos(server: CaptureServer) -> list[ClientHello]:
+    hellos: list[ClientHello] = []
+    for connection in server.recording(HTTP3).connections:
+        assert isinstance(connection, QuicConnectionRecord)
+        hellos.append(connection.client_hello.hello)
+    return hellos
+
+
+def ech_aead(form: dict[str, Json]) -> Json:
+    """Return the AEAD that the encrypted_client_hello extension of a ClientHello's normal form names."""
+    extensions = cast(list[dict[str, Json]], form["extensions"])
+    return next(item["aead"] for item in extensions if item["type"] == "encrypted_client_hello")
+
+
+def without_ech_aead(form: dict[str, Json]) -> dict[str, Json]:
+    """Return a ClientHello's normal form without the AEAD of its encrypted_client_hello extension."""
+    extensions: list[Json] = [
+        {key: value for key, value in item.items() if key != "aead"}
+        if item["type"] == "encrypted_client_hello"
+        else item
+        for item in cast(list[dict[str, Json]], form["extensions"])
+    ]
+    stripped: dict[str, Json] = {**form, "extensions": extensions}
+    return stripped
+
+
+def inner_form(outer: dict[str, Json], *, tls_1_2: bool) -> dict[str, Json]:
+    """Return what the normal form of a ClientHelloInner should be, from that of its outer ClientHello.
+
+    The inner one offers TLS 1.3 only, so it leaves out what the outer one has for TLS 1.2, which over QUIC is nothing.
+    """
+    extensions: list[Json] = []
+    for item in cast(list[dict[str, Json]], outer["extensions"]):
+        if item["type"] == "encrypted_client_hello":
+            extensions.append(_INNER_ECH)
+        elif not tls_1_2:
+            extensions.append(item)
+        elif item["type"] == "supported_versions":
+            extensions.append({**item, "versions": [v for v in cast(list[Json], item["versions"]) if v != "TLS 1.2"]})
+        elif item["type"] not in _TLS_1_2_EXTENSIONS:
+            extensions.append(item)
+    suites = cast(list[Json], outer["cipher_suites"])
+    if tls_1_2:
+        suites = [suite for suite in suites if suite in _TLS_1_3_CIPHER_SUITES]
+    form: dict[str, Json] = {**outer, "cipher_suites": suites, "extensions": extensions}
+    return form
+
+
 @pytest.fixture
 def capture_server() -> Iterator[CaptureServer]:
     with CaptureServer() as server:
@@ -92,6 +153,65 @@ def test_an_https_record_with_ech_puts_real_ech_in_the_client_hello(capture_serv
     # The client then connects again in the clear, with what it sends to a host that has no configuration.
     assert server_name(retry) == HOST
     assert response.status == 200
+
+
+def test_real_ech_looks_like_ech_grease_from_outside(capture_server: CaptureServer) -> None:
+    key = EchKey.generate(ECH_CONFIG_ID, PUBLIC_NAME)
+
+    with (
+        LocalDnsServer(https_record(HOST, alpn=[HTTP2], ech=key.config_list)) as dns,
+        Session(ignore_certificate_errors_spki_list=[capture_server.spki_hash], dns_nameserver=dns.address) as session,
+    ):
+        session.request(f"https://{HOST}:{capture_server.port(HTTP2)}/")
+
+    real, grease = client_hellos(capture_server)
+    assert server_name(key.inner_client_hello(real)) == HOST
+    # GREASE has a random configuration ID, which can be this one by chance.
+    with pytest.raises((ValueError, InvalidTag)):
+        key.inner_client_hello(grease)
+    # Chrome 155, 156 and 157 sent the same: with real ECH, their ClientHello had the normal form of their Baselines,
+    # which hold GREASE. Real ECH takes the record's one AEAD, and GREASE takes AES-128-GCM only on a processor with AES
+    # instructions, so that one field follows the Host.
+    assert ech_aead(normal_hello(real)) == "AES-128-GCM"
+    assert without_ech_aead(normal_hello(real)) == without_ech_aead(normal_hello(grease))
+
+
+def test_the_client_hello_inner_offers_tls_1_3_only(capture_server: CaptureServer) -> None:
+    key = EchKey.generate(ECH_CONFIG_ID, PUBLIC_NAME)
+
+    with (
+        LocalDnsServer(https_record(HOST, alpn=[HTTP2], ech=key.config_list)) as dns,
+        Session(ignore_certificate_errors_spki_list=[capture_server.spki_hash], dns_nameserver=dns.address) as session,
+    ):
+        session.request(f"https://{HOST}:{capture_server.port(HTTP2)}/")
+
+    outer, _ = client_hellos(capture_server)
+    inner = key.inner_client_hello(outer)
+    assert server_name(inner) == HOST
+    assert normal_hello(inner) == inner_form(normal_hello(outer), tls_1_2=True)
+
+
+def test_over_quic_the_client_hello_inner_differs_only_in_its_type(capture_server: CaptureServer) -> None:
+    key = EchKey.generate(ECH_CONFIG_ID, PUBLIC_NAME)
+
+    with (
+        LocalDnsServer(https_record(HOST, alpn=[HTTP3], ech=key.config_list)) as dns,
+        # As in the test of an h3 record below, this only lifts //net's refusal of QUIC to a private certificate.
+        Session(
+            ignore_certificate_errors_spki_list=[capture_server.spki_hash],
+            origins_to_force_quic_on=[f"{HOST}:1"],
+            dns_nameserver=dns.address,
+        ) as session,
+        # The capture server knows no ECH. Over QUIC, //net does not connect again without it, as it does over TCP.
+        pytest.raises(RequestError),
+    ):
+        session.request(f"https://{HOST}:{capture_server.port(HTTP3)}/")
+
+    outer, *_ = quic_client_hellos(capture_server)
+    inner = key.inner_client_hello(outer)
+    assert server_name(outer) == PUBLIC_NAME
+    assert server_name(inner) == HOST
+    assert normal_hello(inner) == inner_form(normal_hello(outer), tls_1_2=False)
 
 
 def test_an_https_record_without_ech_leaves_ech_grease_in_the_client_hello(capture_server: CaptureServer) -> None:

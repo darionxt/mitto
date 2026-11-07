@@ -281,6 +281,7 @@ Only connections that carried a request of a Recording Case count, and a run's n
 - **QPACK.** How a client encodes its headers, and what it says on its QPACK encoder stream, depends on the requests before them. Those bytes stay in the raw recording, but only the decoded headers are in the normal form.
 - **Chaos in Initial packets.** The normal form cannot tell a client that splits its ClientHello at random from one that does not, because any one way of splitting it is random too.
 - **Lines for Google's domains.** Chrome adds them by the name in the URL, and the names of the case pages are not Google's. See [What Chrome adds for Google's domains](#what-chrome-adds-for-googles-domains).
+- **The ClientHelloInner of real ECH.** The names of the case pages are never looked up, so Chrome finds no HTTPS record and sends ECH GREASE. With real ECH the outer ClientHello has the same normal form, so only the inner one is missing. See [Real ECH](#real-ech).
 
 ### What can differ between Chrome installations
 
@@ -607,6 +608,90 @@ The token is what a server's `NEW_TOKEN` frame leaves for next time. The capture
 - A Session on Windows, which is not a **Host**, and Chrome on a second machine.
 - A ticket that has run out, or that a server has forgotten, and how each client falls back.
 - A later Chrome Release. When the Engine Release moves, `record.ps1 -Tickets` repeats the first part. For ALPS, `TlsClientHandshaker::SetAlpn()` is the place to read: while it passes no data, there is nothing to see.
+
+## Real ECH
+
+A **Baseline**'s ClientHello holds ECH GREASE, because Chrome finds no HTTPS record for the names of the case pages. A site whose HTTPS record offers ECH gets real ECH instead: an outer ClientHello at the record's public name, which carries the real one, the ClientHelloInner, encrypted to the site's key. So we recorded Chrome against HTTPS records of our own, on 2026-11-07:
+
+| Question | Answer | From |
+|---|---|---|
+| Can Chrome use a resolver of our own, without a change to the machine's DNS settings? | Yes. `dns_over_https` in the `Local State` of its user data directory sends every name to a DoH server on loopback | Measured |
+| Does that change what Chrome sends? | No. With HTTPS records that offer no ECH, the three runs of the case pages over TLS came out byte for byte the Baselines | Measured |
+| Does Chrome then send real ECH? | Yes, to every name whose record offers it, over TCP and over QUIC | Measured |
+| Can the ClientHelloInner be read? | Yes, with the private key of the configuration in the record. Once it is decrypted, the kit's parsers read it as they read the outer one | Measured |
+| Do Chrome and a **Session** send the same? | Yes. The outer ClientHello has the normal form of the Baselines, which hold GREASE, and the ClientHelloInner is the same in Chrome 155, 156 and 157 and in a Session | Measured |
+| What is in the ClientHelloInner? | The outer ClientHello's offer for TLS 1.3 alone, at the real name | Measured, and the source |
+| Can a Baseline hold this? | Yes, with a DoH server and a key in the kit, and over HTTP/3 a server that accepts ECH | Measured |
+| Is it worth a **Recording Case**? | No. `tests/test_dns.py` holds a Session to what Chrome sent | [Below](#why-no-recording-case) |
+
+### What Chrome does
+
+This part comes from reading Chromium 157's source.
+
+`StubResolverConfigReader` in `chrome/browser/net/` reads `dns_over_https.mode` and `dns_over_https.templates` from `Local State`. With the mode `secure`, every name goes to the servers of the templates and nowhere else. It turns DoH off on a machine that is joined to a domain or has machine-level policies, and when Windows parental controls filter the web. A template without `{?dns}` makes a `POST`, which `DnsHTTPAttempt` sends around any proxy.
+
+`SSLConnectJob` and `TlsStreamAttempt` give BoringSSL the ECHConfigList of the HTTPS record of the endpoint they connect to, when `GetEchMode()` allows ECH, which it does in Chrome and in a Session without a policy. A server that cannot decrypt the ClientHelloInner completes the handshake for the public name. BoringSSL checks the certificate against the public name, and the handshake fails with `ERR_ECH_NOT_NEGOTIATED`. `//net` then connects again with the `retry_configs` the server sent, or with none, which brings back ECH GREASE. Over QUIC it does not connect again without ECH.
+
+BoringSSL writes both ClientHellos in `ssl_add_clienthello_tlsext()` and encrypts the inner one in `ssl_encrypt_client_hello()`. The inner one leaves out what only TLS 1.2 uses, puts what it shares with the outer one in `ech_outer_extensions`, and is padded to a multiple of 32 bytes. GREASE gets a payload of 128, 160, 192 or 224 random bytes, and the AEAD's 16. Both pick AES-128-GCM on a processor with AES instructions and ChaCha20-Poly1305 on one without, so that choice follows the **Host**, for real ECH among what the record offers.
+
+After the handshake, `SSLInfo::encrypted_client_hello` says whether the server accepted ECH. DevTools, metrics and the HTTP cache read it, and nothing that changes what a server sees.
+
+### How we measured it
+
+| Part | How |
+|---|---|
+| Chrome | Stable Windows Chrome 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39, windowed, from new user data directories. A copy of `record.ps1` took each through the runs of the case pages over HTTP/1.1, HTTP/2 and HTTP/3, with the flags of a Baseline apart from `--host-resolver-rules`, and started the DoH server too. `--ignore-certificate-errors-spki-list` covered that server as well, which presented the capture server's certificate. The copy took the seed's serial number in `Local State` as the sign that the seed had come, with or without `variations_country`, and `chrome://version` listed active variations in every run |
+| Its resolver | After the first start had brought the variations seed and Chrome had closed, a script wrote `"dns_over_https": {"mode": "secure", "templates": "https://127.0.0.1:PORT/dns-query"}` into `Local State`. That server answers no other name, so the seed had to come first |
+| The DoH server | A script beside the capture server, over HTTP/1.1. It answers the names of the case pages with loopback and with an HTTPS record for each port, such as `_8444._https.capture.test` with `alpn=h2`. Any other name does not exist, so Chrome's own requests got no address and nothing left the machine |
+| The ECH configuration | A key of its own for each session, with X25519, HKDF-SHA256 and AES-128-GCM, the public name `public.test` and a `maximum_name_length` of 0. The outer ClientHello holds the public name, which the normal form writes as `<host>` |
+| Three kinds of session | Records with no ECH. Records with ECH, which the capture server refuses, because Python's `ssl` knows no ECH. Records with ECH, which a server patched by hand accepts |
+| A Session | macOS arm64, with the Persona of each Chrome Release, through a DNS server on loopback with the same records and a key of its own. Every case of the same runs, replayed as a **Parity Check** replays it |
+| Reading the ClientHelloInner | HPKE of RFC 9180 in Python, in `tests/local_ech.py` |
+
+The accepting server leaned on private parts of aioquic, so it stays out of the kit. aioquic's TLS took the ClientHelloInner in the place of the outer one and put the confirmation of RFC 9849, section 7.2, at the end of its ServerHello's random, and over TCP it ran behind a TLS 1.3 record layer written for this. The kit still recorded the outer ClientHello.
+
+### What we measured
+
+Nine sessions: one with no ECH, from Chrome 157, and one with ECH refused and one with it accepted from each Chrome Release, with a second of each from Chrome 157. Next to the Baselines of its Chrome Release, each sent this:
+
+| Session | HTTP/1.1 and HTTP/2 | HTTP/3 |
+|---|---|---|
+| No ECH | Byte for byte the Baselines | Byte for byte the Baselines |
+| ECH refused | Each connection sends real ECH, fails, and connects again with GREASE. Only the second connection carries requests, so the normal forms are byte for byte the Baselines | Six or seven connections with real ECH and no request. The page never loads |
+| ECH accepted | Byte for byte the Baselines | Byte for byte the Baselines |
+
+So with real ECH the outer ClientHello has the normal form of the Baselines, and with ECH accepted, so does everything after it. The ClientHelloInner differs from the outer one like this:
+
+| Part | Over TCP | Over QUIC |
+|---|---|---|
+| `encrypted_client_hello` | `inner`, with no KDF and AEAD | The same |
+| Cipher suites | The three for TLS 1.3, with GREASE | Those of the outer one |
+| `supported_versions` | TLS 1.3, with GREASE | Those of the outer one |
+| `ec_point_formats`, `extended_master_secret`, `renegotiation_info`, `session_ticket` | Left out | In neither |
+| `server_name` | The real name | The real name |
+| The rest | Those of the outer one, in `ech_outer_extensions` | The same, with `supported_versions` there too |
+
+The eight sessions with ECH sent 196 ClientHellos with real ECH. Over TCP they had one outer and one inner normal form, and over QUIC one of each, in all three Chrome Releases. Each had an encapsulated key of 32 bytes and a payload of 144, which is 128 bytes of padded ClientHelloInner and the AEAD's 16, for each of the three names. A Session with the Persona of each Chrome Release sent the same normal forms, the same list in `ech_outer_extensions` and the same sizes, and every case of the same runs matched Chrome's, as a Parity Check compares them. Over HTTP/3, `quic` and the transport parameters were those of the Baselines. Over QUIC with ECH refused, a Session's request failed with `ERR_QUIC_PROTOCOL_ERROR`.
+
+### Why no Recording Case
+
+A Recording Case would add little that is not compared already:
+
+- What the network and a server without the key see is the outer ClientHello, and its normal form is that of every Baseline. BoringSSL makes GREASE look like real ECH on purpose. What differs is the configuration ID, the encapsulated key and the payload, which are random or come from the record, and which the normal form drops.
+- What comes after the handshake does not depend on ECH, by the source, and it was byte for byte the Baselines with ECH accepted.
+- The ClientHelloInner comes from the same BoringSSL and the same settings as the outer one, by a rule that the table above shows. `tests/test_dns.py` holds a Session to that rule over TCP and QUIC, so when a new **Engine Release** changes the rule, a test fails.
+
+It would cost a DoH server and an ECH key in the kit, a step in `record.ps1` that writes `Local State` before the runs, a place for the ClientHelloInner in the normal form, and a Parity Check whose Session finds names through a DNS server. Over HTTP/3 it would also need a server that accepts ECH, which neither Python's `ssl` nor aioquic offers.
+
+### What this does not cover
+
+- A Chrome Release that changes the ClientHelloInner and keeps the outer one. The test only shows what the Engine Release does, so seeing that means recording Chrome again, as here.
+- `retry_configs`. The capture server cannot send them, so connecting again with them comes from the source. A Session has the same code.
+- Another configuration: other cipher suites, several configurations, another `maximum_name_length`, or a public name that the certificate does not cover.
+- A HelloRetryRequest with ECH, and a ticket with ECH.
+- A real server's ECH. No real site was compared this time.
+- QUIC that is not forced on. A refused ECH over QUIC leaves a page with TCP alone, and Chrome's choice between the two then was not measured.
+- A record that comes late. `//net` waits a short time for the HTTPS answer after the address answer, and then goes on with GREASE.
 
 ## From Python
 

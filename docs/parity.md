@@ -122,6 +122,21 @@ The first Session in a process waits up to a second for the system's DNS setting
 
 No Parity Check can see any of this. The capture server's names are never looked up, because a `.localhost` name resolves to loopback by itself and a `.test` name goes through `--host-resolver-rules`, so a Baseline's ClientHello always holds ECH GREASE. `tests/test_dns.py` checks real ECH and an `h3` HTTPS record against a DNS server on loopback, which a Session reaches through the `dns_nameserver` setting. Only `mitto._native` offers that setting, and the public Session takes it only through `_settings`. Such a Session has a `HostResolverManager` of its own, so that other Sessions keep the system's settings.
 
+### Real ECH
+
+A site whose HTTPS record offers ECH gets an outer ClientHello at its public name, with the ClientHelloInner encrypted to its key. Chrome 155, 156 and 157 and a Session were recorded that way by hand ([how, and what came out](capture.md#real-ech)), which settles what this table says:
+
+| With real ECH | Compared | How |
+|---|---|---|
+| The outer ClientHello | Yes | Its normal form is that of GREASE, which every Baseline holds |
+| What comes after the handshake | Yes | It does not depend on ECH, and was byte for byte the Baselines with ECH accepted |
+| That a refused ECH connects again with GREASE over TCP, and not over QUIC | In `tests/test_dns.py` | Against the capture server, which refuses it |
+| The ClientHelloInner | In `tests/test_dns.py`, against a rule and not a Baseline | It is the outer ClientHello's offer for TLS 1.3 alone, as Chrome sent it, over TCP and QUIC. The test reads it with the key it made for the record, through `tests/local_ech.py` |
+| The configuration ID, the encapsulated key and the payload | No | They are random or come from the record, and the normal form drops them. Their sizes were the same in Chrome and a Session |
+| A server's `retry_configs`, another configuration, a HelloRetryRequest | No | The capture server offers none of these |
+
+No Baseline holds a ClientHelloInner, and there is no **Recording Case** for one, for the reasons in [capture.md](capture.md#why-no-recording-case). So a Chrome Release that changed its ClientHelloInner and kept its outer ClientHello would show nowhere until someone records Chrome again.
+
 ## The Initiator and each hop
 
 What the headers say ([the rules](persona.md#the-initiator)) depends on the page a request comes from and on each URL it goes through. In Chrome several layers decide that. All of them but `//net` are outside the source export, so `native/fetch_rules.cc` and `native/sec_header_helpers.cc` port them, with their names kept, and run them at the start and on each hop:
