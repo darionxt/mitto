@@ -279,11 +279,42 @@ def test_names_that_differ_only_in_case_are_refused() -> None:
         ({"timeout": True}, "timeout has to be a number of seconds or a Timeout, not bool"),
         ({"timeout": False}, "timeout has to be a number of seconds or a Timeout, not bool"),
         ({"timeout": 1j}, "timeout has to be a number of seconds or a Timeout, not complex"),
+        ({"method": 5}, "method has to be text, not int"),
+        ({"method": b"POST"}, "method has to be text, not bytes"),
+        ({"url": 5}, "url has to be text, not int"),
+        ({"url": b"https://example.test/"}, "url has to be text, not bytes"),
+        ({"kind": 5}, "kind has to be a RequestKind, its value or None, not int"),
+        ({"initiator": 5}, "initiator has to be text or None, not int"),
+        ({"initiator": b"https://example.test/"}, "initiator has to be text or None, not bytes"),
+        ({"follow_redirects": "no"}, "follow_redirects has to be True or False, not str"),
+        ({"follow_redirects": 0}, "follow_redirects has to be True or False, not int"),
+        ({"follow_redirects": None}, "follow_redirects has to be True or False, not NoneType"),
+        (
+            {"files": {"f": "a,b"}},
+            "the file 'f' in files has to be its content in bytes, (file name, content) or"
+            " (file name, content, media type), not str",
+        ),
+        (
+            {"files": [("f", ("report.csv", "a,b"))]},
+            "the file 'f' in files has to be its content in bytes, (file name, content) or"
+            " (file name, content, media type), not tuple",
+        ),
+        ({"json": {1}}, "json has to hold only what JSON has a form of: Object of type set is not JSON serializable"),
+        (
+            {"json": {"a": [b"1"]}},
+            "json has to hold only what JSON has a form of: Object of type bytes is not JSON serializable",
+        ),
+        (
+            {"json": {(1, 2): "a"}},
+            "json has to hold only what JSON has a form of: keys must be str, int, float, bool or None, not tuple",
+        ),
     ],
 )
 def test_an_argument_of_the_wrong_type_is_named_with_what_it_takes(options: dict[str, Any], message: str) -> None:
+    arguments: dict[str, Any] = {"method": "POST", "url": URL, **options}
+
     with pytest.raises(TypeError) as caught:
-        build_request(ENGINE_PERSONA, "POST", URL, **options)
+        build_request(ENGINE_PERSONA, **arguments)
 
     assert str(caught.value) == message
 
@@ -295,6 +326,9 @@ def test_an_argument_of_the_wrong_type_is_named_with_what_it_takes(options: dict
         {"data": {"password": b"a secret"}},
         {"data": {"password": b"a secret"}, "files": {"f": b""}},
         {"headers": {"Authorization": b"a secret"}},
+        {"files": {"report": "a secret"}},
+        {"json": {"password": {"a secret"}}},
+        {"initiator": b"https://a-secret.test/"},
     ],
 )
 def test_a_value_of_the_wrong_type_stays_out_of_the_message(options: dict[str, Any]) -> None:

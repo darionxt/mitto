@@ -73,6 +73,19 @@ def test_a_private_chain_is_accepted_with_its_anchor(tmp_path: Path) -> None:
     assert response.status == 200
 
 
+@pytest.mark.parametrize("container", ["tuple", "generator"])
+def test_anchors_can_come_in_a_tuple_or_from_a_generator(tmp_path: Path, container: str) -> None:
+    root = generate_root()
+    anchors = (root.pem,) if container == "tuple" else (pem for pem in [root.pem])
+    with (
+        serving(TlsServer(tmp_path, generate_leaf(root, HOST))) as server,
+        mitto.Session(additional_trust_anchors=anchors) as session,  # pyright: ignore[reportArgumentType]
+    ):
+        response = session.get(url_of(server))
+
+    assert response.status == 200
+
+
 def test_a_private_chain_is_refused_with_another_anchor(tmp_path: Path) -> None:
     root = generate_root()
     other = generate_root("another mitto test root")

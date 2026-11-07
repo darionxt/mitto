@@ -214,3 +214,24 @@ def test_the_public_response_holds_each_redirect() -> None:
 
 def test_a_response_with_no_redirects_has_an_empty_history() -> None:
     assert response(b"").history == ()
+
+
+@pytest.mark.parametrize(
+    ("method", "arguments", "message"),
+    [
+        ("get", (5,), "name has to be text, not int"),
+        ("get", (b"Content-Type",), "name has to be text, not bytes"),
+        ("get", ("Content-Type", 5), "default has to be text or None, not int"),
+        ("get", ("X-Missing", b"none"), "default has to be text or None, not bytes"),
+        ("get_all", (None,), "name has to be text, not NoneType"),
+        ("__getitem__", (5,), "name has to be text, not int"),
+        ("__contains__", (5,), "name has to be text, not int"),
+    ],
+)
+def test_a_name_or_default_of_the_wrong_type_is_named(method: str, arguments: tuple[object, ...], message: str) -> None:
+    headers = Headers((("Content-Type", "text/plain"),))
+
+    with pytest.raises(TypeError) as caught:
+        getattr(headers, method)(*arguments)
+
+    assert str(caught.value) == message

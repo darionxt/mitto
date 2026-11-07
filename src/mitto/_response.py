@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from mitto._arguments import require_type
 from mitto._errors import MittoError
 from mitto._native import NativeResponse, RedirectFollowed, ResponseStarted
 
@@ -70,12 +71,21 @@ class Headers:
 
         Repeated headers come back joined by ", ", as Headers.get() does in Fetch. That does not suit Set-Cookie, whose
         values can hold commas, so use get_all() for it.
+
+        Raises:
+            TypeError: If `name` is not text, or `default` is neither text nor None.
         """
         values = self.get_all(name)
+        require_type("default", default, str | None, "text or None")
         return ", ".join(values) if values else default
 
     def get_all(self, name: str) -> list[str]:
-        """Return each value of a header in the order received, which is an empty list if there is none."""
+        """Return each value of a header in the order received, which is an empty list if there is none.
+
+        Raises:
+            TypeError: If `name` is not text.
+        """
+        require_type("name", name, str, "text")
         wanted = name.lower()
         return [value for pair_name, value in self.pairs if pair_name.lower() == wanted]
 

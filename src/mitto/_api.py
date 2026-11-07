@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from types import TracebackType
 from typing import Self, Unpack
 
+from mitto._arguments import require_type
 from mitto._native import PrivateSettings, encode_url, iter_body, wait_for_response
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import RequestOptions
@@ -74,7 +75,10 @@ class Session:
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
-            TypeError: If `timeout` is neither a number, a Timeout nor None, which the message says.
+            TypeError: If an argument is of a type it does not take, which the message names: `persona` that is not text,
+                `accept_language` or `proxy` that is neither text nor None, `additional_trust_anchors` that is text, or
+                holds anything but text, `timeout` that is neither a number, a Timeout nor None, or `cookie_file` or
+                `cache` that is neither text, a path nor None.
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
                 `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
                 `cookie_file` does not hold cookies that this Session can use, `proxy` cannot be used or `cache` is an empty
@@ -126,16 +130,18 @@ class Session:
             **options: See RequestOptions.
 
         Raises:
-            TypeError: If `params` is not a mapping or pairs of text, a mapping in `data` holds a name or value that is not
-                text, `headers` is not a mapping with text for names and text or None for values, or `timeout` is neither
-                a number, a Timeout nor None, each of which the message names. Also if `data` is of no type that makes a
-                body, a stream gives something other than bytes, `files` is not a mapping or pairs with text for names, a
-                file has another form, or `json` holds a value that JSON has no form of.
-            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1,
-                `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a positive
-                number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds a
-                NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or a
-                stream does not keep to its `Content-Length`.
+            TypeError: If an argument is of a type it does not take, which the message names: `method`, `url` or
+                `initiator` that is not text, `kind` that is not a Request Kind or its value, `follow_redirects` that is
+                neither True nor False, `params` that is not a mapping or pairs of text, `headers` that is not a mapping
+                with text for names and text or None for values, `timeout` that is neither a number, a Timeout nor None,
+                `data` of no type that makes a body or a mapping in it that holds a name or value that is not text,
+                `files` that is not a mapping or pairs with text for names or holds a file of another form, or `json` that
+                holds a value that JSON has no form of. Also if a stream gives something other than bytes.
+            ValueError: If `url`, `initiator` or a Referer in `headers` holds a NUL character or cannot be encoded as UTF-8,
+                which the message names, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in
+                `headers` differ only in case or `timeout` is not a positive number of at most 2,000,000 seconds. Also if
+                the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with GET or
+                HEAD or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length`.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
                 that runs out is a RequestTimeoutError. A proxy that asks for credentials this Session does not have, or
                 refuses those it has, is a ProxyError with ERR_PROXY_AUTH_REQUESTED, except that a SOCKS5 proxy asking a
@@ -219,5 +225,6 @@ def get(url: str, **options: Unpack[RequestOptions]) -> Response:
         RequestError: As Session.request() does.
     """
     # An invalid URL is reported before anything else, whether or not there is a native library.
+    require_type("url", url, str, "text")
     encode_url(url)
     return default_session().get(url, **options)

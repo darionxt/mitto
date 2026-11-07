@@ -2,6 +2,8 @@
 
 Every public name of `mitto`, in the order a caller uses them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). [persona.md](persona.md) says what a request sends, and [parity.md](parity.md) how that compares with Chrome and what stays different. For code that uses `requests`, see [from-requests.md](from-requests.md).
 
+Nothing a caller passes is converted, so a number that goes in a URL or a header is written as text. An argument of a type it does not take raises a `TypeError` that names it, says what it takes and the type it got, and leaves out the value, which may be a secret. A request raises it before anything goes on the wire.
+
 `tests/test_docs.py` holds this page to the code. Each public name, method and argument has a heading here, each signature is the one in the code, and each example runs, in order, with every line reached. In that test every name in a URL lands on a local server, so no example needs a port, and a Session trusts the certificate it finds there. `/echo` answers with what it received, as JSON. A name such as `nowhere.example.test` does what it says.
 
 ```python
@@ -37,14 +39,14 @@ One Session may run requests from several threads at once. Close it with `close(
 
 Creating one raises:
 
-- `TypeError` if `timeout` is of a type it does not take, as [it says](#timeout), with a message that names it.
+- `TypeError` if an argument is of a type it does not take, as each says, with a message that names it. One text is not a list of `additional_trust_anchors`, and [`timeout`](#timeout) says what counts as a number.
 - `ValueError` if one of the arguments below cannot be used, as each says. The message leaves out `proxy`, which may hold a password.
 - `OSError` if `cookie_file` exists and cannot be read, a cache cannot be kept in the directory of `cache`, or another Session has that directory open.
 - `NativeLibraryError` if the native library cannot be used.
 
 #### `persona=`
 
-The **Persona** to present: `"chrome_155_windows"`, `"chrome_156_windows"` or `"chrome_157_windows"`. The default is the **Engine Release**'s. The others are Persona data on the same network code ([ADR-0005](adr/0005-older-releases-as-data.md)), and today they differ only in [`sec-ch-ua` and `User-Agent`](persona.md#what-differs-between-chrome-releases). Another name raises a `ValueError`.
+The **Persona** to present: `"chrome_155_windows"`, `"chrome_156_windows"` or `"chrome_157_windows"`. The default is the **Engine Release**'s. The others are Persona data on the same network code ([ADR-0005](adr/0005-older-releases-as-data.md)), and today they differ only in [`sec-ch-ua` and `User-Agent`](persona.md#what-differs-between-chrome-releases). Another name raises a `ValueError`, and anything but text a `TypeError`.
 
 ```python
 with mitto.Session(persona="chrome_155_windows") as session:
@@ -55,7 +57,7 @@ assert "Chrome/155" in sent["User-Agent"]
 
 #### `accept_language=`
 
-The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`.
+The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`, and one that is neither text nor `None` a `TypeError`.
 
 ```python
 with mitto.Session(accept_language="de-DE,de;q=0.9") as session:
@@ -66,7 +68,7 @@ assert sent["Accept-Language"] == "de-DE,de;q=0.9"
 
 #### `additional_trust_anchors=`
 
-Root certificates that this Session trusts beside the Chrome Root Store. Each entry is the text of a PEM file that holds at least one. A self-signed server certificate can be its own root, and an anchor's own dates and constraints are not enforced. A list the native core refuses raises a `ValueError`.
+Root certificates that this Session trusts beside the Chrome Root Store. Each entry is the text of a PEM file that holds at least one. A self-signed server certificate can be its own root, and an anchor's own dates and constraints are not enforced. A list the native core refuses raises a `ValueError`. Text on its own, which would make each of its characters an anchor, raises a `TypeError`, and so does an entry that is not text, so one PEM file goes in a list.
 
 Chrome receives its additional certificates the same way. `//net` refuses QUIC to a root that is not known, as it does in Chrome, so a server whose chain ends at one of these is reached over HTTP/1.1 or HTTP/2, whatever its `Alt-Svc` says. On Linux a Session reads no roots from the system, and on macOS it also reads those a user has added to the Keychain ([certificate verification](parity.md#certificate-verification)).
 
@@ -86,7 +88,7 @@ What a request's [`timeout=`](#timeout-1) defaults to: a number is the total tim
 
 A file to keep the cookies in. They load from it now, if it exists, and `close()` saves them to it, as [`Cookies.save()`](#cookiessave) does. A crash loses what came after the last save, which a caller can make more often with `session.cookies.save(path)`. Chrome writes its store every 30 seconds. The default keeps them only until the Session closes. The file holds cookies alone, so what origins asked for in client hints starts over with each Session.
 
-A file that does not hold cookies this Session can use raises a `ValueError`, because closing the Session would otherwise overwrite it.
+A file that does not hold cookies this Session can use raises a `ValueError`, because closing the Session would otherwise overwrite it. A value that is neither text, a path nor `None` raises a `TypeError`.
 
 ```python
 with mitto.Session(cookie_file="cookies.json") as session:
@@ -108,7 +110,7 @@ The proxy for every request of this Session, as a URL. There is no proxy per req
 
 A username and password are percent-encoded. They answer the proxy when it asks, as they do in Chrome once a person has typed them, and a proxy that does not ask never gets them. Real Chrome cannot answer a SOCKS5 proxy at all. A Session gives its credentials there by RFC 1929, each at most 255 bytes once decoded, so a target sees no difference but the proxy sees [a greeting Chrome never sends](parity.md#credentials-over-socks5). SOCKS5 keeps nothing, so each new connection gives them again. A URL with only a username or only a password sends the other empty.
 
-As in Chrome, a request to `localhost`, a `*.localhost` name or a loopback address goes around the proxy, and a proxy that fails is a [`ProxyError`](#proxyerror) and not a reason to go directly. A request through a proxy stays on HTTP/1.1 or HTTP/2. A URL that cannot be used raises a `ValueError`.
+As in Chrome, a request to `localhost`, a `*.localhost` name or a loopback address goes around the proxy, and a proxy that fails is a [`ProxyError`](#proxyerror) and not a reason to go directly. A request through a proxy stays on HTTP/1.1 or HTTP/2. A URL that cannot be used raises a `ValueError`, and a value that is neither text nor `None` a `TypeError`. Neither message holds the URL.
 
 ```python
 with mitto.Session(proxy="http://user:password@proxy.example.test:8080") as session:
@@ -124,7 +126,7 @@ Where to keep responses, which `//net` then answers from and revalidates as Chro
 | A directory, as text or a path | Made if it does not exist, and what Chrome has. Responses stay for later Sessions. `//net` only touches its subdirectory `Cache_Data`, and one Session at a time can have the directory, in any process |
 | `"memory"` | Keeps them until the Session closes, as Chrome's Incognito mode does. A server can tell this from a directory by [the stream a 304 cancels](parity.md#which-backend) over HTTP/2. Write `"./memory"` for a directory of that name |
 
-An empty string raises a `ValueError`. A directory that cannot hold a cache, or that another Session has open, raises an `OSError`. [`Response.from_cache`](#response) says whether a body came from here.
+An empty string raises a `ValueError`, and a value that is neither text, a path nor `None` a `TypeError`. A directory that cannot hold a cache, or that another Session has open, raises an `OSError`. [`Response.from_cache`](#response) says whether a body came from here.
 
 ```python
 with mitto.Session(cache="memory") as session:
@@ -163,8 +165,8 @@ Fetch `url` and block until the whole [response](#response) has arrived, with th
 
 | It raises | If |
 | --- | --- |
-| `TypeError` | An argument is not one of the request arguments, `params`, `headers`, `timeout`, `files` or a mapping in `data` holds a type it does not take, as [each says](#request-arguments) and the message names, `data` is of no type that makes a body or a stream gives something other than bytes, or `json` holds a value that JSON has no form of |
-| `ValueError` | `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` cannot be used. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with `GET` or `HEAD` or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length` |
+| `TypeError` | An argument is not one of the request arguments, or it is of a type it does not take, as [each says](#request-arguments) and the message names. `method` and `url` are text, and so are the names and values in `params`, `headers` and a mapping in `data`. Also a file of another form in `files`, a value in `json` that JSON has no form of, or a stream that gives something other than bytes |
+| `ValueError` | `url`, `initiator` or a `Referer` in `headers` holds a NUL character or cannot be encoded as UTF-8, which the message names, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` cannot be used. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with `GET` or `HEAD` or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length` |
 | [`RequestError`](#errors) | The request ended without a response. An invalid header or method, or an `initiator` that is not a valid URL, is `ERR_INVALID_ARGUMENT`. A URL that is not valid is `ERR_INVALID_URL` |
 | Whatever a stream's file or iterable raises | That ends the request |
 
@@ -205,7 +207,7 @@ assert mitto.get("https://example.test/").status == 200
 
 ## Request arguments
 
-The keyword arguments that each method of a Session takes, and `get()` and `stream()` too.
+The keyword arguments that each method of a Session takes, and `get()` and `stream()` too. A value of a type that one does not take raises a `TypeError` that names it, before anything is sent.
 
 | Argument | What it takes | The default |
 | --- | --- | --- |
@@ -241,7 +243,7 @@ Changes the Persona's lines for this request, by name in any case. [persona.md](
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
 | `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's value after the other lines, because a request always gets one from the context |
-| `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what `initiator=` would make of it. `//net` still decides where it goes |
+| `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what `initiator=` would make of it. `//net` still decides where it goes. A NUL character or a lone surrogate in it raises a `ValueError` that names it |
 | A line the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop. `//net` still changes an `Origin` on a redirect, as it does in Chrome |
 | `Cookie` | Goes only if the Session holds no cookie for the URL, because `//net` writes over it otherwise |
 
@@ -267,7 +269,7 @@ assert list(sent).index("User-Agent") > list(sent).index("Sec-Fetch-Dest")
 
 ### `kind=`
 
-Which **Request Kind** this request reproduces, which decides what the Persona sends. A value that is not one raises a `ValueError`.
+Which **Request Kind** this request reproduces, which decides what the Persona sends. Text that is not one raises a `ValueError`, and anything else but `None` a `TypeError`.
 
 ```python
 with mitto.Session() as session:
@@ -293,7 +295,7 @@ A string enum, so that `kind="fetch"` and `kind=mitto.RequestKind.FETCH` are the
 
 The URL of the page the request is made from, which counts as a top-level page. It decides `Referer`, `Origin` and `Sec-Fetch-Site` on each hop, which `SameSite` cookies go, which connections and partitioned cookies the request can use, and for a kind other than navigation, which client hints it sends. [persona.md](persona.md#the-initiator) has the rules, which are ported from Chrome.
 
-Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`.
+Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`. One that holds a NUL character or a lone surrogate, which UTF-8 cannot encode, raises a `ValueError` that names `initiator`, and a value that is neither text nor `None` raises a `TypeError`.
 
 A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows.
 
@@ -352,7 +354,7 @@ with mitto.Session(timeout=timeout) as session:
 
 ### `follow_redirects=`
 
-`//net` follows a redirect as it does in Chrome: the limit of 20, the method of the next hop and when a body goes. `False` makes a redirect the response, with empty content, because `//net` does not read the body of a redirect, as with `redirect: "manual"` in Fetch. A redirect to a URL that is not valid still ends the request with a `RequestError`.
+`//net` follows a redirect as it does in Chrome: the limit of 20, the method of the next hop and when a body goes. `False` makes a redirect the response, with empty content, because `//net` does not read the body of a redirect, as with `redirect: "manual"` in Fetch. A redirect to a URL that is not valid still ends the request with a `RequestError`. Anything but `True` or `False`, such as `0` or `"no"`, raises a `TypeError`.
 
 ```python
 redirecting = "https://example.test/redirect?to=/echo"
@@ -418,7 +420,7 @@ assert unsized.protocol == "h2"
 
 ### `json=`
 
-A value that goes as `JSON.stringify` writes it, with a `Content-Type` of `application/json`. A float keeps Python's text, so `1.0` stays `1.0`. `None` sends no JSON, and `data` can send a JSON `null`. A value that JSON has no form of raises a `TypeError`. A NaN or an infinity raises a `ValueError`, where `JSON.stringify` would write `null`, and so does `json` beside `data` or `files`.
+A value that goes as `JSON.stringify` writes it, with a `Content-Type` of `application/json`. A float keeps Python's text, so `1.0` stays `1.0`. `None` sends no JSON, and `data` can send a JSON `null`. A value that JSON has no form of raises a `TypeError` that names `json`. A NaN or an infinity raises a `ValueError`, where `JSON.stringify` would write `null`, and so does `json` beside `data` or `files`.
 
 ```python
 with mitto.Session() as session:
@@ -430,7 +432,7 @@ assert sent["headers"]["Content-Type"] == "application/json"
 
 ### `files=`
 
-Files by field name, or pairs that can repeat a name, which make a multipart body as Blink's `FormData` does. A file is its content in bytes, `(file name, content)` or `(file name, content, media type)`. With no file name it is Blink's `blob`, and with no media type it is `application/octet-stream`, since a type is not guessed. Text fields in a mapping in `data` come before the files, and anything else in `data` raises a `ValueError`. Any other form of a file raises a `TypeError`, so read a file object first. So does a field name that is not text or anything but a mapping or pairs, whose message names `files`.
+Files by field name, or pairs that can repeat a name, which make a multipart body as Blink's `FormData` does. A file is its content in bytes, `(file name, content)` or `(file name, content, media type)`. With no file name it is Blink's `blob`, and with no media type it is `application/octet-stream`, since a type is not guessed. Text fields in a mapping in `data` come before the files, and anything else in `data` raises a `ValueError`. Any other form of a file raises a `TypeError` that names `files` and its field, so read a file object first. So does a field name that is not text or anything but a mapping or pairs.
 
 ```python
 with mitto.Session() as session:
@@ -506,7 +508,7 @@ except mitto.HTTPStatusError as error:
 
 ### `Headers`
 
-A response's headers in the order received, with lookup that ignores the case of a name. Iterating gives each (name, value) pair, so a repeated header stays separate, and `len()` counts those pairs. `headers["name"]` is what `get()` gives, and raises a `KeyError` if there is no such header. `"name" in headers` says whether there is.
+A response's headers in the order received, with lookup that ignores the case of a name. Iterating gives each (name, value) pair, so a repeated header stays separate, and `len()` counts those pairs. `headers["name"]` is what `get()` gives, and raises a `KeyError` if there is no such header. `"name" in headers` says whether there is. Each of these raises a `TypeError` for a name that is not text.
 
 Headers have no fixed encoding, so they are decoded as Latin-1, which keeps every byte: `value.encode("latin-1")` gives back what the server sent.
 
@@ -530,7 +532,7 @@ assert headers.get_all("set-cookie") == ["a=1; Secure; SameSite=Lax", "b=2; Secu
 Headers.get(name: str, default: str | None = None) -> str | None
 ```
 
-Return the value of a header, or `default` if there is none. Repeated headers come back joined by `", "`, as `Headers.get()` does in Fetch. That does not suit `Set-Cookie`, whose values can hold commas, so use `get_all()` for it.
+Return the value of a header, or `default` if there is none. Repeated headers come back joined by `", "`, as `Headers.get()` does in Fetch. That does not suit `Set-Cookie`, whose values can hold commas, so use `get_all()` for it. A `name` that is not text raises a `TypeError`, and so does a `default` that is neither text nor `None`, whether or not there is a header.
 
 #### `Headers.get_all()`
 
@@ -538,7 +540,7 @@ Return the value of a header, or `default` if there is none. Repeated headers co
 Headers.get_all(name: str) -> list[str]
 ```
 
-Return each value of a header in the order received, which is an empty list if there is none.
+Return each value of a header in the order received, which is an empty list if there is none. A `name` that is not text raises a `TypeError`.
 
 ### `Redirect`
 
@@ -637,7 +639,7 @@ with mitto.Session() as session:
 Cookies.get(name: str, *, domain: str | None = None, path: str | None = None) -> Cookie | None
 ```
 
-Return the cookie of this name, or `None` if there is none. `domain` is written as `Cookie.domain` is, and `path` as `Cookie.path` is, and `None` stands for any. If several match, this is the one that goes first in a `Cookie` header.
+Return the cookie of this name, or `None` if there is none. `domain` is written as `Cookie.domain` is, and `path` as `Cookie.path` is, and `None` stands for any. If several match, this is the one that goes first in a `Cookie` header. A `name` that is not text, or a `domain` or `path` that is neither text nor `None`, raises a `TypeError`.
 
 #### `Cookies.set()`
 
@@ -647,7 +649,7 @@ Cookies.set(cookie: Cookie) -> None
 
 Put a cookie in the store, as a response's `Set-Cookie` would. It replaces one of the same name, domain and path. A cookie with an expiry in the past is not stored, and what it would replace still goes. A dot before a public suffix gives a cookie for that one name, as a server's `Domain` attribute does, and not one for all of the suffix.
 
-It raises a `ValueError` if the native core refuses the cookie, such as a `__Host-` cookie that is not `Secure` or a domain that holds a port or a path, and a `TypeError` if one of its times has no timezone.
+It raises a `ValueError` if the native core refuses the cookie, such as a `__Host-` cookie that is not `Secure` or a domain that holds a port or a path, and a `TypeError` if `cookie` is not a `Cookie`.
 
 #### `Cookies.delete()`
 
@@ -655,7 +657,7 @@ It raises a `ValueError` if the native core refuses the cookie, such as a `__Hos
 Cookies.delete(name: str, *, domain: str | None = None, path: str | None = None) -> int
 ```
 
-Delete the cookies of this name, and return how many went. `domain` and `path` are as for `get()`.
+Delete the cookies of this name, and return how many went. `name`, `domain` and `path` are as for `get()`, and so is what each raises.
 
 #### `Cookies.clear()`
 
@@ -671,7 +673,7 @@ Delete every cookie, and return how many went.
 Cookies.save(path: str | os.PathLike[str]) -> None
 ```
 
-Write all the cookies to a JSON file that only its owner can read or write. The values are not encrypted. Session cookies are written too, as a browser does that restores its last session. A crash during this call leaves the file as it was. It raises an `OSError` if the file cannot be written.
+Write all the cookies to a JSON file that only its owner can read or write. The values are not encrypted. Session cookies are written too, as a browser does that restores its last session. A crash during this call leaves the file as it was. It raises an `OSError` if the file cannot be written, and a `TypeError` if `path` is neither text nor a path.
 
 #### `Cookies.load()`
 
@@ -679,7 +681,7 @@ Write all the cookies to a JSON file that only its owner can read or write. The 
 Cookies.load(path: str | os.PathLike[str]) -> None
 ```
 
-Add the cookies of a file from `save()`, each with the attributes it had there, replacing any of the same name. It raises an `OSError` if the file cannot be read, such as a `FileNotFoundError`, and a `ValueError` if the native core refuses what the file holds, in which case no cookie is added.
+Add the cookies of a file from `save()`, each with the attributes it had there, replacing any of the same name. It raises an `OSError` if the file cannot be read, such as a `FileNotFoundError`, and a `ValueError` if the native core refuses what the file holds, in which case no cookie is added. A `path` that is neither text nor a path raises a `TypeError`.
 
 ### `Cookie`
 
@@ -709,6 +711,8 @@ One cookie, as the store holds it. A cookie has no fixed encoding, so `name`, `v
 
 Without `created`, this is a new cookie to set, and `//net` checks it as if a server at its domain had sent it. The attributes below `created` then stay `None`. A cookie from `Cookies` has them all, and can be set again as it is.
 
+An attribute of a type it does not take raises a `TypeError` that names it, so a time is a `datetime` and not a number of seconds, and `True` and `False` are no `source_port`. So does a time without a timezone, which could stand for any moment, when the cookie is built. Text outside the values of its type, such as a `same_site` of `"sometimes"`, raises a `ValueError` when [`Cookies.set()`](#cookiesset) puts it in the store.
+
 | Attribute | Type | What it holds |
 | --- | --- | --- |
 | `name` | `str` | The name |
@@ -734,7 +738,7 @@ Without `created`, this is a new cookie to set, and `//net` checks it as if a se
 CookiePartitionKey(top_level_site: str, has_cross_site_ancestor: bool)
 ```
 
-The partition of a cookie that a request sends only from one top-level site, which `initiator=` names. A page always counts as top-level.
+The partition of a cookie that a request sends only from one top-level site, which `initiator=` names. A page always counts as top-level. A `top_level_site` that is not text, or a `has_cross_site_ancestor` that is neither `True` nor `False`, raises a `TypeError`.
 
 | Attribute | Type | What it holds |
 | --- | --- | --- |

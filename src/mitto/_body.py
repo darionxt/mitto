@@ -123,7 +123,8 @@ def encode_body(
     Raises:
         TypeError: If `data` is of no type that makes a body, such as a file in text mode, a name or value in a mapping in
             it is not text, `files` is not a mapping or pairs with text for names, a file has another form, or `json_value`
-            holds a value that JSON has no form of. A stream raises it later, if a part it gives is not bytes.
+            holds a value that JSON has no form of. The message names the argument. A stream raises it later, if a part it
+            gives is not bytes.
         ValueError: If the arguments do not go together, because `json_value` is given beside another, or `data` is not a
             mapping beside `files`, or `json_value` holds a NaN or an infinity, which JSON cannot hold.
     """
@@ -282,7 +283,11 @@ def _well_formed(text: str) -> str:
 
 
 def _encode_json(value: object) -> bytes:
-    text = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    try:
+        text = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except TypeError as error:
+        # What json says names the type it has no form of, and never a value.
+        raise TypeError(f"json has to hold only what JSON has a form of: {error}") from error
     return _LONE_SURROGATE.sub(lambda surrogate: f"\\u{ord(surrogate[0]):04x}", text).encode()
 
 
@@ -303,7 +308,7 @@ def _encode_multipart(fields: Mapping[str, str], files: FileFields) -> EncodedBo
     for name, value in _text_fields(fields, "data"):
         parts += [_part_head(boundary, name), _LINE_BREAK.sub("\r\n", _well_formed(value)).encode(), b"\r\n"]
     for name, file in _named_items(files, "files"):
-        file_name, content, media_type = _file_part(file)
+        file_name, content, media_type = _file_part(name, file)
         parts += [_part_head(boundary, name, file_name, media_type), content, b"\r\n"]
     parts.append(f"--{boundary}--\r\n".encode())
     return EncodedBody(b"".join(parts), BodyEncoding.MULTIPART, boundary)
@@ -314,7 +319,12 @@ def _new_boundary() -> str:
     return _BOUNDARY_PREFIX + "".join(_BOUNDARY_ALPHABET[byte & _LOW_SIX_BITS] for byte in random_bytes)
 
 
-def _file_part(file: object) -> tuple[str, bytes, str]:
+def _file_part(name: str, file: object) -> tuple[str, bytes, str]:
+    """Return the file name, content and media type of the file in field `name`.
+
+    Raises:
+        TypeError: If it has another form. The message leaves out the file, whose content may be a secret.
+    """
     match file:
         case bytes():
             return _BLOB_FILE_NAME, file, ""
@@ -323,7 +333,10 @@ def _file_part(file: object) -> tuple[str, bytes, str]:
         case (str() as file_name, bytes() as content, str() as media_type):
             return file_name, content, media_type
         case _:
-            raise TypeError("a file has to be its content in bytes, (name, content) or (name, content, media type)")
+            raise TypeError(
+                f"the file {name!r} in files has to be its content in bytes, (file name, content) or"
+                f" (file name, content, media type), not {type(file).__name__}"
+            )
 
 
 def _part_head(boundary: str, name: str, file_name: str | None = None, media_type: str = "") -> bytes:

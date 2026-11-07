@@ -138,7 +138,7 @@ except ValueError:
 
 A Session verifies each certificate as Chrome does, and nothing turns that off. Chrome goes past a certificate it refuses only when a person clicks through, and a Session has nobody to ask. A chain that does not verify ends with a `CertificateError`.
 
-For a private root or a self-signed server certificate, add it with `additional_trust_anchors=`. That also takes the place of `verify="ca.pem"`, except that it adds to the Chrome Root Store and does not replace it. It holds a certificate's text, not a path, and `REQUESTS_CA_BUNDLE` means nothing here.
+For a private root or a self-signed server certificate, add it with `additional_trust_anchors=`. That also takes the place of `verify="ca.pem"`, except that it adds to the Chrome Root Store and does not replace it. It holds a list of certificates' text, not a path, so one text on its own raises a `TypeError`, and `REQUESTS_CA_BUNDLE` means nothing here.
 
 ```python
 with open("company-root.pem") as file:
