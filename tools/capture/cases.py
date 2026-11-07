@@ -33,6 +33,9 @@ FORMS_PATH = "/case/forms"
 _DONE_PATH = "/case/done"
 _PLAIN_HTTP_DONE_PATH = "/case/plain-http-done"
 _PROXY_DONE_PATH = "/case/proxy-done"
+_CLIENT_HINTS_DONE_PATH = "/case/client-hints-done"
+_CLIENT_HINTS_PLAIN_HTTP_DONE_PATH = "/case/client-hints-plain-http-done"
+CLIENT_HINTS_PLAIN_HTTP_START_PATH = "/case/client-hints-plain-http"
 _FAILED_PREFIX = "/case/failed?"
 COOKIE_SET_PATH = "/case/cookie-set"
 _COOKIE = "mitto=1"
@@ -44,6 +47,19 @@ _JAVASCRIPT = "text/javascript; charset=utf-8"
 _PNG = "image/png"
 _EVERY_ORIGIN = ("Access-Control-Allow-Origin", "*")
 _ETAG = '"mitto"'
+
+_ACCEPT_CH = "Accept-CH"
+_CRITICAL_CH = "Critical-CH"
+_EVERY_CLIENT_HINT = (
+    "device-memory, dpr, width, viewport-width, rtt, downlink, ect, sec-ch-ua, sec-ch-ua-arch, sec-ch-ua-platform,"
+    " sec-ch-ua-model, sec-ch-ua-mobile, sec-ch-ua-full-version, sec-ch-ua-platform-version,"
+    " sec-ch-prefers-color-scheme, sec-ch-ua-bitness, sec-ch-viewport-height, sec-ch-device-memory, sec-ch-dpr,"
+    " sec-ch-width, sec-ch-viewport-width, sec-ch-ua-full-version-list, sec-ch-ua-wow64, save-data,"
+    " sec-ch-prefers-reduced-motion, sec-ch-ua-form-factors, sec-ch-prefers-reduced-transparency"
+)
+"""What a server asks for to get every client hint, as in GetClientHintToNameMap() in Chromium."""
+
+_CRITICAL_HINT = "sec-ch-ua-arch"
 
 _log = logging.getLogger(__name__)
 
@@ -104,6 +120,73 @@ _PLAIN_HTTP_SCRIPT = _case("plain_http_script")
 _PLAIN_HTTP_IMAGE = _case("plain_http_image")
 _PROXY_NAVIGATION = _case("proxy_navigation")
 
+_CH_FIRST = _case("client_hints_first")
+_CH_SCRIPT = _case("client_hints_script")
+_CH_SCRIPT_SAME_SITE = _case("client_hints_script_same_site")
+_CH_SCRIPT_CROSS_SITE = _case("client_hints_script_cross_site")
+_CH_IMAGE = _case("client_hints_image")
+_CH_IMAGE_SAME_SITE = _case("client_hints_image_same_site")
+_CH_IMAGE_CROSS_SITE = _case("client_hints_image_cross_site")
+_CH_FETCH = _case("client_hints_fetch")
+_CH_FETCH_SAME_SITE = _case("client_hints_fetch_same_site")
+_CH_FETCH_CROSS_SITE = _case("client_hints_fetch_cross_site")
+_CH_FETCH_POST = _case("client_hints_fetch_post")
+_CH_REDIRECT_FETCH = tuple(_case(f"client_hints_redirect_fetch_{hop}") for hop in range(1, 5))
+_CH_NAVIGATION = _case("client_hints_navigation")
+_CH_NAVIGATION_SAME_SITE = _case("client_hints_navigation_same_site")
+_CH_NAVIGATION_CROSS_SITE = _case("client_hints_navigation_cross_site")
+_CH_NAVIGATION_BACK = _case("client_hints_navigation_back")
+_CH_FORM = _case("client_hints_form")
+_CH_REDIRECT_NAVIGATION = tuple(_case(f"client_hints_redirect_navigation_{hop}") for hop in range(1, 6))
+_CH_CRITICAL = _case("client_hints_critical", carries=_CRITICAL_HINT)
+_CH_PLAIN_HTTP_FETCH = _case("client_hints_plain_http_fetch")
+_CH_PLAIN_HTTP_NAVIGATION = _case("client_hints_plain_http_navigation")
+
+
+@dataclass(frozen=True, slots=True)
+class HintsAsked:
+    """A page that asks for its own set of hints, and the requests that show what that set does.
+
+    Attributes:
+        path: Where the page is, which is the page's origin. Its own request shows what the set before it did.
+        accept_ch: The value of its Accept-CH header.
+        fetch: A fetch() from the page.
+        post: A fetch() with a text body, which makes one line more.
+        navigation: A click on a link in the page.
+    """
+
+    path: str
+    accept_ch: str
+    fetch: Case
+    post: Case
+    navigation: Case
+
+
+def _hints_asked(name: str, accept_ch: str) -> HintsAsked:
+    return HintsAsked(
+        f"{_CASE_PREFIX}client-hints-{name}",
+        accept_ch,
+        _case(f"client_hints_{name}_fetch"),
+        _case(f"client_hints_{name}_post"),
+        _case(f"client_hints_{name}_navigation"),
+    )
+
+
+# Chrome keeps a subresource's lines in a hash table, whose size follows how many there are. So these ask for as many as
+# it takes to reach each size, with the sets real servers ask for among them.
+HINTS_ASKED = (
+    _hints_asked("one", "sec-ch-ua-arch"),
+    _hints_asked("few", "sec-ch-ua-arch, sec-ch-ua-model, sec-ch-ua-platform-version"),
+    _hints_asked(
+        "many",
+        "sec-ch-ua-bitness, sec-ch-ua-arch, sec-ch-ua-full-version, sec-ch-ua-mobile, sec-ch-ua-model,"
+        " sec-ch-ua-platform-version, sec-ch-ua-full-version-list, sec-ch-ua-platform, sec-ch-ua",
+    ),
+    _hints_asked("legacy", "dpr, viewport-width, rtt, downlink, ect, device-memory"),
+    # An empty header replaces what the origin asked for with nothing.
+    _hints_asked("none", ""),
+)
+
 PROXY_CONNECT = Case("proxy_connect", "<CONNECT>")
 """What opens a tunnel through the proxy. Its path is one no request has, because CONNECT names a server instead."""
 
@@ -133,8 +216,38 @@ _TLS_CASES = (
 )
 _PLAIN_HTTP_CASES = (_PLAIN_HTTP_NAVIGATION, _PLAIN_HTTP_FETCH, _PLAIN_HTTP_SCRIPT, _PLAIN_HTTP_IMAGE)
 _PROXY_CASES = (PROXY_CONNECT, _PROXY_NAVIGATION)
+_CLIENT_HINTS_CASES = (
+    _CH_FIRST,
+    _CH_SCRIPT,
+    _CH_SCRIPT_SAME_SITE,
+    _CH_SCRIPT_CROSS_SITE,
+    _CH_IMAGE,
+    _CH_IMAGE_SAME_SITE,
+    _CH_IMAGE_CROSS_SITE,
+    _CH_FETCH,
+    _CH_FETCH_SAME_SITE,
+    _CH_FETCH_CROSS_SITE,
+    _CH_FETCH_POST,
+    *_CH_REDIRECT_FETCH,
+    _CH_NAVIGATION,
+    _CH_NAVIGATION_SAME_SITE,
+    _CH_NAVIGATION_CROSS_SITE,
+    _CH_NAVIGATION_BACK,
+    _CH_FORM,
+    *_CH_REDIRECT_NAVIGATION,
+    *(case for asked in HINTS_ASKED for case in (asked.fetch, asked.post, asked.navigation)),
+    _CH_CRITICAL,
+)
+_CLIENT_HINTS_PLAIN_HTTP_CASES = (_CH_PLAIN_HTTP_FETCH, _CH_PLAIN_HTTP_NAVIGATION)
 
-CASES = (*MAIN_CASES, *_TLS_CASES, *_PLAIN_HTTP_CASES, *_PROXY_CASES)
+CASES = (
+    *MAIN_CASES,
+    *_TLS_CASES,
+    *_PLAIN_HTTP_CASES,
+    *_PROXY_CASES,
+    *_CLIENT_HINTS_CASES,
+    *_CLIENT_HINTS_PLAIN_HTTP_CASES,
+)
 """Every Recording Case, in the order a normal form lists them."""
 
 
@@ -173,6 +286,10 @@ def _proxy_run(name: str, label: str, route: str) -> Run:
     return Run(name, label, route, CASE_HOST, _PROXY_NAVIGATION.path, _PROXY_DONE_PATH, _PROXY_CASES)
 
 
+def _client_hints_run(name: str, label: str, route: str) -> Run:
+    return Run(name, label, route, CASE_HOST, _CH_FIRST.path, _CLIENT_HINTS_DONE_PATH, _CLIENT_HINTS_CASES)
+
+
 RUNS = (
     _main_run("http1", "HTTP/1.1", HTTP1),
     _main_run("http2", "HTTP/2", HTTP2),
@@ -191,6 +308,19 @@ RUNS = (
     ),
     _proxy_run("cases/proxy_http1", "Cases through a proxy, over HTTP/1.1", PROXIED_HTTP1),
     _proxy_run("cases/proxy_http2", "Cases through a proxy, over HTTP/2", PROXIED_HTTP2),
+    # Last, because a server's asking lasts as long as the user data directory does, and the origins are the ones above.
+    _client_hints_run("cases/client_hints_http1", "Client hints over HTTP/1.1", HTTP1),
+    _client_hints_run("cases/client_hints_http2", "Client hints over HTTP/2", HTTP2),
+    _client_hints_run("cases/client_hints_http3", "Client hints over HTTP/3", HTTP3),
+    Run(
+        "cases/client_hints_plain_http",
+        "Client hints over plain HTTP",
+        PLAIN_HTTP,
+        CASE_HOST,
+        CLIENT_HINTS_PLAIN_HTTP_START_PATH,
+        _CLIENT_HINTS_PLAIN_HTTP_DONE_PATH,
+        _CLIENT_HINTS_PLAIN_HTTP_CASES,
+    ),
 )
 """Every start of a Chrome that a recording session takes, in the order it takes them."""
 
@@ -246,6 +376,29 @@ _START_SCRIPT = """
   })().catch(report);
 """
 
+# The images come from a script. One in the HTML goes through the preload scanner, which gives it another priority unless
+# it says it is small. When it says so, its width goes in width and sec-ch-width, which only a page's layout can know.
+_CLIENT_HINTS_FIRST_SCRIPT = """
+  const imageLoaded = (url) => new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = resolve;
+    image.onerror = () => reject(new Error(url + " failed to load"));
+    image.src = url;
+  });
+  const images = [urls.image, urls.image_same_site, urls.image_cross_site].map(imageLoaded);
+  addEventListener("load", () => {
+    (async () => {
+      await Promise.all(images);
+      await get(urls.fetch);
+      await get(urls.fetch_same_site);
+      await get(urls.fetch_cross_site);
+      await get(urls.fetch_post, {method: "POST", body: "text body"});
+      await get(urls.redirect_fetch_1);
+      showNext();
+    })().catch(report);
+  });
+"""
+
 _SHOW_NEXT_ON_LOAD = """
   addEventListener("load", showNext);
 """
@@ -277,10 +430,10 @@ def _document(body: str) -> bytes:
 """.encode()
 
 
-def _page(*parts: str, script: str = _SHOW_NEXT_ON_LOAD) -> Response:
+def _page(*parts: str, script: str = _SHOW_NEXT_ON_LOAD, headers: tuple[tuple[str, str], ...] = ()) -> Response:
     """Return a page that shows a progress line, holds parts, and runs script once it has what parts define."""
     body = "\n".join(('<p id="progress">Recording...</p>', *parts, f"<script>{_PAGE_SCRIPT}{script}</script>"))
-    return _case_response(_HTML, _document(body))
+    return _case_response(_HTML, _document(body), *headers)
 
 
 def _case_response(
@@ -291,12 +444,16 @@ def _case_response(
     return Response(200, content_type, body, cache_control, (_EVERY_ORIGIN, *headers))
 
 
-def _link_page(to: str) -> Response:
-    return _page(f'<p><a id="next" hidden href="{to}">Click this link.</a></p>')
+def _link(to: str) -> str:
+    return f'<p><a id="next" hidden href="{to}">Click this link.</a></p>'
 
 
-def _redirect(to: str) -> Response:
-    return Response(302, _TEXT, b"", headers=(_EVERY_ORIGIN, ("Location", to)))
+def _link_page(to: str, *headers: tuple[str, str]) -> Response:
+    return _page(_link(to), headers=headers)
+
+
+def _redirect(to: str, *headers: tuple[str, str]) -> Response:
+    return Response(302, _TEXT, b"", headers=(_EVERY_ORIGIN, ("Location", to), *headers))
 
 
 _SUBMIT = '<button id="next" hidden>Click this button.</button>'
@@ -345,6 +502,115 @@ def _plain_http_page() -> Response:
   }});
 """,
     )
+
+
+def _client_hints_first_page(page: str, same_site: str, cross_site: str) -> Response:
+    urls = {
+        "image": _CH_IMAGE.path,
+        "image_same_site": same_site + _CH_IMAGE_SAME_SITE.path,
+        "image_cross_site": cross_site + _CH_IMAGE_CROSS_SITE.path,
+        "fetch": _CH_FETCH.path,
+        "fetch_same_site": same_site + _CH_FETCH_SAME_SITE.path,
+        "fetch_cross_site": cross_site + _CH_FETCH_CROSS_SITE.path,
+        "fetch_post": _CH_FETCH_POST.path,
+        "redirect_fetch_1": _CH_REDIRECT_FETCH[0].path,
+    }
+    return _page(
+        f'<script src="{_CH_SCRIPT.path}"></script>',
+        f'<script src="{same_site}{_CH_SCRIPT_SAME_SITE.path}"></script>',
+        f'<script src="{cross_site}{_CH_SCRIPT_CROSS_SITE.path}"></script>',
+        _link(page + _CH_NAVIGATION.path),
+        f"<script>const urls = {json.dumps(urls)};</script>",
+        script=_CLIENT_HINTS_FIRST_SCRIPT,
+        headers=((_ACCEPT_CH, _EVERY_CLIENT_HINT),),
+    )
+
+
+def _hints_asked_page(asked: HintsAsked) -> Response:
+    script = f"""
+  get("{asked.fetch.path}")
+    .then(() => get("{asked.post.path}", {{method: "POST", body: "text body"}}))
+    .then(showNext)
+    .catch(report);
+"""
+    return _page(_link(asked.navigation.path), script=script, headers=((_ACCEPT_CH, asked.accept_ch),))
+
+
+def _hints_asked_responses(cross_site: str, text: Response) -> dict[str, Response]:
+    """Return the answers to the pages of HINTS_ASKED. They go through each in turn, and on to the last case."""
+    responses: dict[str, Response] = {}
+    next_paths = (*(asked.path for asked in HINTS_ASKED[1:]), cross_site + _CH_CRITICAL.path)
+    for asked, next_path in zip(HINTS_ASKED, next_paths, strict=True):
+        responses[asked.path] = _hints_asked_page(asked)
+        responses[asked.fetch.path] = text
+        responses[asked.post.path] = text
+        responses[asked.navigation.path] = _link_page(next_path)
+    return responses
+
+
+def _client_hints_plain_http_page() -> Response:
+    script = f"""
+  addEventListener("load", () => {{
+    get("{_CH_PLAIN_HTTP_FETCH.path}")
+      .then(() => {{ location.href = "{_CH_PLAIN_HTTP_NAVIGATION.path}"; }})
+      .catch(report);
+  }});
+"""
+    return _page(script=script, headers=((_ACCEPT_CH, _EVERY_CLIENT_HINT),))
+
+
+def _client_hints_responses(
+    page: str, same_site: str, cross_site: str, done: Response, script: Response, image: Response, text: Response
+) -> dict[str, Response]:
+    """Return the answers of the client hints runs, which go through these pages in this order.
+
+    The page's origin asks for every hint. What another origin's subresources say has no effect, because only a
+    navigation's response counts. The other origin of the site then asks on a redirect, which counts at once. The other
+    site stays out of it until the end, when it asks in a way that makes Chrome send the request again.
+    """
+    asks = (_ACCEPT_CH, _EVERY_CLIENT_HINT)
+    ignored_text = _case_response(_TEXT, b"answered\n", asks)
+    ignored_script = _case_response(_JAVASCRIPT, b"// Nothing to do.\n", asks)
+    ignored_image = _case_response(_PNG, image.body, asks)
+    return {
+        _CH_FIRST.path: _client_hints_first_page(page, same_site, cross_site),
+        _CH_SCRIPT.path: script,
+        _CH_SCRIPT_SAME_SITE.path: ignored_script,
+        _CH_SCRIPT_CROSS_SITE.path: ignored_script,
+        _CH_IMAGE.path: image,
+        _CH_IMAGE_SAME_SITE.path: ignored_image,
+        _CH_IMAGE_CROSS_SITE.path: ignored_image,
+        _CH_FETCH.path: text,
+        _CH_FETCH_SAME_SITE.path: ignored_text,
+        _CH_FETCH_CROSS_SITE.path: ignored_text,
+        _CH_FETCH_POST.path: text,
+        _CH_REDIRECT_FETCH[0].path: _redirect(same_site + _CH_REDIRECT_FETCH[1].path),
+        _CH_REDIRECT_FETCH[1].path: _redirect(cross_site + _CH_REDIRECT_FETCH[2].path),
+        _CH_REDIRECT_FETCH[2].path: _redirect(page + _CH_REDIRECT_FETCH[3].path),
+        _CH_REDIRECT_FETCH[3].path: text,
+        _CH_NAVIGATION.path: _link_page(same_site + _CH_NAVIGATION_SAME_SITE.path),
+        _CH_NAVIGATION_SAME_SITE.path: _link_page(cross_site + _CH_NAVIGATION_CROSS_SITE.path),
+        _CH_NAVIGATION_CROSS_SITE.path: _link_page(page + _CH_NAVIGATION_BACK.path),
+        _CH_NAVIGATION_BACK.path: _page(
+            f'<form method="post" action="{_CH_FORM.path}">{_URLENCODED_FIELDS}{_SUBMIT}</form>',
+        ),
+        _CH_FORM.path: _link_page(_CH_REDIRECT_NAVIGATION[0].path),
+        _CH_REDIRECT_NAVIGATION[0].path: _redirect(same_site + _CH_REDIRECT_NAVIGATION[1].path),
+        _CH_REDIRECT_NAVIGATION[1].path: _redirect(same_site + _CH_REDIRECT_NAVIGATION[2].path, asks),
+        _CH_REDIRECT_NAVIGATION[2].path: _redirect(cross_site + _CH_REDIRECT_NAVIGATION[3].path),
+        _CH_REDIRECT_NAVIGATION[3].path: _redirect(page + _CH_REDIRECT_NAVIGATION[4].path),
+        _CH_REDIRECT_NAVIGATION[4].path: _link_page(HINTS_ASKED[0].path),
+        **_hints_asked_responses(cross_site, text),
+        _CH_CRITICAL.path: _page(
+            script=_report_done(_CLIENT_HINTS_DONE_PATH),
+            headers=((_ACCEPT_CH, _CRITICAL_HINT), (_CRITICAL_CH, _CRITICAL_HINT)),
+        ),
+        _CLIENT_HINTS_DONE_PATH: done,
+        CLIENT_HINTS_PLAIN_HTTP_START_PATH: _client_hints_plain_http_page(),
+        _CH_PLAIN_HTTP_FETCH.path: text,
+        _CH_PLAIN_HTTP_NAVIGATION.path: _page(script=_report_done(_CLIENT_HINTS_PLAIN_HTTP_DONE_PATH)),
+        _CLIENT_HINTS_PLAIN_HTTP_DONE_PATH: done,
+    }
 
 
 @functools.lru_cache(maxsize=64)
@@ -402,6 +668,7 @@ def _responses(scheme: str, port: int) -> dict[str, Response]:
         _DONE_PATH: done,
         _PLAIN_HTTP_DONE_PATH: done,
         _PROXY_DONE_PATH: done,
+        **_client_hints_responses(page, same_site, cross_site, done, script, image, text),
     }
 
 

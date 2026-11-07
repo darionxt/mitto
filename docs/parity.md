@@ -47,6 +47,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is, from the page it came from. `//net` follows the rest, and the native core changes the headers on each | Nothing |
 | `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
+| `client_hints_*` | A navigation to the page that asks, as `asks` in its `Replay` says, and then the case, as for the cases above | Nothing |
 
 The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
 
@@ -101,6 +102,7 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
 | `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
 | `native/fetch_rules.cc`, `native/sec_header_helpers.cc` | [The headers that follow the page a request comes from](#the-initiator-and-each-hop), and what `//net` is told about that page | `SetFetchMetadataHeaders` and `MaybeRemoveSecHeaders` in `services/network/sec_header_helpers.cc`, `CorsURLLoader` and `URLLoader` in `services/network`, and the parts of the browser process and Blink that the section names |
+| `native/client_hints.cc`, `native/fetch_rules.cc`, `native/http_header_map.cc` | [Which client hints a request has](#client-hints), and in what order | `content/browser/client_hints`, `components/client_hints`, `services/network/public/cpp/client_hints.cc`, and Blink's `FrameFetchContext` and `HTTPHeaderMap` |
 | `native/mitto_core.cc` | That network state is partitioned and the HTTP cache split, in [the calls Chrome makes](#partitioning), and [where a cache lives](#the-http-cache) | `ChromeMainDelegate::CommonEarlyInitialization()`, `ChooseCacheType()` in `components/network_session_configurator` and `PopulateHttpCacheDirectories()` in `//content` |
 | `native/stub_resolver_config_reader.cc` | The stub resolver: the built-in DNS client, additional query types, which is what asks for HTTPS records, secure mode automatic, and the upgrade to DNS over HTTPS | `ConfigureStubHostResolver` in `services/network/network_service.cc`, with the defaults in `chrome/browser/net/stub_resolver_config_reader.cc` |
 
@@ -130,13 +132,64 @@ What the headers say ([the rules](persona.md#the-initiator)) depends on the page
 | `Sec-Fetch-Storage-Access: active` | `CookieSettingsBase::GetStorageAccessStatus`, which a Session answers as a Chrome with no setting that blocks a cookie does | `components/content_settings` |
 | `Origin` on a navigation | `AddAdditionalRequestHeaders` and `Referrer::SanitizeOriginForRequest` | `content/browser/renderer_host/navigation_request.cc`, `content/public/common/referrer.cc` |
 | `sec-ch-*` moving on a navigation's hop | `NavigationRequest::OnRequestRedirected` removes every client hint and adds those of the next URL as modified headers, and `//net` merges those last | `content/browser/renderer_host/navigation_request.cc` |
-| `sec-ch-*` staying on a subresource's hop | `FrameFetchContext::AddClientHintsIfNecessary` runs when a request starts, and not on a redirect | Blink |
+| `sec-ch-*` staying on a subresource's hop | `FrameFetchContext::AddClientHintsIfNecessary` runs when a request starts, and not on a redirect. `FindClientHintsToRemove` then takes away what the page's permissions policy does not allow the next URL | Blink |
 | `Referer` of the first hop | `SecurityPolicy::GenerateReferrer`, which `URLRequestJob::ComputeReferrerForPolicy` answers the same way | Blink, and `//net` from the second hop |
 | `IsUrlPotentiallyTrustworthy` | Already in `//net` at this Engine Release, so it needs no port | `net/base/is_potentially_trustworthy.cc` |
 
 So the last four rows hold what comes from outside `//net` and `services/network`. `Sec-Fetch-Frame-Top` and `Sec-Fetch-Frame-Ancestors` are behind features that are off by default and in the Baselines, so they are not ported, and no **Request Kind** is a subframe's, so a page always counts as top-level.
 
 A **Persona**'s lines arrive at the native core with the rest of the headers, each in its place, along with what `network::ResourceRequest` would say: `mode`, `destination`, `credentials_mode`, `has_user_activation` and `initiator`. `fixed_headers` names what a caller gave or removed, which no rule touches. A request with none of this, which only `mitto._native` can make, sends what its headers say.
+
+## Client hints
+
+What a server asks for ([the rules](persona.md#client-hints)) lives in a `ClientHintsStore` in each **Session**, on the network thread, so that the native core can read it on each hop with nothing to ask Python. All of this is outside the source export and is ported with its names kept:
+
+| Rule | In Chrome | Where |
+| --- | --- | --- |
+| Which names are hints, and what `Accept-CH` holds | `GetClientHintToNameMap` and `ParseClientHintsHeader` | `services/network/public/cpp/client_hints.cc` |
+| `Accept-CH` and `Critical-CH` count for nothing beside `Clear-Site-Data` | `PopulateParsedHeaders` | `services/network/public/cpp/parsed_headers.cc` |
+| What goes without asking | `IsClientHintSentByDefault` | `third_party/blink/common/client_hints` |
+| Keeping what an origin asked for | `PersistClientHints` and `GetAllowedClientHintsFromSource` | `components/client_hints/browser/client_hints.cc` |
+| Taking it back | `ClearClientHintCacheAndReply`, from `SiteDataClearer` | `content/browser/browsing_data/clear_site_data_utils.cc` |
+| A navigation's response, and each redirect on the way | `ParseAndPersistAcceptCHForNavigation`, from `CommitNavigation` and `OnRequestRedirected` | `content/browser/client_hints/client_hints.cc`, `content/browser/renderer_host/navigation_request.cc` |
+| A navigation's hints | `AddNavigationRequestClientHintsHeaders` | `content/browser/client_hints/client_hints.cc` |
+| A subresource's hints | `AddClientHintsIfNecessary`, with each origin's default permissions policy | Blink's `FrameFetchContext`, `permissions_policy_features.json5` |
+| `Critical-CH` | `CriticalClientHintsThrottle`, whose restart `RestartWithURLResetNow` makes a redirect to the first URL | `content/browser/client_hints`, `third_party/blink/common/loader` |
+| `ACCEPT_CH` in ALPS | `AcceptCHFrameInterceptor` and `OnAcceptCHFrameReceived`. `//net` hands the frame to `OnConnected` in `TransportInfo`, from `GetAcceptChViaAlps()` | `services/network`, `content/browser/loader/navigation_url_loader_impl.cc` |
+
+### Starting over
+
+A restart for `Critical-CH` or for the frame in ALPS is a new `URLRequest` in the place of the old one, as the new loader is in Chrome, with the method and body that the navigation has come to. A `Referer` that has shrunk stays that way. Neither comes with an event for a caller, as in Chrome, where a page sees neither. A stream cannot go twice, so a request with one goes on without restarting.
+
+A restart for the frame happens in `OnConnected`, when the request has sent nothing, so a server sees only the request with the hints. It stays at this hop, and carries on the chain, so `Sec-Fetch-Site` still knows where the navigation has been. After 20 of them, which a server can only cause by presenting another ALPS on each connection, the request ends with `ERR_TOO_MANY_ACCEPT_CH_RESTARTS`.
+
+A restart for `Critical-CH` follows a whole request, so a server sees two. Chrome only has `CriticalClientHintsThrottle` for a navigation that starts with a safe method, so a `POST` never does this. It goes back to the first URL, and starts a new chain, so `Sec-Fetch-Site` there knows nothing of a hop on the way.
+
+The hop after that restart has a quirk, which a Session copies. `ThrottlingURLLoader::FollowRedirect()` goes on from the restart with what that said still in `headers_update_params_`, which it only clears after the next real redirect. So on that hop the hints of the restart come first, and what the next origin should have follows, which sends those hints even to an origin that did not ask for them. Chrome 156 on macOS sent `sec-ch-ua-model` that way on 2026-11-07, to an origin that had only asked for `sec-ch-ua-arch`, and on the hop after that it did not. No Baseline holds this, because `client_hints_critical` has no redirect.
+
+The capture server cannot say anything in ALPS, because Python's `ssl` cannot negotiate it, so no **Baseline** holds the order of a restart for the frame. It comes from the source: `resource_request_->headers.MergeFrom()` keeps each line it has, and adds the others at the end, before the network service adds Fetch Metadata. `tests/test_client_hints.py` goes through the rules with `accept_ch_via_alps`, a setting only tests can reach, in the place of what `//net` read.
+
+Google's servers do send the frame, so this was also checked by hand on 2026-11-07 against `www.google.com`, on macOS. In a net log of Chrome 156 going there, the first `URLRequest` ends at `URL_REQUEST_DELEGATE_CONNECTED` with nothing sent, and the second has the new hints after `accept` and before `sec-fetch-site`, with the three that go by default still ahead of `upgrade-insecure-requests`. A Session restarted in the same way there, with the frame that `//net` read, and the same order. That Chrome also adds `x-browser-*` lines for Google's hosts, which a Session does not. No test does this, because it takes the network.
+
+### The order of a subresource's lines
+
+Over the network, a script, image or fetch shows the lines that Blink holds in `ResourceRequest` in the order of its `HTTPHeaderMap`, which is a `WTF::HashMap` that Blink goes through from the first bucket to the last. So the order depends on each name's hash and on the size of the table, which grows with what is in it. It looks random, and it changes with what a server asks for: asking for one more hint can swap two others.
+
+`native/http_header_map.cc` ports that table: `rapidhash` through `CaseFoldingHashReader`, `HashString24`, the probing of `HashTable::insert`, its growth at half full and `Rehash`, which goes through the old table in its own order. What goes in, in order, is `Content-Type`, the hints in the order of `AddClientHintsIfNecessary`, and `User-Agent` from `PrepareRequest`. `Accept` and the rest come later and from elsewhere, so they follow.
+
+Before any of this was written, a script of this same model in Python gave the order of all 40 subresources that Chrome 156 on macOS sent for 8 sets of hints, from none to all of them. The Baselines of `client_hints_*` hold six sets from Windows Chrome, with and without a body, which reach all three sizes the table gets to. `tests/test_client_hints.py` holds two more sets. With no hint added, the native core leaves the Persona's order alone.
+
+### What stays different
+
+| | Chrome | A Session |
+| --- | --- | --- |
+| How long it keeps what an origin asked for | Until the user clears it, in its profile | As long as the Session lasts. `cookie_file` does not hold it |
+| Delegating hints to another origin | `Permissions-Policy` and `Delegate-CH` from the page | A page has no response that a request can go back to, so a subresource to another origin only gets what goes by default |
+| `<meta http-equiv="accept-ch">` | Read from the HTML | There is no HTML |
+| `rtt`, `downlink` | Measured, with noise for each host | The Persona's values, on every host |
+| Viewport sizes | Follow the window | The Persona's values |
+| `width`, `sec-ch-width` | From the layout of an image with a width | Not sent |
+| `Clear-Site-Data` | Also clears cookies and the cache | Only takes back what an origin asked for |
 
 ## Partitioning
 

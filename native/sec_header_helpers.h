@@ -21,9 +21,6 @@ namespace mitto {
 // changes.
 bool IsFixedHeader(const FetchParams& params, std::string_view name);
 
-// Whether `name` is the name of a client hint, as a Persona has them.
-bool IsClientHintHeader(std::string_view name);
-
 // Removes the sec-ch- and sec-fetch- lines that are not a caller's.
 void RemoveSecHeaders(net::URLRequest& request, const FetchParams& params);
 

@@ -86,6 +86,8 @@ def test_only_a_later_hop_and_what_opens_a_tunnel_ask_for_another_case() -> None
 
     assert starts == {
         **{f"redirect_{kind}_{hop}": f"redirect_{kind}_1" for kind in ("navigation", "fetch") for hop in range(1, 5)},
+        **{f"client_hints_redirect_fetch_{hop}": "client_hints_redirect_fetch_1" for hop in range(1, 5)},
+        **{f"client_hints_redirect_navigation_{hop}": "client_hints_redirect_navigation_1" for hop in range(1, 6)},
         "proxy_connect": "proxy_navigation",
     }
 

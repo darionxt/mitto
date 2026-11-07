@@ -12,9 +12,15 @@ import pytest
 from mitto._native import FetchParams, Priority
 from mitto._persona import WINDOWS_PERSONAS, RequestDefaults, RequestKind, load_persona
 from mitto._request import build_request
+from tests.client_hints import HINTS_A_SERVER_ASKS_FOR, SENT_BY_DEFAULT, until_a_server_asks
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS
 from tools.capture import RequestKind as CaptureRequestKind
-from tools.capture.normal_form import AUTHORITY_PLACEHOLDER, ORIGIN_PLACEHOLDER
+from tools.capture.normal_form import (
+    AUTHORITY_PLACEHOLDER,
+    HINTS_FROM_THE_MACHINE,
+    MACHINE_PLACEHOLDER,
+    ORIGIN_PLACEHOLDER,
+)
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.parity.replay import REPLAYS
 
@@ -22,11 +28,15 @@ PERSONAS = {release: load_persona(name) for release, name in WINDOWS_PERSONAS.it
 ALL_BASELINES = load_baselines(BASELINES_DIRECTORY)
 BASELINES = [baseline for baseline in ALL_BASELINES if baseline.case in {kind.value for kind in RequestKind}]
 
-# A Baseline of a refusal holds no headers.
+_CLIENT_HINTS_PREFIX = "client_hints_"
+
+# A Baseline of a refusal holds no headers, and one that has hints depends on what an origin asked for.
 BODY_BASELINES = [
     baseline
     for baseline in ALL_BASELINES
-    if REPLAYS[baseline.case].body and baseline.fingerprint["request"] != {"refused": True}
+    if REPLAYS[baseline.case].body
+    and baseline.fingerprint["request"] != {"refused": True}
+    and not baseline.case.startswith(_CLIENT_HINTS_PREFIX)
 ]
 
 _ANY_URL = "https://example.test:8444/any/path?query"
@@ -48,6 +58,23 @@ _VALUE_FROM_THE_NATIVE_CORE = "sec-fetch-site"
 
 # What the native core leaves of the Persona's lines, for a GET that a kind makes without a body or an Initiator.
 _NOT_ON_A_GET = "Origin"
+
+# What a Persona claims for each hint that follows the machine, which a Baseline does not hold.
+_CLAIMED_FROM_THE_MACHINE = {
+    "device-memory": "8",
+    "downlink": "10",
+    "dpr": "1",
+    "ect": "4g",
+    "rtt": "50",
+    "sec-ch-device-memory": "8",
+    "sec-ch-dpr": "1",
+    "sec-ch-prefers-color-scheme": "light",
+    "sec-ch-prefers-reduced-motion": "no-preference",
+    "sec-ch-prefers-reduced-transparency": "no-preference",
+    "sec-ch-viewport-height": "945",
+    "sec-ch-viewport-width": "1920",
+    "viewport-width": "1920",
+}
 
 # The boundary as a normal form writes it.
 _RANDOM_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
@@ -72,7 +99,7 @@ def _priority_field(defaults: RequestDefaults) -> str:
 def _lines_on_the_wire(baseline: Baseline) -> list[str]:
     """Return the header lines that the Persona's data and //net together give for a Baseline's request."""
     defaults = _defaults(baseline)
-    lines = [f"{name}: {value}" for name, value in defaults["headers"] if name != _NOT_ON_A_GET]
+    lines = [f"{name}: {value}" for name, value in until_a_server_asks(defaults["headers"]) if name != _NOT_ON_A_GET]
     if baseline.case != RequestKind.NAVIGATION:
         lines.append(f"Referer: {ORIGIN_PLACEHOLDER}/")
     accept_language = PERSONAS[baseline.release].accept_language
@@ -190,8 +217,76 @@ def test_a_body_adds_the_lines_of_the_baseline_in_its_order(baseline: Baseline) 
     recorded = request["headers"]
     assert isinstance(recorded, list)
 
-    sent = [(name, _RANDOM_BOUNDARY.sub(r"\1<random>", value)) for name, value in built["headers"]]
+    sent = [(name, _RANDOM_BOUNDARY.sub(r"\1<random>", value)) for name, value in until_a_server_asks(built["headers"])]
 
     assert _from_the_persona(sent) == _from_the_persona(
         [(name, value) for name, _, value in (str(line).partition(": ") for line in recorded)]
     )
+
+
+def _as_recorded(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Return what a Persona decides of these lines, as a Baseline holds it, with the machine's values hidden."""
+    return [
+        (name, MACHINE_PLACEHOLDER if name in HINTS_FROM_THE_MACHINE else value)
+        for name, value in _from_the_persona(lines)
+    ]
+
+
+def _recorded(baseline: Baseline) -> list[tuple[str, str]]:
+    request = baseline.fingerprint["request"]
+    assert isinstance(request, dict)
+    recorded = request["headers"]
+    assert isinstance(recorded, list)
+    return _from_the_persona([(name, value) for name, _, value in (str(line).partition(": ") for line in recorded)])
+
+
+def _built_for(baseline: Baseline) -> list[tuple[str, str]]:
+    replay = REPLAYS[baseline.case]
+    built = build_request(PERSONAS[baseline.release], replay.method, _ANY_URL, kind=replay.kind.value, **replay.body)
+    return _as_recorded([(name, value) for name, value in built["headers"] if name.lower() != "origin" or replay.body])
+
+
+_EVERY_HINT_CASES = {"client_hints_form", "client_hints_fetch_post", "client_hints_script", "client_hints_image"}
+_EVERY_HINT_BASELINES = [item for item in ALL_BASELINES if item.case in _EVERY_HINT_CASES]
+
+
+@pytest.mark.parametrize("baseline", [b for b in _EVERY_HINT_BASELINES if b.case == "client_hints_form"], ids=_name)
+def test_a_navigation_holds_every_hint_in_the_order_and_with_the_values_of_the_baseline(baseline: Baseline) -> None:
+    assert _built_for(baseline) == _recorded(baseline)
+
+
+@pytest.mark.parametrize("baseline", [b for b in _EVERY_HINT_BASELINES if b.case != "client_hints_form"], ids=_name)
+def test_a_subresource_holds_every_hint_with_the_value_of_the_baseline(baseline: Baseline) -> None:
+    # Their order is that of Blink's map, which depends on which there are. So the native core works it out, and the
+    # Parity Checks show that it does.
+    assert sorted(_built_for(baseline)) == sorted(_recorded(baseline))
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+@pytest.mark.parametrize("kind", RequestKind)
+def test_a_persona_claims_one_value_for_what_follows_the_machine(release: str, kind: RequestKind) -> None:
+    lines = dict(PERSONAS[release].request_defaults(kind)["headers"])
+
+    assert {name: lines[name] for name in HINTS_FROM_THE_MACHINE} == _CLAIMED_FROM_THE_MACHINE
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+@pytest.mark.parametrize("kind", RequestKind)
+def test_a_persona_has_every_hint_a_server_can_ask_for_and_that_chrome_sends_of_a_kind(
+    release: str, kind: RequestKind
+) -> None:
+    names = {name.lower() for name, _ in PERSONAS[release].request_defaults(kind)["headers"]}
+
+    assert names >= HINTS_A_SERVER_ASKS_FOR | SENT_BY_DEFAULT
+    assert names.isdisjoint({"width", "sec-ch-width", "save-data"})
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_the_full_version_is_the_build_that_recorded_the_baselines(release: str) -> None:
+    note = (BASELINES_DIRECTORY / release / "chrome.txt").read_text(encoding="utf-8")
+    build = re.search(r"^Chrome: (\S+)$", note, re.MULTILINE)
+    assert build is not None
+    lines = dict(PERSONAS[release].request_defaults(RequestKind.NAVIGATION)["headers"])
+
+    assert lines["sec-ch-ua-full-version"] == f'"{build[1]}"'
+    assert lines["sec-ch-ua-full-version-list"].count(f'v="{build[1]}"') == 2

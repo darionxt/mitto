@@ -13,12 +13,16 @@ shared_library("mitto_core") {
   sources = [
     "body_stream.cc",
     "body_stream.h",
+    "client_hints.cc",
+    "client_hints.h",
     "cookie_json.cc",
     "cookie_json.h",
     "feature_list.cc",
     "feature_list.h",
     "fetch_rules.cc",
     "fetch_rules.h",
+    "http_header_map.cc",
+    "http_header_map.h",
     "ignore_errors_cert_verifier.cc",
     "ignore_errors_cert_verifier.h",
     "mitto_core.cc",
@@ -95,6 +99,22 @@ executable("mitto_core_test") {
 if (use_libfuzzer) {
   import("//testing/libfuzzer/fuzzer_test.gni")
 
+  fuzzer_test("client_hints_fuzzer") {
+    # The parser and not the library, whose exports list hides everything but the
+    # C API.
+    sources = [
+      "client_hints.cc",
+      "client_hints.h",
+      "test/client_hints_fuzzer.cc",
+    ]
+    additional_configs = [ ":public_api" ]
+    deps = [
+      "//base",
+      "//net",
+      "//url",
+    ]
+  }
+
   fuzzer_test("cookies_fuzzer") {
     # The parser and not the library, whose exports list hides everything but the
     # C API.
@@ -169,6 +189,7 @@ group("mitto") {
   ]
   if (use_libfuzzer) {
     deps += [
+      ":client_hints_fuzzer",
       ":cookies_fuzzer",
       ":request_options_fuzzer",
       ":session_settings_fuzzer",

@@ -26,7 +26,14 @@ from tools.capture.http2 import (
     serialize_frame,
 )
 from tools.capture.http3 import serialize_varint
-from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_client_hello, normal_form
+from tools.capture.normal_form import (
+    HINTS_FROM_THE_MACHINE,
+    MACHINE_PLACEHOLDER,
+    RecordingError,
+    dumps_normal_form,
+    normal_client_hello,
+    normal_form,
+)
 from tools.capture.page import respond
 from tools.capture.recording import ConnectionRecord, Json, QuicConnectionRecord, Recording, raw_form
 from tools.capture.wire import ParseError
@@ -252,6 +259,31 @@ def test_headers_keep_names_order_and_values() -> None:
     assert "http2" not in form
     assert form["requests"] == {
         "fetch": {"request_line": "GET /fetch HTTP/1.1", "headers": ["User-Agent: x", "sec-a: 1", "Accept: */*"]}
+    }
+
+
+@pytest.mark.parametrize("name", sorted(HINTS_FROM_THE_MACHINE))
+def test_a_hint_from_the_machine_keeps_its_place_and_not_its_value(name: str) -> None:
+    head = f"GET /fetch HTTP/1.1\r\nUser-Agent: x\r\n{name.upper()}: 1.5\r\nAccept: */*\r\n\r\n".encode()
+
+    requests = normal_form(http1_recording(head))["requests"]
+
+    assert isinstance(requests, dict)
+    assert requests["fetch"] == {
+        "request_line": "GET /fetch HTTP/1.1",
+        "headers": ["User-Agent: x", f"{name.upper()}: {MACHINE_PLACEHOLDER}", "Accept: */*"],
+    }
+
+
+def test_a_hint_that_says_what_chrome_is_keeps_its_value() -> None:
+    head = b'GET /fetch HTTP/1.1\r\nsec-ch-ua-platform-version: "19.0.0"\r\nsec-ch-ua-arch: "x86"\r\n\r\n'
+
+    requests = normal_form(http1_recording(head))["requests"]
+
+    assert isinstance(requests, dict)
+    assert requests["fetch"] == {
+        "request_line": "GET /fetch HTTP/1.1",
+        "headers": ['sec-ch-ua-platform-version: "19.0.0"', 'sec-ch-ua-arch: "x86"'],
     }
 
 

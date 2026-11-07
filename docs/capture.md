@@ -88,6 +88,8 @@ Each main Request Kind makes one **Recording Case**, named after it. The other c
 | Cases over HTTP/1.1, HTTP/2, HTTP/3 | `cases/http1.json`, `cases/http2.json`, `cases/http3.json` | The port of that protocol | The table below |
 | Cases over plain HTTP | `cases/plain_http.json` | The plain HTTP port | `plain_http_navigation`, `plain_http_fetch`, `plain_http_script`, `plain_http_image` |
 | Cases through a proxy, over HTTP/1.1 and HTTP/2 | `cases/proxy_http1.json`, `cases/proxy_http2.json` | The proxy, to the port of that protocol | `proxy_connect`, `proxy_navigation` |
+| Client hints over HTTP/1.1, HTTP/2, HTTP/3 | `cases/client_hints_http1.json`, `cases/client_hints_http2.json`, `cases/client_hints_http3.json` | The port of that protocol | [Those below](#client-hints) |
+| Client hints over plain HTTP | `cases/client_hints_plain_http.json` | The plain HTTP port | `client_hints_plain_http_fetch`, `client_hints_plain_http_navigation` |
 
 The three runs over TLS go through the same pages, in this order, and the page at each step shows what to click:
 
@@ -106,6 +108,26 @@ The three runs over TLS go through the same pages, in this order, and the page a
 | `redirect_navigation_1` to `redirect_navigation_4` | A click on a link, with the same hops as the fetch |
 
 Every response under `/case/` allows every origin, because a request shows no sign of that and a page cannot go on without it. So the cases need no preflight, and each hop of a redirect also works with `Origin: null`.
+
+### Client hints
+
+What a server asks for lasts as long as the user data directory, so these runs come last. Their files stay apart from the others, which are the same with or without these. The three runs over TLS go through these pages in order, starting at `client_hints_first`, which asks for every hint in `Accept-CH`:
+
+| Recording Case | What makes it |
+|---|---|
+| `client_hints_first` | The navigation to the page that asks, which has no hint yet |
+| `client_hints_script`, `client_hints_image`, `client_hints_fetch` and each with `_same_site` and `_cross_site` | The elements and `fetch()` of that page. What is at another origin also says `Accept-CH`, which counts for nothing because it is no navigation |
+| `client_hints_fetch_post` | `fetch()` with a string. So this and `client_hints_form` hold `Content-Type` among the hints |
+| `client_hints_redirect_fetch_1` to `_4` | One `fetch()`, whose hops go same-origin, same-site, cross-site and back |
+| `client_hints_navigation`, `client_hints_navigation_same_site`, `client_hints_navigation_cross_site`, `client_hints_navigation_back` | A click on a link in each page in turn, which ends where it began |
+| `client_hints_form` | A click on the button of a form |
+| `client_hints_redirect_navigation_1` to `_5` | A click on a link, whose hops go to the page's origin, to the same site twice, where the first of those answers `Accept-CH` itself, to another site and back |
+| `client_hints_one_*`, `client_hints_few_*`, `client_hints_many_*`, `client_hints_legacy_*`, `client_hints_none_*` | From a page that asks for one hint, three, nine, the six without `sec-ch-`, or with an empty header for nothing: a `fetch()` as `_fetch`, one with a string as `_post`, and a click on a link as `_navigation` |
+| `client_hints_critical` | A click on a link to a page at another site, which says `Accept-CH` and `Critical-CH`. Chrome asks again with the hint, and the case is the request that has it |
+
+The images come from a script. Chrome's preload scanner finds an image in the HTML, and raises its priority unless it says it is small. When it says so, Chrome sends its width in `width` and `sec-ch-width`, which depend on the page's layout. An image from a script has neither, and has the priority of `image`. The set of nine is what real servers often ask for, and how many there are decides [the order of a subresource's lines](parity.md#the-order-of-a-subresources-lines), which is why there are several.
+
+The run over plain HTTP asks for every hint too, and then makes a `fetch()` and a navigation that shows that it did not count.
 
 ### A stream body over HTTP/1.1
 
@@ -237,6 +259,7 @@ Whatever a server can observe and a client decides stays as it was sent, in the 
 | Server name | The placeholder `<host>` | It says where the server is, not who the client is |
 | The server's name and port in header values and in a `CONNECT` line | The placeholders `<authority>` and, with the page's scheme, `<origin>`. For the other names, `<same-site-authority>`, `<same-site-origin>`, `<cross-site-authority>` and `<cross-site-origin>` | The same |
 | The random part of a multipart boundary, in headers and bodies | `----WebKitFormBoundary<random>`, for that prefix and 16 alphanumerics. Any other boundary stays as sent | Chrome picks it at random |
+| The value of `device-memory`, `dpr`, `viewport-width`, `rtt`, `downlink`, `ect` and of `sec-ch-device-memory`, `sec-ch-dpr`, `sec-ch-viewport-width`, `sec-ch-viewport-height`, `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion` and `sec-ch-prefers-reduced-transparency` | The placeholder `<machine>`, in its place | It says what the machine, its window, its network and its user are, and not which Chrome this is. So [a Persona claims a value of its own](persona.md#what-they-say). `rtt` and `downlink` also change between requests |
 | HTTP/2 stream IDs and stream dependencies of requests and `later_frames` | Dropped | They depend on which requests happened to be open. In `preface` they stay, because no request has started yet |
 | HTTP/3 stream IDs of requests | Dropped | The same. On unidirectional streams they stay, because a client opens those whatever it requests |
 | HTTP/3 GOAWAY on the control stream | Dropped | It depends on when the client leaves |
@@ -248,7 +271,7 @@ Only connections that carried a request of a Recording Case count, and a run's n
 ### What it does not capture yet
 
 - **Which requests share a connection.** The normal form describes one connection and then each request, so it cannot show how a client spreads its requests over connections, such as [partitioning](baselines.md#features-on-in-chromes-own-code). The raw recording can.
-- **ALPS.** Python's `ssl` cannot negotiate it, so the normal form has Chrome's offer but not the settings Chrome would then send.
+- **ALPS.** Python's `ssl` cannot negotiate it, so the normal form has Chrome's offer but not the settings Chrome would then send, and no server here can send the `ACCEPT_CH` frame.
 - **Resumed connections.** The server gives out no tickets, so the normal form describes fresh connections only.
 - **Frames that depend on the response or on timing.** The normal form leaves out frames sent after the first request on stream 0, such as a later `SETTINGS` or `PING`. They remain in the raw recording.
 - **Later ClientHellos.** After a HelloRetryRequest, only the first ClientHello is recorded.

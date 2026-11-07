@@ -170,7 +170,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer` | 2.2 GiB |
 
 Each of them stops at the first report.
 
@@ -185,7 +185,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies and `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers and `client_hints_fuzzer` for what a server asks for, with the files of that name:
 
 ```bash
 mkdir corpus

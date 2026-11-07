@@ -1,0 +1,1 @@
+sec-ch-ua-arch, sec-ch-ua-model;a=1, DPR, no-such-hint
