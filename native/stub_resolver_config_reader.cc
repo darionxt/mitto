@@ -11,7 +11,10 @@
 #include <utility>
 #include <vector>
 
-#include "net/dns/host_resolver_manager.h"
+// //net/dns keeps this header to the targets on its friend lists, to track who
+// uses it outside the network stack. //mitto uses it as //services/network
+// does.
+#include "net/dns/host_resolver_manager.h"  // nogncheck
 #include "net/dns/public/dns_config_overrides.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/insecure_dns_mode.h"

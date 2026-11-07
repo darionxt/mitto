@@ -1004,7 +1004,8 @@ def build_from_export(directory: Path, archive: Path | None, config: BuildConfig
     write_args(config, build_dir)
 
     env = build_environment()
-    check_call([src / host.gn, "gen", relative, *GN_ROOT], cwd=src, env=env)
+    # The check takes seconds, and stops the build before it compiles anything.
+    check_call([src / host.gn, "gen", relative, *GN_ROOT, "--check"], cwd=src, env=env)
     check_call([src / "third_party/ninja/ninja", "-C", relative, "mitto"], cwd=src, env=env)
     library = build_dir / host.library
     if library_fingerprint(library) == metadata["traced_libraries"][host.name][config.name]:
