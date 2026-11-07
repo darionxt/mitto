@@ -97,6 +97,7 @@ def server() -> Iterator[_Server]:
     with _Server(("127.0.0.1", 0), _Handler) as running:
         threading.Thread(target=running.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         yield running
+        running.shutdown()
 
 
 def _url_of(server: _Server) -> str:

@@ -10,6 +10,10 @@ class LocalHTTPServer(http.server.ThreadingHTTPServer):
 
     HTTPServer.server_bind() does a reverse DNS lookup to set server_name, which only CGI handlers read. The first
     lookup in a process can wait about 35 seconds for mDNS on a macOS CI runner.
+
+    Call shutdown() before leaving its with statement, if a thread runs serve_forever(). That thread would otherwise go on
+    polling the number of the closed socket. On Linux, a poll holds on to the socket that has that number by then, so a test
+    that closes a listener to get a port that refuses connections finds it still taking them until the poll ends.
     """
 
     def server_bind(self) -> None:

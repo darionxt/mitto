@@ -136,6 +136,7 @@ def server() -> Iterator[Server]:
         threading.Thread(target=running.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         yield running
         running.answer.set()
+        running.shutdown()
 
 
 def run[T](coroutine: Coroutine[Any, Any, T]) -> T:
