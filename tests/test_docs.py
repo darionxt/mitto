@@ -545,7 +545,7 @@ def test_the_readme_names_the_supported_window_on_one_line() -> None:
 
 def test_a_chrome_release_named_on_another_line_is_noticed() -> None:
     text = README.read_text(encoding="utf-8")
-    text += '\n```python\nmitto.Session(persona="chrome_155_windows")\n```\nChrome 158 is next.\n'
+    text += '\n```python\nmitto.Session(persona="chrome_150_windows")\n```\nChrome 158 is next.\n'
 
     assert len(lines_naming_chrome_releases(text)) == 3
 
