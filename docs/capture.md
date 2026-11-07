@@ -278,6 +278,7 @@ Only connections that carried a request of a Recording Case count, and a run's n
 - **QUIC after the Initial packets.** aioquic hides what the later packets hold apart from stream data, such as ACK frames, NEW_CONNECTION_ID frames and flow control updates. The kit sees none of it.
 - **QPACK.** How a client encodes its headers, and what it says on its QPACK encoder stream, depends on the requests before them. Those bytes stay in the raw recording, but only the decoded headers are in the normal form.
 - **Chaos in Initial packets.** The normal form cannot tell a client that splits its ClientHello at random from one that does not, because any one way of splitting it is random too.
+- **Lines for Google's domains.** Chrome adds them by the name in the URL, and the names of the case pages are not Google's. See [What Chrome adds for Google's domains](#what-chrome-adds-for-googles-domains).
 
 ### What can differ between Chrome installations
 
@@ -344,6 +345,130 @@ A Session therefore looks like a Chrome in the first seconds after a start. When
 The Chrome here ran for minutes, not days, and no component with a different set of IDs has reached it. That a component replaces the list while Chrome is running, without a new start, comes from the source.
 
 Merkle Tree Certificates would change the answer. With `VerifyMTCs` on, Chrome adds the IDs of its Merkle Tree CAs, and a second component, PKI Metadata Fastpush, adds landmark IDs that expire. The feature is off by default in 157 and upstream on 2026-11-06, the seeds of 2026-11-05 and 2026-11-06 have no study that names it, and `chrome://components` showed no such component. A Baseline would show it, because it adds IDs to the compiled-in list too.
+
+## What Chrome adds for Google's domains
+
+Real Chrome adds request lines for Google's domains that a **Session** does not send, so a server there can tell the two apart. No **Baseline** holds them, because the names of the capture server are not Google's. A Session goes on sending none of them, as [parity.md](parity.md#googles-domains) says.
+
+| Line | Goes to | Its value | Can a Session state it? |
+|---|---|---|---|
+| `x-browser-channel` | [The domains](#the-domains) and [requests](#the-requests) below | `stable` | Yes. It is the same in the whole build |
+| `x-browser-year` | The same | `2026` in 155, 156 and 157 | Yes. The build sets it, not the clock |
+| `x-browser-copyright` | The same | `Copyright 2026 Google LLC. All Rights Reserved.` in 155, 156 and 157 | Yes. It is the same in the whole build |
+| `x-browser-validation` | The same | 28 characters, one value per **Chrome Release** | No. It hashes a seed and an API key inside Chrome with Chrome's `User-Agent`. **Known Gap** |
+| `x-sec-ch-ua-not-a-border` | The same, from Chrome 156 on | 32 lowercase letters, which change every five minutes | No. A closed library inside Chrome makes it. **Known Gap** |
+| `x-client-data` | The same domains, over HTTPS only | Variation IDs, which differ from one start of Chrome to the next | No. It follows a user's field trials, and a Session has no seed. **Known Gap** |
+| `x-chrome-id-consistency-request` | `accounts.google.com` only | Fixed fields, Chrome's OAuth client ID and a device ID per user data directory | Only in part, and it asks Google for what only Chrome's account code can use. **Known Gap** |
+
+The first three alone would not help. Chrome sets those three and `x-browser-validation` together, so a request with only the three is one that no Chrome sends. Which requests get what is the same in 155, 156 and 157, except that 155 has no `x-sec-ch-ua-not-a-border`.
+
+### What Chrome does
+
+This part comes from reading Chromium's public source, at 157.0.8103.27 and the tags of 155 and 156. The names of the lines are not in it, which is why a search for them finds nothing.
+
+`RequestHeaderIntegrityURLLoaderThrottle` in `chrome/common/request_header_integrity/` adds the lines. Only builds with Google's branding have it (`enable_request_header_integrity = is_chrome_branded`). `chrome/browser/chrome_content_browser_client.cc` and `chrome/renderer/url_loader_throttle_provider_impl.cc` give it to what goes through URL loader throttles in the browser and in a page. If `google_util::IsGoogleAssociatedDomainUrl()` holds for the URL, it sets the lines. On a redirect it sets them again for a name that passes, and removes them for one that does not. Nothing there looks at the profile or the scheme.
+
+| Line | What the source says |
+|---|---|
+| `x-browser-channel` | `chrome::GetChannelName()` |
+| `x-browser-year` | `LASTCHANGE_YEAR`, from `internal/build_derived_values.h`, when Chrome is built |
+| `x-browser-copyright` | `CHROME_COPYRIGHT`, from the same place |
+| `x-browser-validation` | Base64 of the SHA-1 of `kIntegritySeed`, `google_apis::GetAPIKey()` and `embedder_support::GetUserAgent()`. The seed is in `internal/integrity_seed_internal.h` |
+| `x-sec-ch-ua-not-a-border` | `ChromeCompaneroHost` calls `GetHeaderName` and `GetCompaneroValue` in `chromecompaneros.dll`, a library that comes with Chrome, and hands it the same seed, API key and `User-Agent`. Each process keeps the value and asks for a new one every minute |
+
+`internal` is a submodule of closed code, and the names of the lines are there too. The public files have placeholders such as `X-Placeholder-3`, and the name of the last line comes from the library at run time. So that this is the line of the library is our reading: it comes where that code sets its line, it is missing just after a start, and it follows the `User-Agent`. `PlatformRuntimeHost` can also run a library from a component called Platform Runtime, in a process of its own, every 3 minutes, and the values it returns overwrite those of the lines above.
+
+`x-client-data` comes from elsewhere: `components/variations/net/variations_http_headers.cc`, which checks the same `IsGoogleAssociatedDomainUrl()` and asks for HTTPS and not Incognito. It only starts with a request, so it does not get added on a redirect into Google's domains. Its value is a `ClientVariations` message holding the Google-visible IDs of the field trials this Chrome drew, with fewer of them when a page that is not Google's made the request. `x-chrome-id-consistency-request` comes from `components/signin/core/browser/dice_header_helper.cc`, for `accounts.google.com`.
+
+`IsGoogleAssociatedDomainUrl()` in `components/google/core/common/google_util.cc` has the same lists in the three Chrome Releases. It takes these names, on any port:
+
+- `google.TLD` and `youtube.TLD`, with any subdomain, for the TLDs on the lists in `google_tld_list.h`;
+- any subdomain of `android.com`, `doubleclick.com`, `doubleclick.net`, `ggpht.com`, `googleadservices.com`, `googleapis.com`, `googlesyndication.com`, `googleusercontent.com`, `googlevideo.com`, `gstatic.com`, `litepages.googlezip.net`, `youtubekids.com` and `ytimg.com`, but not those names themselves;
+- exactly `googleweblight.com`.
+
+### What we measured
+
+This part was measured on 2026-11-07 with stable Windows Chrome 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39, windowed, from new user data directories with [the flags of a Baseline](baselines.md#what-it-does), through net logs at their default capture mode, which hides cookies. Nothing signed in.
+
+| Runs | How | What they are for |
+|---|---|---|
+| Two sessions per Chrome Release at real domains, 90 seconds each | `www.google.com`, `www.youtube.com`, `accounts.google.com`, a font's CSS at `fonts.googleapis.com`, and `example.com` with an image, script, frame and `fetch()` from Google's domains. Also a new start of one directory, and a first start with no seed | What real Google pages cause. 1,232 of 1,521 requests had the lines |
+| One session per Chrome Release with every name at a loopback server | `--host-resolver-rules` sends every name to a server on the machine, so no request left it. 78 names, and about 30 kinds of request, from pages at Google's domains and elsewhere | Which names and requests get the lines, without the traffic that would take |
+| `www.google.com` at the capture server, for each Chrome Release and protocol | `--host-resolver-rules` and `--origin-to-force-quic-on`, as in [a recording](baselines.md#what-it-does) | The lines in a normal form, on the wire, next to the Baselines |
+| Chrome 157 with every name at a loopback server, one session each | `--user-agent`, `--accept-lang`, an Incognito window, Chrome for Testing, and sessions of 12 and 22 minutes in Chrome 156 and 157 | What changes the values |
+
+Runs at a loopback server or at the capture server are not Baselines, and none of this went into `tests/baselines`. The raw net logs stayed out of the repository too, because they can hold session data.
+
+#### The domains
+
+Of the 78 names, the 29 that the rule above takes had the lines on a navigation and on a `fetch()` from that page, and the 49 others had none. Those include `gstatic.com` and `googleapis.com` themselves, `www.youtube-nocookie.com`, `www.googletagmanager.com`, `www.google-analytics.com`, `www.chromium.org`, `about.google`, `www.google.xyz` and `www.google.com.example`. `x-client-data` went to the same names. All three Chrome Releases gave the same answer for all 333 requests of those sessions, apart from `x-sec-ch-ua-not-a-border`, so a port of that one function would be enough to choose the names.
+
+#### The requests
+
+| Request to one of those domains | The `x-browser-*` lines and `x-sec-ch-ua-not-a-border` | `x-client-data` |
+|---|---|---|
+| Navigations: from the address bar, a link, a script, a form, a reload, a frame | Yes | Yes |
+| Script, image, style, font, video, `fetch()` and XHR of any method and mode, beacon, `preload`, `prefetch`, `EventSource`, the script of a worker or service worker, and a `fetch()` inside one | Yes | Yes |
+| The same from a page that is not Google's | Yes | Yes, with fewer IDs |
+| A hop of a redirect, into one of those domains | Yes | Only if the chain began at one of them |
+| A hop of a redirect, away from them | Removed | Removed |
+| Plain HTTP | Yes | No |
+| Another port | Yes | Yes |
+| A CORS preflight, a WebSocket handshake | No | No |
+| Chrome's own requests, such as for a seed or updates | No | On some |
+
+#### Their place
+
+The lines come after everything the request has so far and just before `sec-fetch-site`, in this order, with the case that HTTP/1.1 sends:
+
+```text
+X-Browser-Channel
+X-Browser-Year
+X-Browser-Validation
+X-Browser-Copyright
+X-Sec-CH-UA-Not-A-Border
+X-Client-Data
+```
+
+Over HTTP/2 and HTTP/3 they are in lowercase. Next to the Baselines of each Chrome Release, over all three protocols and for navigation, `fetch()`, script and image, these lines were the only difference. The connection was the same, and the other lines were the same and in the same order.
+
+A navigation that starts with Chrome has no `x-sec-ch-ua-not-a-border`, because the value is not there yet. All 8 of those in Chrome 156 and 157 lacked it, while the requests of the same page had it. The 5 that [started over for ALPS](parity.md#starting-over) at `www.google.com` had it after `x-client-data`, which fits the second try finding it there.
+
+#### Their values
+
+| Line | New directories | New starts | Chrome Releases | With `--user-agent` |
+|---|---|---|---|---|
+| `x-browser-channel`, `x-browser-year`, `x-browser-copyright` | The same | The same | The same | Not read |
+| `x-browser-validation` | The same | The same, with or without a seed | Different in each | Different. `--accept-lang` makes no difference |
+| `x-sec-ch-ua-not-a-border` | The same at the same time | The same at the same time | Different in each | Different |
+| `x-client-data` | Different | Different. None in a first start, with no seed | Different | Not compared |
+| `device_id` in `x-chrome-id-consistency-request` | Different | Not read | Different | Not read |
+
+The other fields of `x-chrome-id-consistency-request` were the same everywhere: `version=2`, the client ID, `signin_mode=all_accounts` and `signout_mode=show_confirmation`. It went with every request of the page at `accounts.google.com`, 9 per session, and not with Chrome's own request to that name.
+
+`x-sec-ch-ua-not-a-border` follows the clock. In 22 minutes of Chrome 157 and 12 of Chrome 156, with a request every 10 seconds, it changed 6 times, each time within a minute after a time that ends in :00 or :05 UTC, and never in between. Each process kept its old value for up to a minute more, as the source says, so requests from two processes differed around that time. In one such period, four new directories of Chrome 157 had the same value. `x-browser-validation` did not change during these runs.
+
+A real Incognito window sent the `x-browser-*` lines and `x-sec-ch-ua-not-a-border`, with the same `x-browser-validation`, and no `x-client-data`. Chrome for Testing 157.0.8103.39, which has no Google branding, sent none of them. A Chrome 157 left running for 15 minutes, which then went to `www.google.com`, had the same `x-browser-validation` and no other new line.
+
+Chrome 156 on macOS, headless and from new directories, sent these lines too, with other values of `x-browser-validation` and `x-sec-ch-ua-not-a-border`. Its navigation had another `x-browser-validation` than the requests of the page, with the same `User-Agent` line, which no windowed Chrome here did. This shows that the values follow the operating system or headless mode, and not which.
+
+### What this means for a Session
+
+`x-browser-validation` is the same for every request of a Chrome Release, so a recorded value would look right for that Chrome Release's `User-Agent`. It would still be the output of a seed and a key inside Chrome, so it stays a Known Gap. We did not look for the seed or the key, and did not open Chrome's binary or the library. `x-sec-ch-ua-not-a-border` could not be recorded at all, because it changes. A Session without it looks like the first navigation after a start of Chrome, and like nothing after that.
+
+A Session without `x-client-data` looks like a Chrome with no seed yet, or an Incognito window. Sending one recorded value would look like one draw of one seed, which goes out of date as studies change.
+
+So a Session sends none of these lines. That is what a build without Google's branding sends, although a Session's `sec-ch-ua` says Google Chrome, so a server at these domains that reads these lines can tell a Session from a real Chrome. On every other domain, nothing here changes.
+
+### What this does not cover
+
+- A second machine. By the source, two machines get the same `x-browser-validation`, because the hash has the same inputs. The values on macOS above differ, but that Chrome differs in more than its machine.
+- The Platform Runtime component. After 15 minutes, that Chrome had other components, but none by this name in `chrome://components` and no `PlatformRuntime` directory. If it reaches a Chrome, the source says that its library can change these values. We have not seen that.
+- HTTP/3 at Google's own servers. The real sessions went over HTTP/2, so HTTP/3 comes from the capture server alone.
+- Why Chrome 155 sends no `x-sec-ch-ua-not-a-border`. Its source has the same code, and it comes with a library of that name.
+- Whether Google does anything with these lines, or answers differently without them. This page says what Chrome sends.
+- `x-browser-year` and `x-browser-copyright` in another year. All three builds say 2026, so a change of year has not been seen, and the source says it follows the build.
+- Other lines in the source that only apply with a policy, on Android or in a feature that a new directory does not use, such as `X-Goog-*` in Chrome's own requests, `YouTube-Restrict` and `X-CCT-Client-Data`. Lines that a page's own scripts set, such as `x-youtube-client-name`, are not Chrome's.
 
 ## From Python
 

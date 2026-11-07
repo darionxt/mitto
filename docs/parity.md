@@ -169,7 +169,7 @@ The hop after that restart has a quirk, which a Session copies. `ThrottlingURLLo
 
 The capture server cannot say anything in ALPS, because Python's `ssl` cannot negotiate it, so no **Baseline** holds the order of a restart for the frame. It comes from the source: `resource_request_->headers.MergeFrom()` keeps each line it has, and adds the others at the end, before the network service adds Fetch Metadata. `tests/test_client_hints.py` goes through the rules with `accept_ch_via_alps`, a setting only tests can reach, in the place of what `//net` read.
 
-Google's servers do send the frame, so this was also checked by hand on 2026-11-07 against `www.google.com`, on macOS. In a net log of Chrome 156 going there, the first `URLRequest` ends at `URL_REQUEST_DELEGATE_CONNECTED` with nothing sent, and the second has the new hints after `accept` and before `sec-fetch-site`, with the three that go by default still ahead of `upgrade-insecure-requests`. A Session restarted in the same way there, with the frame that `//net` read, and the same order. That Chrome also adds `x-browser-*` lines for Google's hosts, which a Session does not. No test does this, because it takes the network.
+Google's servers do send the frame, so this was also checked by hand on 2026-11-07 against `www.google.com`, on macOS. In a net log of Chrome 156 going there, the first `URLRequest` ends at `URL_REQUEST_DELEGATE_CONNECTED` with nothing sent, and the second has the new hints after `accept` and before `sec-fetch-site`, with the three that go by default still ahead of `upgrade-insecure-requests`. A Session restarted in the same way there, with the frame that `//net` read, and the same order. That Chrome also adds [lines for Google's domains](#googles-domains), which a Session does not. No test does this, because it takes the network.
 
 ### The order of a subresource's lines
 
@@ -399,6 +399,22 @@ A chain that arrives without an intermediate gets it from the URL in the certifi
 | Root store | The compiled-in list, until a component brings a newer one | The compiled-in list of the **Engine Release** |
 
 These let a Session accept what Chrome would refuse. None of them changes what a server sees: the ClientHello still offers SCTs, and it does not depend on `additional_trust_anchors`. A fetch for a certificate sends the same lines as Chrome 156 on macOS, in the same order: `Host`, `Connection`, `User-Agent`, `Accept-Encoding` and `Accept-Language`. Its `User-Agent` is the **Persona**'s, as Chrome's is its own.
+
+## Google's domains
+
+Real Chrome adds lines for Google's domains, and a Session sends none of them. [capture.md](capture.md#what-chrome-adds-for-googles-domains) has which domains and requests get them, where they go, and what was measured apart from what was read in the source.
+
+These are **Known Gaps**, but `tests/baselines/known_gaps.json` has no line for them. No **Baseline** holds them, because the capture server's names are not Google's, so no Parity Check can see them. This list is where they are written down:
+
+| Line | Why a Session does not send it |
+|---|---|
+| `x-browser-validation` | It hashes a seed and an API key inside Chrome with Chrome's `User-Agent`. We do not take those out of Chrome, and a recorded value would still come from them |
+| `x-sec-ch-ua-not-a-border` | A closed library inside Chrome makes it from the same seed and key, and it changes every five minutes |
+| `x-client-data` | It follows the field trials a Chrome drew, and a Session has no seed |
+| `x-chrome-id-consistency-request` | It holds Chrome's OAuth client ID, and it asks `accounts.google.com` for what only Chrome's account code can use |
+| `x-browser-channel`, `x-browser-year`, `x-browser-copyright` | They are the same in a whole build, so they could be **Persona** data. But Chrome always sends them with `x-browser-validation`, so with only these a request would be one that no Chrome sends |
+
+So a server at those domains that reads these lines can tell a Session from a real Chrome. Nothing here changes what a Session sends anywhere else.
 
 ## Tests of the comparison
 
