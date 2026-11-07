@@ -48,18 +48,24 @@ Goal: mitto's **Wire Fingerprint** matches real Chrome. This is the project's co
 
 ### M2: HTTP client features
 
-- **Session** API:
+Goal: turn the native core into the library people use, with the HTTP behavior of Chrome's network stack, still checked against **Baselines**. [api.md](api.md) has every public name, and [from-requests.md](from-requests.md) has what changes for code that uses `requests`.
+
+- **Session** API, sync and asyncio, on the same machinery ([ADR-0003](adr/0003-c-abi-and-ctypes.md)):
   - methods, query parameters and headers;
   - bodies: form, JSON, multipart and streamed;
   - timeouts;
   - responses as bytes, text, JSON or a stream;
-  - a typed error hierarchy.
-- Cookies (optionally persisted), redirects, an optional HTTP cache, and proxies: HTTP, HTTPS and SOCKS5, with authentication.
-- DNS and certificate verification as Chrome does them, including the Chrome Root Store. Also an option to add trust anchors, because on Linux the Chrome Root Store is otherwise the only source of trust ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
-- Headers that follow the **Initiator**: `Sec-Fetch-Site`, `Referer`, `Origin` and same-site cookie rules.
+  - a typed error hierarchy, sorted by what a caller does next.
+- Cookies, optionally kept in a file that the Python layer writes, redirects and an optional HTTP cache.
+- Proxies, as a setting of a Session: HTTP, HTTPS and SOCKS5, with authentication. Real Chrome cannot give credentials to a SOCKS5 proxy, so a Session does that below `//net`, with no patch ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
+- DNS as Chrome's stub resolver does it, which finds HTTPS records and so real ECH. Certificate verification as Chrome does it, including the Chrome Root Store. Also an option to add trust anchors, because on Linux the Chrome Root Store is otherwise the only source of trust ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
+- Headers that follow the **Initiator**: `Sec-Fetch-Site`, `Referer`, `Origin` and same-site cookie rules. Connections and the HTTP cache are [partitioned by top-level site](parity.md#partitioning), as in Chrome.
 - Client hints that follow what each origin asks for, in `Accept-CH`, `Critical-CH` or the `ACCEPT_CH` frame in ALPS, with their values in Persona data. See [persona.md](persona.md#client-hints).
-- An asyncio API that shares the same Session machinery.
-- **Exit:** feature tests and Parity Checks pass, and the API reference is written.
+- The three differences that M1 left: `spdy_go_away_on_ip_change`, `sec-ch-ua*` and `Sec-Fetch-*` over plain HTTP, and `trust_anchors` in a long-running Chrome, which stays the list compiled into the **Engine Release** ([what can differ](capture.md#what-can-differ-between-chrome-installations)).
+- A Session sends none of the lines Chrome adds for Google's domains. They need what only Chrome holds, or would make a set no Chrome sends. They are **Known Gaps** that no **Parity Check** can see, and [parity.md](parity.md#googles-domains) lists them.
+- **Left out:** WebSocket, CORS preflights, HTTPS upgrades of navigations, an `auth=` argument for origins (an `Authorization` header works), `verify=False`, client certificates, Certificate Transparency enforcement, Reporting and NEL, shared dictionaries and preconnects.
+- **Still open:** what a resumed connection sends and whether the ClientHello check is enough for ALPS over HTTP/3, and whether a Baseline can hold a handshake with real ECH. The answers go in [capture.md](capture.md).
+- **Exit:** feature tests pass through both the sync and the asyncio API. Parity Checks pass with an empty known-gaps list for Chrome 155, 156 and 157 and every **Recording Case**, on both **Hosts**. The API reference is written. The **Supported Window** stays at those three and the Engine Release at 157 until then, because moving up is the routine of M3.
 
 ### M3: Packaging and release
 

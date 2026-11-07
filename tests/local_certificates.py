@@ -4,7 +4,7 @@ import datetime
 import http.server
 import ssl
 import threading
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,12 +88,14 @@ def generate_intermediate(root: Issued) -> Issued:
     return Issued(builder.sign(root.key, hashes.SHA256()), key)
 
 
-def generate_leaf(issuer: Issued, host: str, aia_url: str | None = None) -> Issued:
-    """Generate a certificate for `host` under `issuer`, whose AIA extension names `aia_url` if there is one."""
+def generate_leaf(issuer: Issued, host: str, aia_url: str | None = None, *, other_hosts: Sequence[str] = ()) -> Issued:
+    """Generate a certificate for `host` and `other_hosts` under `issuer`, whose AIA extension names `aia_url` if there is one."""
     key = ec.generate_private_key(ec.SECP256R1())
     builder = (
         _builder(host, issuer.certificate.subject, key)
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(name) for name in (host, *other_hosts)]), critical=False
+        )
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(_key_usage(digital_signature=True), critical=True)
     )
