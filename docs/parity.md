@@ -273,7 +273,7 @@ Session cookies are saved too, as a browser does that restores its last session.
 
 `Session(cache="memory")` or `Session(cache=path)` gives a **Session** the `HttpCache` of `//net`, through `URLRequestContextBuilder::EnableHttpCache()`, so `//net` decides what to keep, when to revalidate and what that sends, as it does in Chrome. The default is no cache. `Response.from_cache` is `URLRequest::was_cached()`, as `was_fetched_via_cache` is in Chrome: it says where the body came from, so a 304 makes it true although a request went out.
 
-The `revalidation` **Recording Case** shows that `If-None-Match` reaches the wire in the place Chrome puts it, over each protocol. `tests/test_cache.py` checks what no **Baseline** holds: a response that saves a request, a revalidation, a directory that outlives its Session and its process, a `POST` that drops what the cache holds, and which requests share a response.
+The `revalidation` **Recording Case** shows that `If-None-Match` reaches the wire in the place Chrome puts it, over each protocol. `tests/test_cache.py` checks what no **Baseline** holds: a response that saves a request, a revalidation, a directory that outlives its Session and its process, a `POST` that drops what the cache holds, a 206 response that runs past its range, and which requests share a response.
 
 ### Which backend
 

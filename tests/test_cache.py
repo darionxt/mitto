@@ -37,6 +37,11 @@ LAST_MODIFIED = "Wed, 01 Jan 2025 00:00:00 GMT"
 BIG_BODY = bytes(range(256)) * 4096  # 1 MiB, past what one read holds and what the backend keeps in a block.
 GZIPPED_TEXT = b"text that went out compressed"
 
+# A range of a resource, and an answer to it that holds more than the range.
+RANGE = "bytes=0-9"
+CONTENT_RANGE = "bytes 0-9/100"
+RANGE_ANSWER = b"0123456789 and more"
+
 PAGE = "http://www.example.test/page"
 PAGE_OF_ANOTHER_SITE = "http://www.other.test/page"
 PAGE_ON_THE_SAME_SITE = "http://other.example.test/page"
@@ -115,8 +120,26 @@ class CacheHandler(http.server.BaseHTTPRequestHandler):
                 self.respond(200, BIG_BODY, ("Cache-Control", "max-age=3600"))
             case "/refused":
                 self.respond(500, body)
+            case "/past-the-range":
+                self.respond_past_the_range()
             case _:
                 self.respond(200, body)
+
+    def respond_past_the_range(self) -> None:
+        """Answers the range that RANGE asks for with RANGE_ANSWER, which runs past its end.
+
+        //net ends the body at a Content-Length of the range's length and refuses any other, so the body goes out in a
+        chunk.
+        """
+        self.send_response(206)
+        self.send_header("Content-Range", CONTENT_RANGE)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "max-age=3600")
+        self.send_header("ETag", ETAG)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(RANGE_ANSWER), RANGE_ANSWER))
 
     def respond(self, status: int, body: bytes, *headers: tuple[str, str]) -> None:
         self.send_response(status)
@@ -480,6 +503,26 @@ def test_a_body_of_parts_passes_through_the_cache_and_drops_what_it_holds(
 
     assert [request.method for request in server.received] == ["GET", "POST", "GET"]
     assert after.from_cache is False
+
+
+def test_a_range_answer_that_runs_past_the_range_is_an_error(server: CacheServer, cache: str | Path) -> None:
+    url = server.url("/past-the-range")
+
+    with mitto.Session(cache=cache) as session, pytest.raises(mitto.ProtocolError) as caught:
+        session.get(url, headers={"Range": RANGE})
+
+    assert caught.value.name == "ERR_CONTENT_LENGTH_MISMATCH"
+
+
+def test_a_range_answer_that_runs_past_the_range_is_not_kept(server: CacheServer, cache: str | Path) -> None:
+    url = server.url("/past-the-range")
+
+    with mitto.Session(cache=cache) as session:
+        for _ in range(2):
+            with pytest.raises(mitto.ProtocolError):
+                session.get(url, headers={"Range": RANGE})
+
+    assert server.paths() == ["/past-the-range", "/past-the-range"]
 
 
 def test_a_memory_cache_goes_with_its_session(server: CacheServer) -> None:
