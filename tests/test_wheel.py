@@ -17,6 +17,7 @@ import tarfile
 import zipfile
 import zlib
 from collections.abc import Mapping, Sequence
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -137,6 +138,31 @@ def test_the_linux_tag_is_the_highest_glibc_version_the_library_needs(tmp_path: 
     assert wheel.platform_tag(library) == "manylinux_2_26_x86_64"
 
 
+@pytest.mark.parametrize(
+    ("needed", "tag"),
+    [("GLIBC_2.2.5", "manylinux_2_5_x86_64"), ("GLIBC_2.25", "manylinux_2_26_x86_64")],
+)
+def test_a_glibc_version_without_a_policy_gets_the_next_one(tmp_path: Path, needed: str, tag: str) -> None:
+    library = write(tmp_path, elf_library({"libc.so.6": [needed]}))
+
+    assert wheel.platform_tag(library) == tag
+
+
+def test_a_glibc_version_newer_than_every_policy_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, elf_library({"libc.so.6": ["GLIBC_2.99"]}))
+
+    with pytest.raises(wheel.WheelError, match=r"glibc 2\.99, which no manylinux policy covers"):
+        wheel.platform_tag(library)
+
+
+def test_the_glibc_versions_are_those_auditwheel_has_a_policy_for() -> None:
+    pytest.importorskip("auditwheel", reason="auditwheel is only installed on Linux")
+    policies = json.loads(resources.files("auditwheel.policy").joinpath("manylinux-policy.json").read_text())
+    names = {policy["name"] for policy in policies} - {"linux"}
+
+    assert names == {f"manylinux_{major}_{minor}" for major, minor in wheel.MANYLINUX_GLIBC_VERSIONS}
+
+
 def test_a_private_glibc_version_has_no_tag(tmp_path: Path) -> None:
     library = write(tmp_path, elf_library({"libc.so.6": ["GLIBC_2.17", "GLIBC_PRIVATE"]}))
 
@@ -199,7 +225,7 @@ def stub_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     directory = tmp_path_factory.mktemp("stub")
     source = directory / "stub.c"
     source.write_text(STUB)
-    flags = [f"-mmacosx-version-min={STUB_MACOS_VERSION}"] if sys.platform == "darwin" else []
+    flags: list[str] = [f"-mmacosx-version-min={STUB_MACOS_VERSION}"] if sys.platform == "darwin" else []
     run([compiler, "-c", "-g", "-fPIC", *flags, "-o", directory / "stub.o", source])
     run([compiler, "-shared", *flags, "-o", directory / _native.LIBRARY_NAME, directory / "stub.o"])
 

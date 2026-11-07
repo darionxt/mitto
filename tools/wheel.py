@@ -7,7 +7,7 @@ library in MITTO_WHEEL_LIBRARY and build as usual:
 
 The hook strips a copy of the library and keeps what it removed in an archive next to the wheel, named after it. The
 wheel's tag is py3-none-PLATFORM, with the platform taken from the library itself: the macOS version it needs, or the
-highest glibc version it needs. A wheel without a library would install anywhere and fail on its first request, so the
+highest glibc version it needs, as auditwheel names it. A wheel without a library would install anywhere and fail on its first request, so the
 hook refuses to build one. An editable install needs none, because it takes the library from MITTO_NATIVE_LIBRARY.
 
 Hatchling loads this file by its path, outside the project's environment, so it imports nothing but the standard library
@@ -50,6 +50,27 @@ ELF_ARCHITECTURES = {62: "x86_64"}
 SHT_GNU_VERNEED = 0x6FFFFFFE
 GLIBC_VERSION = re.compile(r"GLIBC_(\d+)\.(\d+)(\.\d+)?")
 
+# The glibc versions that auditwheel, which checks manylinux wheels, has a policy for. A tag can name any version, but
+# auditwheel accepts no other, so a library that needs another version gets the next of these.
+MANYLINUX_GLIBC_VERSIONS = (
+    (2, 5),
+    (2, 12),
+    (2, 17),
+    (2, 24),
+    (2, 26),
+    (2, 27),
+    (2, 28),
+    (2, 31),
+    (2, 34),
+    (2, 35),
+    (2, 36),
+    (2, 37),
+    (2, 38),
+    (2, 39),
+    (2, 40),
+    (2, 41),
+)
+
 
 class WheelError(Exception):
     """Stops the build with a message for the person running it."""
@@ -81,7 +102,7 @@ def _macos_tag(library: Path, data: bytes) -> str:
             platform, minimum = struct.unpack_from("<2I", data, command + 8)
             if platform != PLATFORM_MACOS:
                 raise WheelError(f"{library} is for Apple platform {platform}, not for macOS")
-            major, minor, patch = minimum >> 16, minimum >> 8 & 0xFF, minimum & 0xFF
+            major, minor, patch = minimum >> 16, (minimum >> 8) & 0xFF, minimum & 0xFF
             # From macOS 11 on, pip only matches tags of a major version, such as macosx_13_0.
             if minor or patch:
                 raise WheelError(f"{library} needs macOS {major}.{minor}.{patch}, and a tag can only say {major}.0")
@@ -106,8 +127,11 @@ def _manylinux_tag(library: Path, data: bytes) -> str:
         versions.append((int(match[1]), int(match[2])))
     if not versions:
         raise WheelError(f"{library} needs no version of glibc")
-    major, minor = max(versions)
-    return f"manylinux_{major}_{minor}_{ELF_ARCHITECTURES[machine]}"
+    needed = max(versions)
+    policy = next((version for version in MANYLINUX_GLIBC_VERSIONS if version >= needed), None)
+    if policy is None:
+        raise WheelError(f"{library} needs glibc {needed[0]}.{needed[1]}, which no manylinux policy covers")
+    return f"manylinux_{policy[0]}_{policy[1]}_{ELF_ARCHITECTURES[machine]}"
 
 
 def _needed_versions(data: bytes) -> set[str]:
@@ -221,10 +245,15 @@ class NativeLibraryHook(BuildHookInterface[BuilderConfig]):
         if not library.is_file():
             raise WheelError(f"{LIBRARY_ENV_VAR} names {library}, which is not a file")
         self._directory = Path(tempfile.mkdtemp(prefix="mitto-wheel-"))
-        stripped, self._symbols = strip_library(library, self._directory)
+        try:
+            stripped, self._symbols = strip_library(library, self._directory)
+            tag = f"py3-none-{platform_tag(stripped)}"
+        except BaseException:
+            shutil.rmtree(self._directory)
+            raise
         build_data["force_include"][str(stripped)] = f"{PACKAGE}/{stripped.name}"
         build_data["pure_python"] = False
-        build_data["tag"] = f"py3-none-{platform_tag(stripped)}"
+        build_data["tag"] = tag
 
     def finalize(self, version: str, build_data: dict[str, Any], artifact_path: str) -> None:
         if version == "editable":
