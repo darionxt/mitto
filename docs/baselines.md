@@ -18,7 +18,7 @@ A **Baseline** is ground truth: what real Chrome sent. This page is how to recor
 
 ## Install Chrome
 
-Google's update server names the stable build of a Chrome Release and its installer. Ask it in PowerShell on the Windows machine, with the Chrome Release in `targetversionprefix`:
+Google's update server names the stable build of a Chrome Release and its installer. Ask it in PowerShell on the Windows machine, with the Chrome Release in place of `RELEASE` in `targetversionprefix`:
 
 ```powershell
 $request = @"
@@ -26,7 +26,7 @@ $request = @"
 <request protocol="3.0" updater="Omaha" updaterversion="1.3.37.0" shell_version="1.3.37.0" ismachine="0" sessionid="{$([guid]::NewGuid())}" installsource="ondemand" requestid="{$([guid]::NewGuid())}" dedup="cr">
 <hw physmemory="16" sse="1" sse2="1" sse3="1" ssse3="1" sse41="1" sse42="1" avx="1"/>
 <os platform="win" version="10.0.26100.0" sp="" arch="x64"/>
-<app appid="{8A69D345-D564-463C-AFF1-A69D9E530F96}" version="" nextversion="" ap="x64-stable-statsdef_1" lang="en" brand="GCEA" installage="-1"><updatecheck targetversionprefix="157."/></app>
+<app appid="{8A69D345-D564-463C-AFF1-A69D9E530F96}" version="" nextversion="" ap="x64-stable-statsdef_1" lang="en" brand="GCEA" installage="-1"><updatecheck targetversionprefix="RELEASE."/></app>
 </request>
 "@
 $answer = [xml](Invoke-WebRequest https://tools.google.com/service/update2 -Method Post -ContentType application/xml -Body $request -UseBasicParsing).Content
@@ -70,24 +70,24 @@ The first line must be the version from before. The others must show nothing and
 
 That is what holds updates back. This installer is the one the updater itself runs, so it installs Chrome and no updater, and nothing can move Chrome to another build. The installer on Chrome's download page brings the updater along and takes whatever build the rollout gives it. Holding that back with registry policies only works on a managed machine. The script below also fails if Chrome's version changes during a session.
 
-To remove Chrome afterwards, with the version it has:
+To remove Chrome afterwards, with the build it has in place of `BUILD`:
 
 ```powershell
-& "$env:LOCALAPPDATA\Google\Chrome\Application\157.0.8103.39\Installer\setup.exe" --uninstall --channel=stable --force-uninstall
+& "$env:LOCALAPPDATA\Google\Chrome\Application\BUILD\Installer\setup.exe" --uninstall --channel=stable --force-uninstall
 ```
 
 ### An older Chrome Release
 
-The update server also answers for older Chrome Releases, so ask it the same way with `155.` or `156.` in `targetversionprefix`. A build that stopped serving is not in the release feed's list above. To check an older build, ask the feed for the builds of that Chrome Release that can be pinned. The server's answer must be the newest of them:
+The update server also answers for older Chrome Releases, so ask it the same way with an older one in `targetversionprefix`. A build that stopped serving is not in the release feed's list above. To check an older build, ask the feed for the builds of that Chrome Release that can be pinned, with the Chrome Release in place of `RELEASE` and the one after it in place of `NEXT`. The server's answer must be the newest of them:
 
 ```text
-https://versionhistory.googleapis.com/v1/chrome/platforms/win64/channels/stable/versions/all/releases?filter=version>=155,version<156,pinnable=true
+https://versionhistory.googleapis.com/v1/chrome/platforms/win64/channels/stable/versions/all/releases?filter=version>=RELEASE,version<NEXT,pinnable=true
 ```
 
 Download and check the installer as above, then unpack it instead of installing it. A user can only have one build installed, and this leaves that one as it is:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\baselines\unpack.ps1 -Installer chrome_installer.exe -Out $env:USERPROFILE\mitto-chrome-bin\155
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\baselines\unpack.ps1 -Installer chrome_installer.exe -Out $env:USERPROFILE\mitto-chrome-bin\RELEASE
 ```
 
 It needs no administrator and no updater can reach the result. Name `Chrome-bin\chrome.exe` in that directory with `-Chrome` when you record. It gets a variations seed like an installed Chrome, and [on the wire it is the same](#chrome-157).
@@ -172,7 +172,8 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
    ```
 
 3. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, and the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
-4. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
+4. Write the Persona's file again, because `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name the build. See [persona.md](persona.md#write-one).
+5. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
 
 ## Where each Chrome Release comes from
 
