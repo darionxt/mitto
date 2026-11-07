@@ -1,13 +1,13 @@
 """Moving 1 GiB each way through the public API, which has to hold no more of it than it holds of a small body.
 
 The bytes are made as they go and thrown away as they come, so this takes neither disk nor much memory on either side.
-Each test takes some tens of seconds. tests/big_transfer_client.py is the client, in a process of its own.
+Each test takes a few seconds. tests/big_transfer_client.py is the client, in a process of its own.
 """
 
 import http.server
 import json
 import os
-import socket
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -124,17 +124,28 @@ class _SinkAndSource(http.server.BaseHTTPRequestHandler):
 
 
 @contextmanager
-def _http1_server() -> Generator[tuple[str, _Tally]]:
-    server: Any = LocalHTTPServer(("127.0.0.1", 0), _SinkAndSource)
-    server.tally = _Tally()
+def _serving(server: LocalHTTPServer) -> Generator[None]:
+    """Run `server` on a thread of its own until the with statement ends.
+
+    shutdown() is what ends it. On Linux, closing a listening socket does not wake a thread that waits in accept() on it,
+    so a loop of accept() would wait there for a connection that never comes.
+    """
     thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}/", server.tally
+        yield
     finally:
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@contextmanager
+def _http1_server() -> Generator[tuple[str, _Tally]]:
+    server: Any = LocalHTTPServer(("127.0.0.1", 0), _SinkAndSource)
+    server.tally = _Tally()
+    with _serving(server):
+        yield f"http://127.0.0.1:{server.server_port}/", server.tally
 
 
 class _Http2Connection:
@@ -261,6 +272,18 @@ class _Http2Connection:
         return max(min(self._send_window, self._window_of_stream(stream_id)), 0)
 
 
+class _Http2Handler(socketserver.BaseRequestHandler):
+    """Serves a connection over TLS with _Http2Connection."""
+
+    def handle(self) -> None:
+        server = cast(Any, self.server)
+        with (
+            server.context.wrap_socket(self.request, server_side=True) as connection,
+            suppress(ConnectionError, ssl.SSLError),
+        ):
+            _Http2Connection(connection, server.tally).serve()
+
+
 @contextmanager
 def _http2_server(directory: Path) -> Generator[tuple[str, _Tally, str]]:
     root = generate_root()
@@ -273,26 +296,11 @@ def _http2_server(directory: Path) -> Generator[tuple[str, _Tally, str]]:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(chain_file)
     context.set_alpn_protocols(["h2"])
-    tally = _Tally()
-    stop = threading.Event()
-
-    def serve(listener: socket.socket) -> None:
-        while not stop.is_set():
-            try:
-                raw, _ = listener.accept()
-            except OSError:
-                return
-            with context.wrap_socket(raw, server_side=True) as connection, suppress(ConnectionError, ssl.SSLError):
-                _Http2Connection(connection, tally).serve()
-
-    with socket.create_server(("127.0.0.1", 0)) as listener:
-        thread = threading.Thread(target=serve, args=(listener,), daemon=True)
-        thread.start()
-        try:
-            yield f"https://localhost:{listener.getsockname()[1]}/", tally, root.pem
-        finally:
-            stop.set()
-    thread.join(_RUN_SECONDS)
+    server: Any = LocalHTTPServer(("127.0.0.1", 0), _Http2Handler)
+    server.context = context
+    server.tally = _Tally()
+    with _serving(server):
+        yield f"https://localhost:{server.server_port}/", server.tally, root.pem
 
 
 def _run_client(api: str, url: str, *arguments: str) -> dict[str, Any]:
