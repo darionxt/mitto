@@ -37,6 +37,7 @@ One Session may run requests from several threads at once. Close it with `close(
 
 Creating one raises:
 
+- `TypeError` if `timeout` is of a type it does not take, as [it says](#timeout), with a message that names it.
 - `ValueError` if one of the arguments below cannot be used, as each says. The message leaves out `proxy`, which may hold a password.
 - `OSError` if `cookie_file` exists and cannot be read, a cache cannot be kept in the directory of `cache`, or another Session has that directory open.
 - `NativeLibraryError` if the native library cannot be used.
@@ -79,7 +80,7 @@ with mitto.Session(additional_trust_anchors=[company_root]) as session:
 
 #### `timeout=`
 
-What a request's [`timeout=`](#timeout-1) defaults to: a number is the total time in seconds, and a [`Timeout`](#timeout-2) sets each timer. The default runs no timer, leaving what `//net` has of its own. Anything but a positive number of at most 2,000,000 seconds raises a `ValueError`.
+What a request's [`timeout=`](#timeout-1) defaults to: a number is the total time in seconds, and a [`Timeout`](#timeout-2) sets each timer. The default runs no timer, leaving what `//net` has of its own. A value that is neither a number nor a `Timeout` raises a `TypeError` that names `timeout`, and `True` and `False` do not count as numbers here. A number that is not positive, or is more than 2,000,000 seconds, raises a `ValueError`.
 
 #### `cookie_file=`
 
@@ -162,7 +163,7 @@ Fetch `url` and block until the whole [response](#response) has arrived, with th
 
 | It raises | If |
 | --- | --- |
-| `TypeError` | An argument is not one of the request arguments, `data` is of no type that makes a body or a stream gives something other than bytes, or `json` holds a value that JSON has no form of |
+| `TypeError` | An argument is not one of the request arguments, `params`, `headers`, `timeout`, `files` or a mapping in `data` holds a type it does not take, as [each says](#request-arguments) and the message names, `data` is of no type that makes a body or a stream gives something other than bytes, or `json` holds a value that JSON has no form of |
 | `ValueError` | `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` cannot be used. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with `GET` or `HEAD` or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length` |
 | [`RequestError`](#errors) | The request ended without a response. An invalid header or method, or an `initiator` that is not a valid URL, is `ERR_INVALID_ARGUMENT`. A URL that is not valid is `ERR_INVALID_URL` |
 | Whatever a stream's file or iterable raises | That ends the request |
@@ -220,7 +221,7 @@ The keyword arguments that each method of a Session takes, and `get()` and `stre
 
 ### `params=`
 
-The query to add to the URL, encoded as `URLSearchParams` does. A query the URL already has stays as it is and comes first, and pairs can repeat a name. A name or value that is not text raises an `AttributeError`.
+The query to add to the URL, encoded as `URLSearchParams` does. A query the URL already has stays as it is and comes first, and pairs can repeat a name. A name or value that is not text raises a `TypeError` that names `params`, and so does anything but a mapping or pairs, so a number is written as text.
 
 ```python
 with mitto.Session() as session:
@@ -231,7 +232,7 @@ assert sent["path"] == "/echo?a=1&b=2&b=3"
 
 ### `headers=`
 
-Changes the Persona's lines for this request, by name in any case. [persona.md](persona.md#what-a-caller-changes) has the whole table. Two names that differ only in case raise a `ValueError`, and so does a value that cannot be encoded as Latin-1. A value that is neither text nor `None` raises an `AttributeError`.
+Changes the Persona's lines for this request, by name in any case. [persona.md](persona.md#what-a-caller-changes) has the whole table. Two names that differ only in case raise a `ValueError`, and so does a value that cannot be encoded as Latin-1. A name that is not text, a value that is neither text nor `None` and anything but a mapping raise a `TypeError` that names `headers`.
 
 | In `headers` | On the wire |
 | --- | --- |
@@ -313,7 +314,7 @@ assert image["Cookie"] == "a=1"
 
 ### `timeout=`
 
-A number is the total time in seconds, and a [`Timeout`](#timeout-2) sets each timer. `None` runs no timer, in place of the Session's default. The default is the Session's. Anything but a positive number of at most 2,000,000 seconds raises a `ValueError`. A timer that runs out raises a [`RequestTimeoutError`](#requesttimeouterror), and the Session carries on.
+A number is the total time in seconds, and a [`Timeout`](#timeout-2) sets each timer. `None` runs no timer, in place of the Session's default. The default is the Session's. A value that is neither a number nor a `Timeout` raises a `TypeError` that names `timeout`, and `True` and `False` do not count as numbers here. A number that is not positive, or is more than 2,000,000 seconds, raises a `ValueError`. A timer that runs out raises a [`RequestTimeoutError`](#requesttimeouterror), and the Session carries on.
 
 ```python
 with mitto.Session() as session:
@@ -329,7 +330,7 @@ with mitto.Session() as session:
 Timeout(*, connect: float | None = None, read: float | None = None, total: float | None = None)
 ```
 
-A request's timers, in seconds. None runs no timer, leaving what `//net` has of its own. The native core runs them, so all a server sees is the request ending. A value that is not a positive number of at most 2,000,000 seconds raises a `ValueError`.
+A request's timers, in seconds. None runs no timer, leaving what `//net` has of its own. The native core runs them, so all a server sees is the request ending. A value that is neither a number nor `None` raises a `TypeError` that names the timer, and `True` and `False` do not count as numbers here. A number that is not positive, or is more than 2,000,000 seconds, raises a `ValueError`.
 
 | Attribute | Type | What it times |
 | --- | --- | --- |
@@ -368,7 +369,7 @@ assert not_followed.content == b""
 
 ### `data=`
 
-What the body is, which with the Request Kind decides its `Content-Type`, [as Chrome's does](persona.md#what-a-body-adds). A navigation's says what a form would, and a fetch's what a page's script would. A body with `GET` or `HEAD` raises a `ValueError`, because Fetch refuses one, and so does one on a `script` or `image`, which Chrome sends none with. Any other type raises a `TypeError`, and a mapping's name or value that is not text an `AttributeError`.
+What the body is, which with the Request Kind decides its `Content-Type`, [as Chrome's does](persona.md#what-a-body-adds). A navigation's says what a form would, and a fetch's what a page's script would. A body with `GET` or `HEAD` raises a `ValueError`, because Fetch refuses one, and so does one on a `script` or `image`, which Chrome sends none with. Any other type raises a `TypeError`, and so does a mapping's name or value that is not text, whose message names `data`.
 
 | `data=` | The body | `Content-Type` of a fetch | `Content-Type` of a navigation |
 | --- | --- | --- | --- |
@@ -429,7 +430,7 @@ assert sent["headers"]["Content-Type"] == "application/json"
 
 ### `files=`
 
-Files by field name, or pairs that can repeat a name, which make a multipart body as Blink's `FormData` does. A file is its content in bytes, `(file name, content)` or `(file name, content, media type)`. With no file name it is Blink's `blob`, and with no media type it is `application/octet-stream`, since a type is not guessed. Text fields in a mapping in `data` come before the files, and anything else in `data` raises a `ValueError`. Any other form of a file raises a `TypeError`, so read a file object first.
+Files by field name, or pairs that can repeat a name, which make a multipart body as Blink's `FormData` does. A file is its content in bytes, `(file name, content)` or `(file name, content, media type)`. With no file name it is Blink's `blob`, and with no media type it is `application/octet-stream`, since a type is not guessed. Text fields in a mapping in `data` come before the files, and anything else in `data` raises a `ValueError`. Any other form of a file raises a `TypeError`, so read a file object first. So does a field name that is not text or anything but a mapping or pairs, whose message names `files`.
 
 ```python
 with mitto.Session() as session:

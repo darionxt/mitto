@@ -708,6 +708,65 @@ def test_a_body_with_get_or_head_is_refused_with_nothing_sent(server: AnyMethodS
     assert server.received == []
 
 
+# An argument of each kind that test_request.py lists more of, in the type that code from `requests` gives it.
+WRONG_TYPES = [
+    ({"params": {"page": 2}}, "the value of 'page' in params has to be text, not int"),
+    ({"params": {1: "a"}}, "a name in params has to be text, not int"),
+    ({"params": [("page", None)]}, "the value of 'page' in params has to be text, not NoneType"),
+    ({"params": "page=2"}, "params has to be a mapping or (name, value) pairs, not str"),
+    ({"data": {"a": 1}}, "the value of 'a' in data has to be text, not int"),
+    ({"data": {1: "a"}}, "a name in data has to be text, not int"),
+    ({"data": {"a": 1}, "files": {"f": b""}}, "the value of 'a' in data has to be text, not int"),
+    ({"files": {1: b""}}, "a name in files has to be text, not int"),
+    ({"headers": {"X-A": 1}}, "the value of 'X-A' in headers has to be text or None, not int"),
+    ({"headers": {1: "a"}}, "a name in headers has to be text, not int"),
+    ({"headers": [("X-A", "1")]}, "headers has to be a mapping of names to text or None, not list"),
+    ({"timeout": (3, 10)}, "timeout has to be a number of seconds or a Timeout, not tuple"),
+]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("options", "message"), WRONG_TYPES)
+def test_an_argument_of_the_wrong_type_is_named_with_nothing_sent(
+    server: AnyMethodServer, options: dict[str, Any], message: str
+) -> None:
+    with mitto.Session() as session, pytest.raises(TypeError) as caught:
+        session.post(server.url, **options)
+
+    assert str(caught.value) == message
+    assert server.received == []
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(("options", "message"), WRONG_TYPES)
+def test_a_stream_names_an_argument_of_the_wrong_type_with_nothing_sent(
+    server: AnyMethodServer, options: dict[str, Any], message: str
+) -> None:
+    with mitto.Session() as session, pytest.raises(TypeError) as caught, session.stream("POST", server.url, **options):
+        pytest.fail("the request started")
+
+    assert str(caught.value) == message
+    assert server.received == []
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_session_goes_on_after_an_argument_of_the_wrong_type(server: AnyMethodServer) -> None:
+    with mitto.Session() as session:
+        with pytest.raises(TypeError, match="params"):
+            session.get(server.url, params={"page": 2})  # pyright: ignore[reportArgumentType]
+        session.get(server.url, params={"page": "2"})
+
+    assert [request.path for request in server.received] == ["/?page=2"]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_get_names_an_argument_of_the_wrong_type(server: AnyMethodServer) -> None:
+    with pytest.raises(TypeError, match="'page' in params"):
+        mitto.get(server.url, params={"page": 2})  # pyright: ignore[reportArgumentType]
+
+    assert server.received == []
+
+
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize(("route", "protocol"), [(HTTP1, "http/1.1"), (HTTP2, "h2"), (HTTP3, "h3")])
 def test_a_body_larger_than_one_frame_arrives_whole_over_each_protocol(route: str, protocol: str) -> None:

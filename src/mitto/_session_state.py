@@ -41,6 +41,7 @@ class SessionState:
         """Open a native Session and load any cookies, where Session() says what each argument means.
 
         Raises:
+            TypeError: As Session() does.
             ValueError: As Session() does.
             OSError: As Session() does.
             NativeLibraryError: If the native library cannot be used.

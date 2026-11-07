@@ -15,6 +15,8 @@ import threading
 import time
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
@@ -424,6 +426,31 @@ def test_a_timer_that_is_not_a_positive_number_is_refused(name: str, seconds: fl
         Timeout(**{name: seconds})
 
 
+@pytest.mark.parametrize("name", ["connect", "read", "total"])
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [
+        ("5", "str"),
+        ((3, 10), "tuple"),
+        ([1], "list"),
+        (True, "bool"),
+        (False, "bool"),
+        (1j, "complex"),
+        (Timeout(), "Timeout"),
+    ],
+)
+def test_a_timer_that_is_not_a_number_is_named(name: str, value: object, type_name: str) -> None:
+    with pytest.raises(TypeError) as caught:
+        Timeout(**{name: value})  # pyright: ignore[reportArgumentType]
+
+    assert str(caught.value) == f"{name} has to be a number of seconds or None, not {type_name}"
+
+
+@pytest.mark.parametrize("seconds", [2, 1.5, Fraction(3, 2), Decimal("1.5")], ids=str)
+def test_any_real_number_can_be_a_timer(seconds: Any) -> None:
+    assert _native.timeout_options(Timeout(total=seconds))["total_timeout_ms"] == math.ceil(seconds * 1000)
+
+
 def test_each_timer_is_named() -> None:
     with pytest.raises(TypeError):
         Timeout(1, 2, 3)  # pyright: ignore[reportCallIssue]
@@ -442,6 +469,18 @@ def test_a_sessions_timeout_is_refused_before_the_library_loads(
 
     with pytest.raises(ValueError, match="total"):
         mitto.Session(timeout=0)
+
+
+@pytest.mark.parametrize(("timeout", "type_name"), [((3, 10), "tuple"), ("5", "str"), (True, "bool")])
+def test_a_sessions_timeout_of_the_wrong_type_is_named_before_the_library_loads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, timeout: Any, type_name: str
+) -> None:
+    monkeypatch.setenv(_native.LIBRARY_ENV_VAR, str(tmp_path / "missing"))
+
+    with pytest.raises(TypeError) as caught:
+        mitto.Session(timeout=timeout)
+
+    assert str(caught.value) == f"timeout has to be a number of seconds or a Timeout, not {type_name}"
 
 
 def test_a_timer_becomes_whole_milliseconds_rounded_up() -> None:

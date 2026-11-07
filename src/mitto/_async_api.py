@@ -359,6 +359,7 @@ class AsyncSession:
         It goes on opening if the caller is cancelled, until close() closes it.
 
         Raises:
+            TypeError: As Session() does.
             ValueError: If it has been closed, or else as Session() does.
             OSError: As Session() does.
             NativeLibraryError: If the native library cannot be used.

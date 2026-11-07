@@ -6,7 +6,7 @@ where.
 
 import dataclasses
 from collections.abc import AsyncIterable, Buffer, Iterable, Mapping
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
 from mitto._persona import Persona, RequestDefaults, RequestKind
@@ -167,7 +167,10 @@ def build_request(
         files: See BodyOptions.
 
     Raises:
-        TypeError: If `data` is of no type that makes a body, or `json` holds a value that JSON has no form of.
+        TypeError: If `params`, `headers` or `timeout` is of a type it does not take, or a name or value in `params` or a
+            mapping in `data` is not text, or a name in `headers` is not text, or a value in it is neither text nor None.
+            The message names the argument. Also if `data` is of no type that makes a body, `files` is not a mapping or
+            pairs with text for names, a file has another form, or `json` holds a value that JSON has no form of.
         ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a
             positive number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds
             a NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or the
@@ -182,7 +185,7 @@ def build_request(
     if body is not None and method in _METHODS_WITHOUT_A_BODY:
         raise ValueError(f"Fetch refuses a body with {method}, so Chrome never sends one")
     defaults = persona.request_defaults(request_kind, with_body=body is not None)
-    changes = _changes_by_name(headers or {})
+    changes = _changes_by_name(headers)
     if isinstance(body, StreamBody):
         body = _with_size_from_headers(body, changes)
     fetch = dataclasses.replace(defaults["fetch"], initiator=initiator, fixed_headers=tuple(changes))
@@ -235,15 +238,28 @@ def _with_query(url: str, query: str) -> str:
     return f"{before_fragment}{separator}{query}{hash_sign}{fragment}"
 
 
-def _changes_by_name(headers: RequestHeaders) -> dict[str, tuple[str, str | None]]:
-    """Return a caller's (name, value) pairs by lower-case name.
+def _changes_by_name(headers: object) -> dict[str, tuple[str, str | None]]:
+    """Return a caller's (name, value) pairs by lower-case name, of which None has none.
 
     Raises:
+        TypeError: If `headers` is not a mapping or None, a name is not text, or a value is neither text nor None. The
+            message leaves out the value, which may be a secret.
         ValueError: If two names differ only in case, since neither is more right than the other.
     """
-    changes = {name.lower(): (name, value) for name, value in headers.items()}
-    if len(changes) != len(headers):
-        raise ValueError(f"headers holds names that differ only in case: {list(headers)}")
+    if headers is None:
+        return {}
+    if not isinstance(headers, Mapping):
+        raise TypeError(f"headers has to be a mapping of names to text or None, not {type(headers).__name__}")
+    lines = cast(Mapping[object, object], headers)
+    changes: dict[str, tuple[str, str | None]] = {}
+    for name, value in lines.items():
+        if not isinstance(name, str):
+            raise TypeError(f"a name in headers has to be text, not {type(name).__name__}")
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"the value of {name!r} in headers has to be text or None, not {type(value).__name__}")
+        changes[name.lower()] = (name, value)
+    if len(changes) != len(lines):
+        raise ValueError(f"headers holds names that differ only in case: {list(lines)}")
     return changes
 
 

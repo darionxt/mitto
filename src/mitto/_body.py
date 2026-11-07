@@ -10,7 +10,7 @@ import json
 import os
 import re
 import secrets
-from collections.abc import AsyncIterable, AsyncIterator, Buffer, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Buffer, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import BinaryIO, Protocol, cast, runtime_checkable
@@ -121,8 +121,9 @@ def encode_body(
         files: The files of a multipart body, which follow any text fields in `data`.
 
     Raises:
-        TypeError: If `data` is of no type that makes a body, such as a file in text mode, or `json_value` holds a value
-            that JSON has no form of. A stream raises it later, if a part it gives is not bytes.
+        TypeError: If `data` is of no type that makes a body, such as a file in text mode, a name or value in a mapping in
+            it is not text, `files` is not a mapping or pairs with text for names, a file has another form, or `json_value`
+            holds a value that JSON has no form of. A stream raises it later, if a part it gives is not bytes.
         ValueError: If the arguments do not go together, because `json_value` is given beside another, or `data` is not a
             mapping beside `files`, or `json_value` holds a NaN or an infinity, which JSON cannot hold.
     """
@@ -138,7 +139,7 @@ def encode_body(
         case str():
             return EncodedBody(_well_formed(data).encode(), BodyEncoding.TEXT)
         case Mapping():
-            return EncodedBody(encode_query(cast(Mapping[str, str], data)).encode(), BodyEncoding.FORM)
+            return EncodedBody(_encode_form(cast(Mapping[str, str], data), "data").encode(), BodyEncoding.FORM)
         case Buffer():
             return EncodedBody(bytes(data))
         case ReadableFile():
@@ -220,9 +221,54 @@ async def async_stream_chunks(data: AsyncIterable[object], size: int | None) -> 
 
 
 def encode_query(params: QueryParams) -> str:
-    """Return `params` as the text of a query or a form's body, as URLSearchParams.toString() does."""
-    pairs = cast(Mapping[str, str], params).items() if isinstance(params, Mapping) else params
+    """Return `params` as the text of a query, as URLSearchParams.toString() does.
+
+    Raises:
+        TypeError: If `params` is not a mapping or pairs, or a name or value in it is not text.
+    """
+    return _encode_form(params, "params")
+
+
+def _encode_form(fields: object, argument: str) -> str:
+    """Return `fields`, which a caller gave as `argument`, as URLSearchParams.toString() writes them."""
+    pairs = _text_fields(fields, argument)
     return "&".join(f"{_encode_component(name)}={_encode_component(value)}" for name, value in pairs)
+
+
+def _text_fields(fields: object, argument: str) -> Iterator[tuple[str, str]]:
+    """Yield the names and values of `fields`, which a caller gave as `argument`.
+
+    Raises:
+        TypeError: As _named_items() does, or if a value is not text. The message leaves out the value, which may be a
+            secret.
+    """
+    for name, value in _named_items(fields, argument):
+        if not isinstance(value, str):
+            raise TypeError(f"the value of {name!r} in {argument} has to be text, not {type(value).__name__}")
+        yield name, value
+
+
+def _named_items(items: object, argument: str) -> Iterator[tuple[str, object]]:
+    """Yield what a mapping or pairs hold by name, which a caller gave as `argument`.
+
+    Raises:
+        TypeError: If `items` is neither, one of the pairs is not a sequence of two, or a name is not text.
+    """
+    pairs: Iterable[Sequence[object]]
+    if isinstance(items, Mapping):
+        pairs = cast(Mapping[object, object], items).items()
+    elif isinstance(items, Iterable) and not isinstance(items, str | Buffer):
+        pairs = cast(Iterable[Sequence[object]], items)
+    else:
+        raise TypeError(f"{argument} has to be a mapping or (name, value) pairs, not {type(items).__name__}")
+    for pair in pairs:
+        match pair:
+            case (str() as name, item):
+                yield name, item
+            case (name, _):
+                raise TypeError(f"a name in {argument} has to be text, not {type(name).__name__}")
+            case _:
+                raise TypeError(f"an item of {argument} has to be a (name, value) pair, not {type(pair).__name__}")
 
 
 def _encode_component(text: str) -> str:
@@ -254,10 +300,9 @@ def _encode_multipart(fields: Mapping[str, str], files: FileFields) -> EncodedBo
     """Return a multipart body, as FormData::EncodeMultiPartFormData() in Blink writes it."""
     boundary = _new_boundary()
     parts: list[bytes] = []
-    for name, value in fields.items():
+    for name, value in _text_fields(fields, "data"):
         parts += [_part_head(boundary, name), _LINE_BREAK.sub("\r\n", _well_formed(value)).encode(), b"\r\n"]
-    pairs = cast(Mapping[str, FilePart], files).items() if isinstance(files, Mapping) else files
-    for name, file in pairs:
+    for name, file in _named_items(files, "files"):
         file_name, content, media_type = _file_part(file)
         parts += [_part_head(boundary, name, file_name, media_type), content, b"\r\n"]
     parts.append(f"--{boundary}--\r\n".encode())
@@ -269,7 +314,7 @@ def _new_boundary() -> str:
     return _BOUNDARY_PREFIX + "".join(_BOUNDARY_ALPHABET[byte & _LOW_SIX_BITS] for byte in random_bytes)
 
 
-def _file_part(file: FilePart) -> tuple[str, bytes, str]:
+def _file_part(file: object) -> tuple[str, bytes, str]:
     match file:
         case bytes():
             return _BLOB_FILE_NAME, file, ""
