@@ -143,7 +143,7 @@ These packages come from Google Storage and CIPD, Chromium's package store, rath
 
 ### In CI
 
-A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command and then `pytest` with `MITTO_NATIVE_LIBRARY` set. Times are from 14 runs from a cold cache for Chromium 157.0.8103.27, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS.
+A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, [builds a wheel](#build-a-wheel) from the library and runs `pytest` against the installed wheel. Times are from 14 runs from a cold cache for Chromium 157.0.8103.27, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS.
 
 | | Linux x86_64 | macOS arm64 |
 | --- | --- | --- |
@@ -203,6 +203,60 @@ Times are from two runs from a cold cache.
 | --- | --- | --- | --- |
 | Build | 19 and 26 minutes | 17 and 20 minutes | 24 and 26 minutes |
 | Cached, compressed | 59 MiB | 43 MiB | 39 MiB |
+
+## Build a wheel
+
+A wheel of mitto is for one **Host**. Its tag is `py3-none-PLATFORM`, and it holds the native library next to [`src/mitto/_native.py`](../src/mitto/_native.py), where the loader looks for it ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). From the repository root, name a library built [from the source export](#build-from-the-source-export) or [in a checkout](#build-the-native-core):
+
+```bash
+MITTO_WHEEL_LIBRARY=/absolute/path/to/libmitto_core.dylib uv build --wheel
+```
+
+On Linux the file is `libmitto_core.so`. The build hook in [`tools/wheel.py`](../tools/wheel.py):
+
+1. strips a copy of the library. On macOS it runs `dsymutil` and then `strip -x`, and checks that the copy's code signature still holds, because macOS on arm64 does not load a library whose signature does not. On Linux it runs `objcopy --only-keep-debug`, `strip` and `objcopy --add-gnu-debuglink`;
+2. takes the wheel's platform from the stripped library: `macosx_X_0_arm64` from the `minos` of its `LC_BUILD_VERSION` on macOS, and `manylinux_2_X_x86_64` from the highest glibc symbol version it needs on Linux. `auditwheel`, which checks manylinux wheels, has a policy for some versions of glibc only, and a version without one becomes the next version with one;
+3. puts it into the wheel as `mitto/libmitto_core.dylib`, or `mitto/libmitto_core.so`;
+4. writes what stripping removed into an archive next to the wheel, named after it: `mitto-<version>-py3-none-<platform>.symbols.tar.xz`. It holds the dSYM bundle on macOS and `libmitto_core.so.debug` on Linux.
+
+Without `MITTO_WHEEL_LIBRARY` the build stops, so that no wheel without a library can go out: it would install anywhere and fail on its first request. An editable install, which `uv sync` makes, needs no library, because the loader takes the one in `MITTO_NATIVE_LIBRARY`. mitto ships no sdist, because a build from source needs the source export and Chromium's toolchain.
+
+The hook needs Xcode on macOS, and `objcopy` and `strip` from GNU binutils on Linux. On macOS the library only points to the debug information, which stays in the build's object files. For a library whose build directory is gone, such as one restored from CI's cache, `dsymutil` warns about each missing file, and the symbols keep function names but lose line numbers.
+
+To turn an address in the library, such as one from a crash report, back into a function name, unpack the symbols archive and run one of these, on macOS and on Linux, with the address's offset from the start of the library in place of `0x3c44`:
+
+```bash
+atos -o libmitto_core.dylib.dSYM -l 0 0x3c44
+addr2line -f -C -e libmitto_core.so.debug 0x3c44
+```
+
+Measured for Chromium 157.0.8103.27, in MB of 1,000,000 bytes:
+
+| | Linux x86_64 | macOS arm64 |
+| --- | --- | --- |
+| Tag | `py3-none-manylinux_2_26_x86_64` | `py3-none-macosx_13_0_arm64` |
+| Wheel | 12.3 MB | 11.2 MB |
+| Library, installed | 26.9 MB | 23.9 MB |
+| Symbols archive | 13.5 MB | 14.1 MB, or 0.8 MB without the object files |
+
+The tag follows from Chromium's build. Chromium 157 sets `mac_deployment_target` to 13.0 in `build/config/mac/mac_sdk.gni`. Its Linux sysroot is Debian bullseye, and `build/linux/sysroot_scripts/reversion_glibc.py` rewrites the sysroot's glibc so that no symbol needs a version above 2.26. The library needs 2.25, for `getentropy` and `getrandom`, and auditwheel has no policy for 2.25, so the tag says 2.26. [`tests/test_wheel.py`](../tests/test_wheel.py) keeps the tag equal to what the library needs: what `auditwheel show` says on Linux, and the `minos` that `otool -l` shows on macOS.
+
+To check a wheel, install it into a new environment and run the tests there, with `MITTO_WHEEL` naming the wheel and `MITTO_NATIVE_LIBRARY` unset:
+
+```bash
+export UV_PROJECT_ENVIRONMENT=/absolute/path/to/new/environment
+uv sync --no-install-project
+uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" dist/mitto-*.whl
+MITTO_WHEEL="$(ls "$PWD"/dist/mitto-*.whl)" "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest
+```
+
+The suite then runs against the installed package, and `MITTO_WHEEL` adds the tests of the wheel itself: that the installed package loads the wheel's library, that the tag is what the library needs, and that the symbols archive belongs to the library and names a function that the stripped library does not.
+
+### In CI
+
+The native job of each Host builds a wheel from the library it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. It installs the wheel into a new environment and runs the tests as above. This adds about 10 seconds on either Host.
+
+Once, the wheels also passed their tests on the oldest system that their tags claim and that GitHub offers. The Linux wheel ran in an `amazonlinux:2` container on `ubuntu-latest`, with glibc 2.26. The macOS wheel ran on `macos-15`, with macOS 15.8: GitHub no longer offers `macos-14`, and never had an arm64 runner with macOS 13.
 
 ## Work on the Python package
 

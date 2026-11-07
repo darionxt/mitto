@@ -98,6 +98,10 @@ def write(directory: Path, data: bytes) -> Path:
     return library
 
 
+def run(command: Sequence[str | Path]) -> str:
+    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+
+
 def test_the_macos_tag_is_the_version_the_library_needs(tmp_path: Path) -> None:
     library = write(tmp_path, mach_o_library(minimum=(13, 0, 0)))
 
@@ -235,36 +239,6 @@ def stub_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return built
 
 
-def run(command: Sequence[str | Path]) -> str:
-    return subprocess.run(command, check=True, capture_output=True, text=True).stdout
-
-
-def test_the_wheel_holds_the_library_next_to_the_loader(stub_wheel: Path) -> None:
-    with zipfile.ZipFile(stub_wheel) as archive:
-        names = archive.namelist()
-        (metadata,) = (name for name in names if name.endswith(".dist-info/WHEEL"))
-        lines = archive.read(metadata).decode().splitlines()
-
-    tag = stub_wheel.name.removesuffix(".whl").split("-", 2)[2]
-    if sys.platform == "darwin":
-        assert tag == f"py3-none-macosx_{STUB_MACOS_VERSION.replace('.', '_')}_arm64"
-    else:
-        assert re.fullmatch(r"py3-none-manylinux_2_\d+_x86_64", tag)
-    assert {"mitto/_native.py", f"mitto/{_native.LIBRARY_NAME}"} <= set(names)
-    assert "Root-Is-Purelib: false" in lines
-    assert f"Tag: {tag}" in lines
-
-
-def test_the_stripped_stub_loads(stub_wheel: Path, tmp_path: Path) -> None:
-    library, _ = unpack(stub_wheel, tmp_path)
-
-    assert ctypes.CDLL(library).mitto_abi_version() in {3, 4}
-
-
-def test_the_symbols_of_the_stub_name_a_function_the_library_does_not(stub_wheel: Path, tmp_path: Path) -> None:
-    check_symbols(stub_wheel, STUB_HIDDEN_FUNCTION, tmp_path)
-
-
 def unpack(built: Path, directory: Path) -> tuple[Path, Path]:
     """Unpack the library of a wheel and its symbols archive, and return the library and the file of its symbols."""
     with zipfile.ZipFile(built) as archive:
@@ -329,6 +303,32 @@ def debug_link_of(library: Path, directory: Path) -> tuple[str, int]:
     run(["objcopy", f"--dump-section=.gnu_debuglink={section}", library, directory / "discarded"])
     data = section.read_bytes()
     return data[: data.index(b"\0")].decode(), int.from_bytes(data[-4:], "little")
+
+
+def test_the_wheel_holds_the_library_next_to_the_loader(stub_wheel: Path) -> None:
+    with zipfile.ZipFile(stub_wheel) as archive:
+        names = archive.namelist()
+        (metadata,) = (name for name in names if name.endswith(".dist-info/WHEEL"))
+        lines = archive.read(metadata).decode().splitlines()
+
+    tag = stub_wheel.name.removesuffix(".whl").split("-", 2)[2]
+    if sys.platform == "darwin":
+        assert tag == f"py3-none-macosx_{STUB_MACOS_VERSION.replace('.', '_')}_arm64"
+    else:
+        assert re.fullmatch(r"py3-none-manylinux_2_\d+_x86_64", tag)
+    assert {"mitto/_native.py", f"mitto/{_native.LIBRARY_NAME}"} <= set(names)
+    assert "Root-Is-Purelib: false" in lines
+    assert f"Tag: {tag}" in lines
+
+
+def test_the_stripped_stub_loads(stub_wheel: Path, tmp_path: Path) -> None:
+    library, _ = unpack(stub_wheel, tmp_path)
+
+    assert ctypes.CDLL(library).mitto_abi_version() in {3, 4}
+
+
+def test_the_symbols_of_the_stub_name_a_function_the_library_does_not(stub_wheel: Path, tmp_path: Path) -> None:
+    check_symbols(stub_wheel, STUB_HIDDEN_FUNCTION, tmp_path)
 
 
 @pytest.fixture(scope="module")
