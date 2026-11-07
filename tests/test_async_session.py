@@ -7,6 +7,8 @@ local servers, so they need no network connection, and are skipped when this mac
 import asyncio
 import http.server
 import inspect
+import io
+import os
 import subprocess
 import sys
 import textwrap
@@ -137,13 +139,52 @@ def server() -> Iterator[Server]:
 
 
 def run[T](coroutine: Coroutine[Any, Any, T]) -> T:
-    """Run a test's coroutine on an event loop of its own, which a hang fails rather than stops."""
+    """Run a test's coroutine on an event loop of its own, which a hang or an error in a callback fails rather than stops."""
+    errors: list[dict[str, Any]] = []
 
     async def limited() -> T:
+        asyncio.get_running_loop().set_exception_handler(lambda _, context: errors.append(context))
         async with asyncio.timeout(WAIT_SECONDS):
             return await coroutine
 
-    return asyncio.run(limited())
+    result = asyncio.run(limited())
+    assert not errors
+    return result
+
+
+class HeldOpening:
+    """Stands in for what opens a Session, and holds it up until a test says so.
+
+    Attributes:
+        started: Set once a thread is opening a Session.
+        go_on: What a test sets to let it go on.
+        made: Set once the Session exists.
+    """
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.go_on = threading.Event()
+        self.made = threading.Event()
+        self._create = _async_api.SessionState
+
+    def __call__(self, **arguments: Any) -> SessionState:
+        self.started.set()
+        self.go_on.wait(WAIT_SECONDS)
+        state = self._create(**arguments)
+        self.made.set()
+        return state
+
+    def let_go_and_wait(self) -> None:
+        """Let the Session open. Another may not try for its cache before this one has it, or it would find the cache free."""
+        self.go_on.set()
+        assert self.made.wait(WAIT_SECONDS)
+
+
+@pytest.fixture
+def held_opening(monkeypatch: pytest.MonkeyPatch) -> HeldOpening:
+    held = HeldOpening()
+    monkeypatch.setattr(_async_api, "SessionState", held)
+    return held
 
 
 def opened_state(session: mitto.AsyncSession) -> SessionState:
@@ -729,23 +770,14 @@ def test_close_leaves_no_reader_on_the_loop(monkeypatch: pytest.MonkeyPatch) -> 
     assert run(main()) is False
 
 
-def test_a_close_while_it_opens_waits_for_that_and_closes(monkeypatch: pytest.MonkeyPatch, server: Server) -> None:
-    go_on = threading.Event()
-    create = _async_api.SessionState
-
-    def held(**arguments: Any) -> SessionState:
-        go_on.wait(WAIT_SECONDS)
-        return create(**arguments)
-
-    monkeypatch.setattr(_async_api, "SessionState", held)
-
+def test_a_close_while_it_opens_waits_for_that_and_closes(held_opening: HeldOpening, server: Server) -> None:
     async def main() -> None:
         session = mitto.AsyncSession()
         opening = asyncio.create_task(session.open())
         await asyncio.sleep(0)
         closing = asyncio.create_task(session.close())
         await asyncio.sleep(0)
-        go_on.set()
+        held_opening.go_on.set()
         await closing
         assert await opening is session
         with pytest.raises(mitto.RequestError) as caught:
@@ -767,17 +799,7 @@ async def _cache_opens(path: Path) -> None:
             await asyncio.sleep(0.01)
 
 
-def test_a_task_cancelled_while_it_opens_leaves_nothing_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    started = threading.Event()
-    go_on = threading.Event()
-    create = _async_api.SessionState
-
-    def held(**arguments: Any) -> SessionState:
-        started.set()
-        go_on.wait(WAIT_SECONDS)
-        return create(**arguments)
-
-    monkeypatch.setattr(_async_api, "SessionState", held)
+def test_a_task_cancelled_while_it_opens_leaves_nothing_open(tmp_path: Path, held_opening: HeldOpening) -> None:
     cache = tmp_path / "cache"
 
     async def enter() -> None:
@@ -786,15 +808,89 @@ def test_a_task_cancelled_while_it_opens_leaves_nothing_open(tmp_path: Path, mon
 
     async def main() -> None:
         entering = asyncio.create_task(enter())
-        assert await wait_for(started)
+        assert await wait_for(held_opening.started)
         entering.cancel()
         with pytest.raises(asyncio.CancelledError):
             await entering
-        go_on.set()
-        monkeypatch.setattr(_async_api, "SessionState", create)
+        await asyncio.to_thread(held_opening.let_go_and_wait)
         await _cache_opens(cache)
 
     run(main())
+
+
+@pytest.mark.parametrize("reach", ["cancelled_entering", "still_opening"])
+def test_the_end_of_the_loop_while_it_opens_leaves_nothing_open(
+    tmp_path: Path, held_opening: HeldOpening, reach: str
+) -> None:
+    """Ending a loop cancels every task, shielded or not, and the thread that opens a Session finishes after that."""
+    cache = tmp_path / "cache"
+
+    async def enter() -> None:
+        async with mitto.AsyncSession(cache=cache):
+            pytest.fail("it was cancelled before it opened")
+
+    async def main() -> None:
+        entering = asyncio.create_task(enter())
+        assert await wait_for(held_opening.started)
+        if reach == "cancelled_entering":
+            entering.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await entering
+
+    asyncio.run(main())
+    held_opening.let_go_and_wait()
+    run(_cache_opens(cache))
+
+
+def test_a_cancel_that_comes_just_as_it_opens_leaves_nothing_open(tmp_path: Path, held_opening: HeldOpening) -> None:
+    """The thread has handed it over, and the task that was to take it hears of the cancel first."""
+    cache = tmp_path / "cache"
+
+    async def main() -> None:
+        session = mitto.AsyncSession(cache=cache)
+        waiting = asyncio.create_task(session.open())
+        assert await wait_for(held_opening.started)
+        held_opening.let_go_and_wait()
+        # On purpose this holds up the loop, so that no callback tells the task what the thread does in this time.
+        time.sleep(0.2)
+        opening = session._opening  # pyright: ignore[reportPrivateUsage]
+        assert opening is not None
+        opening.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+        await _cache_opens(cache)
+
+    run(main())
+
+
+def test_cancelling_one_first_request_leaves_another_to_open_it(server: Server, held_opening: HeldOpening) -> None:
+    async def main() -> bytes:
+        session = mitto.AsyncSession()
+        first = asyncio.create_task(session.get(server.url("/body")))
+        second = asyncio.create_task(session.get(server.url("/body")))
+        assert await wait_for(held_opening.started)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        held_opening.go_on.set()
+        content = (await second).content
+        await session.close()
+        return content
+
+    assert run(main()) == BODY
+
+
+def test_the_end_of_the_loop_during_a_close_leaves_it_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The end of a loop cancels a task that has only just been made, before it has done anything."""
+    cache = tmp_path / "cache"
+
+    async def main() -> None:
+        session = await mitto.AsyncSession(cache=cache).open()
+        asyncio.create_task(session.close())  # noqa: RUF006
+        await asyncio.sleep(0)
+
+    asyncio.run(main())
+    run(_cache_opens(cache))
 
 
 def test_a_task_cancelled_while_it_closes_leaves_it_closing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -830,32 +926,21 @@ def test_a_task_cancelled_while_it_closes_leaves_it_closing(tmp_path: Path, monk
 
 
 def test_a_task_cancelled_while_it_closes_what_still_opens_leaves_it_closing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, held_opening: HeldOpening
 ) -> None:
-    started = threading.Event()
-    go_on = threading.Event()
-    create = _async_api.SessionState
     cache = tmp_path / "cache"
-
-    def held(**arguments: Any) -> SessionState:
-        started.set()
-        go_on.wait(WAIT_SECONDS)
-        return create(**arguments)
-
-    monkeypatch.setattr(_async_api, "SessionState", held)
 
     async def main() -> None:
         session = mitto.AsyncSession(cache=cache)
         opening = asyncio.create_task(session.open())
-        assert await wait_for(started)
+        assert await wait_for(held_opening.started)
         closer = asyncio.create_task(session.close())
         await asyncio.sleep(0)
         closer.cancel()
         with pytest.raises(asyncio.CancelledError):
             await closer
-        go_on.set()
+        await asyncio.to_thread(held_opening.let_go_and_wait)
         await opening
-        monkeypatch.setattr(_async_api, "SessionState", create)
         await _cache_opens(cache)
 
     run(main())
@@ -926,7 +1011,8 @@ def test_a_second_task_that_reads_one_response_does_not_wait_forever(server: Ser
             server.answer.set()
             return await asyncio.gather(*readers, return_exceptions=True)
 
-    assert BODY in run(main())
+    # Which of them gets which part is anybody's guess. A reader that finds the end taken gets a RequestError.
+    assert all(isinstance(result, bytes | mitto.RequestError) for result in run(main()))
 
 
 def test_cancelling_a_task_cancels_the_native_request_that_waits_for_a_response(server: Server) -> None:
@@ -1202,6 +1288,53 @@ def test_a_callers_iterable_and_file_are_read_off_the_loop(server: Server, tmp_p
     assert server.received[-2:] == [("POST", "/up", WHOLE), ("POST", "/up", WHOLE)]
     assert threads
     assert loop_thread not in threads
+
+
+def test_a_file_says_its_size_off_the_loop(server: Server, tmp_path: Path) -> None:
+    calls: dict[str, int] = {}
+
+    class WatchedFile(io.BytesIO):
+        def tell(self) -> int:
+            calls["tell"] = threading.get_ident()
+            return super().tell()
+
+        def seek(self, offset: int, whence: int = os.SEEK_SET, /) -> int:
+            calls["seek"] = threading.get_ident()
+            return super().seek(offset, whence)
+
+    async def main() -> int:
+        async with mitto.AsyncSession() as session:
+            await session.post(server.url("/up"), data=WatchedFile(WHOLE))
+            return threading.get_ident()
+
+    loop_thread = run(main())
+    assert server.received[-1] == ("POST", "/up", WHOLE)
+    assert set(calls) == {"tell", "seek"}
+    assert loop_thread not in calls.values()
+
+
+def test_a_close_that_begins_while_a_file_says_its_size_refuses_the_request(server: Server) -> None:
+    measuring = threading.Event()
+    go_on = threading.Event()
+
+    class HeldFile(io.BytesIO):
+        def tell(self) -> int:
+            measuring.set()
+            go_on.wait(WAIT_SECONDS)
+            return super().tell()
+
+    async def main() -> None:
+        session = await mitto.AsyncSession().open()
+        posting = asyncio.create_task(session.post(server.url("/up"), data=HeldFile(WHOLE)))
+        assert await asyncio.get_running_loop().run_in_executor(_OTHER_THREAD, measuring.wait, WAIT_SECONDS)
+        await session.close()
+        go_on.set()
+        with pytest.raises(mitto.RequestError) as caught:
+            await posting
+        assert caught.value.net_error == ERR_INVALID_ARGUMENT
+
+    run(main())
+    assert not server.received
 
 
 def test_an_iterable_that_waits_for_a_request_on_the_same_session_does_not_hold_up_the_loop(server: Server) -> None:

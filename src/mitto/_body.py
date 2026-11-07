@@ -1,8 +1,8 @@
 """Encoding a request's body as Chrome does.
 
 A mapping follows URLSearchParams, and a multipart body follows Blink's FormDataEncoder. What a body adds to a request's
-headers comes from the Persona, as docs/persona.md says. Only a stream does I/O, on a caller's file or iterable, and not
-until something iterates it.
+headers comes from the Persona, as docs/persona.md says. Only a stream does I/O, on a caller's file or iterable: a file says
+its size when the body is made, and the rest waits until something iterates it.
 """
 
 import io

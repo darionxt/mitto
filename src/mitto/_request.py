@@ -1,4 +1,4 @@
-"""Building a request: what a caller's arguments and a Persona make of it, with no I/O.
+"""Building a request: what a caller's arguments and a Persona make of it, with no I/O but asking a file for its size.
 
 Building is apart from waiting, so that every API that makes requests shares it. See docs/persona.md for what comes from
 where.

@@ -6,17 +6,18 @@ closing a Session, the file of its cookies, a caller's file or iterable, and joi
 """
 
 import asyncio
+import concurrent.futures
 import functools
 import os
+import threading
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Buffer, Callable, Iterable, Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self, Unpack, cast
 
 from mitto import _native
-from mitto._body import StreamBody, async_stream_chunks
+from mitto._body import ReadableFile, StreamBody, async_stream_chunks
 from mitto._cookies import AsyncCookies
 from mitto._errors import request_error
 from mitto._native import (
@@ -192,17 +193,16 @@ class _Opened:
     cookies: AsyncCookies
 
 
-async def _on_a_thread_of_its_own[T](function: Callable[[], T]) -> T:
-    """Return what `function` returns, off the event loop, which goes on whether or not the caller is still waiting.
+def _on_a_thread_of_its_own[T](function: Callable[[], T]) -> asyncio.Future[T]:
+    """Return a future of what `function` returns, off the event loop.
 
     A thread of the loop's default executor could be late or never come, since a caller's file or iterable may hold them
     all, and what they wait for may be the end of this Session.
     """
-    executor = ThreadPoolExecutor(max_workers=1)
-    try:
-        return await asyncio.get_running_loop().run_in_executor(executor, function)
-    finally:
-        executor.shutdown(wait=False)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = asyncio.get_running_loop().run_in_executor(executor, function)
+    executor.shutdown(wait=False)
+    return future
 
 
 def _create_state(arguments: dict[str, Any]) -> tuple[SessionState, int]:
@@ -216,6 +216,40 @@ def _create_state(arguments: dict[str, Any]) -> tuple[SessionState, int]:
     except BaseException:
         state.close()
         raise
+
+
+async def _create_off_the_loop(arguments: dict[str, Any]) -> tuple[SessionState, int]:
+    """Return what _create_state() returns, from a thread of its own, which closes it if nobody is left to take it.
+
+    A task that waits here can be cancelled, by its caller or by the end of the event loop, and the thread cannot be.
+    """
+    created: concurrent.futures.Future[tuple[SessionState, int]] = concurrent.futures.Future()
+
+    def create() -> None:
+        try:
+            result = _create_state(arguments)
+        except BaseException as error:
+            if created.set_running_or_notify_cancel():
+                created.set_exception(error)
+            return
+        if created.set_running_or_notify_cancel():
+            created.set_result(result)
+        else:
+            result[0].close()
+
+    threading.Thread(target=create, name="mitto-session-open").start()
+    try:
+        return await asyncio.wrap_future(created)
+    except asyncio.CancelledError:
+        # Too late for the thread to find out, so it is up to this to close what it made.
+        if not created.cancel():
+            created.add_done_callback(_close_created)
+        raise
+
+
+def _close_created(created: concurrent.futures.Future[tuple[SessionState, int]]) -> None:
+    if created.exception() is None:
+        threading.Thread(target=created.result()[0].close, name="mitto-session-close").start()
 
 
 async def _off_the_loop(chunks: Iterator[memoryview]) -> AsyncIterator[memoryview]:
@@ -296,14 +330,14 @@ class AsyncSession:
         }
         self._loop: asyncio.AbstractEventLoop | None = None
         self._opening: asyncio.Task[_Opened] | None = None
-        self._closing: asyncio.Task[None] | None = None
+        self._closing: asyncio.Future[None] | None = None
 
     async def __aenter__(self) -> Self:
         try:
             return await self.open()
         except asyncio.CancelledError:
             # The opening goes on, on its thread, and no __aexit__ will come.
-            self._closing = self._closing or asyncio.ensure_future(self._close())
+            self._closing = self._closing or self._start_closing()
             raise
 
     async def __aexit__(
@@ -354,7 +388,7 @@ class AsyncSession:
         if self._closing is not None:
             await asyncio.wait({self._closing})
             return
-        self._closing = asyncio.ensure_future(self._close())
+        self._closing = self._start_closing()
         await asyncio.shield(self._closing)
 
     async def request(self, method: str, url: str, **options: Unpack[AsyncRequestOptions]) -> Response:
@@ -438,27 +472,42 @@ class AsyncSession:
             raise RuntimeError("an AsyncSession stays on the event loop that opened it")
 
     async def _open(self, loop: asyncio.AbstractEventLoop) -> _Opened:
-        try:
-            state, fd = await _on_a_thread_of_its_own(functools.partial(_create_state, self._arguments))
-        finally:
-            self._arguments.clear()
+        arguments, self._arguments = self._arguments, {}
+        state, fd = await _create_off_the_loop(arguments)
         return _Opened(state, _Events(state.native, fd, loop), AsyncCookies(state.native))
 
-    async def _close(self) -> None:
+    def _start_closing(self) -> asyncio.Future[None]:
+        """Return a future of the end of the close.
+
+        This is callbacks and a thread and no task, since the end of the event loop cancels every task, whether or not it
+        is shielded, and a close has to get as far as closing the native Session.
+        """
+        closing = asyncio.get_running_loop().create_future()
         if self._opening is None:
-            return
-        try:
-            opened = await asyncio.shield(self._opening)
-        except Exception:
+            closing.set_result(None)
+        else:
+            self._opening.add_done_callback(functools.partial(self._close_opened, closing))
+        return closing
+
+    def _close_opened(self, closing: asyncio.Future[None], opening: asyncio.Task[_Opened]) -> None:
+        if opening.cancelled() or opening.exception() is not None:
             # It never opened, and what it raised went to whoever asked for it.
+            closing.set_result(None)
             return
-        # There is no await before the thread starts, so nothing on the loop can use a native Session that is closing.
+        opened = opening.result()
+        # This all happens in one go on the loop, so nothing there can use a native Session that is closing.
         finish = opened.state.begin_close()
         opened.events.stop_watching()
-        try:
-            await _on_a_thread_of_its_own(finish)
-        finally:
+
+        def finished(thread: asyncio.Future[None]) -> None:
             opened.events.wake_all()
+            error = None if thread.cancelled() else thread.exception()
+            if error is None:
+                closing.set_result(None)
+            else:
+                closing.set_exception(error)
+
+        _on_a_thread_of_its_own(finish).add_done_callback(finished)
 
     async def _start(self, method: str, url: str, options: AsyncRequestOptions) -> _Driver:
         """Start a request and return what drives it, which the caller closes through its `request`."""
@@ -468,5 +517,10 @@ class AsyncSession:
             raise request_error(url, _ERR_INVALID_ARGUMENT, method, _ERR_INVALID_ARGUMENT_NAME)
         opened = self._opening.result()
         request_options, async_data = _without_async_data(options)
-        built = opened.state.build(method, url, request_options)
+        # A file says what size it is through seek(), which may flush it or wait for a disk.
+        if isinstance(request_options.get("data"), ReadableFile):
+            built = await asyncio.to_thread(opened.state.build, method, url, request_options)
+        else:
+            built = opened.state.build(method, url, request_options)
+        # A native Session that has begun to close by now refuses this with the same error as above.
         return _Driver(opened.state.native.start(**built), opened.events, _body_of(built, async_data))
