@@ -2,10 +2,10 @@
 
 A **Persona** is the browser identity mitto presents to servers. Its data says what one **Chrome Release** on one operating system sends by default for each **Request Kind**. It is package data, so changing it needs no native rebuild. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
 
-There is one Persona for each Chrome Release in the **Supported Window**, all on Windows: `chrome_155_windows`, `chrome_156_windows` and `chrome_157_windows`. A **Session** takes one when it is created, and `mitto.Session()` and `mitto.get()` present the **Engine Release**'s. A request takes its Request Kind as `kind`, which is navigation for `GET` and fetch for other methods by default:
+There is one Persona for each Chrome Release in the **Supported Window**, all on Windows, named `chrome_RELEASE_windows`. [`persona=`](api.md#persona) lists them. A **Session** takes one when it is created, and `mitto.Session()` and `mitto.get()` present the **Engine Release**'s. A request takes its Request Kind as `kind`, which is navigation for `GET` and fetch for other methods by default:
 
 ```python
-with mitto.Session(persona="chrome_155_windows") as session:
+with mitto.Session() as session:
     session.get(url)
     session.get(url, kind="script")
     session.post(url, json={"a": 1})
@@ -155,7 +155,13 @@ A name that `//net` would add, such as `Accept-Encoding`, counts as another name
 
 ## Write one
 
-Write the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), by taking away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with [the values above](#what-they-say) for what a Baseline does not hold.
+[`tools/release/persona.py`](../tools/release/persona.py) writes the file from the Baselines of its Chrome Release in [`tests/baselines`](../tests/baselines), with the Chrome Release in place of `RELEASE`:
+
+```bash
+uv run python -m tools.release persona RELEASE
+```
+
+It takes away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with [the values above](#what-they-say) for what a Baseline does not hold. The priority comes from the `priority` header over HTTP/2. The script also holds `credentials_mode` and the `Content-Type` of a body that no Recording Case sends, and refuses a Baseline whose `Content-Type` is not its own. [`tests/release`](../tests/release) checks that it writes each file in the repository byte for byte.
 
 [`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
 

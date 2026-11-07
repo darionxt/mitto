@@ -263,7 +263,7 @@ assert sent["X-Trace"] == "1"
 with mitto.Session() as session:
     sent = session.get("https://example.test/echo", headers={"User-Agent": None}).json()["headers"]
 
-assert "Chrome/157" in sent["User-Agent"]
+assert "Chrome/" in sent["User-Agent"]
 assert list(sent).index("User-Agent") > list(sent).index("Sec-Fetch-Dest")
 ```
 
