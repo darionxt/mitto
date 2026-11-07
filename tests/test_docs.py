@@ -1,4 +1,4 @@
-"""Tests that docs/api.md and docs/from-requests.md say what the code does.
+"""Tests that README.md, docs/api.md and docs/from-requests.md say what the code does.
 
 The checks of names, signatures and links need nothing. Running the examples needs a native library, and every name in a URL
 lands on a local server, so that a reader sees no port numbers. Nothing runs the `requests` column of the guide, so this
@@ -15,6 +15,7 @@ import re
 import ssl
 import sys
 import threading
+import tomllib
 import types
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -28,7 +29,7 @@ import pytest
 import mitto
 from mitto import _api
 from mitto._native import PrivateSettings
-from mitto._persona import WINDOWS_PERSONAS
+from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS
 from mitto._request import RequestOptions
 from tests.local_certificates import Issued, TlsServer, generate_leaf, generate_root, serving
 from tests.local_proxy import LocalProxy
@@ -37,7 +38,13 @@ from tools.capture import HTTP2, CaptureServer
 REPOSITORY = Path(__file__).parent.parent
 API_PAGE = REPOSITORY / "docs" / "api.md"
 GUIDE = REPOSITORY / "docs" / "from-requests.md"
-PAGES = [API_PAGE, GUIDE]
+README = REPOSITORY / "README.md"
+PAGES = [API_PAGE, GUIDE, README]
+
+PROJECT = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+# What each page may have blocks of: examples, signatures that the checks read, and the README's install command.
+_BLOCK_LANGUAGES = {API_PAGE: {"python", "text"}, GUIDE: {"python"}, README: {"python", "bash"}}
 
 _FENCE = "```"
 _HEADING = re.compile(r"(#{1,6}) (.+)")
@@ -48,6 +55,17 @@ _MEMBER_SPAN = re.compile(r"(?:mitto\.)?([A-Z]\w+)\.(\w+)(?:\(\))?")
 _MODULE_PATH = re.compile(r"\b(?:mitto\.\w+|collections\.abc|contextlib|datetime|typing)\.")
 # A signature that takes several lines has them indented, up to a line that closes its parenthesis.
 _NEXT_SIGNATURE = re.compile(r"\n(?=[^\s)])")
+# A link to a file or a directory of this repository on its main branch, which works on PyPI too.
+_ON_GITHUB = re.compile(
+    rf"{re.escape(PROJECT['urls']['Source'])}/(?:blob|tree)/main/(?P<path>[^#]+)(?:#(?P<anchor>.+))?"
+)
+# What names a Chrome Release, in text or as part of the name of a Persona.
+_NAMES_A_CHROME_RELEASE = re.compile(r"\bChrome \d+|\bchrome_\d+_")
+# The one line of the README that names Chrome Releases, so that the release routine changes only that one.
+_SUPPORTED_WINDOW = re.compile(
+    r"This version presents Chrome (?P<older>(?:\d+, )*\d+) and (?P<newest>\d+), "
+    r"with Chrome (?P<engine>\d+) as its Engine Release\."
+)
 
 # The classes that a caller makes, so that their constructors are part of the API.
 _MADE_BY_A_CALLER = (mitto.Session, mitto.AsyncSession, mitto.Timeout, mitto.Cookie, mitto.CookiePartitionKey)
@@ -65,8 +83,9 @@ REPORT = b"a,b\n1,2\n"
 # What the URL of the proxy in the examples says.
 PROXY_CREDENTIALS = "user:password"
 
-# The names that the local servers' certificate covers, beyond those with a server of their own.
-EXAMPLE_NAMES = ("example.test", "*.example.test", "other.test", "*.other.test")
+# The names that the local servers' certificate covers, beyond those with a server of their own. The README's examples go
+# to example.com, so that a reader who runs them reaches a real server.
+EXAMPLE_NAMES = ("example.test", "*.example.test", "other.test", "*.other.test", "example.com")
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,10 +438,7 @@ def test_the_table_of_errors_says_what_to_do_about_each() -> None:
 
 @pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
 def test_each_block_is_an_example_or_something_the_checks_read(path: Path) -> None:
-    page = _read_page(path)
-    allowed = {"python", "text"} if path == API_PAGE else {"python"}
-
-    assert {block.language for block in page.blocks} <= allowed
+    assert {block.language for block in _read_page(path).blocks} <= _BLOCK_LANGUAGES[path]
 
 
 @pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
@@ -445,17 +461,100 @@ def _anchors(path: Path) -> set[str]:
     return anchors
 
 
+def link_target(page: Path, link: str) -> tuple[Path, str] | None:
+    """Return the path in this repository that a link on a page leads to, and its anchor, or None if it leads elsewhere.
+
+    A link leads into this repository if it is relative, or if it goes to this repository's main branch on GitHub.
+    """
+    if match := _ON_GITHUB.fullmatch(link):
+        return REPOSITORY / match["path"], match["anchor"] or ""
+    if "://" in link:
+        return None
+    target, _, anchor = link.partition("#")
+    return (page.parent / target).resolve() if target else page, anchor
+
+
+def test_a_link_into_this_repository_is_relative_or_on_its_main_branch() -> None:
+    page = REPOSITORY / "docs" / "page.md"
+    source = PROJECT["urls"]["Source"]
+
+    assert link_target(page, "api.md#session") == (REPOSITORY / "docs" / "api.md", "session")
+    assert link_target(page, "#errors") == (page, "errors")
+    assert link_target(page, f"{source}/blob/main/docs/api.md#errors") == (REPOSITORY / "docs" / "api.md", "errors")
+    assert link_target(page, f"{source}/tree/main/docs/adr") == (REPOSITORY / "docs" / "adr", "")
+    assert link_target(page, f"{source}/issues") is None
+    assert link_target(page, "https://example.com/") is None
+
+
 @pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
 def test_each_link_leads_somewhere(path: Path) -> None:
     for number, text in _read_page(path).prose:
         for link in _LINK.findall(text):
-            if "://" in link:
+            if (target := link_target(path, link)) is None:
                 continue
-            target, _, anchor = link.partition("#")
-            page = (path.parent / target).resolve() if target else path
+            page, anchor = target
             assert page.exists(), f"{path.name}:{number}: {link}"
             if anchor:
                 assert anchor in _anchors(page), f"{path.name}:{number}: {link}"
+
+
+# The checks of the README, which PyPI shows too.
+
+
+def test_each_link_of_the_readme_works_on_pypi() -> None:
+    """PyPI shows the README on a page of its own, where a relative link leads nowhere."""
+    for number, text in _read_page(README).prose:
+        for link in _LINK.findall(text):
+            assert link.startswith("https://"), f"{README.name}:{number}: {link}"
+
+
+def test_pypi_shows_the_readme() -> None:
+    assert PROJECT["readme"] == README.name
+
+
+def test_each_url_of_the_project_into_this_repository_leads_somewhere() -> None:
+    for label, url in PROJECT["urls"].items():
+        if (target := link_target(README, url)) is not None:
+            assert target[0].exists(), label
+
+
+def test_the_readme_installs_this_project() -> None:
+    commands = [block.code for block in _read_page(README).blocks if block.language == "bash"]
+
+    assert commands == [f"pip install {PROJECT['name']}\n"]
+
+
+def lines_naming_chrome_releases(text: str) -> list[str]:
+    return [line for line in text.splitlines() if _NAMES_A_CHROME_RELEASE.search(line)]
+
+
+def supported_window(line: str) -> tuple[list[str], str] | None:
+    """Return the Chrome Releases that a line of the README presents, and its Engine Release, or None if it says neither."""
+    if match := _SUPPORTED_WINDOW.fullmatch(line):
+        return [*match["older"].split(", "), match["newest"]], match["engine"]
+    return None
+
+
+def test_the_readme_names_the_supported_window_on_one_line() -> None:
+    lines = lines_naming_chrome_releases(README.read_text(encoding="utf-8"))
+    engine_release = next(release for release, persona in WINDOWS_PERSONAS.items() if persona == ENGINE_RELEASE_PERSONA)
+
+    assert len(lines) == 1, lines
+    assert supported_window(lines[0]) == (list(WINDOWS_PERSONAS), engine_release)
+
+
+def test_a_chrome_release_named_on_another_line_is_noticed() -> None:
+    text = README.read_text(encoding="utf-8")
+    text += '\n```python\nmitto.Session(persona="chrome_155_windows")\n```\nChrome 158 is next.\n'
+
+    assert len(lines_naming_chrome_releases(text)) == 3
+
+
+def test_a_supported_window_with_another_release_is_noticed() -> None:
+    line = "This version presents Chrome 156, 157 and 158, with Chrome 158 as its Engine Release."
+
+    assert supported_window(line) == (["156", "157", "158"], "158")
+    assert supported_window("This version presents Chrome 157.") is None
 
 
 # Running the examples.
