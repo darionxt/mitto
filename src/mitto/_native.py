@@ -6,6 +6,7 @@ library. The public Session is built on the Session here, and the settings that 
 
 import ctypes
 import enum
+import errno
 import functools
 import json
 import math
@@ -26,6 +27,7 @@ __all__ = [
     "COOKIES_VERSION",
     "LIBRARY_ENV_VAR",
     "LIBRARY_NAME",
+    "MEMORY_CACHE",
     "REQUEST_OPTIONS_VERSION",
     "SETTINGS_VERSION",
     "BodyAvailable",
@@ -56,7 +58,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 6
+ABI_VERSION = 7
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -74,6 +76,13 @@ LIBRARY_NAME = "libmitto_core.dylib" if sys.platform == "darwin" else "libmitto_
 
 # What the C API returns when there is nothing yet.
 _ERR_IO_PENDING = -1
+
+# What mitto_session_create() returns for settings that it refuses, and when another Session has a directory for a cache.
+_ERR_INVALID_ARGUMENT = -4
+_ERR_CACHE_LOCK_TIMEOUT = -409
+
+# What the "http_cache" setting says for a cache that is not in a directory.
+MEMORY_CACHE = "memory"
 
 # How much a read asks for: as much as the native core holds at a time.
 _READ_SIZE = 64 * 1024
@@ -134,6 +143,7 @@ class MittoEvent(ctypes.Structure):
         ("type", ctypes.c_int32),
         ("status", ctypes.c_int32),
         ("net_error", ctypes.c_int32),
+        ("from_cache", ctypes.c_int32),
         ("protocol", ctypes.c_char_p),
         ("url", ctypes.c_char_p),
         ("headers", ctypes.POINTER(ctypes.c_char)),
@@ -272,6 +282,14 @@ def _check_proxy(proxy: str) -> None:
         raise ValueError("a proxy is a URL whose scheme is http, https or socks5")
 
 
+def _cache_error(library: ctypes.CDLL, http_cache: str | None, net_error: int) -> OSError:
+    """Return the error for a net error from mitto_session_create() that is not about the form of its settings."""
+    if net_error == _ERR_CACHE_LOCK_TIMEOUT:
+        return OSError(errno.EBUSY, "another Session has this cache open", http_cache)
+    name: bytes = library.mitto_net_error_name(net_error)
+    return OSError(f"cannot keep a cache in {http_cache}: {name.decode()}")
+
+
 def timeout_options(timeout: Timeout) -> dict[str, int]:
     """Return the timers that are set, as the options of the C API's mitto_request_start()."""
     timers = {"connect_timeout_ms": timeout.connect, "read_timeout_ms": timeout.read, "total_timeout_ms": timeout.total}
@@ -295,12 +313,15 @@ class ResponseStarted:
         headers: The (name, value) pairs in the order received, so repeated headers stay separate. Headers have no fixed
             encoding, so they are decoded as Latin-1, which keeps every byte: value.encode("latin-1") gives back what the
             server sent.
+        from_cache: Whether the body comes from the Session's HTTP cache, also when the server has answered a revalidation
+            with a 304.
     """
 
     status: int
     protocol: str
     url: str
     headers: tuple[tuple[str, str], ...]
+    from_cache: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +379,8 @@ class NativeResponse:
             value.encode("latin-1") gives back what the server sent.
         body: The final response's body, after any content decoding. It stays out of repr(), since it can be large.
         history: The redirects that led here, the first one first.
+        from_cache: Whether the body comes from the Session's HTTP cache, also when the server has answered a revalidation
+            with a 304.
     """
 
     status: int
@@ -366,6 +389,7 @@ class NativeResponse:
     headers: tuple[tuple[str, str], ...]
     body: bytes = field(repr=False)
     history: tuple[RedirectFollowed, ...] = ()
+    from_cache: bool = False
 
 
 class NativeRequest:
@@ -590,6 +614,7 @@ class Session:
         host_resolver_rules: str = "",
         proxy: str | None = None,
         accept_ch_via_alps: Mapping[str, str] | None = None,
+        http_cache: str | None = None,
     ) -> None:
         """Create the Session.
 
@@ -619,9 +644,14 @@ class Session:
             accept_ch_via_alps: What each origin counts as having said in the ACCEPT_CH frame in ALPS, by the URL of its
                 origin. No server in the tests can say anything there, so this stands for what //net would read. It is for
                 tests, so the public API does not offer it.
+            http_cache: Keep responses as Chrome's HTTP cache does: MEMORY_CACHE until this Session closes, or the absolute
+                path of a directory for later Sessions too. //net only touches its subdirectory Cache_Data there. None keeps
+                no responses.
 
         Raises:
             ValueError: If the native core refuses the settings. The message leaves out `proxy`, which may hold a password.
+            OSError: If a cache cannot be kept in the directory of `http_cache`, or another Session has it open, in any
+                process.
             NativeLibraryError: If the native library cannot be used.
         """
         # Before the library, so that this fault is named whether or not there is one.
@@ -642,12 +672,16 @@ class Session:
             settings_dict["dns_nameserver"] = dns_nameserver
         if proxy is not None:
             settings_dict["proxy"] = proxy
+        if http_cache is not None:
+            settings_dict["http_cache"] = http_cache
         settings = json.dumps(settings_dict).encode()
         self._handle = ctypes.POINTER(MittoSession)()
         net_error: int = self._library.mitto_session_create(settings, len(settings), ctypes.byref(self._handle))
-        if net_error != 0:
+        if net_error == _ERR_INVALID_ARGUMENT:
             shown = settings_dict if proxy is None else {**settings_dict, "proxy": "<not shown>"}
             raise ValueError(f"the native core refused the settings {shown!r} with net error {net_error}")
+        if net_error != 0:
+            raise _cache_error(self._library, http_cache, net_error)
 
     def __enter__(self) -> Self:
         return self
@@ -927,6 +961,7 @@ def _collect_response(request: NativeRequest) -> NativeResponse:
         headers=started.headers,
         body=b"".join(iter_body(request)),
         history=history,
+        from_cache=started.from_cache,
     )
 
 
@@ -939,6 +974,7 @@ def _copy_event(native: MittoEvent) -> NativeEvent:
                 protocol=native.protocol.decode(),
                 url=native.url.decode(),
                 headers=_parse_headers(ctypes.string_at(native.headers, native.headers_size)),
+                from_cache=bool(native.from_cache),
             )
         case EventType.REDIRECT_FOLLOWED:
             return RedirectFollowed(

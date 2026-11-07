@@ -1,5 +1,8 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/file.h>
 
 #include <algorithm>
 #include <map>
@@ -19,8 +22,12 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/containers/unique_ptr_adapters.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -29,6 +36,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/waitable_event.h"
@@ -76,12 +84,14 @@
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_manager.h"
 #include "net/dns/system_dns_config_change_notifier.h"
+#include "net/http/http_cache.h"
 #include "net/http/http_connection_info.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_status_code.h"
+#include "net/http/http_transaction_factory.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log.h"
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
@@ -118,6 +128,9 @@ struct MittoSession {
   // Ends each running request, with its last event.
   void CancelJobs();
 
+  // Says that this Session has its directory for the HTTP cache, if any. It
+  // comes first, so that it goes after everything that writes there.
+  base::ScopedFD http_cache_directory_lock;
   // The resolver of a Session with a DNS server of its own, which the others
   // must not ask. `context` points to it, so it has to come first.
   std::unique_ptr<net::HostResolverManager> own_host_resolver_manager;
@@ -162,6 +175,11 @@ constexpr base::TimeDelta kDelayInitialDohProbeTimeout = base::Seconds(5);
 // How long the first Session waits for the system's DNS settings. Reading them
 // takes milliseconds, and a machine where it fails never answers.
 constexpr base::TimeDelta kSystemDnsConfigTimeout = base::Seconds(1);
+
+// The subdirectory of a Session's cache directory that //net owns, with the name
+// that PopulateHttpCacheDirectories() in //content gives it.
+constexpr base::FilePath::CharType kCacheDataDirectoryName[] =
+    FILE_PATH_LITERAL("Cache_Data");
 
 constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
     net::DefineNetworkTrafficAnnotation(
@@ -469,6 +487,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     RequestEvent event;
     event.type = type;
     event.status = request_->GetResponseCode();
+    event.from_cache = request_->was_cached();
     event.protocol = net::HttpConnectionInfoToString(
         request_->response_info().connection_info);
     event.url = request_->url().spec();
@@ -640,12 +659,64 @@ std::unique_ptr<net::CertVerifier> CreateCertVerifier(
       std::make_unique<net::CoalescingCertVerifier>(std::move(verifier)));
 }
 
+// Makes `directory` if it does not exist and takes a lock on it. Chrome relies
+// on being one process, and //net on one backend for each directory. A second
+// one in the same process would wait for the first to go, so its requests would
+// never end, and one in another process would overwrite the first's files.
+// flock() goes by open file, so it refuses a Session in the same process too,
+// and it goes away with the process, however that ends.
+int LockHttpCacheDirectory(const base::FilePath& directory,
+                           base::ScopedFD& lock) {
+  if (!base::CreateDirectory(directory)) {
+    return net::ERR_CACHE_OPEN_FAILURE;
+  }
+  base::ScopedFD file(
+      HANDLE_EINTR(open(directory.value().c_str(), O_RDONLY | O_CLOEXEC)));
+  if (!file.is_valid()) {
+    return net::ERR_CACHE_OPEN_FAILURE;
+  }
+  if (HANDLE_EINTR(flock(file.get(), LOCK_EX | LOCK_NB)) != 0) {
+    return errno == EWOULDBLOCK ? net::ERR_CACHE_LOCK_TIMEOUT
+                                : net::ERR_CACHE_OPEN_FAILURE;
+  }
+  lock = std::move(file);
+  return net::OK;
+}
+
+// Blockfile is what ChooseCacheType() in //components picks on Windows, the
+// system of every Persona, while macOS and Linux get the simple backend there.
+// It shows on the wire. Its writes never finish at once, so over HTTP/2 a 304
+// has ended its stream by the time HttpCache lets the network transaction go.
+// The simple backend and the one in memory can finish at once, so they cancel
+// that stream, with an RST_STREAM that no Baseline holds. Its destructor also
+// waits for its work, so a process can end right after destroying a Session.
+//
+// A directory of //net's own keeps the caller's files apart from it, because a
+// cache that //net cannot read makes it rename the whole directory and delete
+// it. Chrome also gives //net a directory for No-Vary-Search, whose writes go on
+// after a Session has gone, so here those entries last as long as the Session.
+void ConfigureHttpCache(net::URLRequestContextBuilder& builder,
+                        const SessionSettings& settings) {
+  if (!settings.http_cache_in_memory && !settings.http_cache_directory) {
+    builder.DisableHttpCache();
+    return;
+  }
+  net::URLRequestContextBuilder::HttpCacheParams params;
+  if (settings.http_cache_directory) {
+    params.type = net::URLRequestContextBuilder::HttpCacheParams::DISK_BLOCKFILE;
+    params.path = settings.http_cache_directory->Append(kCacheDataDirectoryName);
+  }
+  builder.EnableHttpCache(params);
+}
+
 // Called on the network thread.
 std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     SessionSettings settings,
+    base::ScopedFD http_cache_directory_lock,
     net::HostResolverManager* host_resolver_manager,
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
+  session->http_cache_directory_lock = std::move(http_cache_directory_lock);
   session->cert_net_fetcher =
       base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
@@ -660,7 +731,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
 
   net::URLRequestContextBuilder builder;
   builder.set_host_resolver_manager(host_resolver_manager);
-  builder.DisableHttpCache();
+  ConfigureHttpCache(builder, settings);
   // Chrome's network service turns these on. They add to what //net puts in
   // Accept-Encoding, over HTTPS and to localhost only.
   builder.set_enable_brotli(true);
@@ -735,10 +806,11 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     // loaded the library are not meant for it.
     base::CommandLine::Init(0, nullptr);
     InitFeatureList();
-    // What ChromeMainDelegate::CommonEarlyInitialization() does. This needs the
-    // feature list, and has to come before anything asks whether partitioning is
-    // on. HttpCache::SplitCacheFeatureEnableByDefault() goes right here, the line
-    // before it as in Chrome, when a Session has a cache.
+    // What ChromeMainDelegate::CommonEarlyInitialization() does, in its order.
+    // These need the feature list, and have to come before anything asks whether
+    // the cache is split or network state partitioned, and before any cache
+    // exists.
+    net::HttpCache::SplitCacheFeatureEnableByDefault();
     net::NetworkAnonymizationKey::PartitionByDefault();
     base::ThreadPoolInstance::CreateAndStartWithDefaultParams("mitto");
     CHECK(network_thread_.StartWithOptions(
@@ -759,18 +831,58 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     system_dns_config_read_.Signal();
   }
 
-  std::unique_ptr<MittoSession> CreateSession(SessionSettings settings) {
+  std::unique_ptr<MittoSession> CreateSession(
+      SessionSettings settings,
+      base::ScopedFD http_cache_directory_lock) {
     std::unique_ptr<MittoSession> session;
     RunAndWait(base::BindOnce(
         [](NetworkCore* core, SessionSettings settings,
+           base::ScopedFD http_cache_directory_lock,
            std::unique_ptr<MittoSession>* session) {
           *session = CreateSessionOnNetworkThread(
-              std::move(settings), core->host_resolver_manager_.get(),
-              core->doh_probes_start_time_);
+              std::move(settings), std::move(http_cache_directory_lock),
+              core->host_resolver_manager_.get(), core->doh_probes_start_time_);
         },
         base::Unretained(this), std::move(settings),
-        base::Unretained(&session)));
+        std::move(http_cache_directory_lock), base::Unretained(&session)));
     return session;
+  }
+
+  // Waits until `session`'s HTTP cache, if any, can take its first request, and
+  // returns a net error if it never can. //net opens a cache for the first
+  // request that wants it, and goes on without one if that fails, which nothing
+  // would tell a caller.
+  int OpenHttpCache(MittoSession& session) {
+    int result = net::OK;
+    base::WaitableEvent done;
+    PostTask(base::BindOnce(
+        [](MittoSession* session, int* result, base::WaitableEvent* done) {
+          net::HttpCache* const cache =
+              session->context->http_transaction_factory()->GetCache();
+          if (!cache) {
+            done->Signal();
+            return;
+          }
+          auto [from_callback, from_here] = base::SplitOnceCallback(
+              base::BindOnce(
+                  [](int* result, base::WaitableEvent* done,
+                     net::HttpCache::GetBackendResult backend) {
+                    if (backend.first != net::OK) {
+                      *result = net::ERR_CACHE_OPEN_FAILURE;
+                    }
+                    done->Signal();
+                  },
+                  base::Unretained(result), base::Unretained(done)));
+          net::HttpCache::GetBackendResult backend =
+              cache->GetBackend(std::move(from_callback));
+          if (backend.first != net::ERR_IO_PENDING) {
+            std::move(from_here).Run(std::move(backend));
+          }
+        },
+        base::Unretained(&session), base::Unretained(&result),
+        base::Unretained(&done)));
+    done.Wait();
+    return result;
   }
 
   void DestroySession(std::unique_ptr<MittoSession> session) {
@@ -998,7 +1110,22 @@ int32_t mitto_session_create(const char* settings,
   if (!parsed) {
     return net::ERR_INVALID_ARGUMENT;
   }
-  *session = core.CreateSession(std::move(*parsed)).release();
+  base::ScopedFD http_cache_directory_lock;
+  if (parsed->http_cache_directory) {
+    const int result = mitto::LockHttpCacheDirectory(
+        *parsed->http_cache_directory, http_cache_directory_lock);
+    if (result != net::OK) {
+      return result;
+    }
+  }
+  std::unique_ptr<MittoSession> created = core.CreateSession(
+      std::move(*parsed), std::move(http_cache_directory_lock));
+  const int result = core.OpenHttpCache(*created);
+  if (result != net::OK) {
+    core.DestroySession(std::move(created));
+    return result;
+  }
+  *session = created.release();
   return net::OK;
 }
 
@@ -1178,6 +1305,7 @@ int32_t mitto_request_next_event(MittoRequest* request,
   event->status = next.status;
   event->net_error = next.net_error;
   if (next.type == MITTO_EVENT_RESPONSE_STARTED) {
+    event->from_cache = next.from_cache;
     event->protocol = mitto::CopyToNewBuffer(next.protocol);
   }
   if (next.type == MITTO_EVENT_RESPONSE_STARTED ||

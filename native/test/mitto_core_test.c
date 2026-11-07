@@ -142,6 +142,9 @@ static int HandleEvent(MittoEvent* event, size_t* body_size, int32_t* result) {
       break;
     case MITTO_EVENT_RESPONSE_STARTED:
       printf("status %" PRId32 " over %s\n", event->status, event->protocol);
+      if (event->from_cache) {
+        printf("from the cache\n");
+      }
       printf("url: %s\n", event->url);
       printf("%s", event->headers);
       ReadBody(body_size);
@@ -191,6 +194,14 @@ static int Fetch(const char* url) {
     return 1;
   }
   return FinishInBlockingCalls(url);
+}
+
+// Asks for the same URL again, which a Session with a cache can answer itself.
+static int FetchTwice(const char* url) {
+  if (Fetch(url) != 0) {
+    return 1;
+  }
+  return Fetch(url);
 }
 
 // A redirect is the response here, with no body.
@@ -719,6 +730,7 @@ static const struct {
   int (*run)(const char* url);
 } kScenarios[] = {
     {"fetch", Fetch},
+    {"fetch-twice", FetchTwice},
     {"post", Post},
     {"post-stream", PostStream},
     {"post-sized-stream", PostSizedStream},

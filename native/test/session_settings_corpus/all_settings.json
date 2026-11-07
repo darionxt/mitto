@@ -7,5 +7,6 @@
   "proxy": "http://us%40er:p%3Ass@proxy.test:8080",
   "origins_to_force_quic_on": ["capture.localhost:8445", "127.0.0.1:443", "*"],
   "dns_nameserver": "127.0.0.1:53",
-  "host_resolver_rules": "MAP capture.test 127.0.0.1, MAP *.capture.test [::1]:443, EXCLUDE other.capture.test"
+  "host_resolver_rules": "MAP capture.test 127.0.0.1, MAP *.capture.test [::1]:443, EXCLUDE other.capture.test",
+  "http_cache": "memory"
 }

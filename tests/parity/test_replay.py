@@ -1,13 +1,14 @@
 """Tests of replaying the Recording Cases. Tests that take the native_library fixture need a native library."""
 
 from dataclasses import replace
+from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
 import pytest
 
-from mitto import RequestError
-from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, CaptureServer, Case, Run
+from mitto import RequestError, Session
+from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, CaptureServer, Case, Run, normal_form
 from tools.capture.cases import PROXY_CONNECT
 from tools.capture.http1 import Http1Request
 from tools.capture.recording import ConnectionRecord, Json, Recording
@@ -17,15 +18,17 @@ from tools.parity import (
     Baseline,
     Gap,
     find_gaps,
+    load_baselines,
     loads_known_gaps,
     mismatches,
 )
 from tools.parity.check import as_recorded, record
-from tools.parity.replay import REPLAYS, protocol_of, proxy_of, run_of, session_settings
+from tools.parity.replay import REPLAYS, protocol_of, proxy_of, replay, run_of, session_settings
 
 _RELEASE = "157"
 _REFUSED: dict[str, Json] = {"refused": True}
 _REFUSAL = "ERR_ALPN_NEGOTIATION_FAILED"
+_CANCEL: Json = {"type": "RST_STREAM", "flags": [], "payload": "00000008"}
 _WHERE_A_REQUEST_WENT = {":method", ":authority", ":scheme", ":path", "host"}
 
 
@@ -170,6 +173,43 @@ def test_no_known_gap_says_that_a_replay_went_somewhere_else() -> None:
         name = gap.field.removeprefix("request.headers.")
         assert name.lower() not in _WHERE_A_REQUEST_WENT, gap
         assert gap.field != "request.request_line" or gap.baseline is None, gap
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_cache_in_a_directory_changes_nothing_that_any_case_sends(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every Chrome behind the Baselines had one, and a Session by default has none, so both have to compare alike."""
+
+    def needs_cache(_case: str) -> bool:
+        return True
+
+    monkeypatch.setattr("tools.parity.check.needs_cache", needs_cache)
+    baselines = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if baseline.release == _RELEASE]
+
+    assert not mismatches(find_gaps(baselines), [gap for gap in _listed_gaps() if gap.release == _RELEASE])
+
+
+def _frames_after_a_revalidation(cache: Path | str) -> Json:
+    run = run_of("revalidation", HTTP2)
+    assert run is not None
+    with CaptureServer() as server, Session(cache=cache, _settings=session_settings(server, run)) as session:
+        replay(session, server, run, "revalidation")
+    requests = normal_form(server.recording(run.route, host=run.host), run.cases)["requests"]
+    assert isinstance(requests, dict)
+    request = requests["revalidation"]
+    assert isinstance(request, dict)
+    return request.get("later_frames")
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_cache_in_a_directory_lets_the_stream_of_a_304_end(tmp_path: Path) -> None:
+    for attempt in range(5):
+        assert _frames_after_a_revalidation(tmp_path / str(attempt)) is None
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_cache_in_memory_cancels_the_stream_of_a_304() -> None:
+    """docs/parity.md says so. A response can get there first, which ends the stream with nothing to cancel."""
+    assert any(_frames_after_a_revalidation("memory") == [_CANCEL] for _ in range(5))
 
 
 @pytest.mark.usefixtures("native_library")

@@ -5,6 +5,7 @@ load a sanitized library: the sanitizers' runtime is linked into the program tha
 """
 
 import base64
+import fcntl
 import http.server
 import json
 import os
@@ -42,9 +43,12 @@ _ERR_CERT_AUTHORITY_INVALID = -202
 _ERR_ALPN_NEGOTIATION_FAILED = -122
 _ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED = -25
 _ERR_INVALID_URL = -300
+_ERR_CACHE_OPEN_FAILURE = -404
+_ERR_CACHE_LOCK_TIMEOUT = -409
 _TIMEOUT_SECONDS = 120
 _HOST = "localhost"
 _FETCH_PATH = KIND_PATHS[RequestKind.FETCH]
+_REVALIDATION_PATH = next(case.path for case in CASES if case.name == "revalidation")
 _SOCKS5_LOGIN = (b"user", b"password")
 _STREAM_CASE = next(case for case in CASES if case.name == "fetch_post_stream")
 _STREAM_BODY = "the body of a request"
@@ -423,6 +427,53 @@ def test_a_process_that_exits_with_a_request_running(program: Path, protocol: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["exiting"]
+
+
+@pytest.fixture(params=["memory", "directory"])
+def http_cache(request: pytest.FixtureRequest, tmp_path: Path) -> str:
+    return "memory" if request.param == "memory" else str(tmp_path / "cache")
+
+
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_second_request_answered_from_the_cache(program: Path, protocol: str, http_cache: str) -> None:
+    with CaptureServer() as server:
+        url = server.url(protocol, path=_REVALIDATION_PATH)
+        result = _run(program, url, {**_settings(server, protocol), "http_cache": http_cache}, "fetch-twice")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines().count("from the cache") == 1
+
+
+@pytest.mark.parametrize("scenario", ["destroy-session-while-running", "exit-while-running", "cancel-after-response"])
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
+def test_a_request_that_stops_with_a_cache(program: Path, protocol: str, scenario: str, http_cache: str) -> None:
+    with CaptureServer() as server:
+        result = _run(
+            program, server.url(protocol), {**_settings(server, protocol), "http_cache": http_cache}, scenario
+        )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_directory_that_something_else_holds(program: Path, tmp_path: Path) -> None:
+    lock = os.open(tmp_path, os.O_RDONLY)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        result = _run(program, "http://127.0.0.1:9/", {"version": SETTINGS_VERSION, "http_cache": str(tmp_path)})
+    finally:
+        os.close(lock)
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_CACHE_LOCK_TIMEOUT}" in result.stderr
+
+
+def test_a_file_in_place_of_a_directory(program: Path, tmp_path: Path) -> None:
+    (tmp_path / "file").write_text("")
+
+    result = _run(program, "http://127.0.0.1:9/", {"version": SETTINGS_VERSION, "http_cache": str(tmp_path / "file")})
+
+    assert result.returncode == 1
+    assert f"net error {_ERR_CACHE_OPEN_FAILURE}" in result.stderr
 
 
 def test_the_calls_for_cookies(program: Path) -> None:

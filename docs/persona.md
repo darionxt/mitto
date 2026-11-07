@@ -188,4 +188,4 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 | The HSTS preload list. Chrome 155 and 156 have the same one. 2,730 hosts are only in Chrome 157's and 2,361 only in theirs | A plain HTTP request to one of those hosts: the native core asks for HTTPS as Chrome 157 does, whichever Persona it presents |
 | QUIC connection migration, in `net/quic/quic_chromium_client_session.cc` and `quic_migration_attempt_context.cc`, with new features and new defaults | When the network or the path changes |
 | Closing an HTTP/2 session after a protocol error, in `net/spdy/spdy_session.cc` | When a server breaks the protocol |
-| `HttpCacheZstdCompression` and `HttpCacheZstdDecompression` by default from 157, and `LogicalClearHttpCache` from 156 | The HTTP cache, which a Session does not have yet, and never on the wire |
+| `HttpCacheZstdCompression` and `HttpCacheZstdDecompression` by default from 157, and `LogicalClearHttpCache` from 156 | What a [cache](parity.md#the-http-cache) keeps on disk, and never on the wire |

@@ -1,11 +1,1 @@
-[
-{"release": "155", "case": "revalidation", "protocol": "http/1.1", "field": "request.headers.If-None-Match", "baseline": "If-None-Match: \"mitto\"", "mitto": null},
-{"release": "155", "case": "revalidation", "protocol": "h2", "field": "request.headers.if-none-match", "baseline": "if-none-match: \"mitto\"", "mitto": null},
-{"release": "155", "case": "revalidation", "protocol": "h3", "field": "request.headers.if-none-match", "baseline": "if-none-match: \"mitto\"", "mitto": null},
-{"release": "156", "case": "revalidation", "protocol": "http/1.1", "field": "request.headers.If-None-Match", "baseline": "If-None-Match: \"mitto\"", "mitto": null},
-{"release": "156", "case": "revalidation", "protocol": "h2", "field": "request.headers.if-none-match", "baseline": "if-none-match: \"mitto\"", "mitto": null},
-{"release": "156", "case": "revalidation", "protocol": "h3", "field": "request.headers.if-none-match", "baseline": "if-none-match: \"mitto\"", "mitto": null},
-{"release": "157", "case": "revalidation", "protocol": "http/1.1", "field": "request.headers.If-None-Match", "baseline": "If-None-Match: \"mitto\"", "mitto": null},
-{"release": "157", "case": "revalidation", "protocol": "h2", "field": "request.headers.if-none-match", "baseline": "if-none-match: \"mitto\"", "mitto": null},
-{"release": "157", "case": "revalidation", "protocol": "h3", "field": "request.headers.if-none-match", "baseline": "if-none-match: \"mitto\"", "mitto": null}
-]
+[]

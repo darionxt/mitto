@@ -10,7 +10,7 @@ from typing import Self, Unpack
 
 from mitto import _native
 from mitto._cookies import Cookies
-from mitto._native import PrivateSettings, encode_url, iter_body, wait_for_response
+from mitto._native import MEMORY_CACHE, PrivateSettings, encode_url, iter_body, wait_for_response
 from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
 from mitto._request import RequestOptions, build_request
 from mitto._response import Response, ResponseStream, to_response, to_response_stream
@@ -20,7 +20,7 @@ __all__ = ["Session", "get"]
 
 
 class Session:
-    """A long-lived client that holds one Chrome-like browsing state: its Persona, cookies and open connections.
+    """A long-lived client that holds one Chrome-like browsing state: its Persona, cookies, cache and open connections.
 
     It also keeps which client hints each origin has asked for, and sends those as Chrome does. See docs/persona.md.
 
@@ -43,6 +43,7 @@ class Session:
         timeout: float | Timeout | None = None,
         cookie_file: str | os.PathLike[str] | None = None,
         proxy: str | None = None,
+        cache: str | os.PathLike[str] | None = None,
         _settings: PrivateSettings | None = None,
     ) -> None:
         """Create the Session.
@@ -65,14 +66,22 @@ class Session:
                 RFC 1929, each at most 255 bytes once decoded. As in Chrome, a request to localhost, a *.localhost name or
                 a loopback address goes around the proxy, and a proxy that fails is an error and not a reason to go
                 directly. The default reaches each server directly, whatever the system's proxy settings say.
+            cache: Where to keep responses, which //net then answers from and revalidates as Chrome's HTTP cache does, split
+                by the top-level site of the page a request comes from. A directory, made if it does not exist, is what
+                Chrome has and keeps them for later Sessions too. //net only touches its subdirectory Cache_Data, and one
+                Session at a time can have the directory, in any process. "memory" keeps them until the Session closes, as
+                Chrome's Incognito mode does, and a server can tell the two apart by the stream a 304 cancels over HTTP/2.
+                Write "./memory" for a directory of that name. The default keeps no responses, where a real Chrome always
+                has a cache, so a server sees each request.
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
                 `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
-                `cookie_file` does not hold cookies that this Session can use or `proxy` cannot be used. The message leaves
-                out `proxy`, which may hold a password.
-            OSError: If `cookie_file` exists and cannot be read.
+                `cookie_file` does not hold cookies that this Session can use, `proxy` cannot be used or `cache` is an empty
+                string. The message leaves out `proxy`, which may hold a password.
+            OSError: If `cookie_file` exists and cannot be read, a cache cannot be kept in the directory of `cache`, or
+                another Session has that directory open.
             NativeLibraryError: If the native library cannot be used.
         """
         self._persona = load_persona(persona)
@@ -85,6 +94,7 @@ class Session:
             user_agent=self._persona.user_agent,
             additional_trust_anchors=additional_trust_anchors,
             proxy=proxy,
+            http_cache=_http_cache_setting(cache),
             **(PrivateSettings() if _settings is None else _settings),
         )
         self.cookies = Cookies(self._native)
@@ -100,10 +110,11 @@ class Session:
         self.close()
 
     def close(self) -> None:
-        """Save the cookies to `cookie_file`, if it has one, and close the Session's connections.
+        """Save the cookies to `cookie_file`, if it has one, and close the Session's connections and any cache on disk.
 
         Requests still running end with a RequestError, and so do later ones. A response that arrives during this call
-        may not reach the file. The connections close even if the save fails, and a second call does nothing.
+        may not reach the file. The connections close even if the save fails, and a second call does nothing. Another
+        Session can open the same `cache` once this has returned.
 
         Raises:
             OSError: If `cookie_file` cannot be written.
@@ -206,6 +217,22 @@ class Session:
         except BaseException:
             self._native.close()
             raise
+
+
+def _http_cache_setting(cache: str | os.PathLike[str] | None) -> str | None:
+    """Return the native Session's setting for what Session() takes as `cache`.
+
+    Raises:
+        ValueError: If `cache` is an empty string, which would otherwise mean the working directory.
+    """
+    if cache is None:
+        return None
+    if cache == "":
+        raise ValueError("cache is an empty string, which names no directory")
+    if cache == MEMORY_CACHE:
+        return MEMORY_CACHE
+    # The working directory may change before the Session closes, and the native core only takes an absolute path.
+    return str(Path(cache).resolve())
 
 
 @functools.cache

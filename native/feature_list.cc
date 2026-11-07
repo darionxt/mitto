@@ -18,7 +18,7 @@ void InitFeatureList() {
       // The features in //net that the Chrome behind the Baselines has on, as
       // chrome.txt beside them shows. A source build has the first two off. No
       // Parity Check can see these four, because they are about what a server
-      // sends back and the HTTP cache, which a Session does not have yet.
+      // sends back and what the HTTP cache does with it.
       // ConfigureQuicHints is the one more that chrome.txt has on. It is stated
       // per Session instead, by the function of that name.
       net::features::kLogicalClearHttpCache.name,

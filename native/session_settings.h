@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "base/files/file_path.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/socks5_auth_exchange.h"
 #include "net/base/auth.h"
@@ -67,6 +68,14 @@ struct SessionSettings {
   // What each origin counts as having said in ALPS, where //net would have read
   // it. No server in the tests can say anything there. For tests only.
   std::map<url::Origin, std::string> accept_ch_via_alps;
+
+  // Whether the Session keeps responses in memory.
+  bool http_cache_in_memory = false;
+
+  // The directory that the Session keeps responses in, which is absolute. It is
+  // what Chrome calls http_cache_directory before
+  // PopulateHttpCacheDirectories() adds Cache_Data to it.
+  std::optional<base::FilePath> http_cache_directory;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns
