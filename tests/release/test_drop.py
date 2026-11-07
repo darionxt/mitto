@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_docs import lines_naming_chrome_releases, supported_window
 from tools.parity import Gap, dumps_known_gaps, loads_known_gaps
 from tools.release.drop import DropError, Named, drop_oldest, releases, still_named
 
@@ -27,6 +28,7 @@ PERSONAS = Path("src/mitto/personas")
 PERSONA_MODULE = Path("src/mitto/_persona.py")
 BASELINES = Path("tests/baselines")
 KNOWN_GAPS = BASELINES / "known_gaps.json"
+README = Path("README.md")
 
 type Layout = Callable[[list[str]], str]
 """What writes WINDOWS_PERSONAS for some Chrome Releases, as ruff formats it on one line or on a line for each."""
@@ -46,10 +48,11 @@ def a_line_each(window: list[str]) -> str:
 
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
-    """Return a copy of the repository's code and data."""
-    ignored = shutil.ignore_patterns("__pycache__", ".pytest_cache")
+    """Return a copy of the repository's code, data and README."""
+    ignored = shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.dylib", "*.so")
     for directory in ("src", "tests", "tools"):
         shutil.copytree(REPOSITORY / directory, tmp_path / directory, ignore=ignored)
+    shutil.copy(REPOSITORY / README, tmp_path / README)
     return tmp_path
 
 
@@ -107,6 +110,26 @@ def test_the_oldest_chrome_release_leaves_the_code_and_the_data(tree: Path, layo
     assert module["engine"] == f"chrome_{NEW}_windows"
     assert module["undefined"] == []
     assert f"CHROME_{OLDEST}_WINDOWS" not in (tree / PERSONA_MODULE).read_text()
+    assert [supported_window(line) for line in lines_naming_chrome_releases((tree / README).read_text())] == [
+        ([*WINDOW[1:], NEW], NEW)
+    ]
+
+
+def test_only_the_line_that_names_the_supported_window_changes_in_the_readme(tree: Path) -> None:
+    add_new_engine_release(tree)
+    before = (tree / README).read_text().splitlines()
+
+    drop_oldest(tree)
+
+    after = (tree / README).read_text().splitlines()
+    assert len(after) == len(before)
+    assert [(old, new) for old, new in zip(before, after, strict=True) if old != new] == [
+        (
+            f"This version presents Chrome {', '.join(WINDOW[:-1])} and {WINDOW[-1]}, "
+            f"with Chrome {WINDOW[-1]} as its Engine Release.",
+            f"This version presents Chrome {', '.join(WINDOW[1:])} and {NEW}, with Chrome {NEW} as its Engine Release.",
+        )
+    ]
 
 
 def test_only_the_lines_that_name_the_oldest_leave_the_persona_module(tree: Path) -> None:
@@ -169,6 +192,41 @@ def test_a_persona_module_without_the_lines_it_expects_leaves_the_tree_as_it_is(
     before = snapshot(tree)
 
     with pytest.raises(DropError, match="change it by hand"):
+        drop_oldest(tree)
+
+    assert snapshot(tree) == before
+
+
+def test_an_engine_release_that_is_not_the_newest_leaves_the_tree_as_it_is(tree: Path) -> None:
+    add_new_engine_release(tree, engine=WINDOW[-1])
+    before = snapshot(tree)
+
+    with pytest.raises(
+        DropError, match=f"the Engine Release is Chrome {WINDOW[-1]}, and the newest Persona is of Chrome {NEW}"
+    ):
+        drop_oldest(tree)
+
+    assert snapshot(tree) == before
+
+
+def test_a_readme_without_the_line_that_names_the_window_leaves_the_tree_as_it_is(tree: Path) -> None:
+    add_new_engine_release(tree)
+    readme = tree / README
+    readme.write_text(readme.read_text().replace("This version presents Chrome", "This version shows Chrome"))
+    before = snapshot(tree)
+
+    with pytest.raises(DropError, match=r"README\.md does not have one line that names the Supported Window"):
+        drop_oldest(tree)
+
+    assert snapshot(tree) == before
+
+
+def test_a_tree_without_a_readme_is_left_as_it_is(tree: Path) -> None:
+    add_new_engine_release(tree)
+    (tree / README).unlink()
+    before = snapshot(tree)
+
+    with pytest.raises(DropError, match=r"the tree has no README\.md"):
         drop_oldest(tree)
 
     assert snapshot(tree) == before

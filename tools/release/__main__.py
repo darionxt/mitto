@@ -28,6 +28,7 @@ def _persona(args: argparse.Namespace) -> int:
 def _drop(args: argparse.Namespace) -> int:
     dropped = drop_oldest(args.root)
     print(f"Dropped Chrome {dropped.release}: its Persona, its Baselines and {dropped.gaps} known gaps.")
+    print("Wrote the line of README.md that names the Supported Window.")
     if dropped.still_named:
         print(f"These lines of code still name Chrome {dropped.release}. Change those that present it:")
         print("\n".join(f"  {named}" for named in dropped.still_named))

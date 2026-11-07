@@ -74,7 +74,7 @@ For each Chrome Release whose Baselines are new:
 uv run python -m tools.release persona RELEASE
 ```
 
-This writes `src/mitto/personas/chrome_RELEASE_windows.json` from `tests/baselines/RELEASE`, [as persona.md describes](persona.md#write-one). For the new Engine Release, also name its Persona in [`src/mitto/_persona.py`](../src/mitto/_persona.py): a constant like the others, its entry in `__all__` and in `WINDOWS_PERSONAS`, and `ENGINE_RELEASE_PERSONA`. The tests that check what a Session presents by default name the Engine Release, and fail until they move with it.
+This writes `src/mitto/personas/chrome_RELEASE_windows.json` from `tests/baselines/RELEASE`, [as persona.md describes](persona.md#write-one). For the new Engine Release, also name its Persona in [`src/mitto/_persona.py`](../src/mitto/_persona.py): a constant like the others, its entry in `__all__` and in `WINDOWS_PERSONAS`, and `ENGINE_RELEASE_PERSONA`. The tests that check what a Session presents by default name the Engine Release, and fail until they move with it. The README's line follows in [step 7](#7-drop-the-oldest-chrome-release).
 
 Then run `uv run pytest tests/test_persona.py tests/release`. If the script refuses, for example because a Content-Type is not the one it knows, Chrome has changed what a request sends. Change the script and [persona.md](persona.md) to say what it does now.
 
@@ -84,7 +84,7 @@ Then run `uv run pytest tests/test_persona.py tests/release`. If the script refu
 uv run python -m tools.release drop
 ```
 
-This deletes the oldest Persona's file, its Baselines and its entries in the known-gaps list, and takes its name out of `src/mitto/_persona.py`. It refuses while there are only three Personas, so it only runs once the new Engine Release has one, and it refuses without changing anything if `_persona.py` names the oldest anywhere else. It then prints any other line of code that still names it, by its Persona, a build or its `User-Agent`. A line in `tests/release` that holds what Chromium Dash said on one day is a record and stays.
+This deletes the oldest Persona's file, its Baselines and its entries in the known-gaps list, and takes its name out of `src/mitto/_persona.py`. It also writes the line of [`README.md`](../README.md) that names the Supported Window, from the Personas that are left and `ENGINE_RELEASE_PERSONA`, in the words that `tests/test_docs.py` checks. It refuses while there are only three Personas, so it only runs once the new Engine Release has one. It also refuses, without changing anything, if `_persona.py` names the oldest anywhere else, if the Engine Release is not the newest Persona, or if the README has no such line. It then prints any other line of code that still names it, by its Persona, a build or its `User-Agent`. A line in `tests/release` that holds what Chromium Dash said on one day is a record and stays.
 
 Then go through the docs with the [rule below](#lines-that-name-a-chrome-release), with the dropped Chrome Release in place of `RELEASE`:
 
@@ -112,10 +112,11 @@ The workflow and the environment do not exist yet: [#122](https://github.com/dar
 
 ## Lines that name a Chrome Release
 
-A line in the docs that names a Chrome Release does one of two things:
+A line in the README or the docs that names a Chrome Release does one of two things:
 
 - **It records what was measured.** It says which build, and usually which day, gave the result, such as the sections of [baselines.md](baselines.md) on each recording, what [capture.md](capture.md) measured, [what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases) and the milestones in [roadmap.md](roadmap.md). It stays as it was when the Supported Window moves, also once its Chrome Release has left, because it is still what was measured. A new measurement gets a record of its own, which says what it replaces.
 - **It states the present Supported Window.** It follows the Window, and only these places hold one:
+  - The line of [`README.md`](../README.md) that says which Chrome Releases this version presents, which [step 7](#7-drop-the-oldest-chrome-release) writes. A test checks it against `WINDOWS_PERSONAS` and `ENGINE_RELEASE_PERSONA`, and that no other line of the README names a Chrome Release.
   - [`persona=` in api.md](api.md#persona), which names every Persona and shows one in its example. A test checks that it names every Persona in `WINDOWS_PERSONAS`.
   - [Where each Chrome Release comes from](baselines.md#where-each-chrome-release-comes-from), with the build and the installer of each Chrome Release's Baselines.
 
