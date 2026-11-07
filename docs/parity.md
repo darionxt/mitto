@@ -43,14 +43,14 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `navigation_form_*`, `fetch_post_text_*`, `fetch_post_json_same_origin` | `POST` with the case's body, from the same fields as the page's form or script, and from the page it came from | Nothing |
 | `fetch_post_stream` | `POST` with the case's bytes as a stream, from the page it came from | Nothing. Over HTTP/1.1 the Baseline is `{"refused": true}`, and the replay fails with `ERR_ALPN_NEGOTIATION_FAILED` and leaves nothing on the wire, which matches it |
 | `cookie` | `/case/cookie-set`, then the case's path, both from the page it came from | Nothing. A case counts a request without what it should carry when none has it, so a Session that lost its cookie would show one gap in `Cookie` |
-| `revalidation` | The case's path twice, from the page it came from | Keep a response, so `If-None-Match` is a gap in the same way |
+| `revalidation` | The case's path twice, from the page it came from, on a Session with a [cache in a directory](#the-http-cache) | Nothing |
 | `redirect_navigation_*`, `redirect_fetch_*` | The first hop, whichever hop the Baseline is, from the page it came from. `//net` follows the rest, and the native core changes the headers on each | Nothing |
 | `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 
 The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
 
-When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. `revalidation` needs a Session with a cache, since a Session has none by default.
+When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. Only `revalidation` has a cache, since a Session has none by default, and `tests/parity/test_replay.py` checks that every other case sends the same with one.
 
 ## Gaps
 
@@ -101,7 +101,7 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
 | `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
 | `native/fetch_rules.cc`, `native/sec_header_helpers.cc` | [The headers that follow the page a request comes from](#the-initiator-and-each-hop), and what `//net` is told about that page | `SetFetchMetadataHeaders` and `MaybeRemoveSecHeaders` in `services/network/sec_header_helpers.cc`, `CorsURLLoader` and `URLLoader` in `services/network`, and the parts of the browser process and Blink that the section names |
-| `native/mitto_core.cc` | That network state is partitioned, in [the call Chrome makes](#partitioning) | `ChromeMainDelegate::CommonEarlyInitialization()` |
+| `native/mitto_core.cc` | That network state is partitioned and the HTTP cache split, in [the calls Chrome makes](#partitioning), and [where a cache lives](#the-http-cache) | `ChromeMainDelegate::CommonEarlyInitialization()`, `ChooseCacheType()` in `components/network_session_configurator` and `PopulateHttpCacheDirectories()` in `//content` |
 | `native/stub_resolver_config_reader.cc` | The stub resolver: the built-in DNS client, additional query types, which is what asks for HTTPS records, secure mode automatic, and the upgrade to DNS over HTTPS | `ConfigureStubHostResolver` in `services/network/network_service.cc`, with the defaults in `chrome/browser/net/stub_resolver_config_reader.cc` |
 
 A value stated here stays when a new **Engine Release** changes a default, so a Parity Check fails instead of mitto moving with the engine. That matters because an older **Chrome Release** must keep sending what it sent. All of this holds for every Persona, since Chrome 155, 156 and 157 [send the same in it](persona.md#what-differs-between-chrome-releases).
@@ -140,11 +140,11 @@ A **Persona**'s lines arrive at the native core with the rest of the headers, ea
 
 ## Partitioning
 
-Chrome partitions connections, TLS sessions, DNS results and more by the top-level site, because `ChromeMainDelegate::CommonEarlyInitialization()` calls `NetworkAnonymizationKey::PartitionByDefault()` ([what was measured](baselines.md#features-on-in-chromes-own-code)). `NetworkCore` makes the same call, right after the feature list exists and before anything can ask whether partitioning is on. Its comment marks the place for the same call that the split cache needs.
+Chrome partitions connections, TLS sessions, DNS results and more by the top-level site, and splits its HTTP cache the same way, because `ChromeMainDelegate::CommonEarlyInitialization()` calls `HttpCache::SplitCacheFeatureEnableByDefault()` and `NetworkAnonymizationKey::PartitionByDefault()` ([what was measured](baselines.md#features-on-in-chromes-own-code)). `NetworkCore` makes the same two calls in the same order, right after the feature list exists and before anything can ask whether either is on or any cache exists.
 
 Each request has an `IsolationInfo`, as in Chrome: a navigation's follows it as a top frame on each hop, and a subresource's stays that of its page. So over each protocol, a subresource from one top-level site does not share a connection with one from another, and a navigation shares one with what its own page asks of its own site. A cross-origin `fetch()` has no credentials, so `//net` gives it a connection apart from one that has them.
 
-No normal form can show this, so `tests/test_initiator.py` counts the connections at the server, over HTTP/1.1, HTTP/2 and HTTP/3. `Partitioned` cookies go in the partition of the same site.
+No normal form can show this, so `tests/test_initiator.py` counts the connections at the server, over HTTP/1.1, HTTP/2 and HTTP/3, and `tests/test_cache.py` counts the requests that a cached response saves. `Partitioned` cookies go in the partition of the same site.
 
 ## Cookies
 
@@ -198,6 +198,42 @@ Session cookies are saved too, as a browser does that restores its last session.
 | A page in a frame | Its `site_for_cookies` can be null, and its partition holds its ancestors | A page always counts as top-level |
 | Settings that block a cookie, and First-Party Sets | `CookieSettings` and `FirstPartySetsManager`, in `services/network` | None, which is what a Chrome with no such settings does for a first-party cookie |
 | When the store is written | Every 30 seconds, by `SQLitePersistentCookieStore` | When a caller saves, or at close |
+
+## The HTTP cache
+
+`Session(cache="memory")` or `Session(cache=path)` gives a **Session** the `HttpCache` of `//net`, through `URLRequestContextBuilder::EnableHttpCache()`, so `//net` decides what to keep, when to revalidate and what that sends, as it does in Chrome. The default is no cache. `Response.from_cache` is `URLRequest::was_cached()`, as `was_fetched_via_cache` is in Chrome: it says where the body came from, so a 304 makes it true although a request went out.
+
+The `revalidation` **Recording Case** shows that `If-None-Match` reaches the wire in the place Chrome puts it, over each protocol. `tests/test_cache.py` checks what no **Baseline** holds: a response that saves a request, a revalidation, a directory that outlives its Session and its process, a `POST` that drops what the cache holds, and which requests share a response.
+
+### Which backend
+
+`ChooseCacheType()` picks a different backend per system, and that shows on the wire. Over HTTP/2 a 304's `HEADERS` frame usually holds `END_STREAM`, and `//net` tells `HttpCache` about the headers before it handles that. `HttpCache` updates the entry and then lets the network transaction go. If the write has already finished, that cancels a stream that is about to end, with an `RST_STREAM` that a server can see:
+
+| | Backend | Writing an entry | `RST_STREAM` after a 304 |
+| --- | --- | --- | --- |
+| Chrome on Windows, and `Session(cache=path)` on every **Host** | Blockfile | Never finishes at once | None, as the **Baselines** show |
+| Chrome on macOS and Linux | Simple | Can finish at once | Sent. Measured on macOS, Chrome 156 |
+| Chrome in Incognito, and `Session(cache="memory")` | Memory | Finishes at once | Sent. Measured on macOS, Chrome 156 |
+
+Every **Persona** is Windows Chrome, so a directory gets blockfile whatever the **Host** is, and that is what the replay of `revalidation` uses. Blockfile's destructor also waits for its work, so a process can end as soon as `close()` returns.
+
+A response can also get there first, in which case the stream has already ended and even the memory backend cancels nothing, so that row says what usually happens.
+
+### Where it lives
+
+A directory holds what Chrome's `http_cache_directory` does, with `//net`'s files in its subdirectory `Cache_Data`, as `PopulateHttpCacheDirectories()` lays it out. This matters more here than in Chrome. A cache that `//net` cannot read makes it rename the directory it was given and delete it, and a caller can name any directory, so `//net` never gets one that a caller's files are in.
+
+One Session at a time can have a directory. `//net` allows one backend for each path, and a second one in the same process waits for the first to go, so its requests would never end. Across processes Chrome counts on being one process, and a second one would overwrite the first's files. So the native core holds a `flock()` on the directory itself, which refuses a Session in the same process too, whatever name it comes by, and which goes away with the process however that ends. A Session that cannot have the directory fails to open with an `OSError`, and so does one that `//net` cannot make a cache for, because `//net` itself would go on with no cache and tell nobody.
+
+The sizes are those of `//net` with no setting: at most 50 MiB in memory, and on disk from 80 MiB to 1% of the free space. A Session does not offer a size.
+
+### What stays different
+
+| | Chrome | A Session |
+| --- | --- | --- |
+| The body of a `POST` | A form's has an identifier, so its response is kept for going back to it | Has none, so a `POST` always passes through the cache. It still drops what the cache holds for that URL when it succeeds |
+| `No-Vary-Search` | Its entries go to disk in `No_Vary_Search`, by writes that go on after `HttpCache` has gone | Last as long as the Session, so that nothing touches the directory after `close()`. A later Session finds a response by its exact URL |
+| A wait for another request's entry | Has no timer around it | Counts towards `connect` of a `Timeout`, because no connection is ready yet |
 
 ## Proxies
 

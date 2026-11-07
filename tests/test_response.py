@@ -159,6 +159,15 @@ def test_a_native_response_becomes_a_response() -> None:
     )
 
 
+@pytest.mark.parametrize("from_cache", [False, True])
+def test_a_response_says_whether_it_came_from_the_cache(from_cache: bool) -> None:
+    native = NativeResponse(
+        status=200, protocol="h2", url="https://example.test/a", headers=(), body=b"", from_cache=from_cache
+    )
+
+    assert to_response(native).from_cache is from_cache
+
+
 def with_status(status: int) -> Response:
     return dataclasses.replace(response(b"body"), status=status)
 

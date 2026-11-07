@@ -48,6 +48,8 @@ class Replay:
         page: The path of the page the request came from in tools/capture/cases.py, or nothing for what a request with no
             Initiator is.
         page_host: The name of that page, or nothing for the name the case's run starts at.
+        cache: Whether the Session has a cache in a directory, as the Chrome that recorded the case had, for a case that
+            needs one to show what it is about.
     """
 
     kind: RequestKind
@@ -58,6 +60,7 @@ class Replay:
     body: BodyOptions = field(default_factory=BodyOptions)
     page: str | None = None
     page_host: str | None = None
+    cache: bool = False
 
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
@@ -102,7 +105,7 @@ REPLAYS = {
     "image_same_site": Replay(RequestKind.IMAGE, host=SAME_SITE_HOST, page=START_PATH),
     "image_cross_site": Replay(RequestKind.IMAGE, host=CROSS_SITE_HOST, page=START_PATH),
     "cookie": Replay(RequestKind.FETCH, before=(COOKIE_SET_PATH,), page=START_PATH),
-    "revalidation": Replay(RequestKind.FETCH, before=(_PATHS["revalidation"],), page=START_PATH),
+    "revalidation": Replay(RequestKind.FETCH, before=(_PATHS["revalidation"],), page=START_PATH, cache=True),
     **_hops("redirect_navigation", RequestKind.NAVIGATION, _PATHS["navigation_form_multipart"]),
     **_hops("redirect_fetch", RequestKind.FETCH, START_PATH),
     "plain_http_navigation": Replay(RequestKind.NAVIGATION),
@@ -142,6 +145,11 @@ def run_of(case: str, protocol: str) -> Run | None:
 def proxy_of(server: CaptureServer, run: Run) -> str | None:
     """Return the proxy that the Chrome of a run went through, or None if it went directly."""
     return server.proxy_url if run.route in _PROXIED_ROUTES else None
+
+
+def needs_cache(case: str) -> bool:
+    """Return whether a Session that replays a Recording Case needs a cache in a directory."""
+    return REPLAYS[case].cache
 
 
 def session_settings(server: CaptureServer, run: Run) -> PrivateSettings:

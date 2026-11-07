@@ -1,6 +1,7 @@
 """One Parity Check: load Baselines, make the same requests through the public API, and find the gaps."""
 
 import json
+import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,7 +12,7 @@ from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
-from tools.parity.replay import proxy_of, replay, run_of, session_settings
+from tools.parity.replay import needs_cache, proxy_of, replay, run_of, session_settings
 
 BASELINES_DIRECTORY = Path(__file__).parents[2] / "tests" / "baselines"
 
@@ -136,7 +137,13 @@ def record(baseline: Baseline) -> dict[str, Json]:
     refused: Json = None
     with (
         CaptureServer() as server,
-        Session(persona=persona, proxy=proxy_of(server, run), _settings=session_settings(server, run)) as session,
+        tempfile.TemporaryDirectory(prefix="mitto-parity-") as cache_directory,
+        Session(
+            persona=persona,
+            proxy=proxy_of(server, run),
+            cache=cache_directory if needs_cache(baseline.case) else None,
+            _settings=session_settings(server, run),
+        ) as session,
     ):
         try:
             replay(session, server, run, baseline.case)

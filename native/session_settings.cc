@@ -41,6 +41,8 @@ constexpr std::string_view kOriginsToForceQuicOnKey =
 constexpr std::string_view kEveryOrigin = "*";
 constexpr std::string_view kDnsNameserverKey = "dns_nameserver";
 constexpr std::string_view kHostResolverRulesKey = "host_resolver_rules";
+constexpr std::string_view kHttpCacheKey = "http_cache";
+constexpr std::string_view kMemoryCache = "memory";
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -222,6 +224,25 @@ bool ReadProxy(const base::Value& value, SessionSettings& settings) {
   return true;
 }
 
+// Only an absolute path can be a directory, so "memory" never names one. A NUL
+// would cut the path short, because that is where base::FilePath stops.
+bool ReadHttpCache(const base::Value& value, SessionSettings& settings) {
+  if (!value.is_string()) {
+    return false;
+  }
+  const std::string& cache = value.GetString();
+  if (cache == kMemoryCache) {
+    settings.http_cache_in_memory = true;
+    return true;
+  }
+  const base::FilePath directory = base::FilePath::FromUTF8Unsafe(cache);
+  if (cache.find('\0') != std::string::npos || !directory.IsAbsolute()) {
+    return false;
+  }
+  settings.http_cache_directory = directory;
+  return true;
+}
+
 }  // namespace
 
 SessionSettings::SessionSettings() = default;
@@ -289,6 +310,12 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
     }
     if (key == kHostResolverRulesKey) {
       if (!ReadHostResolverRules(value, settings)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kHttpCacheKey) {
+      if (!ReadHttpCache(value, settings)) {
         return std::nullopt;
       }
       continue;
