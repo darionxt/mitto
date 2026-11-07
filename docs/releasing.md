@@ -108,9 +108,9 @@ Once the pull request is merged, tag its commit on `main` as `vX.Y.Z`, with the 
 
 ### 11. The publish
 
-`.github/workflows/release.yml` builds the wheels from nothing, with no Actions cache, on the hosted runners that CI uses. It uploads them to PyPI with Trusted Publishing, from a `pypi` environment that waits for the owner's approval. No API token can upload to `mitto`. The symbols archives go to the GitHub release of the tag, not to PyPI. There are wheels only, and no sdist.
+The tag starts [the release workflow](building.md#the-release-workflow), `.github/workflows/release.yml`. It checks that the tag is the version in `pyproject.toml` and that its commit is on `main`, builds the wheels from nothing, with no Actions cache, on the hosted runners that CI uses, and runs every test against each installed wheel. It then waits for the owner's approval in the `pypi` environment: approve the run's deployment once both builds have passed. It uploads the wheels to PyPI with Trusted Publishing. No API token can upload to `mitto`. The symbols archives go to the GitHub release of the tag, not to PyPI. There are wheels only, and no sdist. Last, it installs the version from PyPI on each Host and makes a request with it.
 
-The workflow and the environment do not exist yet: [#122](https://github.com/darionxt/mitto/issues/122) writes the workflow and [#120](https://github.com/darionxt/mitto/issues/120) sets up the environment.
+A [dry run](building.md#a-dry-run) does the same with a pre-release on TestPyPI, and needs no tag and no approval.
 
 ## Lines that name a Chrome Release
 
