@@ -419,7 +419,7 @@ Other parts of `//net` that a build flag leaves out are small on macOS: Reportin
 4. **GitHub release** of the tag, with the two wheels, the two symbols archives, a `SHA256SUMS` file of the four, and the notes of the first job.
 5. **Install**, on each Host, at the same time as the GitHub release: `pip install mitto==X.Y.Z` from PyPI into a new environment of the newest Python that mitto supports, and a request with it to a local server. It tries for five minutes, because an index can take a while to list a new version.
 
-A tag that fails the first job has published nothing. Delete it, fix what the job says, and tag again. Once the wheels are on PyPI, rerun what failed with `gh run rerun <run-id> --failed` rather than tagging again, because PyPI would refuse the version. A macOS job that GitHub cancels after about 15 minutes, with no runner named, has not started: rerun it the same way.
+A tag that fails the first job has published nothing. Delete it, fix what the job says, and tag again. Once the wheels are on PyPI, rerun what failed with `gh run rerun <run-id> --failed` rather than tagging again, because PyPI would refuse the version. That also finishes a publish that stopped after one wheel: the rerun sends the same two wheels, and PyPI takes a file that it already has, byte for byte, as it takes a new one. It refuses another file of the same name. A macOS job that GitHub cancels after about 15 minutes, with no runner named, has not started: rerun it the same way.
 
 In the first dry run, on 2026-11-07, the whole run took 33 minutes. The build jobs took 27 minutes on macOS and 32 on Linux, of which the native core took 18 and 24 minutes and the tests about 8 minutes on either Host. Each later job took under half a minute.
 

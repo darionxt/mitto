@@ -178,6 +178,9 @@ jobs:
         run: |
           ls dist
           test "$(ls dist | wc -l)" -eq 2
+      # A rerun of this job sends the same wheels again. An index answers a file that it already has, byte for byte,
+      # as it answers a new one, so a publish that stopped after one wheel finishes. skip-existing stays off, because
+      # it would also pass over another file of the same name.
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: ${{ needs.check.outputs.upload-url }}
