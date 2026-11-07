@@ -7,7 +7,7 @@ Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). Architectural deci
 | Topic | Decision |
 |---|---|
 | First deliverable | The HTTP client. The **Runtime** is a later phase. |
-| Hosts | Linux x86_64 and macOS arm64 |
+| Hosts | Linux x86_64 and macOS arm64, and Windows x64 from M4 |
 | Persona | Windows Chrome |
 | Supported Window | Current stable plus the two previous Chrome Releases ([ADR-0005](adr/0005-older-releases-as-data.md)) |
 | Network | Chromium's own stack, built from source ([ADR-0001](adr/0001-chromium-network-stack.md), [ADR-0002](adr/0002-build-inside-chromium-tree.md)) |
@@ -74,6 +74,18 @@ Goal: turn the native core into the library people use, with the HTTP behavior o
 - Yank the `0.0.0` placeholder when 0.1.0 ships. It only holds the name on PyPI: it has no code, and its wheel installs on any platform and Python version. If it stays, pip falls back to it wherever no 0.1.0 wheel fits, and the install succeeds with nothing to import.
 - **Exit:** `pip install mitto` works on both Hosts, 0.1.0 is on PyPI, and the `0.0.0` placeholder is yanked.
 
+### M4: Windows Host
+
+Goal: mitto installs and runs on Windows x64 as well. The **Persona** stays Windows Chrome on every **Host**, so this adds a Host and changes nothing a Session presents.
+
+- A workspace and a build of the native core on Windows, with Chromium's toolchain and the machine's Visual Studio and Windows SDK, as Chromium builds on Windows outside Google.
+- A Windows slice in the source export, made by hand on a Windows machine, so that hosted Windows runners build from the export as the other Hosts' runners do.
+- The asyncio API on Windows, whose default event loop cannot watch a file descriptor. A thread per Session waits in the native core there ([ADR-0003](adr/0003-c-abi-and-ctypes.md)).
+- Certificate verification as Chrome on Windows does it, which also reads Windows' certificate stores.
+- CI, a `py3-none-win_amd64` wheel and the release workflow on GitHub-hosted Windows runners.
+- M4 holds back neither 0.1.0 nor the release routine. The first release after its exit ships the Windows wheel.
+- **Exit:** `pip install mitto` works on Windows x64, and every test passes there from the installed wheel, Parity Checks included.
+
 ### Later phase: Runtime
 
 The headless JavaScript **Runtime** gets its own planning once M3 ships. The direction is V8 from the Engine Release, bindings generated from Chromium's Web IDL files, and a self-written DOM, CSS and layout. Its network requests go through the same Session machinery.
@@ -90,4 +102,5 @@ The headless JavaScript **Runtime** gets its own planning once M3 ships. The dir
 - **Randomized handshakes.** Chrome randomizes TLS extension order and GREASE values, so Parity Checks compare normalized forms rather than raw bytes.
 - **Build cost.** Chromium builds are slow on ordinary developer machines. Building only the native core's targets, never the browser, keeps iteration usable.
 - **Hosted runner limits.** GitHub-hosted runners have little disk space and a six-hour job limit, and their minutes are free only for public repositories. The trimmed export and build caching must keep a CI build inside those limits.
+- **Windows toolchain.** Chromium takes Visual Studio and the Windows SDK from the machine, and a new milestone can ask for newer versions of them. A hosted image can lag behind: in October 2026, `windows-2025-vs2026` had Visual Studio 2026 but not the SDK that Chromium 157 asks for, so a job may have to install it first.
 - **Maintenance cadence.** Chrome ships a new stable milestone every two weeks, and falling behind makes the Persona stale. The routine, including its manual steps, has to be cheap and scripted.
