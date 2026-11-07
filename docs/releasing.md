@@ -50,6 +50,8 @@ Each release has its own checkout because a shallow checkout cannot move to a ne
 
 [Make the source export](building.md#make-the-source-export) of the new release, publish it with the owner's OK, and write its URL and SHA-256 into [`tools/workspace/source_export.json`](../tools/workspace/source_export.json). CI then builds the native core from it.
 
+On each of the two machines, [update its part of the third-party notices](building.md#third-party-notices) from a build of the new export, such as the one that checks the archive, and commit the result with the run's pull request. CI's test of the installed wheel fails on a Host whose part is wrong.
+
 ### 4. Record Baselines
 
 On the Windows machine, [record Baselines](baselines.md) of every Chrome Release in the new Supported Window: the Engine Release [installed](baselines.md#install-chrome), and the older ones [unpacked](baselines.md#an-older-chrome-release), each at the build that the update server gives. [Check and commit](baselines.md#check-and-commit) them, update [where each Chrome Release comes from](baselines.md#where-each-chrome-release-comes-from), and write down what the recording found under its Chrome Release on that page.

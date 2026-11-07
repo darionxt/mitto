@@ -219,6 +219,8 @@ On Linux the file is `libmitto_core.so`. The build hook in [`tools/wheel.py`](..
 3. puts it into the wheel as `mitto/libmitto_core.dylib`, or `mitto/libmitto_core.so`;
 4. writes what stripping removed into an archive next to the wheel, named after it: `mitto-<version>-py3-none-<platform>.symbols.tar.xz`. It holds the dSYM bundle on macOS and `libmitto_core.so.debug` on Linux.
 
+Every wheel also holds `LICENSE` and the [third-party notices](#third-party-notices) of its library, [`THIRD_PARTY_NOTICES`](../THIRD_PARTY_NOTICES), in its `.dist-info/licenses` directory. `license-files` in `pyproject.toml` names both, and the wheel's `METADATA` lists them in `License-File` lines.
+
 Without `MITTO_WHEEL_LIBRARY` the build stops, so that no wheel without a library can go out: it would install anywhere and fail on its first request. An editable install, which `uv sync` makes, needs no library, because the loader takes the one in `MITTO_NATIVE_LIBRARY`. mitto ships no sdist, because a build from source needs the source export and Chromium's toolchain.
 
 The hook needs Xcode on macOS, and `objcopy` and `strip` from GNU binutils on Linux. On macOS the library only points to the debug information, which stays in the build's object files. For a library whose build directory is gone, such as one restored from CI's cache, `dsymutil` warns about each missing file, and the symbols keep function names but lose line numbers.
@@ -241,20 +243,50 @@ Measured for Chromium 157.0.8103.27, in MB of 1,000,000 bytes:
 
 The tag follows from Chromium's build. Chromium 157 sets `mac_deployment_target` to 13.0 in `build/config/mac/mac_sdk.gni`. Its Linux sysroot is Debian bullseye, and `build/linux/sysroot_scripts/reversion_glibc.py` rewrites the sysroot's glibc so that no symbol needs a version above 2.26. The library needs 2.25, for `getentropy` and `getrandom`, and auditwheel has no policy for 2.25, so the tag says 2.26. [`tests/test_wheel.py`](../tests/test_wheel.py) keeps the tag equal to what the library needs: what `auditwheel show` says on Linux, and the `minos` that `otool -l` shows on macOS.
 
-To check a wheel, install it into a new environment and run the tests there, with `MITTO_WHEEL` naming the wheel and `MITTO_NATIVE_LIBRARY` unset:
+To check a wheel, install it into a new environment and run the tests there, with `MITTO_WHEEL` naming the wheel, `MITTO_HOST_NOTICES` naming what the [notices script](#third-party-notices) prints for the library's build, and `MITTO_NATIVE_LIBRARY` unset. Print the notices first, because `uv run` would install the project into the new environment:
 
 ```bash
+uv run python -m tools.workspace.notices host /absolute/path/to/chromium-<tag>/src/out/mitto > dist/host-notices.txt
 export UV_PROJECT_ENVIRONMENT=/absolute/path/to/new/environment
 uv sync --no-install-project
 uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" dist/mitto-*.whl
-MITTO_WHEEL="$(ls "$PWD"/dist/mitto-*.whl)" "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest
+MITTO_WHEEL="$(ls "$PWD"/dist/mitto-*.whl)" MITTO_HOST_NOTICES="$PWD/dist/host-notices.txt" "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest
 ```
 
-The suite then runs against the installed package, and `MITTO_WHEEL` adds the tests of the wheel itself: that the installed package loads the wheel's library, that the tag is what the library needs, and that the symbols archive belongs to the library and names a function that the stripped library does not.
+The suite then runs against the installed package, and `MITTO_WHEEL` adds the tests of the wheel itself: that the installed package loads the wheel's library, that the tag is what the library needs, that the symbols archive belongs to the library and names a function that the stripped library does not, and that the wheel holds the notice of every project that its library links on this Host.
+
+### Third-party notices
+
+The library links Chromium and about 80 projects that Chromium uses, such as BoringSSL, QUICHE, ICU, zlib, Brotli, zstd, Abseil, Perfetto, Rust crates and the Rust standard library. Their licences ask that a binary carries their notices, so [`THIRD_PARTY_NOTICES`](../THIRD_PARTY_NOTICES) holds an entry for each project, with the text of its licence, and every wheel carries that file.
+
+[`tools/workspace/notices.py`](../tools/workspace/notices.py) writes it from the library's build graph, as Chromium's `tools/licenses/licenses.py` does for Chrome. The source export does not hold that script, and the script would also count the build's tools:
+
+1. `gn desc` describes every target of the build graph, in a directory of its own with the build directory's `args.gn`, so that the build directory stays as it is.
+2. From `//mitto:mitto_core`, it follows the dependencies whose code a shared library links: static libraries, source sets, Rust libraries and groups. An action, an executable and a Rust procedural macro only run during the build, so it stops there. protoc, the program that generates the HSTS preload list and serde's derive macros need no notice.
+3. A linked target's code lies in the directories of its sources, or in the target's own directory when all its sources are generated. A Rust crate's code counts as its target's directory, which holds its `README.chromium`.
+4. A directory belongs to the nearest project: a directory under a `third_party` directory, or a crate's `third_party/rust/<crate>/<epoch>`, that holds a `README.chromium`. One without, such as a project inside another project, is the nearest directory with licence files, and one with neither belongs to the project around it. Code outside any project is Chromium's, and the library's own code is under `LICENSE`.
+5. The `README.chromium` gives each project's name, URL, licence and licence files, with `COPYING` when the files it names do not exist. A dependency marked `Shipped: no` gets no entry: Chromium marks code whose licence another entry already carries that way, such as the part of ICU that `//base` copies. The Rust standard library has no `README.chromium`, and its licence texts come from the Rust toolchain. A linked project without a licence file stops the script.
+
+The Hosts link slightly different projects: only Linux links compiler-rt, glog's symbolizer and xdg-user-dirs. gn on one Host cannot describe the other Host's build, so each entry says which Hosts link its project, and each Host writes its own part, from a build of the [source export](#build-from-the-source-export) or of a [checkout](#build-the-native-core):
+
+```bash
+uv run python -m tools.workspace.notices update /absolute/path/to/chromium-<tag>/src/out/mitto
+```
+
+It says which entries changed, and drops an entry that no Host links any longer. The native job of each Host in CI keeps that Host's part as the artifact `notices-<runner>` of its run, so one machine can take the other Host's part from there:
+
+```bash
+gh run download <run-id> --name notices-ubuntu-latest --dir /absolute/path/to/new/directory
+uv run python -m tools.workspace.notices merge /absolute/path/to/new/directory/host-notices.txt
+```
+
+Update both parts whenever what the library links may change: when the **Engine Release** moves, in [the release routine](releasing.md#3-make-the-source-export), when `native/BUILD.gn` changes its dependencies, and when `tools/workspace/args.gn` changes. Until a Host's part is right, the test of the installed wheel fails on that Host and names each project that the notices get wrong: one they miss, one they say is linked but is not, and one whose licence text changed.
+
+Measured for Chromium 157.0.8103.27, the notices are 0.6 MB, and they add 0.1 MB to a wheel.
 
 ### In CI
 
-The native job of each Host builds a wheel from the library it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. It installs the wheel into a new environment and runs the tests as above. This adds about 10 seconds on either Host.
+The native job of each Host builds a wheel from the library it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. It installs the wheel into a new environment and runs the tests as above. This adds about 10 seconds on either Host.
 
 Once, the wheels also passed their tests on the oldest system that their tags claim and that GitHub offers. The Linux wheel ran in an `amazonlinux:2` container on `ubuntu-latest`, with glibc 2.26. The macOS wheel ran on `macos-15`, with macOS 15.8: GitHub no longer offers `macos-14`, and never had an arm64 runner with macOS 13.
 

@@ -78,3 +78,5 @@ The HTTP client leaves out WebSocket, CORS preflights, HTTPS upgrades of navigat
 ## Licence
 
 mitto is licensed under the [Apache License 2.0](https://github.com/darionxt/mitto/blob/main/LICENSE).
+
+Each wheel also holds the native library's [third-party notices](https://github.com/darionxt/mitto/blob/main/THIRD_PARTY_NOTICES): Chromium and the projects it uses, each with the text of its licence.

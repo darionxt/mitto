@@ -76,8 +76,11 @@ jobs:
         run: |
           set -o pipefail
           uv run tools/workspace/export.py build "$RUNNER_TEMP/export" | tee "$RUNNER_TEMP/build.log"
+          library="$(tail -n 1 "$RUNNER_TEMP/build.log")"
           mkdir "$RUNNER_TEMP/native-core"
-          cp "$(tail -n 1 "$RUNNER_TEMP/build.log")" "$RUNNER_TEMP/native-core"
+          cp "$library" "$RUNNER_TEMP/native-core"
+          # The notices of what this library links, which the test of the wheel's notices compares with them.
+          uv run python -m tools.workspace.notices host "$(dirname "$library")" > "$RUNNER_TEMP/native-core/host-notices.txt"
       # Before the tests, so that a test that fails does not waste the build.
       - if: steps.cached-library.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -100,6 +103,12 @@ jobs:
           if-no-files-found: error
           # Both files are compressed already.
           compression-level: 0
+      # So that this Host's part of THIRD_PARTY_NOTICES can be merged on another Host.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notices-${{ matrix.runner }}
+          path: ${{ runner.temp }}/native-core/host-notices.txt
+          if-no-files-found: error
       # A new environment, with the locked tools and the package from the wheel, so that the
       # tests load the library inside the installed package and import nothing from src/.
       - name: Install the wheel
@@ -109,6 +118,8 @@ jobs:
           uv sync --no-install-project
           uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" "$RUNNER_TEMP"/dist/*.whl
       - name: Test the installed wheel
+        env:
+          MITTO_HOST_NOTICES: ${{ runner.temp }}/native-core/host-notices.txt
         run: |
           MITTO_WHEEL="$(ls "$RUNNER_TEMP"/dist/*.whl)"
           export MITTO_WHEEL
