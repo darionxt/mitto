@@ -12,7 +12,7 @@ import json
 import math
 import os
 import sys
-from collections.abc import Buffer, Iterator, Mapping, Sequence
+from collections.abc import Buffer, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
@@ -30,6 +30,7 @@ __all__ = [
     "MEMORY_CACHE",
     "REQUEST_OPTIONS_VERSION",
     "SETTINGS_VERSION",
+    "WRITE_SIZE",
     "BodyAvailable",
     "BodyWanted",
     "EventType",
@@ -51,6 +52,7 @@ __all__ = [
     "Session",
     "encode_url",
     "find_library",
+    "finished_response",
     "iter_body",
     "load_library",
     "timeout_options",
@@ -88,7 +90,7 @@ MEMORY_CACHE = "memory"
 _READ_SIZE = 64 * 1024
 
 # How much a write gives: as much as the native core holds at a time.
-_WRITE_SIZE = 64 * 1024
+WRITE_SIZE = 64 * 1024
 
 _PROXY_SCHEMES = frozenset({"http", "https", "socks5"})
 
@@ -521,7 +523,7 @@ class NativeRequest:
                 self.end_body()
                 return
             self._unsent_body = chunk
-        written = self.write_body(self._unsent_body[:_WRITE_SIZE])
+        written = self.write_body(self._unsent_body[:WRITE_SIZE])
         if written == 0:
             self._body_chunks = None
         elif written is not None:
@@ -696,8 +698,16 @@ class Session:
 
         A NativeRequest stays usable until it is closed. Later requests fail with a RequestError.
         """
-        self._library.mitto_session_destroy(self._handle)
-        self._handle = ctypes.POINTER(MittoSession)()
+        self.detach()()
+
+    def detach(self) -> Callable[[], None]:
+        """Refuse every later call at once, as a closed Session does, and return what closes this one.
+
+        What it returns can block for a moment, on the network thread and any cache on disk, so that a caller who cannot
+        block can call it elsewhere. A Session that has been detached already gets back something that does nothing.
+        """
+        handle, self._handle = self._handle, ctypes.POINTER(MittoSession)()
+        return functools.partial(self._library.mitto_session_destroy, handle)
 
     def list_cookies(self) -> bytes:
         """Return all this Session's cookies, as the JSON that the C API's mitto_session_list_cookies() writes.
@@ -954,12 +964,17 @@ def _collect_response(request: NativeRequest) -> NativeResponse:
         RequestError: If the request ends without a response.
     """
     started, history = wait_for_response(request)
+    return finished_response(started, history, b"".join(iter_body(request)))
+
+
+def finished_response(started: ResponseStarted, history: tuple[RedirectFollowed, ...], body: bytes) -> NativeResponse:
+    """Return the response that has started with `started`, after the redirects in `history`, and has `body`."""
     return NativeResponse(
         status=started.status,
         protocol=started.protocol,
         url=started.url,
         headers=started.headers,
-        body=b"".join(iter_body(request)),
+        body=body,
         history=history,
         from_cache=started.from_cache,
     )

@@ -28,7 +28,7 @@ from tests.local_server import LocalHTTPServer
 from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer, normal_form
 from tools.parity.replay import run_of, session_settings
 
-pytestmark = pytest.mark.usefixtures("native_library")
+pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 ERR_INVALID_ARGUMENT = -4
 ERR_UPLOAD_FILE_CHANGED = -14

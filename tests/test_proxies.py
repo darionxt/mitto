@@ -17,6 +17,8 @@ from tests.local_proxy import DIGEST_CHALLENGE, LocalProxy
 from tools.capture import CASE_HOST, CASES, HTTP1, HTTP2, SAME_SITE_HOST, CaptureServer, normal_form
 from tools.parity import BASELINES_DIRECTORY, differences, fingerprint, load_baselines
 
+pytestmark = pytest.mark.usefixtures("both_apis")
+
 _CASE = next(case for case in CASES if case.name == "proxy_navigation")
 _BASELINES = {
     baseline.protocol: baseline

@@ -1,7 +1,8 @@
 """An HTTP client whose traffic matches real Chrome, built on Chromium's network stack."""
 
 from mitto._api import Session, get
-from mitto._cookies import Cookie, CookiePartitionKey, Cookies
+from mitto._async_api import AsyncSession
+from mitto._cookies import AsyncCookies, Cookie, CookiePartitionKey, Cookies
 from mitto._errors import (
     CertificateError,
     ConnectionFailedError,
@@ -16,10 +17,13 @@ from mitto._errors import (
     TooManyRedirectsError,
 )
 from mitto._persona import RequestKind
-from mitto._response import Headers, HTTPStatusError, Redirect, Response, ResponseStream
+from mitto._response import AsyncResponseStream, Headers, HTTPStatusError, Redirect, Response, ResponseStream
 from mitto._timeout import Timeout
 
 __all__ = [
+    "AsyncCookies",
+    "AsyncResponseStream",
+    "AsyncSession",
     "CertificateError",
     "ConnectionFailedError",
     "Cookie",

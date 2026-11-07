@@ -4,17 +4,15 @@ import functools
 import os
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from pathlib import Path
 from types import TracebackType
 from typing import Self, Unpack
 
-from mitto import _native
-from mitto._cookies import Cookies
-from mitto._native import MEMORY_CACHE, PrivateSettings, encode_url, iter_body, wait_for_response
-from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
-from mitto._request import RequestOptions, build_request
+from mitto._native import PrivateSettings, encode_url, iter_body, wait_for_response
+from mitto._persona import ENGINE_RELEASE_PERSONA
+from mitto._request import RequestOptions
 from mitto._response import Response, ResponseStream, to_response, to_response_stream
-from mitto._timeout import Timeout, to_timeout
+from mitto._session_state import SessionState
+from mitto._timeout import Timeout
 
 __all__ = ["Session", "get"]
 
@@ -84,22 +82,18 @@ class Session:
                 another Session has that directory open.
             NativeLibraryError: If the native library cannot be used.
         """
-        self._persona = load_persona(persona)
-        self._timeout = to_timeout(timeout)
-        # Before anything that needs closing exists, because this can raise. The working directory may change before the
-        # Session closes.
-        self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
-        self._native = _native.Session(
-            accept_language=self._persona.accept_language if accept_language is None else accept_language,
-            user_agent=self._persona.user_agent,
+        self._state = SessionState(
+            persona=persona,
+            accept_language=accept_language,
             additional_trust_anchors=additional_trust_anchors,
+            timeout=timeout,
+            cookie_file=cookie_file,
             proxy=proxy,
-            http_cache=_http_cache_setting(cache),
-            **(PrivateSettings() if _settings is None else _settings),
+            cache=cache,
+            settings=_settings,
         )
-        self.cookies = Cookies(self._native)
-        if self._cookie_file is not None:
-            self._load_cookie_file(self._cookie_file)
+        self._native = self._state.native
+        self.cookies = self._state.cookies
 
     def __enter__(self) -> Self:
         return self
@@ -119,12 +113,7 @@ class Session:
         Raises:
             OSError: If `cookie_file` cannot be written.
         """
-        cookie_file, self._cookie_file = self._cookie_file, None
-        try:
-            if cookie_file is not None:
-                self.cookies.save(cookie_file)
-        finally:
-            self._native.close()
+        self._state.close()
 
     def request(self, method: str, url: str, **options: Unpack[RequestOptions]) -> Response:
         """Fetch `url` and block until the whole response has arrived, with the GIL released while it waits.
@@ -151,9 +140,7 @@ class Session:
                 is not a valid URL, ends the request with ERR_INVALID_ARGUMENT.
             Exception: Whatever a stream's file or iterable raises, which ends the request.
         """
-        options.setdefault("timeout", self._timeout)
-        built = build_request(self._persona, method, url, **options)
-        return to_response(self._native.request(**built))
+        return to_response(self._native.request(**self._state.build(method, url, options)))
 
     @contextmanager
     def stream(self, method: str, url: str, **options: Unpack[RequestOptions]) -> Generator[ResponseStream]:
@@ -174,9 +161,7 @@ class Session:
                 what reads it.
             Exception: Whatever a stream's file or iterable raises, which ends the request.
         """
-        options.setdefault("timeout", self._timeout)
-        built = build_request(self._persona, method, url, **options)
-        with self._native.start(**built) as request:
+        with self._native.start(**self._state.build(method, url, options)) as request:
             started, history = wait_for_response(request)
             yield to_response_stream(started, history, iter_body(request))
 
@@ -207,32 +192,6 @@ class Session:
     def options(self, url: str, **options: Unpack[RequestOptions]) -> Response:
         """Send an OPTIONS request, as request() does."""
         return self.request("OPTIONS", url, **options)
-
-    def _load_cookie_file(self, path: Path) -> None:
-        """Load what `path` holds, where a file that does not exist yet holds nothing. Close the Session if that fails."""
-        try:
-            self.cookies.load(path)
-        except FileNotFoundError:
-            pass
-        except BaseException:
-            self._native.close()
-            raise
-
-
-def _http_cache_setting(cache: str | os.PathLike[str] | None) -> str | None:
-    """Return the native Session's setting for what Session() takes as `cache`.
-
-    Raises:
-        ValueError: If `cache` is an empty string, which would otherwise mean the working directory.
-    """
-    if cache is None:
-        return None
-    if cache == "":
-        raise ValueError("cache is an empty string, which names no directory")
-    if cache == MEMORY_CACHE:
-        return MEMORY_CACHE
-    # The working directory may change before the Session closes, and the native core only takes an absolute path.
-    return str(Path(cache).resolve())
 
 
 @functools.cache

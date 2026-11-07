@@ -26,7 +26,7 @@ from tests.local_certificates import (
 )
 from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer
 
-pytestmark = pytest.mark.usefixtures("native_library")
+pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 HOST = "localhost"
 ERR_ABORTED = -3

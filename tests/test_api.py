@@ -27,6 +27,8 @@ from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS, MAIN_CASES, CaptureServer, normal_form
 from tools.capture import RequestKind as CaptureRequestKind
 
+pytestmark = pytest.mark.usefixtures("both_apis")
+
 ERR_INVALID_ARGUMENT = -4
 ERR_INVALID_URL = -300
 

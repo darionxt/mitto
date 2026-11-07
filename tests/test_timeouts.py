@@ -30,6 +30,8 @@ from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP2, HTTP3, CaptureServer
 from tools.parity.replay import run_of, session_settings
 
+pytestmark = pytest.mark.usefixtures("both_apis")
+
 ERR_CONNECTION_TIMED_OUT = -118
 ERR_INVALID_ARGUMENT = -4
 ERR_TIMED_OUT = -7

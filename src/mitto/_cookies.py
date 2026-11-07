@@ -4,6 +4,7 @@
 through the native core, so that nothing here can disagree with it. See docs/parity.md for how a Session uses them.
 """
 
+import asyncio
 import json
 import os
 import tempfile
@@ -15,7 +16,7 @@ from typing import Any, Literal
 
 from mitto import _native
 
-__all__ = ["Cookie", "CookiePartitionKey", "Cookies"]
+__all__ = ["AsyncCookies", "Cookie", "CookiePartitionKey", "Cookies", "write_cookie_file"]
 
 type SameSite = Literal["unspecified", "none", "lax", "strict"]
 """A cookie's SameSite attribute. "unspecified" is a cookie without one, which //net treats as "lax"."""
@@ -97,8 +98,8 @@ class Cookie:
     source_type: CookieSourceType | None = None
 
 
-class Cookies:
-    """The cookies of one Session.
+class _CookieStore:
+    """What the cookie store in //net holds, for each API's kind of cookies to read and change.
 
     Each call asks the network thread, and blocks only the calling thread for as long as that takes, with the GIL
     released. The calls may come from any thread, but not after the Session has closed, when they raise a ValueError.
@@ -163,25 +164,7 @@ class Cookies:
         """Delete every cookie, and return how many went."""
         return self._delete({})
 
-    def save(self, path: str | os.PathLike[str]) -> None:
-        """Write all the cookies to a JSON file that only its owner can read or write.
-
-        The values are not encrypted. Session cookies are written too, as a browser does that restores its last session.
-        A crash during this call leaves the file as it was.
-
-        Raises:
-            OSError: If the file cannot be written.
-        """
-        _replace_file(Path(path).resolve(), self._native.list_cookies())
-
-    def load(self, path: str | os.PathLike[str]) -> None:
-        """Add the cookies of a file from save(), each with the attributes it had there, replacing any of the same name.
-
-        Raises:
-            OSError: If the file cannot be read, such as a FileNotFoundError.
-            ValueError: If the native core refuses what the file holds, in which case no cookie is added.
-        """
-        contents = Path(path).read_bytes()
+    def _set_from_file(self, path: str | os.PathLike[str], contents: bytes) -> None:
         try:
             self._native.set_cookies(contents)
         except ValueError as error:
@@ -192,6 +175,69 @@ class Cookies:
 
     def _delete(self, keys: dict[str, str]) -> int:
         return self._native.delete_cookies(json.dumps({"version": _native.COOKIES_VERSION, **keys}).encode())
+
+
+class Cookies(_CookieStore):
+    """The cookies of one Session.
+
+    Each call asks the network thread, and blocks only the calling thread for as long as that takes, with the GIL
+    released. The calls may come from any thread, but not after the Session has closed, when they raise a ValueError.
+    """
+
+    def save(self, path: str | os.PathLike[str]) -> None:
+        """Write all the cookies to a JSON file that only its owner can read or write.
+
+        The values are not encrypted. Session cookies are written too, as a browser does that restores its last session.
+        A crash during this call leaves the file as it was.
+
+        Raises:
+            OSError: If the file cannot be written.
+        """
+        write_cookie_file(path, self._native.list_cookies())
+
+    def load(self, path: str | os.PathLike[str]) -> None:
+        """Add the cookies of a file from save(), each with the attributes it had there, replacing any of the same name.
+
+        Raises:
+            OSError: If the file cannot be read, such as a FileNotFoundError.
+            ValueError: If the native core refuses what the file holds, in which case no cookie is added.
+        """
+        self._set_from_file(path, Path(path).read_bytes())
+
+
+class AsyncCookies(_CookieStore):
+    """The cookies of one AsyncSession, which are those of Cookies with the file left to a thread of the event loop's.
+
+    What the network thread answers is one short task on it, which never waits for Python, so those calls stay plain ones,
+    on the event loop's thread. They raise a ValueError once the AsyncSession has begun to close.
+    """
+
+    async def save(self, path: str | os.PathLike[str]) -> None:
+        """Write all the cookies to a file off the event loop, as Cookies.save() does.
+
+        Raises:
+            OSError: If the file cannot be written.
+        """
+        # This asks the network thread here, so that nothing off the loop can use a native Session that is closing.
+        await asyncio.to_thread(write_cookie_file, path, self._native.list_cookies())
+
+    async def load(self, path: str | os.PathLike[str]) -> None:
+        """Read a file from save() off the event loop and add its cookies, as Cookies.load() does.
+
+        Raises:
+            OSError: If the file cannot be read, such as a FileNotFoundError.
+            ValueError: If the native core refuses what the file holds, in which case no cookie is added.
+        """
+        self._set_from_file(path, await asyncio.to_thread(Path(path).read_bytes))
+
+
+def write_cookie_file(path: str | os.PathLike[str], contents: bytes) -> None:
+    """Write what the native core lists as a file of cookies that only its owner can read or write.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    _replace_file(Path(path).resolve(), contents)
 
 
 def _to_microseconds(time: datetime | None) -> int | None:
