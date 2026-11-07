@@ -280,7 +280,7 @@ gh run download <run-id> --name notices-ubuntu-latest --dir /absolute/path/to/ne
 uv run python -m tools.workspace.notices merge /absolute/path/to/new/directory/host-notices.txt
 ```
 
-Update both parts whenever what the library links may change: when the **Engine Release** moves, when `native/BUILD.gn` changes its dependencies, and when `tools/workspace/args.gn` changes. Until a Host's part is right, the test of the installed wheel fails on that Host and names each project that the notices get wrong: one they miss, one they say is linked but is not, and one whose licence text changed.
+Update both parts whenever what the library links may change: when the **Engine Release** moves, in [the release routine](releasing.md#3-make-the-source-export), when `native/BUILD.gn` changes its dependencies, and when `tools/workspace/args.gn` changes. Until a Host's part is right, the test of the installed wheel fails on that Host and names each project that the notices get wrong: one they miss, one they say is linked but is not, and one whose licence text changed.
 
 Measured for Chromium 157.0.8103.27, the notices are 0.6 MB, and they add 0.1 MB to a wheel.
 
