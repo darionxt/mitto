@@ -8,6 +8,24 @@ config("public_api") {
   include_dirs = [ "include" ]
 }
 
+# ICU's data, cut down to the items that the library's code can read: about
+# 0.3 MB of Chromium's 10.8 MB. ICU's build leaves its own data out, as
+# tools/workspace/args.gn asks, so every program here that links ICU needs this.
+action("icu_data_assembly") {
+  script = "make_icu_data.py"
+  inputs = [ "//third_party/icu/common/icudtl.dat" ]
+  outputs = [ "$target_gen_dir/icudtl_dat.S" ]
+  args = rebase_path(inputs + outputs, root_build_dir)
+  if (is_mac) {
+    args += [ "--mach-o" ]
+  }
+}
+
+source_set("icu_data") {
+  sources = get_target_outputs(":icu_data_assembly")
+  deps = [ ":icu_data_assembly" ]
+}
+
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
   sources = [
@@ -49,6 +67,7 @@ shared_library("mitto_core") {
   ]
   public_configs = [ ":public_api" ]
   deps = [
+    ":icu_data",
     "//base",
     "//crypto",
     "//net",
@@ -109,6 +128,7 @@ if (use_libfuzzer) {
     ]
     additional_configs = [ ":public_api" ]
     deps = [
+      ":icu_data",
       "//base",
       "//net",
       "//url",
@@ -126,6 +146,7 @@ if (use_libfuzzer) {
     ]
     additional_configs = [ ":public_api" ]
     deps = [
+      ":icu_data",
       "//base",
       "//net",
       "//url",
@@ -143,6 +164,7 @@ if (use_libfuzzer) {
     ]
     additional_configs = [ ":public_api" ]
     deps = [
+      ":icu_data",
       "//base",
       "//net",
       "//url",
@@ -163,6 +185,7 @@ if (use_libfuzzer) {
     ]
     additional_configs = [ ":public_api" ]
     deps = [
+      ":icu_data",
       "//base",
       "//net",
       "//url",
@@ -178,6 +201,7 @@ if (use_libfuzzer) {
       "test/socks5_auth_fuzzer.cc",
     ]
     deps = [
+      ":icu_data",
       "//base",
       "//net",
     ]

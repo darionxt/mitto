@@ -11,9 +11,26 @@ use_allocator_shim = false
 enable_backup_ref_ptr_support = false
 dcheck_always_on = false
 
-# Links ICU's data into the library, so that no data file has to ship with it.
-# //url needs that data for hostnames that are not ASCII.
-icu_use_data_file = false
+# As in Chrome's releases, no unwind tables, which only a debugger or a stack
+# trace in a crash report would read. A debugger still finds what it needs in
+# the symbols that the wheel's build keeps.
+exclude_unwind_tables = true
+
+# ICU reads its data through a symbol that //mitto:icu_data defines, with only
+# the items that the library's code can read, so that no data file has to ship
+# with it. //url needs them for hostnames that are not ASCII. ICU's build then
+# neither links its whole data nor copies the file into the build directory.
+icu_use_data_file = true
+icu_use_stub_data = false
+icu_copy_icudata_to_root_build_dir = false
+
+# //net only uses these when its embedder asks for them, and mitto asks for
+# neither: device bound sessions need a service that the URLRequestContext
+# builder only makes on request, and the SQL backend of the HTTP cache is only
+# made for its own cache type. Both link SQLite, and its ICU extension links
+# most of ICU's code and the data that code reads.
+enable_device_bound_sessions = false
+enable_disk_cache_sql_backend = false
 
 # On Linux, //net uses these desktop libraries only for GNOME's proxy settings
 # and the desktop portal's metered-network state, and mitto uses neither. A
