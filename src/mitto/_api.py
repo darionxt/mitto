@@ -74,6 +74,7 @@ class Session:
             _settings: Settings that only tests need, which are not part of the public API.
 
         Raises:
+            TypeError: If `timeout` is neither a number, a Timeout nor None, which the message says.
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
                 `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
                 `cookie_file` does not hold cookies that this Session can use, `proxy` cannot be used or `cache` is an empty
@@ -125,8 +126,11 @@ class Session:
             **options: See RequestOptions.
 
         Raises:
-            TypeError: If `data` is of no type that makes a body or a stream gives something other than bytes, or `json`
-                holds a value that JSON has no form of.
+            TypeError: If `params` is not a mapping or pairs of text, a mapping in `data` holds a name or value that is not
+                text, `headers` is not a mapping with text for names and text or None for values, or `timeout` is neither
+                a number, a Timeout nor None, each of which the message names. Also if `data` is of no type that makes a
+                body, a stream gives something other than bytes, `files` is not a mapping or pairs with text for names, a
+                file has another form, or `json` holds a value that JSON has no form of.
             ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1,
                 `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a positive
                 number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds a
@@ -209,6 +213,7 @@ def get(url: str, **options: Unpack[RequestOptions]) -> Response:
     Takes the arguments of Session.get(). A navigation is the default, as it is there.
 
     Raises:
+        TypeError: As Session.request() does.
         ValueError: As Session.request() does.
         NativeLibraryError: If the native library cannot be used.
         RequestError: As Session.request() does.

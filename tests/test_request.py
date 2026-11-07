@@ -1,6 +1,7 @@
 """Tests of building a request. They need no native library and no connection, so they run on every machine."""
 
 import re
+from typing import Any
 from urllib.parse import parse_qsl
 
 import pytest
@@ -229,6 +230,121 @@ def test_changes_to_several_lines_at_once() -> None:
 def test_names_that_differ_only_in_case_are_refused() -> None:
     with pytest.raises(ValueError, match="differ only in case"):
         build_request(ENGINE_PERSONA, "GET", URL, headers={"X-Thing": "1", "x-thing": "2"})
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"params": {"page": 2}}, "the value of 'page' in params has to be text, not int"),
+        ({"params": {"page": 2.5}}, "the value of 'page' in params has to be text, not float"),
+        ({"params": {"page": None}}, "the value of 'page' in params has to be text, not NoneType"),
+        ({"params": {"page": b"2"}}, "the value of 'page' in params has to be text, not bytes"),
+        ({"params": {"a": ["1", "2"]}}, "the value of 'a' in params has to be text, not list"),
+        ({"params": {1: "a"}}, "a name in params has to be text, not int"),
+        ({"params": {None: "a"}}, "a name in params has to be text, not NoneType"),
+        ({"params": [("page", 2)]}, "the value of 'page' in params has to be text, not int"),
+        ({"params": [(1, "a")]}, "a name in params has to be text, not int"),
+        ({"params": [("a", "1"), ("b", 2)]}, "the value of 'b' in params has to be text, not int"),
+        ({"params": ("ab",)}, "an item of params has to be a (name, value) pair, not str"),
+        ({"params": [b"ab"]}, "an item of params has to be a (name, value) pair, not bytes"),
+        ({"params": [1]}, "an item of params has to be a (name, value) pair, not int"),
+        ({"params": [("a",)]}, "an item of params has to be a (name, value) pair, not tuple"),
+        ({"params": [("a", "1", "2")]}, "an item of params has to be a (name, value) pair, not tuple"),
+        ({"params": "a=b"}, "params has to be a mapping or (name, value) pairs, not str"),
+        ({"params": ""}, "params has to be a mapping or (name, value) pairs, not str"),
+        ({"params": b"a=b"}, "params has to be a mapping or (name, value) pairs, not bytes"),
+        ({"params": 2}, "params has to be a mapping or (name, value) pairs, not int"),
+        ({"data": {"a": 1}}, "the value of 'a' in data has to be text, not int"),
+        ({"data": {"a": None}}, "the value of 'a' in data has to be text, not NoneType"),
+        ({"data": {"a": b"1"}}, "the value of 'a' in data has to be text, not bytes"),
+        ({"data": {1: "a"}}, "a name in data has to be text, not int"),
+        ({"data": {"a": 1}, "files": {"f": b""}}, "the value of 'a' in data has to be text, not int"),
+        ({"data": {1: "a"}, "files": {"f": b""}}, "a name in data has to be text, not int"),
+        ({"files": {1: b""}}, "a name in files has to be text, not int"),
+        ({"files": [(1, b"")]}, "a name in files has to be text, not int"),
+        ({"files": [("f",)]}, "an item of files has to be a (name, value) pair, not tuple"),
+        ({"files": "f"}, "files has to be a mapping or (name, value) pairs, not str"),
+        ({"files": 1}, "files has to be a mapping or (name, value) pairs, not int"),
+        ({"headers": {"X-A": 1}}, "the value of 'X-A' in headers has to be text or None, not int"),
+        ({"headers": {"X-A": b"1"}}, "the value of 'X-A' in headers has to be text or None, not bytes"),
+        ({"headers": {1: "a"}}, "a name in headers has to be text, not int"),
+        ({"headers": {None: "a"}}, "a name in headers has to be text, not NoneType"),
+        ({"headers": [("X-A", "1")]}, "headers has to be a mapping of names to text or None, not list"),
+        ({"headers": []}, "headers has to be a mapping of names to text or None, not list"),
+        ({"headers": "X-A: 1"}, "headers has to be a mapping of names to text or None, not str"),
+        ({"headers": ""}, "headers has to be a mapping of names to text or None, not str"),
+        ({"headers": 0}, "headers has to be a mapping of names to text or None, not int"),
+        ({"timeout": (3, 10)}, "timeout has to be a number of seconds or a Timeout, not tuple"),
+        ({"timeout": "5"}, "timeout has to be a number of seconds or a Timeout, not str"),
+        ({"timeout": True}, "timeout has to be a number of seconds or a Timeout, not bool"),
+        ({"timeout": False}, "timeout has to be a number of seconds or a Timeout, not bool"),
+        ({"timeout": 1j}, "timeout has to be a number of seconds or a Timeout, not complex"),
+    ],
+)
+def test_an_argument_of_the_wrong_type_is_named_with_what_it_takes(options: dict[str, Any], message: str) -> None:
+    with pytest.raises(TypeError) as caught:
+        build_request(ENGINE_PERSONA, "POST", URL, **options)
+
+    assert str(caught.value) == message
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"params": {"token": b"a secret"}},
+        {"data": {"password": b"a secret"}},
+        {"data": {"password": b"a secret"}, "files": {"f": b""}},
+        {"headers": {"Authorization": b"a secret"}},
+    ],
+)
+def test_a_value_of_the_wrong_type_stays_out_of_the_message(options: dict[str, Any]) -> None:
+    with pytest.raises(TypeError) as caught:
+        build_request(ENGINE_PERSONA, "POST", URL, **options)
+
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        [["a", "1"], ["b", "2"]],
+        (("a", "1"), ("b", "2")),
+        iter([("a", "1"), ("b", "2")]),
+        (pair for pair in [("a", "1"), ("b", "2")]),
+    ],
+    ids=["lists", "tuples", "iterator", "generator"],
+)
+def test_pairs_of_params_come_in_any_sequence_from_any_iterable(params: Any) -> None:
+    assert build_request(ENGINE_PERSONA, "GET", URL, params=params)["url"] == f"{URL}?a=1&b=2"
+
+
+class _Text(str):
+    __slots__ = ()
+
+
+def test_a_subclass_of_str_counts_as_text() -> None:
+    built = build_request(
+        ENGINE_PERSONA,
+        "POST",
+        URL,
+        params={_Text("a"): _Text("1")},
+        data={_Text("b"): _Text("2")},
+        headers={_Text("X-A"): _Text("3")},
+    )
+
+    assert built["url"] == f"{URL}?a=1"
+    assert built["body"] == b"b=2"
+    assert ("X-A", "3") in built["headers"]
+
+
+@pytest.mark.parametrize("nothing", [None, {}])
+def test_no_headers_changes_nothing(nothing: dict[str, str] | None) -> None:
+    assert build_request(ENGINE_PERSONA, "GET", URL, headers=nothing) == build_request(ENGINE_PERSONA, "GET", URL)
+
+
+@pytest.mark.parametrize("nothing", [{}, [], ()], ids=["mapping", "list", "tuple"])
+def test_no_params_leaves_the_url_as_it_is(nothing: Any) -> None:
+    assert build_request(ENGINE_PERSONA, "GET", URL, params=nothing)["url"] == URL
 
 
 @pytest.mark.parametrize("name", ["Referer", "referer", "REFERER"])

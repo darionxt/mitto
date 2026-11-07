@@ -41,9 +41,9 @@ response = session.get(url)
 | `response.encoding = "latin-1"` | `response.content.decode("latin-1")` | A response cannot be told what its charset is |
 | `session.get(url, allow_redirects=False)` | `session.get(url, follow_redirects=False)` | The response is the redirect, with empty content |
 | `session.head(url)` | `session.head(url, follow_redirects=False)` | Every method follows redirects by default, where `requests` leaves `HEAD` alone |
-| `session.get(url, params={"page": 2})` | `session.get(url, params={"page": "2"})` | A number or `None` as a value raises an `AttributeError` |
+| `session.get(url, params={"page": 2})` | `session.get(url, params={"page": "2"})` | A number or `None` as a value raises a `TypeError` that names the argument, and so does one in a mapping in `data` or a number in `headers` |
 | `session.get(url, params={"a": ["1", "2"]})` | `session.get(url, params=[("a", "1"), ("a", "2")])` | Pairs repeat a name |
-| `session.get(url, timeout=(3, 10))` | `session.get(url, timeout=mitto.Timeout(connect=3, read=10))` | [`Timeout`](api.md#timeout-2) has a `total` too |
+| `session.get(url, timeout=(3, 10))` | `session.get(url, timeout=mitto.Timeout(connect=3, read=10))` | A tuple raises a `TypeError` that names `timeout`. [`Timeout`](api.md#timeout-2) has a `total` too |
 | `session.post(url, files={"f": open("report.csv", "rb")})` | `session.post(url, files={"f": ("report.csv", b"a,b\n")})` | A file's content is in bytes, so read it first. Its type is `application/octet-stream` unless a third item says otherwise, and is never guessed |
 | `session.get(url, stream=True)` and `iter_content()` | `with session.stream("GET", url) as stream: parts = list(stream.iter_bytes())` | Parts come as they arrive, in no size of a caller's, and the request ends with the `with` statement. `stream.read()` gives the rest at once |
 | `session.get(url, cookies={"b": "2"})` | `session.get(url, headers={"Cookie": "b=2"})` | It goes only if the store holds no cookie for the URL, because `//net` writes over it otherwise. A cookie meant to last belongs in the store |

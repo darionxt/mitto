@@ -1,6 +1,8 @@
 """How long a request may take."""
 
 from dataclasses import dataclass
+from decimal import Decimal
+from numbers import Real
 
 __all__ = ["NO_TIMEOUT", "Timeout", "to_timeout"]
 
@@ -25,7 +27,8 @@ class Timeout:
         total: The time from the start of the request to its end, over all its redirects.
 
     Raises:
-        ValueError: If a value is not a positive number of at most 2,000,000 seconds.
+        TypeError: If a value is neither a number nor None.
+        ValueError: If a number is not positive or is more than 2,000,000 seconds.
     """
 
     connect: float | None = None
@@ -34,8 +37,12 @@ class Timeout:
 
     def __post_init__(self) -> None:
         for name, seconds in (("connect", self.connect), ("read", self.read), ("total", self.total)):
+            if seconds is None:
+                continue
+            if not _is_number(seconds):
+                raise TypeError(f"{name} has to be a number of seconds or None, not {type(seconds).__name__}")
             # NaN fails this as well.
-            if seconds is not None and not 0 < seconds <= _MAX_SECONDS:
+            if not 0 < seconds <= _MAX_SECONDS:
                 raise ValueError(f"{name} has to be more than 0 and at most {_MAX_SECONDS} seconds, not {seconds}")
 
 
@@ -46,8 +53,18 @@ def to_timeout(timeout: float | Timeout | None) -> Timeout:
     """Return the timers that a caller's `timeout` argument stands for: a number is the total time, and None is no timer.
 
     Raises:
+        TypeError: If `timeout` is neither a number, a Timeout nor None.
         ValueError: As Timeout does.
     """
     if timeout is None:
         return NO_TIMEOUT
-    return timeout if isinstance(timeout, Timeout) else Timeout(total=timeout)
+    if isinstance(timeout, Timeout):
+        return timeout
+    if not _is_number(timeout):
+        raise TypeError(f"timeout has to be a number of seconds or a Timeout, not {type(timeout).__name__}")
+    return Timeout(total=timeout)
+
+
+def _is_number(value: object) -> bool:
+    """Return whether `value` is a number that has an order. Real leaves out Decimal, and takes True for 1."""
+    return not isinstance(value, bool) and isinstance(value, Real | Decimal)
