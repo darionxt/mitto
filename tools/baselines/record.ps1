@@ -158,18 +158,21 @@ function Read-LocalState {
     }
 }
 
+function Test-LocalStateHas($State, [string]$Name) {
+    return ($null -ne $State) -and ($State.PSObject.Properties.Name -contains $Name) -and [bool]$State.$Name
+}
+
 function Test-SeedArrived {
+    # Chrome writes the serial number once it has stored a seed whose signature holds, and variations_country only when
+    # the seed's response named a country, which not every response does. The country's value does not matter: it
+    # follows the network, and --variations-override-country decides what counts.
     $state = Read-LocalState
-    # The value does not matter: it follows the network, and --variations-override-country decides what counts.
-    return ($null -ne $state) -and ($state.PSObject.Properties.Name -contains 'variations_country') -and
-        [bool]$state.variations_country
+    return (Test-LocalStateHas $state 'variations_seed_serial_number') -or (Test-LocalStateHas $state 'variations_country')
 }
 
 function Get-SeedSerialNumber {
     $state = Read-LocalState
-    if (($null -ne $state) -and ($state.PSObject.Properties.Name -contains 'variations_seed_serial_number')) {
-        return $state.variations_seed_serial_number
-    }
+    if (Test-LocalStateHas $state 'variations_seed_serial_number') { return $state.variations_seed_serial_number }
     return 'none'
 }
 
@@ -331,7 +334,9 @@ try {
         Start-Chrome @() 'about:blank'
         Wait-Until 'the variations seed' $SeedTimeoutSeconds { Test-SeedArrived }
         Stop-Chrome
-        if (-not (Test-SeedArrived)) { throw 'Local State lost variations_country when Chrome closed.' }
+        if (-not (Test-SeedArrived)) { throw 'Local State lost the variations seed when Chrome closed.' }
+        $country = if (Test-LocalStateHas (Read-LocalState) 'variations_country') { 'with' } else { 'without' }
+        Write-Step "Variations seed $(Get-SeedSerialNumber), $country variations_country in Local State"
     }
 
     $serverOutput = Join-Path $Out 'server.log'
