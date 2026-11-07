@@ -1,7 +1,8 @@
 """A proxy on loopback for tests, which speaks HTTP, HTTP inside TLS or SOCKS5.
 
 It tunnels to the port that a client names on this machine, whatever name goes with that port, so that a client can ask
-for a name that exists nowhere, which //net does not take around a proxy.
+for a name that exists nowhere, which //net does not take around a proxy. An HTTP proxy can be told one port to tunnel to
+instead, for a client whose URLs name none.
 """
 
 import select
@@ -85,7 +86,7 @@ class _ProxyHandler(socketserver.StreamRequestHandler):
             return True
         if request.request_line.startswith("CONNECT "):
             self.wfile.write(_TUNNEL_OPEN)
-            self._tunnel(int(request.target.rpartition(":")[2]))
+            self._tunnel(proxy.tunnel_port or int(request.target.rpartition(":")[2]))
             return False
         location = proxy.redirects.get(request.target)
         if location is not None:
@@ -189,6 +190,7 @@ class LocalProxy(QuietServer):
         authorization: What Proxy-Authorization has to hold, or None if it asks for nothing. An empty string takes any.
         challenge: What Proxy-Authenticate holds when it asks.
         challenge_each_host: Whether it asks once for each host, whatever a client sends first.
+        tunnel_port: The port on this machine that each CONNECT goes to, or None for the port it names.
         redirects: For a plain HTTP request, the Location to answer each target with. It answers any other with a 200.
         requests: What it has been asked over HTTP.
         socks_greetings: Each SOCKS5 greeting as it came.
@@ -209,6 +211,7 @@ class LocalProxy(QuietServer):
         authorization: str | None = None,
         challenge: str = BASIC_CHALLENGE,
         challenge_each_host: bool = False,
+        tunnel_port: int | None = None,
     ) -> None:
         super().__init__((_LOOPBACK, 0), _ProxyHandler)
         self.socks = socks
@@ -221,6 +224,7 @@ class LocalProxy(QuietServer):
         self.authorization = authorization
         self.challenge = challenge
         self.challenge_each_host = challenge_each_host
+        self.tunnel_port = tunnel_port
         self.redirects: dict[str, str] = {}
         self.requests: list[ProxiedRequest] = []
         self.socks_greetings: list[bytes] = []
