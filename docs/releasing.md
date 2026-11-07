@@ -52,6 +52,8 @@ Each release has its own checkout because a shallow checkout cannot move to a ne
 
 On each of the two machines, [update its part of the third-party notices](building.md#third-party-notices) from a build of the new export, such as the one that checks the archive, and commit the result with the run's pull request. CI's test of the installed wheel fails on a Host whose part is wrong.
 
+From the same build on either machine, check [ICU's data](building.md#icus-data) again. Disassemble the unstripped library with `objdump -d`, and find every call to ICU's entry points to its data, whose names end in the ICU version, such as `ures_openDirect_78`. A caller that the table of that section does not name, or a new caller of one that passes a name on, such as `base::CodepageToUTF16()`, may ask for an item that the library lacks. Read what it asks for, and add the item to [`native/make_icu_data.py`](../native/make_icu_data.py). The build stops if an item in that list is missing from ICU's new data.
+
 ### 4. Record Baselines
 
 On the Windows machine, [record Baselines](baselines.md) of every Chrome Release in the new Supported Window: the Engine Release [installed](baselines.md#install-chrome), and the older ones [unpacked](baselines.md#an-older-chrome-release), each at the build that the update server gives. [Check and commit](baselines.md#check-and-commit) them, update [where each Chrome Release comes from](baselines.md#where-each-chrome-release-comes-from), and write down what the recording found under its Chrome Release on that page.
