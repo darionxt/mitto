@@ -94,6 +94,21 @@ It needs no administrator and no updater can reach the result. Name `Chrome-bin\
 
 Google does not say how long the server keeps answering. On 2026-11-06 it answered for every Chrome Release from 145 to 157, and not for 144 or older. So keep the installer until the Chrome Release leaves the **Supported Window**.
 
+### Which build
+
+Record the build that the server answers for the pin, with the Chrome Release in `targetversionprefix`. That is the newest build of the Chrome Release that the release feed marks as `pinnable`. Do not take the newest build that Chromium Dash or the feed's full list shows. Those lists also hold builds that Google gives only to a share of installations, and the server does not give them for a pin.
+
+On 2026-11-07 the server answered this, which kept the builds the Baselines already came from:
+
+| `targetversionprefix` | Answer |
+|---|---|
+| `155.` | 155.0.8059.85 |
+| `156.` | 156.0.8078.80 |
+| `157.` | 157.0.8103.39 |
+| `155.0.8059.86`, `156.0.8078.81` or `156.0.8078.82` | `noupdate` |
+
+The feed gives each build its share of a fraction group, and only shares in the same group compare. That day there were two groups. One holds the pinnable builds, and 157.0.8103.39 had all of it. In the other, none pinnable, 156.0.8078.80 had 49.5%, 156.0.8078.81 and 157.0.8103.38 24.75% each, and 156.0.8078.82 and 158.0.8127.18 0.5% each. 155.0.8059.86 had 10 to 25% of that group from 2026-10-20 to 2026-10-26, against 49.5 to 80% for 155.0.8059.85, and none since. So the pinned build of each older Chrome Release was also the one with the largest share, and the newer builds were rollouts to a few installations.
+
 ## The variations seed and the country
 
 Chrome fetches a variations seed, and field trials from it apply from the next start. Without it, Chrome looks fine and runs with no field trials, so a recording session waits for the seed, restarts Chrome and checks that `chrome://version` lists active variations.
@@ -106,7 +121,7 @@ To see that the flag works, read the field trials in `chrome://version/?show-var
 
 Capture traffic stays out of all this. Chrome resolves `*.localhost` itself and never sends it through a proxy. The [case pages](capture.md#recording-cases) are at names that are not local, so their starts of Chrome have `--no-proxy-server`, and `--host-resolver-rules` sends those names to loopback with no DNS. The capture server only listens on loopback, and its own proxy refuses a tunnel to any name but its own, so nothing that reaches it leaves the machine. The raw recording holds each client's address as `peer`, so that this can be checked.
 
-`chrome.txt` shows what one session drew, and only names that look network-related. The seed holds every study. To read it, take `VariationsSafeSeedV2` from the user data directory: zstd over a protocol buffer whose field 1 is the `VariationsSeed` of `components/variations/proto/variations_seed.proto`, with the serial number that `chrome.txt` names. In the seed of 2026-11-05, no study names a feature that decides the ClientHello over TCP.
+`chrome.txt` shows what one session drew, and only names that look network-related. The seed holds every study. To read it, take `VariationsSafeSeedV2` from the user data directory: zstd over a protocol buffer whose field 1 is the `VariationsSeed` of `components/variations/proto/variations_seed.proto`, with the serial number that `chrome.txt` names. A directory that Chrome has started from only once has the seed in `VariationsSeedV2` instead, and a `VariationsSafeSeedV2` of a few bytes. Once the safe seed holds it, `VariationsSeedV2` only points there. In the seed of 2026-11-05, no study names a feature that decides the ClientHello over TCP.
 
 ### Features on in Chrome's own code
 
@@ -183,7 +198,7 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
 | 156 | [Google's update server](#an-older-chrome-release), unpacked | 156.0.8078.80 | `43cca215206b634b89d226ed71522c7f58c5430b8559b92e782dd7bd77add7cc` | None |
 | 157 | [Google's update server](#install-chrome), installed | 157.0.8103.39 | `389b9e21de9a520a6e24ba807ee8760409ccc837457bbcc460d2fdce0d5e8df5` | None |
 
-All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06 for hash, signature and version, and [recorded](#chrome-155-and-156) that day.
+All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is [the build to record](#which-build): the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06 for hash, signature and version, and [recorded](#chrome-155-and-156) that day. On 2026-11-07 the server still named all three builds and these installers, with the hashes above, and [sessions with that day's seed](#the-seed-of-2026-11-07) gave the Baselines byte for byte.
 
 A recording of an older Chrome Release gets the seed of the day it is recorded, as every installation of that Chrome Release does on that day. Each Chrome Release gets [its own cut](#their-variations-seeds) of that seed.
 
@@ -309,6 +324,26 @@ Between Chrome Releases these files differ only in `sec-ch-ua`, `User-Agent`, `s
 Over the four files that is 123 fields of `sec-ch-ua`, 125 of `User-Agent` and 42 each of the other two per Chrome Release.
 
 The seed's version is the same as [the day before](#their-seed), and so is the part of its serial number after the `#`, so the studies have not changed. The part before the `#` has grown. `OptimisticDnsForTcp` is in the `chrome.txt` of some user data directories and in none of the starts of others, which goes beyond [what Chrome 157 showed](#chrome-157), and the normal form is the same in both.
+
+## The seed of 2026-11-07
+
+Later on 2026-11-07, three more sessions of each Chrome Release were recorded through `record.ps1`, with [the same builds](#where-each-chrome-release-comes-from) on the same machine. Each session recorded Chrome 155, 156 and 157 in turn, so Chrome 157 checks each session's seed. All nine gave normal forms byte for byte the same as `tests/baselines` in all thirteen files, so the Baselines stay as they are, `chrome.txt` included, and so do the Personas. None of them drew [the field trial that reaches the wire](#chrome-157).
+
+Their seed had the version `20261106-170047.808000-production`, with 635, 623 and 589 studies for Chrome 155, 156 and 157. One session of Chrome 156 got `20261107-030038.770000-production` instead, with 626 studies. One of Chrome 157 got a seed of the same version with another part after the `#` and 591 studies. Field trials differed between sessions as before, with no effect on the normal form. New in that list are `CacheGurlSchemeIsHttpOrHttpsResult`, `HttpCacheZstdCompression`, `PreconnectManagerDirectFastPath` and `VariationsFeatureAccessLogging` in Chrome 156, and `SearchPrefetchHighPriorityPrefetches` and `WinSboxCsrssLockdown` in Chrome 157.
+
+### Merkle Tree Certificates
+
+No study in any of those seeds names `VerifyMTCs`, or anything with `MTC` or `Merkle` in its name, for any of the three Chrome Releases. So the feature stays at its default, which is off in 157. The normal forms did not change, so `trust_anchors` names the same 28 IDs as before in every file with TLS, and no Merkle Tree CA was added. [capture.md](capture.md#what-this-does-not-cover) says what would change if it were.
+
+### The Platform Runtime component
+
+None of the three has it. `chrome://components` listed no Platform Runtime from new user data directories after 30 seconds, about 7 minutes and 16 minutes. It listed none after a later start either, once the seed's field trials applied. No `PlatformRuntime` directory appeared.
+
+The seeds do have a study for it, `PlatformRuntimeComponentStudy`, the same in all of them. Its groups turn the feature `EnablePlatformRuntimeComponent` on for 1% of user data directories and off for another 1%. They leave the other 98% at the feature's default, which is off. The study only applies to stable Chrome on Windows from 157.0.8079.0, so Chrome 155 and 156 never draw it, and our Chrome 157 drew the default group.
+
+Chrome 157's source has two more conditions, in `MaybeRegisterPlatformRuntimeComponent` in `chrome/browser/component_updater/platform_runtime_component_installer.cc`. The browser must be Google Chrome on Windows. Its `chrome.exe` must also run from the directory that the registry names for the installation, so an [unpacked](#an-older-chrome-release) Chrome never registers the component.
+
+It does not change the wire of a Baseline. `RequestHeaderIntegrityURLLoaderThrottle` hands every request to `PlatformRuntimeHeaders::Apply`, which adds no line. It only replaces the value of a line that the request already has, among those Chrome adds outside CORS, when the component's library returned a value under that name. Those are the lines that the same throttle adds for [Google's domains](capture.md#what-chrome-adds-for-googles-domains) alone, and the names of the case pages are not Google's. A Session sends none of those lines anyway. In the 1% of installed Chrome 157 that do have the component, it can change their values on Google's domains. We did not measure that: forcing the feature on would install the component into the directory of the installed Chrome that the Baselines come from.
 
 ## A Chrome that has run for a while
 

@@ -347,7 +347,7 @@ A Session therefore looks like a Chrome in the first seconds after a start. When
 
 The Chrome here ran for minutes, not days, and no component with a different set of IDs has reached it. That a component replaces the list while Chrome is running, without a new start, comes from the source.
 
-Merkle Tree Certificates would change the answer. With `VerifyMTCs` on, Chrome adds the IDs of its Merkle Tree CAs, and a second component, PKI Metadata Fastpush, adds landmark IDs that expire. The feature is off by default in 157 and upstream on 2026-11-06, the seeds of 2026-11-05 and 2026-11-06 have no study that names it, and `chrome://components` showed no such component. A Baseline would show it, because it adds IDs to the compiled-in list too.
+Merkle Tree Certificates would change the answer. With `VerifyMTCs` on, Chrome adds the IDs of its Merkle Tree CAs, and a second component, PKI Metadata Fastpush, adds landmark IDs that expire. The feature is off by default in 157 and upstream on 2026-11-06, the seeds of 2026-11-05 to 2026-11-07 have [no study that names it](baselines.md#merkle-tree-certificates), and `chrome://components` showed no such component. A Baseline would show it, because it adds IDs to the compiled-in list too.
 
 ## What Chrome adds for Google's domains
 
@@ -466,7 +466,7 @@ So a Session sends none of these lines. That is what a build without Google's br
 ### What this does not cover
 
 - A second machine. By the source, two machines get the same `x-browser-validation`, because the hash has the same inputs. The values on macOS above differ, but that Chrome differs in more than its machine.
-- The Platform Runtime component. After 15 minutes, that Chrome had other components, but none by this name in `chrome://components` and no `PlatformRuntime` directory. If it reaches a Chrome, the source says that its library can change these values. We have not seen that.
+- The Platform Runtime component. After 15 minutes, that Chrome had other components, but none by this name in `chrome://components` and no `PlatformRuntime` directory. A study turns it on in 1% of Chrome 157 on Windows, where only an installed Chrome registers it, and none of ours had it ([baselines.md](baselines.md#the-platform-runtime-component)). Where it is, the source says that its library can change these values. We have not seen that.
 - HTTP/3 at Google's own servers. The real sessions went over HTTP/2, so HTTP/3 comes from the capture server alone.
 - Why Chrome 155 sends no `x-sec-ch-ua-not-a-border`. Its source has the same code, and it comes with a library of that name.
 - Whether Google does anything with these lines, or answers differently without them. This page says what Chrome sends.
