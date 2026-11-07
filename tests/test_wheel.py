@@ -2,7 +2,9 @@
 
 Tests of the tag read made-up headers. Tests of the build run hatchling on this repository. Those that need a library
 compile a stub with cc, and are skipped when there is no C compiler. Those that take the built_wheel fixture check a wheel
-of the real native core, named in MITTO_WHEEL, and the package installed from it.
+of the real native core, named in MITTO_WHEEL, and the package installed from it. The test of its notices also needs
+what the library links, which `python -m tools.workspace.notices host` prints from the library's build, in
+MITTO_HOST_NOTICES.
 """
 
 import ctypes
@@ -24,11 +26,15 @@ import pytest
 
 from mitto import _native
 from tools import wheel
+from tools.workspace import export, notices
 
 REPOSITORY = Path(__file__).parents[1]
 
 # Names a wheel of the real native core, with its symbols archive next to it.
 WHEEL_ENV_VAR = "MITTO_WHEEL"
+
+# Names this Host's part of the notices, from the build of the wheel's library.
+HOST_NOTICES_ENV_VAR = "MITTO_HOST_NOTICES"
 
 # A function of the native core that the C API does not export.
 HIDDEN_FUNCTION = "mitto::ParseSessionSettings"
@@ -321,6 +327,25 @@ def test_the_wheel_holds_the_library_next_to_the_loader(stub_wheel: Path) -> Non
     assert f"Tag: {tag}" in lines
 
 
+def licence_files_of(built: Path) -> dict[str, bytes]:
+    """Return the licence files in a wheel's .dist-info directory, by name, and check that its metadata names each."""
+    with zipfile.ZipFile(built) as archive:
+        names = archive.namelist()
+        (metadata,) = (name for name in names if name.endswith(".dist-info/METADATA"))
+        directory = f"{metadata.removesuffix('METADATA')}licenses/"
+        files = {name.removeprefix(directory): archive.read(name) for name in names if name.startswith(directory)}
+        lines = archive.read(metadata).decode().splitlines()
+    assert [line.removeprefix("License-File: ") for line in lines if line.startswith("License-File: ")] == sorted(files)
+    return files
+
+
+def test_the_wheel_holds_the_licence_and_the_notices(stub_wheel: Path) -> None:
+    assert licence_files_of(stub_wheel) == {
+        "LICENSE": (REPOSITORY / "LICENSE").read_bytes(),
+        notices.NOTICES_FILE.name: notices.NOTICES_FILE.read_bytes(),
+    }
+
+
 def test_the_stripped_stub_loads(stub_wheel: Path, tmp_path: Path) -> None:
     library, _ = unpack(stub_wheel, tmp_path)
 
@@ -365,3 +390,15 @@ def test_the_wheel_is_tagged_for_what_its_library_needs(built_wheel: Path, tmp_p
 
 def test_the_symbols_of_the_wheel_name_a_function_the_library_does_not(built_wheel: Path, tmp_path: Path) -> None:
     check_symbols(built_wheel, HIDDEN_FUNCTION, tmp_path)
+
+
+def test_the_wheel_holds_the_notice_of_every_project_its_library_links(built_wheel: Path) -> None:
+    value = os.environ.get(HOST_NOTICES_ENV_VAR)
+    if not value:
+        pytest.skip(f"nothing says what the library links; set {HOST_NOTICES_ENV_VAR} to run this test")
+    linked = notices.parse(Path(value).read_text())
+    host = export.current_host().name
+    in_wheel = notices.parse(licence_files_of(built_wheel)[notices.NOTICES_FILE.name].decode())
+
+    assert notices.host_of(linked) == host
+    assert notices.differences(in_wheel, host, linked) == []

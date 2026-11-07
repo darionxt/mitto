@@ -5,7 +5,7 @@ description = "A Python HTTP client whose traffic matches real Chrome, built on 
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
 keywords = ["asyncio", "chrome", "chromium", "http", "http-client", "http2", "http3", "quic", "tls"]
 # The licence is the SPDX expression above, so no classifier repeats it.
 classifiers = [
