@@ -70,7 +70,7 @@ Goal: turn the native core into the library people use, with the HTTP behavior o
 
 - Release builds on the same GitHub-hosted runners as CI.
 - Wheels: `py3-none` for manylinux x86_64 (the glibc floor follows Chromium's Linux sysroot) and for macOS arm64. Symbols are stripped and shipped as a separate symbols archive. The target is about 5 MB per wheel.
-- A release routine every two weeks, following Chrome's stable milestones: move the Engine Release to the new stable, refresh Persona data, re-record Baselines, rebuild and publish.
+- A release routine every two weeks, following Chrome's stable milestones: move the Engine Release to the new stable, refresh Persona data, re-record Baselines, rebuild and publish. See [releasing.md](releasing.md).
 - Yank the `0.0.0` placeholder when 0.1.0 ships. It only holds the name on PyPI: it has no code, and its wheel installs on any platform and Python version. If it stays, pip falls back to it wherever no 0.1.0 wheel fits, and the install succeeds with nothing to import.
 - **Exit:** `pip install mitto` works on both Hosts, 0.1.0 is on PyPI, and the `0.0.0` placeholder is yanked.
 

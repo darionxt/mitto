@@ -299,7 +299,7 @@ The repositories keep every tag and commit they fetch. Delete `$MITTO_WORKSPACE/
 
 [`tools/workspace/export.py`](../tools/workspace/export.py) makes the source export by hand, on machines that hold a workspace. Make a new one when:
 
-- the **Engine Release** moves;
+- the **Engine Release** moves, in [the release routine](releasing.md);
 - a patch in [`tools/workspace/patches`](../tools/workspace/patches) or a value in [`tools/workspace/args.gn`](../tools/workspace/args.gn) changes;
 - a new build configuration, such as another sanitizer, needs files that this one does not;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
@@ -350,16 +350,3 @@ A slice holds:
 It leaves out the build output, `//mitto` and the toolchain. It stops if it would keep a prebuilt program, because that belongs in the toolchain list at the top of the script.
 
 The merge stops if a path differs between slices, other than `build/config/gclient_args.gni`, which gclient writes per Host and whose `checkout_*` values decide nothing in this build graph. It also stops if a third-party project in the export has no licence file. It reads the toolchain's pins from `DEPS`, and resolves those in CIPD to a hash with depot_tools.
-
-## Move to a new Engine Release
-
-Chrome ships a new stable milestone every two weeks, and the Engine Release follows it ([ADR-0005](adr/0005-older-releases-as-data.md)).
-
-1. On [Chromium Dash](https://chromiumdash.appspot.com/releases?platform=Windows), find the newest Windows stable build of the new milestone. Windows is used because the Persona is Windows Chrome.
-2. Write that version into `tools/workspace/chromium_tag`.
-3. Rerun `tools/workspace/bootstrap`. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`. If a patch no longer applies, the script stops after the sync. Update the patch against the new checkout and rerun the script. Delete a patch the new release no longer needs.
-4. [Build the native core](#build-the-native-core) in the new checkout.
-5. [Make the source export](#make-the-source-export) of the new release.
-6. Once the new release works, delete the old release's `chromium-<tag>` directory.
-
-Each release has its own checkout because a shallow checkout cannot move to a new release in place: gclient would fetch every branch with full history. Until step 6, the old checkout and its build output stay usable.

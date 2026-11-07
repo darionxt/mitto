@@ -68,7 +68,7 @@ Add-Type -AssemblyName System.Web.Extensions
 # name too many costs one line, and a name too few hides what changed the wire.
 $NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|socket|cert|alps|mlkem|kyber|tcp|ipv[46]|ipmatching' +
     '|preconnect|proxy|priorit|urlloader|structuredheaders|shareddictionar|zstd|brotli|clienthint|acceptlang|useragent' +
-    '|reduceua|connection|preload|prefetch|prerender|hsts|(?-i:ECH|H2|H3)'
+    '|reduceua|connection|preload|prefetch|prerender|hsts|mtc|(?-i:ECH|H2|H3)'
 
 # Chrome turns these on in ChromeMainDelegate::CommonEarlyInitialization unless something overrides them, and //net has
 # them off. chrome://version only lists overrides, so with none, only these lines of chrome.txt name them.

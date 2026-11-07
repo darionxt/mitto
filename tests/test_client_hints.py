@@ -19,8 +19,9 @@ import pytest
 import mitto
 from mitto import RequestError
 from mitto._native import PrivateSettings
-from mitto._persona import CHROME_155_WINDOWS, CHROME_156_WINDOWS, CHROME_157_WINDOWS
+from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS
 from tests.local_server import LocalHTTPServer
+from tools.release.window import recorded_build
 
 pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
@@ -687,12 +688,7 @@ def test_a_subresource_sends_its_lines_in_the_order_of_blinks_map(
 
 
 @pytest.mark.parametrize(
-    ("persona", "version"),
-    [
-        (CHROME_155_WINDOWS, "155.0.8059.85"),
-        (CHROME_156_WINDOWS, "156.0.8078.80"),
-        (CHROME_157_WINDOWS, "157.0.8103.39"),
-    ],
+    ("persona", "version"), [(persona, recorded_build(release)) for release, persona in WINDOWS_PERSONAS.items()]
 )
 def test_each_persona_says_its_own_full_version(servers: Servers, persona: str, version: str) -> None:
     with new_session(persona) as session:
