@@ -40,6 +40,8 @@ Open each address in a Chrome started that way. Chrome ignores `--ignore-certifi
 
 To check that a client records the same twice, record it into two directories and compare the files.
 
+`--tickets` has the server give out session tickets, and takes clients through [the runs that resume](#how-the-server-does-it) instead of the others.
+
 `--host` sets another name ending in `.localhost`. `--http1-port`, `--http2-port`, `--http3-port`, `--plain-http-port` and `--proxy-port` set other ports. The normal form does not depend on any of them. `--runs` names the runs to wait for, such as `--runs http1 http2 http3`.
 
 `--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols.
@@ -51,7 +53,7 @@ To check that a client records the same twice, record it into two directories an
 - It serves HTTP/1.1 and HTTP/2 on separate TCP ports, and HTTP/3 on a UDP port. Each port offers one protocol through ALPN. On a TCP port, a client that does not take it is served HTTP/1.1, and the normal form shows that. Over QUIC, such a client gets no connection.
 - It serves plain HTTP/1.1 on another TCP port.
 - It is an HTTP proxy on another TCP port. It answers `CONNECT` to one of its names on its HTTP/1.1 or HTTP/2 port by serving that port's protocol in the tunnel, on the same socket, so a tunnel reaches nothing outside the server. It refuses anything else with a 403. What comes through it gets its own recording, whose connections also hold the `CONNECT` that opened them.
-- It gives out no session tickets. Every connection is therefore a fresh one, with no `pre_shared_key`, including the later connections of one page load.
+- It gives out no session tickets unless it is told to with `--tickets`. Every connection is therefore a fresh one, with no `pre_shared_key`, including the later connections of one page load. Baselines come from a server like this, and [they need nothing else](#resumed-connections-and-alps).
 - Its private certificate is new on every start, so the hash changes too.
 - Its HTTP/2 side does only what the pages need. Responses use no HPACK dynamic table and ignore flow control, because they are far smaller than the windows Chrome opens. A client whose window is smaller than a response is not served correctly. It sends no `WINDOW_UPDATE`, so a client can send it no more than the 64 KiB of the default window.
 - It waits for the end of a request's body before it answers. Over HTTP/1.1 it keeps a body of up to 16 MiB that comes with `Content-Length`. A chunked body has no length to wait for and is not recorded, so a request that has one gets an answer at once and the connection ends with it.
@@ -230,7 +232,7 @@ And an HTTP/3 connection like this:
 | `http3` | Only for `h3`. `streams` lists the unidirectional streams the client opened, and `control` the frames on its control stream, without those listed below. |
 | `requests` | One entry per Recording Case recorded, always in the order navigation, fetch, script, image and then those of [the tables above](#recording-cases). If a case was requested twice, the first request counts. `cookie` and `revalidation` only count a request with `Cookie` or `If-None-Match`, so the first request with one counts. |
 
-An HTTP/1.1 request has `request_line` and `headers`. An HTTP/2 request has the `flags` of its HEADERS frame, the frame's `priority` if it has any, `headers` and, if there were any, `later_frames`: what the client sent on the stream after the headers, without the content of bodies or encoded header blocks. An HTTP/3 request has `headers` and, if there were any, `priority_updates`: the priorities that PRIORITY_UPDATE frames on the control stream gave it, in order. It also has `earlier_frames` and `later_frames`: what the client sent on the stream before and after the first headers, without the content of bodies or encoded header sections. Headers are written `name: value`, in the order sent and with the case sent, and repeated headers stay separate.
+An HTTP/1.1 request has `request_line` and `headers`. An HTTP/2 request has the `flags` of its HEADERS frame, the frame's `priority` if it has any, `headers` and, if there were any, `later_frames`: what the client sent on the stream after the headers, without the content of bodies or encoded header blocks. An HTTP/3 request has `headers` and, if there were any, `priority_updates`: the priorities that PRIORITY_UPDATE frames on the control stream gave it, in order. It also has `earlier_frames` and `later_frames`: what the client sent on the stream before and after the first headers, without the content of bodies or encoded header sections. On a connection that sent early data it has `early_data`, which lists what came before the client's Finished: `request` for the request itself, and the type of each other stream. It goes with the request, because what a client sends early depends on the request. Headers are written `name: value`, in the order sent and with the case sent, and repeated headers stay separate.
 
 A request with a body also has `body`: all of it, as text decoded from Latin-1, which keeps every byte. `proxy_connect` is the `CONNECT` that opened the first tunnel, with the same keys as an HTTP/1.1 request. A connection without TLS, over plain HTTP, has no `tls`.
 
@@ -271,8 +273,8 @@ Only connections that carried a request of a Recording Case count, and a run's n
 ### What it does not capture yet
 
 - **Which requests share a connection.** The normal form describes one connection and then each request, so it cannot show how a client spreads its requests over connections, such as [partitioning](baselines.md#features-on-in-chromes-own-code). The raw recording can.
-- **ALPS.** Python's `ssl` cannot negotiate it, so the normal form has Chrome's offer but not the settings Chrome would then send, and no server here can send the `ACCEPT_CH` frame.
-- **Resumed connections.** The server gives out no tickets, so the normal form describes fresh connections only.
+- **ALPS.** Python's `ssl` cannot negotiate it, and neither can aioquic, so the normal form has a client's offer only, and no server here can send the `ACCEPT_CH` frame. Over TCP and over HTTP/3 [that offer is enough](#resumed-connections-and-alps), because what a client then sends is empty. Our check of that over HTTP/3 was by hand, and it is not in the kit.
+- **Resumed connections, beyond a ticket.** With `--tickets` the kit records them, and [Baselines do not need them](#resumed-connections-and-alps). Still out of reach: early data over TCP, because Python's `ssl` cannot say that a ticket allows it; a server that refuses early data or a ticket, or answers `425 Too Early`; a resumption after a HelloRetryRequest; and the token in an Initial packet, because aioquic sends no `NEW_TOKEN` frame, so `token_length` stays 0 here where a real server makes it more.
 - **Frames that depend on the response or on timing.** The normal form leaves out frames sent after the first request on stream 0, such as a later `SETTINGS` or `PING`. They remain in the raw recording.
 - **Later ClientHellos.** After a HelloRetryRequest, only the first ClientHello is recorded.
 - **QUIC after the Initial packets.** aioquic hides what the later packets hold apart from stream data, such as ACK frames, NEW_CONNECTION_ID frames and flow control updates. The kit sees none of it.
@@ -471,6 +473,142 @@ So a Session sends none of these lines. That is what a build without Google's br
 - `x-browser-year` and `x-browser-copyright` in another year. All three builds say 2026, so a change of year has not been seen, and the source says it follows the build.
 - Other lines in the source that only apply with a policy, on Android or in a feature that a new directory does not use, such as `X-Goog-*` in Chrome's own requests, `YouTube-Restrict` and `X-CCT-Client-Data`. Lines that a page's own scripts set, such as `x-youtube-client-name`, are not Chrome's.
 
+## Resumed connections and ALPS
+
+**Baselines** hold fresh connections, because the capture server gives out no session tickets for them. A real server does, so a later connection can resume. Two questions were open about that, and about what a client sends once a server takes up its offer of ALPS.
+
+| Question | Answer |
+|---|---|
+| Do Baselines need a resumed connection too? | No. In Chrome 155, 156 and 157 and in a **Session**, a resumed ClientHello is the fresh one with `pre_shared_key` added, and over HTTP/3 `early_data`. Everything else in the normal form stays the same, and both send the same things as early data. |
+| Is checking the ClientHello enough for ALPS over HTTP/3? | Yes. What Chrome and a Session send in ALPS is empty, and the code has it as a constant. Settings from a server change nothing in the normal form, and what the `ACCEPT_CH` frame changes, a Session changes too. |
+
+So neither calls for a change to what a Session sends or to the Baselines. A resumed connection adds nothing that a **Persona** decides. `tests/test_resumption.py` holds a Session to this, and with `MITTO_CHROME` set, `tests/capture/test_chrome.py` holds real Chrome to it.
+
+### What Chrome and a Session do
+
+This part comes from reading Chromium 157.0.8103.27. All of it is in `//net`, BoringSSL or QUICHE, so the two share it.
+
+| What | Where | What it does |
+|---|---|---|
+| Keeping tickets | `SSLClientSessionCache` in `HttpNetworkSession`, `QuicClientSessionCache` in `QuicSessionPool` | In memory, so a new start has none. They go by name, port and proxy, and by top-level site where connections are [partitioned](parity.md#partitioning): `GetSessionCacheKey()`, which adds privacy mode over TCP, and `QuicCryptoClientConfigKey`. |
+| Using a ticket | BoringSSL | Adds `pre_shared_key`, which has to be the last extension. A TLS 1.3 ticket is good for one connection. |
+| Early data over TCP | `HttpNetworkSessionParams::enable_early_data` | Follows `EnableTLS13EarlyData`, which is off by default. [The native core](../native/feature_list.cc) turns it off as well. |
+| Early data over QUIC | `TlsClientHandshaker`, `disable_tls_zero_rtt` | On, if the ticket allows it. |
+| Which requests go early | `HttpNetworkTransaction`, `QuicHttpStream::DoRequestStream()` | Those with a safe method, or marked idempotent. Others wait until the handshake is confirmed. |
+| ALPS over QUIC | `TlsClientHandshaker::SetAlpn()` | `SSL_add_application_settings()` with no data, for the ALPN of each IETF version. No setting reaches it. `use_new_alps_codepoint` only chooses the extension's number. |
+| ALPS over TCP | `HttpNetworkSession` | `application_settings_[kProtoHTTP2] = {}` |
+| Sending those settings | BoringSSL's `do_send_end_of_early_data()` | In an `EncryptedExtensions` message before the client's Finished, unless the server accepted early data. Then the settings of the session before carry over, and the server must not say any. |
+
+A study could change the first of these. A search of the decompressed seeds of 2026-11-07, for all three Chrome Releases, finds no `EarlyData`, `TLS13`, `ZeroRtt`, `zero_rtt`, `0RTT`, `Alps`, `ALPS` or `disable_tls`, while `TryQuicByDefault` is there. If one drew `EnableTLS13EarlyData`, `chrome.txt` would name it.
+
+### How the server does it
+
+With `--tickets`, connections over TLS get tickets. Those over HTTP/3 allow early data. Those over TCP do not, because Python's `ssl` has no way to say so. Datagrams wait 100 ms before the server reads them, as if it were far away: on loopback a handshake can end before a client has written its request, and then nothing it would send early shows.
+
+Three runs take a client through these requests, over each protocol. Each page asks for an answer that ends its connection before the next step: `Connection: close` over HTTP/1.1, and `GOAWAY` after the answer over HTTP/2 and HTTP/3.
+
+| Request | Its connection | File |
+|---|---|---|
+| A navigation to the first page | Brings the tickets | Raw recording only, because it can be either kind, as [below](#what-only-chrome-does) |
+| `resumption_fetch`, a `fetch()` | New, resumed | `resumption/http1.json`, `http2.json`, `http3.json` |
+| `resumption_post`, a `fetch()` with a string | New, resumed | The same |
+| `resumption_navigation`, a navigation from a script | New, resumed | The same |
+| `resumption_other_site_script`, a `<script>` from another site | New, fresh | `resumption/http1.fresh.json`, `http2.fresh.json`, `http3.fresh.json` |
+| A navigation to that other site | New. The script's ticket is for another top-level site | Raw recording only |
+
+[`record.ps1 -Tickets`](baselines.md) takes a Chrome through them. These runs are not Baselines, and none of them went into `tests/baselines`.
+
+### What we measured
+
+This part was measured on 2026-11-07. Chrome was stable Windows 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39, windowed, from new user data directories with a variations seed and [the flags of a Baseline](baselines.md#what-it-does), three sessions of each. A Session was a macOS arm64 build of the native core, with each **Persona**, two sessions of each. All three sessions of a Chrome Release gave identical normal forms.
+
+#### A resumed connection against a fresh one
+
+The fresh connections have the same `tls`, `http2`, `http3` and `quic` as `tests/baselines/RELEASE/cases/*.json`, in all nine files. Against those:
+
+| | Over HTTP/1.1 and HTTP/2 | Over HTTP/3 |
+|---|---|---|
+| What a resumed ClientHello adds | `pre_shared_key` | `pre_shared_key`, `early_data` |
+| Every other extension, and the rest of `tls`, `http2`, `http3`, `quic` | The same | The same |
+
+Some of what differs is not in a normal form, so we read it in the raw recordings of all 134 resumed connections of Chrome and all 54 of a Session. It was the same in both:
+
+| | Over HTTP/1.1 and HTTP/2 | Over HTTP/3 |
+|---|---|---|
+| `pre_shared_key` | The last extension, with one identity, which is the server's ticket, and one binder | The same |
+| `initial_round_trip_time` | | There on each resumed connection, and on no fresh one |
+| First datagram | | 1250 bytes, as on a fresh connection |
+
+The lines of each request were those of its kind in the Baselines, in the same order, apart from `Referer`, which names the page.
+
+#### Early data
+
+| What opens the connection | As early data over HTTP/3 | Over HTTP/1.1 and HTTP/2 |
+|---|---|---|
+| `fetch()` | The request, the control stream, the QPACK encoder stream | Nothing |
+| A navigation | The request, the control stream, the QPACK encoder stream | Nothing |
+| `fetch()` with a string, a `POST` | The control stream. The request waits for the end of the handshake | Nothing |
+
+This is the same in each Chrome Release, each session and a Session.
+
+To check that nothing goes early over TCP, the tickets have to allow it, so by hand we set `SSL_CTX_set_max_early_data()` through `ctypes` on the server's context:
+
+| Client | `early_data` in a ClientHello with a ticket that allows it |
+|---|---|
+| Chrome 155, 156 and 157 | In none of 36 |
+| The same, with `--enable-features=EnableTLS13EarlyData` | In 33 of 46, which shows that these tickets allow it |
+| A Session, on Linux, because Python on macOS here has no such function to call | In none of 36 |
+
+Most connections that offered it ended during the handshake against this server, which does not read early data, and we did not look into why. So what Chrome would send early over TCP is not known. With the feature off, that does not matter.
+
+#### A Session against Chrome
+
+For each Persona and protocol, the normal forms are those of that Chrome Release, in both files, apart from two things that have nothing to do with resuming:
+
+- The navigation came from a script, so Chrome sends no `Sec-Fetch-User`, and a Session's navigation has `?1`.
+- The page adds `resumption_other_site_script` from a script, so over HTTP/2 and HTTP/3 Chrome gives it a lower priority than a Session's `script`, with no `priority` line.
+
+A navigation to the other site was fresh in all 27 runs of Chrome and all 18 of a Session, although the script had just got a ticket for that name. So a ticket stays with its top-level site in both.
+
+#### What only Chrome does
+
+Chrome opens connections that carry no request, and these take tickets as well. Over HTTP/1.1 and HTTP/2, one opened before the first navigation, so that navigation itself came over a resumed connection in 17 of 18 runs. Over HTTP/3 it was fresh in all 9. A Session opens no such connections, so its first request to a name always comes over a fresh one. No normal form holds this, as with [which requests share a connection](#what-it-does-not-capture-yet).
+
+#### ALPS over HTTP/3
+
+Neither Python's `ssl` nor aioquic can negotiate ALPS. aioquic's TLS is written in Python, though, so for this a subclass of it, not in the kit, puts `application_settings` in the server's `EncryptedExtensions`, and takes the client's `EncryptedExtensions` into the transcript before its Finished. That is how we read what a client sends.
+
+| The server says | The client's `EncryptedExtensions` | The normal forms |
+|---|---|---|
+| Nothing | `08 000006 0004 44cd 0000`: one `application_settings` with nothing in it, in all 20 connections of Chrome and all 111 of a Session | `http3.json` and `cases/http3.json` of each Chrome Release are byte for byte the Baselines. A Session has no gaps from the 87 HTTP/3 Baselines of those runs |
+| `SETTINGS` | The same, in all 19 and all 111 | The same |
+| `SETTINGS` and `ACCEPT_CH` for `sec-ch-ua-arch` | The same, in all 6 and all 3 | Only the navigation differs from the Baselines. It has `sec-ch-ua-arch`, between `accept` and `sec-fetch-site`, on the request that went out, and a Session's normal form is the same as Chrome's throughout |
+| `SETTINGS`, with tickets | The same on the 9 and 18 connections with no early data accepted, and no message on the 9 and 18 that had it | The same as the resumption runs without ALPS |
+
+Google's real servers negotiate it too, as [the next part](#at-real-servers) shows.
+
+#### At real servers
+
+The capture server is ours, so we also went to real servers, on 2026-11-07. This ran on a hosted Linux runner, with stable Chrome 156.0.8078.79 and a Session, over real UDP. Each client asked for a page, waited 45 seconds until its connection had ended, and asked again. `tcpdump` gave the Initial packets, which anyone can read, and a net log gave what Chrome got. A script read the net logs and printed names only.
+
+| Server | Client | Later connections against the first | 0-RTT packets | Token in the Initial packet |
+|---|---|---|---|---|
+| `www.google.com` | Chrome | `pre_shared_key` and `early_data` are the only extensions that differ, on all 3 | 1 to 4 | 70 to 86 bytes, and none on the first |
+| `www.google.com` | A Session | The same, on the 1 it opened | 3 | 70 bytes, and none on the first |
+| `www.cloudflare.com` | Chrome | `pre_shared_key` is the only one that differs, on all 4 | None | None |
+
+The net logs fit that. At `www.google.com`, every session has `QUIC_ACCEPT_CH_FRAME_RECEIVED`, which only comes from ALPS, so that server does negotiate it over HTTP/3. Later ones have `QUIC_SESSION_ZERO_RTT_STATE` with `AttemptedAndSucceeded`. At `www.cloudflare.com` they have no such frame and `NotAttempted`, so its tickets do not allow early data, and neither client offers it unless they do.
+
+The token is what a server's `NEW_TOKEN` frame leaves for next time. The capture server sends none, so it never shows there, and both clients sent one here. A Session has no net log, so it says nothing of what `www.google.com` said in ALPS beyond answering with a 200 over HTTP/3. We compared a Session at `www.google.com` only.
+
+### What this does not cover
+
+- What [What it does not capture yet](#what-it-does-not-capture-yet) lists under ALPS and resumed connections.
+- The order and size of what goes in 0-RTT packets, because aioquic hands over stream data only. Only the streams are compared.
+- A Session on Windows, which is not a **Host**, and Chrome on a second machine.
+- A ticket that has run out, or that a server has forgotten, and how each client falls back.
+- A later Chrome Release. When the Engine Release moves, `record.ps1 -Tickets` repeats the first part. For ALPS, `TlsClientHandshaker::SetAlpn()` is the place to read: while it passes no data, there is nothing to see.
+
 ## Real ECH
 
 A **Baseline**'s ClientHello holds ECH GREASE, because Chrome finds no HTTPS record for the names of the case pages. A site whose HTTPS record offers ECH gets real ECH instead: an outer ClientHello at the record's public name, which carries the real one, the ClientHelloInner, encrypted to the site's key. So we recorded Chrome against HTTPS records of our own, on 2026-11-07:
@@ -572,6 +710,8 @@ print(dumps_normal_form(form))
 `normal_form` includes only the Recording Cases in the recording, so a recording of one request gives a normal form with one entry in `requests`. Its second argument limits it to the cases of a run. It raises `RecordingError` when a recording has no normal form.
 
 To reach the server over HTTP/3, a client needs `server.spki_hash` trusted and `server.authority(HTTP3)` in its list of origins to force QUIC on. For a run, `server.origins_to_force_quic_on(run)` gives that list, with the names of the case pages.
+
+`CaptureServer(tickets=True)` gives out tickets, and `RESUMPTION_RUNS` lists the runs that use them. `normal_form(recording, run.cases)` gives the resumed connections of such a run, and `normal_form(recording, run.fresh_cases)` the fresh ones. They cannot go in one normal form, because a normal form holds what its connections have in common.
 
 To reach a case page, a client needs `server.host_resolver_rules`, which a native Session takes as `host_resolver_rules` from `mitto._native`. `CASE_HOST` names the page, and `server.url(route, host=CASE_HOST, path=...)` and `server.recording(route, host=CASE_HOST)` go with it, so that the placeholders are the ones the Baselines have. `RUNS` lists every run, and `server.start_url(run)` and `server.chrome_flags(run)` say how to start one.
 

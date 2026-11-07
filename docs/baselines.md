@@ -383,4 +383,6 @@ It lacks the brand, and adding the brand is not enough. `GenerateBrandVersionLis
 
 3. Replace `sec-ch-ua` in the normal forms, and say so under that Chrome Release on this page.
 
-For a session with no seed, `-NoVariationsSeed` takes the place of waiting for one. Whenever the Chrome is not Google Chrome, or `-NoVariationsSeed`, `-ExtraFlags`, `-ExistingUserDataDir` or `-SettleSeconds` is there, `chrome.txt` says that it describes a comparison and not a Baseline.
+`-Tickets` is for another comparison: it has the capture server give out session tickets, and takes Chrome through [the runs that resume](capture.md#how-the-server-does-it).
+
+For a session with no seed, `-NoVariationsSeed` takes the place of waiting for one. Whenever the Chrome is not Google Chrome, or `-NoVariationsSeed`, `-ExtraFlags`, `-ExistingUserDataDir`, `-SettleSeconds` or `-Tickets` is there, `chrome.txt` says that it describes a comparison and not a Baseline.

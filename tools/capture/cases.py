@@ -1,5 +1,6 @@
 """The Recording Cases, the pages that make a real Chrome produce them, and the starts of Chrome that go through them."""
 
+import dataclasses
 import functools
 import json
 import logging
@@ -34,6 +35,10 @@ _DONE_PATH = "/case/done"
 _PLAIN_HTTP_DONE_PATH = "/case/plain-http-done"
 _PROXY_DONE_PATH = "/case/proxy-done"
 _CLIENT_HINTS_DONE_PATH = "/case/client-hints-done"
+_RESUMPTION_DONE_PATH = "/case/resumption-done"
+RESUMPTION_CLOSE_PATH = "/case/resumption-close"
+_RESUMPTION_FIRST_PATH = "/case/resumption-first"
+RESUMPTION_OTHER_SITE_PATH = "/case/resumption-other-site"
 _CLIENT_HINTS_PLAIN_HTTP_DONE_PATH = "/case/client-hints-plain-http-done"
 CLIENT_HINTS_PLAIN_HTTP_START_PATH = "/case/client-hints-plain-http"
 _FAILED_PREFIX = "/case/failed?"
@@ -141,6 +146,10 @@ _CH_REDIRECT_NAVIGATION = tuple(_case(f"client_hints_redirect_navigation_{hop}")
 _CH_CRITICAL = _case("client_hints_critical", carries=_CRITICAL_HINT)
 _CH_PLAIN_HTTP_FETCH = _case("client_hints_plain_http_fetch")
 _CH_PLAIN_HTTP_NAVIGATION = _case("client_hints_plain_http_navigation")
+_RESUMPTION_FETCH = _case("resumption_fetch")
+_RESUMPTION_POST = _case("resumption_post")
+_RESUMPTION_NAVIGATION = _case("resumption_navigation")
+_RESUMPTION_OTHER_SITE_SCRIPT = _case("resumption_other_site_script")
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +272,8 @@ class Run:
         start_path: The path it starts at.
         done_path: The path the page asks for when it has finished.
         cases: The Recording Cases it produces.
+        fresh_cases: In a run that resumes, the Recording Cases whose connections have no ticket to use, where those of
+            cases do. They go in a file of their own, named .fresh.json.
     """
 
     name: str
@@ -272,6 +283,7 @@ class Run:
     start_path: str
     done_path: str
     cases: tuple[Case, ...]
+    fresh_cases: tuple[Case, ...] = ()
 
 
 def _main_run(name: str, label: str, route: str) -> Run:
@@ -324,7 +336,28 @@ RUNS = (
 )
 """Every start of a Chrome that a recording session takes, in the order it takes them."""
 
-DONE_PATHS = frozenset(run.done_path for run in RUNS)
+
+def _resumption_run(name: str, label: str, route: str) -> Run:
+    return Run(
+        name,
+        label,
+        route,
+        CASE_HOST,
+        _RESUMPTION_FIRST_PATH,
+        _RESUMPTION_DONE_PATH,
+        (_RESUMPTION_FETCH, _RESUMPTION_POST, _RESUMPTION_NAVIGATION),
+        (_RESUMPTION_OTHER_SITE_SCRIPT,),
+    )
+
+
+RESUMPTION_RUNS = (
+    _resumption_run("resumption/http1", "Resumed connections over HTTP/1.1", HTTP1),
+    _resumption_run("resumption/http2", "Resumed connections over HTTP/2", HTTP2),
+    _resumption_run("resumption/http3", "Resumed connections over HTTP/3", HTTP3),
+)
+"""The runs for a server that gives out tickets. Their connections would break a normal form of the runs above."""
+
+DONE_PATHS = frozenset(run.done_path for run in (*RUNS, *RESUMPTION_RUNS))
 
 _PAGE_SCRIPT = f"""
   const progress = document.getElementById("progress");
@@ -407,6 +440,43 @@ _FILL_FILE_INPUT = """
   const files = new DataTransfer();
   files.items.add(new File(["file text\\n"], 'file "name".txt', {type: "text/plain"}));
   document.getElementById("file").files = files.files;
+"""
+
+
+# The wait gives the client time to see that the connection has ended, so that the next request does not try to use it.
+_RESUMPTION_SCRIPT = """
+  const closeConnection = () => get(urls.close).then(() => new Promise((resolve) => setTimeout(resolve, 500)));
+  addEventListener("load", () => {
+    (async () => {
+      await closeConnection();
+      await get(urls.fetch);
+      await closeConnection();
+      await get(urls.post, {method: "POST", body: "text body"});
+      await closeConnection();
+      location.href = urls.navigation;
+    })().catch(report);
+  });
+"""
+
+# A script goes with credentials, as a navigation does, so what keeps its ticket from the navigation is the top-level site.
+_RESUMPTION_NAVIGATION_SCRIPT = """
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 500));
+  const scriptLoaded = (url) => new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = url;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(url + " failed to load"));
+    document.head.append(script);
+  });
+  addEventListener("load", () => {
+    (async () => {
+      await get(urls.close);
+      await wait();
+      await scriptLoaded(urls.script);
+      await wait();
+      location.href = urls.otherSite;
+    })().catch(report);
+  });
 """
 
 
@@ -613,6 +683,41 @@ def _client_hints_responses(
     }
 
 
+def _resumption_responses(cross_site: str, done: Response, script: Response, text: Response) -> dict[str, Response]:
+    """Return the answers of the resumption runs, which end a connection before each thing they want to see.
+
+    Each of the requests after the first therefore opens a new connection. What it sends first depends on the request,
+    because a client only sends what is safe to repeat as early data, so each kind has a connection of its own. Then
+    a script at another site brings a ticket for that site, which the navigation there cannot use if tickets go by
+    top-level site.
+    """
+    first_urls = {
+        "close": RESUMPTION_CLOSE_PATH,
+        "fetch": _RESUMPTION_FETCH.path,
+        "post": _RESUMPTION_POST.path,
+        "navigation": _RESUMPTION_NAVIGATION.path,
+    }
+    navigation_urls = {
+        "close": RESUMPTION_CLOSE_PATH,
+        "script": cross_site + _RESUMPTION_OTHER_SITE_SCRIPT.path,
+        "otherSite": cross_site + RESUMPTION_OTHER_SITE_PATH,
+    }
+    return {
+        _RESUMPTION_FIRST_PATH: _page(
+            f"<script>const urls = {json.dumps(first_urls)};</script>", script=_RESUMPTION_SCRIPT
+        ),
+        RESUMPTION_CLOSE_PATH: dataclasses.replace(text, close=True),
+        _RESUMPTION_FETCH.path: text,
+        _RESUMPTION_POST.path: text,
+        _RESUMPTION_NAVIGATION.path: _page(
+            f"<script>const urls = {json.dumps(navigation_urls)};</script>", script=_RESUMPTION_NAVIGATION_SCRIPT
+        ),
+        _RESUMPTION_OTHER_SITE_SCRIPT.path: dataclasses.replace(script, close=True),
+        RESUMPTION_OTHER_SITE_PATH: _page(script=_report_done(_RESUMPTION_DONE_PATH)),
+        _RESUMPTION_DONE_PATH: done,
+    }
+
+
 @functools.lru_cache(maxsize=64)
 def _responses(scheme: str, port: int) -> dict[str, Response]:
     """Return the answer to each path of the case pages on a port. They name other origins, so they depend on it."""
@@ -669,6 +774,7 @@ def _responses(scheme: str, port: int) -> dict[str, Response]:
         _PLAIN_HTTP_DONE_PATH: done,
         _PROXY_DONE_PATH: done,
         **_client_hints_responses(page, same_site, cross_site, done, script, image, text),
+        **_resumption_responses(cross_site, done, script, text),
     }
 
 

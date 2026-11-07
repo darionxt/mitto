@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.capture import HTTP1, HTTP2, HTTP3, RUNS, CaptureServer, Run, normal_form
+from tools.capture import HTTP1, HTTP2, HTTP3, RESUMPTION_RUNS, RUNS, CaptureServer, Recording, Run, normal_form
 from tools.capture.devtools import PageClicker
 from tools.capture.recording import Json
 
@@ -78,10 +78,10 @@ def chrome() -> str:
     return path
 
 
-def record(chrome: str, run: Run) -> dict[str, Json]:
-    """Take a Chrome with a fresh user data directory through a run, and return the normal form of what it sent."""
+def go_through(chrome: str, run: Run, *, tickets: bool = False) -> Recording:
+    """Take a Chrome with a fresh user data directory through a run, and return what it sent."""
     with (
-        CaptureServer() as server,
+        CaptureServer(tickets=tickets) as server,
         tempfile.TemporaryDirectory(prefix="mitto-capture-", ignore_cleanup_errors=True) as user_data,
     ):
         process = subprocess.Popen(
@@ -110,7 +110,12 @@ def record(chrome: str, run: Run) -> dict[str, Json]:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-        return normal_form(server.recording(run.route, host=run.host), run.cases)
+        return server.recording(run.route, host=run.host)
+
+
+def record(chrome: str, run: Run) -> dict[str, Json]:
+    """Take a Chrome with a fresh user data directory through a run, and return the normal form of what it sent."""
+    return normal_form(go_through(chrome, run), run.cases)
 
 
 @functools.cache
@@ -286,3 +291,37 @@ def test_plain_http_cannot_ask_for_hints(chrome: str) -> None:
 
     for case in ("client_hints_plain_http_fetch", "client_hints_plain_http_navigation"):
         assert not _hints_of(headers_of(form, case))
+
+
+@pytest.mark.parametrize("run", RESUMPTION_RUNS, ids=lambda run: run.name)
+def test_real_chrome_adds_only_what_a_ticket_takes_to_a_client_hello(chrome: str, run: Run) -> None:
+    recording = go_through(chrome, run, tickets=True)
+    fresh = normal_form(recording, run.fresh_cases)
+    resumed = normal_form(recording, run.cases)
+
+    added = {"pre_shared_key", "early_data"} if run.route == HTTP3 else {"pre_shared_key"}
+    fresh_tls = fresh["tls"]
+    resumed_tls = resumed["tls"]
+    assert isinstance(fresh_tls, dict)
+    assert isinstance(resumed_tls, dict)
+    fresh_extensions = fresh_tls["extensions"]
+    resumed_extensions = resumed_tls["extensions"]
+    assert isinstance(fresh_extensions, list)
+    assert isinstance(resumed_extensions, list)
+    assert [
+        extension
+        for extension in resumed_extensions
+        if not (isinstance(extension, dict) and extension["type"] in added)
+    ] == fresh_extensions
+    assert len(resumed_extensions) == len(fresh_extensions) + len(added)
+    for part in ("protocol", "quic", "http2", "http3"):
+        assert resumed.get(part) == fresh.get(part)
+
+
+def test_real_chrome_sends_only_what_is_safe_to_repeat_as_early_data(chrome: str) -> None:
+    run = next(run for run in RESUMPTION_RUNS if run.route == HTTP3)
+    resumed = normal_form(go_through(chrome, run, tickets=True), run.cases)
+
+    assert request_of(resumed, "resumption_fetch")["early_data"] == ["request", "control", "qpack_encoder"]
+    assert request_of(resumed, "resumption_navigation")["early_data"] == ["request", "control", "qpack_encoder"]
+    assert request_of(resumed, "resumption_post")["early_data"] == ["control"]

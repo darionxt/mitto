@@ -5,10 +5,10 @@ import json
 import sys
 from pathlib import Path
 
-from tools.capture.cases import RUNS, Run
+from tools.capture.cases import RESUMPTION_RUNS, RUNS, Case, Run
 from tools.capture.devtools import PageClicker
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
-from tools.capture.recording import raw_form
+from tools.capture.recording import Recording, raw_form
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
 _RUNS_FILE = "runs.json"
@@ -25,10 +25,14 @@ def main() -> int:
     parser.add_argument("--plain-http-port", type=int, default=8446, help="plain HTTP port (default: %(default)s)")
     parser.add_argument("--proxy-port", type=int, default=8447, help="HTTP proxy port (default: %(default)s)")
     parser.add_argument(
+        "--tickets",
+        action="store_true",
+        help="give out session tickets, and record the runs that resume instead of the others",
+    )
+    parser.add_argument(
         "--runs",
         nargs="+",
-        choices=[run.name for run in RUNS],
-        default=[run.name for run in RUNS],
+        choices=[run.name for run in (*RUNS, *RESUMPTION_RUNS)],
         metavar="RUN",
         help="which recordings to wait for (default: all of them)",
     )
@@ -41,6 +45,11 @@ def main() -> int:
     args = parser.parse_args()
     if not args.host.endswith(".localhost"):
         parser.error(f"{args.host!r} does not end in .localhost")
+    available = RESUMPTION_RUNS if args.tickets else RUNS
+    names = args.runs or [run.name for run in available]
+    runs = [run for run in available if run.name in names]
+    if len(runs) != len(names):
+        parser.error("--runs names a run that needs --tickets, or one that a server with --tickets cannot record")
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -51,6 +60,7 @@ def main() -> int:
         http3_port=args.http3_port,
         plain_http_port=args.plain_http_port,
         proxy_port=args.proxy_port,
+        tickets=args.tickets,
     )
     try:
         server.start()
@@ -61,7 +71,6 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    runs = [run for run in RUNS if run.name in args.runs]
     try:
         if args.click_in is None:
             return _record(server, runs, out)
@@ -119,16 +128,23 @@ def _write(server: CaptureServer, run: Run, out: Path) -> bool:
     raw_path = out / f"{run.name}.raw.json"
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(json.dumps(raw_form(recording), indent=2) + "\n", encoding="utf-8", newline="\n")
+    written = _write_form(recording, run, run.cases, out / f"{run.name}.json", raw_path)
+    if run.fresh_cases:
+        written = _write_form(recording, run, run.fresh_cases, out / f"{run.name}.fresh.json", raw_path) and written
+    return written
+
+
+def _write_form(recording: Recording, run: Run, cases: tuple[Case, ...], path: Path, raw_path: Path) -> bool:
+    """Write the normal form of some of a run's cases. Returns whether it is complete."""
     try:
-        form = normal_form(recording, run.cases)
+        form = normal_form(recording, cases)
     except RecordingError as error:
         print(f"{run.label}: {error}. See {raw_path}.", file=sys.stderr)
         return False
-    path = out / f"{run.name}.json"
     path.write_text(dumps_normal_form(form), encoding="utf-8", newline="\n")
     requests = form["requests"]
     assert isinstance(requests, dict)
-    missing = [case.name for case in run.cases if case.name not in requests]
+    missing = [case.name for case in cases if case.name not in requests]
     if missing:
         print(f"{run.label}: nothing for {', '.join(missing)}. See {raw_path}.", file=sys.stderr)
         return False

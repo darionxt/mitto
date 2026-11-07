@@ -10,7 +10,17 @@ from hpack import Decoder, Encoder
 
 from tests.capture import samples
 from tools.capture import DEFAULT_HOST
-from tools.capture.http2 import DATA, END_HEADERS, END_STREAM, HEADERS, PREFACE, SETTINGS, FrameParser, serialize_frame
+from tools.capture.http2 import (
+    DATA,
+    END_HEADERS,
+    END_STREAM,
+    HEADERS,
+    PREFACE,
+    SETTINGS,
+    Frame,
+    FrameParser,
+    serialize_frame,
+)
 
 _TIMEOUT_SECONDS = 10.0
 
@@ -89,6 +99,17 @@ class Http2Client:
         self.decoder = Decoder()
         self.next_stream = 1
         sock.sendall(PREFACE + serialize_frame(SETTINGS, 0, 0, (4).to_bytes(2) + (65536).to_bytes(4)))
+
+    def read_frames_until(self, frame_type: int) -> list[Frame]:
+        """Return what the server sends next, up to and with the first frame of a type."""
+        frames: list[Frame] = []
+        while True:
+            data = self.sock.recv(1 << 16)
+            assert data, "the connection ended"
+            for frame in self.parser.feed(data):
+                frames.append(frame)
+                if frame.type == frame_type:
+                    return frames
 
     def get(self, target: str) -> tuple[bytes, bytes]:
         """Send a GET and return the status and the body."""
