@@ -26,6 +26,8 @@ Each comparison covers what the connection looks like and the one request. So a 
 
 The native core of the **Engine Release** presents every Chrome Release in turn, so one native library checks all of them. A Baseline of a Chrome Release that has no Persona stops the run.
 
+The test of the real Baselines runs all this twice: through `mitto.Session`, and through a `mitto.AsyncSession` in its place. The two build a request in one place and differ in how they wait, so they should show the same list. `uv run python -m tools.parity` writes the list from `mitto.Session`.
+
 ## Baselines
 
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.

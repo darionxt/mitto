@@ -22,7 +22,7 @@ from mitto._native import PrivateSettings
 from mitto._persona import CHROME_155_WINDOWS, CHROME_156_WINDOWS, CHROME_157_WINDOWS
 from tests.local_server import LocalHTTPServer
 
-pytestmark = pytest.mark.usefixtures("native_library")
+pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
 PRIVATE_CERTIFICATE_SPKI_HASH = "nVtNMMWlVAx2QAb+AXEK53cS8Fm8sDeKSomcP5jydFk="

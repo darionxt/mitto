@@ -29,6 +29,8 @@ from mitto import Cookie, CookiePartitionKey, _cookies, _native
 from mitto._native import PrivateSettings
 from tests.local_server import LocalHTTPServer
 
+pytestmark = pytest.mark.usefixtures("both_apis")
+
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
 PRIVATE_CERTIFICATE_SPKI_HASH = "nVtNMMWlVAx2QAb+AXEK53cS8Fm8sDeKSomcP5jydFk="
 

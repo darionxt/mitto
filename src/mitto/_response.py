@@ -1,19 +1,35 @@
 """A response, as the public API returns it: finished, or with a body that arrives as the caller reads it."""
 
+import asyncio
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 from mitto._errors import MittoError
 from mitto._native import NativeResponse, RedirectFollowed, ResponseStarted
 
-__all__ = ["HTTPStatusError", "Headers", "Redirect", "Response", "ResponseStream", "to_response", "to_response_stream"]
+__all__ = [
+    "AsyncResponseStream",
+    "HTTPStatusError",
+    "Headers",
+    "Redirect",
+    "Response",
+    "ResponseStream",
+    "join_chunks",
+    "to_async_response_stream",
+    "to_response",
+    "to_response_stream",
+]
 
 _DEFAULT_CHARSET = "utf-8"
 
 # The first HTTP status code that says the request failed.
 _FIRST_ERROR_STATUS = 400
+
+# How many bytes an event loop joins by itself, which takes it well under a millisecond. Above this a thread does it, since
+# bytes.join() lets go of the GIL for that long a copy.
+_MOST_BYTES_TO_JOIN_ON_A_LOOP = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +191,49 @@ class ResponseStream:
         return b"".join(self._chunks)
 
 
+@dataclass(frozen=True, slots=True)
+class AsyncResponseStream:
+    """A response whose body arrives as the caller reads it, from AsyncSession.stream().
+
+    This holds what ResponseStream holds, and reading follows the same rules, but for needing an await. A read that is
+    cancelled, by a task or by asyncio.timeout(), cancels the request, so that a later read raises a RequestError and cannot
+    pass for the end of the body. The `read` timer of a request is what waits for a slow server and leaves it running.
+
+    Attributes:
+        status: The HTTP status code of the final response, after redirects.
+        url: The final URL, after redirects.
+        protocol: The protocol the response arrived over, for example "http/1.1", "h2" or "h3".
+        headers: The final response's headers.
+        history: The redirects that led here, the first one first.
+        from_cache: Whether the body comes from the Session's HTTP cache. That goes for a response the server only had to
+            confirm with a 304 too, so True does not say that no request went out.
+    """
+
+    status: int
+    url: str
+    protocol: str
+    headers: Headers
+    history: tuple[Redirect, ...]
+    from_cache: bool
+    _chunks: AsyncIterator[bytes] = field(repr=False)
+
+    def iter_bytes(self) -> AsyncIterator[bytes]:
+        """Return an async iterator over the rest of the body, after any content decoding, in parts as they arrive.
+
+        Iterating raises a RequestError if the request ends before the end of the body, and that is the only way to learn
+        that it did.
+        """
+        return self._chunks
+
+    async def read(self) -> bytes:
+        """Return the rest of the body, after any content decoding, once all of it has arrived.
+
+        Raises:
+            RequestError: If the request ends before the end of the body.
+        """
+        return await join_chunks(self._chunks)
+
+
 class HTTPStatusError(MittoError):
     """A response's status says that the request failed, as raised by Response.raise_for_status().
 
@@ -221,6 +280,29 @@ def to_response_stream(
         from_cache=started.from_cache,
         _chunks=chunks,
     )
+
+
+def to_async_response_stream(
+    started: ResponseStarted, history: Iterable[RedirectFollowed], chunks: AsyncIterator[bytes]
+) -> AsyncResponseStream:
+    """Return the public form of a response from the native core that has started, and whose body `chunks` gives."""
+    return AsyncResponseStream(
+        status=started.status,
+        url=started.url,
+        protocol=started.protocol,
+        headers=Headers(started.headers),
+        history=_to_redirects(history),
+        from_cache=started.from_cache,
+        _chunks=chunks,
+    )
+
+
+async def join_chunks(chunks: AsyncIterable[bytes]) -> bytes:
+    """Return all that `chunks` gives as one value, without holding up the event loop for a large one."""
+    parts = [chunk async for chunk in chunks]
+    if sum(map(len, parts)) <= _MOST_BYTES_TO_JOIN_ON_A_LOOP:
+        return b"".join(parts)
+    return await asyncio.to_thread(b"".join, parts)
 
 
 def _to_redirects(history: Iterable[RedirectFollowed]) -> tuple[Redirect, ...]:

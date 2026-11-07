@@ -30,7 +30,7 @@ from tests.local_server import QuietServer
 from tools.capture import HTTP1, HTTP2, HTTP3, CaptureServer
 from tools.parity.replay import run_of, session_settings
 
-pytestmark = pytest.mark.usefixtures("native_library")
+pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 ETAG = '"version-1"'
 LAST_MODIFIED = "Wed, 01 Jan 2025 00:00:00 GMT"

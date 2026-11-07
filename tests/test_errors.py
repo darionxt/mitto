@@ -19,6 +19,8 @@ from mitto._errors import ERROR_TYPES_BY_NAME, ERROR_TYPES_BY_PREFIX, request_er
 from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP2, CaptureServer
 
+pytestmark = pytest.mark.usefixtures("both_apis")
+
 URL = "http://example.test/"
 
 ERR_CERT_AUTHORITY_INVALID = -202

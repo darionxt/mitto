@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import mitto
 from mitto import Session
 from mitto._native import LIBRARY_ENV_VAR, PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS, load_persona
@@ -34,6 +35,7 @@ from tools.parity import (
     KNOWN_GAPS_FILE_NAME,
     Baseline,
     Gap,
+    check,
     dumps_known_gaps,
     find_gaps,
     load_baselines,
@@ -64,9 +66,10 @@ def regenerate(directory: Path, **environment: str) -> subprocess.CompletedProce
     )
 
 
-@pytest.mark.usefixtures("native_library")
-def test_the_baselines_differ_from_the_native_core_only_by_the_known_gaps() -> None:
-    """The check that everything in this milestone is measured with."""
+@pytest.mark.usefixtures("native_library", "both_apis")
+def test_the_baselines_differ_from_the_native_core_only_by_the_known_gaps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The check that everything in this milestone is measured with, through each API."""
+    monkeypatch.setattr(check, "Session", mitto.Session)
     found = mismatches(find_gaps(load_baselines(BASELINES_DIRECTORY)), known_gaps(BASELINES_DIRECTORY))
 
     if found:

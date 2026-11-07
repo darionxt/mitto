@@ -5,14 +5,14 @@ where.
 """
 
 import dataclasses
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncIterable, Buffer, Iterable, Mapping
 from typing import TypedDict
 
 from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
 
-__all__ = ["BodyOptions", "BuiltRequest", "RequestHeaders", "RequestOptions", "build_request"]
+__all__ = ["AsyncRequestOptions", "BodyOptions", "BuiltRequest", "RequestHeaders", "RequestOptions", "build_request"]
 
 type RequestHeaders = Mapping[str, str | None]
 """What a caller changes about the Persona's headers, by name in any case. None removes a line of the Persona's."""
@@ -84,6 +84,28 @@ class RequestOptions(BodyOptions, total=False):
             default is True.
     """
 
+    params: QueryParams | None
+    headers: RequestHeaders | None
+    kind: RequestKind | str | None
+    initiator: str | None
+    timeout: float | Timeout | None
+    follow_redirects: bool
+
+
+class AsyncRequestOptions(TypedDict, total=False):
+    """The keyword arguments that each method of an AsyncSession takes, which are those of RequestOptions.
+
+    Attributes:
+        data: As in BodyOptions, or also an async iterable of bytes, which is a stream with no size unless `headers` gives
+            one. A file or an iterable is read on a thread of the event loop's default executor, as the network stack asks
+            for more, so one that waits for long takes up a thread until it gives something. An async iterable is read on
+            the loop, and takes up nothing while it waits. Bytes in memory are copied on the loop, once, which holds it up
+            for tens of milliseconds at hundreds of MiB, so a body that large is better off as a stream.
+    """
+
+    data: RequestData | AsyncIterable[Buffer] | None
+    json: object
+    files: FileFields | None
     params: QueryParams | None
     headers: RequestHeaders | None
     kind: RequestKind | str | None

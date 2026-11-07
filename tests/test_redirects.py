@@ -16,7 +16,7 @@ from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer, normal_form
 from tools.capture.http2 import RST_STREAM
 from tools.parity.replay import run_of, session_settings
 
-pytestmark = pytest.mark.usefixtures("native_library")
+pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 ERR_UNKNOWN_URL_SCHEME = -302
 ERR_INVALID_REDIRECT = -303

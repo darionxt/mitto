@@ -23,7 +23,7 @@ from tests.local_server import LocalHTTPServer
 from tools.capture import CROSS_SITE_HOST, HTTP1, HTTP2, HTTP3, CaptureServer
 from tools.parity.replay import run_of, session_settings
 
-pytestmark = pytest.mark.usefixtures("native_library")
+pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
 PRIVATE_CERTIFICATE_SPKI_HASH = "nVtNMMWlVAx2QAb+AXEK53cS8Fm8sDeKSomcP5jydFk="

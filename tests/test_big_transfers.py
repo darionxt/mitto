@@ -295,11 +295,12 @@ def _http2_server(directory: Path) -> Generator[tuple[str, _Tally, str]]:
     thread.join(_RUN_SECONDS)
 
 
-def _run_client(url: str, *arguments: str) -> dict[str, Any]:
+def _run_client(api: str, url: str, *arguments: str) -> dict[str, Any]:
     if find_library() is None:
         pytest.skip("no native library to run this with")
+    through_asyncio = ["--asyncio"] if api == "asyncio" else []
     result = subprocess.run(
-        [sys.executable, _CLIENT, url, str(_GIB), *arguments],
+        [sys.executable, _CLIENT, url, str(_GIB), *through_asyncio, *arguments],
         capture_output=True,
         text=True,
         timeout=_RUN_SECONDS,
@@ -310,9 +311,9 @@ def _run_client(url: str, *arguments: str) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
-def test_1_gib_goes_each_way_over_http1_with_flat_memory() -> None:
+def test_1_gib_goes_each_way_over_http1_with_flat_memory(both_apis: str) -> None:
     with _http1_server() as (url, tally):
-        outcome = _run_client(url, "--known-size")
+        outcome = _run_client(both_apis, url, "--known-size")
 
     assert outcome["protocol"] == "http/1.1"
     assert outcome["status"] == 200
@@ -324,9 +325,9 @@ def test_1_gib_goes_each_way_over_http1_with_flat_memory() -> None:
     assert outcome["growth"] < _MOST_GROWTH_BYTES, outcome
 
 
-def test_1_gib_goes_each_way_over_http2_with_no_known_size_and_flat_memory(tmp_path: Path) -> None:
+def test_1_gib_goes_each_way_over_http2_with_no_known_size_and_flat_memory(both_apis: str, tmp_path: Path) -> None:
     with _http2_server(tmp_path) as (url, tally, anchor):
-        outcome = _run_client(url, "--trust-anchor", anchor)
+        outcome = _run_client(both_apis, url, "--trust-anchor", anchor)
 
     assert outcome["protocol"] == "h2"
     assert outcome["status"] == 200

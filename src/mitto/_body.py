@@ -10,7 +10,7 @@ import json
 import os
 import re
 import secrets
-from collections.abc import Buffer, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator, Buffer, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import BinaryIO, Protocol, cast, runtime_checkable
@@ -25,6 +25,7 @@ __all__ = [
     "ReadableFile",
     "RequestData",
     "StreamBody",
+    "async_stream_chunks",
     "encode_body",
     "encode_query",
     "with_declared_size",
@@ -197,6 +198,24 @@ def _exactly(chunks: Iterator[memoryview], size: int) -> Iterator[memoryview]:
             raise ValueError(f"data gave more bytes than its Content-Length of {size}")
         yield chunk
     if total < size:
+        raise ValueError(f"data gave {total} bytes, fewer than its Content-Length of {size}")
+
+
+async def async_stream_chunks(data: AsyncIterable[object], size: int | None) -> AsyncIterator[memoryview]:
+    """Yield what an async iterable gives, as a stream does what an iterable gives.
+
+    Raises:
+        TypeError: If a part it gives is not bytes.
+        ValueError: If `size` is known, and it does not give that many bytes.
+    """
+    total = 0
+    async for part in data:
+        chunk = _byte_view(part)
+        total += chunk.nbytes
+        if size is not None and total > size:
+            raise ValueError(f"data gave more bytes than its Content-Length of {size}")
+        yield chunk
+    if size is not None and total < size:
         raise ValueError(f"data gave {total} bytes, fewer than its Content-Length of {size}")
 
 
