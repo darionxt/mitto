@@ -7,9 +7,9 @@ from pathlib import Path
 
 from mitto._persona import WINDOWS_PERSONAS
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError
-from tools.release.dash import DashError
 from tools.release.drop import REPOSITORY, DropError, drop_oldest
 from tools.release.persona import PERSONAS_DIRECTORY, PersonaDataError, write_persona
+from tools.release.web import WebError
 from tools.release.window import builds_report, next_window
 
 
@@ -41,7 +41,7 @@ def main() -> int:
 
     builds = commands.add_parser(
         "builds",
-        help="ask Chromium Dash for the next Supported Window's builds and the stable date of its Engine Release",
+        help="find the builds of the next Supported Window and the stable date of its Engine Release",
     )
     builds.add_argument(
         "--engine",
@@ -67,7 +67,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return args.run(args)
-    except (BaselineError, DashError, DropError, KnownGapsError, PersonaDataError) as error:
+    except (BaselineError, DropError, KnownGapsError, PersonaDataError, WebError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

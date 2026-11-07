@@ -6,7 +6,9 @@ from datetime import date
 from pathlib import Path
 
 from tools.parity import BASELINES_DIRECTORY
-from tools.release.dash import Fetch, fetch_from_the_network, milestone, newest_builds
+from tools.release.dash import milestone
+from tools.release.version_history import newest_pinnable_builds
+from tools.release.web import Fetch, fetch_from_the_network
 
 __all__ = ["WINDOW_SIZE", "builds_report", "next_window", "recorded_build"]
 
@@ -41,25 +43,28 @@ def builds_report(
     fetch: Fetch = fetch_from_the_network,
     baselines_directory: Path = BASELINES_DIRECTORY,
 ) -> str:
-    """Return what Chromium Dash says of a Supported Window, for whoever runs the release routine.
+    """Return what a run of the release routine needs to know of a Supported Window before it starts.
 
-    That is when its Engine Release becomes stable, and for each Chrome Release, the newest Windows stable build beside
-    the build of its Baselines.
+    That is when its Engine Release becomes stable, from Chromium Dash, and for each Chrome Release, the newest Windows
+    stable build that can be pinned, from Google's version history, beside the build of its Baselines.
 
     Raises:
-        DashError: Chromium Dash did not answer, or its answer cannot be read.
+        WebError: Chromium Dash or the version history did not answer, or an answer cannot be read.
     """
     engine = window[-1]
     schedule = milestone(engine, fetch)
-    builds = newest_builds(window, fetch)
+    builds = newest_pinnable_builds(window, fetch)
     names = f"{', '.join(window[:-1])} and {engine}"
     if today < schedule.stable_date:
         days = (schedule.stable_date - today).days
         start = f"Chrome {engine} becomes stable on {schedule.stable_date}, in {days} days. Its run starts then."
     else:
         start = f"Chrome {engine} became stable on {schedule.stable_date}, so its run can start."
-    rows = [("Chrome Release", "Newest Windows stable build", "Build of the Baselines")]
-    rows += [(release, builds[release], recorded_build(release, baselines_directory) or "none") for release in window]
+    rows = [("Chrome Release", "Newest pinnable build", "Build of the Baselines")]
+    rows += [
+        (release, builds[release] or "none yet", recorded_build(release, baselines_directory) or "none")
+        for release in window
+    ]
     widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]))]
     table = ["  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip() for row in rows]
     return "\n".join(
@@ -69,6 +74,7 @@ def builds_report(
             "",
             *table,
             "",
-            "Record the build that Google's update server gives. docs/baselines.md says how to ask it.",
+            "A recording takes the newest pinnable build, which Google's update server gives for a Chrome Release.",
+            "docs/baselines.md says how to ask it.",
         ]
     )
