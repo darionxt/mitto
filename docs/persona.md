@@ -189,3 +189,4 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 | QUIC connection migration, in `net/quic/quic_chromium_client_session.cc` and `quic_migration_attempt_context.cc`, with new features and new defaults | When the network or the path changes |
 | Closing an HTTP/2 session after a protocol error, in `net/spdy/spdy_session.cc` | When a server breaks the protocol |
 | `HttpCacheZstdCompression` and `HttpCacheZstdDecompression` by default from 157, and `LogicalClearHttpCache` from 156 | What a [cache](parity.md#the-http-cache) keeps on disk, and never on the wire |
+| A 206 response that runs past the range asked for fails with `ERR_CONTENT_LENGTH_MISMATCH` instead of going into the cache, in `net/http/partial_data.cc`, `http_cache_writers.cc` and `http_cache_transaction.cc`. 157.0.8103.39 and 156.0.8078.80 have it, and 155.0.8059.86 does not | A Session with a cache, when a server sends more than the range that a request asked for |
