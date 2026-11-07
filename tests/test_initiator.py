@@ -831,8 +831,10 @@ def test_an_initiator_that_is_not_a_url_is_refused(servers: Servers, initiator: 
 
 
 def test_an_initiator_with_a_nul_is_refused(servers: Servers) -> None:
-    with new_session() as session, pytest.raises(ValueError, match="NUL"):
+    with new_session() as session, pytest.raises(ValueError, match=r"^initiator holds a NUL character$"):
         session.get(servers.https(), initiator="https://a.test/\0")
+
+    assert servers.received == []
 
 
 @pytest.mark.parametrize("kind", ALL_KINDS)

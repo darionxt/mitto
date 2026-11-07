@@ -166,7 +166,7 @@ Fetch `url` and block until the whole [response](#response) has arrived, with th
 | It raises | If |
 | --- | --- |
 | `TypeError` | An argument is not one of the request arguments, or it is of a type it does not take, as [each says](#request-arguments) and the message names. `method` and `url` are text, and so are the names and values in `params`, `headers` and a mapping in `data`. Also a file of another form in `files`, a value in `json` that JSON has no form of, or a stream that gives something other than bytes |
-| `ValueError` | `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` cannot be used. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with `GET` or `HEAD` or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length` |
+| `ValueError` | `url`, `initiator` or a `Referer` in `headers` holds a NUL character or cannot be encoded as UTF-8, which the message names, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` cannot be used. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with `GET` or `HEAD` or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length` |
 | [`RequestError`](#errors) | The request ended without a response. An invalid header or method, or an `initiator` that is not a valid URL, is `ERR_INVALID_ARGUMENT`. A URL that is not valid is `ERR_INVALID_URL` |
 | Whatever a stream's file or iterable raises | That ends the request |
 
@@ -243,7 +243,7 @@ Changes the Persona's lines for this request, by name in any case. [persona.md](
 | A name the Persona has, with `None` | The line is gone |
 | Another name, with `None` | Nothing changes, so this cannot remove what `//net` adds |
 | `User-Agent`, with `None` | The line leaves its place, and `//net` adds the Persona's value after the other lines, because a request always gets one from the context |
-| `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what `initiator=` would make of it. `//net` still decides where it goes |
+| `Referer` | Goes as given to every hop or, with `None`, goes from every hop, in place of what `initiator=` would make of it. `//net` still decides where it goes. A NUL character or a lone surrogate in it raises a `ValueError` that names it |
 | A line the native core sets, such as `Origin`, `Sec-Fetch-Site` or `sec-ch-ua` | Stays as given or, with `None`, stays gone on each hop. `//net` still changes an `Origin` on a redirect, as it does in Chrome |
 | `Cookie` | Goes only if the Session holds no cookie for the URL, because `//net` writes over it otherwise |
 
@@ -295,7 +295,7 @@ A string enum, so that `kind="fetch"` and `kind=mitto.RequestKind.FETCH` are the
 
 The URL of the page the request is made from, which counts as a top-level page. It decides `Referer`, `Origin` and `Sec-Fetch-Site` on each hop, which `SameSite` cookies go, which connections and partitioned cookies the request can use, and for a kind other than navigation, which client hints it sends. [persona.md](persona.md#the-initiator) has the rules, which are ported from Chrome.
 
-Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`, and a value that is neither text nor `None` raises a `TypeError`.
+Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`. One that holds a NUL character or a lone surrogate, which UTF-8 cannot encode, raises a `ValueError` that names `initiator`, and a value that is neither text nor `None` raises a `TypeError`.
 
 A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows.
 
@@ -649,7 +649,7 @@ Cookies.set(cookie: Cookie) -> None
 
 Put a cookie in the store, as a response's `Set-Cookie` would. It replaces one of the same name, domain and path. A cookie with an expiry in the past is not stored, and what it would replace still goes. A dot before a public suffix gives a cookie for that one name, as a server's `Domain` attribute does, and not one for all of the suffix.
 
-It raises a `ValueError` if the native core refuses the cookie, such as a `__Host-` cookie that is not `Secure` or a domain that holds a port or a path, and a `TypeError` if `cookie` is not a `Cookie` or one of its times has no timezone.
+It raises a `ValueError` if the native core refuses the cookie, such as a `__Host-` cookie that is not `Secure` or a domain that holds a port or a path, and a `TypeError` if `cookie` is not a `Cookie`.
 
 #### `Cookies.delete()`
 
@@ -711,7 +711,7 @@ One cookie, as the store holds it. A cookie has no fixed encoding, so `name`, `v
 
 Without `created`, this is a new cookie to set, and `//net` checks it as if a server at its domain had sent it. The attributes below `created` then stay `None`. A cookie from `Cookies` has them all, and can be set again as it is.
 
-An attribute of a type it does not take raises a `TypeError` that names it, so a time is a `datetime` and not a number of seconds, and `True` and `False` are no `source_port`. Text outside the values of its type, such as a `same_site` of `"sometimes"`, raises a `ValueError` when [`Cookies.set()`](#cookiesset) puts it in the store.
+An attribute of a type it does not take raises a `TypeError` that names it, so a time is a `datetime` and not a number of seconds, and `True` and `False` are no `source_port`. So does a time without a timezone, which could stand for any moment, when the cookie is built. Text outside the values of its type, such as a `same_site` of `"sometimes"`, raises a `ValueError` when [`Cookies.set()`](#cookiesset) puts it in the store.
 
 | Attribute | Type | What it holds |
 | --- | --- | --- |

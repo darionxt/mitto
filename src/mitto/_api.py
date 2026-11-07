@@ -137,11 +137,11 @@ class Session:
                 `data` of no type that makes a body or a mapping in it that holds a name or value that is not text,
                 `files` that is not a mapping or pairs with text for names or holds a file of another form, or `json` that
                 holds a value that JSON has no form of. Also if a stream gives something other than bytes.
-            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, a header cannot be encoded as Latin-1,
-                `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a positive
-                number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds a
-                NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or a
-                stream does not keep to its `Content-Length`.
+            ValueError: If `url`, `initiator` or a Referer in `headers` holds a NUL character or cannot be encoded as UTF-8,
+                which the message names, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in
+                `headers` differ only in case or `timeout` is not a positive number of at most 2,000,000 seconds. Also if
+                the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with GET or
+                HEAD or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length`.
             RequestError: If the request ends without a response. Its subclass says what a caller does next, and a timer
                 that runs out is a RequestTimeoutError. A proxy that asks for credentials this Session does not have, or
                 refuses those it has, is a ProxyError with ERR_PROXY_AUTH_REQUESTED, except that a SOCKS5 proxy asking a

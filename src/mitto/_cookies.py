@@ -56,6 +56,9 @@ class CookiePartitionKey:
         require_type("has_cross_site_ancestor", self.has_cross_site_ancestor, bool, "True or False")
 
 
+_TIME = "a datetime with a timezone or None"
+_TIMES = ("expires", "created", "last_accessed", "last_updated")
+
 # What each attribute of a Cookie takes. Text outside the values of its Literal type is the native core's to refuse.
 _COOKIE_ATTRIBUTES: tuple[tuple[str, type | UnionType, str], ...] = (
     ("name", str, "text"),
@@ -66,11 +69,11 @@ _COOKIE_ATTRIBUTES: tuple[tuple[str, type | UnionType, str], ...] = (
     ("http_only", bool, "True or False"),
     ("same_site", str, "'unspecified', 'none', 'lax' or 'strict'"),
     ("priority", str, "'low', 'medium' or 'high'"),
-    ("expires", datetime | None, "a datetime or None"),
+    ("expires", datetime | None, _TIME),
     ("partition_key", CookiePartitionKey | None, "a CookiePartitionKey or None"),
-    ("created", datetime | None, "a datetime or None"),
-    ("last_accessed", datetime | None, "a datetime or None"),
-    ("last_updated", datetime | None, "a datetime or None"),
+    ("created", datetime | None, _TIME),
+    ("last_accessed", datetime | None, _TIME),
+    ("last_updated", datetime | None, _TIME),
     ("source_scheme", str | None, "'unset', 'non_secure', 'secure' or None"),
     ("source_port", int | None, "a whole number or None"),
     ("source_type", str | None, "'http', 'script', 'other' or None"),
@@ -109,7 +112,8 @@ class Cookie:
         source_type: What it came from.
 
     Raises:
-        TypeError: If an attribute is of a type it does not take, which the message names. True and False are no port.
+        TypeError: If an attribute is of a type it does not take, or a time has no timezone, which the message names.
+            True and False are no port.
     """
 
     name: str
@@ -133,6 +137,11 @@ class Cookie:
     def __post_init__(self) -> None:
         for argument, expected, what in _COOKIE_ATTRIBUTES:
             require_type(argument, getattr(self, argument), expected, what)
+        for argument in _TIMES:
+            time: datetime | None = getattr(self, argument)
+            # A time without one could be in any timezone, and the store keeps each in UTC.
+            if time is not None and time.utcoffset() is None:
+                raise TypeError(f"{argument} has to be {_TIME}, not a datetime without one")
         # True and False are ints to Python, but no port.
         if isinstance(self.source_port, bool):
             raise TypeError("source_port has to be a whole number or None, not bool")
@@ -187,7 +196,7 @@ class _CookieStore:
         Raises:
             ValueError: If the native core refuses it, such as a __Host- cookie that is not Secure or a domain that holds a
                 port or a path.
-            TypeError: If `cookie` is not a Cookie, or one of its times has no timezone.
+            TypeError: If `cookie` is not a Cookie.
         """
         require_type("cookie", cookie, Cookie, "a Cookie")
         self._native.set_cookies(

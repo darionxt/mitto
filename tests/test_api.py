@@ -823,6 +823,36 @@ def test_a_setting_of_the_wrong_type_is_named_before_the_library_loads(
     assert str(caught.value) == message
 
 
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    ("url_end", "options", "message"),
+    [
+        ("a-secret\0", {}, "url holds a NUL character"),
+        ("a-secret\ud800", {}, "url holds a lone surrogate, which UTF-8 cannot encode"),
+        ("", {"initiator": "https://a-secret.test/\0"}, "initiator holds a NUL character"),
+        (
+            "",
+            {"initiator": "https://a-secret.test/\ud800"},
+            "initiator holds a lone surrogate, which UTF-8 cannot encode",
+        ),
+        ("", {"headers": {"Referer": "https://a-secret.test/\0"}}, "the Referer in headers holds a NUL character"),
+        (
+            "",
+            {"headers": {"referer": "https://a-secret.test/\udc00"}},
+            "the Referer in headers holds a lone surrogate, which UTF-8 cannot encode",
+        ),
+    ],
+)
+def test_a_url_that_cannot_be_encoded_is_named_with_nothing_sent(
+    server: AnyMethodServer, url_end: str, options: dict[str, Any], message: str
+) -> None:
+    with mitto.Session() as session, pytest.raises(ValueError, match="holds") as caught:
+        session.get(server.url + url_end, **options)
+
+    assert str(caught.value) == message
+    assert server.received == []
+
+
 # The walk of every public argument. It reads them from the signatures, so a new argument is walked as soon as it exists,
 # and fails here until it has a check.
 

@@ -10,6 +10,7 @@ from typing import TypedDict, cast
 
 from mitto._arguments import require_type
 from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
+from mitto._native import encode_url
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
 
@@ -172,10 +173,11 @@ def build_request(
             name or value in `params` or a mapping in `data` that is not text, a name in `headers` that is not text or a
             value in it that is neither text nor None, a file in `files` of another form and a value in `json` that JSON
             has no form of count as well.
-        ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` is not a
-            positive number of at most 2,000,000 seconds. Also if the arguments of a body do not go together, `json` holds
-            a NaN or an infinity, a body goes with GET or HEAD or with a Request Kind that Chrome sends none with, or the
-            `Content-Length` of a stream is not a number of bytes.
+        ValueError: If `kind` is not a Request Kind, two names in `headers` differ only in case, a Referer in them holds a
+            NUL character or cannot be encoded as UTF-8, or `timeout` is not a positive number of at most 2,000,000
+            seconds. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with
+            GET or HEAD or with a Request Kind that Chrome sends none with, or the `Content-Length` of a stream is not a
+            number of bytes.
     """
     require_type("method", method, str, "text")
     require_type("url", url, str, "text")
@@ -196,6 +198,9 @@ def build_request(
         body = _with_size_from_headers(body, changes)
     fetch = dataclasses.replace(defaults["fetch"], initiator=initiator, fixed_headers=tuple(changes))
     _, referrer = changes.pop(_REFERER, (_REFERER, None))
+    if referrer is not None:
+        # The native core takes it as a URL, in UTF-8, and would name it by its own name.
+        encode_url(referrer, "the Referer in headers")
     if body is not None:
         # This takes the place of the Persona's line, as a caller's would. Having no type removes the line, while a type
         # that a caller gives for bytes still goes where Chrome puts it.

@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlsplit
@@ -639,12 +639,12 @@ def test_an_attribute_outside_its_values_is_refused(changes: dict[str, Any]) -> 
         ({"http_only": 1}, "http_only has to be True or False, not int"),
         ({"same_site": None}, "same_site has to be 'unspecified', 'none', 'lax' or 'strict', not NoneType"),
         ({"priority": 5}, "priority has to be 'low', 'medium' or 'high', not int"),
-        ({"expires": 1_800_000_000}, "expires has to be a datetime or None, not int"),
-        ({"expires": date(2030, 1, 1)}, "expires has to be a datetime or None, not date"),
+        ({"expires": 1_800_000_000}, "expires has to be a datetime with a timezone or None, not int"),
+        ({"expires": date(2030, 1, 1)}, "expires has to be a datetime with a timezone or None, not date"),
         ({"partition_key": "https://example.test"}, "partition_key has to be a CookiePartitionKey or None, not str"),
-        ({"created": "2030-01-01T00:00:00Z"}, "created has to be a datetime or None, not str"),
-        ({"last_accessed": 5.0}, "last_accessed has to be a datetime or None, not float"),
-        ({"last_updated": 5}, "last_updated has to be a datetime or None, not int"),
+        ({"created": "2030-01-01T00:00:00Z"}, "created has to be a datetime with a timezone or None, not str"),
+        ({"last_accessed": 5.0}, "last_accessed has to be a datetime with a timezone or None, not float"),
+        ({"last_updated": 5}, "last_updated has to be a datetime with a timezone or None, not int"),
         ({"source_scheme": 5}, "source_scheme has to be 'unset', 'non_secure', 'secure' or None, not int"),
         ({"source_port": "443"}, "source_port has to be a whole number or None, not str"),
         ({"source_port": 443.0}, "source_port has to be a whole number or None, not float"),
@@ -716,10 +716,39 @@ def test_an_argument_of_the_wrong_type_is_named_and_the_store_stays_as_it_was(
     assert str(caught.value) == message
 
 
+class _NoOffset(tzinfo):
+    """A timezone that gives no offset, which leaves a time without one, as Python counts it."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return None
+
+
 @pytest.mark.usefixtures("native_library")
-def test_a_time_without_a_timezone_is_refused() -> None:
-    with new_session() as session, pytest.raises(TypeError):
-        session.cookies.set(Cookie("a", "1", domain=HOST, expires=datetime(2030, 1, 1)))
+@pytest.mark.parametrize("attribute", ["expires", "created", "last_accessed", "last_updated"])
+@pytest.mark.parametrize(
+    "time", [datetime(2030, 1, 1), datetime(2030, 1, 1, tzinfo=_NoOffset())], ids=["naive", "no-offset"]
+)
+def test_a_time_without_a_timezone_is_named_and_nothing_is_set(attribute: str, time: datetime) -> None:
+    arguments: dict[str, Any] = {"name": "a", "value": "1", "domain": HOST, attribute: time}
+
+    with new_session() as session:
+        with pytest.raises(TypeError) as caught:
+            session.cookies.set(Cookie(**arguments))
+
+        assert len(session.cookies) == 0
+    assert str(caught.value) == f"{attribute} has to be a datetime with a timezone or None, not a datetime without one"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_time_in_any_timezone_is_the_same_time() -> None:
+    # Well inside the 400 days that //net brings an expiry down to.
+    expires = datetime.now(UTC).replace(microsecond=0) + timedelta(days=30)
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST, expires=expires.astimezone(timezone(timedelta(hours=8)))))
+        cookie = session.cookies.get("a")
+
+    assert cookie is not None
+    assert cookie.expires == expires
 
 
 @pytest.mark.usefixtures("native_library")

@@ -257,16 +257,21 @@ def load_library() -> ctypes.CDLL:
     return library
 
 
-def encode_url(url: str) -> bytes:
-    """Return `url` the way the C API takes it.
+def encode_url(url: str, argument: str = "url") -> bytes:
+    """Return `url`, which a caller gave as `argument`, the way the C API takes it.
 
     Raises:
-        ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8.
+        ValueError: If `url` holds a NUL character, or a lone surrogate, which UTF-8 cannot encode. The message names
+            `argument` and leaves out the URL, which may hold a secret.
     """
-    encoded_url = url.encode()
+    try:
+        encoded_url = url.encode()
+    except UnicodeEncodeError:
+        # Its own message shows the character, which is part of the URL.
+        raise ValueError(f"{argument} holds a lone surrogate, which UTF-8 cannot encode") from None
     # The C API takes a NUL-terminated string, so it would fetch only what comes before the NUL.
     if b"\0" in encoded_url:
-        raise ValueError("url holds a NUL character")
+        raise ValueError(f"{argument} holds a NUL character")
     return encoded_url
 
 
@@ -579,7 +584,7 @@ class FetchParams:
             "fixed_headers": list(self.fixed_headers),
         }
         if self.initiator is not None:
-            encode_url(self.initiator)
+            encode_url(self.initiator, "initiator")
             option["initiator"] = self.initiator
         return option
 
@@ -838,7 +843,7 @@ class Session:
 
         Raises:
             ValueError: If `url`, `referrer` or the initiator in `fetch` holds a NUL character or cannot be encoded as UTF-8,
-                or a header cannot be encoded as Latin-1.
+                which the message names, or a header cannot be encoded as Latin-1.
             RequestError: If the native core refuses the request with ERR_INVALID_ARGUMENT, because of an invalid header or
                 method, a `referrer` that //net cannot send, or an initiator that is not a valid URL. What goes wrong later
                 arrives as the Finished event.
@@ -853,7 +858,7 @@ class Session:
             **timeout_options(timeout),
         }
         if referrer is not None:
-            encode_url(referrer)
+            encode_url(referrer, "referrer")
             options["referrer"] = referrer
         if fetch is not None:
             options["fetch"] = fetch.to_option()
