@@ -246,7 +246,7 @@ def test_the_server_reads_datagrams_late_only_with_tickets() -> None:
     def fastest_get_in_seconds(*, tickets: bool) -> float:
         with CaptureServer(tickets=tickets) as server, Http3Client(server.port(HTTP3)) as client:
             client.wait_for_handshake()
-            times = []
+            times: list[float] = []
             for _ in range(5):
                 start = time.monotonic()
                 client.get(_FETCH)
