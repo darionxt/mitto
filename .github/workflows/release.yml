@@ -1,0 +1,296 @@
+name: Release
+
+# A tag vX.Y.Z on main publishes that version to PyPI. Run by hand, the workflow is a dry run: it publishes a
+# pre-release to TestPyPI and makes no public GitHub release. See docs/building.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The pre-release that the dry run publishes to TestPyPI, such as 0.1.0rc1. TestPyPI never takes a version twice.
+        required: true
+        type: string
+
+# No job but the one that publishes can get an OIDC token, which is what Trusted Publishing uploads with.
+permissions:
+  contents: read
+
+# Two runs for the same tag would publish the same version twice.
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  check:
+    name: Check what to publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dry-run: ${{ steps.version.outputs.dry-run }}
+      environment: ${{ steps.version.outputs.environment }}
+      index: ${{ steps.version.outputs.index }}
+      upload-url: ${{ steps.version.outputs.upload-url }}
+    env:
+      UV_LOCKED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Every branch with its history, to see that a tag's commit is on main.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - id: version
+        name: Check the version
+        env:
+          # Only a pushed tag publishes to PyPI. A run by hand is a dry run, even on a tag.
+          RELEASE: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+          TAG: ${{ github.ref_name }}
+          DRY_RUN_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            version="$(uv run python -m tools.release version --tag "$TAG")"
+            if ! git merge-base --is-ancestor HEAD origin/main; then
+              echo "::error::The tag $TAG is not on main."
+              exit 1
+            fi
+            dry_run=false environment=pypi index=https://pypi.org upload_url=https://upload.pypi.org/legacy/
+          else
+            version="$(uv run python -m tools.release version --dry-run "$DRY_RUN_VERSION")"
+            dry_run=true environment=testpypi index=https://test.pypi.org upload_url=https://test.pypi.org/legacy/
+          fi
+          # An index never takes a version twice, so this stops before the builds rather than after them.
+          status="$(curl --silent --retry 3 --output /dev/null --write-out '%{http_code}' "$index/pypi/mitto/$version/json")"
+          if [ "$status" != 404 ]; then
+            echo "::error::$index answered $status for mitto $version, where 404 would say that it does not have it."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "dry-run=$dry_run"
+            echo "environment=$environment"
+            echo "index=$index"
+            echo "upload-url=$upload_url"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishes mitto $version to $index."
+      - name: Write the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: uv run python -m tools.release notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/notes.md
+          if-no-files-found: error
+
+  build:
+    name: Build and test on ${{ matrix.runner }}
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    # The build from nothing takes 15 to 30 minutes, and the tests about 8 more.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+          # The one hosted macOS image with the macOS SDK that Chromium's bots use.
+          - runner: xcode-27
+    env:
+      UV_LOCKED: "1"
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      # In this checkout only, so that the wheel and the locked environment of the tests have it.
+      - name: Take the dry run's version
+        if: needs.check.outputs.dry-run == 'true'
+        env:
+          # uv writes the version into uv.lock too.
+          UV_LOCKED: "0"
+        run: uv version "$VERSION" --no-sync
+      # From nothing: a release restores and saves no Actions cache, so nothing that another run left can get into it.
+      - name: Build the native core
+        run: |
+          set -o pipefail
+          uv run tools/workspace/export.py build "$RUNNER_TEMP/export" | tee "$RUNNER_TEMP/build.log"
+          library="$(tail -n 1 "$RUNNER_TEMP/build.log")"
+          echo "LIBRARY=$library" >> "$GITHUB_ENV"
+          # The notices of what this library links, which the test of the wheel's notices compares with them.
+          uv run python -m tools.workspace.notices host "$(dirname "$library")" > "$RUNNER_TEMP/host-notices.txt"
+      # From the library in its build directory, whose object files give the symbols their line numbers.
+      - name: Build the wheel
+        run: |
+          MITTO_WHEEL_LIBRARY="$LIBRARY" uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+          wheel="$(ls "$RUNNER_TEMP"/dist/mitto-"$VERSION"-py3-none-*.whl)"
+          ls "${wheel%.whl}.symbols.tar.xz"
+          echo "WHEEL=$wheel" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheel-${{ matrix.runner }}
+          path: ${{ runner.temp }}/dist/mitto-*.whl
+          if-no-files-found: error
+          # Compressed already.
+          compression-level: 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: symbols-${{ matrix.runner }}
+          path: ${{ runner.temp }}/dist/mitto-*.symbols.tar.xz
+          if-no-files-found: error
+          compression-level: 0
+      # A new environment, with the locked tools and the package from the wheel, so that the
+      # tests load the library inside the installed package and import nothing from src/.
+      - name: Install the wheel
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wheel-env
+        run: |
+          uv sync --no-install-project
+          uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" "$WHEEL"
+      - name: Test the installed wheel
+        env:
+          MITTO_HOST_NOTICES: ${{ runner.temp }}/host-notices.txt
+        run: MITTO_WHEEL="$WHEEL" "$RUNNER_TEMP/wheel-env/bin/python" -m pytest -rs
+
+  publish:
+    name: Publish to ${{ needs.check.outputs.environment }}
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # A tag waits here for the owner's approval, once every build and test has passed. A dry run does not wait.
+    environment:
+      name: ${{ needs.check.outputs.environment }}
+      url: ${{ needs.check.outputs.index }}/project/mitto/${{ needs.check.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Check that there is a wheel per Host
+        run: |
+          ls dist
+          test "$(ls dist | wc -l)" -eq 2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          repository-url: ${{ needs.check.outputs.upload-url }}
+          packages-dir: dist
+
+  github-release:
+    name: GitHub release
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # A dry run makes a draft, which only those who can write to the repository see, and deletes it again. A draft
+      # makes no tag, and its name is not vX.Y.Z.
+      DRAFT: dry-run-${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: "{wheel,symbols}-*"
+          path: assets
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}
+      - name: Write the sums
+        working-directory: assets
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 4
+      - name: Make the release
+        if: needs.check.outputs.dry-run == 'false'
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --title "mitto $VERSION" --notes-file "$RUNNER_TEMP/notes.md" assets/*
+      - name: Make the dry run's draft
+        if: needs.check.outputs.dry-run == 'true'
+        run: |
+          gh release create "$DRAFT" --draft --target "$GITHUB_SHA" --title "mitto $VERSION" --notes-file "$RUNNER_TEMP/notes.md" assets/*
+          gh release view "$DRAFT" --json assets --jq '.assets[].name'
+      - name: Delete the dry run's draft
+        if: always() && needs.check.outputs.dry-run == 'true'
+        run: |
+          if gh release view "$DRAFT" > /dev/null; then
+            gh release delete "$DRAFT" --yes
+          fi
+
+  install:
+    name: Install from ${{ needs.check.outputs.environment }} on ${{ matrix.runner }}
+    needs: [check, publish]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, xcode-27]
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      INDEX: ${{ needs.check.outputs.index }}
+    steps:
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      # The newest Python mitto supports, as the build job tested the oldest. Nothing from the repository is here.
+      - name: Make a new environment
+        run: uv venv --seed --python 3.15 "$RUNNER_TEMP/new-env"
+      # An index can take a few minutes to list a new version.
+      - name: Install mitto from the index
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if "$RUNNER_TEMP/new-env/bin/python" -m pip install --no-cache-dir --index-url "$INDEX/simple/" "mitto==$VERSION"; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
+      - name: Make a request to a local server
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/new-env/bin/python" - <<'EOF'
+          import functools
+          import http.server
+          import importlib.metadata
+          import os
+          import socketserver
+          import tempfile
+          import threading
+          from pathlib import Path
+
+          import mitto
+
+
+          class Server(http.server.ThreadingHTTPServer):
+              # HTTPServer looks up the host's name, which can take half a minute on a macOS runner.
+              def server_bind(self) -> None:
+                  socketserver.TCPServer.server_bind(self)
+                  self.server_port = self.server_address[1]
+
+
+          version = os.environ["VERSION"]
+          assert importlib.metadata.version("mitto") == version, importlib.metadata.version("mitto")
+          assert "MITTO_NATIVE_LIBRARY" not in os.environ
+          site = Path(tempfile.mkdtemp())
+          (site / "hello.txt").write_text(f"mitto {version}\n")
+          handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=site)
+          with Server(("127.0.0.1", 0), handler) as server:
+              threading.Thread(target=server.serve_forever, daemon=True).start()
+              response = mitto.get(f"http://127.0.0.1:{server.server_port}/hello.txt")
+              server.shutdown()
+          print(f"mitto {version}: {response.status} over {response.protocol}, {response.text!r}")
+          assert response.status == 200
+          assert response.text == f"mitto {version}\n"
+          EOF
