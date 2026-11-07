@@ -91,6 +91,24 @@ def quic_client_hellos(server: CaptureServer) -> list[ClientHello]:
     return hellos
 
 
+def ech_aead(form: dict[str, Json]) -> Json:
+    """Return the AEAD that the encrypted_client_hello extension of a ClientHello's normal form names."""
+    extensions = cast(list[dict[str, Json]], form["extensions"])
+    return next(item["aead"] for item in extensions if item["type"] == "encrypted_client_hello")
+
+
+def without_ech_aead(form: dict[str, Json]) -> dict[str, Json]:
+    """Return a ClientHello's normal form without the AEAD of its encrypted_client_hello extension."""
+    extensions: list[Json] = [
+        {key: value for key, value in item.items() if key != "aead"}
+        if item["type"] == "encrypted_client_hello"
+        else item
+        for item in cast(list[dict[str, Json]], form["extensions"])
+    ]
+    stripped: dict[str, Json] = {**form, "extensions": extensions}
+    return stripped
+
+
 def inner_form(outer: dict[str, Json], *, tls_1_2: bool) -> dict[str, Json]:
     """Return what the normal form of a ClientHelloInner should be, from that of its outer ClientHello.
 
@@ -152,8 +170,10 @@ def test_real_ech_looks_like_ech_grease_from_outside(capture_server: CaptureServ
     with pytest.raises((ValueError, InvalidTag)):
         key.inner_client_hello(grease)
     # Chrome 155, 156 and 157 sent the same: with real ECH, their ClientHello had the normal form of their Baselines,
-    # which hold GREASE. GREASE picks AES-128-GCM only on a processor with AES instructions, so elsewhere this differs.
-    assert normal_hello(real) == normal_hello(grease)
+    # which hold GREASE. Real ECH takes the record's one AEAD, and GREASE takes AES-128-GCM only on a processor with AES
+    # instructions, so that one field follows the Host.
+    assert ech_aead(normal_hello(real)) == "AES-128-GCM"
+    assert without_ech_aead(normal_hello(real)) == without_ech_aead(normal_hello(grease))
 
 
 def test_the_client_hello_inner_offers_tls_1_3_only(capture_server: CaptureServer) -> None:
