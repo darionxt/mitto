@@ -10,11 +10,14 @@ import ssl
 import tempfile
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol, Self
+
+from aioquic.quic.connection import NetworkAddress
 
 from tools.capture.cases import (
     CROSS_SITE_HOST,
@@ -57,6 +60,8 @@ _CLOSE_TIMEOUT_SECONDS = 5.0
 _LOOPBACKS = ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1"))
 _NO_IPV6_ERRORS = (errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT)
 _BIND_ATTEMPTS = 20
+# On loopback a handshake can end before a client has written a request, so what it would send early would not show.
+_QUIC_DELAY_WITH_TICKETS_SECONDS = 0.1
 
 _log = logging.getLogger(__name__)
 
@@ -91,6 +96,9 @@ class _Stream(Protocol):
     @property
     def cipher(self) -> str | None: ...
 
+    @property
+    def resumed(self) -> bool: ...
+
 
 class _LiveConnection:
     """A connection in progress. Only touch it while holding the server's lock."""
@@ -107,6 +115,7 @@ class _LiveConnection:
         self.alpn: str | None = None
         self.http: Http1Connection | Http2Connection | None = None
         self.error: str | None = None
+        self.resumed = False
 
     def snapshot(self) -> ConnectionRecord:
         frames: tuple[Frame, ...] = ()
@@ -127,6 +136,7 @@ class _LiveConnection:
             self.error,
             self.peer,
             self.connect,
+            self.resumed,
         )
 
 
@@ -219,6 +229,10 @@ class _TlsStream:
         cipher = self.tls.cipher()
         return cipher[0] if cipher else None
 
+    @property
+    def resumed(self) -> bool:
+        return self.tls.session_reused
+
     def _fill(self) -> bool:
         data = self._sock.recv(_READ_SIZE)
         if not data:
@@ -238,6 +252,7 @@ class _PlainStream:
     alpn = None
     tls_version = None
     cipher = None
+    resumed = False
 
     def __init__(self, sock: socket.socket) -> None:
         self._sock = sock
@@ -255,7 +270,8 @@ class CaptureServer:
 
     HTTP/1.1, HTTP/2 and HTTP/3 have a port each. Plain HTTP has a port, and so does an HTTP proxy, through which HTTP/1.1
     and HTTP/2 can be reached too. Use it as a context manager. Clients must connect by name, so that they send SNI.
-    Connections never get session tickets, so every ClientHello is that of a fresh connection and has no pre_shared_key.
+    Unless asked to, it gives out no session tickets, so every ClientHello is that of a fresh connection and has no
+    pre_shared_key.
     """
 
     def __init__(
@@ -267,6 +283,7 @@ class CaptureServer:
         http3_port: int = 0,
         plain_http_port: int = 0,
         proxy_port: int = 0,
+        tickets: bool = False,
     ) -> None:
         """Prepare a server at host, which must end in .localhost or .test.
 
@@ -274,10 +291,16 @@ class CaptureServer:
 
         A port of 0 means any free port whose number no other port of this server has. Named ports may share a number
         across TCP and UDP.
+
+        With tickets, connections over TLS get session tickets, so that a client's later connections can resume. Those
+        over HTTP/3 allow early data, and those over TCP do not, because Python's ssl has no way to say that they do.
+        Datagrams then wait a moment before the server reads them, as if it were far away, which is what gives a client
+        time to send early data.
         """
         if not host.endswith(_HOST_SUFFIXES):
             raise ValueError(f"{host!r} does not end in .localhost or .test")
         self.host = host
+        self._tickets = tickets
         self._certificate: Certificate | None = None
         self._endpoints = {
             HTTP1: _Endpoint(HTTP1, http1_port),
@@ -294,6 +317,7 @@ class CaptureServer:
         self._listeners: list[socket.socket] = []
         self._quic: QuicDispatcher | None = None
         self._quic_sockets: dict[int, socket.socket] = {}
+        self._held_datagrams: deque[tuple[float, bytes, NetworkAddress]] = deque()
         self._stopping = threading.Event()
         self._listen_thread: threading.Thread | None = None
         self._connection_threads: list[threading.Thread] = []
@@ -426,7 +450,7 @@ class CaptureServer:
         self._certificate = generate_certificate(self.host, *(name for name in HOST_NAMES if name != self.host))
         for protocol, proxied in ((HTTP1, PROXIED_HTTP1), (HTTP2, PROXIED_HTTP2)):
             direct = self._endpoints[protocol]
-            direct.context = _server_context(self._certificate, protocol)
+            direct.context = _server_context(self._certificate, protocol, tickets=self._tickets)
             self._listen(direct)
             tunnel = self._endpoints[proxied]
             tunnel.context = direct.context
@@ -446,7 +470,7 @@ class CaptureServer:
             connection.id = next(self._connection_ids)
             endpoint.connections.append(connection)
 
-        self._quic = QuicDispatcher(certificate, _page_responder(endpoint), record)
+        self._quic = QuicDispatcher(certificate, _page_responder(endpoint), record, tickets=self._tickets)
         for sock in self._bind(endpoint, _open_udp):
             self._quic_sockets[sock.family] = sock
             self._selector.register(sock, selectors.EVENT_READ, _QuicListener(sock))
@@ -504,9 +528,10 @@ class CaptureServer:
         assert self._quic is not None
         with self._lock:
             wakeup = self._quic.next_wakeup()
-        if wakeup is None:
-            return _POLL_SECONDS
-        return min(_POLL_SECONDS, max(0.0, wakeup - time.monotonic()))
+        wakeups = [wakeup] if wakeup is not None else []
+        if self._held_datagrams:
+            wakeups.append(self._held_datagrams[0][0])
+        return min([_POLL_SECONDS, *(max(0.0, when - time.monotonic()) for when in wakeups)])
 
     def _receive_datagram(self, sock: socket.socket) -> None:
         assert self._quic is not None
@@ -515,12 +540,22 @@ class CaptureServer:
         except OSError:
             # Windows reports here that an earlier datagram found nobody listening. This one is not lost.
             return
+        if self._tickets:
+            self._held_datagrams.append((time.monotonic() + _QUIC_DELAY_WITH_TICKETS_SECONDS, data, address))
+            return
+        self._read_datagram(data, address)
+
+    def _read_datagram(self, data: bytes, address: NetworkAddress) -> None:
+        assert self._quic is not None
         with self._lock:
             output = self._quic.receive(data, address, time.monotonic())
         self._send_datagrams(output)
 
     def _handle_quic_timers(self) -> None:
         assert self._quic is not None
+        while self._held_datagrams and self._held_datagrams[0][0] <= time.monotonic():
+            _, data, address = self._held_datagrams.popleft()
+            self._read_datagram(data, address)
         with self._lock:
             output = self._quic.handle_timers(time.monotonic())
         self._send_datagrams(output)
@@ -636,6 +671,7 @@ class CaptureServer:
             live.cipher = stream.cipher
             live.alpn = alpn
             live.http = http
+            live.resumed = stream.resumed
         return http
 
 
@@ -649,12 +685,13 @@ def _page_responder(endpoint: _Endpoint) -> Responder:
     return answer
 
 
-def _server_context(certificate: Certificate, protocol: str) -> ssl.SSLContext:
+def _server_context(certificate: Certificate, protocol: str, *, tickets: bool) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
-    # With no tickets to resume from, a client's later connections look like its first.
-    context.num_tickets = 0
-    context.options |= ssl.OP_NO_TICKET
+    if not tickets:
+        # With no tickets to resume from, a client's later connections look like its first.
+        context.num_tickets = 0
+        context.options |= ssl.OP_NO_TICKET
     context.set_alpn_protocols([protocol])
     with tempfile.TemporaryDirectory() as directory:
         certificate_path = Path(directory) / "certificate.pem"

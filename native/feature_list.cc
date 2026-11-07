@@ -49,8 +49,9 @@ void InitFeatureList() {
       net::features::kAddTLSServerHandshakePadding.name,
       net::features::kIgnoreIpMatching.name,
 
-      // No Parity Check can see this one, because the capture server gives out
-      // no session tickets, and early data needs a resumed connection.
+      // No Parity Check can see this one, because early data needs a resumed
+      // connection, and Baselines hold fresh ones. docs/capture.md has what
+      // real Chrome does.
       net::features::kEnableTLS13EarlyData.name,
   };
   base::FeatureList::InitInstance(base::JoinString(enable_features, ","),

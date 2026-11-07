@@ -34,6 +34,7 @@ class Response:
         body: The body.
         cache_control: The value of Cache-Control.
         headers: More (name, value) pairs to send, in order, with the case HTTP/1.1 uses.
+        close: Whether the connection ends with this answer, so that the client's next request needs a new one.
     """
 
     status: int
@@ -41,6 +42,7 @@ class Response:
     body: bytes
     cache_control: str = "no-store"
     headers: tuple[tuple[str, str], ...] = ()
+    close: bool = False
 
 
 type Responder = Callable[[RequestHead], Response]

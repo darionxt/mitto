@@ -283,7 +283,13 @@ class Http3Connection:
         if stream.request is None or not stream.finished or stream.reset or stream.answered:
             return []
         stream.answered = True
-        return self._serialize(stream_id, self._respond(stream.request))
+        response = self._respond(stream.request)
+        output = self._serialize(stream_id, response)
+        if response.close:
+            # What the client may still send on this connection, as the number of the first stream the server will not
+            # take. Ending it here could overtake the answer, and even the handshake, if this came as early data.
+            output.append(StreamData(_SERVER_CONTROL_STREAM, serialize_frame(GOAWAY, serialize_varint(stream_id + 4))))
+        return output
 
     def _receive_unidirectional(self, stream_id: int, data: bytes) -> list[StreamData]:
         stream = self._unidirectional_streams.setdefault(stream_id, _UnidirectionalStream())

@@ -113,8 +113,11 @@ class Http1Connection:
         self._body_size = 0
         headers = {name.lower(): value for name, value in request.headers}
         # A chunked body has no length to wait for. Nothing here needs one, so the connection ends with this answer.
-        self.closed = "transfer-encoding" in headers or headers.get("connection", "").lower() == "close"
-        return _serialize(self._respond(request), close=self.closed)
+        response = self._respond(request)
+        self.closed = (
+            response.close or "transfer-encoding" in headers or headers.get("connection", "").lower() == "close"
+        )
+        return _serialize(response, close=self.closed)
 
 
 def _body_size(request: Http1Request) -> int:

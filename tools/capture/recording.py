@@ -64,6 +64,7 @@ class ConnectionRecord:
         error: Why the server gave up on the connection, if it did.
         peer: The client's address, without its port, if known.
         connect: The CONNECT request that opened the tunnel this connection came through, if it came through one.
+        resumed: Whether the handshake resumed a session from a ticket the server gave out.
     """
 
     id: int
@@ -76,6 +77,7 @@ class ConnectionRecord:
     error: str | None
     peer: str | None = None
     connect: Http1Request | None = None
+    resumed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +96,8 @@ class QuicConnectionRecord:
         requests: Every request received, in order.
         error: Why the connection ended, if it was not for a good reason.
         peer: The client's address, without its port, if known.
+        resumed: Whether the handshake resumed a session from a ticket the server gave out.
+        early_streams: The streams that carried early data: what arrived on them before the client's Finished.
     """
 
     id: int
@@ -107,6 +111,8 @@ class QuicConnectionRecord:
     requests: tuple[Http3Request, ...]
     error: str | None
     peer: str | None = None
+    resumed: bool = False
+    early_streams: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,11 +166,13 @@ def _raw_connection(connection: ConnectionRecord | QuicConnectionRecord) -> Json
     }
     if connection.connect is not None:
         form["connect"] = _raw_request(connection.connect)
+    if connection.resumed:
+        form["resumed"] = True
     return form
 
 
 def _raw_quic_connection(connection: QuicConnectionRecord) -> Json:
-    return {
+    form: dict[str, Json] = {
         "id": connection.id,
         "peer": connection.peer,
         "ip_version": connection.ip_version,
@@ -181,6 +189,11 @@ def _raw_quic_connection(connection: QuicConnectionRecord) -> Json:
             {"stream": request.stream_id, "headers": header_lines(request.headers)} for request in connection.requests
         ],
     }
+    if connection.resumed:
+        form["resumed"] = True
+    if connection.early_streams:
+        form["early_streams"] = list[Json](sorted(connection.early_streams))
+    return form
 
 
 def _raw_initial_packet(packet: InitialPacket) -> Json:
