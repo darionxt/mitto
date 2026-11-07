@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from typing import cast
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
 from mitto import RequestError
 from mitto._native import Session
@@ -147,9 +148,11 @@ def test_real_ech_looks_like_ech_grease_from_outside(capture_server: CaptureServ
 
     real, grease = client_hellos(capture_server)
     assert server_name(key.inner_client_hello(real)) == HOST
-    with pytest.raises(ValueError, match="another configuration"):
+    # GREASE has a random configuration ID, which can be this one by chance.
+    with pytest.raises((ValueError, InvalidTag)):
         key.inner_client_hello(grease)
-    # Chrome 157 sent the same: with real ECH, its ClientHello had the normal form of its Baselines, which hold GREASE.
+    # Chrome 155, 156 and 157 sent the same: with real ECH, their ClientHello had the normal form of their Baselines,
+    # which hold GREASE. GREASE picks AES-128-GCM only on a processor with AES instructions, so elsewhere this differs.
     assert normal_hello(real) == normal_hello(grease)
 
 
