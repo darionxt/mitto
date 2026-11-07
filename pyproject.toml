@@ -2,10 +2,33 @@
 name = "mitto"
 version = "0.0.0"
 description = "A Python HTTP client whose traffic matches real Chrome, built on Chromium's network stack."
+readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+keywords = ["asyncio", "chrome", "chromium", "http", "http-client", "http2", "http3", "quic", "tls"]
+# The licence is the SPDX expression above, so no classifier repeats it.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Internet :: WWW/HTTP",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Documentation = "https://github.com/darionxt/mitto/blob/main/docs/api.md"
+Source = "https://github.com/darionxt/mitto"
+Issues = "https://github.com/darionxt/mitto/issues"
 
 [dependency-groups]
 dev = [
