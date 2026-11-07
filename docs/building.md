@@ -409,6 +409,37 @@ Now the wheels are 6.14 MB on Linux and 5.55 MB on macOS. Of the stripped librar
 
 Other parts of `//net` that a build flag leaves out are small on macOS: Reporting with Network Error Logging 0.14 MB, mDNS 0.04 MB, WebSockets 0.02 MB and Kerberos 0.01 MB, before compression. Each would need the same reading of what a Session reaches as the two flags above, and none was tried. The HSTS preload list and the Chrome Root Store decide what a Session does, so they stay.
 
+## The release workflow
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) builds the wheels of a release on the hosted runners that CI uses, and publishes them. A tag `vX.Y.Z` on `main` starts it, in [the release routine](releasing.md#10-the-tag). Its jobs run in this order, and each starts only once those before it have passed:
+
+1. **Check what to publish.** The tag must be `v` and the version in `pyproject.toml`, and its commit must be on `main`. `uv run python -m tools.release version --tag vX.Y.Z` makes the first check and prints the version. PyPI must not have that version yet, because an index never takes a version twice. The job also writes the notes of the GitHub release with `uv run python -m tools.release notes X.Y.Z`. They name the **Supported Window**, the **Engine Release**, the Chromium build of the engine, and the build of Chrome that each **Persona** presents. They refuse an engine built from another milestone than the Engine Release's.
+2. **Build and test**, on `ubuntu-latest` and `xcode-27`. Each job [builds the native core from the source export](#build-from-the-source-export) that the repository pins, [builds the wheel](#build-a-wheel) and its symbols archive from the library in its build directory, and prints this Host's part of the [third-party notices](#third-party-notices). It then installs the wheel into a new environment and runs every test against it, with `MITTO_WHEEL` and `MITTO_HOST_NOTICES` set, as above. It builds from nothing: no job of the workflow restores or saves an Actions cache, setup-uv's included, so nothing that another run left can get into a release. The macOS symbols archive therefore keeps its line numbers.
+3. **Publish**, from a job in the `pypi` environment, which allows only tags `v*` and waits for the owner's approval. So the owner approves once every build and test has passed, and nothing is public before. It is the only job with `id-token: write`, so no other job can get the OIDC token that Trusted Publishing uploads with, and PyPI takes uploads to `mitto` from this workflow in this environment only. It uploads the two wheels and nothing else: there is no sdist, and the symbols archives are not for PyPI.
+4. **GitHub release** of the tag, with the two wheels, the two symbols archives, a `SHA256SUMS` file of the four, and the notes of the first job.
+5. **Install**, on each Host, at the same time as the GitHub release: `pip install mitto==X.Y.Z` from PyPI into a new environment of the newest Python that mitto supports, and a request with it to a local server. It tries for five minutes, because an index can take a while to list a new version.
+
+A tag that fails the first job has published nothing. Delete it, fix what the job says, and tag again. Once the wheels are on PyPI, rerun what failed with `gh run rerun <run-id> --failed` rather than tagging again, because PyPI would refuse the version. That also finishes a publish that stopped after one wheel: the rerun sends the same two wheels, and PyPI takes a file that it already has, byte for byte, as it takes a new one. It refuses another file of the same name. A macOS job that GitHub cancels after about 15 minutes, with no runner named, has not started: rerun it the same way.
+
+In the first dry run, on 2026-11-07, the whole run took 33 minutes. The build jobs took 27 minutes on macOS and 32 on Linux, of which the native core took 18 and 24 minutes and the tests about 8 minutes on either Host. Each later job took under half a minute.
+
+### A dry run
+
+Run by hand, the workflow is a dry run. It publishes a pre-release to TestPyPI from the `testpypi` environment, which waits for nobody, and makes no public GitHub release. For example, from `main`:
+
+```bash
+gh workflow run release.yml --ref main -f version=0.1.0rc1
+```
+
+It does what a release does, with these differences:
+
+- The version comes from the input, and must be a pre-release in PEP 440's normal form, such as `0.1.0rc1` or `0.1.0.dev1`. Each build job writes it into its own checkout's `pyproject.toml` and `uv.lock` with `uv version`, so the branch keeps its version. TestPyPI never takes a version twice, even once it is deleted, so each dry run needs a new one.
+- No tag is checked, so a dry run can run from any branch. A run by hand is a dry run even from a tag.
+- It publishes to TestPyPI, and installs from `https://test.pypi.org/simple/`.
+- The GitHub release is a draft named `dry-run-<version>`, which only those who can write to the repository see, and the job deletes it again once its assets are up. A draft makes no tag.
+
+GitHub only offers a run by hand of a workflow that is on the default branch.
+
 ## Work on the Python package
 
 The Python package is in [`src/mitto`](../src/mitto). Working on it needs [uv](https://docs.astral.sh/uv/) but no Chromium checkout. This command, run from the repository root, creates `.venv` with Python 3.12, the lowest version mitto supports, and the locked development tools:
