@@ -20,7 +20,8 @@ class Timeout:
             also counts a wait for another request's response to the same URL, and a response from the cache stops it.
         read: The longest wait for bytes from the server. The response's headers count as one wait, since //net does not
             report them a byte at a time, and it does not run out while the request's body is still moving. A wait for the
-            next part of a stream body is a wait for the caller, and does not count.
+            next part of a stream body is a wait for the caller, and does not count. //net sees a body move only until the
+            system's socket buffers take it, so the time that the last of it spends in those buffers does count.
         total: The time from the start of the request to its end, over all its redirects.
 
     Raises:

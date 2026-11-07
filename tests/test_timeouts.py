@@ -49,7 +49,9 @@ PAUSE_SECONDS = 0.1
 TRICKLE_CHUNKS = 15
 BODY = b"the whole body"
 
-# A body larger than the socket buffers of a loopback connection hold, and how a slow server reads it.
+# A body larger than the socket buffers of a loopback connection hold, and how a slow server reads it. Those buffers took
+# about 5 MiB at most in CI and LONGER_THAN_A_STALLED_READ_SECONDS of reads take 25 MiB at most, so the sender is still
+# writing when that server stops being slow.
 LARGE_BODY_SIZE = 32 * 1024 * 1024
 READ_SIZE_OF_A_SLOW_SERVER = 1024 * 1024
 READ_A_HEAD_SIZE = 4096
@@ -491,10 +493,15 @@ def test_a_native_timer_takes_any_positive_32_bit_number(native_library: ctypes.
 
 
 @contextmanager
-def _server_of_one_slow_upload(
-    read_size: int, pause_seconds: float, answer: bytes = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
+def _server_of_one_upload(
+    slow_seconds: float = 0, answer: bytes = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
 ) -> Generator[int]:
-    """Accept one connection, read a body slowly and give `answer` once it has all come. Yield the port."""
+    """Accept one connection, read a body and give `answer` once it has all come. Yield the port.
+
+    For `slow_seconds` this reads a little at a time, and the sender goes on filling the space that opens up. Then it takes
+    the rest at once. //net counts a byte as sent when the socket accepts it, so the read timer sees nothing move while
+    the last of a body waits in the socket buffers, and at the slow pace that wait alone can outlast the timer.
+    """
 
     def serve(listener: socket.socket) -> None:
         connection, _ = listener.accept()
@@ -505,9 +512,14 @@ def _server_of_one_slow_upload(
             _, _, read_ahead = head.partition(b"\r\n\r\n")
             size = int(next(line for line in head.split(b"\r\n") if line.startswith(b"Content-Length:")).split(b":")[1])
             remaining = size - len(read_ahead)
+            slow_until = time.monotonic() + slow_seconds
             while remaining > 0:
-                time.sleep(pause_seconds)
-                remaining -= len(connection.recv(read_size))
+                if time.monotonic() < slow_until:
+                    time.sleep(PAUSE_SECONDS)
+                part = connection.recv(READ_SIZE_OF_A_SLOW_SERVER)
+                if not part:
+                    return
+                remaining -= len(part)
             connection.sendall(answer)
 
     with socket.create_server(("127.0.0.1", 0)) as listener:
@@ -519,16 +531,15 @@ def _server_of_one_slow_upload(
 
 @pytest.mark.usefixtures("native_library")
 def test_a_body_that_keeps_moving_does_not_run_out_the_read_timer() -> None:
-    # The socket buffers of a loopback connection take a few megabytes, and this reads the rest in about four seconds.
     body = bytes(LARGE_BODY_SIZE)
-    with _server_of_one_slow_upload(READ_SIZE_OF_A_SLOW_SERVER, PAUSE_SECONDS) as port, mitto.Session() as session:
+    with _server_of_one_upload(LONGER_THAN_A_STALLED_READ_SECONDS) as port, mitto.Session() as session:
         started_at = time.monotonic()
         response = session.post(
             f"http://127.0.0.1:{port}/", data=body, timeout=Timeout(read=ROOMY_SECONDS, total=LONG_SECONDS)
         )
 
     assert response.status == 200
-    assert time.monotonic() - started_at > ROOMY_SECONDS
+    assert time.monotonic() - started_at > LONGER_THAN_A_STALLED_READ_SECONDS
 
 
 @pytest.mark.usefixtures("native_library")
@@ -536,20 +547,20 @@ def test_a_body_that_keeps_moving_after_a_redirect_does_not_run_out_the_read_tim
     # //net keeps the upload progress of the first hop, which a read timer must not take for a stalled server.
     body = bytes(LARGE_BODY_SIZE)
     with (
-        _server_of_one_slow_upload(READ_SIZE_OF_A_SLOW_SERVER, PAUSE_SECONDS) as slow_port,
-        _server_of_one_slow_upload(
-            LARGE_BODY_SIZE,
-            0,
-            f"HTTP/1.1 307 Redirect\r\nLocation: http://127.0.0.1:{slow_port}/\r\nContent-Length: 0\r\n\r\n".encode(),
+        _server_of_one_upload(LONGER_THAN_A_STALLED_READ_SECONDS) as slow_port,
+        _server_of_one_upload(
+            answer=f"HTTP/1.1 307 Redirect\r\nLocation: http://127.0.0.1:{slow_port}/\r\nContent-Length: 0\r\n\r\n".encode()
         ) as port,
         mitto.Session() as session,
     ):
+        started_at = time.monotonic()
         response = session.post(
             f"http://127.0.0.1:{port}/", data=body, timeout=Timeout(read=ROOMY_SECONDS, total=LONG_SECONDS)
         )
 
     assert response.status == 200
     assert len(response.history) == 1
+    assert time.monotonic() - started_at > LONGER_THAN_A_STALLED_READ_SECONDS
 
 
 def _slow_parts(count: int, pause_seconds: float) -> Iterator[bytes]:
@@ -562,7 +573,7 @@ def _slow_parts(count: int, pause_seconds: float) -> Iterator[bytes]:
 def test_a_wait_for_the_next_part_of_a_stream_does_not_run_out_the_read_timer() -> None:
     parts = 4
     # Each pause is longer than the read timer allows, and all of them far longer than a turn that notices moving bytes.
-    with _server_of_one_slow_upload(READ_A_HEAD_SIZE, 0) as port, mitto.Session() as session:
+    with _server_of_one_upload() as port, mitto.Session() as session:
         response = session.post(
             f"http://127.0.0.1:{port}/",
             data=_slow_parts(parts, SHORT_SECONDS * 3),
