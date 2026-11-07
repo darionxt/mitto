@@ -26,7 +26,7 @@ _SVC_PARAM_ECH = 5
 
 # The draft version that ECH shipped with, and the only KEM, KDF and AEAD that the test needs.
 _ECH_VERSION = 0xFE0D
-_DHKEM_X25519_HKDF_SHA256 = 0x0020
+DHKEM_X25519_HKDF_SHA256 = 0x0020
 ECH_KDF_HKDF_SHA256 = 0x0001
 ECH_AEAD_AES_128_GCM = 0x0001
 
@@ -43,13 +43,15 @@ def _opaque(size_bytes: int, data: bytes) -> bytes:
     return len(data).to_bytes(size_bytes) + data
 
 
-def ech_config_list(config_id: int, public_name: str) -> bytes:
-    """Return an ECHConfigList with one configuration, whose key nobody keeps."""
+def ech_config_list(config_id: int, public_name: str, public_key: bytes | None = None) -> bytes:
+    """Return an ECHConfigList with one configuration, for an X25519 public key or one whose private key nobody keeps."""
+    if public_key is None:
+        public_key = X25519PrivateKey.generate().public_key().public_bytes_raw()
     contents = b"".join(
         (
             config_id.to_bytes(1),
-            _DHKEM_X25519_HKDF_SHA256.to_bytes(2),
-            _opaque(2, X25519PrivateKey.generate().public_key().public_bytes_raw()),
+            DHKEM_X25519_HKDF_SHA256.to_bytes(2),
+            _opaque(2, public_key),
             _opaque(2, ECH_KDF_HKDF_SHA256.to_bytes(2) + ECH_AEAD_AES_128_GCM.to_bytes(2)),
             # maximum_name_length, which only decides how much padding the client adds.
             (0).to_bytes(1),

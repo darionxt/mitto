@@ -64,7 +64,6 @@ Goal: turn the native core into the library people use, with the HTTP behavior o
 - The three differences that M1 left: `spdy_go_away_on_ip_change`, `sec-ch-ua*` and `Sec-Fetch-*` over plain HTTP, and `trust_anchors` in a long-running Chrome, which stays the list compiled into the **Engine Release** ([what can differ](capture.md#what-can-differ-between-chrome-installations)).
 - A Session sends none of the lines Chrome adds for Google's domains. They need what only Chrome holds, or would make a set no Chrome sends. They are **Known Gaps** that no **Parity Check** can see, and [parity.md](parity.md#googles-domains) lists them.
 - **Left out:** WebSocket, CORS preflights, HTTPS upgrades of navigations, an `auth=` argument for origins (an `Authorization` header works), `verify=False`, client certificates, Certificate Transparency enforcement, Reporting and NEL, shared dictionaries and preconnects.
-- **Still open:** what a resumed connection sends and whether the ClientHello check is enough for ALPS over HTTP/3, and whether a Baseline can hold a handshake with real ECH. The answers go in [capture.md](capture.md).
 - **Exit:** feature tests pass through both the sync and the asyncio API. Parity Checks pass with an empty known-gaps list for Chrome 155, 156 and 157 and every **Recording Case**, on both **Hosts**. The API reference is written. The **Supported Window** stays at those three and the Engine Release at 157 until then, because moving up is the routine of M3.
 
 ### M3: Packaging and release
