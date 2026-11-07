@@ -124,7 +124,7 @@ On macOS the file is `libmitto_core.dylib`.
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.6 MiB compressed, 174 MiB unpacked, about 12,400 files.
+Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.6 MiB compressed, 174 MiB unpacked, about 12,400 files. The export of 157.0.8103.39 is the same size, with the same paths and the same toolchain.
 
 | Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked |
 | --- | --- | --- | --- | --- | --- |
