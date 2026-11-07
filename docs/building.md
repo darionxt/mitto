@@ -302,6 +302,8 @@ Once, the wheels also passed their tests on the oldest system that their tags cl
 
 A tag that fails the first job has published nothing. Delete it, fix what the job says, and tag again. Once the wheels are on PyPI, rerun what failed with `gh run rerun <run-id> --failed` rather than tagging again, because PyPI would refuse the version. A macOS job that GitHub cancels after about 15 minutes, with no runner named, has not started: rerun it the same way.
 
+In the first dry run, on 2026-11-07, the whole run took 33 minutes. The build jobs took 27 minutes on macOS and 32 on Linux, of which the native core took 18 and 24 minutes and the tests about 8 minutes on either Host. Each later job took under half a minute.
+
 ### A dry run
 
 Run by hand, the workflow is a dry run. It publishes a pre-release to TestPyPI from the `testpypi` environment, which waits for nobody, and makes no public GitHub release. For example, from `main`:
