@@ -12,6 +12,7 @@ from aioquic.quic import events
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import NetworkAddress, QuicConnection
 from aioquic.quic.packet import QuicPacketType, encode_quic_version_negotiation, pull_quic_header
+from aioquic.tls import SessionTicket
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
@@ -55,6 +56,8 @@ class LiveQuicConnection:
         self.cipher: str | None = None
         self.alpn: str | None = None
         self.error: str | None = None
+        self.resumed = False
+        self.early_streams: set[int] = set()
 
     def snapshot(self) -> QuicConnectionRecord:
         assert self.client_hello is not None
@@ -70,6 +73,8 @@ class LiveQuicConnection:
             tuple(self.http.requests),
             self.error,
             self.peer,
+            self.resumed,
+            frozenset(self.early_streams),
         )
 
 
@@ -80,13 +85,21 @@ class QuicDispatcher:
         certificate: What the server presents.
         respond: What answers each connection's requests.
         record: Called with a connection when its ClientHello is complete, which is when it goes on record.
+        tickets: Whether connections get session tickets. Each is good for one resumption, with early data.
     """
 
     def __init__(
-        self, certificate: Certificate, respond: Responder, record: Callable[[LiveQuicConnection], None]
+        self,
+        certificate: Certificate,
+        respond: Responder,
+        record: Callable[[LiveQuicConnection], None],
+        *,
+        tickets: bool = False,
     ) -> None:
         self._respond = respond
         self._record = record
+        self._gives_tickets = tickets
+        self._tickets: dict[bytes, SessionTicket] = {}
         self._configuration = QuicConfiguration(
             alpn_protocols=[HTTP3],
             connection_id_length=_CONNECTION_ID_LENGTH,
@@ -137,7 +150,10 @@ class QuicDispatcher:
         self, data: bytes, destination_connection_id: bytes, address: NetworkAddress
     ) -> LiveQuicConnection | None:
         quic = QuicConnection(
-            configuration=self._configuration, original_destination_connection_id=destination_connection_id
+            configuration=self._configuration,
+            original_destination_connection_id=destination_connection_id,
+            session_ticket_fetcher=self._take_ticket if self._gives_tickets else None,
+            session_ticket_handler=self._keep_ticket if self._gives_tickets else None,
         )
         connection = LiveQuicConnection(quic, self._respond, address[0])
         try:
@@ -150,6 +166,12 @@ class QuicDispatcher:
             self._routes[route] = connection
         self._connections.add(connection)
         return connection
+
+    def _take_ticket(self, identity: bytes) -> SessionTicket | None:
+        return self._tickets.pop(identity, None)
+
+    def _keep_ticket(self, ticket: SessionTicket) -> None:
+        self._tickets[ticket.ticket] = ticket
 
     def _assemble(self, connection: LiveQuicConnection, data: bytes) -> None:
         if connection.client_hello is None:
@@ -175,10 +197,14 @@ class QuicDispatcher:
                 _send(connection, connection.http.start())
         elif isinstance(event, events.HandshakeCompleted):
             connection.tls_version = _TLS_VERSION
+            connection.resumed = event.session_resumed
             key_schedule = connection.quic.tls.key_schedule
             if key_schedule is not None:
                 connection.cipher = cipher_suite_name(key_schedule.cipher_suite)
         elif isinstance(event, events.StreamDataReceived):
+            # Only the keys of early data can open what arrives before the client's Finished.
+            if connection.tls_version is None:
+                connection.early_streams.add(event.stream_id)
             _receive_stream_data(connection, event)
         elif isinstance(event, events.StreamReset):
             connection.http.reset(event.stream_id)

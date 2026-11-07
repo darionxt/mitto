@@ -41,6 +41,10 @@
 .PARAMETER SettleSeconds
     Lets each start of Chrome run this long on an empty tab before the page opens. In its first seconds, Chrome has not
     loaded its components yet and a recording is over by then. What this records is a comparison, not a Baseline.
+
+.PARAMETER Tickets
+    Has the capture server give out session tickets, and takes Chrome through the runs that resume instead of the others.
+    What this records is a comparison, not a Baseline.
 #>
 [CmdletBinding()]
 param(
@@ -52,7 +56,8 @@ param(
     [switch]$NoVariationsSeed,
     [string[]]$ExtraFlags = @(),
     [switch]$ExistingUserDataDir,
-    [int]$SettleSeconds = 0
+    [int]$SettleSeconds = 0,
+    [switch]$Tickets
 )
 
 Set-StrictMode -Version Latest
@@ -285,6 +290,7 @@ $UserDataDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFrom
 if (-not (Test-Path $Chrome)) { throw "No Chrome at $Chrome." }
 $Chrome = (Resolve-Path $Chrome).Path
 if ((Test-Path $UserDataDir) -and -not $ExistingUserDataDir) { throw "$UserDataDir exists. Each session needs a new user data directory." }
+if ($Tickets -and $NoDebuggingPort) { throw 'The runs that resume are not the main runs, which is all -NoDebuggingPort records.' }
 if ($ExistingUserDataDir) {
     # Before the try below, whose cleanup closes every Chrome on this directory.
     if (@(Get-OurChromeProcesses).Count -gt 0) { throw "A Chrome is still running from $UserDataDir." }
@@ -298,7 +304,7 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 $Out = (Resolve-Path $Out).Path
 $installed = (Get-Item $Chrome).VersionInfo.ProductVersion
 $product = (Get-Item $Chrome).VersionInfo.ProductName
-$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0) -and (-not $ExistingUserDataDir) -and ($SettleSeconds -eq 0)
+$isBaseline = ($product -eq 'Google Chrome') -and (-not $NoVariationsSeed) -and ($ExtraFlags.Count -eq 0) -and (-not $ExistingUserDataDir) -and ($SettleSeconds -eq 0) -and (-not $Tickets)
 Write-Step "$product $installed"
 
 $BaseFlags = @(
@@ -331,6 +337,7 @@ try {
     $serverOutput = Join-Path $Out 'server.log'
     $serverErrors = Join-Path $Out 'server-errors.log'
     $serverArguments = @('run', 'python', '-m', 'tools.capture', '--out', "`"$Out`"")
+    if ($Tickets) { $serverArguments += '--tickets' }
     if ($NoDebuggingPort) {
         $serverArguments += @('--runs') + $MainRuns
     } else {
@@ -393,7 +400,7 @@ try {
     }
     $note += "Variations seed: $(Get-SeedSerialNumber)"
     if ($pages.Count -gt 0) {
-        $first = $pages['http1']
+        $first = $pages[$runs[0].name]
         $note += @("Version: $($first.version)", "System: $($first.system)", "User agent: $($first.userAgent)")
     }
     foreach ($run in $runs) {

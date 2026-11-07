@@ -15,6 +15,7 @@ PRIORITY = 0x2
 RST_STREAM = 0x3
 SETTINGS = 0x4
 PING = 0x6
+GOAWAY = 0x7
 WINDOW_UPDATE = 0x8
 CONTINUATION = 0x9
 
@@ -303,7 +304,14 @@ class Http2Connection:
     def _finish_stream(self, stream_id: int) -> bytes:
         """Answer the request on a stream the client has finished sending on, unless it has an answer already."""
         request = self._unanswered.pop(stream_id, None)
-        return b"" if request is None else self._serialize(stream_id, self._respond(request))
+        if request is None:
+            return b""
+        response = self._respond(request)
+        output = self._serialize(stream_id, response)
+        if response.close:
+            # The last stream the server took, and no error. The client ends the connection when it has read this.
+            output += serialize_frame(GOAWAY, 0, 0, stream_id.to_bytes(4) + bytes(4))
+        return output
 
     def _serialize(self, stream_id: int, response: Response) -> bytes:
         block = self._encoder.encode(

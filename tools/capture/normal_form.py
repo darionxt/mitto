@@ -405,6 +405,8 @@ _PARAMETER_DECODERS: dict[str, Callable[[Reader], dict[str, Json]]] = {
     "google_connection_options": _connection_options,
 }
 
+_EARLY_REQUEST = "request"
+
 _PRESENCE_ONLY = frozenset({"cookie", "early_data", "padding", "pre_shared_key", "session_ticket"})
 """Extensions whose content changes from one connection to the next, or follows from the rest of the ClientHello."""
 
@@ -517,10 +519,29 @@ def _normal_http3_frame(frame: Http3Frame) -> dict[str, Json]:
     return {"type": name, "payload": frame.payload.hex()}
 
 
+def _early_data(connection: QuicConnectionRecord, request: Http3Request) -> list[Json]:
+    """Return what the connection of a request sent as early data: the request itself, and its other streams by type.
+
+    It goes with the request and not the connection, because what a client sends early depends on the request.
+    """
+    early: list[Json] = []
+    for stream in connection.streams:
+        if stream.id not in connection.early_streams:
+            continue
+        if stream.id == request.stream_id:
+            early.append(_EARLY_REQUEST)
+        elif stream.type is not None:
+            early.append(http3_stream_type_name(stream.type))
+    return early
+
+
 def _normal_http3_request(
     connection: QuicConnectionRecord, request: Http3Request, headers: list[Json]
 ) -> dict[str, Json]:
     form: dict[str, Json] = {"headers": headers}
+    early_data = _early_data(connection, request)
+    if early_data:
+        form["early_data"] = early_data
     updates: list[Json] = []
     earlier: list[Json] = []
     later: list[Json] = []
