@@ -13,8 +13,8 @@ from mitto import _native
 from mitto._arguments import require_path, require_type
 from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
 from mitto._cookies import Cookies
-from mitto._machine import Machine
-from mitto._native import MEMORY_CACHE, PrivateSettings
+from mitto._machine import Machine, draw_noise_salts
+from mitto._native import MEMORY_CACHE, NetworkQuality, PrivateSettings
 from mitto._persona import load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
 from mitto._timeout import Timeout, to_timeout
@@ -68,12 +68,20 @@ class SessionState:
         saved = None if self._cookie_file is None else _read_if_there(self._cookie_file)
         self.machine = _machine_to_claim(machine, saved)
         self._persona = persona_data.with_machine(self.machine)
+        # Each time the Session opens, for the Machine it claims, which may be the file's.
+        salts = draw_noise_salts(self.machine)
         self.native = _native.Session(
             accept_language=self._persona.accept_language if accept_language is None else accept_language,
             user_agent=self._persona.user_agent,
             additional_trust_anchors=anchors,
             proxy=proxy,
             http_cache=_http_cache_setting(cache),
+            network_quality=NetworkQuality(
+                http_rtt_ms=self.machine.round_trip_ms,
+                downstream_throughput_kbps=self.machine.throughput_kbps,
+                browser_salt=salts.browser,
+                renderer_salt_key=salts.renderer_key,
+            ),
             **(PrivateSettings() if settings is None else settings),
         )
         self.cookies = Cookies(self.native, self.machine)

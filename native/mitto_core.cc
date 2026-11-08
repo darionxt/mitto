@@ -45,6 +45,7 @@
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "base/types/optional_util.h"
 #include "mitto/body_stream.h"
 #include "mitto/client_hints.h"
 #include "mitto/cookie_json.h"
@@ -52,6 +53,7 @@
 #include "mitto/fetch_rules.h"
 #include "mitto/ignore_errors_cert_verifier.h"
 #include "mitto/mitto.h"
+#include "mitto/network_quality.h"
 #include "mitto/network_session_configurator.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
@@ -146,6 +148,8 @@ struct MittoSession {
   // What to answer the Session's proxy with when it asks.
   std::optional<net::AuthCredentials> proxy_credentials;
   mitto::ClientHintsStore client_hints_store;
+  // What rtt and downlink are worked out from, if anything.
+  std::optional<mitto::NetworkQuality> network_quality;
   // Stands for what //net reads from a server's ALPS. For tests only.
   std::map<url::Origin, std::string> accept_ch_via_alps;
   // After `context`, because a request has to go before its context does.
@@ -231,7 +235,8 @@ class RequestJob final : public net::URLRequest::Delegate,
         body_(std::move(body)) {
     if (options_.fetch) {
       fetch_rules_.emplace(*std::move(options_.fetch), url_,
-                           session_->client_hints_store);
+                           session_->client_hints_store,
+                           base::OptionalToPtr(session_->network_quality));
     }
   }
 
@@ -749,6 +754,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
                                          kProxyTrafficAnnotation)));
   session->proxy_credentials = std::move(settings.proxy_credentials);
   session->accept_ch_via_alps = std::move(settings.accept_ch_via_alps);
+  session->network_quality = std::move(settings.network_quality);
   // Only for such a Session, so that no other has anything between //net and its
   // sockets.
   if (settings.socks5_credentials) {

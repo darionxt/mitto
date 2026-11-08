@@ -8,8 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "mitto/client_hints.h"
+#include "mitto/network_quality.h"
 #include "mitto/request_options.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
@@ -53,11 +55,13 @@ class FetchRules {
     bool keeps_url_chain = false;
   };
 
-  // `url` is the URL the request starts at. `client_hints_store` is the
-  // Session's, which outlives its requests.
+  // `url` is the URL the request starts at. `client_hints_store` and
+  // `network_quality` are the Session's, which outlives its requests. Without a
+  // network quality, rtt and downlink keep the values of their lines.
   FetchRules(FetchParams params,
              const GURL& url,
-             ClientHintsStore& client_hints_store);
+             ClientHintsStore& client_hints_store,
+             const NetworkQuality* network_quality);
 
   FetchRules(const FetchRules&) = delete;
   FetchRules& operator=(const FetchRules&) = delete;
@@ -128,6 +132,13 @@ class FetchRules {
                            std::string_view name,
                            const EnabledClientHints& additional_hints) const;
 
+  // The value of a navigation's hint `name` on a hop to `url`, where its line
+  // in the Persona says `value`: rtt and downlink are worked out for the host
+  // of `url`, and the others keep `value`.
+  std::string NavigationClientHintValue(std::string_view name,
+                                        const std::string& value,
+                                        const GURL& url) const;
+
   // ParseAndPersistAcceptCHForNavigation().
   void ParseAndPersistAcceptCHForNavigation(
       const url::Origin& origin,
@@ -142,6 +153,7 @@ class FetchRules {
 
   const FetchParams params_;
   const raw_ref<ClientHintsStore> client_hints_store_;
+  const raw_ptr<const NetworkQuality> network_quality_;
 
   // Where the request comes from. Without an Initiator, a subresource comes
   // from the page at the root of its URL's origin, and a navigation from no
@@ -154,8 +166,8 @@ class FetchRules {
   bool tainted_ = false;
   bool fetch_cors_flag_ = false;
 
-  // Every hint that a navigation can send, in its order, which it adds again on
-  // each hop if the next URL should have it.
+  // Every hint that a navigation can send, in its order, with the value of its
+  // line, which it adds again on each hop if the next URL should have it.
   std::vector<std::pair<std::string, std::string>> client_hints_;
 
   // The URL a navigation started at, and the hints it started with: what
@@ -167,7 +179,8 @@ class FetchRules {
   // all.
   bool has_critical_client_hints_throttle_ = false;
 
-  // What a restart for Critical-CH sent, which also goes to the next hop.
+  // What a restart for Critical-CH sent, with the values it sent, which also go
+  // to the next hop.
   std::vector<std::pair<std::string, std::string>> client_hints_of_restart_;
 
   // The origins that restarted this navigation for a Critical-CH, once each.

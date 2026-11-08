@@ -5,9 +5,8 @@
 // through it from the first bucket to the last. So where a header goes depends
 // on its name, and on how many others there are, because the table grows with
 // them. The source export leaves Blink out, so this is ported from
-// third_party/blink/renderer/platform/network/http_header_map.h,
-// .../wtf/hash_table.h, .../wtf/text/case_folding_hash.h and
-// third_party/rapidhash/rapidhash.h.
+// third_party/blink/renderer/platform/network/http_header_map.h and
+// .../wtf/hash_table.h, with the hash of a name in string_hasher.h.
 
 #ifndef MITTO_HTTP_HEADER_MAP_H_
 #define MITTO_HTTP_HEADER_MAP_H_

@@ -7,12 +7,13 @@ servers, so a test can use names that say how they relate.
 
 import dataclasses
 import http.server
+import itertools
 import json
 import ssl
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -22,10 +23,11 @@ import pytest
 
 import mitto
 from mitto import RequestError
-from mitto._machine import MACHINE_HINTS, client_hints
+from mitto._machine import MACHINE_HINTS, client_hints, draw_noise_salts
 from mitto._native import PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS
 from tests.local_server import LocalHTTPServer
+from tests.network_noise import browser_downlink, browser_rtt, renderer_downlink, renderer_rtt, renderer_salt
 from tools.release.window import recorded_build
 
 pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
@@ -985,6 +987,30 @@ def machine_hints(received: Received) -> dict[str, str | None]:
     return {name: received.header(name) for name in sorted(MACHINE_HINTS)}
 
 
+def chromes_machine_hints(
+    machine: mitto.Machine, host: str = HOST, kind: mitto.RequestKind = mitto.RequestKind.NAVIGATION
+) -> dict[str, str | None]:
+    """Return what Chrome on `machine`, with the salts a Session draws for it, sends on a hop to `host` of the hints that
+    follow the machine: rtt and downlink from the browser process for a navigation, and from the renderer process of the
+    page's site for a subresource, whose page is at `host`."""
+    salts = draw_noise_salts(machine)
+    values: dict[str, str | None] = dict(client_hints(machine))
+    if kind is mitto.RequestKind.NAVIGATION:
+        values["rtt"] = browser_rtt(host, machine.round_trip_ms, salts.browser)
+        values["downlink"] = browser_downlink(host, machine.throughput_kbps, salts.browser)
+    else:
+        salt = renderer_salt(salts.renderer_key, site_of(host))
+        values["rtt"] = renderer_rtt(host, machine.round_trip_ms, salt)
+        values["downlink"] = renderer_downlink(host, machine.throughput_kbps, salt)
+    return dict(sorted(values.items()))
+
+
+def site_of(host: str) -> str:
+    """Return the site of a page at `host`, as SchemefulSite writes it, for a host whose last label is a registry of one
+    label, known or not, as `test` is to Chrome."""
+    return "https://" + ".".join(host.split(".")[-2:])
+
+
 @pytest.mark.parametrize("kind", ALL_KINDS)
 def test_a_session_with_no_machine_sends_the_values_of_the_machine_drawn_for_it(
     servers: Servers, kind: mitto.RequestKind
@@ -995,7 +1021,7 @@ def test_a_session_with_no_machine_sends_the_values_of_the_machine_drawn_for_it(
         machine = session.machine
 
     assert machine.seed is not None
-    assert machine_hints(servers.received[1]) == client_hints(machine)
+    assert machine_hints(servers.received[1]) == chromes_machine_hints(machine, kind=kind)
 
 
 def test_two_sessions_with_no_machine_draw_one_each(servers: Servers) -> None:
@@ -1010,7 +1036,7 @@ def test_a_session_with_a_machine_of_the_same_seed_sends_the_same_values(servers
             session.get(servers.https())
 
     assert machine_hints(servers.received[1]) == machine_hints(servers.received[3])
-    assert machine_hints(servers.received[1]) == client_hints(mitto.Machine.draw(seed=7))
+    assert machine_hints(servers.received[1]) == chromes_machine_hints(mitto.Machine.draw(seed=7))
 
 
 def test_a_session_keeps_a_value_that_its_machine_fixes(servers: Servers) -> None:
@@ -1032,17 +1058,20 @@ def test_a_session_sends_the_values_of_a_machine_on_each_hop(servers: Servers) -
         asks(servers, session, hints=EVERY_HINT)
         session.get(chain(servers.https(path="/a"), servers.https(path="/b")))
 
-    assert [machine_hints(received) for received in servers.received[1:]] == [client_hints(machine)] * 2
+    assert [machine_hints(received) for received in servers.received[1:]] == [chromes_machine_hints(machine)] * 2
 
 
-def test_the_machine_of_mitto_0_1_sends_what_every_session_of_mitto_0_1_sent(servers: Servers) -> None:
+def test_the_machine_of_mitto_0_1_sends_what_mitto_0_1_sent_but_for_the_noise_on_downlink(servers: Servers) -> None:
     with new_session(machine=mitto.Machine.named("mitto-0.1")) as session:
         asks(servers, session, hints=EVERY_HINT)
         session.get(servers.https())
 
+    # It has no seed, so its salts are drawn at random, and the noise can take the downlink below 10.
+    downlinks = {browser_downlink(HOST, 10_000, salt) for salt in range(1, 22)}
+    assert servers.received[1].header("downlink") in downlinks
     assert machine_hints(servers.received[1]) == {
         "device-memory": "8",
-        "downlink": "10",
+        "downlink": servers.received[1].header("downlink"),
         "dpr": "1",
         "ect": "4g",
         "rtt": "50",
@@ -1089,3 +1118,230 @@ def test_a_session_saved_and_loaded_in_another_process_sends_the_same_values(
     assert machine_hints(again) == machine_hints(first)
     assert again.headers == first.headers
     assert again.header("cookie") == "a=1"
+
+
+# rtt and downlink for each host
+
+NETWORK_HINTS = "rtt, downlink"
+
+
+def network_hints(received: Received) -> tuple[str | None, str | None]:
+    return received.header("rtt"), received.header("downlink")
+
+
+def browsers(machine: mitto.Machine, host: str) -> tuple[str, str]:
+    """Return the rtt and downlink that Chrome's browser process sends on a navigation's hop to `host`."""
+    return chromes_network_hints(machine, host, mitto.RequestKind.NAVIGATION)
+
+
+def renderers(machine: mitto.Machine, host: str) -> tuple[str, str]:
+    """Return the rtt and downlink that the renderer of a page at `host` sends on a subresource to its own origin."""
+    return chromes_network_hints(machine, host, mitto.RequestKind.FETCH)
+
+
+def chromes_network_hints(machine: mitto.Machine, host: str, kind: mitto.RequestKind) -> tuple[str, str]:
+    hints = chromes_machine_hints(machine, host, kind)
+    return cast(str, hints["rtt"]), cast(str, hints["downlink"])
+
+
+def machine_where(holds: Callable[[mitto.Machine], bool]) -> mitto.Machine:
+    """Return a Machine with the first seed whose salts make `holds` true of it, which keeps the values of seed 0."""
+    machine = mitto.Machine.draw(seed=0)
+    return next(
+        candidate
+        for candidate in (dataclasses.replace(machine, seed=seed) for seed in itertools.count())
+        if holds(candidate)
+    )
+
+
+def test_a_redirect_to_another_host_changes_rtt_and_downlink_as_chromes_browser_process_does(
+    servers: Servers,
+) -> None:
+    machine = machine_where(lambda machine: browsers(machine, HOST) != browsers(machine, CROSS_SITE))
+    with new_session(machine=machine) as session:
+        asks(servers, session, HOST, hints=NETWORK_HINTS)
+        asks(servers, session, CROSS_SITE, hints=NETWORK_HINTS)
+        session.get(chain(servers.https(HOST, "/first"), servers.https(CROSS_SITE, "/last")))
+
+    first, last = servers.received[2:]
+    assert network_hints(first) == browsers(machine, HOST)
+    assert network_hints(last) == browsers(machine, CROSS_SITE)
+
+
+@pytest.mark.parametrize("kind", SUBRESOURCES)
+def test_a_subresource_gets_rtt_and_downlink_from_the_renderer_of_its_pages_site(
+    servers: Servers, kind: mitto.RequestKind
+) -> None:
+    machine = machine_where(lambda machine: renderers(machine, HOST) != browsers(machine, HOST))
+    with new_session(machine=machine) as session:
+        page = asks(servers, session, HOST, hints=NETWORK_HINTS)
+        session.get(servers.https(HOST, "/resource"), kind=kind, initiator=page)
+        session.get(servers.https(HOST, "/next"))
+
+    resource, navigation = servers.received[1:]
+    assert network_hints(resource) == renderers(machine, HOST)
+    assert network_hints(navigation) == browsers(machine, HOST)
+
+
+def test_the_pages_of_each_site_have_a_renderer_with_a_salt_of_its_own(servers: Servers) -> None:
+    def salts_differ(machine: mitto.Machine) -> bool:
+        key = draw_noise_salts(machine).renderer_key
+        return renderer_salt(key, site_of(HOST)) != renderer_salt(key, site_of(CROSS_SITE))
+
+    machine = machine_where(salts_differ)
+    with new_session(machine=machine) as session:
+        for host in (HOST, SAME_SITE, CROSS_SITE):
+            page = asks(servers, session, host, hints=NETWORK_HINTS)
+            session.get(servers.https(host, "/resource"), kind=mitto.RequestKind.FETCH, initiator=page)
+
+    assert [network_hints(received) for received in servers.received[1::2]] == [
+        renderers(machine, host) for host in (HOST, SAME_SITE, CROSS_SITE)
+    ]
+
+
+@pytest.mark.parametrize("next_origin_asked", [False, True], ids=["next-origin-did-not-ask", "next-origin-asked"])
+def test_the_hop_after_a_restart_keeps_the_restarts_rtt_where_its_origin_did_not_ask_and_has_its_own_where_it_did(
+    servers: Servers, next_origin_asked: bool
+) -> None:
+    # The response that starts the navigation over says what its origin asks for from then on.
+    machine = machine_where(lambda machine: browsers(machine, HOST) != browsers(machine, CROSS_SITE))
+    end = servers.https(CROSS_SITE, "/end")
+    accept_ch = f"{ASKED_FOR}, {NETWORK_HINTS}" if next_origin_asked else ASKED_FOR
+    last = servers.https(
+        CROSS_SITE, "/last", accept_ch=accept_ch, critical_ch=ASKED_FOR, when_sent=ASKED_FOR, then_to=end
+    )
+    with new_session(machine=machine) as session:
+        asks(servers, session, HOST, hints=NETWORK_HINTS)
+        session.get(redirect(servers.https(HOST, "/first"), last))
+
+    restart, next_hop, hop_after = servers.received[-3:]
+    assert network_hints(restart) == browsers(machine, HOST)
+    if next_origin_asked:
+        assert network_hints(next_hop) == network_hints(hop_after) == browsers(machine, CROSS_SITE)
+    else:
+        assert network_hints(next_hop) == browsers(machine, HOST)
+        assert network_hints(hop_after) == (None, None)
+
+
+def test_a_restart_for_alps_works_them_out_for_its_own_url(servers: Servers) -> None:
+    machine = mitto.Machine.draw(seed=9)
+    with new_session(alps=alps_for(servers, CROSS_SITE, NETWORK_HINTS), machine=machine) as session:
+        session.get(servers.https(CROSS_SITE))
+
+    (received,) = servers.received
+    assert network_hints(received) == browsers(machine, CROSS_SITE)
+
+
+def test_a_callers_rtt_and_downlink_go_as_given_on_each_hop(servers: Servers) -> None:
+    with new_session(machine=mitto.Machine.draw(seed=9)) as session:
+        asks(servers, session, HOST, hints=NETWORK_HINTS)
+        asks(servers, session, CROSS_SITE, hints=NETWORK_HINTS)
+        session.get(
+            chain(servers.https(HOST, "/first"), servers.https(CROSS_SITE, "/last")),
+            headers={"RTT": "1000", "Downlink": "0.5"},
+        )
+
+    assert [network_hints(received) for received in servers.received[2:]] == [("1000", "0.5")] * 2
+
+
+# The cases of content/browser/client_hints/client_hints_unittest.cc, which call RoundRtt() and RoundKbpsToMbps() of the
+# browser process with an estimate and a host. Each estimate here is a Machine's, so a Session claims each pair of a round
+# trip and a throughput. Some cases have an empty host, which no URL has, so each estimate goes to the two hosts of the
+# others, and to a script, image or fetch as well, whose renderer has the same rounding.
+
+CHROMIUM_ESTIMATES = [
+    (12, 12),
+    (98, 98),
+    (1023, 1023),
+    (1193, 1193),
+    (2750, 7523),
+    (2789, 9999),
+    (6023, 100102),
+    (6787, 12102),
+    (1023, 102),
+    (1023, 2102),
+]
+CHROMIUM_HOSTS = ["foo.com", "example.com"]
+
+# How far the noise and the rounding can take each value from the estimate, in ms and Mbps, where the cases say.
+RTT_WITHIN = {98: 100, 1023: 200, 1193: 200, 2750: 400}
+DOWNLINK_WITHIN = {98: 0.1, 1023: 0.2, 1193: 0.2, 7523: 0.9, 9999: 1.2}
+
+
+@dataclass(frozen=True, slots=True)
+class Sent:
+    host: str
+    kind: mitto.RequestKind
+    rtt: str
+    downlink: str
+
+
+def network_hints_of_each_kind(servers: Servers, machine: mitto.Machine, hosts: list[str]) -> list[Sent]:
+    """Return what a Session sends as rtt and downlink to each host in turn, which has asked, on a navigation and on a
+    fetch from a page there."""
+    sent: list[Sent] = []
+    with new_session(machine=machine) as session:
+        for host in hosts:
+            page = asks(servers, session, host, hints=NETWORK_HINTS)
+            for kind in (mitto.RequestKind.NAVIGATION, mitto.RequestKind.FETCH):
+                session.get(servers.https(host, "/next"), kind=kind, initiator=page)
+                rtt, downlink = network_hints(servers.received[-1])
+                sent.append(Sent(host, kind, cast(str, rtt), cast(str, downlink)))
+    return sent
+
+
+@pytest.mark.parametrize(("round_trip_ms", "throughput_kbps"), CHROMIUM_ESTIMATES)
+def test_rtt_and_downlink_keep_to_the_rounding_and_the_cap_of_chromiums_cases(
+    servers: Servers, round_trip_ms: int, throughput_kbps: int
+) -> None:
+    machine = mitto.Machine.draw(seed=10, round_trip_ms=round_trip_ms, throughput_kbps=throughput_kbps)
+    sent = network_hints_of_each_kind(servers, machine, CHROMIUM_HOSTS)
+
+    for one in sent:
+        assert (one.rtt, one.downlink) == chromes_network_hints(machine, one.host, one.kind)
+        rtt = int(one.rtt)
+        downlink = float(one.downlink)
+        assert rtt % 50 == 0
+        assert rtt <= 3000
+        assert round(downlink * 1000) % 50 == 0
+        assert downlink <= 10
+        if round_trip_ms in RTT_WITHIN:
+            assert abs(rtt - round_trip_ms) <= RTT_WITHIN[round_trip_ms]
+        if throughput_kbps in DOWNLINK_WITHIN:
+            assert abs(downlink - throughput_kbps / 1000) <= DOWNLINK_WITHIN[throughput_kbps]
+
+
+def test_rtt_and_downlink_change_with_the_host_and_stay_for_one_host(servers: Servers) -> None:
+    # One in 21 hosts lands on the multiplier of another, so 20 others are all but sure to have one that does not.
+    machine = mitto.Machine.draw(seed=10, round_trip_ms=1023, throughput_kbps=1023)
+    hosts = ["example.com", *(f"{number}.test" for number in range(20)), "example.com"]
+    sent = network_hints_of_each_kind(servers, machine, hosts)
+
+    for kind in (mitto.RequestKind.NAVIGATION, mitto.RequestKind.FETCH):
+        of_kind = [one for one in sent if one.kind is kind]
+        first, others, again = of_kind[0], of_kind[1:-1], of_kind[-1]
+        assert any(one.rtt != first.rtt for one in others)
+        assert any(one.downlink != first.downlink for one in others)
+        assert (again.rtt, again.downlink) == (first.rtt, first.downlink)
+
+
+def test_a_host_of_each_length_that_the_hashes_tell_apart_gets_chromes_values(servers: Servers) -> None:
+    # Blink's rapidhash reads up to 3, up to 16, up to 48 and more bytes each in a way of its own, and libc++'s CityHash64
+    # up to 3, up to 8, up to 16, up to 32, up to 64 and more.
+    lengths = [1, 2, 3, 4, 5, 8, 9, 12, 16, 17, 24, 32, 33, 48, 49, 64, 65, 97, 128, 129, 200]
+    hosts = [_host_of_length(length) for length in lengths]
+    machine = mitto.Machine.draw(seed=11, round_trip_ms=1023, throughput_kbps=7523)
+    sent = network_hints_of_each_kind(servers, machine, hosts)
+
+    assert [one.host for one in sent] == [host for host in hosts for _ in range(2)]
+    for one in sent:
+        assert (one.rtt, one.downlink) == chromes_network_hints(machine, one.host, one.kind), (len(one.host), one.kind)
+
+
+def _host_of_length(length: int) -> str:
+    """Return a host name of `length` letters and dots, with a dot after each 60 letters."""
+    host = ""
+    while len(host) < length:
+        host += "." if len(host) % 61 == 60 else chr(ord("a") + len(host) % 26)
+    assert not host.endswith(".")
+    return host

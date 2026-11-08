@@ -144,7 +144,13 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //     "host_resolver_rules": "MAP <host> <address>",
 //     "proxy": "http://<username>:<password>@<host>:<port>",
 //     "accept_ch_via_alps": {"https://<host>:<port>": "<hints>"},
-//     "http_cache": "<absolute path of a directory>"
+//     "http_cache": "<absolute path of a directory>",
+//     "network_quality": {
+//       "http_rtt_ms": 116,
+//       "downstream_throughput_kbps": 2658,
+//       "browser_salt": 7,
+//       "renderer_salt_key": "<text>"
+//     }
 //   }
 //
 // - "version" is required and must be MITTO_SETTINGS_VERSION.
@@ -201,6 +207,17 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   memory cancels the stream of a 304 with an RST_STREAM, as Chrome's Incognito
 //   mode does, and a directory does not, as Chrome on Windows does not. The
 //   default is no cache.
+// - "network_quality" works out the values of the rtt and downlink hints that a
+//   request with "fetch" in its options sends, for the host of each hop, as
+//   Chrome does from what its network quality estimator has, with noise for
+//   each host. "http_rtt_ms" and "downstream_throughput_kbps" are that
+//   estimate, each at least 0. A navigation gets the noise of the browser
+//   process, whose salt "browser_salt" is from 1 to 21. Another request gets
+//   the noise of the renderer process of its page's site, whose salt is 1 plus
+//   the first 8 bytes of the SHA-256 of "renderer_salt_key", a space and the
+//   serialized site, as a big-endian number, modulo 20. Each of the four is
+//   required. A line that "fixed_headers" names keeps its value. The default
+//   works out nothing, so those lines go as the headers say.
 //
 // An unknown key or an invalid value is refused, where Chrome's flag would
 // skip an invalid entry and log it, so a mistake cannot go unnoticed.

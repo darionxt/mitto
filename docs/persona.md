@@ -126,7 +126,7 @@ A script, image or fetch has no order of its own to write down. Blink holds thos
 | `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64`, `sec-ch-ua-model`, `sec-ch-ua-form-factors` | `"x86"`, `"64"`, `?0`, `""`, `"Desktop"` | The Baselines hold this, and it is the same for a 64-bit Chrome on any x64 desktop PC with Windows |
 | `device-memory`, `sec-ch-device-memory`, `dpr`, `sec-ch-dpr`, `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height`, `rtt`, `downlink`, `ect`, `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` and `sec-ch-ua-platform-version` | `<machine>`, which a Session fills from its **Machine** when it opens | Chrome reads them from the machine it runs on, and the Session claims [a machine of its own](#a-machine-of-its-own), which [`machine=`](api.md#machine) gives or which is drawn for it |
 
-`rtt` and `downlink` go with Chrome's cap and rounding, and with no noise for each host yet. A Session sends them alike to every host.
+`rtt` and `downlink` go with [Chrome's noise for each host](#the-noise-on-rtt-and-downlink), its cap and its rounding, which the native core works out on each hop.
 
 In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1")`](api.md#machinenamed) still gives:
 
@@ -136,7 +136,7 @@ In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1
 | `device-memory`, `sec-ch-device-memory` | `8` | A value [no Baseline holds](capture.md#what-stays-and-what-does-not). A common size, where the real value is the machine's, rounded |
 | `dpr`, `sec-ch-dpr` | `1` | No Baseline holds it. The scale of a display at 100% |
 | `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height` | `1920`, `1920`, `945` | No Baseline holds it. A Chrome window that fills a 1920 by 1080 display at that scale |
-| `rtt`, `downlink`, `ect` | `50`, `10`, `4g` | No Baseline holds it. A good connection. In Chrome they follow what it measures, with some noise for each host |
+| `rtt`, `downlink`, `ect` | `50`, `10`, `4g` | No Baseline holds it. A good connection, of 50 ms and 10,000 kbps. In Chrome they follow what it measures, with some noise for each host, which the Machine now gets too, so its `downlink` is from `9` to `10` by host |
 | `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` | `light`, `no-preference`, `no-preference` | No Baseline holds it. What Windows has as it comes |
 
 `width` and `sec-ch-width` say how wide an image is laid out, which only a page knows, and Chrome sends neither for an image with no width of its own. `save-data` needs a setting that a Persona does not have on. So a Persona has no line for them, and they do not go.
@@ -209,7 +209,7 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 In mitto 0.1, once a server asked for the hints that follow the machine, every Session of a Persona sent [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions landed on one point, which a server can count. A Session that saved its cookies and came back also came back as that one machine.
 
-So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Built so far: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, a step of the release routine that refreshes the table, and `sec-ch-ua-platform-version` hidden in the normal form. Not yet: the noise on `rtt` and `downlink` for each host.
+So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Everything it plans is built: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table.
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -242,7 +242,19 @@ Before it caps and rounds, Chrome multiplies the estimate by `0.9 + ((hash + sal
 | The hash of the host | libc++'s `std::hash<std::string>`, cut to 32 bits | Blink's hash of a string, `StringImpl::GetHash()`, which has 24 bits |
 | The salt | 1 to 21, drawn once in each run of the browser | 1 to 20, drawn once in each renderer process |
 
-So one host gets one value for its navigations and often another for the subresources of its pages, and both change when Chrome starts again. A Session sends one value to every host.
+So one host gets one value for its navigations and often another for the subresources of its pages, and both change when Chrome starts again.
+
+A Session does the same, in `native/network_quality.cc`, which ports `GetRandomMultiplier`, `RoundRtt` and `RoundKbpsToMbps` of the browser and `GetRandomMultiplier`, `RoundRtt` and `RoundMbps` of the renderer with their names:
+
+| | A navigation | A script, image or fetch |
+| --- | --- | --- |
+| When | At its start, on each hop for the host of that hop, and on a restart for `Critical-CH` or for the frame in ALPS for the host it goes to | At its start, for the host it starts at. A redirect keeps them, as Blink does, or takes them away at another origin |
+| The hash | libc++'s own `std::hash`, which the native core is built with as Chrome is, with the same ABI version on every platform | Blink's rapidhash of a string, in `native/string_hasher.cc`, which the order of [a subresource's lines](parity.md#the-order-of-a-subresources-lines) also takes |
+| The salt | One for the Session, from 1 to 21 | One for each site of a page, from 1 to 20, which stands for its renderer process |
+
+A Session draws the salts each time it opens: from the seed of its Machine if it has one, so that the same Machine sends the same values again, and at random otherwise. The browser's salt reaches the native core as a Session setting, with the estimate. A renderer's comes from a key that the Session draws beside it, and from the site of the page, so that a page of a new site gets a salt of its own without the native core holding any. The hop after a restart for `Critical-CH` keeps the restart's values for the hints that its own origin did not ask for, [as it keeps those hints](parity.md#starting-over), and has its own for the rest. A value that a caller gives in `headers` goes as given, on each hop.
+
+`tests/test_client_hints.py` checks each of these against a port of the same code in Python, `tests/network_noise.py`, on hosts of each length that the two hashes read in a way of their own, and with the cases of `content/browser/client_hints/client_hints_unittest.cc`. The native core calls the libc++ that Chrome builds with, so the port in Python of its CityHash64 is checked there too, and `tests/test_network_noise.py` checks the rapidhash there against the values that Blink's own tests pin.
 
 What the estimator has measured depends on the network. It keeps an estimate for each network it has seen, in the profile. On a network it has not seen, it starts from typical values for the kind of connection until requests have been measured: 90 ms and 1456 kbps on Ethernet, 116 ms and 2658 kbps on Wi-Fi, and 115 ms and 1961 kbps when it cannot tell, in `net/nqe/network_quality_estimator_params.cc`. A field trial can change them. So a new Chrome on Wi-Fi sends `rtt` of `100` or `150`, `downlink` from `2.4` to `2.9` and `ect` of `4g`, until it has measured more. A Persona's `downlink` of `10` takes an estimate of at least 9.1 to 11.1 Mbps, by the noise for the host.
 
@@ -379,10 +391,10 @@ A source's "Other", StatCounter's 800×600 and its sizes that only another syste
 | A file from mitto 0.1? | It has no machine, so it loads with the one every Session claimed then, the values [above](#what-they-say) | A returning Session must not change machine because mitto changed |
 | What it holds | The memory, the display with its scale, the viewport, the round trip and throughput as estimated before noise, the three settings and the Windows version | What Chrome reads, and not what it sends, so that noise can be added for each host and a page can later read the same machine |
 | What it leaves to the Persona | `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64`, `sec-ch-ua-model` and `sec-ch-ua-form-factors` | They are the same on every x64 Windows machine. Windows on Arm would need Baselines of its own first, to show that nothing else changes |
-| The salts of the noise | Drawn each time a Session opens, from its seed if it has one, and never saved | Chrome draws them again each time it starts, so a returning user has new ones too |
+| The salts of the noise | Drawn each time a Session opens, from its seed if it has one, and never saved | Chrome draws them again each time it starts, so a returning user has new ones too. A seed gives the same ones again, so that a test sees the same values |
 | On a Windows **Host** | Drawn as on every other Host, and never read from the machine mitto runs on | The owner decided this on 2026-11-08 |
 
-Who writes each value: a Session writes its Machine's values into the Persona's lines when it opens, in place of `<machine>`, as the Persona's own values go. `rtt` and `downlink` change with the host, so the native core will work them out on each hop from the estimate and the salts. That takes both hashes of the table above. `native/http_header_map.cc` already ports the rapidhash under Blink's. Until then they go with Chrome's rounding and no noise.
+Who writes each value: a Session writes its Machine's values into the Persona's lines when it opens, in place of `<machine>`, as the Persona's own values go. `rtt` and `downlink` change with the host, so the native core works them out on each hop, from the estimate and the salts that reach it as Session settings, [as Chrome does](#the-noise-on-rtt-and-downlink). The Persona's lines hold their places with the values of no noise.
 
 The native core lists the cookies as `{"version": 1, "cookies": [...]}`, and refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the Python layer writes the cookie file as version 2, with the machine beside the cookies, and hands the native core the cookies alone, as [Saved cookies](parity.md#saved-cookies) says.
 

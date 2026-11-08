@@ -1,5 +1,8 @@
 #include "mitto/session_settings.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <memory>
 #include <utility>
 
@@ -7,6 +10,7 @@
 #include "base/strings/escape.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "mitto/mitto.h"
 #include "net/base/hash_value.h"
@@ -44,6 +48,16 @@ constexpr std::string_view kHostResolverRulesKey = "host_resolver_rules";
 constexpr std::string_view kAcceptCHViaALPSKey = "accept_ch_via_alps";
 constexpr std::string_view kHttpCacheKey = "http_cache";
 constexpr std::string_view kMemoryCache = "memory";
+constexpr std::string_view kNetworkQualityKey = "network_quality";
+constexpr std::string_view kHttpRttMsKey = "http_rtt_ms";
+constexpr std::string_view kDownstreamThroughputKbpsKey =
+    "downstream_throughput_kbps";
+constexpr std::string_view kBrowserSaltKey = "browser_salt";
+constexpr std::string_view kRendererSaltKeyKey = "renderer_salt_key";
+constexpr size_t kNetworkQualityKeyCount = 4;
+
+// The browser process draws its salt with RandIntInclusive(1, 21).
+constexpr int kMaxBrowserSalt = 21;
 
 std::optional<SPKIHashSet> ReadSPKIHashes(const base::Value& value) {
   if (!value.is_list()) {
@@ -239,6 +253,33 @@ bool ReadProxy(const base::Value& value, SessionSettings& settings) {
   return true;
 }
 
+// Reads the estimate and the salts, all of which it needs. An estimate below 0,
+// which Chrome's estimator takes for none, or a salt that Chrome cannot draw is
+// refused.
+std::optional<NetworkQuality> ReadNetworkQuality(const base::Value& value) {
+  if (!value.is_dict() || value.GetDict().size() != kNetworkQualityKeyCount) {
+    return std::nullopt;
+  }
+  const base::DictValue& dict = value.GetDict();
+  const std::optional<int> http_rtt_ms = dict.FindInt(kHttpRttMsKey);
+  const std::optional<int> downstream_throughput_kbps =
+      dict.FindInt(kDownstreamThroughputKbpsKey);
+  const std::optional<int> browser_salt = dict.FindInt(kBrowserSaltKey);
+  const std::string* const renderer_salt_key =
+      dict.FindString(kRendererSaltKeyKey);
+  if (!http_rtt_ms || *http_rtt_ms < 0 || !downstream_throughput_kbps ||
+      *downstream_throughput_kbps < 0 || !browser_salt || *browser_salt < 1 ||
+      *browser_salt > kMaxBrowserSalt || !renderer_salt_key) {
+    return std::nullopt;
+  }
+  NetworkQuality quality;
+  quality.http_rtt = base::Milliseconds(*http_rtt_ms);
+  quality.downstream_throughput_kbps = *downstream_throughput_kbps;
+  quality.browser_salt = static_cast<uint8_t>(*browser_salt);
+  quality.renderer_salt_key = *renderer_salt_key;
+  return quality;
+}
+
 // Only an absolute path can be a directory, so "memory" never names one. A NUL
 // would cut the path short, because that is where base::FilePath stops.
 bool ReadHttpCache(const base::Value& value, SessionSettings& settings) {
@@ -337,6 +378,13 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
     }
     if (key == kHttpCacheKey) {
       if (!ReadHttpCache(value, settings)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kNetworkQualityKey) {
+      settings.network_quality = ReadNetworkQuality(value);
+      if (!settings.network_quality) {
         return std::nullopt;
       }
       continue;
