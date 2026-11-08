@@ -209,7 +209,7 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 In mitto 0.1, once a server asked for the hints that follow the machine, every Session of a Persona sent [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions landed on one point, which a server can count. A Session that saved its cookies and came back also came back as that one machine.
 
-So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Built so far: the Machine, its draw from the table, its values in the hints, and the Machine saved with the cookies. Not yet: the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table.
+So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Built so far: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, and a step of the release routine that refreshes the table. Not yet: the noise on `rtt` and `downlink` for each host, and `sec-ch-ua-platform-version` hidden in the normal form.
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -340,14 +340,14 @@ This is a reading of their terms, not legal advice. A table under a share-alike 
 
 #### Keeping the table current
 
-StatCounter has a month on the second of the next and revises it for 45 days, through a CSV link that its page uses but does not document. Firefox's report is weekly, at stable JSON addresses. The Chrome UX Report is monthly, in BigQuery, and needs a Google Cloud account. So a step of [the release routine](releasing.md) can fetch StatCounter's last month that is older than 45 days and Firefox's last week, write the table again and show its diff for review. Steam's survey has no API and is no source for the table.
+StatCounter has a month on the second of the next and revises it for 45 days, through a CSV link that its page uses but does not document. Firefox's report is weekly, at stable JSON addresses. The Chrome UX Report is monthly, in BigQuery, and needs a Google Cloud account. So [a step of the release routine](releasing.md#7-refresh-the-table-of-machines) fetches StatCounter's newest month that it no longer revises and Firefox's newest week, writes the table again and shows its diff for review. Steam's survey has no API and is no source for the table.
 
 ### The table
 
-[`src/mitto/machine_table.json`](../src/mitto/machine_table.json) holds a group of weighted rows for each set of values that are drawn together. [`tools/release/machines.py`](../tools/release/machines.py) writes it from the statistics above, which it holds with their sources and periods, and the owner's weights:
+[`src/mitto/machine_table.json`](../src/mitto/machine_table.json) holds a group of weighted rows for each set of values that are drawn together. [`tools/release/machines.py`](../tools/release/machines.py) writes it from the statistics above, which [`tools/release/machine_statistics.json`](../tools/release/machine_statistics.json) holds with their sources and periods, and the owner's weights. [The release routine](releasing.md#7-refresh-the-table-of-machines) fetches the statistics again and writes both files. This writes the table from the statistics as they are, and fetches nothing:
 
 ```bash
-uv run python -m tools.release machines
+uv run python -m tools.release machines --saved
 ```
 
 | Group | Its rows | From |
@@ -365,7 +365,7 @@ A source's "Other", StatCounter's 800×600 and its sizes that only another syste
 
 [`Machine.draw()`](api.md#machinedraw) draws the groups in the order above. Each group takes a number of its own from the SHA-256 of the seed and the group's name, and the row that number lands on when each row has as many numbers as its weight, among the rows that fit what is fixed and drawn already. So a value fixed in one group leaves the others as the seed draws them, unless they have to fit together, and the same seed and table give the same Machine on every Host and in every Python. A row of the platform version only goes if a display fits it, so a viewport of one Windows draws that Windows. A Machine checks each value against [what Chrome can read](#what-decides-each-value), and that the viewport fits on the display.
 
-[`tests/test_machine.py`](../tests/test_machine.py) checks that every value of a draw is one Chrome sends and that each row keeps to [what goes together](#what-goes-together), and [`tests/release/test_write_machines.py`](../tests/release/test_write_machines.py) that the script writes the table byte for byte.
+[`tests/test_machine.py`](../tests/test_machine.py) checks that every value of a draw is one Chrome sends and that each row keeps to [what goes together](#what-goes-together), [`tests/release/test_write_machines.py`](../tests/release/test_write_machines.py) that the script writes the table byte for byte, and [`tests/release/test_refresh_machines.py`](../tests/release/test_refresh_machines.py) that a refresh takes the periods that [the release routine](releasing.md#7-refresh-the-table-of-machines) names and changes nothing when a source fails, with answers that the sources gave on 2026-11-08.
 
 ### Where it lives
 
