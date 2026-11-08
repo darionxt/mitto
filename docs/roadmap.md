@@ -9,12 +9,13 @@ Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). Architectural deci
 | First deliverable | The HTTP client. The **Runtime** is a later phase. |
 | Hosts | Linux x86_64 and macOS arm64, and Windows x64 from M4 |
 | Persona | Windows Chrome |
+| Machine | Drawn for each **Session** from a weighted table, from M5 ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)) |
 | Supported Window | Current stable plus the two previous Chrome Releases ([ADR-0005](adr/0005-older-releases-as-data.md)) |
 | Network | Chromium's own stack, built from source ([ADR-0001](adr/0001-chromium-network-stack.md), [ADR-0002](adr/0002-build-inside-chromium-tree.md)) |
 | Python API | Its own API, familiar to people who know `requests`, with both sync and asyncio versions. The network stack owns HTTP semantics ([ADR-0004](adr/0004-network-stack-owns-http-semantics.md)). |
 | Python boundary | C ABI and `ctypes`, one `py3-none` wheel per Host ([ADR-0003](adr/0003-c-abi-and-ctypes.md)) |
 | Python versions | 3.12 and later |
-| Licence and distribution | Apache-2.0, public on GitHub, published on PyPI as `mitto` |
+| Licence and distribution | Apache-2.0, public on GitHub, published on PyPI as `mitto`. From M5 the wheel also carries a data table under CC BY-SA 3.0 ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)) |
 | Build resources | CI runs only on GitHub-hosted runners. Anything outside CI, such as producing source exports and recording Baselines, is done by hand. |
 | First Engine Release | Chrome 157, the stable release when the project started |
 
@@ -85,6 +86,18 @@ Goal: mitto installs and runs on Windows x64 as well. The **Persona** stays Wind
 - CI, a `py3-none-win_amd64` wheel and the release workflow on GitHub-hosted Windows runners.
 - M4 holds back neither 0.1.0 nor the release routine. The first release after its exit ships the Windows wheel.
 - **Exit:** `pip install mitto` works on Windows x64, and every test passes there from the installed wheel, Parity Checks included.
+
+### M5: A Machine for each Session
+
+Goal: each **Session** claims a **Machine** of its own instead of the one its **Persona** claimed in 0.1, so that Sessions no longer share one set of machine hints ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)).
+
+- A Machine drawn by default from a weighted table that ships with mitto, repeatable from a seed, with any value fixed by the caller. It is drawn the same way on every **Host** and never read from the machine mitto runs on.
+- The Machine saved with the cookies, in a new version of the cookie file.
+- Chrome's noise on `rtt` and `downlink`, for each host, in the native core.
+- `sec-ch-ua-platform-version` hidden as `<machine>` in the normal form.
+- A step of the release routine that refreshes the table.
+- M5 runs beside M4 and holds back neither. It ships in a minor version, with release notes on what a Session sends now.
+- **Exit:** a Session sends the hints of a drawn Machine, the same ones after its cookie file is loaded in another process, `rtt` and `downlink` differ from host to host as Chrome's do, and the Parity Checks pass.
 
 ### Later phase: Runtime
 

@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Each Session claims a machine of its own, drawn by default
 
-A Persona is one Chrome Release on Windows, and today it also claims one machine. So every Session that a server asks for client hints gives the same memory, display, window, network, user settings and Windows version, and all of them land on one point, which a server can count. We propose that each Session gets a **Machine** of its own, apart from its Persona: drawn by default from a weighted table that ships with mitto, repeatable from a seed, with any value fixed by the caller, and saved with the cookies so that a Session that comes back is the same machine. It is drawn the same way on every Host, and never read from the machine mitto runs on. What decides each value in Chrome, and the statistics behind the table, are in [persona.md](../persona.md#a-machine-of-its-own).
+A Persona is one Chrome Release on Windows, and today it also claims one machine. So every Session that a server asks for client hints gives the same memory, display, window, network, user settings and Windows version, and all of them land on one point, which a server can count. So each Session gets a **Machine** of its own, apart from its Persona: drawn by default from a weighted table that ships with mitto, repeatable from a seed, with any value fixed by the caller, and saved with the cookies so that a Session that comes back is the same machine. It is drawn the same way on every Host, and never read from the machine mitto runs on. What decides each value in Chrome, and the statistics behind the table, are in [persona.md](../persona.md#a-machine-of-its-own).
 
 ## The decision
 
@@ -20,13 +20,13 @@ A Persona is one Chrome Release on Windows, and today it also claims one machine
 - **Noise.** The salts of `rtt` and `downlink` belong to a run of Chrome and not to the machine, so they are drawn each time a Session opens, from its seed if it has one, and never saved. The native core works out `rtt` and `downlink` on each hop, for the host of that hop, with Chrome's two hashes.
 - **Parity Checks.** `sec-ch-ua-platform-version` joins the hints that the normal form hides as `<machine>`, and the Baselines are written again with that value changed. Tests of the rounding against Chromium's own cases, of each drawn value against what Chrome can send, and of what a Session sends on each hop check the values. A check where the recordings are kept compares the form of real Chrome's hidden values with a Session's.
 
-The term is new. Accepting this adds it to [CONTEXT.md](../../CONTEXT.md):
+The term is new, and [CONTEXT.md](../../CONTEXT.md) has it:
 
 > **Machine**:
 > The computer a Session claims to run on: its memory, display, window, network, its user's settings and its Windows version. It is independent of the Host and of the Persona.
 > _Avoid_: device, hardware profile, environment, fingerprint
 
-The Persona's entry then says "with its locale and the client hints of its Chrome", since the values that follow the machine move here.
+The Persona's entry says "with its locale and the client hints of its Chrome", since the values that follow the machine move here, and the Session's entry names its Machine.
 
 ## Considered Options
 
