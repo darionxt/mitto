@@ -1,21 +1,23 @@
 """Writing the table that a Session's Machine is drawn from, from public statistics, the way docs/persona.md describes.
 
 The statistics are StatCounter's and the Firefox Public Data Report's, which are under CC BY-SA 3.0, so the table is too,
-with their credits in it. Where no public source has weights, the table takes the owner's and says so. STATISTICS holds what
-the sources said for the period the table is made from.
+with their credits in it. Where no public source has weights, the table takes the owner's and says so. What the sources
+said for the period the table is made from is in machine_statistics.json beside this, which machine_sources.py fetches
+again.
 """
 
 import itertools
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 __all__ = [
     "STATISTICS",
+    "STATISTICS_PATH",
     "TABLE_PATH",
     "Display",
     "MachineTableError",
@@ -23,12 +25,15 @@ __all__ = [
     "Statistics",
     "approximated_device_memory",
     "display_shares",
+    "dumps_statistics",
     "dumps_table",
+    "read_statistics",
     "table_data",
     "write_table",
 ]
 
 TABLE_PATH = Path(__file__).parents[2] / "src" / "mitto" / "machine_table.json"
+STATISTICS_PATH = Path(__file__).with_name("machine_statistics.json")
 
 LICENCE = "CC-BY-SA-3.0"
 _LICENCE_URL = "https://creativecommons.org/licenses/by-sa/3.0/"
@@ -69,82 +74,20 @@ class Statistics:
     memory: Source
 
 
-_STATCOUNTER = "https://gs.statcounter.com/"
-_FIREFOX = "https://data.firefox.com/dashboard/hardware"
+def read_statistics(path: Path = STATISTICS_PATH) -> Statistics:
+    """Return the statistics that a file of them holds."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return Statistics(**{field.name: Source(**data[field.name]) for field in fields(Statistics)})
 
-STATISTICS = Statistics(
-    windows_versions=Source(
-        "StatCounter Global Stats, Desktop Windows Version Market Share Worldwide, October 2026",
-        "https://gs.statcounter.com/windows-version-market-share/desktop/worldwide",
-        {"Win11": 74.2, "Win10": 25.22, "Win7": 0.43, "Win8.1": 0.08, "WinXP": 0.04, "Win8": 0.02, "WinVista": 0.01},
-    ),
-    css_displays=Source(
-        "StatCounter Global Stats, Desktop Screen Resolution Stats Worldwide, October 2026",
-        "https://gs.statcounter.com/screen-resolution-stats/desktop/worldwide",
-        {
-            "1920x1080": 27.82,
-            "1536x864": 9.15,
-            "800x600": 8.69,
-            "1366x768": 7.49,
-            "1280x720": 4.45,
-            "2560x1440": 3.78,
-            "1280x1200": 3.46,
-            "1440x900": 2.8,
-            "2560x1600": 2.09,
-            "1280x800": 1.92,
-            "1600x900": 1.7,
-            "1536x960": 1.36,
-            "1470x956": 1.21,
-            "1920x1200": 1.12,
-            "1680x1050": 0.88,
-            "1512x982": 0.65,
-            "820x1180": 0.64,
-            "2048x1152": 0.58,
-            "3440x1440": 0.58,
-            "1280x1024": 0.57,
-        },
-    ),
-    pixel_displays=Source(
-        "Firefox Public Data Report, Hardware Across the Web, Display Resolution, week of 2026-10-26",
-        _FIREFOX,
-        {
-            "1920x1080": 51.216,
-            "1366x768": 13.482,
-            "1920x1200": 5.068,
-            "2560x1440": 4.408,
-            "1600x900": 4.044,
-            "2880x1800": 2.150,
-            "3840x2160": 2.121,
-            "1440x900": 1.990,
-            "1280x1024": 1.363,
-            "2560x1600": 1.275,
-            "1680x1050": 1.141,
-            "1024x768": 1.132,
-            "3440x1440": 1.039,
-        },
-    ),
-    memory=Source(
-        "Firefox Public Data Report, Hardware Across the Web, Memory, week of 2026-10-26",
-        _FIREFOX,
-        {
-            "8GB": 29.453,
-            "16GB": 24.923,
-            "4GB": 9.981,
-            "32GB": 7.520,
-            "15GB": 5.995,
-            "31GB": 3.394,
-            "7GB": 3.171,
-            "6GB": 2.423,
-            "3GB": 1.929,
-            "12GB": 1.916,
-            "64GB": 1.376,
-            "2GB": 1.233,
-            "24GB": 1.186,
-            "14GB": 1.116,
-        },
-    ),
-)
-"""What the sources said on 2026-11-08, for the latest period each had then. Their "Other" counts for nothing."""
+
+def dumps_statistics(statistics: Statistics) -> str:
+    """Write statistics as text, with one line for each share, so that a change to a share is one line of a diff."""
+    return json.dumps({"licence": LICENCE, **asdict(statistics)}, indent=2, ensure_ascii=False) + "\n"
+
+
+STATISTICS = read_statistics()
+"""What the sources said when they were last fetched, for the period that each credit names. Their "Other" counts for
+nothing."""
 
 _OWNER = "The owner of mitto, where no public source has weights"
 
