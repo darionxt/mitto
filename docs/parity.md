@@ -18,7 +18,7 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise. For a Baseline recorded through the capture server's proxy it has that proxy, and then the proxy is what finds the names;
+2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**, and with no `machine=`, so it claims a **Machine** drawn for it, as a caller's Session does. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise. For a Baseline recorded through the capture server's proxy it has that proxy, and then the proxy is what finds the names;
 3. [replays](#replaying-a-recording-case) the Baseline's **Recording Case** through the public API, with what the Persona sends for that case's **Request Kind** ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
@@ -33,6 +33,8 @@ The test of the real Baselines runs all this twice: through `mitto.Session`, and
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
 
 Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
+
+A value that [follows the machine](capture.md#what-stays-and-what-does-not), such as `sec-ch-ua-platform-version`, is `<machine>` in a Baseline and in what a Session sent, so a check compares where its line is and not what it says. That is why a drawn Machine passes as any other does. Its form is checked instead, against the same [forms](capture.md#the-form-of-a-hidden-value): `tests/test_machine.py` for every value a Session works out from its Machine, and [`tools.capture.machine_forms`](baselines.md#check-and-commit) for real Chrome's recordings, on the machine that keeps them.
 
 ## Replaying a Recording Case
 

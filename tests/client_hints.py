@@ -16,7 +16,6 @@ HINTS_A_SERVER_ASKS_FOR = frozenset(
         "sec-ch-ua-full-version",
         "sec-ch-ua-full-version-list",
         "sec-ch-ua-model",
-        "sec-ch-ua-platform-version",
         "sec-ch-ua-wow64",
     }
 )
