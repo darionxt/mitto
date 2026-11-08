@@ -11,7 +11,8 @@ from typing import cast
 
 from mitto import _native
 from mitto._arguments import require_path, require_type
-from mitto._cookies import Cookies, write_cookie_file
+from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
+from mitto._cookies import Cookies
 from mitto._machine import Machine
 from mitto._native import MEMORY_CACHE, PrivateSettings
 from mitto._persona import load_persona
@@ -25,7 +26,7 @@ class SessionState:
     """A native Session with its Persona, its Machine, its default timeout and the file of its cookies.
 
     Attributes:
-        machine: The Machine it claims, whose values its Persona's lines hold.
+        machine: The Machine it claims, whose values its Persona's lines hold, and which its file of cookies keeps.
         native: The native Session.
         cookies: Its cookies.
     """
@@ -59,12 +60,14 @@ class SessionState:
         require_path("cookie_file", cookie_file, or_none=True)
         require_type("proxy", proxy, str | None, "text or None")
         require_path("cache", cache, or_none=True)
-        self.machine = Machine.draw() if machine is None else machine
-        self._persona = load_persona(persona).with_machine(self.machine)
+        persona_data = load_persona(persona)
         self._timeout = to_timeout(timeout)
         # Before anything that needs closing exists, because this can raise. The working directory may change before the
         # Session closes.
         self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
+        saved = None if self._cookie_file is None else _read_if_there(self._cookie_file)
+        self.machine = _machine_to_claim(machine, saved)
+        self._persona = persona_data.with_machine(self.machine)
         self.native = _native.Session(
             accept_language=self._persona.accept_language if accept_language is None else accept_language,
             user_agent=self._persona.user_agent,
@@ -73,9 +76,9 @@ class SessionState:
             http_cache=_http_cache_setting(cache),
             **(PrivateSettings() if settings is None else settings),
         )
-        self.cookies = Cookies(self.native)
-        if self._cookie_file is not None:
-            self._load_cookie_file(self._cookie_file)
+        self.cookies = Cookies(self.native, self.machine)
+        if saved is not None:
+            self._add_saved(saved)
 
     def build(self, method: str, url: str, options: RequestOptions) -> BuiltRequest:
         """Return what to ask the native Session for, with this Session's default timeout unless `options` has its own.
@@ -96,7 +99,7 @@ class SessionState:
             later call returns does nothing.
         """
         cookie_file, self._cookie_file = self._cookie_file, None
-        to_save = None if cookie_file is None else (cookie_file, self.native.list_cookies())
+        to_save = None if cookie_file is None else (cookie_file, self.machine, self.native.list_cookies())
         destroy = self.native.detach()
 
         def finish() -> None:
@@ -116,15 +119,45 @@ class SessionState:
         """
         self.begin_close()()
 
-    def _load_cookie_file(self, path: Path) -> None:
-        """Load what `path` holds, where a file that does not exist yet holds nothing. Close the Session if that fails."""
+    def _add_saved(self, saved: CookieFile) -> None:
+        """Add the cookies of the file that this Session claims the Machine of. Close the Session if that fails."""
         try:
-            self.cookies.load(path)
-        except FileNotFoundError:
-            pass
+            saved.add_to(self.native)
         except BaseException:
             self.native.close()
             raise
+
+
+def _read_if_there(path: Path) -> CookieFile | None:
+    """Return what a Session's file of cookies holds, or None for a file that does not exist yet.
+
+    Raises:
+        OSError: If it exists and cannot be read.
+        ValueError: If it holds no cookies that a Session can use.
+    """
+    try:
+        return read_cookie_file(path)
+    except FileNotFoundError:
+        return None
+
+
+def _machine_to_claim(machine: Machine | None, saved: CookieFile | None) -> Machine:
+    """Return the Machine of a Session's file of cookies, or else the one given, or else one drawn for it.
+
+    A Session that comes back with its cookies has to be the machine it was, since a server can tell.
+
+    Raises:
+        ValueError: If a Machine is given and the file holds another.
+    """
+    if saved is None:
+        return Machine.draw() if machine is None else machine
+    if machine is None:
+        return saved.machine
+    if machine != saved.machine:
+        raise ValueError(
+            f"{saved.path} holds the cookies of another Machine than `machine` gives: leave it out to claim the file's"
+        )
+    return machine
 
 
 def _trust_anchors(anchors: object) -> tuple[str, ...]:

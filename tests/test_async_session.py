@@ -23,7 +23,7 @@ from typing import Any, cast, get_type_hints
 import pytest
 
 import mitto
-from mitto import _async_api, _cookies, _native
+from mitto import _async_api, _cookie_file, _native
 from mitto._request import AsyncRequestOptions, RequestOptions
 from mitto._session_state import SessionState
 from tests.local_server import QuietServer
@@ -512,7 +512,7 @@ def test_opening_and_closing_block_only_a_thread_of_the_loop(
 ) -> None:
     threads: dict[str, int] = {}
     native_session = _native.Session
-    replace_file = _cookies._replace_file  # pyright: ignore[reportPrivateUsage]
+    replace_file = _cookie_file._replace_file  # pyright: ignore[reportPrivateUsage]
     detach = _native.Session.detach
 
     def created(**settings: Any) -> _native.Session:
@@ -534,7 +534,7 @@ def test_opening_and_closing_block_only_a_thread_of_the_loop(
 
     monkeypatch.setattr(_native, "Session", created)
     monkeypatch.setattr(native_session, "detach", detached)
-    monkeypatch.setattr(_cookies, "_replace_file", replaced)
+    monkeypatch.setattr(_cookie_file, "_replace_file", replaced)
 
     async def main() -> None:
         async with mitto.AsyncSession(cookie_file=tmp_path / "cookies.json"):
@@ -590,7 +590,7 @@ def test_cookies_go_through_a_file_off_the_loop(
     server: Server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     threads: list[int] = []
-    replace_file = _cookies._replace_file  # pyright: ignore[reportPrivateUsage]
+    replace_file = _cookie_file._replace_file  # pyright: ignore[reportPrivateUsage]
     read_bytes = Path.read_bytes
 
     def replaced(path: Path, contents: bytes) -> None:
@@ -601,7 +601,7 @@ def test_cookies_go_through_a_file_off_the_loop(
         threads.append(threading.get_ident())
         return read_bytes(path)
 
-    monkeypatch.setattr(_cookies, "_replace_file", replaced)
+    monkeypatch.setattr(_cookie_file, "_replace_file", replaced)
     monkeypatch.setattr(Path, "read_bytes", read)
     path = tmp_path / "cookies.json"
 
@@ -609,7 +609,8 @@ def test_cookies_go_through_a_file_off_the_loop(
         async with mitto.AsyncSession() as first:
             first.cookies.set(mitto.Cookie("a", "1", domain="example.com", secure=True))
             await first.cookies.save(path)
-        async with mitto.AsyncSession() as second:
+            machine = first.machine
+        async with mitto.AsyncSession(machine=machine) as second:
             await second.cookies.load(path)
             return [cookie.name for cookie in second.cookies]
 
