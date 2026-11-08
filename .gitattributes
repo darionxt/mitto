@@ -1,0 +1,3 @@
+# git apply matches a patch against Chromium's files byte for byte, so a clone
+# on Windows must not give the patches CRLF line endings.
+*.patch -text

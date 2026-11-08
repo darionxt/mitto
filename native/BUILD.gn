@@ -1,6 +1,6 @@
 # The native core: a shared library that links //net and exports only the C API
-# in include/mitto/mitto.h. tools/workspace/bootstrap links this directory into
-# the Chromium checkout as //mitto.
+# in include/mitto/mitto.h. tools/workspace/bootstrap.py links this directory
+# into the Chromium checkout as //mitto.
 
 import("//build/config/sanitizers/sanitizers.gni")
 

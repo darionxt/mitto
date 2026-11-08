@@ -40,7 +40,7 @@ Each Chrome Release is recorded at its newest pinnable build, because that is th
 ### 2. Check out the new Engine Release
 
 1. Write the new Engine Release's newest pinnable build from [step 1](#1-find-the-builds) into [`tools/workspace/chromium_tag`](../tools/workspace/chromium_tag). Its checkout and its Baselines take the same build, so that the engine runs the network code that was recorded.
-2. Rerun [`tools/workspace/bootstrap`](building.md#set-up-the-workspace) on each machine. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`. If a patch no longer applies, the script stops after the sync. Update the patch against the new checkout and rerun the script. Delete a patch the new release no longer needs.
+2. Rerun [`tools/workspace/bootstrap.py`](building.md#set-up-the-workspace) on each machine. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`. If a patch no longer applies, the script stops after the sync. Update the patch against the new checkout and rerun the script. Delete a patch the new release no longer needs.
 3. [Build the native core](building.md#build-the-native-core) in the new checkout.
 4. [Compare](building.md#compare-two-releases) the build of each older Chrome Release in the new Supported Window with the new one. A change in the network code that sets up a connection is one that Persona data may have to undo for the older Chrome Releases ([what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases)). It is a decision for the milestone's plan.
 5. Once the new release works, delete the old release's `chromium-<tag>` directory.
