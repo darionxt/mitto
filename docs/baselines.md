@@ -186,9 +186,15 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
    grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?,client_hints_*}.json recordings/a/chrome.txt
    ```
 
-3. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, and the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
-4. Write the Persona's file again, because `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name the build. See [persona.md](persona.md#write-one).
-5. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
+3. On the Windows machine, check that each value the normal form hides as `<machine>` has [the form a Session's has](capture.md#the-form-of-a-hidden-value). Each directory should say `pass`. It prints no value, but the raw recordings it reads hold this machine's own, so they stay on it:
+
+   ```powershell
+   uv run python -m tools.capture.machine_forms recordings\a recordings\b
+   ```
+
+4. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, and the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
+5. Write the Persona's file again, because `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name the build. See [persona.md](persona.md#write-one).
+6. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
 
 ## Where each Chrome Release comes from
 
@@ -311,7 +317,7 @@ Field trials differ between sessions as they did before, with no effect on the n
 
 The three sessions of each Chrome Release gave identical normal forms in all thirteen files, and none drew [the field trial that reaches the wire](#chrome-157). The nine files from before came out byte for byte the same in all nine sessions, so neither these runs nor another day moved them. The checks in [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording hold for these cases in each Chrome Release. A connection looks the same here as in the main file of its protocol, so these cases too differ from the others in their requests only.
 
-The values that [follow the machine](capture.md#what-stays-and-what-does-not) are `<machine>` in these files, and they differ from what [a Session claims](persona.md#what-they-say) on purpose. `sec-ch-ua-platform-version` stays as it was, `"19.0.0"`, from the same Windows build as the Baselines above.
+The values that [follow the machine](capture.md#what-stays-and-what-does-not) are `<machine>` in these files, and they differ from what [a Session claims](persona.md#what-they-say) on purpose. `sec-ch-ua-platform-version` is too, since [it was hidden](#the-platform-version-hidden) on 2026-11-08.
 
 Between Chrome Releases these files differ only in `sec-ch-ua`, `User-Agent`, `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list`:
 
@@ -324,6 +330,12 @@ Between Chrome Releases these files differ only in `sec-ch-ua`, `User-Agent`, `s
 Over the four files that is 123 fields of `sec-ch-ua`, 125 of `User-Agent` and 42 each of the other two per Chrome Release.
 
 The seed's version is the same as [the day before](#their-seed), and so is the part of its serial number after the `#`, so the studies have not changed. The part before the `#` has grown. `OptimisticDnsForTcp` is in the `chrome.txt` of some user data directories and in none of the starts of others, which goes beyond [what Chrome 157 showed](#chrome-157), and the normal form is the same in both.
+
+### The platform version hidden
+
+On 2026-11-08 `sec-ch-ua-platform-version` joined the hints that the normal form hides, because each Session claims [a Windows of its own](persona.md#which-windows). The Baselines were written again with that one value changed: `"19.0.0"` became `<machine>` 17 times in each of `cases/client_hints_http1.json`, `cases/client_hints_http2.json` and `cases/client_hints_http3.json`, of each Chrome Release, and nothing else changed. On the Windows machine, the normal forms of the first session of each Chrome Release that recorded [the client hints](#client-hints), with that line hidden the same way, are byte for byte the Baselines in all thirteen files.
+
+[The check of hidden values](capture.md#the-form-of-a-hidden-value) passed on the raw recordings of all three of those sessions of each Chrome Release, and of the three of [the seed of 2026-11-07](#the-seed-of-2026-11-07): 600 values in 13 raw recordings for each, and every one of them in its form.
 
 ## The seed of 2026-11-07
 
