@@ -28,6 +28,7 @@ import json
 import lzma
 import os
 import platform
+import posixpath
 import re
 import shutil
 import stat
@@ -55,29 +56,50 @@ CIPD_FILE_TIME = 1_000_000_000
 # GitHub refuses a bigger release asset.
 ASSET_LIMIT = 2 * 1024**3
 
+# A connection that drops resumes where it stopped, in this run or the next.
+CURL_ARGUMENTS = (
+    "--fail",
+    "--location",
+    "--silent",
+    "--show-error",
+    "--retry",
+    "5",
+    "--retry-all-errors",
+    "--continue-at",
+    "-",
+)
+
 GN_ROOT = ["--root-target=//mitto", "--root-pattern=//mitto:*"]
 
 # A file that gclient writes per Host. It only sets checkout_* variables, and
 # those decide nothing in the native core's build graph.
 PER_HOST_FILES = {"build/config/gclient_args.gni"}
 
+# Where a hook of DEPS puts the resource compiler of a Windows build, which it
+# downloads by the SHA-1 in the file next to it.
+RC_EXE = "build/toolchain/win/rc/win/rc.exe"
+RC_BUCKET = "chromium-browser-clang/rc"
+
 # What no list of a build's inputs names. The merge reads the toolchain pins from
-# DEPS, and gn only checks that the other file exists, with path_exists().
-ALWAYS_KEPT = {"DEPS", "build/modules/linux/BUILD.gn"}
+# DEPS and the SHA-1 of rc.exe, and gn only checks that the BUILD.gn file exists,
+# with path_exists().
+ALWAYS_KEPT = {"DEPS", "build/modules/linux/BUILD.gn", f"{RC_EXE}.sha1"}
 
 # Build output, and what comes from this repository rather than the export.
 NEVER_KEPT_DIRS = ("out", "mitto")
 
-# A directory of the checkout that the toolchain fills. A slice leaves these out
-# and the build fetches them again.
-TOOLCHAIN_DIRS = (
+# A directory or file of the checkout that the toolchain fills. A slice leaves
+# these out and the build fetches them again.
+TOOLCHAIN_PATHS = (
     "buildtools/linux64",
     "buildtools/mac",
+    "buildtools/win",
     "buildtools/third_party/mold/cipd",
     "third_party/cpython3",
     "third_party/llvm-build",
     "third_party/ninja",
     "third_party/rust-toolchain",
+    RC_EXE,
 )
 SYSROOT_DIR = re.compile(r"build/linux/[^/]+-sysroot(/|$)")
 
@@ -94,6 +116,10 @@ THIRD_PARTY_WITHOUT_LICENCE = {"buildtools/third_party/libc++", "buildtools/thir
 
 # The first bytes of an ELF file, a Mach-O file and a universal Mach-O file.
 EXECUTABLE_MAGIC = (b"\x7fELF", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+# A Windows program starts with an MS-DOS header, whose field at this offset
+# says where the PE signature lies.
+PE_OFFSET_FIELD = 0x3C
+PE_SIGNATURE = b"PE\0\0"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,6 +135,17 @@ class CipdPackage:
     """A package that DEPS pins in CIPD, Chromium's package store."""
 
     path: str
+
+
+@dataclasses.dataclass(frozen=True)
+class GcsFile:
+    """A single program that a hook of DEPS downloads from Google Storage.
+
+    The object's name is the SHA-1 in the file next to the program, `<path>.sha1`.
+    """
+
+    path: str
+    bucket: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -138,9 +175,12 @@ class Host:
     name: str
     gn: str
     cipd_platform: str
-    packages: tuple[GcsPackage | CipdPackage, ...]
+    packages: tuple[GcsPackage | CipdPackage | GcsFile, ...]
     library: str
     configs: tuple[BuildConfig, ...]
+    ninja: str = "third_party/ninja/ninja"
+    # Windows keeps no file modes, so its slice cannot say which file is a program.
+    file_modes: bool = True
 
     @property
     def cipd_arch(self) -> str:
@@ -178,7 +218,29 @@ MAC = Host(
     library="libmitto_core.dylib",
     configs=(PLAIN,),
 )
-HOSTS = (LINUX, MAC)
+# Visual Studio and the Windows SDK stay the machine's, as Xcode does on macOS.
+# The build of the native core never runs rc.exe today, but gn's toolchain for
+# Windows names it, and a resource file in native/ would need it.
+WINDOWS = Host(
+    name="win",
+    gn="buildtools/win/gn.exe",
+    ninja="third_party/ninja/ninja.exe",
+    cipd_platform="windows-amd64",
+    packages=(
+        GcsPackage("third_party/llvm-build/Release+Asserts", r"Win/clang-llvmorg-.*"),
+        GcsPackage("third_party/rust-toolchain", r"Win/rust-toolchain-.*"),
+        CipdPackage("buildtools/win"),
+        CipdPackage("third_party/ninja"),
+        CipdPackage("third_party/cpython3/host"),
+        GcsFile(RC_EXE, RC_BUCKET),
+    ),
+    library="mitto_core.dll",
+    configs=(PLAIN,),
+    file_modes=False,
+)
+# The merge takes a file that several slices hold from the first of them, so a
+# Host that keeps file modes comes before one that does not.
+HOSTS = (LINUX, MAC, WINDOWS)
 
 MACH_O_MAGIC = b"\xcf\xfa\xed\xfe"
 MACH_O_HEADER_SIZE = 32
@@ -190,9 +252,9 @@ MACH_O_ZERO_FILL_TYPES = {0x1, 0xC, 0x12}
 
 ARCHIVE_README = """\
 This is the part of Chromium {tag} that mitto's native core needs in order to
-build, on Linux x86_64 and on macOS arm64. Everything else in Chromium is left
-out. See docs/building.md in https://github.com/darionxt/mitto, whose script
-tools/workspace/export.py made this archive.
+build, on Linux x86_64, on macOS arm64 and on Windows x64. Everything else in
+Chromium is left out. See docs/building.md in https://github.com/darionxt/mitto,
+whose script tools/workspace/export.py made this archive.
 
 src/         Chromium's files, with the patches below applied and no other change
 patches/     every change to those files, each with its reason
@@ -254,8 +316,10 @@ def current_host() -> Host:
             return LINUX
         case "darwin", "arm64":
             return MAC
+        case "win32", "AMD64":
+            return WINDOWS
         case system, machine:
-            die(f"unsupported host {system}/{machine}; use macOS arm64 or Linux x86_64")
+            die(f"unsupported host {system}/{machine}; use macOS arm64, Linux x86_64 or Windows x64")
 
 
 def read_tag() -> str:
@@ -347,7 +411,22 @@ def build_environment() -> dict[str, str]:
     )
     for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
         env.pop(name, None)
+    if sys.platform == "win32":
+        # Use the Visual Studio installed on the machine. Otherwise Chromium's
+        # scripts look for the packaged copy that only Google's own machines get.
+        env["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "0"
     return env
+
+
+def system_program(name: str) -> str:
+    """Returns a program that the system brings.
+
+    On Windows, tar and curl come with the system, and a tar earlier on PATH,
+    such as Git's, does not take a path that starts with a drive letter.
+    """
+    if sys.platform == "win32":
+        return str(Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / f"{name}.exe")
+    return name
 
 
 # Reading what a build used.
@@ -393,24 +472,42 @@ def paths_in_commands(text: str) -> set[str]:
     """Returns what the commands of a build name in the source tree.
 
     Compilers and linkers read files that no depfile lists, such as warning
-    suppression lists and symbol lists, and they name them only in a flag.
+    suppression lists and symbol lists, and they name them only in a flag. On
+    Windows a command can name a file with backslashes.
     """
-    return set(re.findall(r"\.\./\.\./[^\s\"'`;:,=]+", text))
+    return set(re.findall(r"\.\.[/\\]\.\.[/\\][^\s\"'`;:,=]+", text))
 
 
 def system_include_dirs(text: str) -> set[str]:
     """Returns the directories that the commands of a build search as system headers.
 
-    Compilers run with -MMD, which leaves headers found this way out of the depfile.
+    Compilers run with -MMD, or on Windows with /showIncludes:user, which leaves
+    headers found this way out of what they report.
     """
-    return set(re.findall(r"-isystem\s*(\.\./\.\./[^\s\"']+)", text))
+    return set(re.findall(r"(?:-isystem|[-/]imsvc)\s*(\.\./\.\./[^\s\"']+)", text))
 
 
 def source_relative(path: str, src: Path, base: Path) -> str | None:
-    """Returns a path relative to the source root, or None if it lies outside."""
+    """Returns a path relative to the source root, with `/`, or None if it lies outside.
+
+    Windows ignores case in paths, so the root does too there.
+    """
     absolute = os.path.normpath(base / path)
     root = str(src) + os.sep
-    return absolute.removeprefix(root) if absolute.startswith(root) else None
+    if not os.path.normcase(absolute).startswith(os.path.normcase(root)):
+        return None
+    return absolute[len(root) :].replace(os.sep, "/")
+
+
+def spelled_as_on_disk(src: Path, path: str) -> str:
+    """Returns the path of an existing file as its directory spells it.
+
+    Windows finds a file whatever the case of its path, and a tool reports the
+    path in the case it was given, but every slice must name a file alike.
+    """
+    if sys.platform != "win32":
+        return path
+    return Path(os.path.realpath(src / path)).relative_to(os.path.realpath(src)).as_posix()
 
 
 def is_kept_path(path: str) -> bool:
@@ -418,7 +515,7 @@ def is_kept_path(path: str) -> bool:
     parts = PurePosixPath(path).parts
     if parts[0] in NEVER_KEPT_DIRS or "__pycache__" in parts or ".git" in parts:
         return False
-    if any(path == directory or path.startswith(directory + "/") for directory in TOOLCHAIN_DIRS):
+    if any(path == toolchain or path.startswith(toolchain + "/") for toolchain in TOOLCHAIN_PATHS):
         return False
     return not SYSROOT_DIR.match(path)
 
@@ -434,7 +531,7 @@ def with_symlinks(src: Path, path: str) -> set[str]:
             if not target.startswith(str(src) + os.sep):
                 die(f"{current} is a symlink that leaves the source tree")
             rest = parts[index:]
-            resolved = os.path.relpath(target, src)
+            resolved = Path(os.path.relpath(target, src)).as_posix()
             return {current} | with_symlinks(src, "/".join((resolved, *rest)))
     return {path}
 
@@ -477,9 +574,9 @@ def _named_licence_files(src: Path, directory: str, readme: str) -> set[str]:
             item = item.strip()
             # A leading slash means the top of the source tree, as in GN.
             path = item.lstrip("/") if item.startswith("/") else str(PurePosixPath(directory) / item)
-            path = os.path.normpath(path)
+            path = posixpath.normpath(path)
             if item and not path.startswith("..") and (src / path).is_file():
-                named.add(path)
+                named.add(spelled_as_on_disk(src, path))
     return named
 
 
@@ -571,7 +668,7 @@ def traced_build(src: Path, host: Host, config: BuildConfig, build_dir: Path, tr
     note(f"generating the traced {config.name} build")
     check_call([src / host.gn, "gen", relative, *GN_ROOT, "--ide=json"], cwd=src, env=env)
     note("building; a first build takes minutes")
-    check_call([src / "third_party/ninja/ninja", "-C", relative, "mitto"], cwd=src, env=env)
+    check_call([src / host.ninja, "-C", relative, "mitto"], cwd=src, env=env)
 
 
 def paths_read_by_python(logs: Path, src: Path) -> set[str]:
@@ -584,16 +681,18 @@ def paths_read_by_python(logs: Path, src: Path) -> set[str]:
     return paths
 
 
-def paths_used_by_build(src: Path, build_dir: Path, logs: Path) -> set[str]:
+def paths_used_by_build(src: Path, host: Host, build_dir: Path, logs: Path) -> set[str]:
     """Returns every file of the source tree that the finished build used."""
-    ninja = src / "third_party/ninja/ninja"
+    ninja = src / host.ninja
     paths = paths_in_project(json.loads((build_dir / "project.json").read_text()))
     commands = output_of([ninja, "-C", build_dir, "-t", "commands", "mitto"])
     relative_to_build = paths_in_ninja_deps(output_of([ninja, "-C", build_dir, "-t", "deps"]))
     relative_to_build |= paths_in_commands(commands)
     for directory in system_include_dirs(commands):
-        for file in _files_under(build_dir / directory):
-            relative_to_build.add(str(file))
+        # On Windows, Visual Studio's and the SDK's headers are system headers too.
+        if source_relative(directory, src, build_dir) is not None:
+            for file in _files_under(build_dir / directory):
+                relative_to_build.add(str(file))
     for depfile in build_dir.rglob("*.d"):
         if depfile.is_file():
             relative_to_build |= paths_in_depfile(depfile.read_text(errors="replace"))
@@ -612,16 +711,30 @@ def files_to_keep(src: Path, used: Iterable[str]) -> set[str]:
             continue
         for resolved in with_symlinks(src, path):
             target = src / resolved
-            if is_kept_path(resolved) and (target.is_symlink() or target.is_file()):
+            if target.is_symlink():
                 paths.add(resolved)
+            elif target.is_file():
+                paths.add(spelled_as_on_disk(src, resolved))
+    paths = {path for path in paths if is_kept_path(path)}
     paths |= licence_files(src, paths)
     for path in paths:
         target = src / path
-        if not target.is_symlink():
-            with target.open("rb") as file:
-                if file.read(4) in EXECUTABLE_MAGIC:
-                    die(f"{path} is a prebuilt program; add its package to the toolchain in this script")
+        if not target.is_symlink() and is_program(target):
+            die(f"{path} is a prebuilt program; add its package to the toolchain in this script")
     return paths
+
+
+def is_program(file: Path) -> bool:
+    """Says whether a file is a program for macOS, Linux or Windows."""
+    with file.open("rb") as content:
+        header = content.read(PE_OFFSET_FIELD + 4)
+        if header[:4] in EXECUTABLE_MAGIC:
+            return True
+        if header[:2] != b"MZ" or len(header) < PE_OFFSET_FIELD + 4:
+            return False
+        (offset,) = struct.unpack_from("<I", header, PE_OFFSET_FIELD)
+        content.seek(offset)
+        return content.read(len(PE_SIGNATURE)) == PE_SIGNATURE
 
 
 def copy_files(src: Path, paths: Iterable[str], destination: Path) -> None:
@@ -647,7 +760,7 @@ def make_slice(workspace: Path, tag: str, host: Host) -> Path:
         for config in host.configs:
             build_dir = src / "out" / f"export-trace-{config.name}"
             traced_build(src, host, config, build_dir, trace_dir)
-            used |= paths_used_by_build(src, build_dir, trace_dir / "logs")
+            used |= paths_used_by_build(src, host, build_dir, trace_dir / "logs")
             libraries[config.name] = library_fingerprint(build_dir / host.library)
             note(f"{config.name} {host.library}: fingerprint {libraries[config.name]}")
             shutil.rmtree(build_dir)
@@ -713,31 +826,58 @@ def sha256_of_cipd_instance(instance_id: str) -> str:
     return raw[:-1].hex()
 
 
+@dataclasses.dataclass(frozen=True)
+class PackageStores:
+    """What the merge asks of Chromium's package stores, for the hash of each package.
+
+    `cipd_instance` gives the instance ID of a CIPD package at a version, and
+    `gcs_sha256` the SHA-256 of a Google Storage object, from its URL and SHA-1.
+    """
+
+    cipd_instance: Callable[[str, str], str]
+    gcs_sha256: Callable[[str, str], str]
+
+
+def deps_entry(deps: Mapping[str, Any], path: str) -> Any:
+    entry = deps["deps"].get(f"src/{path}")
+    if entry is None:
+        die(f"DEPS has no entry src/{path}")
+    return entry
+
+
 def toolchain_pins(
-    deps: Mapping[str, Any], host: Host, resolve_cipd: Callable[[str, str], str]
+    deps: Mapping[str, Any], sources: Mapping[str, Path], host: Host, stores: PackageStores
 ) -> list[dict[str, str]]:
-    """Returns where this Host's toolchain lies, as pinned by a release's DEPS."""
+    """Returns where this Host's toolchain lies, as a release's DEPS and SHA-1 files pin it."""
     pins: list[dict[str, str]] = []
     for package in host.packages:
-        entry = deps["deps"].get(f"src/{package.path}")
-        if entry is None:
-            die(f"DEPS has no entry src/{package.path}")
         match package:
             case GcsPackage(path, pattern):
+                entry = deps_entry(deps, path)
                 objects = [o for o in entry["objects"] if re.fullmatch(pattern, o["object_name"])]
                 if len(objects) != 1:
                     die(f"DEPS has {len(objects)} objects matching {pattern} in src/{path}")
                 url = f"https://storage.googleapis.com/{entry['bucket']}/{objects[0]['object_name']}"
                 pins.append({"path": path, "url": url, "sha256": objects[0]["sha256sum"], "format": "tar"})
             case CipdPackage(path):
+                entry = deps_entry(deps, path)
                 name = (
                     entry["packages"][0]["package"]
                     .replace("${{platform}}", host.cipd_platform)
                     .replace("${{arch}}", host.cipd_arch)
                 )
-                instance_id = resolve_cipd(name, entry["packages"][0]["version"])
+                instance_id = stores.cipd_instance(name, entry["packages"][0]["version"])
                 url = f"https://chrome-infra-packages.appspot.com/dl/{name}/+/{instance_id}"
                 pins.append({"path": path, "url": url, "sha256": sha256_of_cipd_instance(instance_id), "format": "zip"})
+            case GcsFile(path, bucket):
+                pin_file = sources.get(f"{path}.sha1")
+                if pin_file is None:
+                    die(f"the slices have no {path}.sha1")
+                sha1 = pin_file.read_text().strip()
+                if not re.fullmatch(r"[0-9a-f]{40}", sha1):
+                    die(f"{path}.sha1 holds '{sha1}', not a SHA-1")
+                url = f"https://storage.googleapis.com/{bucket}/{sha1}"
+                pins.append({"path": path, "url": url, "sha256": stores.gcs_sha256(url, sha1), "format": "file"})
     return pins
 
 
@@ -769,12 +909,36 @@ def _same_file(first: Path, second: Path) -> bool:
     return filecmp.cmp(first, second, shallow=False)
 
 
+def has_executable_mode(file: Path) -> bool:
+    return bool(file.stat().st_mode & stat.S_IXUSR)
+
+
+def executable_in_merge(slices_without_modes: Iterable[Path]) -> Callable[[Path], bool]:
+    """Returns what says whether a merged file is executable.
+
+    The merge takes a file from such a slice only when no slice with modes holds
+    it, and then only its own Host uses it, which needs no mode.
+    """
+    directories = list(slices_without_modes)
+
+    def is_executable(file: Path) -> bool:
+        return not any(file.is_relative_to(directory) for directory in directories) and has_executable_mode(file)
+
+    return is_executable
+
+
 def write_archive(
-    destination: Path, root: str, files: Mapping[str, Path], extras: Mapping[str, bytes], mtime: int
+    destination: Path,
+    root: str,
+    files: Mapping[str, Path],
+    extras: Mapping[str, bytes],
+    mtime: int,
+    is_executable: Callable[[Path], bool] = has_executable_mode,
 ) -> None:
     """Writes the archive. The same input gives the same bytes, on any machine.
 
-    The files go under src/, and the extras beside it.
+    The files go under src/, and the extras beside it. A file is 0755 if it is
+    executable and 0644 otherwise.
     """
 
     def entry(name: str, kind: bytes = tarfile.REGTYPE, mode: int = 0o644, size: int = 0) -> tarfile.TarInfo:
@@ -796,11 +960,23 @@ def write_archive(
                 link.linkname = str(file.readlink())
                 tar.addfile(link)
             else:
-                stats = file.stat()
-                mode = 0o755 if stats.st_mode & stat.S_IXUSR else 0o644
+                mode = 0o755 if is_executable(file) else 0o644
                 with file.open("rb") as content:
-                    tar.addfile(entry(f"src/{name}", mode=mode, size=stats.st_size), content)
+                    tar.addfile(entry(f"src/{name}", mode=mode, size=file.stat().st_size), content)
     partial.replace(destination)
+
+
+def sha256_of_download(url: str, sha1: str) -> str:
+    """Downloads a file that its SHA-1 pins, and returns its SHA-256."""
+    with tempfile.TemporaryDirectory() as temporary:
+        file = Path(temporary) / "download"
+        note(f"downloading {url}")
+        check_call([system_program("curl"), *CURL_ARGUMENTS, "--output", file, url])
+        data = file.read_bytes()
+    actual = hashlib.sha1(data).hexdigest()
+    if actual != sha1:
+        die(f"{url} has SHA-1 {actual}, not {sha1}")
+    return hashlib.sha256(data).hexdigest()
 
 
 def resolve_with_depot_tools(workspace: Path) -> Callable[[str, str], str]:
@@ -848,13 +1024,14 @@ def make_archive(workspace: Path, tag: str) -> Path:
     if missing:
         die("no licence file found for " + ", ".join(missing))
     deps = evaluate_deps(files["DEPS"].read_text())
-    resolve = resolve_with_depot_tools(workspace)
+    stores = PackageStores(resolve_with_depot_tools(workspace), sha256_of_download)
     metadata = {
         "chromium_tag": tag,
         "patches": patches,
         "traced_libraries": {info["host"]: info["libraries"] for info in infos},
-        "toolchain": {host.name: toolchain_pins(deps, host, resolve) for host in HOSTS},
+        "toolchain": {host.name: toolchain_pins(deps, files, host, stores) for host in HOSTS},
     }
+    is_executable = executable_in_merge([directory / host.name for host in HOSTS if not host.file_modes])
     extras = {
         "README.md": ARCHIVE_README.format(tag=tag).encode(),
         "export.json": (json.dumps(metadata, indent=2) + "\n").encode(),
@@ -862,7 +1039,7 @@ def make_archive(workspace: Path, tag: str) -> Path:
     extras |= {f"patches/{patch.name}": patch.read_bytes() for patch in sorted(PATCHES.glob("*.patch"))}
     destination = directory / archive_name(tag)
     note(f"compressing {len(files)} files; this takes minutes")
-    write_archive(destination, f"chromium-{tag}", files, extras, infos[0]["commit_time"])
+    write_archive(destination, f"chromium-{tag}", files, extras, infos[0]["commit_time"], is_executable)
     size = destination.stat().st_size
     if size > ASSET_LIMIT:
         die(f"{destination} is {human_size(size)}, over GitHub's limit for a release asset")
@@ -882,9 +1059,7 @@ def download(url: str, sha256: str, directory: Path) -> Path:
     if file.is_file() and sha256_of(file) == sha256:
         return file
     note(f"downloading {url}")
-    # A connection that drops resumes where it stopped, in this run or the next.
-    retries = ["--retry", "5", "--retry-all-errors", "--continue-at", "-"]
-    check_call(["curl", "--fail", "--location", "--silent", "--show-error", *retries, "--output", file, url])
+    check_call([system_program("curl"), *CURL_ARGUMENTS, "--output", file, url])
     actual = sha256_of(file)
     if actual != sha256:
         file.unlink()
@@ -929,11 +1104,19 @@ def fetch_toolchain(metadata: Mapping[str, Any], host: Host, checkout: Path, dow
             continue
         file = download(pin["url"], pin["sha256"], downloads)
         destination = checkout / "src" / pin["path"]
-        destination.mkdir(parents=True, exist_ok=True)
-        if pin["format"] == "zip":
-            extract_zip(file, destination)
-        else:
-            check_call(["tar", "-xf", file, "-C", destination])
+        match pin["format"]:
+            case "file":
+                # Older than any build output, for the reason extract_zip gives.
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(file, destination)
+                destination.chmod(0o755)
+                os.utime(destination, (CIPD_FILE_TIME, CIPD_FILE_TIME))
+            case "zip":
+                destination.mkdir(parents=True, exist_ok=True)
+                extract_zip(file, destination)
+            case _:
+                destination.mkdir(parents=True, exist_ok=True)
+                check_call([system_program("tar"), "-xf", file, "-C", destination])
         stamp.touch()
 
 
@@ -943,6 +1126,53 @@ def check_xcode() -> None:
         die(
             f"gn gen needs a full Xcode installation and xcode-select points to '{developer_dir}'; see docs/building.md"
         )
+
+
+def gn_values(text: str) -> dict[str, str]:
+    """Returns the string values in what Chromium's scripts print as GN assignments."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if match := re.fullmatch(r'\s*(\w+) = "(.*)"\s*', line):
+            values[match[1]] = re.sub(r"\\([\\\"$])", r"\1", match[2])
+    return values
+
+
+def check_visual_studio(src: Path, env: Mapping[str, str]) -> None:
+    """Stops unless the machine has a Visual Studio and the Windows SDK that this release accepts.
+
+    Chromium's own script picks them, as the build will. It knows the SDK only by
+    the version that it asks for, so a missing SDK would otherwise stop the build
+    later, with a message that does not say so.
+    """
+    script = src / "build/vs_toolchain.py"
+    found = subprocess.run(
+        [sys.executable, script, "get_toolchain_dir"], cwd=src, env=env, capture_output=True, text=True
+    )
+    if found.returncode != 0:
+        reason = (found.stderr.strip().splitlines() or ["it failed"])[-1]
+        die(f"Chromium finds no Visual Studio that it supports: {reason}; see docs/building.md")
+    values = gn_values(found.stdout)
+    sdk = Path(values["sdk_path"])
+    sdk_version = values["sdk_version"]
+    if not (sdk / "Include" / sdk_version / "um/windows.h").is_file():
+        die(f"Chromium asks for the Windows SDK {sdk_version}, which is not in {sdk}; see docs/building.md")
+    note(f"Visual Studio {values['vs_version']} in {values['vs_path']}, Windows SDK {sdk_version}")
+
+
+def link_native(src: Path) -> None:
+    """Links the repository's native/ into a checkout as //mitto, as a junction on Windows.
+
+    A symbolic link needs a privilege there that most users lack.
+    """
+    link = src / "mitto"
+    if link.is_junction():
+        link.rmdir()
+    else:
+        link.unlink(missing_ok=True)
+    if sys.platform == "win32":
+        subprocess.run(["cmd", "/c", "mklink", "/J", link, NATIVE], check=True, stdout=subprocess.DEVNULL)
+    else:
+        link.symlink_to(NATIVE)
 
 
 def archive_from_pin(directory: Path) -> Path:
@@ -968,7 +1198,7 @@ def unpack_export(archive: Path, checkout: Path) -> None:
         return
     note(f"unpacking {archive}")
     with tempfile.TemporaryDirectory(dir=checkout.parent, prefix=".unpacking-") as temporary:
-        check_call(["tar", "-xf", archive, "-C", temporary])
+        check_call([system_program("tar"), "-xf", archive, "-C", temporary])
         unpacked = Path(temporary) / checkout.name
         if not (unpacked / "export.json").is_file():
             die(f"{archive} has no {checkout.name}/export.json; it is not the export of that release")
@@ -993,23 +1223,23 @@ def build_from_export(directory: Path, archive: Path | None, config: BuildConfig
 
     checkout = directory / f"chromium-{tag}"
     unpack_export(archive.resolve() if archive else archive_from_pin(directory), checkout)
+    src = checkout / "src"
+    env = build_environment()
+    if host is WINDOWS:
+        check_visual_studio(src, env)
     metadata = json.loads((checkout / "export.json").read_text())
     fetch_toolchain(metadata, host, checkout, directory / "downloads")
 
     # What a pull request changes comes from the repository, not the export.
-    src = checkout / "src"
-    link = src / "mitto"
-    link.unlink(missing_ok=True)
-    link.symlink_to(NATIVE)
+    link_native(src)
     relative = Path("out") / config.name
     build_dir = src / relative
     build_dir.mkdir(parents=True, exist_ok=True)
     write_args(config, build_dir)
 
-    env = build_environment()
     # The check takes seconds, and stops the build before it compiles anything.
     check_call([src / host.gn, "gen", relative, *GN_ROOT, "--check"], cwd=src, env=env)
-    check_call([src / "third_party/ninja/ninja", "-C", relative, "mitto"], cwd=src, env=env)
+    check_call([src / host.ninja, "-C", relative, "mitto"], cwd=src, env=env)
     library = build_dir / host.library
     if library_fingerprint(library) == metadata["traced_libraries"][host.name][config.name]:
         note("the library is the same as the one the slice of this export built")

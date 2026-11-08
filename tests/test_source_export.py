@@ -19,7 +19,7 @@ import pytest
 
 from tools.workspace import export
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="export.py runs on macOS and Linux only")
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="these tests make symlinks and file modes")
 
 
 def write(root: Path, path: str, content: str | bytes = "") -> Path:
@@ -96,10 +96,22 @@ def test_commands_give_the_paths_in_flags() -> None:
     }
 
 
+def test_commands_on_windows_can_name_files_with_backslashes() -> None:
+    text = "..\\..\\third_party\\llvm-build\\bin\\clang-cl.exe /c ../../net/a.cc\n"
+
+    assert export.paths_in_commands(text) == {"..\\..\\third_party\\llvm-build\\bin\\clang-cl.exe", "../../net/a.cc"}
+
+
 def test_commands_give_the_system_include_directories() -> None:
     text = "clang++ -isystem../../third_party/libc++/src/include -isystem ../../other -I../../not_system\n"
 
     assert export.system_include_dirs(text) == {"../../third_party/libc++/src/include", "../../other"}
+
+
+def test_commands_on_windows_give_their_system_include_directories() -> None:
+    text = '"-imsvc../../../../../Program Files/VC/include" /imsvc../../third_party/win -I../../not_system\n'
+
+    assert export.system_include_dirs(text) == {"../../../../../Program", "../../third_party/win"}
 
 
 def test_source_relative_leaves_out_what_lies_elsewhere() -> None:
@@ -121,6 +133,8 @@ def test_source_relative_leaves_out_what_lies_elsewhere() -> None:
         "buildtools/third_party/mold/BUILD.gn",
         "build/linux/BUILD.gn",
         "third_party/llvm-libc/src/LICENSE.TXT",
+        "build/toolchain/win/rc/win/rc.exe.sha1",
+        "build/toolchain/win/rc/rc.py",
     ],
 )
 def test_source_files_can_be_kept(path: str) -> None:
@@ -137,6 +151,8 @@ def test_source_files_can_be_kept(path: str) -> None:
         "third_party/cpython3/host/bin/python3",
         "buildtools/linux64/gn",
         "buildtools/mac/gn",
+        "buildtools/win/gn.exe",
+        "build/toolchain/win/rc/win/rc.exe",
         "buildtools/third_party/mold/cipd/mold",
         "build/linux/debian_bullseye_amd64-sysroot/usr/include/stdio.h",
         "build/__pycache__/a.pyc",
@@ -231,6 +247,24 @@ def test_a_prebuilt_program_stops_the_export(tmp_path: Path) -> None:
         export.files_to_keep(tmp_path, ["tools/prebuilt"])
 
 
+def windows_program(signature: bytes = b"PE\0\0") -> bytes:
+    header = b"MZ" + b"\0" * 0x3A + struct.pack("<I", 0x80)
+    return header + b"\0" * (0x80 - len(header)) + signature + b"rest of the program"
+
+
+def test_a_windows_program_is_a_program(tmp_path: Path) -> None:
+    assert export.is_program(write(tmp_path, "tool.exe", windows_program()))
+    assert export.is_program(write(tmp_path, "tool.so", b"\x7fELF and the rest"))
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"MZ is how this text starts, and it is long enough to have a PE offset field", windows_program(b"NE\0\0"), b"MZ"],
+)
+def test_text_that_starts_like_a_windows_program_is_not_one(tmp_path: Path, content: bytes) -> None:
+    assert not export.is_program(write(tmp_path, "notes.txt", content))
+
+
 def test_files_to_keep_drops_directories_and_missing_files_and_adds_what_gn_only_checks(tmp_path: Path) -> None:
     write(tmp_path, "DEPS")
     write(tmp_path, "LICENSE")
@@ -290,6 +324,9 @@ deps = {
       {'object_name': 'Linux_x64/clang-tidy-llvmorg-1.tar.xz', 'sha256sum': 'bb', 'size_bytes': 1},
       {'object_name': 'Mac_arm64/clang-llvmorg-1.tar.xz', 'sha256sum': 'cc', 'size_bytes': 1},
       {'object_name': 'Mac_arm64/llvmobjdump-llvmorg-1.tar.xz', 'sha256sum': 'c0', 'size_bytes': 1},
+      {'object_name': 'Win/clang-llvmorg-1.tar.xz', 'sha256sum': 'a1', 'size_bytes': 1},
+      {'object_name': 'Win/clang-tidy-llvmorg-1.tar.xz', 'sha256sum': 'a2', 'size_bytes': 1},
+      {'object_name': 'Win/llvmobjdump-llvmorg-1.tar.xz', 'sha256sum': 'a3', 'size_bytes': 1},
     ],
   },
   'src/third_party/rust-toolchain': {
@@ -298,6 +335,8 @@ deps = {
     'objects': [
       {'object_name': 'Linux_x64/rust-toolchain-1.tar.xz', 'sha256sum': 'dd', 'size_bytes': 1},
       {'object_name': 'Mac_arm64/rust-toolchain-1.tar.xz', 'sha256sum': 'ee', 'size_bytes': 1},
+      {'object_name': 'Win/rust-toolchain-1.tar.xz', 'sha256sum': 'e1', 'size_bytes': 1},
+      {'object_name': 'Win/rust-libclang-1.tar.xz', 'sha256sum': 'e2', 'size_bytes': 1},
     ],
   },
   'src/build/linux/debian_bullseye_amd64-sysroot': {
@@ -310,6 +349,9 @@ deps = {
   },
   'src/buildtools/mac': {
     'packages': [{'package': 'gn/gn/mac-${{arch}}', 'version': Var('gn_version')}],
+  },
+  'src/buildtools/win': {
+    'packages': [{'package': 'gn/gn/windows-amd64', 'version': Var('gn_version')}],
   },
   'src/buildtools/third_party/mold/cipd': {
     'packages': [{'package': 'mold/mold', 'version': 'instance-id'}],
@@ -327,6 +369,27 @@ hooks = [{'name': 'not read', 'action': ['python3', Unknown('anything')]}]
 
 CIPD_DIGEST = hashlib.sha256(b"package").digest()
 CIPD_INSTANCE = base64.urlsafe_b64encode(CIPD_DIGEST + b"\x02").decode().rstrip("=")
+RC_SHA1 = hashlib.sha1(b"rc").hexdigest()
+
+
+def stores(resolved: list[tuple[str, str]] | None = None) -> export.PackageStores:
+    """Returns stores that answer from memory, and note each CIPD package asked for."""
+
+    def cipd_instance(package: str, version: str) -> str:
+        if resolved is not None:
+            resolved.append((package, version))
+        return CIPD_INSTANCE
+
+    def gcs_sha256(url: str, sha1: str) -> str:
+        assert sha1 == RC_SHA1
+        return hashlib.sha256(b"rc").hexdigest()
+
+    return export.PackageStores(cipd_instance, gcs_sha256)
+
+
+def rc_sources(tmp_path: Path, sha1: str = RC_SHA1) -> dict[str, Path]:
+    path = f"{export.RC_EXE}.sha1"
+    return {path: write(tmp_path, path, sha1 + "\n")}
 
 
 def test_deps_evaluates_vars_and_concatenation() -> None:
@@ -353,16 +416,13 @@ def test_cipd_instance_with_another_hash_is_refused() -> None:
         export.sha256_of_cipd_instance(other)
 
 
-def test_pins_follow_the_host() -> None:
+def test_pins_follow_the_host(tmp_path: Path) -> None:
     resolved: list[tuple[str, str]] = []
-
-    def resolve(package: str, version: str) -> str:
-        resolved.append((package, version))
-        return CIPD_INSTANCE
-
     deps = export.evaluate_deps(SAMPLE_DEPS)
-    linux = export.toolchain_pins(deps, export.LINUX, resolve)
-    mac = export.toolchain_pins(deps, export.MAC, resolve)
+    sources = rc_sources(tmp_path)
+    linux = export.toolchain_pins(deps, sources, export.LINUX, stores(resolved))
+    mac = export.toolchain_pins(deps, sources, export.MAC, stores(resolved))
+    windows = export.toolchain_pins(deps, sources, export.WINDOWS, stores(resolved))
 
     assert {pin["path"] for pin in mac} == {
         "third_party/llvm-build/Release+Asserts",
@@ -393,6 +453,36 @@ def test_pins_follow_the_host() -> None:
         "sha256": CIPD_DIGEST.hex(),
         "format": "zip",
     }
+    assert {pin["path"]: pin["sha256"] for pin in windows if pin["format"] == "tar"} == {
+        "third_party/llvm-build/Release+Asserts": "a1",
+        "third_party/rust-toolchain": "e1",
+    }
+    assert ("gn/gn/windows-amd64", "git_revision:abc") in resolved
+    assert ("infra/ninja/windows-amd64", "version:1") in resolved
+    assert ("cpython3/windows-amd64", "version:3") in resolved
+    assert windows[-1] == {
+        "path": "build/toolchain/win/rc/win/rc.exe",
+        "url": f"https://storage.googleapis.com/chromium-browser-clang/rc/{RC_SHA1}",
+        "sha256": hashlib.sha256(b"rc").hexdigest(),
+        "format": "file",
+    }
+
+
+def test_a_missing_or_broken_sha1_file_stops_the_pins(tmp_path: Path) -> None:
+    deps = export.evaluate_deps(SAMPLE_DEPS)
+
+    with pytest.raises(export.ExportError, match=r"no build/toolchain/win/rc/win/rc\.exe\.sha1"):
+        export.toolchain_pins(deps, {}, export.WINDOWS, stores())
+    with pytest.raises(export.ExportError, match="not a SHA-1"):
+        export.toolchain_pins(deps, rc_sources(tmp_path, "version:1"), export.WINDOWS, stores())
+
+
+def test_a_download_with_another_sha1_is_refused(tmp_path: Path) -> None:
+    source = write(tmp_path, "rc.exe", "rc")
+
+    assert export.sha256_of_download(source.as_uri(), RC_SHA1) == hashlib.sha256(b"rc").hexdigest()
+    with pytest.raises(export.ExportError, match="has SHA-1"):
+        export.sha256_of_download(source.as_uri(), "0" * 40)
 
 
 def test_a_missing_package_stops_the_pins() -> None:
@@ -400,7 +490,7 @@ def test_a_missing_package_stops_the_pins() -> None:
     del deps["deps"]["src/third_party/ninja"]
 
     with pytest.raises(export.ExportError, match="src/third_party/ninja"):
-        export.toolchain_pins(deps, export.LINUX, lambda _package, _version: CIPD_INSTANCE)
+        export.toolchain_pins(deps, {}, export.LINUX, stores())
 
 
 def test_an_ambiguous_object_stops_the_pins() -> None:
@@ -409,7 +499,7 @@ def test_an_ambiguous_object_stops_the_pins() -> None:
     objects.append({"object_name": "Linux_x64/rust-toolchain-2.tar.xz", "sha256sum": "00"})
 
     with pytest.raises(export.ExportError, match="2 objects"):
-        export.toolchain_pins(deps, export.LINUX, lambda _package, _version: CIPD_INSTANCE)
+        export.toolchain_pins(deps, {}, export.LINUX, stores())
 
 
 def test_merge_is_the_union_of_the_slices(tmp_path: Path) -> None:
@@ -489,6 +579,21 @@ def test_archive_is_reproducible_and_keeps_modes_and_links(tmp_path: Path) -> No
         assert metadata is not None
         assert metadata.read() == b"{}\n"
     assert not (tmp_path / "first.tar.xz.partial").exists()
+
+
+def test_a_file_from_a_slice_without_modes_is_not_executable(tmp_path: Path) -> None:
+    linux_tool = write(tmp_path, "linux/src/tool.py")
+    windows_tool = write(tmp_path, "win/src/build/toolchain/win/tool_wrapper.py")
+    for tool in (linux_tool, windows_tool):
+        tool.chmod(0o755)
+    archive = tmp_path / "export.tar.xz"
+    files = {"tool.py": linux_tool, "build/toolchain/win/tool_wrapper.py": windows_tool}
+
+    export.write_archive(archive, "chromium-1", files, {}, 1000, export.executable_in_merge([tmp_path / "win"]))
+
+    with tarfile.open(archive) as tar:
+        assert stat.S_IMODE(tar.getmember("chromium-1/src/tool.py").mode) == 0o755
+        assert stat.S_IMODE(tar.getmember("chromium-1/src/build/toolchain/win/tool_wrapper.py").mode) == 0o644
 
 
 def zip_entry(name: str, mode: int) -> zipfile.ZipInfo:
@@ -701,6 +806,24 @@ def test_checkouts_that_share_downloads_each_get_the_toolchain(tmp_path: Path) -
     assert (second / "src/third_party/tool/bin/tool").read_text() == "tool"
 
 
+def test_a_single_program_goes_to_its_path(tmp_path: Path) -> None:
+    program = write(tmp_path, "rc.exe", "rc")
+    pin = {
+        "path": export.RC_EXE,
+        "url": program.as_uri(),
+        "sha256": hashlib.sha256(b"rc").hexdigest(),
+        "format": "file",
+    }
+    checkout = tmp_path / "chromium-1"
+    checkout.mkdir()
+
+    export.fetch_toolchain({"toolchain": {"win": [pin]}}, export.WINDOWS, checkout, tmp_path / "downloads")
+
+    placed = checkout / "src" / export.RC_EXE
+    assert placed.read_text() == "rc"
+    assert placed.stat().st_mtime == export.CIPD_FILE_TIME
+
+
 def test_a_toolchain_already_in_a_checkout_is_left_alone(tmp_path: Path) -> None:
     metadata = toolchain_metadata(tmp_path)
     downloads = tmp_path / "downloads"
@@ -739,6 +862,37 @@ def test_the_environment_of_a_build_has_no_depot_tools(monkeypatch: pytest.Monke
 
     assert env["PATH"].split(os.pathsep) == ["/usr/bin", "/w/depot_tools_not"]
     assert "PYTHONPATH" not in env
+
+
+def test_a_build_on_windows_uses_the_installed_visual_studio(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delenv("DEPOT_TOOLS_WIN_TOOLCHAIN", raising=False)
+
+    assert export.build_environment()["DEPOT_TOOLS_WIN_TOOLCHAIN"] == "0"
+
+
+def test_windows_on_x64_is_a_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(export.platform, "machine", lambda: "AMD64")
+
+    assert export.current_host() is export.WINDOWS
+
+
+def test_what_chromium_prints_as_gn_gives_its_values() -> None:
+    text = textwrap.dedent("""\
+        vs_path = "C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community"
+        sdk_version = "10.0.28000.0"
+        runtime_dirs = "C:\\\\Windows\\\\System32;C:\\\\Windows\\\\SysWOW64;Arm64Unused"
+        quoted = "a \\\"b\\\" \\$c \\\\\\\\d"
+        not a value
+    """)
+
+    assert export.gn_values(text) == {
+        "vs_path": r"C:\Program Files\Microsoft Visual Studio\18\Community",
+        "sdk_version": "10.0.28000.0",
+        "runtime_dirs": r"C:\Windows\System32;C:\Windows\SysWOW64;Arm64Unused",
+        "quoted": 'a "b" $c \\\\d',
+    }
 
 
 def test_a_build_config_adds_to_the_args_of_the_plain_build(tmp_path: Path) -> None:
