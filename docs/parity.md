@@ -412,6 +412,17 @@ A chain that arrives without an intermediate gets it from the URL in the certifi
 
 `Session(additional_trust_anchors=[pem, ...])` adds roots beside the Chrome Root Store, through `CertVerifyProc::InstanceParams`, which is how Chrome receives its own additional certificates. Each entry is the text of a PEM file. A self-signed server certificate can be its own anchor, and an anchor's own dates and constraints are not enforced. This is what mitto offers in place of the roots that Linux users add to the system, which it does not read ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)). On macOS the verifier also reads the roots a user has added to the Keychain, as Chrome does.
 
+On Windows the verifier also reads Windows' certificate stores, as Chrome on Windows does, with no change to `//net` (`net/cert/internal/trust_store_win.cc`). It takes what a user, an administrator or group policy has added there, for the computer and for the user, and leaves out the roots that come with Windows, so the Chrome Root Store still decides about every public server:
+
+| Store | What its certificates are to the verifier |
+| --- | --- |
+| Trusted Root Certification Authorities | Roots, whose own dates and constraints are enforced, unlike those of `additional_trust_anchors`. A self-signed server certificate there is trusted as it is |
+| Intermediate Certification Authorities | Intermediates that a chain can be built through |
+| Trusted People | Self-signed server certificates that are trusted as they are |
+| Untrusted Certificates | Certificates that no chain may use, whatever trusts them |
+
+A certificate whose properties in the store leave out server authentication counts for nothing. A process reads the stores once, at its first verification, so a certificate added afterwards counts from the next process on.
+
 `//net` refuses QUIC to a root that is not known, which means one outside the Chrome Root Store, with `ERR_QUIC_CERT_ROOT_NOT_KNOWN`. So a server whose chain ends at an added root stays on HTTP/1.1 or HTTP/2, whatever its `Alt-Svc` says, as it does in Chrome. Only `origins_to_force_quic_on` lifts that, which is what a Parity Check of `h3` uses, and the public Session does not offer it.
 
 ### What stays different

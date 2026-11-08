@@ -4,7 +4,8 @@
 // value of a constant.
 //
 // Once loaded, the library stays in memory until the process exits, because its
-// network thread never stops. dlclose() does not unload it.
+// network thread never stops. dlclose() does not unload it, and neither does
+// FreeLibrary() on Windows.
 
 #ifndef MITTO_MITTO_H_
 #define MITTO_MITTO_H_
@@ -59,7 +60,14 @@
 // write more or to call mitto_request_end_body().
 #define MITTO_EVENT_BODY_WANTED 5
 
+// The library defines MITTO_IMPLEMENTATION while it builds.
+#if defined(_WIN32) && defined(MITTO_IMPLEMENTATION)
+#define MITTO_EXPORT __declspec(dllexport)
+#elif defined(_WIN32)
+#define MITTO_EXPORT __declspec(dllimport)
+#else
 #define MITTO_EXPORT __attribute__((visibility("default")))
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -367,7 +375,9 @@ MITTO_EXPORT void mitto_cookies_free(char* cookies);
 // first call count.
 //
 // Returns 0 on success. On failure, such as when the process has too many open
-// files, returns a negative Chromium net error code and stores -1.
+// files, returns a negative Chromium net error code and stores -1. On Windows a
+// Session has no such descriptor, so it fails with -11 (ERR_NOT_IMPLEMENTED)
+// where it would succeed elsewhere.
 MITTO_EXPORT int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd);
 
 // Stores the request behind the next waiting event, and takes that entry off the

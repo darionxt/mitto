@@ -19,6 +19,8 @@ import pytest
 
 from tools.workspace import export
 
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="export.py runs on macOS and Linux only")
+
 
 def write(root: Path, path: str, content: str | bytes = "") -> Path:
     file = root / path

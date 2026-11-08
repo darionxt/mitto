@@ -5,6 +5,7 @@ a Session itself adds: where the cache lives, who may use it, and which site a r
 """
 
 import concurrent.futures
+import contextlib
 import errno
 import gzip
 import http.server
@@ -15,7 +16,7 @@ import sys
 import textwrap
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -749,14 +750,31 @@ def test_a_file_in_place_of_a_directory_is_an_error(tmp_path: Path) -> None:
     assert str(tmp_path / "file") in str(caught.value)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
-def test_a_directory_that_cannot_be_written_is_an_error(tmp_path: Path) -> None:
-    tmp_path.chmod(0o500)
+@contextlib.contextmanager
+def _unwritable(directory: Path) -> Generator[None]:
+    """Make `directory` refuse new files while the block runs, or skip if this user can write anywhere."""
+    if sys.platform == "win32":
+        # Windows ignores the read-only attribute of a directory, but not an entry of its access list that refuses
+        # everyone, administrators included.
+        everyone = "*S-1-1-0"
+        subprocess.run(["icacls", directory, "/deny", f"{everyone}:(OI)(CI)(W)"], check=True, capture_output=True)
+        try:
+            yield
+        finally:
+            subprocess.run(["icacls", directory, "/remove:d", everyone], check=True, capture_output=True)
+        return
+    if os.geteuid() == 0:
+        pytest.skip("root can write anywhere")
+    directory.chmod(0o500)
     try:
-        with pytest.raises(OSError, match="ERR_CACHE_OPEN_FAILURE"):
-            mitto.Session(cache=tmp_path)
+        yield
     finally:
-        tmp_path.chmod(0o700)
+        directory.chmod(0o700)
+
+
+def test_a_directory_that_cannot_be_written_is_an_error(tmp_path: Path) -> None:
+    with _unwritable(tmp_path), pytest.raises(OSError, match="ERR_CACHE_OPEN_FAILURE"):
+        mitto.Session(cache=tmp_path)
 
 
 @pytest.mark.parametrize(("cache", "complaint"), [("", "empty string"), ("a\0b", "null")], ids=["empty", "NUL"])

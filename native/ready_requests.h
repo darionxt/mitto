@@ -6,9 +6,13 @@
 #include <optional>
 
 #include "base/containers/circular_deque.h"
-#include "base/files/scoped_file.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "build/build_config.h"
+
+#if BUILDFLAG(IS_POSIX)
+#include "base/files/scoped_file.h"
+#endif
 
 namespace mitto {
 
@@ -22,7 +26,8 @@ namespace mitto {
 // because the handle may be gone by the time its name is taken.
 //
 // Nothing is listed until the first call to GetFileDescriptor(), so that a
-// caller who does not use one pays nothing and has nothing pile up.
+// caller who does not use one pays nothing and has nothing pile up. Windows has
+// no such descriptor, so nothing is ever listed there.
 class ReadyRequests {
  public:
   ReadyRequests();
@@ -32,8 +37,10 @@ class ReadyRequests {
 
   ~ReadyRequests();
 
+#if BUILDFLAG(IS_POSIX)
   // Called on any thread. Returns nullopt if there is no room for a pipe.
   std::optional<int> GetFileDescriptor();
+#endif
 
   // Called on any thread. Returns nullopt if nothing is listed.
   std::optional<uintptr_t> Take();
@@ -45,8 +52,10 @@ class ReadyRequests {
  private:
   base::Lock lock_;
   base::circular_deque<uintptr_t> requests_ GUARDED_BY(lock_);
+#if BUILDFLAG(IS_POSIX)
   base::ScopedFD read_end_ GUARDED_BY(lock_);
   base::ScopedFD write_end_ GUARDED_BY(lock_);
+#endif
 };
 
 }  // namespace mitto

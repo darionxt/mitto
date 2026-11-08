@@ -7,6 +7,7 @@ to local servers, so a test can use names that say how they relate.
 
 import http.server
 import ssl
+import sys
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ ANOTHER_SITE = "www.third.test"
 
 ERR_INVALID_ARGUMENT = -4
 ERR_INVALID_URL = -300
+ERR_UNKNOWN_URL_SCHEME = -302
 
 # Longer than any local request takes, even on a busy machine.
 TIMEOUT_SECONDS = 30.0
@@ -644,6 +646,7 @@ def test_plain_http_to_a_name_on_a_network_gets_no_client_hints_or_fetch_metadat
     assert _sec_names(servers.plain.received[0]) == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows connects to no server at 0.0.0.0")
 def test_mitto_get_leaves_them_out_too(servers: Servers) -> None:
     # It takes no settings, so it needs an address that is no local host and still reaches the server. This one is both.
     mitto.get(f"http://0.0.0.0:{servers.plain.server_port}/")
@@ -843,7 +846,12 @@ def test_the_native_core_says_what_is_wrong_with_a_url_of_each_kind(kind: mitto.
     with new_session() as session, pytest.raises(RequestError) as caught:
         session.post(url, kind=kind)
 
-    assert caught.value.net_error == ERR_INVALID_URL
+    # On Windows //url reads two slashes as the start of a path on a network share, which makes a file URL, as in Chrome
+    # there, and a Session fetches no files.
+    if sys.platform == "win32" and url.startswith("//"):
+        assert caught.value.net_error == ERR_UNKNOWN_URL_SCHEME
+    else:
+        assert caught.value.net_error == ERR_INVALID_URL
 
 
 # SameSite cookies

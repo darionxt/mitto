@@ -9,17 +9,21 @@
 // the names in kScenarios, and the default is the first of them.
 
 #include <inttypes.h>
-#include <poll.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "mitto/mitto.h"
 
+#if !defined(_WIN32)
+#include <poll.h>
+#endif
+
 #define STRINGIFY_VALUE(value) #value
 #define STRINGIFY(value) STRINGIFY_VALUE(value)
 
 #define ERR_ABORTED (-3)
+#define ERR_NOT_IMPLEMENTED (-11)
 #define ERR_UPLOAD_FILE_CHANGED (-14)
 
 // What a scenario returns to have the process exit with everything still running.
@@ -315,6 +319,20 @@ static int PostSizedStream(const char* url) {
   return PostStreamWithOptions(url, kSizedStreamOptions);
 }
 
+#if defined(_WIN32)
+// A Session has no file descriptor on Windows, so this checks that the call
+// says so, and then fetches as Fetch() does.
+static int FetchWithFileDescriptor(const char* url) {
+  int32_t fd;
+  const int32_t error = mitto_session_event_fd(g_session, &fd);
+  if (error != ERR_NOT_IMPLEMENTED || fd != -1) {
+    fprintf(stderr, "a file descriptor on Windows: net error %" PRId32 "\n",
+            error);
+    return 1;
+  }
+  return Fetch(url);
+}
+#else
 // Waits on the file descriptor, as an event loop does.
 static int FetchWithFileDescriptor(const char* url) {
   int32_t fd;
@@ -351,6 +369,7 @@ static int FetchWithFileDescriptor(const char* url) {
     }
   }
 }
+#endif
 
 // Waits for the event of `type`, leaving the body unread. Returns 0 if it came.
 static int WaitFor(int32_t type) {

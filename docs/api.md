@@ -84,7 +84,7 @@ assert sent["Accept-Language"] == "de-DE,de;q=0.9"
 
 Root certificates that this Session trusts beside the Chrome Root Store. Each entry is the text of a PEM file that holds at least one. A self-signed server certificate can be its own root, and an anchor's own dates and constraints are not enforced. A list the native core refuses raises a `ValueError`. Text on its own, which would make each of its characters an anchor, raises a `TypeError`, and so does an entry that is not text, so one PEM file goes in a list.
 
-Chrome receives its additional certificates the same way. `//net` refuses QUIC to a root that is not known, as it does in Chrome, so a server whose chain ends at one of these is reached over HTTP/1.1 or HTTP/2, whatever its `Alt-Svc` says. On Linux a Session reads no roots from the system, and on macOS it also reads those a user has added to the Keychain ([certificate verification](parity.md#certificate-verification)).
+Chrome receives its additional certificates the same way. `//net` refuses QUIC to a root that is not known, as it does in Chrome, so a server whose chain ends at one of these is reached over HTTP/1.1 or HTTP/2, whatever its `Alt-Svc` says. On Linux a Session reads no roots from the system, on macOS it also reads those a user has added to the Keychain, and on Windows those that a user, an administrator or group policy has added to Windows' certificate stores ([certificate verification](parity.md#certificate-verification)).
 
 ```python
 with open("company-root.pem") as file:
@@ -193,7 +193,7 @@ Fetch `url` and block until the whole [response](#response) has arrived, with th
 | --- | --- |
 | `TypeError` | An argument is not one of the request arguments, or it is of a type it does not take, as [each says](#request-arguments) and the message names. `method` and `url` are text, and so are the names and values in `params`, `headers` and a mapping in `data`. Also a file of another form in `files`, a value in `json` that JSON has no form of, or a stream that gives something other than bytes |
 | `ValueError` | `url`, `initiator` or a `Referer` in `headers` holds a NUL character or cannot be encoded as UTF-8, which the message names, a header cannot be encoded as Latin-1, `kind` is not a Request Kind, two names in `headers` differ only in case or `timeout` cannot be used. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with `GET` or `HEAD` or with a Request Kind that Chrome sends none with, or a stream does not keep to its `Content-Length` |
-| [`RequestError`](#errors) | The request ended without a response. An invalid header or method, or an `initiator` that is not a valid URL, is `ERR_INVALID_ARGUMENT`. A URL that is not valid is `ERR_INVALID_URL` |
+| [`RequestError`](#errors) | The request ended without a response. An invalid header or method, or an `initiator` that is not a valid URL, is `ERR_INVALID_ARGUMENT`. A URL that is not valid is `ERR_INVALID_URL`. On Windows, as in Chrome there, a URL that starts with two slashes names a file on a network share, which a Session does not fetch: `ERR_UNKNOWN_URL_SCHEME` |
 | Whatever a stream's file or iterable raises | That ends the request |
 
 An HTTP error status such as 404 is a response, which [`raise_for_status()`](#responseraise_for_status) turns into an error.

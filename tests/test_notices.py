@@ -4,6 +4,7 @@ They build small source trees and build graphs of their own. The test that a whe
 its library links is in test_wheel.py, because it needs a wheel of the real native core.
 """
 
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -237,6 +238,7 @@ def test_a_project_without_a_readme_is_named_after_its_directory(tree: Path) -> 
     ]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the notices know the parts of macOS and Linux only")
 def test_this_host_s_entries_come_from_what_the_library_links(tree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     graph = {
         notices.ROOT_TARGET: target("shared_library", ["//net:net"], ["//mitto/mitto_core.cc"]),

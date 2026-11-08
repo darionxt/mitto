@@ -4,7 +4,7 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 
 ## Requirements
 
-- A macOS arm64, Linux x86_64 or Windows x64 Host. A Windows workspace sets up and generates its build graph, but the native core does not build there yet.
+- A macOS arm64, Linux x86_64 or Windows x64 Host. On Windows the native core builds in a checkout only: there is no [source export](#build-from-the-source-export) and no wheel for Windows yet.
 - About 31 GiB of free disk space for the workspace, including compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
 - `git`, and [uv](https://docs.astral.sh/uv/) to run the set-up script with Python 3.12 or later. The script needs only Python's standard library. On macOS and Linux, depot_tools also needs `curl` and `bash`.
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
@@ -96,9 +96,17 @@ From `$MITTO_WORKSPACE/chromium-<tag>/src`, with depot_tools on your `PATH`:
 autoninja -C out/mitto mitto
 ```
 
+On Windows, `autoninja` picks Siso, Chromium's other build tool, which does not follow the junction that `//mitto` is there and stops before it builds anything. Run the checkout's own ninja instead, from the same directory:
+
+```powershell
+third_party\ninja\ninja.exe -C out\mitto mitto
+```
+
+depot_tools' `ninja` command refuses a build directory where Siso has run, and this one does not.
+
 This builds two targets from [`native/`](../native), about 4,200 steps in all:
 
-- `mitto_core`, the shared library `out/mitto/libmitto_core.dylib` (`.so` on Linux). It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h).
+- `mitto_core`, the shared library `out/mitto/libmitto_core.dylib`, `libmitto_core.so` on Linux and `mitto_core.dll` on Windows. It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h), and on Windows also `GetHandleVerifier`, which `//base` marks `__declspec(dllexport)` in `base/win/scoped_handle_verifier.cc`. A linker cannot take that away, and it clashes with nothing, because Windows looks up an import in the DLL that the import names. `//base` only looks for it in the program that started the process.
 - `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result.
 
 Run the test program, which needs a network connection:
@@ -106,6 +114,8 @@ Run the test program, which needs a network connection:
 ```bash
 out/mitto/mitto_core_test
 ```
+
+On Windows it is `out\mitto\mitto_core_test.exe`.
 
 It fetches `https://example.com/` unless given another URL, a second argument gives it the settings that `mitto_session_create()` reads, and a third names one of the scenarios at the end of its source, such as `cancel-after-response`. The first line of its output shows the status and the protocol:
 
@@ -115,7 +125,9 @@ status 200 over h2
 
 A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machine, and most of the time goes to `//net` and its dependencies. On macOS arm64 the library is 17 MB, 11 MB once stripped with `strip -x` and 5.4 MB compressed. On Linux x86_64 it is 103 MB, 12 MB once stripped and 6.0 MB compressed. [Size of the library](#size-of-the-library) says where that goes.
 
-On Linux the library needs only glibc and libgcc from the system at run time, as `ldd` shows, and a test checks this. [`tools/workspace/args.gn`](../tools/workspace/args.gn) turns off GLib, GIO, D-Bus, NSS and NSPR, and a patch to `//net` makes that possible for NSS and NSPR. So on Linux the Chrome Root Store is the only source of trust: certificates added to an NSS database are ignored ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
+On Windows x64, for Chromium 157.0.8103.39, the first build took 9 minutes, 4,082 steps, on the same 16-thread machine that builds it in 5 minutes on Linux, with Windows' real-time virus scan on. The DLL is 13.4 MB and 6.5 MB compressed. It needs no stripping, because its debug information is in `mitto_core.dll.pdb` beside it, 92 MB, and the build directory takes 1.3 GiB.
+
+On Linux the library needs only glibc and libgcc from the system at run time, as `ldd` shows, and a test checks this. On Windows it loads only Windows' own DLLs, and no C runtime of Visual Studio, because Chromium's build links the C runtime into it. A test reads that from the DLL's import tables. [`tools/workspace/args.gn`](../tools/workspace/args.gn) turns off GLib, GIO, D-Bus, NSS and NSPR, and a patch to `//net` makes that possible for NSS and NSPR. So on Linux the Chrome Root Store is the only source of trust: certificates added to an NSS database are ignored ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
 
 ## Build from the source export
 
@@ -494,11 +506,18 @@ export MITTO_NATIVE_LIBRARY="$MITTO_WORKSPACE/chromium-<tag>/src/out/mitto/libmi
 uv run pytest
 ```
 
-On Linux the file is `libmitto_core.so`.
+On Linux the file is `libmitto_core.so`. On Windows, in PowerShell:
+
+```powershell
+$env:MITTO_NATIVE_LIBRARY = "$env:MITTO_WORKSPACE\chromium-<tag>\src\out\mitto\mitto_core.dll"
+uv run pytest --ignore=tests/test_async_session.py --ignore=tests/test_asyncio_load.py -k "not asyncio"
+```
+
+The asyncio API does not run on Windows yet, because a Session has no file descriptor there for the event loop to watch, so that command leaves its tests out.
 
 Those tests include the **Parity Checks**, described in [parity.md](parity.md).
 
-Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler. A new Ubuntu install has none, and the native core's build does not need one. Install `gcc` to run these tests.
+Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler. A new Ubuntu install has none, and the native core's build does not need one. Install `gcc` to run these tests. Windows has no `cc`, so they are skipped there.
 
 To check the whole path from Python through the native core to a real server, with `MITTO_NATIVE_LIBRARY` set as above and a network connection:
 
@@ -508,7 +527,7 @@ uv run python -c "import mitto; print(mitto.get('https://example.com/').status)"
 
 It prints `200`.
 
-The loader in [`src/mitto/_native.py`](../src/mitto/_native.py) uses `MITTO_NATIVE_LIBRARY` if it is set, and otherwise `libmitto_core.dylib` (`.so` on Linux) next to that file in the installed package. If the variable names something that is not a file, loading fails rather than falling back to the installed library. The loader refuses a library whose ABI version differs from its own `ABI_VERSION`, and a test keeps that constant equal to `MITTO_ABI_VERSION` in the C header.
+The loader in [`src/mitto/_native.py`](../src/mitto/_native.py) uses `MITTO_NATIVE_LIBRARY` if it is set, and otherwise `libmitto_core.dylib`, `libmitto_core.so` on Linux or `mitto_core.dll` on Windows, next to that file in the installed package. If the variable names something that is not a file, loading fails rather than falling back to the installed library. The loader refuses a library whose ABI version differs from its own `ABI_VERSION`, and a test keeps that constant equal to `MITTO_ABI_VERSION` in the C header.
 
 ## Disk usage
 
@@ -526,7 +545,7 @@ Of `src`, 3.6 GiB is the `.git` directories of `src` and its 143 git dependencie
 
 On Linux x86_64 the same workspace takes 29.7 GiB, of which 1.4 GiB is `out/mitto`.
 
-On Windows x64, for Chromium 157.0.8103.39, the workspace takes 24.3 GiB before the native core builds there: 22.9 GiB for `chromium-<tag>/src` in about 1.07 million files, 0.8 GiB for `depot_tools` and 0.6 GiB for `.cache`. Visual Studio and the Windows SDK come on top, on the system disk (see [Requirements](#requirements)).
+On Windows x64, for Chromium 157.0.8103.39, the workspace takes 25.6 GiB after building the native core: 22.9 GiB for `chromium-<tag>/src` without `out`, in about 1.07 million files, 1.3 GiB for `out/mitto`, 0.8 GiB for `depot_tools` and 0.6 GiB for `.cache`. Visual Studio and the Windows SDK come on top, on the system disk (see [Requirements](#requirements)).
 
 ## Compare two releases
 

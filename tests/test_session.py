@@ -1111,6 +1111,7 @@ def test_closing_a_session_ends_a_blocking_request_on_another_thread(scripted_se
     assert error.net_error == ERR_ABORTED
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a Session has no file descriptor on Windows")
 def test_the_event_fd_is_readable_while_an_event_is_waiting(scripted_server: ScriptedServer) -> None:
     with Session() as session:
         fd = session.event_fd()
@@ -1141,6 +1142,7 @@ def test_the_event_fd_is_readable_while_an_event_is_waiting(scripted_server: Scr
             assert not is_readable(fd)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a Session has no file descriptor on Windows")
 def test_the_event_fd_serves_all_the_requests_of_a_session(scripted_server: ScriptedServer) -> None:
     url = scripted_server.url("/small")
 
@@ -1162,6 +1164,7 @@ def test_the_event_fd_serves_all_the_requests_of_a_session(scripted_server: Scri
             request.close()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a Session has no file descriptor on Windows")
 def test_a_request_closed_with_an_event_waiting_can_still_come_up(scripted_server: ScriptedServer) -> None:
     with Session() as session:
         fd = session.event_fd()

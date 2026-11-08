@@ -1267,6 +1267,7 @@ def test_a_file_with_a_cookie_only_the_store_refuses_changes_nothing(tmp_path: P
         assert [cookie.value for cookie in session.cookies] == ["old"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no mode bits: a file takes the access of its folder")
 @pytest.mark.usefixtures("native_library")
 def test_save_makes_a_file_only_its_owner_can_use(tmp_path: Path) -> None:
     file = tmp_path / "cookies.json"
@@ -1281,6 +1282,7 @@ def test_save_makes_a_file_only_its_owner_can_use(tmp_path: Path) -> None:
     assert [path.name for path in tmp_path.iterdir()] == ["cookies.json"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no mode bits: a file takes the access of its folder")
 @pytest.mark.usefixtures("native_library")
 def test_save_tightens_a_file_that_others_could_read(tmp_path: Path) -> None:
     file = tmp_path / "cookies.json"
@@ -1441,7 +1443,9 @@ def test_a_cookie_file_starts_empty_saves_at_close_and_loads_at_open(servers: Se
         session.get(setting(servers.https(), "a=1"))
         assert not file.exists()
 
-    assert stat.S_IMODE(file.stat().st_mode) == 0o600
+    # Windows has no mode bits: a file takes the access of its folder.
+    if sys.platform != "win32":
+        assert stat.S_IMODE(file.stat().st_mode) == 0o600
     with new_session(file) as session:
         assert sent(session, servers.https()) == "a=1"
         session.cookies.delete("a")
@@ -1592,7 +1596,8 @@ def test_a_cookie_file_that_holds_something_else_stops_the_session_and_stays(tmp
 
 @pytest.mark.usefixtures("native_library")
 def test_a_cookie_file_that_cannot_be_read_raises(tmp_path: Path) -> None:
-    with pytest.raises(IsADirectoryError):
+    # Windows answers an attempt to open a directory as a file with access denied.
+    with pytest.raises(PermissionError if sys.platform == "win32" else IsADirectoryError):
         new_session(tmp_path)
 
 

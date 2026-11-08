@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Writes the part of ICU's data that the library can read, as an assembly file.
 
+On Windows the assembly goes into a C++ file instead, as ICU's own build does it
+there, because the assembler of Windows reads another syntax.
+
 Chromium links all of ICU's data, about 10.8 MB, into the programs that use ICU.
 Of the functions that read it, the library links only those below, and each of
 them reads items of fixed names. This script copies those items, unchanged,
@@ -114,15 +117,26 @@ def symbol_name(items: dict[str, bytes]) -> str:
     return f"{prefix.removesuffix('l')}_dat"
 
 
-def assembly(package: bytes, symbol: str, mach_o: bool) -> str:
-    """Returns an assembly file that defines a hidden symbol holding the package."""
-    if mach_o:
+def assembly(package: bytes, symbol: str, object_format: str) -> str:
+    """Returns an assembly file that defines a symbol holding the package, hidden from other libraries.
+
+    On Windows a symbol is hidden unless something exports it, and the assembler there reads another syntax. So for
+    COFF this returns C++ that holds the assembly, as ICU's own build does for Windows.
+    """
+    if object_format == "mach-o":
         lines = [
             f".globl _{symbol}",
             f".private_extern _{symbol}",
             ".const",
             f".p2align {ALIGNMENT.bit_length() - 1}",
             f"_{symbol}:",
+        ]
+    elif object_format == "coff":
+        lines = [
+            ".section .rdata",
+            f".balign {ALIGNMENT}",
+            f".globl {symbol}",
+            f"{symbol}:",
         ]
     else:
         lines = [
@@ -138,14 +152,18 @@ def assembly(package: bytes, symbol: str, mach_o: bool) -> str:
     words = struct.unpack(f"<{len(package) // 4}I", package)
     for start in range(0, len(words), 8):
         lines.append(".long " + ",".join(f"{word:#010x}" for word in words[start : start + 8]))
+    if object_format == "coff":
+        return "__asm__(\n" + "".join(f'    "{line}\\n"\n' for line in lines) + ");\n"
     return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("input", type=Path, help="Chromium's ICU data file, icudtl.dat")
-    parser.add_argument("output", type=Path, help="the assembly file to write")
-    parser.add_argument("--mach-o", action="store_true", help="write for macOS rather than for ELF")
+    parser.add_argument("output", type=Path, help="the assembly file, or the C++ file for COFF, to write")
+    parser.add_argument(
+        "--format", choices=("elf", "mach-o", "coff"), default="elf", help="the object format of the Host's libraries"
+    )
     arguments = parser.parse_args()
     try:
         header, items = read_package(arguments.input.read_bytes())
@@ -158,7 +176,7 @@ def main() -> int:
     except DataError as error:
         print(f"{Path(__file__).name}: error: {error}", file=sys.stderr)
         return 1
-    arguments.output.write_text(assembly(package, symbol, arguments.mach_o))
+    arguments.output.write_text(assembly(package, symbol, arguments.format))
     return 0
 
 

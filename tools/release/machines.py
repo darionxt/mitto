@@ -234,7 +234,7 @@ def write_table(statistics: Statistics = STATISTICS, path: Path = TABLE_PATH) ->
     Raises:
         MachineTableError: See table_data().
     """
-    path.write_text(dumps_table(table_data(statistics)), encoding="utf-8")
+    path.write_text(dumps_table(table_data(statistics)), encoding="utf-8", newline="\n")
     return path
 
 

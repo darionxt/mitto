@@ -21,7 +21,7 @@ another Host, such as one that CI made. See docs/building.md.
 import argparse
 import dataclasses
 import json
-import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -292,8 +292,8 @@ def _resolve(src: Path, project: str, files: Iterable[str]) -> list[str]:
     for file in files:
         if not file or file == NOT_SHIPPED:
             continue
-        # A leading slash means the top of the source tree, as in GN.
-        path = os.path.normpath(file.lstrip("/") if file.startswith("/") else f"{project}/{file}")
+        # A leading slash means the top of the source tree, as in GN, whose labels use slashes on every Host.
+        path = posixpath.normpath(file.lstrip("/") if file.startswith("/") else f"{project}/{file}")
         if not path.startswith("..") and (src / path).is_file():
             resolved.append(f"//{path}")
     return resolved
