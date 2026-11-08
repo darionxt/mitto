@@ -14,8 +14,8 @@ namespace mitto {
 
 // A lock on a directory. No other lock can take the same directory while this
 // one holds it: not from another process, not from this one, and not through
-// another name for the directory, such as a link. It goes away with this object,
-// or with the process, however that ends.
+// another name for the directory, such as a link. It goes away with this
+// object, or with the process, however that ends.
 class DirectoryLock {
  public:
   // What Take() did.

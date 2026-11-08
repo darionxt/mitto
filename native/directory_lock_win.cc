@@ -25,11 +25,11 @@ DirectoryLock::~DirectoryLock() = default;
 DirectoryLock::Result DirectoryLock::Take(const base::FilePath& directory) {
   DCHECK(!mutex_.is_valid());
   // Opened only to read its attributes, the directory stays open to anyone.
-  const base::win::ScopedHandle handle(::CreateFileW(
-      directory.value().c_str(), FILE_READ_ATTRIBUTES,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-      /*lpSecurityAttributes=*/nullptr, OPEN_EXISTING,
-      FILE_FLAG_BACKUP_SEMANTICS, /*hTemplateFile=*/nullptr));
+  const base::win::ScopedHandle handle(
+      ::CreateFileW(directory.value().c_str(), FILE_READ_ATTRIBUTES,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    /*lpSecurityAttributes=*/nullptr, OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS, /*hTemplateFile=*/nullptr));
   FILE_ID_INFO id;
   if (!handle.is_valid() || !::GetFileInformationByHandleEx(
                                 handle.get(), FileIdInfo, &id, sizeof(id))) {
@@ -42,9 +42,9 @@ DirectoryLock::Result DirectoryLock::Take(const base::FilePath& directory) {
                     base::NumberToString(id.VolumeSerialNumber), "-",
                     base::HexEncode(id.FileId.Identifier)});
   // A mutex goes away with the last handle to it, so with the process.
-  base::win::ScopedHandle mutex(::CreateMutexW(/*lpMutexAttributes=*/nullptr,
-                                               /*bInitialOwner=*/FALSE,
-                                               base::ASCIIToWide(name).c_str()));
+  base::win::ScopedHandle mutex(
+      ::CreateMutexW(/*lpMutexAttributes=*/nullptr,
+                     /*bInitialOwner=*/FALSE, base::ASCIIToWide(name).c_str()));
   if (!mutex.is_valid()) {
     // Another user's lock exists, and this one may not open it.
     return ::GetLastError() == ERROR_ACCESS_DENIED ? Result::kHeld
