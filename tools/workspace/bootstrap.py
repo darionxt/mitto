@@ -44,11 +44,22 @@ SRC_URL = "https://chromium.googlesource.com/chromium/src.git"
 GN_ROOT = ("--root-target=//mitto", "--root-pattern=//mitto:*")
 
 # How git writes the files of a checkout, set for each git command that the
-# set-up runs rather than in the user's own configuration. Without core.eol,
-# Git for Windows writes CRLF into every file that a .gitattributes marks as
-# text, such as all of expat's, and those would differ from the same files on
-# the other Hosts.
-GIT_CONFIG = {"core.autocrlf": "false", "core.eol": "lf"}
+# set-up runs rather than in the user's own configuration, so that every file
+# has the same bytes on every Host. Without core.eol, Git for Windows writes
+# CRLF into every file that a .gitattributes marks as text, such as all of
+# expat's. Chromium's git server has no Git LFS, so a file that a dependency
+# keeps in LFS stays the pointer that git holds, as depot_tools asks with
+# GIT_LFS_SKIP_SMUDGE. That variable needs git-lfs itself, which MinGit lacks
+# while its own configuration still requires the filter, so the filter does
+# nothing at all.
+GIT_CONFIG = {
+    "core.autocrlf": "false",
+    "core.eol": "lf",
+    "filter.lfs.clean": "",
+    "filter.lfs.smudge": "",
+    "filter.lfs.process": "",
+    "filter.lfs.required": "false",
+}
 # Lets Git for Windows write paths longer than Windows' 260 characters without
 # the system-wide setting that would allow them for every program.
 WINDOWS_GIT_CONFIG = {"core.longpaths": "true"}
@@ -211,7 +222,11 @@ def write_if_changed(path: Path, text: str) -> None:
 def remove_tree(path: Path) -> None:
     """Removes a directory, including the read-only files that git leaves on Windows."""
 
-    def make_writable_and_retry(function: Callable[[str], object], name: str, _: BaseException) -> None:
+    def make_writable_and_retry(function: Callable[[str], object], name: str, error: BaseException) -> None:
+        # Windows refuses to delete a read-only file, and git makes its objects
+        # read-only. Elsewhere that flag is no reason for a failure.
+        if sys.platform != "win32":
+            raise error
         Path(name).chmod(stat.S_IWRITE)
         function(name)
 

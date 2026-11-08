@@ -51,6 +51,37 @@ def test_git_reads_the_settings_above_the_users_own(tmp_path: Path) -> None:
     assert setting("core.eol") == "lf\n"
 
 
+@needs_git
+def test_a_file_in_git_lfs_stays_its_pointer_without_git_lfs(tmp_path: Path) -> None:
+    # As MinGit's own configuration does, with no git-lfs to run.
+    global_config = tmp_path / "gitconfig"
+    global_config.write_text(
+        '[filter "lfs"]\n\tclean = git-lfs-missing clean -- %f\n\tsmudge = git-lfs-missing smudge -- %f\n'
+        "\tprocess = git-lfs-missing filter-process\n\trequired = true\n"
+    )
+    plain = {**os.environ, "GIT_CONFIG_GLOBAL": str(global_config)}
+    env = bootstrap.with_git_config(plain, bootstrap.GIT_CONFIG)
+    pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:dd11\nsize 3\n"
+    repository = tmp_path / "repository"
+    repository.mkdir()
+
+    def run_git(*args: str, environment: dict[str, str] = env) -> subprocess.CompletedProcess[str]:
+        assert GIT is not None
+        return subprocess.run([GIT, "-C", str(repository), *args], env=environment, capture_output=True, text=True)
+
+    run_git("init", "--quiet")
+    (repository / ".gitattributes").write_text("*.so filter=lfs\n")
+    (repository / "lib.so").write_text(pointer)
+    run_git("add", ".")
+    run_git("-c", "user.name=A", "-c", "user.email=a@example.com", "commit", "--quiet", "-m", "a")
+    (repository / "lib.so").unlink()
+
+    assert run_git("checkout", "--", "lib.so", environment=plain).returncode != 0
+    assert run_git("checkout", "--", "lib.so").returncode == 0
+    assert (repository / "lib.so").read_text() == pointer
+    assert run_git("status", "--porcelain").stdout == ""
+
+
 @pytest.mark.parametrize("host", ["mac", "linux", "win"])
 def test_tools_run_with_depot_tools_first_and_without_the_callers_python(host: bootstrap.Host, tmp_path: Path) -> None:
     workspace = bootstrap.Workspace(tmp_path, "157.0.8103.39")
@@ -68,10 +99,12 @@ def test_tools_run_with_depot_tools_first_and_without_the_callers_python(host: b
     settings = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))}
     if host == "win":
         assert env["DEPOT_TOOLS_WIN_TOOLCHAIN"] == "0"
-        assert settings == {"core.autocrlf": "false", "core.eol": "lf", "core.longpaths": "true"}
+        assert settings == {**bootstrap.GIT_CONFIG, "core.longpaths": "true"}
     else:
         assert "DEPOT_TOOLS_WIN_TOOLCHAIN" not in env
-        assert settings == {"core.autocrlf": "false", "core.eol": "lf"}
+        assert settings == bootstrap.GIT_CONFIG
+    assert settings["core.autocrlf"] == "false"
+    assert settings["core.eol"] == "lf"
 
 
 def test_depot_tools_commands_are_their_batch_files_on_windows(tmp_path: Path) -> None:
