@@ -114,7 +114,9 @@ def main() -> int:
     version.set_defaults(run=_version)
 
     notes = commands.add_parser(
-        "notes", help="print the notes of a version's GitHub release, with its Supported Window and Engine Release"
+        "notes",
+        help="print the notes of a version's GitHub release: its Supported Window, its Engine Release and its entry in "
+        "CHANGELOG.md",
     )
     notes.add_argument("version", help="the version, such as 0.1.0")
     notes.set_defaults(run=_notes)

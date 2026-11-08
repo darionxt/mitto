@@ -6,6 +6,7 @@ A Python library whose HTTP traffic matches real Chrome, built on Chromium's own
 
 - C++ follows the Chromium C++ style guide and `styleguide/c++/c++-features.md` (ADR-0002). Generic C++ guidelines that conflict with them do not apply.
 - Python targets 3.12+, uses ruff for linting and formatting, and type-checks strictly.
+- A change that callers will notice says so in `CHANGELOG.md`, under the version that ships it (`docs/releasing.md`, "What changes for callers").
 
 ## Agent skills
 

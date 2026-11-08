@@ -126,7 +126,13 @@ On a macOS or Linux Host, [build the native core from the new export](building.m
 
 ### 10. The version
 
-Raise `version` in [`pyproject.toml`](../pyproject.toml) and run `uv lock`, which writes it into `uv.lock` too. The run's pull request then holds everything from step 2 on.
+Raise `version` in [`pyproject.toml`](../pyproject.toml) and run `uv lock`, which writes it into `uv.lock` too. Then read the notes of the version's GitHub release, which hold [its entry in `CHANGELOG.md`](#what-changes-for-callers):
+
+```bash
+uv run python -m tools.release notes X.Y.Z
+```
+
+A run adds to the entry what it changes for callers itself, such as the Persona that [step 8](#8-drop-the-oldest-chrome-release) dropped, whose name `persona=` refuses from then on. Without an entry for the version, the command stops and says so, and so do `tests/release` and the first job of the release workflow. The run's pull request then holds everything from step 2 on.
 
 ### 11. The tag
 
@@ -138,11 +144,19 @@ The tag starts [the release workflow](building.md#the-release-workflow), `.githu
 
 A [dry run](building.md#a-dry-run) does the same with a pre-release on TestPyPI, and needs no tag and no approval.
 
+## What changes for callers
+
+[`CHANGELOG.md`](../CHANGELOG.md) says what changes for callers in each version, under a heading `## X.Y.Z`, newest first: what a Session sends now, what a caller has to change, and what an older mitto cannot read any more. A change that callers will notice writes it there, in the pull request that makes the change. It goes under the version that ships it, which is the next minor version, made by the next run, unless the change is a fix that ships in a patch before. The notes of the version's GitHub release hold the entry after their first paragraph, which names the Supported Window and the Engine Release.
+
+Every version needs an entry, a patch too. A patch is made for its fix, and its notes are where a caller reads what it fixes and whether to take it. Without an entry, they would only say again what the notes of the version before said.
+
+The release workflow writes the notes before it builds anything, and a dry run of a pre-release, such as `0.2.0rc1`, takes the entry of the release it comes before, so it shows the notes as that release will have them. GitHub shows each line of the notes on a line of its own, so a paragraph or an item of a list is one line, as on these pages. A relative link, such as `docs/api.md#machine`, leads from the repository's root, and the notes link it at the version's tag.
+
 ## Lines that name a Chrome Release
 
 A line in the README or the docs that names a Chrome Release does one of two things:
 
-- **It records what was measured.** It says which build, and usually which day, gave the result, such as the sections of [baselines.md](baselines.md) on each recording, what [capture.md](capture.md) measured, [what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases) and the milestones in [roadmap.md](roadmap.md). It stays as it was when the Supported Window moves, also once its Chrome Release has left, because it is still what was measured. A new measurement gets a record of its own, which says what it replaces.
+- **It records what was measured.** It says which build, and usually which day, gave the result, such as the sections of [baselines.md](baselines.md) on each recording, what [capture.md](capture.md) measured, [what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases), the milestones in [roadmap.md](roadmap.md) and what [`CHANGELOG.md`](../CHANGELOG.md) says a version changed. It stays as it was when the Supported Window moves, also once its Chrome Release has left, because it is still what was measured. A new measurement gets a record of its own, which says what it replaces.
 - **It states the present Supported Window.** It follows the Window, and only these places hold one:
   - The line of [`README.md`](../README.md) that says which Chrome Releases this version presents, which [step 8](#8-drop-the-oldest-chrome-release) writes. A test checks it against `WINDOWS_PERSONAS` and `ENGINE_RELEASE_PERSONA`, and that no other line of the README names a Chrome Release.
   - [`persona=` in api.md](api.md#persona), which names every Persona and shows one in its example. A test checks that it names every Persona in `WINDOWS_PERSONAS`.
