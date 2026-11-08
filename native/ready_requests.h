@@ -62,8 +62,8 @@ class ReadyRequests {
   // without waiting for them.
   void EndWaits();
 
-  // Called on any thread, by what destroys the Session. Does as EndWaits() does,
-  // and returns once no Wait() runs, so that the list can go.
+  // Called on any thread, by what destroys the Session. Does as EndWaits()
+  // does, and returns once no Wait() runs, so that the list can go.
   void EndWaitsAndWaitForThem();
 
   // Called on any thread. Returns nullopt if nothing is listed.

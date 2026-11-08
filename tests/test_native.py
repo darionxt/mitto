@@ -826,7 +826,8 @@ def test_destroying_a_session_ends_a_wait_and_waits_for_it(native_library: ctype
     waited: list[int] = []
     waiting = threading.Thread(target=lambda: waited.append(native_library.mitto_session_wait_for_event(handle, -1)))
     waiting.start()
-    waiting.join(0.05)
+    # Long enough for the thread to be in the call, since one that started after the Session had gone would use it.
+    waiting.join(0.2)
     assert waiting.is_alive()
 
     native_library.mitto_session_destroy(handle)
