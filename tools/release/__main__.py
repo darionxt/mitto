@@ -8,6 +8,7 @@ from pathlib import Path
 from mitto._persona import WINDOWS_PERSONAS
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError
 from tools.release.drop import REPOSITORY, DropError, drop_oldest
+from tools.release.machines import TABLE_PATH, MachineTableError, write_table
 from tools.release.persona import PERSONAS_DIRECTORY, PersonaDataError, write_persona
 from tools.release.publish import PublishError, dry_run_version, release_notes, tag_version
 from tools.release.web import WebError
@@ -23,6 +24,12 @@ def _builds(args: argparse.Namespace) -> int:
 def _persona(args: argparse.Namespace) -> int:
     path = write_persona(args.release, args.baselines, args.personas)
     print(f"Wrote {path} from the Baselines of Chrome {args.release}.")
+    return 0
+
+
+def _machines(args: argparse.Namespace) -> int:
+    path = write_table(path=args.table)
+    print(f"Wrote {path} from the statistics in tools/release/machines.py.")
     return 0
 
 
@@ -72,6 +79,10 @@ def main() -> int:
     )
     persona.set_defaults(run=_persona)
 
+    machines = commands.add_parser("machines", help="write the table that a Session's Machine is drawn from")
+    machines.add_argument("--table", type=Path, default=TABLE_PATH, help="the file to write (default: %(default)s)")
+    machines.set_defaults(run=_machines)
+
     drop = commands.add_parser("drop", help="drop the oldest Chrome Release, once the new Engine Release has a Persona")
     drop.add_argument("--root", type=Path, default=REPOSITORY, help="the tree to change (default: %(default)s)")
     drop.set_defaults(run=_drop)
@@ -95,7 +106,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return args.run(args)
-    except (BaselineError, DropError, KnownGapsError, PersonaDataError, PublishError, WebError) as error:
+    except (
+        BaselineError,
+        DropError,
+        KnownGapsError,
+        MachineTableError,
+        PersonaDataError,
+        PublishError,
+        WebError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

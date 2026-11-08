@@ -311,7 +311,7 @@ Field trials differ between sessions as they did before, with no effect on the n
 
 The three sessions of each Chrome Release gave identical normal forms in all thirteen files, and none drew [the field trial that reaches the wire](#chrome-157). The nine files from before came out byte for byte the same in all nine sessions, so neither these runs nor another day moved them. The checks in [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording hold for these cases in each Chrome Release. A connection looks the same here as in the main file of its protocol, so these cases too differ from the others in their requests only.
 
-The values that [follow the machine](capture.md#what-stays-and-what-does-not) are `<machine>` in these files, and they differ from what [a Persona claims](persona.md#what-they-say) on purpose. `sec-ch-ua-platform-version` stays as it was, `"19.0.0"`, from the same Windows build as the Baselines above.
+The values that [follow the machine](capture.md#what-stays-and-what-does-not) are `<machine>` in these files, and they differ from what [a Session claims](persona.md#what-they-say) on purpose. `sec-ch-ua-platform-version` stays as it was, `"19.0.0"`, from the same Windows build as the Baselines above.
 
 Between Chrome Releases these files differ only in `sec-ch-ua`, `User-Agent`, `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list`:
 

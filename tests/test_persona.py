@@ -9,8 +9,9 @@ import re
 
 import pytest
 
+from mitto._machine import MACHINE_HINTS, Machine
 from mitto._native import FetchParams, Priority
-from mitto._persona import WINDOWS_PERSONAS, RequestDefaults, RequestKind, load_persona
+from mitto._persona import MACHINE_PLACEHOLDER, WINDOWS_PERSONAS, RequestDefaults, RequestKind, load_persona
 from mitto._request import build_request
 from tests.client_hints import HINTS_A_SERVER_ASKS_FOR, SENT_BY_DEFAULT, until_a_server_asks
 from tools.capture import HTTP1, HTTP2, HTTP3, KIND_PATHS
@@ -18,13 +19,15 @@ from tools.capture import RequestKind as CaptureRequestKind
 from tools.capture.normal_form import (
     AUTHORITY_PLACEHOLDER,
     HINTS_FROM_THE_MACHINE,
-    MACHINE_PLACEHOLDER,
     ORIGIN_PLACEHOLDER,
 )
+from tools.capture.normal_form import MACHINE_PLACEHOLDER as NORMAL_FORM_MACHINE_PLACEHOLDER
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.parity.replay import REPLAYS
 
-PERSONAS = {release: load_persona(name) for release, name in WINDOWS_PERSONAS.items()}
+# The Baselines hold the platform version of the Machine of mitto 0.1, which the normal form does not hide yet.
+MITTO_0_1 = Machine.named("mitto-0.1")
+PERSONAS = {release: load_persona(name).with_machine(MITTO_0_1) for release, name in WINDOWS_PERSONAS.items()}
 ALL_BASELINES = load_baselines(BASELINES_DIRECTORY)
 BASELINES = [baseline for baseline in ALL_BASELINES if baseline.case in {kind.value for kind in RequestKind}]
 
@@ -59,8 +62,8 @@ _VALUE_FROM_THE_NATIVE_CORE = "sec-fetch-site"
 # What the native core leaves of the Persona's lines, for a GET that a kind makes without a body or an Initiator.
 _NOT_ON_A_GET = "Origin"
 
-# What a Persona claims for each hint that follows the machine, which a Baseline does not hold.
-_CLAIMED_FROM_THE_MACHINE = {
+# What the Machine of mitto 0.1 says for each hint that follows the machine, which a Baseline does not hold.
+_MITTO_0_1_HINTS = {
     "device-memory": "8",
     "downlink": "10",
     "dpr": "1",
@@ -74,6 +77,7 @@ _CLAIMED_FROM_THE_MACHINE = {
     "sec-ch-viewport-height": "945",
     "sec-ch-viewport-width": "1920",
     "viewport-width": "1920",
+    "sec-ch-ua-platform-version": '"19.0.0"',
 }
 
 # The boundary as a normal form writes it.
@@ -227,7 +231,7 @@ def test_a_body_adds_the_lines_of_the_baseline_in_its_order(baseline: Baseline) 
 def _as_recorded(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Return what a Persona decides of these lines, as a Baseline holds it, with the machine's values hidden."""
     return [
-        (name, MACHINE_PLACEHOLDER if name in HINTS_FROM_THE_MACHINE else value)
+        (name, NORMAL_FORM_MACHINE_PLACEHOLDER if name in HINTS_FROM_THE_MACHINE else value)
         for name, value in _from_the_persona(lines)
     ]
 
@@ -264,10 +268,32 @@ def test_a_subresource_holds_every_hint_with_the_value_of_the_baseline(baseline:
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
 @pytest.mark.parametrize("kind", RequestKind)
-def test_a_persona_claims_one_value_for_what_follows_the_machine(release: str, kind: RequestKind) -> None:
+def test_a_persona_with_a_machine_says_the_machines_value_for_each_hint_that_follows_it(
+    release: str, kind: RequestKind
+) -> None:
     lines = dict(PERSONAS[release].request_defaults(kind)["headers"])
 
-    assert {name: lines[name] for name in HINTS_FROM_THE_MACHINE} == _CLAIMED_FROM_THE_MACHINE
+    assert {name: lines[name] for name in MACHINE_HINTS} == _MITTO_0_1_HINTS
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+@pytest.mark.parametrize("kind", RequestKind)
+def test_a_persona_holds_the_placeholder_for_each_hint_that_follows_the_machine(
+    release: str, kind: RequestKind
+) -> None:
+    lines = dict(load_persona(WINDOWS_PERSONAS[release]).request_defaults(kind)["headers"])
+
+    assert {name: lines[name] for name in MACHINE_HINTS} == dict.fromkeys(MACHINE_HINTS, MACHINE_PLACEHOLDER)
+    assert MACHINE_HINTS >= HINTS_FROM_THE_MACHINE
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+@pytest.mark.parametrize("kind", RequestKind)
+def test_a_persona_with_a_machine_holds_no_placeholder(release: str, kind: RequestKind) -> None:
+    machine = Machine.draw(seed=int(release))
+    lines = load_persona(WINDOWS_PERSONAS[release]).with_machine(machine).request_defaults(kind)["headers"]
+
+    assert [name for name, value in lines if value == MACHINE_PLACEHOLDER] == []
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)

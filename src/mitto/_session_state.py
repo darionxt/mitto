@@ -12,6 +12,7 @@ from typing import cast
 from mitto import _native
 from mitto._arguments import require_path, require_type
 from mitto._cookies import Cookies, write_cookie_file
+from mitto._machine import Machine
 from mitto._native import MEMORY_CACHE, PrivateSettings
 from mitto._persona import load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
@@ -21,9 +22,10 @@ __all__ = ["SessionState"]
 
 
 class SessionState:
-    """A native Session with its Persona, its default timeout and the file of its cookies.
+    """A native Session with its Persona, its Machine, its default timeout and the file of its cookies.
 
     Attributes:
+        machine: The Machine it claims, whose values its Persona's lines hold.
         native: The native Session.
         cookies: Its cookies.
     """
@@ -32,6 +34,7 @@ class SessionState:
         self,
         *,
         persona: str,
+        machine: Machine | None,
         accept_language: str | None,
         additional_trust_anchors: Sequence[str],
         timeout: float | Timeout | None,
@@ -50,12 +53,14 @@ class SessionState:
         """
         # Before the library, so that these faults are named whether or not there is one.
         require_type("persona", persona, str, "text")
+        require_type("machine", machine, Machine | None, "a Machine or None")
         require_type("accept_language", accept_language, str | None, "text or None")
         anchors = _trust_anchors(additional_trust_anchors)
         require_path("cookie_file", cookie_file, or_none=True)
         require_type("proxy", proxy, str | None, "text or None")
         require_path("cache", cache, or_none=True)
-        self._persona = load_persona(persona)
+        self.machine = Machine.draw() if machine is None else machine
+        self._persona = load_persona(persona).with_machine(self.machine)
         self._timeout = to_timeout(timeout)
         # Before anything that needs closing exists, because this can raise. The working directory may change before the
         # Session closes.

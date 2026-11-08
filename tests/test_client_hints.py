@@ -18,6 +18,7 @@ import pytest
 
 import mitto
 from mitto import RequestError
+from mitto._machine import MACHINE_HINTS, client_hints
 from mitto._native import PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS
 from tests.local_server import LocalHTTPServer
@@ -176,9 +177,12 @@ def servers() -> Iterator[Servers]:
         plain.shutdown()
 
 
-def new_session(persona: str = CHROME_157_WINDOWS, *, alps: dict[str, str] | None = None) -> mitto.Session:
+def new_session(
+    persona: str = CHROME_157_WINDOWS, *, alps: dict[str, str] | None = None, machine: mitto.Machine | None = None
+) -> mitto.Session:
     return mitto.Session(
         persona=persona,
+        machine=machine,
         timeout=TIMEOUT_SECONDS,
         _settings=PrivateSettings(
             ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH],
@@ -962,3 +966,83 @@ def test_a_stream_goes_on_with_what_it_has_for_alps(servers: Servers) -> None:
     assert len(servers.received) == 1
     assert servers.received[0].body == b"a=b"
     assert ASKED_FOR not in servers.received[0].hints
+
+
+# The Machine
+
+
+def machine_hints(received: Received) -> dict[str, str | None]:
+    return {name: received.header(name) for name in sorted(MACHINE_HINTS)}
+
+
+@pytest.mark.parametrize("kind", ALL_KINDS)
+def test_a_session_with_no_machine_sends_the_values_of_the_machine_drawn_for_it(
+    servers: Servers, kind: mitto.RequestKind
+) -> None:
+    with new_session() as session:
+        page = asks(servers, session, hints=EVERY_HINT)
+        session.get(servers.https(), kind=kind, initiator=page)
+        machine = session.machine
+
+    assert machine.seed is not None
+    assert machine_hints(servers.received[1]) == client_hints(machine)
+
+
+def test_two_sessions_with_no_machine_draw_one_each(servers: Servers) -> None:
+    with new_session() as first, new_session() as second:
+        assert first.machine.seed != second.machine.seed
+
+
+def test_a_session_with_a_machine_of_the_same_seed_sends_the_same_values(servers: Servers) -> None:
+    for _ in range(2):
+        with new_session(machine=mitto.Machine.draw(seed=7)) as session:
+            asks(servers, session, hints=EVERY_HINT)
+            session.get(servers.https())
+
+    assert machine_hints(servers.received[1]) == machine_hints(servers.received[3])
+    assert machine_hints(servers.received[1]) == client_hints(mitto.Machine.draw(seed=7))
+
+
+def test_a_session_keeps_a_value_that_its_machine_fixes(servers: Servers) -> None:
+    machine = mitto.Machine.draw(seed=7, memory=32, color_scheme="dark", platform_version="15.0.0")
+    with new_session(machine=machine) as session:
+        asks(servers, session, hints=EVERY_HINT)
+        session.get(servers.https())
+        assert session.machine is machine
+
+    received = servers.received[1]
+    assert received.header("device-memory") == received.header("sec-ch-device-memory") == "32"
+    assert received.header("sec-ch-prefers-color-scheme") == "dark"
+    assert received.header("sec-ch-ua-platform-version") == '"15.0.0"'
+
+
+def test_a_session_sends_the_values_of_a_machine_on_each_hop(servers: Servers) -> None:
+    machine = mitto.Machine.draw(seed=8)
+    with new_session(machine=machine) as session:
+        asks(servers, session, hints=EVERY_HINT)
+        session.get(chain(servers.https(path="/a"), servers.https(path="/b")))
+
+    assert [machine_hints(received) for received in servers.received[1:]] == [client_hints(machine)] * 2
+
+
+def test_the_machine_of_mitto_0_1_sends_what_every_session_of_mitto_0_1_sent(servers: Servers) -> None:
+    with new_session(machine=mitto.Machine.named("mitto-0.1")) as session:
+        asks(servers, session, hints=EVERY_HINT)
+        session.get(servers.https())
+
+    assert machine_hints(servers.received[1]) == {
+        "device-memory": "8",
+        "downlink": "10",
+        "dpr": "1",
+        "ect": "4g",
+        "rtt": "50",
+        "sec-ch-device-memory": "8",
+        "sec-ch-dpr": "1",
+        "sec-ch-prefers-color-scheme": "light",
+        "sec-ch-prefers-reduced-motion": "no-preference",
+        "sec-ch-prefers-reduced-transparency": "no-preference",
+        "sec-ch-ua-platform-version": '"19.0.0"',
+        "sec-ch-viewport-height": "945",
+        "sec-ch-viewport-width": "1920",
+        "viewport-width": "1920",
+    }

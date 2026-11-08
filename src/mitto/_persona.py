@@ -1,18 +1,21 @@
 """Persona data: what real Chrome sends by default, for one Chrome Release on one operating system.
 
 Each Persona is a file in the personas directory, written from the Baselines of its Chrome Release. See docs/persona.md
-for the format, and for the parts of a request that come from //net rather than from this data.
+for the format, and for the parts of a request that come from //net rather than from this data. The values that follow the
+machine are placeholders there, which a Session fills from its Machine.
 """
 
+import dataclasses
 import functools
 import json
-from collections.abc import Container, Iterable
+from collections.abc import Container, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import NotRequired, Self, TypedDict
 
 from mitto._body import EncodedBody, StreamBody
+from mitto._machine import Machine, client_hints
 from mitto._native import FetchParams, Priority
 
 __all__ = [
@@ -20,6 +23,7 @@ __all__ = [
     "CHROME_156_WINDOWS",
     "CHROME_157_WINDOWS",
     "ENGINE_RELEASE_PERSONA",
+    "MACHINE_PLACEHOLDER",
     "WINDOWS_PERSONAS",
     "Persona",
     "RequestDefaults",
@@ -36,6 +40,9 @@ WINDOWS_PERSONAS = {"155": CHROME_155_WINDOWS, "156": CHROME_156_WINDOWS, "157":
 
 ENGINE_RELEASE_PERSONA = CHROME_157_WINDOWS
 """The Persona of the Engine Release, which a Session presents unless it is told otherwise."""
+
+MACHINE_PLACEHOLDER = "<machine>"
+"""What a Persona's file holds for the value of a client hint that follows the machine."""
 
 _PERSONAS_DIRECTORY = Path(__file__).with_name("personas")
 _BOUNDARY_PLACEHOLDER = "<boundary>"
@@ -141,6 +148,16 @@ class Persona:
             ),
         )
 
+    def with_machine(self, machine: Machine) -> Self:
+        """Return this Persona with the values of `machine` in place of the placeholder of each hint that follows it.
+
+        Raises:
+            ValueError: If the placeholder stands in a line that is no such hint.
+        """
+        values = client_hints(machine)
+        kinds = {kind: _with_values(data, values) for kind, data in self._kinds.items()}
+        return dataclasses.replace(self, _kinds=kinds)
+
     def content_type(self, kind: RequestKind, body: EncodedBody | StreamBody) -> str | None:
         """Return the Content-Type that this Persona's Chrome gives `body` on a request of `kind`, or None for none.
 
@@ -172,6 +189,22 @@ def load_persona(name: str) -> Persona:
         user_agent=data["user_agent"],
         _kinds={RequestKind(kind): kind_data for kind, kind_data in data["kinds"].items()},
     )
+
+
+def _with_values(data: _KindData, values: Mapping[str, str]) -> _KindData:
+    """Return the data of a Request Kind with `values`, by lower-case name, in place of each placeholder of the machine."""
+    filled = data.copy()
+    filled["headers"] = [_with_value(line, values) for line in data["headers"]]
+    return filled
+
+
+def _with_value(line: str, values: Mapping[str, str]) -> str:
+    name, _, value = line.partition(": ")
+    if value != MACHINE_PLACEHOLDER:
+        return line
+    if name.lower() not in values:
+        raise ValueError(f"{name} holds {MACHINE_PLACEHOLDER}, and is no client hint that follows the machine")
+    return f"{name}: {values[name.lower()]}"
 
 
 def _header_lines(lines: Iterable[str], left_out: Container[str]) -> tuple[tuple[str, str], ...]:

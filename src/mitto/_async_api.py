@@ -20,6 +20,7 @@ from mitto import _native
 from mitto._body import ReadableFile, StreamBody, async_stream_chunks
 from mitto._cookies import AsyncCookies
 from mitto._errors import request_error
+from mitto._machine import Machine
 from mitto._native import (
     WRITE_SIZE,
     BodyAvailable,
@@ -291,12 +292,14 @@ class AsyncSession:
     Attributes:
         cookies: The cookies, which //net sets from responses and sends with requests. An AsyncSession that has not opened
             has none yet, which raises a RuntimeError.
+        machine: The Machine it claims. An AsyncSession that has not opened has none yet, which raises a RuntimeError.
     """
 
     def __init__(
         self,
         *,
         persona: str = ENGINE_RELEASE_PERSONA,
+        machine: Machine | None = None,
         accept_language: str | None = None,
         additional_trust_anchors: Sequence[str] = (),
         timeout: float | Timeout | None = None,
@@ -309,6 +312,7 @@ class AsyncSession:
 
         Args:
             persona: As for Session().
+            machine: As for Session(). A Machine is drawn when this opens.
             accept_language: As for Session().
             additional_trust_anchors: As for Session().
             timeout: As for Session().
@@ -320,6 +324,7 @@ class AsyncSession:
         # A proxy's URL may hold a password, which Python keeps only until the native core has it.
         self._arguments: dict[str, Any] = {
             "persona": persona,
+            "machine": machine,
             "accept_language": accept_language,
             "additional_trust_anchors": additional_trust_anchors,
             "timeout": timeout,
@@ -348,10 +353,12 @@ class AsyncSession:
     @property
     def cookies(self) -> AsyncCookies:
         """The cookies, as the class says."""
-        opening = self._opening
-        if opening is None or not opening.done() or opening.cancelled() or opening.exception() is not None:
-            raise RuntimeError("this AsyncSession has no cookies until it has opened")
-        return opening.result().cookies
+        return self._opened("cookies").cookies
+
+    @property
+    def machine(self) -> Machine:
+        """The Machine this AsyncSession claims, as Session.machine says. One that has not opened has none yet."""
+        return self._opened("Machine").state.machine
 
     async def open(self) -> Self:
         """Open this AsyncSession on the running event loop, off it for what can block, unless it has opened already.
@@ -467,6 +474,17 @@ class AsyncSession:
     async def options(self, url: str, **options: Unpack[AsyncRequestOptions]) -> Response:
         """Send an OPTIONS request, as request() does."""
         return await self.request("OPTIONS", url, **options)
+
+    def _opened(self, what: str) -> _Opened:
+        """Return what opening made.
+
+        Raises:
+            RuntimeError: If this has not opened, which names `what` it has none of.
+        """
+        opening = self._opening
+        if opening is None or not opening.done() or opening.cancelled() or opening.exception() is not None:
+            raise RuntimeError(f"this AsyncSession has no {what} until it has opened")
+        return opening.result()
 
     def _require_its_loop(self) -> None:
         if self._loop is not None and self._loop is not asyncio.get_running_loop():

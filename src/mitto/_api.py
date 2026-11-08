@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import Self, Unpack
 
 from mitto._arguments import require_type
+from mitto._machine import Machine
 from mitto._native import PrivateSettings, encode_url, iter_body, wait_for_response
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import RequestOptions
@@ -19,9 +20,10 @@ __all__ = ["Session", "get"]
 
 
 class Session:
-    """A long-lived client that holds one Chrome-like browsing state: its Persona, cookies, cache and open connections.
+    """A long-lived client that holds one Chrome-like browsing state: its Persona, Machine, cookies, cache and connections.
 
-    It also keeps which client hints each origin has asked for, and sends those as Chrome does. See docs/persona.md.
+    It also keeps which client hints each origin has asked for, and sends those as Chrome does, with the values of its
+    Machine for those that follow the machine. See docs/persona.md.
 
     One Session may run requests from several threads at once. Close it with close() or a with statement, which ends the
     requests still running, but not while another thread is starting one or using its cookies.
@@ -37,6 +39,7 @@ class Session:
         self,
         *,
         persona: str = ENGINE_RELEASE_PERSONA,
+        machine: Machine | None = None,
         accept_language: str | None = None,
         additional_trust_anchors: Sequence[str] = (),
         timeout: float | Timeout | None = None,
@@ -49,6 +52,8 @@ class Session:
 
         Args:
             persona: The Persona to present, such as "chrome_157_windows". The default is the Engine Release's.
+            machine: The Machine to claim, whose values go in the client hints that follow the machine. The default draws
+                one with Machine.draw(), so that each Session has its own.
             accept_language: The value of the Accept-Language header in place of the Persona's. An empty string sends none.
             additional_trust_anchors: Root certificates that this Session trusts beside the Chrome Root Store. Each entry is
                 the text of a PEM file that holds at least one. A self-signed server certificate can be its own root. The
@@ -76,9 +81,9 @@ class Session:
 
         Raises:
             TypeError: If an argument is of a type it does not take, which the message names: `persona` that is not text,
-                `accept_language` or `proxy` that is neither text nor None, `additional_trust_anchors` that is text, or
-                holds anything but text, `timeout` that is neither a number, a Timeout nor None, or `cookie_file` or
-                `cache` that is neither text, a path nor None.
+                `machine` that is neither a Machine nor None, `accept_language` or `proxy` that is neither text nor None,
+                `additional_trust_anchors` that is text, or holds anything but text, `timeout` that is neither a number, a
+                Timeout nor None, or `cookie_file` or `cache` that is neither text, a path nor None.
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
                 `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
                 `cookie_file` does not hold cookies that this Session can use, `proxy` cannot be used or `cache` is an empty
@@ -89,6 +94,7 @@ class Session:
         """
         self._state = SessionState(
             persona=persona,
+            machine=machine,
             accept_language=accept_language,
             additional_trust_anchors=additional_trust_anchors,
             timeout=timeout,
@@ -107,6 +113,11 @@ class Session:
         self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
     ) -> None:
         self.close()
+
+    @property
+    def machine(self) -> Machine:
+        """The Machine this Session claims, which `machine` gave or which was drawn for it."""
+        return self._state.machine
 
     def close(self) -> None:
         """Save the cookies to `cookie_file`, if it has one, and close the Session's connections and any cache on disk.
@@ -214,7 +225,7 @@ def default_session() -> Session:
 
 
 def get(url: str, **options: Unpack[RequestOptions]) -> Response:
-    """Send a GET request on a default Session, which presents the Engine Release's Persona.
+    """Send a GET request on a default Session, which presents the Engine Release's Persona and claims a drawn Machine.
 
     Takes the arguments of Session.get(). A navigation is the default, as it is there.
 

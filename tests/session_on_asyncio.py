@@ -108,6 +108,10 @@ class SessionOnAsyncio:
         self.cookies = _BlockingCookies(self._session.cookies, self._run)
         self._native = self._session._opening.result().state.native  # pyright: ignore[reportPrivateUsage, reportOptionalMemberAccess]
 
+    @property
+    def machine(self) -> mitto.Machine:
+        return self._session.machine
+
     def __enter__(self) -> Self:
         return self
 

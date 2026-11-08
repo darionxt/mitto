@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
-from mitto import RequestError, Session
+from mitto import Machine, RequestError, Session
 from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
@@ -140,6 +140,8 @@ def record(baseline: Baseline) -> dict[str, Json]:
         tempfile.TemporaryDirectory(prefix="mitto-parity-") as cache_directory,
         Session(
             persona=persona,
+            # The normal form does not hide sec-ch-ua-platform-version yet, and the Baselines hold this Machine's.
+            machine=Machine.named("mitto-0.1"),
             proxy=proxy_of(server, run),
             cache=cache_directory if needs_cache(baseline.case) else None,
             _settings=session_settings(server, run),

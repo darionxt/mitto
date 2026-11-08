@@ -9,7 +9,8 @@ from typing import cast
 
 import pytest
 
-from mitto._persona import WINDOWS_PERSONAS
+from mitto._machine import MACHINE_HINTS
+from mitto._persona import MACHINE_PLACEHOLDER, WINDOWS_PERSONAS
 from tools.capture import HTTP1, HTTP2
 from tools.capture.recording import Json
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
@@ -106,11 +107,22 @@ def test_a_priority_header_that_is_not_there_is_the_default_urgency_and_not_incr
     assert (image["priority"], image["priority_incremental"]) == ("LOWEST", False)
 
 
-def test_a_hint_of_the_machine_with_no_claimed_value_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(persona.CLAIMED_FROM_THE_MACHINE, "rtt")
+def test_a_hint_of_the_machine_that_a_machine_has_no_value_for_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(persona, "MACHINE_HINTS", persona.MACHINE_HINTS - {"rtt"})
 
     with pytest.raises(PersonaDataError, match="rtt follows the machine"):
         persona_data(ENGINE, BASELINES)
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_each_hint_that_follows_the_machine_holds_the_placeholder_and_nothing_else_does(release: str) -> None:
+    kinds = cast(dict[str, dict[str, Json]], persona_data(release, BASELINES)["kinds"])
+    for kind in kinds.values():
+        lines = [str(line).partition(": ") for line in cast(list[Json], kind["headers"])]
+        placeholders = {name.lower() for name, _, value in lines if value == MACHINE_PLACEHOLDER}
+        hints = {name.lower() for name, _, _ in lines} & MACHINE_HINTS
+
+        assert placeholders == hints
 
 
 def test_a_hints_case_with_no_hint_of_its_own_is_an_error() -> None:

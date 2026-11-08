@@ -24,6 +24,7 @@ assert response.text == "Hello\n"
 Session(
     *,
     persona: str = 'chrome_157_windows',
+    machine: Machine | None = None,
     accept_language: str | None = None,
     additional_trust_anchors: Sequence[str] = (),
     timeout: float | Timeout | None = None,
@@ -33,7 +34,7 @@ Session(
 )
 ```
 
-A long-lived client that holds one Chrome-like browsing state: its **Persona**, cookies, cache and open connections, and [which client hints](persona.md#client-hints) each origin has asked for. Two Sessions share none of that, as two Chrome profiles do not.
+A long-lived client that holds one Chrome-like browsing state: its **Persona**, its **Machine**, cookies, cache and open connections, and [which client hints](persona.md#client-hints) each origin has asked for. Two Sessions share none of that, as two Chrome profiles do not.
 
 One Session may run requests from several threads at once. Close it with `close()` or a `with` statement, which ends the requests still running, but not while another thread is starting one or using its cookies.
 
@@ -53,6 +54,17 @@ with mitto.Session(persona="chrome_155_windows") as session:
     sent = session.get("https://example.test/echo").json()["headers"]
 
 assert "Chrome/155" in sent["User-Agent"]
+```
+
+#### `machine=`
+
+The **Machine** to claim: the computer whose memory, display, window, network, user settings and Windows version go in [the client hints that follow the machine](persona.md#what-they-say), once a server asks for them. The default draws one with [`Machine.draw()`](#machinedraw), so that each Session claims a machine of its own. `rtt` and `downlink` have Chrome's rounding, and no noise for each host yet. A value that is neither a [`Machine`](#machine-1) nor `None` raises a `TypeError`.
+
+```python
+machine = mitto.Machine.draw(seed=7, memory=16)
+
+with mitto.Session(machine=machine) as session:
+    assert session.machine is machine
 ```
 
 #### `accept_language=`
@@ -86,7 +98,7 @@ What a request's [`timeout=`](#timeout-1) defaults to: a number is the total tim
 
 #### `cookie_file=`
 
-A file to keep the cookies in. They load from it now, if it exists, and `close()` saves them to it, as [`Cookies.save()`](#cookiessave) does. A crash loses what came after the last save, which a caller can make more often with `session.cookies.save(path)`. Chrome writes its store every 30 seconds. The default keeps them only until the Session closes. The file holds cookies alone, so what origins asked for in client hints starts over with each Session.
+A file to keep the cookies in. They load from it now, if it exists, and `close()` saves them to it, as [`Cookies.save()`](#cookiessave) does. A crash loses what came after the last save, which a caller can make more often with `session.cookies.save(path)`. Chrome writes its store every 30 seconds. The default keeps them only until the Session closes. The file holds cookies alone, so what origins asked for in client hints starts over with each Session, and a Session that loads it claims the Machine that `machine=` gives or draws.
 
 A file that does not hold cookies this Session can use raises a `ValueError`, because closing the Session would otherwise overwrite it. A value that is neither text, a path nor `None` raises a `TypeError`.
 
@@ -145,6 +157,14 @@ Session.cookies -> Cookies
 
 The [cookies](#cookies-1), which `//net` sets from responses and sends with requests.
 
+#### `Session.machine`
+
+```text
+Session.machine -> Machine
+```
+
+The [Machine](#machine-1) this Session claims, which `machine=` gave or which was drawn for it.
+
 #### `Session.close()`
 
 ```text
@@ -199,10 +219,102 @@ Send a request of that method, as `request()` does. Each takes the same argument
 get(url: str, **options: Unpack[RequestOptions]) -> Response
 ```
 
-Send a `GET` on a default Session, which presents the Engine Release's Persona and stays open until the process exits, so its cookies and connections carry over from one call to the next. It takes the arguments of `Session.get()`, with a navigation as the default kind. It raises what `Session.request()` does, and a `NativeLibraryError` if the native library cannot be used. No other method has a shortcut, and nothing else about this Session can be set.
+Send a `GET` on a default Session, which presents the Engine Release's Persona, claims a Machine drawn for it and stays open until the process exits, so its cookies and connections carry over from one call to the next. It takes the arguments of `Session.get()`, with a navigation as the default kind. It raises what `Session.request()` does, and a `NativeLibraryError` if the native library cannot be used. No other method has a shortcut, and nothing else about this Session can be set.
 
 ```python
 assert mitto.get("https://example.test/").status == 200
+```
+
+## Machine
+
+### `Machine`
+
+```text
+Machine(
+    *,
+    memory: int,
+    display_width: int,
+    display_height: int,
+    scale: float,
+    viewport_width: int,
+    viewport_height: int,
+    round_trip_ms: int,
+    throughput_kbps: int,
+    color_scheme: ColorScheme,
+    reduced_motion: ReducedMotion,
+    reduced_transparency: ReducedTransparency,
+    platform_version: str,
+    seed: int | None = None,
+)
+```
+
+The computer a Session claims to run on, as Chrome reads it. A Session works out each client hint that follows the machine from it, [as Chrome does](persona.md#what-decides-each-value). It is apart from the **Host** and from the **Persona**, and never read from the computer mitto runs on. [`Machine.draw()`](#machinedraw) gives one from a table that ships with mitto, and a caller can make one too.
+
+A value of a type it does not take raises a `TypeError` that names it, and `True` and `False` are no number. A value that Chrome on Windows 10 or 11 cannot read raises a `ValueError`, and so does a viewport larger than the display.
+
+| Attribute | Type | What it holds |
+| --- | --- | --- |
+| `memory` | `int` | The memory in GiB, as Chrome rounds what Windows reports: 2, 4, 8, 16 or 32. `device-memory` says it |
+| `display_width` | `int` | The width of the primary display, in pixels |
+| `display_height` | `int` | The height of the primary display, in pixels |
+| `scale` | `float` | The scale in Windows' display settings, such as 1.25 for 125%: 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5 or 5. `dpr` says it |
+| `viewport_width` | `int` | The width of the window's page area, in device-independent pixels, which are the display's pixels over the scale. At most the display's |
+| `viewport_height` | `int` | The height of the window's page area, in device-independent pixels. At most the display's |
+| `round_trip_ms` | `int` | The round trip of HTTP that Chrome's network quality estimator has, in milliseconds. `rtt` is it at most 3000 and rounded to 50, and `ect` follows from it |
+| `throughput_kbps` | `int` | The throughput that the estimator has, in kbps. `downlink` is it at most 10,000 and rounded to 50, in Mbps |
+| `color_scheme` | `ColorScheme` | `"light"` or `"dark"` |
+| `reduced_motion` | `ReducedMotion` | `"no-preference"`, or `"reduce"` with Windows' animation effects off |
+| `reduced_transparency` | `ReducedTransparency` | `"no-preference"`, or `"reduce"` with Windows' transparency effects off |
+| `platform_version` | `str` | What `sec-ch-ua-platform-version` says: the version of Windows' UniversalApiContract, such as `"19.0.0"` for Windows 11 from 24H2 and `"10.0.0"` for Windows 10 from 2004. [Which Windows](persona.md#which-windows) has each |
+| `seed` | `int \| None` | What `draw()` drew it from, or `None` for one that a caller made |
+
+#### `Machine.draw()`
+
+```text
+Machine.draw(
+    *,
+    seed: int | None = None,
+    memory: int | None = None,
+    display_width: int | None = None,
+    display_height: int | None = None,
+    scale: float | None = None,
+    viewport_width: int | None = None,
+    viewport_height: int | None = None,
+    round_trip_ms: int | None = None,
+    throughput_kbps: int | None = None,
+    color_scheme: ColorScheme | None = None,
+    reduced_motion: ReducedMotion | None = None,
+    reduced_transparency: ReducedTransparency | None = None,
+    platform_version: str | None = None,
+) -> Self
+```
+
+Return a Machine drawn from [the table](persona.md#the-table) that ships with mitto, with each value given here and the rest drawn to fit them.
+
+The display, its scale and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the viewport too, since its taskbar takes some of the height. Each other value is drawn on its own.
+
+The same seed and the same table give the same Machine on every Host, and a value given in one group leaves what the seed draws for the others as it was, unless they have to fit together. Without a seed, one is drawn, which the Machine keeps. Another version of mitto can have another table, which draws another Machine from the same seed.
+
+It raises what `Machine` raises, a `TypeError` if `seed` is not a whole number, and a `ValueError` if no row of the table has the values given of a group whose values are not all given.
+
+```python
+machine = mitto.Machine.draw(seed=7, memory=16)
+
+assert machine.memory == 16
+assert machine.seed == 7
+assert mitto.Machine.draw(seed=7, memory=16) == machine
+```
+
+#### `Machine.named()`
+
+```text
+Machine.named(name: str) -> Self
+```
+
+Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills it on Windows 11 24H2, an `rtt` of 50 and a `downlink` of 10, and the settings that Windows comes with. Another name raises a `ValueError`, and anything but text a `TypeError`.
+
+```python
+assert mitto.Machine.named("mitto-0.1").viewport_height == 945
 ```
 
 ## Request arguments
@@ -929,6 +1041,7 @@ assert echo.json()["body"] == '{"a":1}'
 AsyncSession(
     *,
     persona: str = 'chrome_157_windows',
+    machine: Machine | None = None,
     accept_language: str | None = None,
     additional_trust_anchors: Sequence[str] = (),
     timeout: float | Timeout | None = None,
@@ -964,6 +1077,14 @@ AsyncSession.cookies -> AsyncCookies
 ```
 
 The [cookies](#asynccookies). One that has not opened has none yet, which raises a `RuntimeError`.
+
+#### `AsyncSession.machine`
+
+```text
+AsyncSession.machine -> Machine
+```
+
+The Machine, as [`Session.machine`](#sessionmachine) says. One that has not opened has none yet, which raises a `RuntimeError`, and `machine=` draws one when it opens.
 
 #### `AsyncSession.open()`
 

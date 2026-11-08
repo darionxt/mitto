@@ -9,6 +9,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from mitto._body import encode_query
+from mitto._machine import Machine
 from mitto._persona import WINDOWS_PERSONAS, Persona, RequestKind, load_persona
 from mitto._request import BodyOptions, BuiltRequest, build_request
 from mitto._timeout import Timeout
@@ -16,8 +17,10 @@ from tests.client_hints import until_a_server_asks
 
 URL = "https://example.test:8444/any/path"
 
-PERSONAS = [load_persona(name) for name in WINDOWS_PERSONAS.values()]
-ENGINE_PERSONA = load_persona(WINDOWS_PERSONAS["157"])
+# As a Session has them, with the values of its Machine.
+MACHINE = Machine.draw(seed=1)
+PERSONAS = [load_persona(name).with_machine(MACHINE) for name in WINDOWS_PERSONAS.values()]
+ENGINE_PERSONA = load_persona(WINDOWS_PERSONAS["157"]).with_machine(MACHINE)
 
 # Everything that URLSearchParams leaves as it is, or writes in some other way than as a percent-encoded byte.
 QUERY_TEXT = re.compile(r"[A-Za-z0-9*\-._+%&=]*")
