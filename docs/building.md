@@ -10,10 +10,10 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
 - On Linux, nothing more. A new Ubuntu 26.04 desktop install only needs `sudo apt-get install git curl`, and other distributions have not been tried. The checkout brings its own compiler, linker and sysroot, so the native core builds without a system C compiler. It also builds without Chromium's `build/install-build-deps.sh`, which installs hundreds of packages for the rest of Chromium.
 - On Windows, what Chromium's own [instructions for Windows](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8103.39/docs/windows_build_instructions.md) ask for. The checkout brings its own compiler and linker, clang-cl and lld-link, but they take Windows' headers, libraries and some tools from the machine:
-  - Visual Studio 2026, version 18.0 or later; Community is enough. It needs "Desktop development with C++" and that workload's ATL/MFC component. From the command line, its installer adds them with `--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.ATLMFC --includeRecommended`.
-  - The Windows SDK 10.0.28000.2270, with its Debugging Tools for Windows. Its installer is on Microsoft's [Windows SDK downloads](https://learn.microsoft.com/en-us/windows/apps/windows-sdk/downloads) page. Chromium 157's `build/vs_toolchain.py` asks for `10.0.28000.0`, the directory that every build of that SDK installs into.
+  - Visual Studio 2026, version 18.0 or later; Community is enough. It needs "Desktop development with C++" and that workload's ATL/MFC component. From the command line, its installer adds them with `--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.ATLMFC --includeRecommended`. Version 18.11 took 7.6 GiB this way, and its installer kept another 2.8 GiB of packages.
+  - The Windows SDK 10.0.28000.2270, with its Debugging Tools for Windows, about 4 GiB with all its features. Its installer is on Microsoft's [Windows SDK downloads](https://learn.microsoft.com/en-us/windows/apps/windows-sdk/downloads) page. Chromium 157's `build/vs_toolchain.py` asks for `10.0.28000.0`, the directory that every build of that SDK installs into.
   - [Git for Windows](https://gitforwindows.org/), with `git` on `PATH`. depot_tools no longer brings its own git on Windows: it looks on `PATH` for a git inside a directory named `Git`. Its portable MinGit works as well, unpacked into a directory of that name.
-  - An NTFS disk and a short path for the workspace, such as `C:\ws`. Chromium's longest paths come close to Windows' limit of 260 characters, and the script lets only git go past that limit.
+  - An NTFS disk and a short path for the workspace, such as `C:\ws`. The longest path of the checkout of Chromium 157.0.8103.39 lies 228 characters below the workspace, so a workspace path of up to 31 characters keeps every path within Windows' limit of 260. Without Windows' own setting for long paths, which applies to every program, only git can go past that limit, because the script lets it.
 
 ## Set up the workspace
 
@@ -525,6 +525,8 @@ Measured for Chromium 157.0.8103.27 on macOS arm64, after building the native co
 Of `src`, 3.6 GiB is the `.git` directories of `src` and its 143 git dependencies. Each additional release kept in the workspace needs its own `chromium-<tag>` directory.
 
 On Linux x86_64 the same workspace takes 29.7 GiB, of which 1.4 GiB is `out/mitto`.
+
+On Windows x64, for Chromium 157.0.8103.39, the workspace takes 24.3 GiB before the native core builds there: 22.9 GiB for `chromium-<tag>/src` in about 1.07 million files, 0.8 GiB for `depot_tools` and 0.6 GiB for `.cache`. Visual Studio and the Windows SDK come on top, on the system disk (see [Requirements](#requirements)).
 
 ## Compare two releases
 
