@@ -6,7 +6,7 @@ Each mitto release ships one engine, built from the **Engine Release**, and pres
 
 A run starts when a milestone reaches its stable date in [Chromium Dash](https://chromiumdash.appspot.com/schedule), not its early stable date. About two weeks before the stable date, the early stable date gives the milestone to a small share of users only, and most installations are still on the one before. The run makes that milestone the Engine Release, records every Chrome Release of the new Supported Window, drops the oldest, and publishes.
 
-A run raises the minor version: 0.1.0, 0.2.0 and so on. A fix between two runs raises the patch, and goes through the [last three steps](#10-the-version) only. Dropping a Chrome Release, and with it its Persona, only happens in a run.
+A run raises the minor version: 0.1.0, 0.2.0 and so on. Between two runs, a change that every caller can take as it is raises the patch, or waits for the next minor version. While mitto is at 0.x, a change that is not compatible, such as one whose files an older mitto cannot read, may also ship in a minor version of its own, without waiting for a run. Either goes through the [last three steps](#10-the-version) only, and the next run still raises the minor version by one. Every version is made from `main`, so a patch only follows the newest minor version, and no patch of an older one ships. How versions are numbered from 1.0 on is decided when 1.0 comes. Dropping a Chrome Release, and with it its Persona, only happens in a run.
 
 ## The steps
 
@@ -146,7 +146,7 @@ A [dry run](building.md#a-dry-run) does the same with a pre-release on TestPyPI,
 
 ## What changes for callers
 
-[`CHANGELOG.md`](../CHANGELOG.md) says what changes for callers in each version, under a heading `## X.Y.Z`, newest first: what a Session sends now, what a caller has to change, and what an older mitto cannot read any more. A change that callers will notice writes it there, in the pull request that makes the change. It goes under the version that ships it, which is the next minor version, made by the next run, unless the change is a fix that ships in a patch before. The notes of the version's GitHub release hold the entry after their first paragraph, which names the Supported Window and the Engine Release.
+[`CHANGELOG.md`](../CHANGELOG.md) says what changes for callers in each version, under a heading `## X.Y.Z`, newest first: what a Session sends now, what a caller has to change, and what an older mitto cannot read any more. A change that callers will notice writes it there, in the pull request that makes the change. It goes under the version that ships it: the next minor version, whether a run makes it or [a change ships in one of its own](#when-a-run-starts), or a patch that ships before it. The notes of the version's GitHub release hold the entry after their first paragraph, which names the Supported Window and the Engine Release.
 
 Every version needs an entry, a patch too. A patch is made for its fix, and its notes are where a caller reads what it fixes and whether to take it. Without an entry, they would only say again what the notes of the version before said.
 
