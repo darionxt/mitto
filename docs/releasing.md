@@ -6,7 +6,7 @@ Each mitto release ships one engine, built from the **Engine Release**, and pres
 
 A run starts when a milestone reaches its stable date in [Chromium Dash](https://chromiumdash.appspot.com/schedule), not its early stable date. About two weeks before the stable date, the early stable date gives the milestone to a small share of users only, and most installations are still on the one before. The run makes that milestone the Engine Release, records every Chrome Release of the new Supported Window, drops the oldest, and publishes.
 
-A run raises the minor version: 0.1.0, 0.2.0 and so on. A fix between two runs raises the patch, and goes through the [last three steps](#9-the-version) only. Dropping a Chrome Release, and with it its Persona, only happens in a run.
+A run raises the minor version: 0.1.0, 0.2.0 and so on. A fix between two runs raises the patch, and goes through the [last three steps](#10-the-version) only. Dropping a Chrome Release, and with it its Persona, only happens in a run.
 
 ## The steps
 
@@ -18,13 +18,14 @@ A run raises the minor version: 0.1.0, 0.2.0 and so on. A fix between two runs r
 | 4. [Record Baselines](#4-record-baselines), with the Platform Runtime component | A Windows machine | Nobody |
 | 5. [Check for Merkle Tree Certificates](#5-check-for-merkle-tree-certificates) | The workspace, the Windows machine and any machine | The owner, if a seed turns them on |
 | 6. [Write the Persona data](#6-write-the-persona-data) | Any machine | Nobody |
-| 7. [Drop the oldest Chrome Release](#7-drop-the-oldest-chrome-release) | Any machine | Nobody |
-| 8. [The known-gaps list](#8-the-known-gaps-list) | A macOS or Linux **Host** | The owner, for any gap that stays |
-| 9. [The version](#9-the-version) | Any machine | Review of the run's pull request |
-| 10. [The tag](#10-the-tag) | Any machine | The owner |
-| 11. [The publish](#11-the-publish) | GitHub's hosted runners | The owner, in the `pypi` environment |
+| 7. [Refresh the table of Machines](#7-refresh-the-table-of-machines) | Any machine | Review of the run's pull request |
+| 8. [Drop the oldest Chrome Release](#8-drop-the-oldest-chrome-release) | Any machine | Nobody |
+| 9. [The known-gaps list](#9-the-known-gaps-list) | A macOS or Linux **Host** | The owner, for any gap that stays |
+| 10. [The version](#10-the-version) | Any machine | Review of the run's pull request |
+| 11. [The tag](#11-the-tag) | Any machine | The owner |
+| 12. [The publish](#12-the-publish) | GitHub's hosted runners | The owner, in the `pypi` environment |
 
-"Any machine" is one with the repository and uv. The scripts of steps 1, 6 and 7 need no native library. Steps 2 to 9 end in one pull request, and CI builds it from the new export on both Hosts.
+"Any machine" is one with the repository and uv. The scripts of steps 1, 6, 7 and 8 need no native library. Steps 2 to 10 end in one pull request, and CI builds it from the new export on both Hosts.
 
 ### 1. Find the builds
 
@@ -66,7 +67,7 @@ With `VerifyMTCs` on, Chrome adds the IDs of its Merkle Tree CAs to `trust_ancho
 
 - In the new checkout on the workspace, the default of `kVerifyMTCs` in `net/base/features.cc`.
 - On the Windows machine, the variations seed of each recording. `chrome://version/?show-variations-cmd` of a recording start must not name `VerifyMTCs`, and neither may the seed itself, `VariationsSafeSeedV2` in the user data directory, once decompressed ([how to read it](baselines.md#the-variations-seed-and-the-country)). `record.ps1` keeps a feature or field trial in `chrome.txt` when its name has `mtc` in it, so `chrome.txt` shows one that a recording drew.
-- In the new Baselines, `trust_anchors` in each ClientHello. The Parity Checks of [step 8](#8-the-known-gaps-list) show a gap there if Chrome sent more IDs than the compiled-in root store has.
+- In the new Baselines, `trust_anchors` in each ClientHello. The Parity Checks of [step 9](#9-the-known-gaps-list) show a gap there if Chrome sent more IDs than the compiled-in root store has.
 
 Write the answer down under the recording in [baselines.md](baselines.md). If any of the three shows `VerifyMTCs` on, what a Session sends is a decision for the milestone's plan.
 
@@ -78,11 +79,34 @@ For each Chrome Release whose Baselines are new:
 uv run python -m tools.release persona RELEASE
 ```
 
-This writes `src/mitto/personas/chrome_RELEASE_windows.json` from `tests/baselines/RELEASE`, [as persona.md describes](persona.md#write-one). For the new Engine Release, also name its Persona in [`src/mitto/_persona.py`](../src/mitto/_persona.py): a constant like the others, its entry in `__all__` and in `WINDOWS_PERSONAS`, and `ENGINE_RELEASE_PERSONA`. The tests that check what a Session presents by default name the Engine Release, and fail until they move with it. The README's line follows in [step 7](#7-drop-the-oldest-chrome-release).
+This writes `src/mitto/personas/chrome_RELEASE_windows.json` from `tests/baselines/RELEASE`, [as persona.md describes](persona.md#write-one). For the new Engine Release, also name its Persona in [`src/mitto/_persona.py`](../src/mitto/_persona.py): a constant like the others, its entry in `__all__` and in `WINDOWS_PERSONAS`, and `ENGINE_RELEASE_PERSONA`. The tests that check what a Session presents by default name the Engine Release, and fail until they move with it. The README's line follows in [step 8](#8-drop-the-oldest-chrome-release).
 
 Then run `uv run pytest tests/test_persona.py tests/release`. If the script refuses, for example because a Content-Type is not the one it knows, Chrome has changed what a request sends. Change the script and [persona.md](persona.md) to say what it does now.
 
-### 7. Drop the oldest Chrome Release
+### 7. Refresh the table of Machines
+
+```bash
+uv run python -m tools.release machines
+```
+
+This fetches the public statistics that [the table of Machines](persona.md#the-table) is made from again, writes them to [`tools/release/machine_statistics.json`](../tools/release/machine_statistics.json), and writes [`src/mitto/machine_table.json`](../src/mitto/machine_table.json) from them. It prints the period it took from each source, and whether that is new, revised or as before. Then read the diff:
+
+```bash
+git diff -- tools/release/machine_statistics.json src/mitto/machine_table.json
+```
+
+| Source | How often it updates | What a refresh takes |
+| --- | --- | --- |
+| StatCounter: Windows 10 against 11, and the display in CSS pixels | Monthly. A month comes out on the second of the next, and StatCounter revises it for 45 days from then | The newest month it no longer revises, so a month counts from the middle of the month after next. It asks the CSV link that StatCounter's pages use for their download, which StatCounter does not document |
+| Firefox Public Data Report: the display in pixels, and the memory | Weekly, at stable JSON addresses under `data.firefox.com/datasets/desktop/hardware` | Its newest week |
+
+The statistics' diff shows which shares moved, and the table's what that does to the weights. The table's credits name the period of each source, so they follow what was fetched, and [`MACHINE_TABLE_NOTICE`](../MACHINE_TABLE_NOTICE) leaves the periods to them. The owner's weights, which the table marks, stay as they are: they are in [`tools/release/machines.py`](../tools/release/machines.py), and only a change there moves them. A name that a source did not give before, such as a new version of Windows or a new display size, counts only where [persona.md](persona.md#the-table) says the table takes it, so look for one in the diff.
+
+If a source does not answer, or answers in a form the script does not read, such as a CSV of another month or JSON without its shares, the script says which and why, exits with an error and changes neither file. The table then stays as it was for this run: say so in the run's pull request. A form that has changed for good is a change to [`tools/release/machine_sources.py`](../tools/release/machine_sources.py) and to the answers saved in `tests/release/data`, which `tests/release` checks it with, and no network.
+
+`--saved` writes the table from the statistics as they are and fetches nothing, such as after a change to an owner's weight.
+
+### 8. Drop the oldest Chrome Release
 
 ```bash
 uv run python -m tools.release drop
@@ -96,19 +120,19 @@ Then go through the docs with the [rule below](#lines-that-name-a-chrome-release
 git grep -n -w RELEASE -- docs
 ```
 
-### 8. The known-gaps list
+### 9. The known-gaps list
 
 On a macOS or Linux Host, [build the native core from the new export](building.md#build-from-the-source-export), then [write the known-gaps list again](parity.md#the-known-gaps-list) with `MITTO_NATIVE_LIBRARY` set, and read its diff. The Parity Checks now run every Persona on the new engine, so a gap of an older Chrome Release that the run brought is network code that moved. It goes back into Persona data, as [persona.md](persona.md#what-differs-between-chrome-releases) says how, or the owner decides to keep it. Write down what differs between the Chrome Releases of the new Supported Window on that page, as a new record.
 
-### 9. The version
+### 10. The version
 
 Raise `version` in [`pyproject.toml`](../pyproject.toml) and run `uv lock`, which writes it into `uv.lock` too. The run's pull request then holds everything from step 2 on.
 
-### 10. The tag
+### 11. The tag
 
-Once the pull request is merged, tag its commit on `main` as `vX.Y.Z`, with the version of step 9, and push the tag, with the owner's OK. The tag starts the publish.
+Once the pull request is merged, tag its commit on `main` as `vX.Y.Z`, with the version of step 10, and push the tag, with the owner's OK. The tag starts the publish.
 
-### 11. The publish
+### 12. The publish
 
 The tag starts [the release workflow](building.md#the-release-workflow), `.github/workflows/release.yml`. It checks that the tag is the version in `pyproject.toml` and that its commit is on `main`, builds the wheels from nothing, with no Actions cache, on the hosted runners that CI uses, and runs every test against each installed wheel. It then waits for the owner's approval in the `pypi` environment: approve the run's deployment once both builds have passed. It uploads the wheels to PyPI with Trusted Publishing. No API token can upload to `mitto`. The symbols archives go to the GitHub release of the tag, not to PyPI. There are wheels only, and no sdist. Last, it installs the version from PyPI on each Host and makes a request with it.
 
@@ -120,7 +144,7 @@ A line in the README or the docs that names a Chrome Release does one of two thi
 
 - **It records what was measured.** It says which build, and usually which day, gave the result, such as the sections of [baselines.md](baselines.md) on each recording, what [capture.md](capture.md) measured, [what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases) and the milestones in [roadmap.md](roadmap.md). It stays as it was when the Supported Window moves, also once its Chrome Release has left, because it is still what was measured. A new measurement gets a record of its own, which says what it replaces.
 - **It states the present Supported Window.** It follows the Window, and only these places hold one:
-  - The line of [`README.md`](../README.md) that says which Chrome Releases this version presents, which [step 7](#7-drop-the-oldest-chrome-release) writes. A test checks it against `WINDOWS_PERSONAS` and `ENGINE_RELEASE_PERSONA`, and that no other line of the README names a Chrome Release.
+  - The line of [`README.md`](../README.md) that says which Chrome Releases this version presents, which [step 8](#8-drop-the-oldest-chrome-release) writes. A test checks it against `WINDOWS_PERSONAS` and `ENGINE_RELEASE_PERSONA`, and that no other line of the README names a Chrome Release.
   - [`persona=` in api.md](api.md#persona), which names every Persona and shows one in its example. A test checks that it names every Persona in `WINDOWS_PERSONAS`.
   - [Where each Chrome Release comes from](baselines.md#where-each-chrome-release-comes-from), with the build and the installer of each Chrome Release's Baselines.
 

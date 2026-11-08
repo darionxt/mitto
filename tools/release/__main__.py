@@ -8,7 +8,8 @@ from pathlib import Path
 from mitto._persona import WINDOWS_PERSONAS
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError
 from tools.release.drop import REPOSITORY, DropError, drop_oldest
-from tools.release.machines import TABLE_PATH, MachineTableError, write_table
+from tools.release.machine_sources import refresh_table
+from tools.release.machines import STATISTICS_PATH, TABLE_PATH, MachineTableError, read_statistics, write_table
 from tools.release.persona import PERSONAS_DIRECTORY, PersonaDataError, write_persona
 from tools.release.publish import PublishError, dry_run_version, release_notes, tag_version
 from tools.release.web import WebError
@@ -28,8 +29,15 @@ def _persona(args: argparse.Namespace) -> int:
 
 
 def _machines(args: argparse.Namespace) -> int:
-    path = write_table(path=args.table)
-    print(f"Wrote {path} from the statistics in tools/release/machines.py.")
+    if args.saved:
+        path = write_table(read_statistics(args.statistics), args.table)
+        print(f"Wrote {path} from the statistics in {args.statistics}.")
+        return 0
+    try:
+        print(refresh_table(date.today(), statistics_path=args.statistics, table_path=args.table))
+    except (MachineTableError, WebError) as error:
+        print(f"error: the table stays as it was, because {error}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -79,8 +87,16 @@ def main() -> int:
     )
     persona.set_defaults(run=_persona)
 
-    machines = commands.add_parser("machines", help="write the table that a Session's Machine is drawn from")
-    machines.add_argument("--table", type=Path, default=TABLE_PATH, help="the file to write (default: %(default)s)")
+    machines = commands.add_parser(
+        "machines", help="fetch the statistics again and write the table that a Session's Machine is drawn from"
+    )
+    machines.add_argument(
+        "--saved", action="store_true", help="write the table from the statistics as they are, and fetch nothing"
+    )
+    machines.add_argument(
+        "--statistics", type=Path, default=STATISTICS_PATH, help="the statistics' file (default: %(default)s)"
+    )
+    machines.add_argument("--table", type=Path, default=TABLE_PATH, help="the table's file (default: %(default)s)")
     machines.set_defaults(run=_machines)
 
     drop = commands.add_parser("drop", help="drop the oldest Chrome Release, once the new Engine Release has a Persona")
