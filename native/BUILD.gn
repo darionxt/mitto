@@ -44,6 +44,8 @@ shared_library("mitto_core") {
     "ignore_errors_cert_verifier.cc",
     "ignore_errors_cert_verifier.h",
     "mitto_core.cc",
+    "network_quality.cc",
+    "network_quality.h",
     "network_session_configurator.cc",
     "network_session_configurator.h",
     "ready_requests.cc",
@@ -62,6 +64,8 @@ shared_library("mitto_core") {
     "socks5_auth_socket_factory.h",
     "ssl_config_service_mojo.cc",
     "ssl_config_service_mojo.h",
+    "string_hasher.cc",
+    "string_hasher.h",
     "stub_resolver_config_reader.cc",
     "stub_resolver_config_reader.h",
   ]
@@ -177,16 +181,21 @@ if (use_libfuzzer) {
     sources = [
       "ignore_errors_cert_verifier.h",
       "include/mitto/mitto.h",
+      "network_quality.cc",
+      "network_quality.h",
       "session_settings.cc",
       "session_settings.h",
       "socks5_auth_exchange.cc",
       "socks5_auth_exchange.h",
+      "string_hasher.cc",
+      "string_hasher.h",
       "test/session_settings_fuzzer.cc",
     ]
     additional_configs = [ ":public_api" ]
     deps = [
       ":icu_data",
       "//base",
+      "//crypto",
       "//net",
       "//url",
     ]

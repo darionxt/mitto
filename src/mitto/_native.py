@@ -44,6 +44,7 @@ __all__ = [
     "NativeLibraryError",
     "NativeRequest",
     "NativeResponse",
+    "NetworkQuality",
     "Priority",
     "PrivateSettings",
     "RedirectFollowed",
@@ -589,6 +590,36 @@ class FetchParams:
         return option
 
 
+@dataclass(frozen=True, slots=True)
+class NetworkQuality:
+    """What a Session claims that Chrome's network quality estimator has, and the salts of Chrome's noise on it.
+
+    The native core works out rtt and downlink from these on each hop of a request made for a page, for the host of that
+    hop. The names are the keys of the "network_quality" setting of mitto_session_create().
+
+    Attributes:
+        http_rtt_ms: The round trip of HTTP, in milliseconds.
+        downstream_throughput_kbps: The throughput, in kbps.
+        browser_salt: The salt of the browser process, from 1 to 21, which a navigation's noise takes.
+        renderer_salt_key: What the salt of the renderer process of each site comes from, which the noise of a script,
+            image or fetch takes.
+    """
+
+    http_rtt_ms: int
+    downstream_throughput_kbps: int
+    browser_salt: int
+    renderer_salt_key: str
+
+    def to_setting(self) -> dict[str, object]:
+        """Return the "network_quality" setting of mitto_session_create()."""
+        return {
+            "http_rtt_ms": self.http_rtt_ms,
+            "downstream_throughput_kbps": self.downstream_throughput_kbps,
+            "browser_salt": self.browser_salt,
+            "renderer_salt_key": self.renderer_salt_key,
+        }
+
+
 class PrivateSettings(TypedDict, total=False):
     """The Session settings that the public API does not offer, for tests to pass to the public Session as `_settings`.
 
@@ -622,6 +653,7 @@ class Session:
         proxy: str | None = None,
         accept_ch_via_alps: Mapping[str, str] | None = None,
         http_cache: str | None = None,
+        network_quality: NetworkQuality | None = None,
     ) -> None:
         """Create the Session.
 
@@ -654,6 +686,8 @@ class Session:
             http_cache: Keep responses as Chrome's HTTP cache does: MEMORY_CACHE until this Session closes, or the absolute
                 path of a directory for later Sessions too. //net only touches its subdirectory Cache_Data there. None keeps
                 no responses.
+            network_quality: What the rtt and downlink of a request made for a page are worked out from on each hop, with
+                Chrome's noise for its host. None leaves them as the request's headers say.
 
         Raises:
             ValueError: If the native core refuses the settings. The message leaves out `proxy`, which may hold a password.
@@ -681,6 +715,8 @@ class Session:
             settings_dict["proxy"] = proxy
         if http_cache is not None:
             settings_dict["http_cache"] = http_cache
+        if network_quality is not None:
+            settings_dict["network_quality"] = network_quality.to_setting()
         settings = json.dumps(settings_dict).encode()
         self._handle = ctypes.POINTER(MittoSession)()
         net_error: int = self._library.mitto_session_create(settings, len(settings), ctypes.byref(self._handle))

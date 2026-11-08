@@ -104,7 +104,7 @@ Real Chrome gets its settings from preferences, field trials and the defaults in
 | `native/ssl_config_service_mojo.cc` | TLS versions, cipher suites, key shares, ECH GREASE and trust anchors | `chrome/browser/ssl/ssl_config_service_manager.cc`, `services/network/ssl_config_service_mojo.cc` and `ssl_config_type_converter.cc` |
 | `native/feature_list.cc` | Features that the ClientHello depends on, over TCP and QUIC, and those in `//net` that field trials turn on | The `--enable-features` and `--disable-features` lists in `chrome.txt` |
 | `native/fetch_rules.cc`, `native/sec_header_helpers.cc` | [The headers that follow the page a request comes from](#the-initiator-and-each-hop), and what `//net` is told about that page | `SetFetchMetadataHeaders` and `MaybeRemoveSecHeaders` in `services/network/sec_header_helpers.cc`, `CorsURLLoader` and `URLLoader` in `services/network`, and the parts of the browser process and Blink that the section names |
-| `native/client_hints.cc`, `native/fetch_rules.cc`, `native/http_header_map.cc` | [Which client hints a request has](#client-hints), and in what order | `content/browser/client_hints`, `components/client_hints`, `services/network/public/cpp/client_hints.cc`, and Blink's `FrameFetchContext` and `HTTPHeaderMap` |
+| `native/client_hints.cc`, `native/fetch_rules.cc`, `native/http_header_map.cc`, `native/network_quality.cc`, `native/string_hasher.cc` | [Which client hints a request has](#client-hints), in what order, and the noise on `rtt` and `downlink` | `content/browser/client_hints`, `components/client_hints`, `services/network/public/cpp/client_hints.cc`, and Blink's `FrameFetchContext`, `HTTPHeaderMap`, `NetworkStateNotifier` and `StringHasher` |
 | `native/mitto_core.cc` | That network state is partitioned and the HTTP cache split, in [the calls Chrome makes](#partitioning), and [where a cache lives](#the-http-cache) | `ChromeMainDelegate::CommonEarlyInitialization()`, `ChooseCacheType()` in `components/network_session_configurator` and `PopulateHttpCacheDirectories()` in `//content` |
 | `native/stub_resolver_config_reader.cc` | The stub resolver: the built-in DNS client, additional query types, which is what asks for HTTPS records, secure mode automatic, and the upgrade to DNS over HTTPS | `ConfigureStubHostResolver` in `services/network/network_service.cc`, with the defaults in `chrome/browser/net/stub_resolver_config_reader.cc` |
 
@@ -171,6 +171,7 @@ What a server asks for ([the rules](persona.md#client-hints)) lives in a `Client
 | A navigation's response, and each redirect on the way | `ParseAndPersistAcceptCHForNavigation`, from `CommitNavigation` and `OnRequestRedirected` | `content/browser/client_hints/client_hints.cc`, `content/browser/renderer_host/navigation_request.cc` |
 | A navigation's hints | `AddNavigationRequestClientHintsHeaders` | `content/browser/client_hints/client_hints.cc` |
 | A subresource's hints | `AddClientHintsIfNecessary`, with each origin's default permissions policy | Blink's `FrameFetchContext`, `permissions_policy_features.json5` |
+| [The noise on `rtt` and `downlink`](persona.md#the-noise-on-rtt-and-downlink) | `GetRandomMultiplier`, `RoundRtt` and `RoundKbpsToMbps` of a navigation, and `RoundMbps` of a subresource | `content/browser/client_hints/client_hints.cc`, Blink's `network_state_notifier.cc` |
 | `Critical-CH` | `CriticalClientHintsThrottle`, whose restart `RestartWithURLResetNow` makes a redirect to the first URL | `content/browser/client_hints`, `third_party/blink/common/loader` |
 | `ACCEPT_CH` in ALPS | `AcceptCHFrameInterceptor` and `OnAcceptCHFrameReceived`. `//net` hands the frame to `OnConnected` in `TransportInfo`, from `GetAcceptChViaAlps()` | `services/network`, `content/browser/loader/navigation_url_loader_impl.cc` |
 
@@ -192,7 +193,7 @@ Google's servers do send the frame, so this was also checked by hand on 2026-11-
 
 Over the network, a script, image or fetch shows the lines that Blink holds in `ResourceRequest` in the order of its `HTTPHeaderMap`, which is a `WTF::HashMap` that Blink goes through from the first bucket to the last. So the order depends on each name's hash and on the size of the table, which grows with what is in it. It looks random, and it changes with what a server asks for: asking for one more hint can swap two others.
 
-`native/http_header_map.cc` ports that table: `rapidhash` through `CaseFoldingHashReader`, `HashString24`, the probing of `HashTable::insert`, its growth at half full and `Rehash`, which goes through the old table in its own order. What goes in, in order, is `Content-Type`, the hints in the order of `AddClientHintsIfNecessary`, and `User-Agent` from `PrepareRequest`. `Accept` and the rest come later and from elsewhere, so they follow.
+`native/http_header_map.cc` ports that table, with the hash in `native/string_hasher.cc`: `rapidhash` through `CaseFoldingHashReader`, `HashString24`, the probing of `HashTable::insert`, its growth at half full and `Rehash`, which goes through the old table in its own order. What goes in, in order, is `Content-Type`, the hints in the order of `AddClientHintsIfNecessary`, and `User-Agent` from `PrepareRequest`. `Accept` and the rest come later and from elsewhere, so they follow.
 
 Before any of this was written, a script of this same model in Python gave the order of all 40 subresources that Chrome 156 on macOS sent for 8 sets of hints, from none to all of them. The Baselines of `client_hints_*` hold six sets from Windows Chrome, with and without a body, which reach all three sizes the table gets to. `tests/test_client_hints.py` holds two more sets. With no hint added, the native core leaves the Persona's order alone.
 
@@ -203,7 +204,7 @@ Before any of this was written, a script of this same model in Python gave the o
 | How long it keeps what an origin asked for | Until the user clears it, in its profile | As long as the Session lasts. `cookie_file` does not hold it |
 | Delegating hints to another origin | `Permissions-Policy` and `Delegate-CH` from the page | A page has no response that a request can go back to, so a subresource to another origin only gets what goes by default |
 | `<meta http-equiv="accept-ch">` | Read from the HTML | There is no HTML |
-| `rtt`, `downlink` | Measured, with noise for each host | The Persona's values, on every host |
+| `rtt`, `downlink` | Measured, with noise for each host | The estimate of the Session's Machine, which does not change, with Chrome's noise for each host |
 | Viewport sizes | Follow the window | The Persona's values |
 | `width`, `sec-ch-width` | From the layout of an image with a width | Not sent |
 | `Clear-Site-Data` | Also clears cookies and the cache | Only takes back what an origin asked for |

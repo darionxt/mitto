@@ -12,8 +12,8 @@ from typing import cast
 from mitto import _native
 from mitto._arguments import require_path, require_type
 from mitto._cookies import Cookies, write_cookie_file
-from mitto._machine import Machine
-from mitto._native import MEMORY_CACHE, PrivateSettings
+from mitto._machine import Machine, draw_noise_salts
+from mitto._native import MEMORY_CACHE, NetworkQuality, PrivateSettings
 from mitto._persona import load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
 from mitto._timeout import Timeout, to_timeout
@@ -61,6 +61,7 @@ class SessionState:
         require_path("cache", cache, or_none=True)
         self.machine = Machine.draw() if machine is None else machine
         self._persona = load_persona(persona).with_machine(self.machine)
+        salts = draw_noise_salts(self.machine)
         self._timeout = to_timeout(timeout)
         # Before anything that needs closing exists, because this can raise. The working directory may change before the
         # Session closes.
@@ -71,6 +72,12 @@ class SessionState:
             additional_trust_anchors=anchors,
             proxy=proxy,
             http_cache=_http_cache_setting(cache),
+            network_quality=NetworkQuality(
+                http_rtt_ms=self.machine.round_trip_ms,
+                downstream_throughput_kbps=self.machine.throughput_kbps,
+                browser_salt=salts.browser,
+                renderer_salt_key=salts.renderer_key,
+            ),
             **(PrivateSettings() if settings is None else settings),
         )
         self.cookies = Cookies(self.native)

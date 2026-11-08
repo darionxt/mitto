@@ -15,6 +15,7 @@ from mitto import Machine
 from mitto._machine import (
     MACHINE_HINTS,
     client_hints,
+    draw_noise_salts,
     effective_connection_type,
     load_table,
     rounded_downlink,
@@ -301,6 +302,28 @@ def test_draws_spread_over_the_table() -> None:
 def test_the_same_seed_gives_the_same_machine() -> None:
     assert Machine.draw(seed=7) == Machine.draw(seed=7)
     assert Machine.draw(seed=7).seed == 7
+
+
+def test_the_salts_of_the_noise_come_from_the_seed_and_are_ones_that_chrome_draws() -> None:
+    salts = [draw_noise_salts(Machine.draw(seed=seed)) for seed in range(200)]
+
+    assert draw_noise_salts(Machine.draw(seed=7)) == draw_noise_salts(Machine.draw(seed=7, memory=32))
+    assert {one.browser for one in salts} == set(range(1, 22))
+    assert len({one.renderer_key for one in salts}) == 200
+    assert all(re.fullmatch(r"[0-9a-f]{64}", one.renderer_key) for one in salts)
+
+
+def test_a_machine_holds_no_salt_so_that_a_saved_one_saves_none() -> None:
+    assert not any("salt" in field.name for field in dataclasses.fields(Machine))
+
+
+def test_a_machine_with_no_seed_gets_new_salts_each_time() -> None:
+    machine = Machine.named("mitto-0.1")
+    salts = [draw_noise_salts(machine) for _ in range(50)]
+
+    assert all(1 <= one.browser <= 21 for one in salts)
+    assert len({one.renderer_key for one in salts}) == 50
+    assert len({one.browser for one in salts}) > 1
 
 
 def test_a_machine_drawn_with_no_seed_keeps_the_seed_that_draws_it_again() -> None:

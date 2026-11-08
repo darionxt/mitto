@@ -22,9 +22,11 @@ __all__ = [
     "MACHINE_HINTS",
     "ColorScheme",
     "Machine",
+    "NoiseSalts",
     "ReducedMotion",
     "ReducedTransparency",
     "client_hints",
+    "draw_noise_salts",
     "effective_connection_type",
     "rounded_downlink",
     "rounded_rtt",
@@ -115,6 +117,11 @@ _WEIGHT = "weight"
 
 # The seed of a Machine that a caller gives none for: as many bits as a seed needs to be its own.
 _SEED_BITS = 64
+
+# The browser process of Chrome draws its salt for the noise on rtt and downlink from 1 to 21, in
+# content/browser/client_hints/client_hints.cc. The native core works out the salt of each renderer process from a key.
+_BROWSER_SALTS = 21
+_RENDERER_SALT_KEY_BYTES = 32
 
 _MITTO_0_1 = "mitto-0.1"
 
@@ -264,10 +271,38 @@ class Machine:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class NoiseSalts:
+    """The salts of the noise that one run of Chrome adds to rtt and downlink for each host.
+
+    Attributes:
+        browser: The salt of the browser process, from 1 to 21, which the noise of a navigation takes.
+        renderer_key: What the native core works out the salt of the renderer process of each site from, from 1 to 20,
+            which the noise of a script, image or fetch takes.
+    """
+
+    browser: int
+    renderer_key: str
+
+
+def draw_noise_salts(machine: Machine) -> NoiseSalts:
+    """Return the salts of a run of Chrome on `machine`: from its seed, or at random for a Machine with none.
+
+    Chrome draws them again each time it starts, so they are not part of the Machine, and a Session draws them each time
+    it opens. The same seed gives the same salts, so that the same Machine sends the same values again.
+    """
+    if machine.seed is None:
+        return NoiseSalts(
+            browser=1 + secrets.randbelow(_BROWSER_SALTS), renderer_key=secrets.token_hex(_RENDERER_SALT_KEY_BYTES)
+        )
+    renderer_key = _point(machine.seed, "renderer_salt_key").to_bytes(_RENDERER_SALT_KEY_BYTES).hex()
+    return NoiseSalts(browser=1 + _point(machine.seed, "browser_salt") % _BROWSER_SALTS, renderer_key=renderer_key)
+
+
 def client_hints(machine: Machine) -> dict[str, str]:
     """Return the value of each client hint that follows the machine, by lower-case name, as Chrome works it out.
 
-    rtt and downlink have Chrome's cap and rounding, and no noise for the host yet.
+    rtt and downlink have Chrome's cap and rounding but no noise, which the native core adds on each hop, for its host.
     """
     memory = str(machine.memory)
     dpr = _number_text(machine.scale)

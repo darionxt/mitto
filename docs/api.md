@@ -58,7 +58,7 @@ assert "Chrome/155" in sent["User-Agent"]
 
 #### `machine=`
 
-The **Machine** to claim: the computer whose memory, display, window, network, user settings and Windows version go in [the client hints that follow the machine](persona.md#what-they-say), once a server asks for them. The default draws one with [`Machine.draw()`](#machinedraw), so that each Session claims a machine of its own. `rtt` and `downlink` have Chrome's rounding, and no noise for each host yet. A value that is neither a [`Machine`](#machine-1) nor `None` raises a `TypeError`.
+The **Machine** to claim: the computer whose memory, display, window, network, user settings and Windows version go in [the client hints that follow the machine](persona.md#what-they-say), once a server asks for them. The default draws one with [`Machine.draw()`](#machinedraw), so that each Session claims a machine of its own. `rtt` and `downlink` also get [Chrome's noise for each host](persona.md#the-noise-on-rtt-and-downlink), from salts that the Session draws when it opens, from the Machine's seed if it has one. A value that is neither a [`Machine`](#machine-1) nor `None` raises a `TypeError`.
 
 ```python
 machine = mitto.Machine.draw(seed=7, memory=16)
@@ -260,8 +260,8 @@ A value of a type it does not take raises a `TypeError` that names it, and `True
 | `scale` | `float` | The scale in Windows' display settings, such as 1.25 for 125%: 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5 or 5. `dpr` says it |
 | `viewport_width` | `int` | The width of the window's page area, in device-independent pixels, which are the display's pixels over the scale. At most the display's |
 | `viewport_height` | `int` | The height of the window's page area, in device-independent pixels. At most the display's |
-| `round_trip_ms` | `int` | The round trip of HTTP that Chrome's network quality estimator has, in milliseconds. `rtt` is it at most 3000 and rounded to 50, and `ect` follows from it |
-| `throughput_kbps` | `int` | The throughput that the estimator has, in kbps. `downlink` is it at most 10,000 and rounded to 50, in Mbps |
+| `round_trip_ms` | `int` | The round trip of HTTP that Chrome's network quality estimator has, in milliseconds. `rtt` is it with Chrome's noise for the host, at most 3000 and rounded to 50, and `ect` follows from it with no noise |
+| `throughput_kbps` | `int` | The throughput that the estimator has, in kbps. `downlink` is it with the same noise, at most 10,000 and rounded to 50, in Mbps |
 | `color_scheme` | `ColorScheme` | `"light"` or `"dark"` |
 | `reduced_motion` | `ReducedMotion` | `"no-preference"`, or `"reduce"` with Windows' animation effects off |
 | `reduced_transparency` | `ReducedTransparency` | `"no-preference"`, or `"reduce"` with Windows' transparency effects off |
@@ -311,7 +311,7 @@ assert mitto.Machine.draw(seed=7, memory=16) == machine
 Machine.named(name: str) -> Self
 ```
 
-Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills it on Windows 11 24H2, an `rtt` of 50 and a `downlink` of 10, and the settings that Windows comes with. Another name raises a `ValueError`, and anything but text a `TypeError`.
+Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills it on Windows 11 24H2, a round trip of 50 ms and a throughput of 10,000 kbps, and the settings that Windows comes with. mitto 0.1 sent that network as an `rtt` of 50 and a `downlink` of 10 to every host, and with Chrome's noise the `downlink` is now from 9 to 10, by host. Another name raises a `ValueError`, and anything but text a `TypeError`.
 
 ```python
 assert mitto.Machine.named("mitto-0.1").viewport_height == 945

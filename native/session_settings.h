@@ -9,6 +9,7 @@
 
 #include "base/files/file_path.h"
 #include "mitto/ignore_errors_cert_verifier.h"
+#include "mitto/network_quality.h"
 #include "mitto/socks5_auth_exchange.h"
 #include "net/base/auth.h"
 #include "net/base/ip_endpoint.h"
@@ -68,6 +69,10 @@ struct SessionSettings {
   // What each origin counts as having said in ALPS, where //net would have read
   // it. No server in the tests can say anything there. For tests only.
   std::map<url::Origin, std::string> accept_ch_via_alps;
+
+  // What rtt and downlink are worked out from on each hop, or nothing, which
+  // leaves the values of their lines.
+  std::optional<NetworkQuality> network_quality;
 
   // Whether the Session keeps responses in memory.
   bool http_cache_in_memory = false;

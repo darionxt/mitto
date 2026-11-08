@@ -151,9 +151,11 @@ FetchRules::Restart::~Restart() = default;
 
 FetchRules::FetchRules(FetchParams params,
                        const GURL& url,
-                       ClientHintsStore& client_hints_store)
+                       ClientHintsStore& client_hints_store,
+                       const NetworkQuality* network_quality)
     : params_(std::move(params)),
       client_hints_store_(client_hints_store),
+      network_quality_(network_quality),
       original_url_(url) {
   if (params_.initiator) {
     page_ = *params_.initiator;
@@ -256,10 +258,26 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
     }
     if (!ShouldAddClientHint(url, header.key, no_additional_hints)) {
       request.RemoveRequestHeaderByName(header.key);
-    } else if (params_.mode == RequestMode::kNavigate) {
+      continue;
+    }
+    if (params_.mode == RequestMode::kNavigate) {
       initial_client_hints_.insert(base::ToLowerASCII(header.key));
-    } else if (!IsClientHintSentByDefault(header.key)) {
+      request.SetExtraRequestHeaderByName(
+          header.key, NavigationClientHintValue(header.key, header.value, url),
+          /*overwrite=*/true);
+      continue;
+    }
+    if (!IsClientHintSentByDefault(header.key)) {
       added_a_hint_that_is_not_sent_by_default = true;
+    }
+    // A subresource's page has a renderer process of its own site.
+    if (network_quality_ && IsNetworkQualityHint(header.key)) {
+      request.SetExtraRequestHeaderByName(
+          header.key,
+          GetSubresourceNetworkQualityHint(*network_quality_, header.key,
+                                           net::SchemefulSite(*initiator_),
+                                           url),
+          /*overwrite=*/true);
     }
   }
 
@@ -290,6 +308,15 @@ bool FetchRules::ShouldAddClientHint(
          (sent_by_default ||
           (initiator_->IsSameOriginWith(url) &&
            client_hints_store_->IsEnabled(*initiator_, name)));
+}
+
+std::string FetchRules::NavigationClientHintValue(std::string_view name,
+                                                  const std::string& value,
+                                                  const GURL& url) const {
+  if (!network_quality_ || !IsNetworkQualityHint(name)) {
+    return value;
+  }
+  return GetNavigationNetworkQualityHint(*network_quality_, name, url);
 }
 
 void FetchRules::ParseAndPersistAcceptCHForNavigation(
@@ -379,7 +406,8 @@ std::optional<FetchRules::Restart> FetchRules::OnConnected(
   for (const auto& [name, value] : client_hints_) {
     if (ShouldAddClientHint(request.url(), name, *frame_hints) &&
         !headers.HasHeader(name)) {
-      restart.headers.SetHeader(name, value);
+      restart.headers.SetHeader(
+          name, NavigationClientHintValue(name, value, request.url()));
       adds_a_hint = true;
     }
   }
@@ -449,8 +477,9 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   client_hints_of_restart_.clear();
   for (const auto& [name, value] : client_hints_) {
     if (ShouldAddClientHint(original_url_, name, no_additional_hints)) {
-      restart.headers.SetHeader(name, value);
-      client_hints_of_restart_.emplace_back(name, value);
+      std::string sent = NavigationClientHintValue(name, value, original_url_);
+      restart.headers.SetHeader(name, sent);
+      client_hints_of_restart_.emplace_back(name, std::move(sent));
     }
   }
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
@@ -507,13 +536,16 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
   // NavigationRequest::OnRequestRedirected() in the browser process: every
   // client hint goes, and those that the next URL should have come back through
   // `modified_headers`, which //net merges last, so they land after the rest.
+  // rtt and downlink are worked out again, for the next URL's host.
   const EnabledClientHints no_additional_hints;
   if (params_.mode == RequestMode::kNavigate) {
     // ThrottlingURLLoader::FollowRedirect() goes on from a restart with what
     // that said still in `headers_update_params_`, which it clears only after
     // the next real redirect. So on that hop those hints come first, and go
     // whether or not the next URL's origin has asked for them. Real Chrome
-    // shows this.
+    // shows this. What the redirect says merges over them, so a hint that
+    // both have keeps the place of the restart's and takes the value of the
+    // redirect's.
     if (net::IsUrlPotentiallyTrustworthy(new_url)) {
       for (const auto& [name, value] : client_hints_of_restart_) {
         modified_headers.SetHeader(name, value);
@@ -523,16 +555,18 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
     for (const auto& [name, value] : client_hints_) {
       removed_headers.push_back(name);
       if (ShouldAddClientHint(new_url, name, no_additional_hints)) {
-        modified_headers.SetHeader(name, value);
+        modified_headers.SetHeader(
+            name, NavigationClientHintValue(name, value, new_url));
       }
     }
   } else {
-    // A subresource's hints come from Blink at its start only. blink::
-    // FindClientHintsToRemove() in ResourceLoader::WillFollowRedirect() takes
-    // away what the page's permissions policy does not allow the next URL,
-    // which by default leaves its own origin everything, and any other what
-    // goes by default. MaybeRemoveSecHeaders() below takes those at a URL that
-    // is not potentially trustworthy.
+    // A subresource's hints come from Blink at its start only, with rtt and
+    // downlink for the host it started at. blink::FindClientHintsToRemove()
+    // in ResourceLoader::WillFollowRedirect() takes away what the page's
+    // permissions policy does not allow the next URL, which by default leaves
+    // its own origin everything, and any other what goes by default.
+    // MaybeRemoveSecHeaders() below takes those at a URL that is not
+    // potentially trustworthy.
     for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
          request.extra_request_headers().GetHeaderVector()) {
       if (IsClientHintHeader(header.key) && !IsFixed(header.key) &&
