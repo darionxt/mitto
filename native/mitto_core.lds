@@ -14,10 +14,12 @@
     mitto_session_create;
     mitto_session_delete_cookies;
     mitto_session_destroy;
+    mitto_session_end_waits;
     mitto_session_event_fd;
     mitto_session_list_cookies;
     mitto_session_next_ready_request;
     mitto_session_set_cookies;
+    mitto_session_wait_for_event;
   local:
     *;
 };

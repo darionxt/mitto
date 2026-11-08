@@ -12,7 +12,9 @@ _mitto_request_write_body
 _mitto_session_create
 _mitto_session_delete_cookies
 _mitto_session_destroy
+_mitto_session_end_waits
 _mitto_session_event_fd
 _mitto_session_list_cookies
 _mitto_session_next_ready_request
 _mitto_session_set_cookies
+_mitto_session_wait_for_event

@@ -510,10 +510,10 @@ On Linux the file is `libmitto_core.so`. On Windows, in PowerShell:
 
 ```powershell
 $env:MITTO_NATIVE_LIBRARY = "$env:MITTO_WORKSPACE\chromium-<tag>\src\out\mitto\mitto_core.dll"
-uv run pytest --ignore=tests/test_async_session.py --ignore=tests/test_asyncio_load.py -k "not asyncio"
+uv run pytest
 ```
 
-The asyncio API does not run on Windows yet, because a Session has no file descriptor there for the event loop to watch, so that command leaves its tests out.
+The tests of the asyncio API go through each way that an event loop can hear of a Session's events on the Host: on macOS and Linux by watching the Session's file descriptor and through the thread that Windows has instead, and on Windows on `ProactorEventLoop` and on `SelectorEventLoop`.
 
 Those tests include the **Parity Checks**, described in [parity.md](parity.md).
 

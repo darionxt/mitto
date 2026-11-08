@@ -161,9 +161,10 @@ def silent_port() -> Iterator[int]:
 @contextmanager
 def takes_at_least(seconds: float) -> Generator[None]:
     """Check that the block takes that long at least, and far less than LONG_SECONDS."""
-    start = time.monotonic()
+    # perf_counter(), since monotonic() on Windows moves every 15.6 ms, and so reads a timer of the native core as short.
+    start = time.perf_counter()
     yield
-    elapsed = time.monotonic() - start
+    elapsed = time.perf_counter() - start
     assert seconds <= elapsed < WELL_BEFORE_LONG_SECONDS
 
 
