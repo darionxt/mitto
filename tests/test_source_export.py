@@ -19,7 +19,7 @@ import pytest
 
 from tools.workspace import export
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="these tests make symlinks and file modes")
+needs_file_modes = pytest.mark.skipif(sys.platform == "win32", reason="Windows keeps no file modes")
 
 
 def write(root: Path, path: str, content: str | bytes = "") -> Path:
@@ -543,6 +543,7 @@ def test_merge_takes_the_first_copy_of_a_per_host_file(tmp_path: Path) -> None:
     assert merged["build/config/gclient_args.gni"].read_text() == "checkout_openxr = true\n"
 
 
+@needs_file_modes
 def test_archive_is_reproducible_and_keeps_modes_and_links(tmp_path: Path) -> None:
     tool = write(tmp_path, "slice/tool.py", "#!/usr/bin/env python3\n")
     tool.chmod(0o755)
@@ -581,6 +582,7 @@ def test_archive_is_reproducible_and_keeps_modes_and_links(tmp_path: Path) -> No
     assert not (tmp_path / "first.tar.xz.partial").exists()
 
 
+@needs_file_modes
 def test_a_file_from_a_slice_without_modes_is_not_executable(tmp_path: Path) -> None:
     linux_tool = write(tmp_path, "linux/src/tool.py")
     windows_tool = write(tmp_path, "win/src/build/toolchain/win/tool_wrapper.py")
@@ -602,6 +604,7 @@ def zip_entry(name: str, mode: int) -> zipfile.ZipInfo:
     return info
 
 
+@needs_file_modes
 def test_a_cipd_package_keeps_modes_and_links(tmp_path: Path) -> None:
     packed = io.BytesIO()
     with zipfile.ZipFile(packed, "w") as archive:

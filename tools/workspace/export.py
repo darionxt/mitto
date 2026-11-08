@@ -624,6 +624,9 @@ def checkout_of(workspace: Path, tag: str) -> Path:
 
 def same_tree(first: Path, second: Path) -> bool:
     """Says whether two directories hold the same files with the same contents."""
+    # filecmp remembers a result by each file's size and time, and Windows can
+    # give a file that changed since the same time.
+    filecmp.clear_cache()
     listing = {str(path.relative_to(first)) for path in _files_under(first)}
     if listing != {str(path.relative_to(second)) for path in _files_under(second)}:
         return False
@@ -887,7 +890,7 @@ def merge_slices(slices: Iterable[Path]) -> dict[str, Path]:
     for slice_dir in slices:
         root = slice_dir / "src"
         for file in _files_and_links(root):
-            path = str(file.relative_to(root))
+            path = file.relative_to(root).as_posix()
             if path not in merged:
                 merged[path] = file
             elif not _same_file(merged[path], file) and path not in PER_HOST_FILES:
