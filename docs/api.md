@@ -67,6 +67,8 @@ with mitto.Session(machine=machine) as session:
     assert session.machine is machine
 ```
 
+A Session whose [`cookie_file`](#cookie_file) holds a Machine claims that one in place of a draw, and a `machine=` that differs from it raises a `ValueError`.
+
 #### `accept_language=`
 
 The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`, and one that is neither text nor `None` a `TypeError`.
@@ -98,16 +100,20 @@ What a request's [`timeout=`](#timeout-1) defaults to: a number is the total tim
 
 #### `cookie_file=`
 
-A file to keep the cookies in. They load from it now, if it exists, and `close()` saves them to it, as [`Cookies.save()`](#cookiessave) does. A crash loses what came after the last save, which a caller can make more often with `session.cookies.save(path)`. Chrome writes its store every 30 seconds. The default keeps them only until the Session closes. The file holds cookies alone, so what origins asked for in client hints starts over with each Session, and a Session that loads it claims the Machine that `machine=` gives or draws.
+A file to keep the cookies in, with the Session's [Machine](#machine-1). They load from it now, if it exists, and the Session claims the Machine it holds, so that a Session that comes back is the same machine. `close()` saves them to it, as [`Cookies.save()`](#cookiessave) does. A crash loses what came after the last save, which a caller can make more often with `session.cookies.save(path)`. Chrome writes its store every 30 seconds. The default keeps them only until the Session closes. What origins asked for in client hints is not in the file, so it starts over with each Session.
 
-A file that does not hold cookies this Session can use raises a `ValueError`, because closing the Session would otherwise overwrite it. A value that is neither text, a path nor `None` raises a `TypeError`.
+A file from mitto 0.1 holds no Machine, so a Session that loads it claims the one every Session of mitto 0.1 claimed, [`Machine.named("mitto-0.1")`](#machinenamed). `close()` saves it in the new version, which mitto 0.1 cannot read.
+
+A file that does not hold cookies this Session can use, or holds another Machine than `machine=` gives, raises a `ValueError`, because closing the Session would otherwise overwrite it. A value that is neither text, a path nor `None` raises a `TypeError`.
 
 ```python
 with mitto.Session(cookie_file="cookies.json") as session:
     session.get("https://example.test/set-cookie?seen=1")
+    machine = session.machine
 
 with mitto.Session(cookie_file="cookies.json") as session:
     assert session.cookies.get("seen").value == "1"
+    assert session.machine == machine
 ```
 
 #### `proxy=`
@@ -163,7 +169,7 @@ The [cookies](#cookies-1), which `//net` sets from responses and sends with requ
 Session.machine -> Machine
 ```
 
-The [Machine](#machine-1) this Session claims, which `machine=` gave or which was drawn for it.
+The [Machine](#machine-1) this Session claims, which `cookie_file` or `machine=` gave or which was drawn for it.
 
 #### `Session.close()`
 
@@ -785,7 +791,7 @@ Delete every cookie, and return how many went.
 Cookies.save(path: str | os.PathLike[str]) -> None
 ```
 
-Write all the cookies to a JSON file that only its owner can read or write. The values are not encrypted. Session cookies are written too, as a browser does that restores its last session. A crash during this call leaves the file as it was. It raises an `OSError` if the file cannot be written, and a `TypeError` if `path` is neither text nor a path.
+Write all the cookies, with the Session's Machine, to a JSON file that only its owner can read or write. The values are not encrypted. Session cookies are written too, as a browser does that restores its last session. A crash during this call leaves the file as it was. It raises an `OSError` if the file cannot be written, and a `TypeError` if `path` is neither text nor a path.
 
 #### `Cookies.load()`
 
@@ -793,7 +799,11 @@ Write all the cookies to a JSON file that only its owner can read or write. The 
 Cookies.load(path: str | os.PathLike[str]) -> None
 ```
 
-Add the cookies of a file from `save()`, each with the attributes it had there, replacing any of the same name. It raises an `OSError` if the file cannot be read, such as a `FileNotFoundError`, and a `ValueError` if the native core refuses what the file holds, in which case no cookie is added. A `path` that is neither text nor a path raises a `TypeError`.
+Add the cookies of a file from `save()`, each with the attributes it had there, replacing any of the same name.
+
+The file has to hold the Machine that this Session claims, since a server that sees the same cookies from another machine can tell. A Session claims a file's Machine when it opens with [`cookie_file=`](#cookie_file). A file from mitto 0.1 holds `Machine.named("mitto-0.1")`. To move cookies to a Session of another Machine all the same, `set()` each of them there.
+
+It raises an `OSError` if the file cannot be read, such as a `FileNotFoundError`, and a `ValueError` if the file holds another Machine or the native core refuses what it holds, in which case no cookie is added. A `path` that is neither text nor a path raises a `TypeError`.
 
 ### `Cookie`
 
@@ -1084,7 +1094,7 @@ The [cookies](#asynccookies). One that has not opened has none yet, which raises
 AsyncSession.machine -> Machine
 ```
 
-The Machine, as [`Session.machine`](#sessionmachine) says. One that has not opened has none yet, which raises a `RuntimeError`, and `machine=` draws one when it opens.
+The Machine, as [`Session.machine`](#sessionmachine) says. One that has not opened has none yet, which raises a `RuntimeError`, and it claims one when it opens, from `cookie_file` or `machine=`, or by a draw.
 
 #### `AsyncSession.open()`
 

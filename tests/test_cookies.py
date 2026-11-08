@@ -45,6 +45,9 @@ MAX_AGE_SECONDS = 400 * 24 * 60 * 60
 # A cookie's times are set a moment apart from what a test reads from its clock.
 CLOCK_SLACK = timedelta(minutes=5)
 ANY_TIME = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC)
+# The Machine of each Session here, unless a test says otherwise, so that one Session can load what another saved.
+MACHINE_SEED = 149
+MACHINE = mitto.Machine.draw(seed=MACHINE_SEED)
 
 
 class CookieHandler(http.server.BaseHTTPRequestHandler):
@@ -97,8 +100,9 @@ def servers() -> Iterator[Servers]:
         http_server.shutdown()
 
 
-def new_session(cookie_file: Path | str | None = None) -> mitto.Session:
+def new_session(cookie_file: Path | str | None = None, *, machine: mitto.Machine | None = MACHINE) -> mitto.Session:
     return mitto.Session(
+        machine=machine,
         timeout=TIMEOUT_SECONDS,
         cookie_file=cookie_file,
         _settings=PrivateSettings(
@@ -126,6 +130,18 @@ def stored(line: str, *, url: Callable[[Servers], str] = Servers.https, servers:
     with new_session() as session:
         session.get(setting(url(servers), line))
         return list(session.cookies)
+
+
+def file_of(cookies: object, *, machine: object = None, **changes: object) -> bytes:
+    """Return a file of cookies of version 2 that holds `cookies` and MACHINE, or `machine`, with `changes` made."""
+    saved = dataclasses.asdict(MACHINE) if machine is None else machine
+    return json.dumps({"version": 2, "machine": saved, "cookies": cookies, **changes}).encode()
+
+
+def machine_with(**changes: object) -> dict[str, object]:
+    """Return MACHINE as a file holds it, with `changes` made, where a value of ... leaves its field out."""
+    saved = {**dataclasses.asdict(MACHINE), **changes}
+    return {name: value for name, value in saved.items() if value is not ...}
 
 
 # What //net does with a server's cookies.
@@ -1225,7 +1241,7 @@ def test_loading_a_file_that_is_not_there_raises(tmp_path: Path) -> None:
 @pytest.mark.usefixtures("native_library")
 def test_loading_what_is_not_cookies_names_the_file_and_adds_nothing(tmp_path: Path) -> None:
     file = tmp_path / "cookies.json"
-    file.write_text('{"version": 1, "cookies": [{"name": "a", "value": "secret", "domain": "a.test"}, {}]}')
+    file.write_bytes(file_of([{"name": "a", "value": "secret", "domain": "a.test"}, {}]))
 
     with new_session() as session:
         with pytest.raises(ValueError, match=r"cookies\.json") as caught:
@@ -1241,7 +1257,7 @@ def test_a_file_with_a_cookie_only_the_store_refuses_changes_nothing(tmp_path: P
     file = tmp_path / "cookies.json"
     good = {"name": "a", "value": "new", "domain": HOST}
     bad = {"name": "b", "value": "1", "domain": HOST, "same_site": "none"}
-    file.write_text(json.dumps({"version": _native.COOKIES_VERSION, "cookies": [good, bad]}))
+    file.write_bytes(file_of([good, bad]))
 
     with new_session() as session:
         session.cookies.set(Cookie("a", "old", domain=HOST))
@@ -1313,6 +1329,107 @@ def test_saving_to_a_directory_that_is_not_there_raises(tmp_path: Path) -> None:
         session.cookies.save(tmp_path / "missing" / "cookies.json")
 
 
+@pytest.mark.usefixtures("native_library")
+def test_a_saved_file_holds_the_machine_beside_the_cookies(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST))
+        session.cookies.save(file)
+
+    saved = json.loads(file.read_text())
+    assert saved.keys() == {"version", "machine", "cookies"}
+    assert saved["version"] == 2
+    assert saved["machine"] == dataclasses.asdict(MACHINE)
+    assert [cookie["name"] for cookie in saved["cookies"]] == ["a"]
+
+
+@pytest.mark.usefixtures("native_library")
+def test_loading_a_file_of_another_machine_raises_and_adds_nothing(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST))
+        session.cookies.save(file)
+
+    with new_session(machine=mitto.Machine.draw(seed=MACHINE_SEED + 1)) as session:
+        with pytest.raises(ValueError, match=r"cookies\.json holds the cookies of another Machine"):
+            session.cookies.load(file)
+
+        assert len(session.cookies) == 0
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_file_from_mitto_0_1_loads_in_a_session_of_its_machine(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST))
+        # What mitto 0.1 saved: the native core's list, with no Machine.
+        file.write_bytes(session._native.list_cookies())  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(ValueError, match="another Machine"):
+            session.cookies.load(file)
+
+    with new_session(machine=mitto.Machine.named("mitto-0.1")) as session:
+        session.cookies.load(file)
+
+        assert [cookie.name for cookie in session.cookies] == ["a"]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    "contents",
+    [
+        b'{"version": 1, "cookies": [{"name": "a", "value": "secret", "domain": "a.test"}, {}]}',
+        # The native core reads a file of version 1 as it is, and it knows of no Machine.
+        json.dumps({"version": 1, "machine": dataclasses.asdict(MACHINE), "cookies": []}).encode(),
+    ],
+)
+def test_a_file_of_version_1_that_the_native_core_refuses_is_named(tmp_path: Path, contents: bytes) -> None:
+    file = tmp_path / "cookies.json"
+    file.write_bytes(contents)
+
+    with new_session(machine=mitto.Machine.named("mitto-0.1")) as session:
+        with pytest.raises(ValueError, match=r"cookies\.json") as caught:
+            session.cookies.load(file)
+
+        assert "secret" not in str(caught.value.__cause__)
+        assert len(session.cookies) == 0
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    "contents",
+    [
+        file_of([], version=3),
+        file_of([], version=True),
+        file_of([], version=2.0),
+        json.dumps({"version": 2, "cookies": []}).encode(),
+        json.dumps({"version": 2, "machine": dataclasses.asdict(MACHINE)}).encode(),
+        file_of([], other=1),
+        file_of([], machine=machine_with(seed=...)),
+        file_of([], machine=machine_with(memory=...)),
+        file_of([], machine=machine_with(window=1)),
+        file_of([], machine=machine_with(memory=7)),
+        file_of([], machine=machine_with(memory="8")),
+        file_of([], machine=machine_with(seed=True)),
+        file_of([], machine=[]),
+        file_of({}),
+        b"[]",
+        b"[" * 100_000 + b"]" * 100_000,
+    ],
+)
+def test_a_file_that_is_not_one_of_cookies_and_a_machine_is_refused_and_named(tmp_path: Path, contents: bytes) -> None:
+    file = tmp_path / "cookies.json"
+    file.write_bytes(contents)
+
+    with new_session() as session:
+        with pytest.raises(ValueError, match=r"cookies\.json does not hold cookies"):
+            session.cookies.load(file)
+
+        assert len(session.cookies) == 0
+    with pytest.raises(ValueError, match=r"cookies\.json does not hold cookies"):
+        new_session(file, machine=None)
+    assert file.read_bytes() == contents
+
+
 # Session(cookie_file=...).
 
 
@@ -1331,6 +1448,102 @@ def test_a_cookie_file_starts_empty_saves_at_close_and_loads_at_open(servers: Se
 
     with new_session(file) as session:
         assert len(session.cookies) == 0
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    "machine",
+    [
+        MACHINE,
+        mitto.Machine.draw(seed=0, scale=1.25),
+        mitto.Machine.draw(seed=-1),
+        mitto.Machine.draw(seed=2**80),
+        mitto.Machine.named("mitto-0.1"),
+        dataclasses.replace(MACHINE, seed=None),
+    ],
+)
+def test_a_session_with_a_cookie_file_claims_the_machine_it_holds_exactly(
+    tmp_path: Path, machine: mitto.Machine
+) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session(file, machine=machine) as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST))
+
+    with new_session(file, machine=None) as session:
+        claimed = session.machine
+        assert [cookie.name for cookie in session.cookies] == ["a"]
+
+    assert claimed == machine
+    # The same types too, so that each hint is written as it was.
+    assert repr(claimed) == repr(machine)
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_session_with_a_cookie_file_that_is_not_there_yet_draws_a_machine_and_saves_it(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session(file, machine=None) as session:
+        drawn = session.machine
+
+    assert drawn.seed is not None
+    with new_session(file, machine=None) as session:
+        assert session.machine == drawn
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_machine_equal_to_its_cookie_files_is_the_one_a_session_claims(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session(file):
+        pass
+
+    machine = mitto.Machine.draw(seed=MACHINE_SEED)
+    with new_session(file, machine=machine) as session:
+        assert session.machine is machine
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize(
+    "machine",
+    [
+        mitto.Machine.draw(seed=MACHINE_SEED + 1),
+        # The same values with no seed, from which a later mitto could not draw what this one does not know.
+        dataclasses.replace(MACHINE, seed=None),
+        dataclasses.replace(MACHINE, color_scheme="light" if MACHINE.color_scheme == "dark" else "dark"),
+        mitto.Machine.named("mitto-0.1"),
+    ],
+)
+def test_a_machine_that_differs_from_its_cookie_files_stops_the_session_and_the_file_stays(
+    tmp_path: Path, machine: mitto.Machine
+) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session(file):
+        pass
+    contents = file.read_bytes()
+
+    with pytest.raises(ValueError, match=r"cookies\.json holds the cookies of another Machine than `machine` gives"):
+        new_session(file, machine=machine)
+
+    assert file.read_bytes() == contents
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_cookie_file_from_mitto_0_1_loads_as_its_machine_and_saves_as_the_new_version(
+    servers: Servers, tmp_path: Path
+) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session() as session:
+        session.get(setting(servers.https(), "a=1; Max-Age=100"))
+        # What mitto 0.1 saved: the native core's list, with no Machine.
+        file.write_bytes(session._native.list_cookies())  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="another Machine"):
+        new_session(file)
+
+    with new_session(file, machine=None) as session:
+        assert session.machine == mitto.Machine.named("mitto-0.1")
+        assert sent(session, servers.https()) == "a=1"
+
+    saved = json.loads(file.read_text())
+    assert saved["version"] == 2
+    assert saved["machine"] == dataclasses.asdict(mitto.Machine.named("mitto-0.1"))
 
 
 @pytest.mark.usefixtures("native_library")
@@ -1429,7 +1642,7 @@ def test_a_crash_loses_only_what_came_after_the_last_save(tmp_path: Path) -> Non
     script = f"""
 import os
 import mitto
-session = mitto.Session(cookie_file={str(file)!r})
+session = mitto.Session(cookie_file={str(file)!r}, machine=mitto.Machine.draw(seed={MACHINE_SEED}))
 session.cookies.set(mitto.Cookie("saved", "1", domain={HOST!r}))
 session.cookies.save({str(file)!r})
 session.cookies.set(mitto.Cookie("lost", "1", domain={HOST!r}))

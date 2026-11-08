@@ -384,7 +384,7 @@ A source's "Other", StatCounter's 800×600 and its sizes that only another syste
 
 Who writes each value: a Session writes its Machine's values into the Persona's lines when it opens, in place of `<machine>`, as the Persona's own values go. `rtt` and `downlink` change with the host, so the native core will work them out on each hop from the estimate and the salts. That takes both hashes of the table above. `native/http_header_map.cc` already ports the rapidhash under Blink's. Until then they go with Chrome's rounding and no noise.
 
-The cookie file today is what the native core lists, `{"version": 1, "cookies": [...]}`, and the native core refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the Python layer would write a new version of the file with the machine beside the cookies, and hand the native core the cookies alone.
+The native core lists the cookies as `{"version": 1, "cookies": [...]}`, and refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the Python layer writes the cookie file as version 2, with the machine beside the cookies, and hands the native core the cookies alone, as [Saved cookies](parity.md#saved-cookies) says.
 
 ### What happens to Parity Checks
 

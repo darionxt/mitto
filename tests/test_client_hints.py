@@ -5,8 +5,12 @@ which come from Chrome's source, as the native core's client_hints.cc and fetch_
 servers, so a test can use names that say how they relate.
 """
 
+import dataclasses
 import http.server
+import json
 import ssl
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -28,6 +32,7 @@ pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
 PRIVATE_CERTIFICATE = Path(__file__).parent / "data" / "private_certificate.pem"
 PRIVATE_CERTIFICATE_SPKI_HASH = "nVtNMMWlVAx2QAb+AXEK53cS8Fm8sDeKSomcP5jydFk="
+SAVED_SESSION_CLIENT = Path(__file__).with_name("saved_session_client.py")
 
 HOST = "www.example.test"
 SAME_SITE = "other.example.test"
@@ -178,12 +183,17 @@ def servers() -> Iterator[Servers]:
 
 
 def new_session(
-    persona: str = CHROME_157_WINDOWS, *, alps: dict[str, str] | None = None, machine: mitto.Machine | None = None
+    persona: str = CHROME_157_WINDOWS,
+    *,
+    alps: dict[str, str] | None = None,
+    machine: mitto.Machine | None = None,
+    cookie_file: Path | None = None,
 ) -> mitto.Session:
     return mitto.Session(
         persona=persona,
         machine=machine,
         timeout=TIMEOUT_SECONDS,
+        cookie_file=cookie_file,
         _settings=PrivateSettings(
             ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH],
             host_resolver_rules="MAP * 127.0.0.1",
@@ -1046,3 +1056,36 @@ def test_the_machine_of_mitto_0_1_sends_what_every_session_of_mitto_0_1_sent(ser
         "sec-ch-viewport-width": "1920",
         "viewport-width": "1920",
     }
+
+
+def test_a_session_saved_and_loaded_in_another_process_sends_the_same_values(
+    servers: Servers, tmp_path: Path, both_apis: str
+) -> None:
+    cookie_file = tmp_path / "cookies.json"
+    with new_session(cookie_file=cookie_file) as session:
+        session.cookies.set(mitto.Cookie("a", "1", domain=HOST))
+        page = asks(servers, session, hints=EVERY_HINT)
+        session.get(servers.https())
+        machine = session.machine
+
+    claimed = subprocess.run(
+        [
+            sys.executable,
+            SAVED_SESSION_CLIENT,
+            cookie_file,
+            PRIVATE_CERTIFICATE_SPKI_HASH,
+            page,
+            servers.https(),
+            *(["--asyncio"] if both_apis == "asyncio" else []),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=TIMEOUT_SECONDS * 2,
+    ).stdout
+
+    assert json.loads(claimed) == dataclasses.asdict(machine)
+    first, again = servers.received[1], servers.received[3]
+    assert machine_hints(again) == machine_hints(first)
+    assert again.headers == first.headers
+    assert again.header("cookie") == "a=1"

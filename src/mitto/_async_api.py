@@ -312,7 +312,7 @@ class AsyncSession:
 
         Args:
             persona: As for Session().
-            machine: As for Session(). A Machine is drawn when this opens.
+            machine: As for Session(). The Machine is drawn, or read from `cookie_file`, when this opens.
             accept_language: As for Session().
             additional_trust_anchors: As for Session().
             timeout: As for Session().
@@ -493,7 +493,7 @@ class AsyncSession:
     async def _open(self, loop: asyncio.AbstractEventLoop) -> _Opened:
         arguments, self._arguments = self._arguments, {}
         state, fd = await _create_off_the_loop(arguments)
-        return _Opened(state, _Events(state.native, fd, loop), AsyncCookies(state.native))
+        return _Opened(state, _Events(state.native, fd, loop), AsyncCookies(state.native, state.machine))
 
     def _start_closing(self) -> asyncio.Future[None]:
         """Return a future of the end of the close.

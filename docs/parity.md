@@ -256,7 +256,11 @@ A `fetch` has the `credentials_mode` of a page's `fetch()` that does not ask for
 
 ### Saved cookies
 
-`session.cookies.save(path)` writes what the C API lists to a JSON file, in the Python layer. That keeps SQLite out of the build. The file has mode 0600 whatever the umask, and the values are not encrypted. A new file takes the old one's place by a rename, so a crash leaves one or the other whole. `Session(cookie_file=path)` loads when it opens and saves when it closes, so a crash loses what came after the last save. A file that holds anything else stops the Session from opening, because closing it would otherwise overwrite that file.
+`session.cookies.save(path)` writes what the C API lists to a JSON file, in the Python layer, with the Session's **Machine** beside the cookies. That keeps SQLite out of the build. The file has mode 0600 whatever the umask, and the values are not encrypted. A new file takes the old one's place by a rename, so a crash leaves one or the other whole. `Session(cookie_file=path)` loads when it opens and saves when it closes, so a crash loses what came after the last save. A file that holds anything else stops the Session from opening, because closing it would otherwise overwrite that file.
+
+The native core lists the cookies alone, as `{"version": 1, "cookies": [...]}`, and refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the file is of version 2, `{"version": 2, "machine": {...}, "cookies": [...]}`, and the Python layer takes the Machine out and hands the native core the rest as version 1. The Machine keeps each of its fields and its seed, so that a later mitto that knows more fields can draw them from the seed and keep the others. A file of version 1, from mitto 0.1, holds no Machine and loads as `Machine.named("mitto-0.1")`, which every Session of mitto 0.1 claimed, and the next save writes version 2.
+
+A Session that opens on a file claims its Machine, since a server that sees the same cookies from another machine can tell. A `machine=` that differs stops the Session from opening, and `Cookies.load()` of a file whose Machine is not the Session's adds nothing. Both raise a `ValueError`. Taking cookies to another Machine is up to a caller, cookie by cookie, with `Cookies.set()`.
 
 Session cookies are saved too, as a browser does that restores its last session. A cookie that has expired by the time it loads stays out, because the store removes it on the next read.
 
