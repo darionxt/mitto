@@ -255,19 +255,45 @@ Chrome 155, 156 and 157 run on Windows 10 and 11. Anything older counts as obsol
 | 11, 22H2 | 22621 | `"15.0.0"` | Microsoft |
 | 11, 23H2 | 22631 | `"15.0.0"` | Not confirmed. Microsoft gives it 22H2's SDK |
 | 11, 24H2 | 26100 | `"19.0.0"` | Microsoft |
-| 11, 25H2 and 26H2 | 26200, 26300 | `"19.0.0"` | Not confirmed. Each is 24H2's build with an enablement package |
+| 11, 25H2 | 26200 | `"19.0.0"` | Not confirmed. It is 24H2's build with an enablement package |
+| 11, 26H2 | 26300 | `"19.0.0"` | Read from the registry, on 2026-11-08 |
 | 11, 26H1 | 28000 | Not known | Its SDK adds contract 20 as experimental only. It only comes on new devices, not as an update |
 
 Microsoft's sources are its page on [detecting Windows 11 through client hints](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/how-to-detect-win11), which stops at 21H2 for Windows 10 and gives Windows 11 as "13 and above", the contract versions of each SDK in [its API catalog](https://apisof.net/), the pages of APIs that came with 24H2 such as [`UserAgeRange`](https://learn.microsoft.com/en-us/uwp/api/windows.system.useragerange), and [its release information](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) for builds and dates, all read on 2026-11-08. Reading the registry on each version would confirm the rest. The Baselines hold `"19.0.0"`, which [Windows 11 24H2 also says](#what-they-say).
 
 ### What goes together
 
-- **The display, its scale and the window.** A viewport is at most as wide as the display in device-independent pixels, which is its pixels over the scale, and a window that fills the display is exactly that wide. Its height is at most the work area over the scale, less Chrome's bars. The taskbar and Chrome's bars keep their size in device-independent pixels at any scale, so a scale and a viewport have to be drawn with a display, and not apart from it. For example, a 1920 by 1080 display at 125% is 1536 by 864, and a window that fills it is 1536 wide.
-- **The Windows version and the viewport's height.** Windows 10 and Windows 11 have taskbars of different heights, so a window that fills the display has a height that follows the version. This was read from neither source nor a recording, so the heights need checking before a table holds them.
+- **The display, its scale and the window.** A viewport is at most as wide as the display in device-independent pixels, which is its pixels over the scale, and a window that fills the display is exactly that wide. Its height is at most the work area over the scale, less Chrome's bars. The taskbar and Chrome's bars keep their size in device-independent pixels at any scale, give or take a pixel of rounding ([as read](#the-taskbar-and-chromes-bars)), so a scale and a viewport have to be drawn with a display, and not apart from it. For example, a 1920 by 1080 display at 125% is 1536 by 864, and a window that fills it is 1536 wide.
+- **The Windows version and the viewport's height.** Windows 10 and Windows 11 have taskbars of different heights, 40 and 48, so a window that fills the display has a height that follows the version. [The heights below](#the-taskbar-and-chromes-bars) say how each was found.
 - **The round trip, `ect` and `downlink`.** `ect` follows the round trip with no noise, so `4g` goes with an `rtt` of at most 300, and `3g` with 250 to 1550. The throughput is an estimate of its own, which `ect` does not read.
 - **The Windows version and the Chrome Release.** Every Windows 10 and 11 runs every Chrome Release in the Supported Window, so the Persona does not limit the platform version. How common each version is does.
 - **On their own.** The memory, the colour scheme, reduced motion and reduced transparency are each apart from the rest. The memory goes loosely with the kind of machine, and so with its display, but no public statistics join the two. The three settings are a user's own.
 - **The zoom.** Chrome keeps a zoom for each host, and a default. It multiplies `dpr` and divides the viewport, as the page would. A machine at 100% is the common case, and a zoom for each host would be a setting of its own.
+
+#### The taskbar and Chrome's bars
+
+A window that fills the display is as wide as the work area, and its page area is the work area's height less Chrome's bars. Chrome's first window on a new profile, with no size saved, sits 10 from the work area's top left corner and is as high as the work area less 20. It is as wide as half the work area less 15 when the primary display is 16:10 or wider and the work area is wider than 1600, and otherwise as wide as the work area less 20, at most 1050. On a display in portrait, a window that would be higher than wide is three quarters of its width high instead (`chrome/browser/ui/window_sizer/window_sizer.cc`, `GetDefaultWindowBounds`, with `kWindowTilePixels` and `kWindowMaxDefaultWidth` in `window_sizer_aura.cc`). So a 1920 by 1080 display at 125%, with a work area 1536 wide, gets a first window 1050 wide. Its page area is the window less the bars and the window's border. Each value here is in device-independent pixels, as `screen` and a page's sizes have them:
+
+| Windows | Scale | Taskbar | Bars, maximised | Bars and top border, first window | Side borders, first window | How |
+| --- | --- | --- | --- | --- | --- | --- |
+| 11 | 100% | 48 | 87 | 95 | 16 | Read |
+| 11 | 125% | 48 | 86 | 95 | 14 | Read |
+| 11 | 150% | 48 | 87 | 94 | 15 | Read |
+| 11 | 200% | 48 | 87 | 93 | 13 | Read |
+| 10 | 100% | 40 | 87 | 95 | 16 | Read on Windows Server 2022. Not confirmed on Windows 10 22H2 |
+| 10 | 125% and up | Not read | Taken from Windows 11 | Taken from Windows 11 | Taken from Windows 11 | The same code draws Chrome's bars on both. Not confirmed |
+
+The taskbar is `screen.height - screen.availHeight`, the bars are `outerHeight - innerHeight`, and the side borders are `outerWidth - innerWidth`. A maximised window has no border. So a window that fills a 1920 by 1080 display on Windows 11 at 100% has a viewport of 1920 by 945, which is what [the Persona claims](#what-they-say) today.
+
+How each was read, on 2026-11-08:
+
+- **Windows 11.** Chrome 157.0.8103.39 on Windows 11 26H2, build 26300, with the taskbar as Windows sets it up, at the bottom and not hidden. At each scale, a new profile read its first window, then the same window maximised. The same profile, restarted once its variations seed had arrived, gave the same bars when maximised, so the field trials of that seed change none of them. A restarted Chrome restores the window it had, which at 125% came back a pixel or two off the first window's size, so only a first start gives the first window's values.
+- **Windows 11 24H2.** A hosted `windows-2025` runner, whose Windows Server 2025 is build 26100, with Chrome 156.0.8078.80, at 100% only. It gave the same as 26H2.
+- **Windows 10.** A hosted `windows-2022` runner, whose Windows Server 2022 has the taskbar of Windows 10, with Chrome 156.0.8078.80, at 100% only. Chrome drew the same bars and borders there as on Windows 11.
+
+The Windows 11 readings had work areas wider than 1600, so their first windows were half as wide. The runners' work areas were 1024 wide, and their first windows 1004, the other case.
+
+Chromium 157's source gives the bars of a maximised window as 87, at any scale: a tab strip of 41, which is a tab of 34, 1 of overlap with the toolbar and 6 of padding (`chrome/browser/ui/layout_constants.cc`, `kTabHeight`, `kTabStripPadding`), and a toolbar of 46, which is a button of 34 with a margin of 6 above and below (`kToolbarButtonHeight`, `TOOLBAR_INTERIOR_MARGIN`). With the tab strip shown, Chrome draws its own title bar on Windows 10 and 11 alike, and a maximised window has no top border (`chrome/browser/ui/views/frame/browser_frame_view_win.cc`, `FrameTopBorderThickness`, `TopAreaHeight`). The readings agree, except that at 125% the page area came out a pixel higher, from rounding to whole pixels. The first window's size came out up to 2 larger than `GetDefaultWindowBounds` gives at 125% and 150%, for the same reason. What the source cannot give is the taskbar, which is Windows', and the border of a window that is not maximised, which comes from Windows' system metrics in pixels, such as `SM_CXSIZEFRAME`, so it changes with the scale. A field trial such as `IsToolbarGlowUpEnabled` could still change the bars for some users.
 
 ### How common each one is
 
