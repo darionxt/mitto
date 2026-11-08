@@ -6,6 +6,7 @@ fixture call the real native core and are skipped when this machine has none.
 
 import ctypes
 import http.server
+import os
 import re
 import shutil
 import subprocess
@@ -19,9 +20,11 @@ import pytest
 
 from mitto import _native
 from tests.local_server import LocalHTTPServer
+from tests.pe_file import PeFile
 
-HEADER = Path(__file__).parents[1] / "native" / "include" / "mitto" / "mitto.h"
-_SETTINGS_FUZZ_SEEDS = Path(__file__).parents[1] / "native" / "test" / "session_settings_corpus"
+NATIVE = Path(__file__).parents[1] / "native"
+HEADER = NATIVE / "include" / "mitto" / "mitto.h"
+_SETTINGS_FUZZ_SEEDS = NATIVE / "test" / "session_settings_corpus"
 
 COMPLETE_STUB = """
 #include <stdint.h>
@@ -49,6 +52,7 @@ void mitto_event_free(void* event) {{}}
 
 ERR_IO_PENDING = -1
 ERR_INVALID_ARGUMENT = -4
+ERR_NOT_IMPLEMENTED = -11
 ERR_INVALID_URL = -300
 
 NO_SETTINGS = f'{{"version": {_native.SETTINGS_VERSION}}}'.encode()
@@ -72,6 +76,13 @@ LINUX_SYSTEM_LIBRARIES = {
     "librt.so.1",
     "linux-vdso.so.1",
 }
+
+# The C runtimes that a program built with Visual Studio can load, which Chromium's build links into the library
+# instead.
+C_RUNTIMES = re.compile(r"(vcruntime|msvcp|concrt|vccorlib|ucrtbase|api-ms-win-crt-).*")
+# Names that Windows' loader maps to one of its own DLLs, such as api-ms-win-core-synch-l1-2-0.dll, with no file of
+# that name.
+WINDOWS_API_SET = re.compile(r"api-ms-win-core-.*")
 
 # The NUL shows that the body is read by its size, not as a C string.
 BODY = b"a body with a \x00 inside"
@@ -123,6 +134,24 @@ def server_url() -> Iterator[str]:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         yield f"http://127.0.0.1:{server.server_port}/"
         server.shutdown()
+
+
+def c_api() -> set[str]:
+    """Return the names of the functions that the C header declares."""
+    return set(re.findall(r"^MITTO_EXPORT [^(]*?\b(\w+)\(", HEADER.read_text(), re.MULTILINE))
+
+
+def exported_names(library: Path) -> set[str]:
+    """Return the names of the functions that `library` exports, or skip if this Host's tool for them is missing."""
+    if sys.platform == "win32":
+        return set(PeFile(library).exported_names())
+    nm = shutil.which("nm")
+    if nm is None:
+        pytest.skip("no nm")
+    # Defined and external: what another library or program can link to.
+    flags = ["-g", "-U", "-j"] if sys.platform == "darwin" else ["-D", "--defined-only", "--format=just-symbols"]
+    names = subprocess.run([nm, *flags, library], check=True, capture_output=True, text=True).stdout.split()
+    return {name.removeprefix("_") if sys.platform == "darwin" else name for name in names}
 
 
 def header_constant(name: str) -> int:
@@ -189,6 +218,18 @@ def request_handle(native_library: ctypes.CDLL, session_handle: Any, server_url:
     assert error == 0
     yield handle
     native_library.mitto_request_release(handle)
+
+
+def test_each_exports_list_names_the_c_api() -> None:
+    mac = (NATIVE / "mitto_core.exports").read_text().split()
+    linux = re.findall(r"^    (\w+);$", (NATIVE / "mitto_core.lds").read_text(), re.MULTILINE)
+    windows = (NATIVE / "mitto_core.def").read_text().split()
+
+    assert {"mitto_abi_version", "mitto_session_create", "mitto_event_free"} <= c_api()
+    assert {name.removeprefix("_") for name in mac} == c_api()
+    assert set(linux) == c_api()
+    assert windows[0] == "EXPORTS"
+    assert set(windows[1:]) == c_api()
 
 
 def test_abi_version_matches_the_c_header() -> None:
@@ -310,6 +351,18 @@ def test_native_library_has_the_expected_abi_version(native_library: ctypes.CDLL
     assert native_library.mitto_abi_version() == _native.ABI_VERSION
 
 
+@pytest.mark.usefixtures("native_library")
+def test_native_library_exports_the_c_api_and_nothing_else() -> None:
+    library = _native.find_library()
+    assert library is not None
+    # Except on Windows the one function that //base marks __declspec(dllexport), which no exports list can take away.
+    # Windows looks up an import in the DLL it names, so it cannot clash with anything, and //base only looks for it in
+    # the program that started the process.
+    windows_extra: set[str] = {"GetHandleVerifier"} if sys.platform == "win32" else set()
+
+    assert exported_names(library) == c_api() | windows_extra
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="only Linux wheels have to avoid other system libraries")
 @pytest.mark.usefixtures("native_library")
 def test_native_library_needs_only_glibc_and_libgcc_on_linux() -> None:
@@ -317,6 +370,21 @@ def test_native_library_needs_only_glibc_and_libgcc_on_linux() -> None:
     assert library is not None
     ldd = subprocess.run(["ldd", library], check=True, capture_output=True, text=True).stdout
     assert {Path(line.split()[0]).name for line in ldd.splitlines()} <= LINUX_SYSTEM_LIBRARIES
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="reads the import tables of a Windows DLL")
+@pytest.mark.usefixtures("native_library")
+def test_native_library_loads_only_windows_own_libraries_on_windows() -> None:
+    library = _native.find_library()
+    assert library is not None
+    system = Path(os.environ["SYSTEMROOT"]) / "System32"
+
+    imported = PeFile(library).imported_libraries()
+
+    assert imported
+    for name in imported:
+        assert not C_RUNTIMES.match(name), name
+        assert WINDOWS_API_SET.match(name) or (system / name).is_file(), name
 
 
 def test_session_create_accepts_settings_with_only_a_version(native_library: ctypes.CDLL) -> None:
@@ -641,6 +709,14 @@ def test_null_requests_and_events_are_accepted_where_nothing_needs_doing(native_
     native_library.mitto_request_release(None)
     native_library.mitto_event_free(None)
     native_library.mitto_event_free(ctypes.byref(_native.MittoEvent()))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a Session has a file descriptor on macOS and Linux")
+def test_event_fd_refuses_on_windows(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    fd = ctypes.c_int32(0)
+
+    assert native_library.mitto_session_event_fd(session_handle, ctypes.byref(fd)) == ERR_NOT_IMPLEMENTED
+    assert fd.value == -1
 
 
 def test_event_fd_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:

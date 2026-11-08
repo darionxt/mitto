@@ -75,7 +75,8 @@ COOKIES_VERSION = 1
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
 
-LIBRARY_NAME = "libmitto_core.dylib" if sys.platform == "darwin" else "libmitto_core.so"
+# The file name of the library in the installed package, for each Host.
+LIBRARY_NAME = {"darwin": "libmitto_core.dylib", "win32": "mitto_core.dll"}.get(sys.platform, "libmitto_core.so")
 
 # What the C API returns when there is nothing yet.
 _ERR_IO_PENDING = -1
@@ -814,7 +815,7 @@ class Session:
         events that arrive after the first call count. The Session owns it, so it must not be closed or read directly.
 
         Raises:
-            OSError: If there is no room for another file descriptor.
+            OSError: If there is no room for another file descriptor, and always on Windows, where a Session has none.
         """
         fd = ctypes.c_int32()
         net_error: int = self._library.mitto_session_event_fd(self._handle, ctypes.byref(fd))

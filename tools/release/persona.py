@@ -188,7 +188,7 @@ def write_persona(
     """
     text = dumps_persona(persona_data(release, load_baselines(baselines_directory)))
     path = persona_path(release, personas_directory)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
     return path
 
 

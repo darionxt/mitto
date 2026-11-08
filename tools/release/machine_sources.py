@@ -136,8 +136,8 @@ def refresh_table(
     after = fetch_statistics(today, fetch)
     table = dumps_table(table_data(after))
     table_changed = table_path.read_text(encoding="utf-8") != table
-    statistics_path.write_text(dumps_statistics(after), encoding="utf-8")
-    table_path.write_text(table, encoding="utf-8")
+    statistics_path.write_text(dumps_statistics(after), encoding="utf-8", newline="\n")
+    table_path.write_text(table, encoding="utf-8", newline="\n")
 
     lines = ["What each source says now:"]
     for old, new in zip(_sources(before), _sources(after), strict=True):

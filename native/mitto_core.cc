@@ -1,8 +1,5 @@
-#include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <sys/file.h>
 
 #include <algorithm>
 #include <map>
@@ -24,7 +21,6 @@
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
@@ -36,7 +32,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
-#include "base/posix/eintr_wrapper.h"
+#include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/waitable_event.h"
@@ -46,9 +42,11 @@
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/types/optional_util.h"
+#include "build/build_config.h"
 #include "mitto/body_stream.h"
 #include "mitto/client_hints.h"
 #include "mitto/cookie_json.h"
+#include "mitto/directory_lock.h"
 #include "mitto/feature_list.h"
 #include "mitto/fetch_rules.h"
 #include "mitto/ignore_errors_cert_verifier.h"
@@ -112,6 +110,10 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
+#if BUILDFLAG(IS_WIN)
+#include "mitto/pin_library.h"
+#endif
+
 static_assert(MITTO_PRIORITY_THROTTLED == net::THROTTLED);
 static_assert(MITTO_PRIORITY_IDLE == net::IDLE);
 static_assert(MITTO_PRIORITY_LOWEST == net::LOWEST);
@@ -135,7 +137,7 @@ struct MittoSession {
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
-  base::ScopedFD http_cache_directory_lock;
+  mitto::DirectoryLock http_cache_directory_lock;
   // The resolver of a Session with a DNS server of its own, which the others
   // must not ask. `context` points to it, so it has to come first.
   std::unique_ptr<net::HostResolverManager> own_host_resolver_manager;
@@ -671,24 +673,20 @@ std::unique_ptr<net::CertVerifier> CreateCertVerifier(
 // on being one process, and //net on one backend for each directory. A second
 // one in the same process would wait for the first to go, so its requests would
 // never end, and one in another process would overwrite the first's files.
-// flock() goes by open file, so it refuses a Session in the same process too,
-// and it goes away with the process, however that ends.
 int LockHttpCacheDirectory(const base::FilePath& directory,
-                           base::ScopedFD& lock) {
+                           DirectoryLock& lock) {
   if (!base::CreateDirectory(directory)) {
     return net::ERR_CACHE_OPEN_FAILURE;
   }
-  base::ScopedFD file(
-      HANDLE_EINTR(open(directory.value().c_str(), O_RDONLY | O_CLOEXEC)));
-  if (!file.is_valid()) {
-    return net::ERR_CACHE_OPEN_FAILURE;
+  switch (lock.Take(directory)) {
+    case DirectoryLock::Result::kTaken:
+      return net::OK;
+    case DirectoryLock::Result::kHeld:
+      return net::ERR_CACHE_LOCK_TIMEOUT;
+    case DirectoryLock::Result::kFailed:
+      return net::ERR_CACHE_OPEN_FAILURE;
   }
-  if (HANDLE_EINTR(flock(file.get(), LOCK_EX | LOCK_NB)) != 0) {
-    return errno == EWOULDBLOCK ? net::ERR_CACHE_LOCK_TIMEOUT
-                                : net::ERR_CACHE_OPEN_FAILURE;
-  }
-  lock = std::move(file);
-  return net::OK;
+  NOTREACHED();
 }
 
 // Blockfile is what ChooseCacheType() in //components picks on Windows, the
@@ -720,7 +718,7 @@ void ConfigureHttpCache(net::URLRequestContextBuilder& builder,
 // Called on the network thread.
 std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     SessionSettings settings,
-    base::ScopedFD http_cache_directory_lock,
+    DirectoryLock http_cache_directory_lock,
     net::HostResolverManager* host_resolver_manager,
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
@@ -808,6 +806,10 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   }
 
   NetworkCore() : network_thread_("mitto network") {
+#if BUILDFLAG(IS_WIN)
+    // Before any thread starts.
+    PinLibrary();
+#endif
     // Failures reach the caller as return values. Logging them as well would
     // write to the stderr of a program that did not ask for it.
     logging::SetMinLogLevel(logging::LOGGING_FATAL);
@@ -842,11 +844,11 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
 
   std::unique_ptr<MittoSession> CreateSession(
       SessionSettings settings,
-      base::ScopedFD http_cache_directory_lock) {
+      DirectoryLock http_cache_directory_lock) {
     std::unique_ptr<MittoSession> session;
     RunAndWait(base::BindOnce(
         [](NetworkCore* core, SessionSettings settings,
-           base::ScopedFD http_cache_directory_lock,
+           DirectoryLock http_cache_directory_lock,
            std::unique_ptr<MittoSession>* session) {
           *session = CreateSessionOnNetworkThread(
               std::move(settings), std::move(http_cache_directory_lock),
@@ -1119,7 +1121,7 @@ int32_t mitto_session_create(const char* settings,
   if (!parsed) {
     return net::ERR_INVALID_ARGUMENT;
   }
-  base::ScopedFD http_cache_directory_lock;
+  mitto::DirectoryLock http_cache_directory_lock;
   if (parsed->http_cache_directory) {
     const int result = mitto::LockHttpCacheDirectory(
         *parsed->http_cache_directory, http_cache_directory_lock);
@@ -1211,6 +1213,9 @@ int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd) {
   if (!session) {
     return net::ERR_INVALID_ARGUMENT;
   }
+#if BUILDFLAG(IS_WIN)
+  return net::ERR_NOT_IMPLEMENTED;
+#else
   const std::optional<int> descriptor =
       session->ready_requests.GetFileDescriptor();
   if (!descriptor) {
@@ -1218,6 +1223,7 @@ int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd) {
   }
   *fd = *descriptor;
   return net::OK;
+#endif
 }
 
 int32_t mitto_session_next_ready_request(MittoSession* session,

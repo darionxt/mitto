@@ -111,9 +111,9 @@ def drop_oldest(root: Path = REPOSITORY) -> Dropped:
     persona_path(oldest, root / _PERSONAS).unlink()
     shutil.rmtree(baselines)
     if known_gaps.exists():
-        known_gaps.write_text(dumps_known_gaps(kept), encoding="utf-8")
-    module.write_text(module_text, encoding="utf-8")
-    readme.write_text(readme_text, encoding="utf-8")
+        known_gaps.write_text(dumps_known_gaps(kept), encoding="utf-8", newline="\n")
+    module.write_text(module_text, encoding="utf-8", newline="\n")
+    readme.write_text(readme_text, encoding="utf-8", newline="\n")
     return Dropped(oldest, len(gaps) - len(kept), still_named(oldest, root))
 
 

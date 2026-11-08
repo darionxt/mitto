@@ -43,7 +43,7 @@ def test_writing_the_table_writes_the_file(tmp_path: Path) -> None:
 
 def test_the_statistics_are_byte_for_byte_what_they_write(tmp_path: Path) -> None:
     path = tmp_path / "statistics.json"
-    path.write_text(dumps_statistics(STATISTICS), encoding="utf-8")
+    path.write_text(dumps_statistics(STATISTICS), encoding="utf-8", newline="\n")
 
     assert path.read_bytes() == STATISTICS_PATH.read_bytes()
     assert read_statistics(path) == STATISTICS

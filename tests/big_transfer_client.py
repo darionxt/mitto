@@ -1,13 +1,14 @@
 """Moves a body of a given size each way through the public API, and prints how much the process's peak memory grew.
 
-A process of its own, because ru_maxrss never goes down: earlier tests in pytest's process would hide any growth here.
+A process of its own, because a process's peak memory never goes down: earlier tests in pytest's process would hide any
+growth here.
 tests/test_big_transfers.py runs this, with the server in its own process.
 """
 
 import argparse
 import asyncio
+import ctypes
 import json
-import resource
 import sys
 import zlib
 from collections.abc import AsyncIterator, Iterator
@@ -34,7 +35,40 @@ async def _async_parts(size: int) -> AsyncIterator[bytes]:
         yield part
 
 
+class _ProcessMemoryCounters(ctypes.Structure):
+    """Windows' PROCESS_MEMORY_COUNTERS."""
+
+    _fields_ = (
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    )
+
+
 def _peak_bytes() -> int:
+    """Return the most memory that the process has had resident at once."""
+    if sys.platform == "win32":
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.K32GetProcessMemoryInfo.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(_ProcessMemoryCounters),
+            ctypes.c_uint32,
+        )
+        counters = _ProcessMemoryCounters(cb=ctypes.sizeof(_ProcessMemoryCounters))
+        if not kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return counters.PeakWorkingSetSize
+
+    import resource
+
     # In bytes on macOS, and in KiB on Linux.
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak if sys.platform == "darwin" else peak * 1024

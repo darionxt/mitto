@@ -11,6 +11,7 @@ import io
 import json
 import select
 import socket
+import sys
 import threading
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
@@ -801,6 +802,7 @@ def _wait_for_wanted(request: NativeRequest) -> None:
         assert not isinstance(event, _native.Finished), event
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a Session has no file descriptor on Windows")
 def test_the_event_fd_says_when_a_stream_is_wanted(server: StreamServer) -> None:
     with _native.Session() as session:
         fd = session.event_fd()

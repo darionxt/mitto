@@ -14,11 +14,19 @@ config("public_api") {
 action("icu_data_assembly") {
   script = "make_icu_data.py"
   inputs = [ "//third_party/icu/common/icudtl.dat" ]
-  outputs = [ "$target_gen_dir/icudtl_dat.S" ]
-  args = rebase_path(inputs + outputs, root_build_dir)
-  if (is_mac) {
-    args += [ "--mach-o" ]
+  args = []
+  if (is_win) {
+    # The assembler there reads another syntax, so the assembly goes into C++,
+    # as ICU's own build does it there.
+    outputs = [ "$target_gen_dir/icudtl_dat.cc" ]
+    args += [ "--format=coff" ]
+  } else {
+    outputs = [ "$target_gen_dir/icudtl_dat.S" ]
+    if (is_mac) {
+      args += [ "--format=mach-o" ]
+    }
   }
+  args += rebase_path(inputs + outputs, root_build_dir)
 }
 
 source_set("icu_data") {
@@ -35,6 +43,7 @@ shared_library("mitto_core") {
     "client_hints.h",
     "cookie_json.cc",
     "cookie_json.h",
+    "directory_lock.h",
     "feature_list.cc",
     "feature_list.h",
     "fetch_rules.cc",
@@ -69,7 +78,19 @@ shared_library("mitto_core") {
     "stub_resolver_config_reader.cc",
     "stub_resolver_config_reader.h",
   ]
+  if (is_win) {
+    sources += [
+      "directory_lock_win.cc",
+      "pin_library.h",
+      "pin_library_win.cc",
+    ]
+  } else {
+    sources += [ "directory_lock_posix.cc" ]
+  }
   public_configs = [ ":public_api" ]
+
+  # Makes MITTO_EXPORT export the C API, where Windows needs to know.
+  defines = [ "MITTO_IMPLEMENTATION" ]
   deps = [
     ":icu_data",
     "//base",
@@ -81,8 +102,13 @@ shared_library("mitto_core") {
 
   # Hidden visibility is not enough. Some code in the tree, such as the
   # allocation functions, is exported regardless, and an exported C++ symbol
-  # could clash with one in the process that loads the library.
-  if (is_mac) {
+  # could clash with one in the process that loads the library. On Windows a
+  # library exports what this list names and what its code marks dllexport, and
+  # //base marks one function so: see docs/building.md.
+  if (is_win) {
+    inputs = [ "mitto_core.def" ]
+    ldflags = [ "/DEF:" + rebase_path(inputs[0], root_build_dir) ]
+  } else if (is_mac) {
     inputs = [ "mitto_core.exports" ]
     ldflags = [
       "-Wl,-exported_symbols_list," + rebase_path(inputs[0], root_build_dir),
@@ -95,6 +121,7 @@ shared_library("mitto_core") {
 
       # The network thread never stops, so dlclose() must not unload its code.
       # macOS has no such flag, and dyld keeps this library loaded without one.
+      # On Windows the library pins itself, see pin_library.h.
       "-Wl,-z,nodelete",
     ]
   }
@@ -111,9 +138,10 @@ executable("mitto_core_test") {
     "//build/config/clang:unsafe_buffers",
   ]
 
+  # Windows looks for the library next to the program without being told.
   if (is_mac) {
     ldflags = [ "-Wl,-rpath,@loader_path" ]
-  } else {
+  } else if (!is_win) {
     configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
   }
 }
