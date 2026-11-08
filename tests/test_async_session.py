@@ -458,7 +458,8 @@ def test_the_waiting_thread_sleeps_while_events_wait_for_a_busy_loop(
     server: Server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """However many events arrive while the loop is busy, the thread wakes the loop once and then sleeps until it drains."""
-    # When each wait on the thread returned, by the clock and by the thread's own CPU time.
+    # When each wait on the thread returned, by the clock and by the thread's own CPU time. The clock is perf_counter(),
+    # since monotonic() on Windows only moves every 15.6 ms.
     returns: list[tuple[float, float]] = []
     taken: list[int] = []
     wait_for_event = _native.Session.wait_for_event
@@ -467,7 +468,7 @@ def test_the_waiting_thread_sleeps_while_events_wait_for_a_busy_loop(
     def timed(self: _native.Session, timeout: float | None = None) -> bool:
         woke = wait_for_event(self, timeout)
         if threading.current_thread().name == WAITING_THREAD:
-            returns.append((time.monotonic(), time.thread_time()))
+            returns.append((time.perf_counter(), time.thread_time()))
         return woke
 
     def counted(self: _native.Session) -> int | None:
@@ -486,10 +487,10 @@ def test_the_waiting_thread_sleeps_while_events_wait_for_a_busy_loop(
             requests = [asyncio.create_task(session.get(server.url(f"/echo/{i}"))) for i in range(count)]
             # Each starts its native request, and waits for its first event.
             await asyncio.sleep(0)
-            busy_from = time.monotonic()
+            busy_from = time.perf_counter()
             # On purpose this holds up the loop, while the responses arrive.
             time.sleep(BUSY_SECONDS)
-            busy_until = time.monotonic()
+            busy_until = time.perf_counter()
             taken_before = len(taken)
             await asyncio.sleep(0)
             taken_at_once = len(taken) - taken_before
