@@ -14,7 +14,7 @@ mitto installs on two **Hosts**, macOS on arm64 and Linux on x86_64, with Python
 
 ## What a server sees
 
-A **Session** presents a **Persona**: one **Chrome Release** on Windows, with its `User-Agent`, client hints, `Accept-Language` and the headers of each kind of request. A Session on macOS or Linux presents Windows Chrome all the same. Cookies, redirects and the HTTP cache are Chrome's code too, so which requests go out, and with which cookies, follows Chrome's rules.
+A **Session** presents a **Persona**: one **Chrome Release** on Windows, with its `User-Agent`, client hints, `Accept-Language` and the headers of each kind of request. A Session on macOS or Linux presents Windows Chrome all the same. Each Session also claims a **Machine** of its own, with the memory, display, window, network and Windows version that the client hints of a server that asks for them say, drawn from a table of how common each is unless [`machine=`](https://github.com/darionxt/mitto/blob/main/docs/api.md#machine) gives one. Cookies, redirects and the HTTP cache are Chrome's code too, so which requests go out, and with which cookies, follows Chrome's rules.
 
 mitto presents the current stable Chrome Release and the two before it, its **Supported Window**, on the network code of the newest, its **Engine Release**. New versions follow Chrome's stable milestones, and a Session presents the Engine Release unless [`persona=`](https://github.com/darionxt/mitto/blob/main/docs/api.md#persona) names another.
 

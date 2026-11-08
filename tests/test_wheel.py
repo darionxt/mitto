@@ -342,8 +342,19 @@ def licence_files_of(built: Path) -> dict[str, bytes]:
 def test_the_wheel_holds_the_licence_and_the_notices(stub_wheel: Path) -> None:
     assert licence_files_of(stub_wheel) == {
         "LICENSE": (REPOSITORY / "LICENSE").read_bytes(),
+        "MACHINE_TABLE_NOTICE": (REPOSITORY / "MACHINE_TABLE_NOTICE").read_bytes(),
         notices.NOTICES_FILE.name: notices.NOTICES_FILE.read_bytes(),
     }
+
+
+def test_the_wheel_declares_both_licences_and_holds_the_table(stub_wheel: Path) -> None:
+    with zipfile.ZipFile(stub_wheel) as archive:
+        (metadata,) = (name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
+        lines = archive.read(metadata).decode().splitlines()
+        table = archive.read("mitto/machine_table.json")
+
+    assert "License-Expression: Apache-2.0 AND CC-BY-SA-3.0" in lines
+    assert table == (REPOSITORY / "src" / "mitto" / "machine_table.json").read_bytes()
 
 
 def test_the_stripped_stub_loads(stub_wheel: Path, tmp_path: Path) -> None:

@@ -1,0 +1,15 @@
+The table in mitto/machine_table.json, from which a Session's Machine is drawn, is under the Creative Commons
+Attribution-ShareAlike 3.0 Unported licence (CC BY-SA 3.0): https://creativecommons.org/licenses/by-sa/3.0/
+
+The rest of mitto is under the Apache License 2.0, in LICENSE.
+
+The table is adapted from these sources, both under CC BY-SA 3.0:
+
+- StatCounter Global Stats, https://gs.statcounter.com/: the share of each version of Windows, and of each display size
+  in CSS pixels, on desktops.
+- The Firefox Public Data Report, Hardware Across the Web, by Mozilla, https://data.firefox.com/dashboard/hardware: the
+  share of each display size in pixels, and of each size of memory.
+
+mitto's authors worked those shares into rows of weighted values, as docs/persona.md describes, and added weights where
+no public source has them, which the table marks as the owner's. The table names each source with the period it comes
+from.

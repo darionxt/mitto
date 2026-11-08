@@ -30,7 +30,7 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `kinds.KIND.body.lines` | The names in `headers` that only a request with a body has. A kind without `body` cannot have one, so a body with `script` or `image` is refused |
 | `kinds.KIND.body.content_types` | The value for `Content-Type`, by what the body is: `text`, `form`, `json` or `multipart`. `<boundary>` stands for the boundary of a multipart body |
 
-In `headers`, `<content-type>` stands for what the body says of itself or what a caller gives. `<origin>` is never sent, because the native core writes that line's value or removes the line. `Sec-Fetch-Mode` and `Sec-Fetch-Dest` say what the request is for, which the native core also needs on a later hop, and `Sec-Fetch-User` says that the user started it. `headers` also holds each [client hint](#client-hints) that a server can ask for, which the native core removes until one has.
+In `headers`, `<content-type>` stands for what the body says of itself or what a caller gives, and `<machine>` for the value that the Session's [Machine](#a-machine-of-its-own) gives a hint that follows the machine. `<origin>` is never sent, because the native core writes that line's value or removes the line. `Sec-Fetch-Mode` and `Sec-Fetch-Dest` say what the request is for, which the native core also needs on a later hop, and `Sec-Fetch-User` says that the user started it. `headers` also holds each [client hint](#client-hints) that a server can ask for, which the native core removes until one has.
 
 ## What comes from where
 
@@ -124,14 +124,20 @@ A script, image or fetch has no order of its own to write down. Blink holds thos
 | --- | --- | --- |
 | `sec-ch-ua-full-version`, `sec-ch-ua-full-version-list` | The build that recorded the Baselines of the Chrome Release | The Baselines hold this |
 | `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64`, `sec-ch-ua-model`, `sec-ch-ua-form-factors` | `"x86"`, `"64"`, `?0`, `""`, `"Desktop"` | The Baselines hold this, and it is the same for a 64-bit Chrome on any x64 desktop PC with Windows |
-| `sec-ch-ua-platform-version` | `"19.0.0"` | The Baselines hold this. Chrome reads it from Windows, so it follows the machine too. It only says how new Windows is, and Windows 11 24H2 says the same |
+| `device-memory`, `sec-ch-device-memory`, `dpr`, `sec-ch-dpr`, `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height`, `rtt`, `downlink`, `ect`, `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` and `sec-ch-ua-platform-version` | `<machine>`, which a Session fills from its **Machine** when it opens | Chrome reads them from the machine it runs on, and the Session claims [a machine of its own](#a-machine-of-its-own), which [`machine=`](api.md#machine) gives or which is drawn for it |
+
+`rtt` and `downlink` go with Chrome's cap and rounding, and with no noise for each host yet. A Session sends them alike to every host.
+
+In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1")`](api.md#machinenamed) still gives:
+
+| Hints | The Machine of mitto 0.1 says | Because |
+| --- | --- | --- |
+| `sec-ch-ua-platform-version` | `"19.0.0"` | The Baselines hold this. It only says how new Windows is, and Windows 11 24H2 says the same |
 | `device-memory`, `sec-ch-device-memory` | `8` | A value [no Baseline holds](capture.md#what-stays-and-what-does-not). A common size, where the real value is the machine's, rounded |
 | `dpr`, `sec-ch-dpr` | `1` | No Baseline holds it. The scale of a display at 100% |
 | `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height` | `1920`, `1920`, `945` | No Baseline holds it. A Chrome window that fills a 1920 by 1080 display at that scale |
 | `rtt`, `downlink`, `ect` | `50`, `10`, `4g` | No Baseline holds it. A good connection. In Chrome they follow what it measures, with some noise for each host |
 | `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` | `light`, `no-preference`, `no-preference` | No Baseline holds it. What Windows has as it comes |
-
-So every Session of a Persona claims the same machine. [A machine of its own](#a-machine-of-its-own) says what decides each of these values in Chrome, and what a Session would need to claim a machine of its own.
 
 `width` and `sec-ch-width` say how wide an image is laid out, which only a page knows, and Chrome sends neither for an image with no width of its own. `save-data` needs a setting that a Persona does not have on. So a Persona has no line for them, and they do not go.
 
@@ -163,9 +169,9 @@ A name that `//net` would add, such as `Accept-Encoding`, counts as another name
 uv run python -m tools.release persona RELEASE
 ```
 
-It takes away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with [the values above](#what-they-say) for what a Baseline does not hold. The priority comes from the `priority` header over HTTP/2. The script also holds `credentials_mode` and the `Content-Type` of a body that no Recording Case sends, and refuses a Baseline whose `Content-Type` is not its own. [`tests/release`](../tests/release) checks that it writes each file in the repository byte for byte.
+It takes away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with `<machine>` for [the hints that follow the machine](#what-they-say). The priority comes from the `priority` header over HTTP/2. The script also holds `credentials_mode` and the `Content-Type` of a body that no Recording Case sends, and refuses a Baseline whose `Content-Type` is not its own. [`tests/release`](../tests/release) checks that it writes each file in the repository byte for byte.
 
-[`tests/test_persona.py`](../tests/test_persona.py) compares the file with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
+[`tests/test_persona.py`](../tests/test_persona.py) compares the file, with the values of the Machine of mitto 0.1, with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
 
 ## What differs between Chrome Releases
 
@@ -201,9 +207,9 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 ## A machine of its own
 
-Once a server asks for the hints that follow the machine, every Session of a Persona sends [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions land on one point, which a server can count. A Session that saves its cookies and comes back also comes back as that one machine.
+In mitto 0.1, once a server asked for the hints that follow the machine, every Session of a Persona sent [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions landed on one point, which a server can count. A Session that saved its cookies and came back also came back as that one machine.
 
-This section says what decides each of those values in Chrome, which values go together, how common each one is, and what a Session would need to claim a machine of its own. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Nothing here is built yet: a Session still sends the values above.
+So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Built so far: the Machine, its draw from the table, and its values in the hints. Not yet: the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table.
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -336,6 +342,31 @@ This is a reading of their terms, not legal advice. A table under a share-alike 
 
 StatCounter has a month on the second of the next and revises it for 45 days, through a CSV link that its page uses but does not document. Firefox's report is weekly, at stable JSON addresses. The Chrome UX Report is monthly, in BigQuery, and needs a Google Cloud account. So a step of [the release routine](releasing.md) can fetch StatCounter's last month that is older than 45 days and Firefox's last week, write the table again and show its diff for review. Steam's survey has no API and is no source for the table.
 
+### The table
+
+[`src/mitto/machine_table.json`](../src/mitto/machine_table.json) holds a group of weighted rows for each set of values that are drawn together. [`tools/release/machines.py`](../tools/release/machines.py) writes it from the statistics above, which it holds with their sources and periods, and the owner's weights:
+
+```bash
+uv run python -m tools.release machines
+```
+
+| Group | Its rows | From |
+| --- | --- | --- |
+| `platform_version` | `"19.0.0"` for Windows 11 and `"10.0.0"` for Windows 10, each with which Windows it is | StatCounter's shares of Windows 11 and 10. Older Windows cannot run Chrome 155 to 157, so it counts for nothing |
+| `display` | The display in pixels, its scale, which window it has and that window's viewport, for each Windows | Firefox's sizes in pixels, each split between 100%, 125%, 150% and 200% by how common StatCounter finds the size that each scale gives in CSS pixels. A size in CSS pixels that more than one display gives, such as 1280×720 from 1920×1080 at 150% and from 2560×1440 at 200%, is shared out between them by Firefox's shares. A size in pixels that gives no size StatCounter names at any of them is at 100%. Then the owner's weights for the window: 70% maximised and 30% Chrome's first window on a new profile. Each Windows has the same displays and windows at the same weights, and its own taskbar in the viewport |
+| `memory` | 2, 4, 8, 16 and 32 GiB | Firefox's sizes in whole GB, each counted as what Chrome sends for that many GiB, as above |
+| `network` | Chrome's starting values for Wi-Fi and for Ethernet | The owner's weights: 60% Wi-Fi and 40% Ethernet |
+| `color_scheme` | `light` and `dark` | The owner's weights: 30% `dark` |
+| `reduced_motion`, `reduced_transparency` | `no-preference` | The owner's: what Windows comes with |
+
+The viewport follows from the display, the scale, the window and the Windows, by [the taskbar and Chrome's bars](#the-taskbar-and-chromes-bars): a maximised window has the work area less Chrome's bars, and Chrome's first window on a new profile has the size that `GetDefaultWindowBounds()` gives it, less its bars and borders. Windows 10 at 125% and up takes the bars and borders of Windows 11 and its own taskbar of 40, as that table does. Windows offers more scales than the four read there, such as 175% and 250%, which wait for a reading of Chrome's bars, so a display's share goes to those four.
+
+A source's "Other", StatCounter's 800×600 and its sizes that only another system gives, such as 1470×956 of a Mac, count for nothing, because no size in pixels from Firefox gives them at a scale Windows offers. The weights of each group are whole numbers out of 1,000,000, so that a draw needs no floating point, and a row whose weight rounds to nothing is left out. The table has one line for each row, so that a change of weight is one line of its diff. It holds its licence and the credit of each source, and [`MACHINE_TABLE_NOTICE`](../MACHINE_TABLE_NOTICE) goes with it in the wheel.
+
+[`Machine.draw()`](api.md#machinedraw) draws the groups in the order above. Each group takes a number of its own from the SHA-256 of the seed and the group's name, and the row that number lands on when each row has as many numbers as its weight, among the rows that fit what is fixed and drawn already. So a value fixed in one group leaves the others as the seed draws them, unless they have to fit together, and the same seed and table give the same Machine on every Host and in every Python. A row of the platform version only goes if a display fits it, so a viewport of one Windows draws that Windows. A Machine checks each value against [what Chrome can read](#what-decides-each-value), and that the viewport fits on the display.
+
+[`tests/test_machine.py`](../tests/test_machine.py) checks that every value of a draw is one Chrome sends and that each row keeps to [what goes together](#what-goes-together), and [`tests/release/test_write_machines.py`](../tests/release/test_write_machines.py) that the script writes the table byte for byte.
+
 ### Where it lives
 
 [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md) gives each Session a machine of its own, apart from its Persona, which stays one for each Chrome Release:
@@ -351,13 +382,13 @@ StatCounter has a month on the second of the next and revises it for 45 days, th
 | The salts of the noise | Drawn each time a Session opens, from its seed if it has one, and never saved | Chrome draws them again each time it starts, so a returning user has new ones too |
 | On a Windows **Host** | Drawn as on every other Host, and never read from the machine mitto runs on | The owner decided this on 2026-11-08 |
 
-Who writes each value: those that do not change from one request to the next can go into the Persona's lines when a Session opens, as the Persona's own values go now. `rtt` and `downlink` change with the host, so the native core would work them out on each hop from the estimate and the salts. That takes both hashes of the table above. `native/http_header_map.cc` already ports the rapidhash under Blink's.
+Who writes each value: a Session writes its Machine's values into the Persona's lines when it opens, in place of `<machine>`, as the Persona's own values go. `rtt` and `downlink` change with the host, so the native core will work them out on each hop from the estimate and the salts. That takes both hashes of the table above. `native/http_header_map.cc` already ports the rapidhash under Blink's. Until then they go with Chrome's rounding and no noise.
 
 The cookie file today is what the native core lists, `{"version": 1, "cookies": [...]}`, and the native core refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the Python layer would write a new version of the file with the machine beside the cookies, and hand the native core the cookies alone.
 
 ### What happens to Parity Checks
 
-A drawn value cannot be compared with a Baseline, so the normal form keeps its line in its place and hides the value as `<machine>`, as it does for 13 hints today. A drawn platform version joins them: `sec-ch-ua-platform-version` becomes `<machine>` too, and the Baselines are written again with that one value changed. The order of the lines stays compared.
+A drawn value cannot be compared with a Baseline, so the normal form keeps its line in its place and hides the value as `<machine>`, as it does for 13 hints today. A drawn platform version joins them: `sec-ch-ua-platform-version` becomes `<machine>` too, and the Baselines are written again with that one value changed. The order of the lines stays compared. Until then, the Parity Checks claim the Machine of mitto 0.1, whose platform version the Baselines hold.
 
 What checks the values instead:
 
@@ -388,7 +419,7 @@ So the shape has to allow three things. It keeps what Chrome reads, such as the 
 
 ### What changes for callers
 
-- A Session that does not fix its machine sends values of its own to an origin that asks for them, and another Session sends others. A server that does not ask sees no change.
+- A Session that does not fix its machine sends values of its own to an origin that asks for them, and another Session sends others. A server that does not ask sees no change. [`Machine.named("mitto-0.1")`](api.md#machinenamed) gives the machine of mitto 0.1 back.
 - `sec-ch-ua-platform-version` stops being `"19.0.0"` for everyone.
 - A `cookie_file` written by the new version holds the machine as well, and mitto 0.1 refuses it, because its native core does not know the new version of the file. A file from mitto 0.1 loads in the new version as the machine above.
 - So this ships in a new minor version, as [a run](releasing.md#when-a-run-starts) raises it, and not in a patch. Its release notes have to say so.

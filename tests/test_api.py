@@ -4,6 +4,7 @@ Tests that take the native_library fixture go through the real native core to a 
 connection, and are skipped when this machine has no native library.
 """
 
+import dataclasses
 import functools
 import http.server
 import inspect
@@ -27,6 +28,7 @@ import mitto
 from mitto import _native
 from mitto._body import FileFields, QueryParams, RequestData
 from mitto._cookies import CookiePriority, CookieSourceScheme, CookieSourceType, SameSite
+from mitto._machine import ColorScheme, ReducedMotion, ReducedTransparency
 from mitto._native import PrivateSettings
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, RequestKind, load_persona
 from mitto._request import BodyOptions, RequestHeaders
@@ -882,6 +884,15 @@ WRONG_VALUES: dict[object, object] = {
     CookiePriority: 5,
     CookieSourceScheme | None: 5,
     CookieSourceType | None: 5,
+    int: "8",
+    float: "1",
+    ColorScheme: 5,
+    ReducedMotion: 5,
+    ReducedTransparency: 5,
+    ColorScheme | None: 5,
+    ReducedMotion | None: 5,
+    ReducedTransparency | None: 5,
+    mitto.Machine | None: "mitto-0.1",
 }
 
 # The classes of each API, which the both_apis fixture puts behind mitto.Session.
@@ -903,6 +914,12 @@ NOT_WALKED = {
     "AsyncCookies()": "an AsyncSession makes its own, and a caller never does",
     "RequestKind()": "a value that is not a Request Kind raises a ValueError, as an Enum does, whatever its type",
     **dict.fromkeys((f"{name}()" for name in _ERRORS), "mitto raises its errors, and a caller never builds one"),
+}
+
+
+# What a Machine needs, which the wrong value of each takes the place of in turn.
+MACHINE_VALUES: dict[str, object] = {
+    name: value for name, value in dataclasses.asdict(mitto.Machine.named("mitto-0.1")).items() if name != "seed"
 }
 
 
@@ -937,6 +954,9 @@ def callees(api: str, url: str) -> list[Callee]:
             lambda _: mitto.CookiePartitionKey,
             {"top_level_site": "https://example.test", "has_cross_site_ancestor": False},
         ),
+        Callee("Machine()", mitto.Machine, lambda _: mitto.Machine, MACHINE_VALUES),
+        Callee("Machine.draw()", mitto.Machine.draw, lambda _: mitto.Machine.draw),
+        Callee("Machine.named()", mitto.Machine.named, lambda _: mitto.Machine.named),
         Callee("Headers.get()", mitto.Headers.get, lambda _: mitto.Headers().get, {"name": "a"}),
         Callee("Headers.get_all()", mitto.Headers.get_all, lambda _: mitto.Headers().get_all, {"name": "a"}),
     ]
@@ -1028,9 +1048,12 @@ def public_callables() -> set[str]:
         if _takes_arguments(item):
             names.add(f"{name}()")
         if inspect.isclass(item):
+            # A class method, such as Machine.draw(), is bound to its class already.
             names |= {
                 f"{name}.{method_name}()"
-                for method_name, method in inspect.getmembers(item, inspect.isfunction)
+                for method_name, method in inspect.getmembers(
+                    item, lambda member: inspect.isfunction(member) or inspect.ismethod(member)
+                )
                 if not method_name.startswith("_") and _takes_arguments(method)
             }
     return names

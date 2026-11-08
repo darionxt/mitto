@@ -1,9 +1,10 @@
 """Writing a Persona's file from the Baselines of its Chrome Release, the way docs/persona.md describes.
 
 The lines of each Request Kind come from its Baselines over HTTP/1.1, which has the case Chrome writes, with what //net
-adds taken away, and its priority from the priority header over HTTP/2. What no Baseline can hold comes from this module:
-what a Persona claims for the hints that follow the machine, the credentials mode of each kind, and a Content-Type for a
-body that no Recording Case sends. Where a Baseline does hold a Content-Type, it has to agree.
+adds taken away, and its priority from the priority header over HTTP/2. A hint that follows the machine gets a placeholder,
+which a Session fills from its Machine. What no Baseline can hold comes from this module: the credentials mode of each
+kind, and a Content-Type for a body that no Recording Case sends. Where a Baseline does hold a Content-Type, it has to
+agree.
 """
 
 import json
@@ -12,14 +13,15 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from mitto._machine import MACHINE_HINTS
 from mitto._native import Priority
+from mitto._persona import MACHINE_PLACEHOLDER
 from tools.capture import HTTP1, HTTP2
 from tools.capture.normal_form import HINTS_FROM_THE_MACHINE
 from tools.capture.recording import Json
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 
 __all__ = [
-    "CLAIMED_FROM_THE_MACHINE",
     "PERSONAS_DIRECTORY",
     "PersonaDataError",
     "dumps_persona",
@@ -31,23 +33,6 @@ __all__ = [
 PERSONAS_DIRECTORY = Path(__file__).parents[2] / "src" / "mitto" / "personas"
 
 OPERATING_SYSTEM = "Windows"
-
-CLAIMED_FROM_THE_MACHINE = {
-    "device-memory": "8",
-    "sec-ch-device-memory": "8",
-    "dpr": "1",
-    "sec-ch-dpr": "1",
-    "viewport-width": "1920",
-    "sec-ch-viewport-width": "1920",
-    "sec-ch-viewport-height": "945",
-    "rtt": "50",
-    "downlink": "10",
-    "ect": "4g",
-    "sec-ch-prefers-color-scheme": "light",
-    "sec-ch-prefers-reduced-motion": "no-preference",
-    "sec-ch-prefers-reduced-transparency": "no-preference",
-}
-"""What a Persona claims for each hint that follows the machine, which a Baseline holds as a placeholder."""
 
 _BOUNDARY_PLACEHOLDER = "<boundary>"
 _RECORDED_BOUNDARY = re.compile(r"boundary=\S+")
@@ -170,7 +155,8 @@ def persona_data(release: str, baselines: Iterable[Baseline]) -> dict[str, Json]
 
     Raises:
         PersonaDataError: A Recording Case that the file needs has no Baseline, a Baseline holds a Content-Type that is
-            not this module's, a hint that follows the machine has no claimed value, or a priority is not one //net sends.
+            not this module's, a Machine has no value for a hint that follows the machine, or a priority is not one //net
+            sends.
     """
     found = _Requests(release, baselines)
     _check_content_types(found)
@@ -272,11 +258,10 @@ def _with_hints(lines: list[str], hinted: list[str], case: str) -> list[str]:
 def _line(line: str, values: Mapping[str, str]) -> str:
     name, _, value = line.partition(": ")
     lower_name = name.lower()
+    if lower_name in MACHINE_HINTS:
+        return f"{name}: {MACHINE_PLACEHOLDER}"
     if lower_name in HINTS_FROM_THE_MACHINE:
-        claimed = CLAIMED_FROM_THE_MACHINE.get(lower_name)
-        if claimed is None:
-            raise PersonaDataError(f"{name} follows the machine, and a Persona claims no value for it")
-        return f"{name}: {claimed}"
+        raise PersonaDataError(f"{name} follows the machine, and a Machine has no value for it")
     return f"{name}: {values.get(lower_name, value)}"
 
 

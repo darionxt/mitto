@@ -218,7 +218,10 @@ def test_it_has_each_method_of_a_session() -> None:
 @pytest.mark.parametrize("name", [*sorted(_public_names(mitto.Session)), "__init__"])
 def test_each_method_takes_the_arguments_of_a_session(name: str) -> None:
     def shape(cls: type) -> list[tuple[str, Any, Any]]:
-        parameters = inspect.signature(getattr(cls, name)).parameters.values()
+        member: Any = getattr(cls, name)
+        if isinstance(member, property):
+            member = member.fget
+        parameters = inspect.signature(member).parameters.values()
         return [(parameter.name, parameter.kind, parameter.default) for parameter in parameters]
 
     assert shape(mitto.AsyncSession) == shape(mitto.Session)
@@ -427,6 +430,19 @@ def test_it_has_no_cookies_until_it_has_opened() -> None:
             _ = session.cookies
         async with session:
             assert len(session.cookies) == 0
+
+    run(main())
+
+
+def test_it_has_no_machine_until_it_has_opened_and_then_the_one_it_was_given() -> None:
+    machine = mitto.Machine.draw(seed=9)
+
+    async def main() -> None:
+        session = mitto.AsyncSession(machine=machine)
+        with pytest.raises(RuntimeError, match="no Machine until it has opened"):
+            _ = session.machine
+        async with session:
+            assert session.machine is machine
 
     run(main())
 

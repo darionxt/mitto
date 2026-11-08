@@ -68,7 +68,14 @@ _SUPPORTED_WINDOW = re.compile(
 )
 
 # The classes that a caller makes, so that their constructors are part of the API.
-_MADE_BY_A_CALLER = (mitto.Session, mitto.AsyncSession, mitto.Timeout, mitto.Cookie, mitto.CookiePartitionKey)
+_MADE_BY_A_CALLER = (
+    mitto.Session,
+    mitto.AsyncSession,
+    mitto.Machine,
+    mitto.Timeout,
+    mitto.Cookie,
+    mitto.CookiePartitionKey,
+)
 # Session sets this one in its constructor, so its class does not show it.
 _SESSION_ATTRIBUTES = {"Session.cookies": "Session.cookies -> Cookies"}
 _ERROR_TREE_ROOT = "MittoError"
@@ -152,12 +159,15 @@ def _read_page(path: Path) -> Page:
 
 
 def _public_members(item: type) -> dict[str, Any]:
-    """Return the methods and properties of a class, leaving out what it inherits from outside mitto, such as Exception."""
+    """Return the methods and properties of a class, leaving out what it inherits from outside mitto, such as Exception.
+
+    A class method, such as Machine.draw(), is as the class gives it, bound to the class.
+    """
     members: dict[str, Any] = {}
     for base in reversed(item.__mro__):
         if base.__module__.startswith("mitto."):
             members |= {
-                name: member
+                name: getattr(item, name) if isinstance(member, classmethod) else member
                 for name, member in vars(base).items()
                 if not name.startswith("_") and (inspect.isroutine(member) or isinstance(member, property))
             }

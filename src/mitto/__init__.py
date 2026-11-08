@@ -16,6 +16,7 @@ from mitto._errors import (
     TLSError,
     TooManyRedirectsError,
 )
+from mitto._machine import Machine
 from mitto._persona import RequestKind
 from mitto._response import AsyncResponseStream, Headers, HTTPStatusError, Redirect, Response, ResponseStream
 from mitto._timeout import Timeout
@@ -31,6 +32,7 @@ __all__ = [
     "Cookies",
     "HTTPStatusError",
     "Headers",
+    "Machine",
     "MittoError",
     "NameResolutionError",
     "NativeLibraryError",
