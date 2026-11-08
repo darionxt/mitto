@@ -203,7 +203,7 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 Once a server asks for the hints that follow the machine, every Session of a Persona sends [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions land on one point, which a server can count. A Session that saves its cookies and comes back also comes back as that one machine.
 
-This section says what decides each of those values in Chrome, which values go together, how common each one is, and what a Session would need to claim a machine of its own. The recommendation is the draft [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md). Nothing here is built yet: a Session still sends the values above.
+This section says what decides each of those values in Chrome, which values go together, how common each one is, and what a Session would need to claim a machine of its own. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Nothing here is built yet: a Session still sends the values above.
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -312,9 +312,9 @@ StatCounter has a month on the second of the next and revises it for 45 days, th
 
 ### Where it lives
 
-The draft [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md) recommends that each Session has a machine of its own, apart from its Persona, which stays one for each Chrome Release:
+[ADR-0007](adr/0007-a-machine-of-its-own-per-session.md) gives each Session a machine of its own, apart from its Persona, which stays one for each Chrome Release:
 
-| Question | Recommendation | Because |
+| Question | Decision | Because |
 | --- | --- | --- |
 | Drawn or fixed? | Drawn by default, from a table that ships with mitto. A caller can fix any value, or give the whole machine | A fixed default leaves every Session that does not ask on one point, which is the problem. A machine that the caller must always give would mostly be copied from one example, with the same result |
 | Repeatable? | The same seed gives the same machine with the same table. The machine keeps its seed, and a later mitto that knows more fields draws the new ones from it, to fit those it has | Tests need the same values twice, and a saved machine must not change when mitto learns more |

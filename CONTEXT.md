@@ -7,7 +7,7 @@ mitto is a Python library that talks to web servers the way Chrome does, so that
 ### Identity
 
 **Persona**:
-The browser identity mitto presents to servers: one Chrome Release on one operating system, with its locale and client-hint values.
+The browser identity mitto presents to servers: one Chrome Release on one operating system, with its locale and the client hints of its Chrome.
 _Avoid_: profile, fingerprint, identity, user agent
 
 **Chrome Release**:
@@ -26,10 +26,14 @@ _Avoid_: engine version, Chromium version
 The operating system and CPU architecture mitto itself runs on. It is independent of the operating system the Persona claims.
 _Avoid_: platform
 
+**Machine**:
+The computer a Session claims to run on: its memory, display, window, network, its user's settings and its Windows version. It is independent of the Host and of the Persona.
+_Avoid_: device, hardware profile, environment, fingerprint
+
 ### Requests
 
 **Session**:
-A long-lived client that holds one Chrome-like browsing state: its Persona, cookies, cache and open connections.
+A long-lived client that holds one Chrome-like browsing state: its Persona, its Machine, cookies, cache and open connections.
 _Avoid_: client, browser, context
 
 **Request Kind**:
