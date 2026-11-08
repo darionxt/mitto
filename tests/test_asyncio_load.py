@@ -180,8 +180,10 @@ def run_load(load: str, url: str, size: int, kind_of_loop: str) -> dict[str, Any
         assert process.stdin is not None
         lines = _lines_of(process)
         try:
-            assert lines.get(timeout=_RUN_SECONDS).strip() == "ready"
-            threads_before = _threads_of(process.pid)
+            ready, pid = lines.get(timeout=_RUN_SECONDS).split()
+            assert ready == "ready"
+            client = int(pid)
+            threads_before = _threads_of(client)
             process.stdin.write("go\n")
             process.stdin.flush()
             most_threads = threads_before
@@ -190,7 +192,7 @@ def run_load(load: str, url: str, size: int, kind_of_loop: str) -> dict[str, Any
                 assert time.monotonic() < deadline
                 # A process that has ended before its line got here has no threads, and no list of them.
                 if process.poll() is None:
-                    most_threads = max(most_threads, _threads_of(process.pid))
+                    most_threads = max(most_threads, _threads_of(client))
                 time.sleep(0.01)
             result = json.loads(lines.get())
         finally:

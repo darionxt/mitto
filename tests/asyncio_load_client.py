@@ -3,14 +3,16 @@
 A process of its own, with the server in another, so that what holds up the loop here is only this client, and what counts
 its threads sees only this client's. tests/test_asyncio_load.py runs this.
 
-It opens the Session and makes one request, says "ready" and waits for a line, so that the threads it has by then can be
-counted first. Then it prints one line of JSON. Its last argument names the way the loop hears of the Session's events, as
+It opens the Session and makes one request, says "ready" with its process ID and waits for a line, so that the threads it
+has by then can be counted first. On Windows the python.exe of a virtual environment starts the interpreter in a process of
+its own, so the ID is not the one its parent started. Then it prints one line of JSON. Its last argument names the way the loop hears of the Session's events, as
 tests/event_loops.py does.
 """
 
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import sys
 import threading
@@ -111,7 +113,7 @@ async def _main(load: str, url: str, size: int) -> dict[str, object]:
     loop = asyncio.get_running_loop()
     async with mitto.AsyncSession() as session:
         await session.get(f"{url}small")
-        print("ready", flush=True)
+        print(f"ready {os.getpid()}", flush=True)
         await loop.run_in_executor(None, sys.stdin.readline)
 
         heartbeat = _Heartbeat()
