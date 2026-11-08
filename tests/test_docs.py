@@ -1,4 +1,4 @@
-"""Tests that README.md, docs/api.md and docs/from-requests.md say what the code does.
+"""Tests that README.md, docs/api.md and docs/from-requests.md say what the code does, and CHANGELOG.md what is real.
 
 The checks of names, signatures and links need nothing. Running the examples needs a native library, and every name in a URL
 lands on a local server, so that a reader sees no port numbers. Nothing runs the `requests` column of the guide, so this
@@ -39,12 +39,20 @@ REPOSITORY = Path(__file__).parent.parent
 API_PAGE = REPOSITORY / "docs" / "api.md"
 GUIDE = REPOSITORY / "docs" / "from-requests.md"
 README = REPOSITORY / "README.md"
+CHANGELOG = REPOSITORY / "CHANGELOG.md"
 PAGES = [API_PAGE, GUIDE, README]
+# The changelog has no examples, and the checks of names and links read it as they read the pages.
+PAGES_AND_CHANGELOG = [*PAGES, CHANGELOG]
 
 PROJECT = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
 # What each page may have blocks of: examples, signatures that the checks read, and the README's install command.
-_BLOCK_LANGUAGES = {API_PAGE: {"python", "text"}, GUIDE: {"python"}, README: {"python", "bash"}}
+_BLOCK_LANGUAGES: dict[Path, set[str]] = {
+    API_PAGE: {"python", "text"},
+    GUIDE: {"python"},
+    README: {"python", "bash"},
+    CHANGELOG: set(),
+}
 
 _FENCE = "```"
 _HEADING = re.compile(r"(#{1,6}) (.+)")
@@ -443,15 +451,15 @@ def test_the_table_of_errors_says_what_to_do_about_each() -> None:
             assert f"| [`{name}`](#{name.lower()}) |" in text
 
 
-# The checks of both pages.
+# The checks of every page, and of the changelog.
 
 
-@pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
+@pytest.mark.parametrize("path", PAGES_AND_CHANGELOG, ids=lambda path: path.stem)
 def test_each_block_is_an_example_or_something_the_checks_read(path: Path) -> None:
     assert {block.language for block in _read_page(path).blocks} <= _BLOCK_LANGUAGES[path]
 
 
-@pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
+@pytest.mark.parametrize("path", PAGES_AND_CHANGELOG, ids=lambda path: path.stem)
 def test_each_member_named_in_the_text_is_real(path: Path) -> None:
     for number, text in _read_page(path).prose:
         for span in _CODE_SPAN.findall(text):
@@ -496,7 +504,7 @@ def test_a_link_into_this_repository_is_relative_or_on_its_main_branch() -> None
     assert link_target(page, "https://example.com/") is None
 
 
-@pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
+@pytest.mark.parametrize("path", PAGES_AND_CHANGELOG, ids=lambda path: path.stem)
 def test_each_link_leads_somewhere(path: Path) -> None:
     for number, text in _read_page(path).prose:
         for link in _LINK.findall(text):

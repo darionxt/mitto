@@ -75,10 +75,14 @@ jobs:
             echo "upload-url=$upload_url"
           } >> "$GITHUB_OUTPUT"
           echo "Publishes mitto $version to $index."
+      # They hold the version's entry in CHANGELOG.md, and stop the run if it has none. The run's summary shows them, so
+      # that a dry run shows the notes of the release it comes before.
       - name: Write the release notes
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: uv run python -m tools.release notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+        run: |
+          uv run python -m tools.release notes "$VERSION" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-notes

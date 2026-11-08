@@ -434,4 +434,4 @@ So the shape has to allow three things. It keeps what Chrome reads, such as the 
 - A Session that does not fix its machine sends values of its own to an origin that asks for them, and another Session sends others. A server that does not ask sees no change. [`Machine.named("mitto-0.1")`](api.md#machinenamed) gives the machine of mitto 0.1 back.
 - `sec-ch-ua-platform-version` stops being `"19.0.0"` for everyone.
 - A `cookie_file` written by the new version holds the machine as well, and mitto 0.1 refuses it, because its native core does not know the new version of the file. A file from mitto 0.1 loads in the new version as the machine above.
-- So this ships in a new minor version, as [a run](releasing.md#when-a-run-starts) raises it, and not in a patch. Its release notes have to say so.
+- So this ships in a new minor version, as [a run](releasing.md#when-a-run-starts) raises it, and not in a patch. Its release notes say so, from [its entry in `CHANGELOG.md`](../CHANGELOG.md#020).
