@@ -706,6 +706,37 @@ def test_a_mach_o_fingerprint_follows_its_sections(tmp_path: Path, other: bytes)
     assert export.library_fingerprint(first) != export.library_fingerprint(second)
 
 
+def windows_dll(code: bytes, pdb_signature: bytes) -> bytes:
+    """Returns a small PE32+ DLL whose one section holds a debug directory, its CodeView record and code."""
+    section_offset, section_address = 0x200, 0x1000
+    record = b"RSDS" + pdb_signature + struct.pack("<I", 1) + b"mitto_core.dll.pdb\0"
+    entry = struct.pack("<IIHHIIII", 0, 0, 0, 0, 2, len(record), section_address + 28, section_offset + 28)
+    content = entry + record + code
+    directories = [(0, 0)] * 16
+    directories[6] = (section_address, len(entry))
+    optional = struct.pack("<H", 0x20B).ljust(112, b"\0") + b"".join(struct.pack("<II", *d) for d in directories)
+    coff = struct.pack("<HHIIIHH", 0x8664, 1, 0, 0, 0, len(optional), 0x2022)
+    section = struct.pack("<8sIIII16x", b".rdata", len(content), section_address, len(content), section_offset)
+    headers = b"MZ".ljust(0x3C, b"\0") + struct.pack("<I", 0x40) + b"PE\0\0" + coff + optional + section
+    return headers.ljust(section_offset, b"\0") + content
+
+
+def test_a_windows_dll_fingerprint_ignores_the_signature_of_its_pdb(tmp_path: Path) -> None:
+    first = write(tmp_path, "first.dll", windows_dll(b"code", b"\x01" * 8 + b"LLD PDB."))
+    second = write(tmp_path, "second.dll", windows_dll(b"code", b"\x02" * 8 + b"LLD PDB."))
+
+    assert first.read_bytes() != second.read_bytes()
+    assert export.library_fingerprint(first) == export.library_fingerprint(second)
+    assert export.library_fingerprint(first) != hashlib.sha256(first.read_bytes()).hexdigest()
+
+
+def test_a_windows_dll_fingerprint_follows_its_code(tmp_path: Path) -> None:
+    first = write(tmp_path, "first.dll", windows_dll(b"code", b"\x01" * 16))
+    second = write(tmp_path, "second.dll", windows_dll(b"CODE", b"\x01" * 16))
+
+    assert export.library_fingerprint(first) != export.library_fingerprint(second)
+
+
 def test_any_other_file_is_fingerprinted_whole(tmp_path: Path) -> None:
     library = write(tmp_path, "libmitto_core.so", b"\x7fELF and the rest")
 

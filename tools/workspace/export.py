@@ -249,6 +249,16 @@ MACH_O_SECTION_HEADER_SIZE = 80
 # The section types that take no room in the file.
 MACH_O_ZERO_FILL_TYPES = {0x1, 0xC, 0x12}
 
+# Where a PE file says where its debug directory lies, and what in it names the PDB.
+PE_OPTIONAL_HEADER_OFFSET = 24
+PE_DATA_DIRECTORIES_OFFSET = {0x10B: 96, 0x20B: 112}
+PE_DEBUG_DIRECTORY = 6
+PE_DEBUG_ENTRY_SIZE = 28
+PE_DEBUG_TYPE_CODEVIEW = 2
+PE_SECTION_HEADER_SIZE = 40
+CODEVIEW_PDB70 = b"RSDS"
+CODEVIEW_SIGNATURE_SIZE = 16
+
 ARCHIVE_README = """\
 This is the part of Chromium {tag} that mitto's native core needs in order to
 build, on Linux x86_64, on macOS arm64 and on Windows x64. Everything else in
@@ -364,9 +374,13 @@ def library_fingerprint(library: Path) -> str:
 
     A Mach-O file names each of its object files by absolute path for the
     debugger, which changes its symbol table, its identity and its signature. So
-    that format gets a hash of its sections alone. An ELF file has no such paths.
+    that format gets a hash of its sections alone. A Windows DLL names its PDB by
+    a signature that the linker hashes from the PDB, which holds absolute paths,
+    so that signature does not count. An ELF file has no such paths.
     """
     data = library.read_bytes()
+    if data[:2] == b"MZ":
+        return hashlib.sha256(_without_pdb_signature(data)).hexdigest()
     if data[:4] != MACH_O_MAGIC:
         return hashlib.sha256(data).hexdigest()
     digest = hashlib.sha256()
@@ -386,6 +400,33 @@ def library_fingerprint(library: Path) -> str:
                     digest.update(data[offset : offset + size])
         command += command_size
     return digest.hexdigest()
+
+
+def _without_pdb_signature(data: bytes) -> bytes:
+    """Returns a PE file with the signature of its PDB, in its CodeView debug record, zeroed."""
+    (pe,) = struct.unpack_from("<I", data, PE_OFFSET_FIELD)
+    section_count, optional_size = struct.unpack_from("<H12xH", data, pe + 6)
+    optional = pe + PE_OPTIONAL_HEADER_OFFSET
+    (magic,) = struct.unpack_from("<H", data, optional)
+    directories = optional + PE_DATA_DIRECTORIES_OFFSET[magic]
+    debug_address, debug_size = struct.unpack_from("<2I", data, directories + 8 * PE_DEBUG_DIRECTORY)
+    sections = optional + optional_size
+    debug = None
+    for index in range(section_count):
+        virtual_size, address, raw_size, offset = struct.unpack_from(
+            "<4I", data, sections + index * PE_SECTION_HEADER_SIZE + 8
+        )
+        if address <= debug_address < address + max(virtual_size, raw_size):
+            debug = offset + debug_address - address
+    result = bytearray(data)
+    if debug is None:
+        return bytes(result)
+    for entry in range(debug, debug + debug_size, PE_DEBUG_ENTRY_SIZE):
+        kind, _, _, record = struct.unpack_from("<4I", data, entry + 12)
+        if kind == PE_DEBUG_TYPE_CODEVIEW and data[record : record + 4] == CODEVIEW_PDB70:
+            signature = record + len(CODEVIEW_PDB70)
+            result[signature : signature + CODEVIEW_SIGNATURE_SIZE] = bytes(CODEVIEW_SIGNATURE_SIZE)
+    return bytes(result)
 
 
 def check_call(command: list[str | Path], cwd: Path | None = None, env: Mapping[str, str] | None = None) -> None:
