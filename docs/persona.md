@@ -131,6 +131,8 @@ A script, image or fetch has no order of its own to write down. Blink holds thos
 | `rtt`, `downlink`, `ect` | `50`, `10`, `4g` | No Baseline holds it. A good connection. In Chrome they follow what it measures, with some noise for each host |
 | `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` | `light`, `no-preference`, `no-preference` | No Baseline holds it. What Windows has as it comes |
 
+So every Session of a Persona claims the same machine. [A machine of its own](#a-machine-of-its-own) says what decides each of these values in Chrome, and what a Session would need to claim a machine of its own.
+
 `width` and `sec-ch-width` say how wide an image is laid out, which only a page knows, and Chrome sends neither for an image with no width of its own. `save-data` needs a setting that a Persona does not have on. So a Persona has no line for them, and they do not go.
 
 ## What a caller changes
@@ -196,3 +198,171 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 | Closing an HTTP/2 session after a protocol error, in `net/spdy/spdy_session.cc` | When a server breaks the protocol |
 | `HttpCacheZstdCompression` and `HttpCacheZstdDecompression` by default from 157, and `LogicalClearHttpCache` from 156 | What a [cache](parity.md#the-http-cache) keeps on disk, and never on the wire |
 | A 206 response that runs past the range asked for fails with `ERR_CONTENT_LENGTH_MISMATCH` instead of going into the cache, in `net/http/partial_data.cc`, `http_cache_writers.cc` and `http_cache_transaction.cc`. 157.0.8103.39 and 156.0.8078.80 have it, and 155.0.8059.86 does not | A Session with a cache, when a server sends more than the range that a request asked for |
+
+## A machine of its own
+
+Once a server asks for the hints that follow the machine, every Session of a Persona sends [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions land on one point, which a server can count. A Session that saves its cookies and comes back also comes back as that one machine.
+
+This section says what decides each of those values in Chrome, which values go together, how common each one is, and what a Session would need to claim a machine of its own. The recommendation is the draft [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md). Nothing here is built yet: a Session still sends the values above.
+
+No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
+
+### What decides each value
+
+| Hints | What Chrome reads | What it sends on Windows | Where |
+| --- | --- | --- | --- |
+| `device-memory`, `sec-ch-device-memory` | The memory that Windows reports, in MiB, taken to the nearer power of two, and to the lower one on a tie. A desktop then holds it between 2 and 32 GiB, and Android between 1 and 8 | `2`, `4`, `8`, `16` or `32`. `8` stands for more than 6 GiB and up to 12 GiB, so a machine with 16 GB sends `16` | `third_party/blink/common/device_memory/approximated_device_memory.cc` |
+| `dpr`, `sec-ch-dpr` | The scale of a display, times the zoom of the page. A navigation takes the primary display's scale, and a script, image or fetch the scale of the display its window is on. On Windows a display's scale is its DPI over 96, which is the scale in Windows' display settings | `1`, `1.25`, `1.5`, `1.75`, `2` and so on, as the shortest decimal | `content/browser/client_hints/client_hints.cc` (`GetDeviceScaleFactor`, `GetZoomFactor`), `third_party/blink/renderer/core/loader/frame_fetch_context.cc`, `ui/display/win/dpi.cc` |
+| `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height` | The size of the window's page area in device-independent pixels, divided by the zoom and rounded. A navigation reads it from the tab's view, or else from the last top-level page that the profile laid out, and leaves the line out if it has neither. A script, image or fetch reads the page's layout size, which on a desktop is the whole page area, a scrollbar included, so both give the same value | Whole numbers. A window that fills the display has the display's work area, which leaves out the taskbar, less Chrome's own bars. With no saved size, Chrome's first window on a display of 16:10 or wider, with a work area wider than 1600, is half the work area less 15 wide. After that Chrome keeps the size the user left | `content/browser/client_hints/client_hints.cc` (`GetViewportSize`, `GetScaledViewportSize`), `third_party/blink/renderer/core/frame/local_frame_view.cc` (`ViewportWidth`, `ViewportHeight`), `chrome/browser/ui/window_sizer/window_sizer.cc` (`GetDefaultWindowBounds`) |
+| `rtt` | The round trip of HTTP that Chrome's network quality estimator has measured, with [noise for each host](#the-noise-on-rtt-and-downlink), at most 3000 and rounded to 50 ms | A multiple of 50 from `0` to `3000` | `content/browser/client_hints/client_hints.cc` (`RoundRtt`), `third_party/blink/renderer/platform/network/network_state_notifier.cc` (`RoundRtt`) |
+| `downlink` | The throughput the estimator has measured, with the same noise, at most 10,000 kbps and rounded to 50 kbps, in Mbps | A multiple of 0.05 from `0` to `10`, as the shortest decimal, such as `2.65` | `content/browser/client_hints/client_hints.cc` (`RoundKbpsToMbps`), `third_party/blink/renderer/platform/network/network_state_notifier.cc` (`RoundMbps`) |
+| `ect` | The same round trip, with no noise: `slow-2g` from 2010 ms, `2g` from 1420 ms, `3g` from 272 ms, and `4g` below that or with no estimate at all | `4g`, `3g`, `2g` or `slow-2g` | `net/nqe/network_quality_estimator.cc`, `net/nqe/network_quality_estimator_params.h`, `services/network/public/cpp/client_hints.h` |
+| `sec-ch-prefers-color-scheme` | In a normal profile, the colour mode of Chrome's own theme, which by default follows the app mode of Windows, `AppsUseLightTheme`. In Incognito, the app mode itself. From Chrome 157, a contrast theme decides it instead | `light` or `dark` | `chrome/browser/chrome_content_browser_client.cc` (`GetPreferredColorScheme`), `ui/native_theme/os_settings_provider_win.cc` |
+| `sec-ch-prefers-reduced-motion` | Windows' animation effects, `SPI_GETCLIENTAREAANIMATION` | `no-preference`, or `reduce` with them off | `ui/gfx/animation/animation_win.cc`, `content/browser/web_contents/web_contents_impl.cc` |
+| `sec-ch-prefers-reduced-transparency` | Windows' transparency effects, `EnableTransparency` in the user's registry | `no-preference`, or `reduce` with them off | `ui/native_theme/os_settings_provider_win.cc` |
+| `sec-ch-ua-platform-version` | The version of `Windows.Foundation.UniversalApiContract` in the registry, as `MAJOR.MINOR.0`. Windows 10 before 1809 gets it from a table in the code, and a registry that cannot be read gives `19.0.0` | [One value for each Windows](#which-windows) | `components/embedder_support/user_agent_utils.cc` (`GetUniversalApiContractVersion`) |
+| `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64` | The processor architecture of Windows, and whether Chrome is a 32-bit build on 64-bit Windows | `"x86"`, `"64"` and `?0` for 64-bit Chrome on x64 Windows. `"arm"` on Windows on Arm, also for an x64 Chrome there. `?1` for 32-bit Chrome on x64 Windows, still with `"64"` | `components/embedder_support/user_agent_utils.cc` (`GetCpuArchitecture`, `GetCpuBitness`, `IsWoW64`) |
+| `sec-ch-ua-model`, `sec-ch-ua-form-factors` | Nothing of the machine | `""` and `"Desktop"` on every Windows machine | `components/embedder_support/user_agent_utils.cc` (`BuildModelInfo`, `GetFormFactorsClientHint`) |
+
+Chrome reads the memory, the platform version and the architecture once in each run, the first time it needs them. The other values follow the machine as it changes, such as a window that is made larger.
+
+### The noise on `rtt` and `downlink`
+
+Before it caps and rounds, Chrome multiplies the estimate by `0.9 + ((hash + salt) mod 21) × 0.01`, one of 21 values from 0.90 to 1.10, where the hash is of the host of the request's URL. It does this in two places, which give a host two different numbers:
+
+| | A navigation, on each hop | A script, image or fetch |
+| --- | --- | --- |
+| Where | The browser, in `content/browser/client_hints/client_hints.cc` | The renderer of the page, in `third_party/blink/renderer/platform/network/network_state_notifier.cc` |
+| The hash of the host | libc++'s `std::hash<std::string>`, cut to 32 bits | Blink's hash of a string, `StringImpl::GetHash()`, which has 24 bits |
+| The salt | 1 to 21, drawn once in each run of the browser | 1 to 20, drawn once in each renderer process |
+
+So one host gets one value for its navigations and often another for the subresources of its pages, and both change when Chrome starts again. A Session sends one value to every host.
+
+What the estimator has measured depends on the network. It keeps an estimate for each network it has seen, in the profile. On a network it has not seen, it starts from typical values for the kind of connection until requests have been measured: 90 ms and 1456 kbps on Ethernet, 116 ms and 2658 kbps on Wi-Fi, and 115 ms and 1961 kbps when it cannot tell, in `net/nqe/network_quality_estimator_params.cc`. A field trial can change them. So a new Chrome on Wi-Fi sends `rtt` of `100` or `150`, `downlink` from `2.4` to `2.9` and `ect` of `4g`, until it has measured more. A Persona's `downlink` of `10` takes an estimate of at least 9.1 to 11.1 Mbps, by the noise for the host.
+
+### Which Windows
+
+Chrome 155, 156 and 157 run on Windows 10 and 11. Anything older counts as obsolete, in `chrome/browser/obsolete_system/obsolete_system_win.cc`. So `sec-ch-ua-platform-version` can be any value of Windows 10 or 11. It names the contract, and not the build, so one value stands for several versions of Windows:
+
+| Windows | Build | `sec-ch-ua-platform-version` | From |
+| --- | --- | --- | --- |
+| 10, 1507 to 1803 | 10240 to 17134 | `"1.0.0"` to `"6.0.0"` | Chrome's own table |
+| 10, 1809 | 17763 | `"7.0.0"` | Microsoft |
+| 10, 1903 and 1909 | 18362, 18363 | `"8.0.0"` | Microsoft |
+| 10, 2004 to 21H2 | 19041 to 19044 | `"10.0.0"` | Microsoft |
+| 10, 22H2 | 19045 | `"10.0.0"` | Not confirmed. It is 2004's build with an enablement package, as 20H2 to 21H2 are |
+| 11, 21H2 | 22000 | `"14.0.0"` | Microsoft's SDK for that build |
+| 11, 22H2 | 22621 | `"15.0.0"` | Microsoft |
+| 11, 23H2 | 22631 | `"15.0.0"` | Not confirmed. Microsoft gives it 22H2's SDK |
+| 11, 24H2 | 26100 | `"19.0.0"` | Microsoft |
+| 11, 25H2 and 26H2 | 26200, 26300 | `"19.0.0"` | Not confirmed. Each is 24H2's build with an enablement package |
+| 11, 26H1 | 28000 | Not known | Its SDK adds contract 20 as experimental only. It only comes on new devices, not as an update |
+
+Microsoft's sources are its page on [detecting Windows 11 through client hints](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/how-to-detect-win11), which stops at 21H2 for Windows 10 and gives Windows 11 as "13 and above", the contract versions of each SDK in [its API catalog](https://apisof.net/), the pages of APIs that came with 24H2 such as [`UserAgeRange`](https://learn.microsoft.com/en-us/uwp/api/windows.system.useragerange), and [its release information](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) for builds and dates, all read on 2026-11-08. Reading the registry on each version would confirm the rest. The Baselines hold `"19.0.0"`, which [Windows 11 24H2 also says](#what-they-say).
+
+### What goes together
+
+- **The display, its scale and the window.** A viewport is at most as wide as the display in device-independent pixels, which is its pixels over the scale, and a window that fills the display is exactly that wide. Its height is at most the work area over the scale, less Chrome's bars. The taskbar and Chrome's bars keep their size in device-independent pixels at any scale, so a scale and a viewport have to be drawn with a display, and not apart from it. For example, a 1920 by 1080 display at 125% is 1536 by 864, and a window that fills it is 1536 wide.
+- **The Windows version and the viewport's height.** Windows 10 and Windows 11 have taskbars of different heights, so a window that fills the display has a height that follows the version. This was read from neither source nor a recording, so the heights need checking before a table holds them.
+- **The round trip, `ect` and `downlink`.** `ect` follows the round trip with no noise, so `4g` goes with an `rtt` of at most 300, and `3g` with 250 to 1550. The throughput is an estimate of its own, which `ect` does not read.
+- **The Windows version and the Chrome Release.** Every Windows 10 and 11 runs every Chrome Release in the Supported Window, so the Persona does not limit the platform version. How common each version is does.
+- **On their own.** The memory, the colour scheme, reduced motion and reduced transparency are each apart from the rest. The memory goes loosely with the kind of machine, and so with its display, but no public statistics join the two. The three settings are a user's own.
+- **The zoom.** Chrome keeps a zoom for each host, and a default. It multiplies `dpr` and divides the viewport, as the page would. A machine at 100% is the common case, and a zoom for each host would be a setting of its own.
+
+### How common each one is
+
+These are the public statistics found on 2026-11-08, with the latest period each had then. None of them splits by browser and Windows together, and none measures what Chrome sends, so each weight is a step away from it.
+
+| What | Source and period | What it says |
+| --- | --- | --- |
+| Windows 10 against 11 | [StatCounter](https://gs.statcounter.com/windows-version-market-share/desktop/worldwide), desktop, worldwide, October 2026 | Windows 11 74.2%, Windows 10 25.2%, older 0.6%. It moves by several points from month to month |
+| | [Steam's survey](https://store.steampowered.com/hwsurvey/?platform=pc), Windows, October 2026 | Windows 11 77.4%, Windows 10 22.5% |
+| | [Firefox Public Data Report](https://data.firefox.com/dashboard/hardware), week of 2026-10-26 | Of Windows, about 61% Windows 11, 34% Windows 10 and 5% Windows 7 |
+| Each version of Windows 11 | None | No public source splits Windows 11 by version. AdDuplex, which did, closed in 2023 |
+| The size of the display, in CSS pixels | StatCounter, [desktop screen resolution](https://gs.statcounter.com/screen-resolution-stats/desktop/worldwide), October 2026, all desktop systems | 1920×1080 27.8%, 1536×864 9.2%, 800×600 8.7%, 1366×768 7.5%, 1280×720 4.5%, 2560×1440 3.8%, and a long tail. It reads `screen.width` and `screen.height`, so a 1920×1080 display at 125% counts as 1536×864. macOS is in it, and 800×600 looks like machines that are not people's |
+| The size of the display, in pixels | Steam, Windows, October 2026 | 1920×1080 51.9%, 2560×1440 22.5%, 2560×1600 5.8%, 3840×2160 5.1%, 3440×1440 3.2%, 1920×1200 3.0%, 1366×768 2.3%. Machines for games |
+| | Firefox, week of 2026-10-26, all desktop systems | 1920×1080 51.2%, 1366×768 13.5%, 1920×1200 5.1%, 2560×1440 4.4%, 1600×900 4.0%, 2880×1800 2.2%, 3840×2160 2.1% |
+| The scale | None | No public source gives it. StatCounter's sizes in CSS pixels beside the others' in pixels are the only way to see it: 1536×864 is 1920×1080 at 125%, and 1280×720 can be 1920×1080 at 150% |
+| The memory | Firefox, week of 2026-10-26, all desktop systems | In Chrome's values, worked out here from Firefox's rounded sizes: `2` 3.2%, `4` 12.4%, `8` 34.5%, `16` 33.2%, `32` 12.3%, and 4.4% that Firefox does not name |
+| | Steam, Windows, October 2026 | 16 GB 41.3%, 32 GB 38.2%, 8 GB 7.0%. Machines for games |
+| Dark mode | [Chrome Platform Status](https://chromestatus.com/metrics/feature/timeline/popularity/3581), `PreferredColorSchemeDarkSetting`, early November 2026 | About 40% of page loads, on every platform with Android, which is not Windows alone |
+| Reduced motion and transparency | None | Only how many pages ask for them, not how many users turn them on |
+| The round trip and throughput | [Chrome UX Report](https://developer.chrome.com/docs/crux/bigquery) | A round trip in three bins for each origin, country and kind of device, in BigQuery. A table for all desktops would have to be worked out from it there. Not fetched |
+
+Firefox rounds the memory to whole GB, so for Chrome's values 3 GB counts as `2`, 6 GB as `4`, 7 and 12 GB as `8`, 14, 15 and 24 GB as `16`, and 31 and 64 GB as `32`. 6 and 12 GB sit on Chrome's ties, so a few of them would go up instead.
+
+Where a public source has nothing, a Machine can still take what most users have: Windows ships with animations and transparency on, so `no-preference` for both is what most real machines say, and a value that most users share puts no Session on a point of its own.
+
+#### Licences
+
+| Source | Licence | Can the repository ship a table made from it? |
+| --- | --- | --- |
+| StatCounter | [CC BY-SA 3.0](https://gs.statcounter.com/faq), with a link to them wherever the data is used | Yes, as a file of its own under CC BY-SA 3.0 with that credit. The code keeps Apache-2.0, and the wheel then declares both |
+| Firefox Public Data Report | The site says its content is under a Creative Commons licence, which Mozilla's [licensing page](https://www.mozilla.org/en-US/foundation/licensing/website-content/) gives as CC BY-SA 3.0 or later. The data files carry none of their own | As for StatCounter, though only Mozilla can say for certain that the data is covered |
+| Chrome UX Report | [CC BY 4.0](https://developer.chrome.com/docs/crux/methodology) | Yes, with credit |
+| Chrome Platform Status | None found for its data | No |
+| Steam's survey | None, and Valve's terms keep all rights | No. It can only check what the others say |
+| Cloudflare Radar | [CC BY-NC 4.0](https://developers.cloudflare.com/radar/) | No, since Apache-2.0 allows commercial use |
+
+This is a reading of their terms, not legal advice. A table under a share-alike licence beside Apache-2.0 code is a decision for the owner.
+
+#### Keeping the table current
+
+StatCounter has a month on the second of the next and revises it for 45 days, through a CSV link that its page uses but does not document. Firefox's report is weekly, at stable JSON addresses. The Chrome UX Report is monthly, in BigQuery, and needs a Google Cloud account. So a step of [the release routine](releasing.md) can fetch StatCounter's last month that is older than 45 days and Firefox's last week, write the table again and show its diff for review. Steam's survey has no API and is no source for the table.
+
+### Where it lives
+
+The draft [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md) recommends that each Session has a machine of its own, apart from its Persona, which stays one for each Chrome Release:
+
+| Question | Recommendation | Because |
+| --- | --- | --- |
+| Drawn or fixed? | Drawn by default, from a table that ships with mitto. A caller can fix any value, or give the whole machine | A fixed default leaves every Session that does not ask on one point, which is the problem. A machine that the caller must always give would mostly be copied from one example, with the same result |
+| Repeatable? | The same seed gives the same machine with the same table. The machine keeps its seed, and a later mitto that knows more fields draws the new ones from it, to fit those it has | Tests need the same values twice, and a saved machine must not change when mitto learns more |
+| Saved? | In `cookie_file` and by [`Cookies.save()`](api.md#cookiessave), beside the cookies. A Session that loads the file is that machine | A returning user whose machine changed between visits would stand out |
+| A file from mitto 0.1? | It has no machine, so it loads with the one every Session claimed then, the values [above](#what-they-say) | A returning Session must not change machine because mitto changed |
+| What it holds | The memory, the display with its scale, the viewport, the round trip and throughput as estimated before noise, the three settings and the Windows version | What Chrome reads, and not what it sends, so that noise can be added for each host and a page can later read the same machine |
+| What it leaves to the Persona | `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64`, `sec-ch-ua-model` and `sec-ch-ua-form-factors` | They are the same on every x64 Windows machine. Windows on Arm would need Baselines of its own first, to show that nothing else changes |
+| The salts of the noise | Drawn each time a Session opens, from its seed if it has one, and never saved | Chrome draws them again each time it starts, so a returning user has new ones too |
+| On a Windows **Host** | Drawn as on every other Host, and never read from the machine mitto runs on | The owner decided this on 2026-11-08 |
+
+Who writes each value: those that do not change from one request to the next can go into the Persona's lines when a Session opens, as the Persona's own values go now. `rtt` and `downlink` change with the host, so the native core would work them out on each hop from the estimate and the salts. That takes both hashes of the table above. `native/http_header_map.cc` already ports the rapidhash under Blink's.
+
+The cookie file today is what the native core lists, `{"version": 1, "cookies": [...]}`, and the native core refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the Python layer would write a new version of the file with the machine beside the cookies, and hand the native core the cookies alone.
+
+### What happens to Parity Checks
+
+A drawn value cannot be compared with a Baseline, so the normal form keeps its line in its place and hides the value as `<machine>`, as it does for 13 hints today. A drawn platform version joins them: `sec-ch-ua-platform-version` becomes `<machine>` too, and the Baselines are written again with that one value changed. The order of the lines stays compared.
+
+What checks the values instead:
+
+- Tests of each rounding against the cases of Chromium's own tests, `approximated_device_memory_unittest.cc` and `content/browser/client_hints/client_hints_unittest.cc`.
+- A test that each value a draw can give is one that Chrome can send, by [the table above](#what-decides-each-value), and that a drawn machine keeps to [what goes together](#what-goes-together).
+- Tests that a Session sends its machine's values on each hop, with `rtt` and `downlink` worked out for each host.
+- A check of each recording, where the recordings are kept, that a value the normal form hides has the form a Session's has. Real Chrome's formats are then compared, and the recording machine's values still never reach the repository.
+
+### The Runtime
+
+The **Runtime** will have to read the same machine, or a page could tell that its scripts and its requests disagree. What a page can read, and what it needs:
+
+| A page reads | From the machine |
+| --- | --- |
+| `navigator.deviceMemory` | The same memory |
+| `devicePixelRatio`, and `resolution` in `matchMedia()` | The scale, times the zoom |
+| `innerWidth`, `innerHeight`, and `width` and `height` in `matchMedia()` | The viewport |
+| `screen.width`, `screen.height` | The display, over the scale |
+| `screen.availWidth`, `screen.availHeight` | The work area, over the scale |
+| `outerWidth`, `outerHeight`, `screenX`, `screenY` | The window: the viewport with Chrome's bars, and where it is |
+| `prefers-color-scheme`, `prefers-reduced-motion` and `prefers-reduced-transparency` in `matchMedia()` | The three settings |
+| `prefers-contrast`, `forced-colors` and `inverted-colors` in `matchMedia()` | Windows' contrast themes and colour filters, which no hint sends |
+| `navigator.connection` | The same estimate, with the renderer's noise for the page's host, in `third_party/blink/renderer/modules/netinfo/network_information.cc` |
+| `navigator.userAgentData.getHighEntropyValues()` | The platform version, and what the Persona holds |
+| `navigator.hardwareConcurrency`, `navigator.maxTouchPoints`, the GPU through WebGL, the time zone | Nothing yet |
+
+So the shape has to allow three things. It keeps what Chrome reads, such as the display, its scale and the work area, and not only the viewport, so that `screen` and the window agree with the hints. It keeps the estimate before noise, because a page and a request add different noise. And it takes new fields: a machine saved by one version of mitto loads in a later one that knows more, which draws what is missing from the machine's seed to fit what it has.
+
+### What changes for callers
+
+- A Session that does not fix its machine sends values of its own to an origin that asks for them, and another Session sends others. A server that does not ask sees no change.
+- `sec-ch-ua-platform-version` stops being `"19.0.0"` for everyone.
+- A `cookie_file` written by the new version holds the machine as well, and mitto 0.1 refuses it, because its native core does not know the new version of the file. A file from mitto 0.1 loads in the new version as the machine above.
+- So this ships in a new minor version, as [a run](releasing.md#when-a-run-starts) raises it, and not in a patch. Its release notes have to say so.
