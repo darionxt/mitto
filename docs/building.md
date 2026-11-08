@@ -4,19 +4,31 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 
 ## Requirements
 
-- A macOS arm64 or Linux x86_64 Host.
+- A macOS arm64, Linux x86_64 or Windows x64 Host. A Windows workspace sets up and generates its build graph, but the native core does not build there yet.
 - About 31 GiB of free disk space for the workspace, including compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
-- `git`, `curl` and `bash`.
+- `git`, and [uv](https://docs.astral.sh/uv/) to run the set-up script with Python 3.12 or later. The script needs only Python's standard library. On macOS and Linux, depot_tools also needs `curl` and `bash`.
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
 - On Linux, nothing more. A new Ubuntu 26.04 desktop install only needs `sudo apt-get install git curl`, and other distributions have not been tried. The checkout brings its own compiler, linker and sysroot, so the native core builds without a system C compiler. It also builds without Chromium's `build/install-build-deps.sh`, which installs hundreds of packages for the rest of Chromium.
+- On Windows, what Chromium's own [instructions for Windows](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8103.39/docs/windows_build_instructions.md) ask for. The checkout brings its own compiler and linker, clang-cl and lld-link, but they take Windows' headers, libraries and some tools from the machine:
+  - Visual Studio 2026, version 18.0 or later; Community is enough. It needs "Desktop development with C++" and that workload's ATL/MFC component. From the command line, its installer adds them with `--add Microsoft.VisualStudio.Workload.NativeDesktop --add Microsoft.VisualStudio.Component.VC.ATLMFC --includeRecommended`.
+  - The Windows SDK 10.0.28000.2270, with its Debugging Tools for Windows. Its installer is on Microsoft's [Windows SDK downloads](https://learn.microsoft.com/en-us/windows/apps/windows-sdk/downloads) page. Chromium 157's `build/vs_toolchain.py` asks for `10.0.28000.0`, the directory that every build of that SDK installs into.
+  - [Git for Windows](https://gitforwindows.org/), with `git` on `PATH`. depot_tools no longer brings its own git on Windows: it looks on `PATH` for a git inside a directory named `Git`. Its portable MinGit works as well, unpacked into a directory of that name.
+  - An NTFS disk and a short path for the workspace, such as `C:\ws`. Chromium's longest paths come close to Windows' limit of 260 characters, and the script lets only git go past that limit.
 
 ## Set up the workspace
 
-Choose a directory outside the repository and run the bootstrap script:
+Choose a directory outside the repository and run the bootstrap script from the repository root:
 
 ```bash
 export MITTO_WORKSPACE=/absolute/path/to/mitto-workspace
-tools/workspace/bootstrap
+uv run tools/workspace/bootstrap.py
+```
+
+On Windows, in PowerShell:
+
+```powershell
+$env:MITTO_WORKSPACE = 'C:\ws'
+uv run tools/workspace/bootstrap.py
 ```
 
 The script:
@@ -33,6 +45,10 @@ Running the script again is safe and quick when nothing has changed. After an in
 
 gclient refuses to sync a checkout with local changes, so each run takes the patches out before it syncs and applies them again afterwards. The next build therefore recompiles the patched files. If you have also changed those files in `src`, the script stops until you undo those changes.
 
+Every git command that the script runs, those of depot_tools and gclient included, gets `core.autocrlf=false` and `core.eol=lf`, and on Windows also `core.longpaths=true`. They come through git's `GIT_CONFIG_COUNT` variables in the environment, which take precedence over the user's own git configuration and leave it as it is. So each file of the checkout has the same bytes on every **Host**, as the [source export](#make-the-source-export) needs: Git for Windows would otherwise write CRLF line endings into the files that a `.gitattributes` marks as text. A `gclient sync` run by hand on Windows lacks these settings, so rerun the script instead.
+
+On Windows the script differs in three more ways. `//mitto` is a directory junction, because a symbolic link needs a privilege that most users lack. depot_tools' commands are its `.bat` wrappers, which run in cmd.exe whichever shell starts the script, as Chromium's instructions ask. And everything it runs gets `DEPOT_TOOLS_WIN_TOOLCHAIN=0`, so that depot_tools uses the Visual Studio installed on the machine rather than a packaged copy that only Google's own machines can download.
+
 The workspace then looks like this:
 
 ```text
@@ -43,7 +59,7 @@ $MITTO_WORKSPACE/
     .gclient           written by the script
     applied-patches/   copies of the patches applied to src
     src/               Chromium at the pinned tag, with the patches applied
-      mitto/           link to the repository's native/
+      mitto/           link to the repository's native/, a junction on Windows
       out/mitto/       build directory for the native core
   compare/             shallow repositories for tools/workspace/compare, if used
   export/<tag>/        slices and archive from tools/workspace/export.py, if used
@@ -53,6 +69,13 @@ To use the Chromium tools by hand, put depot_tools on your `PATH`:
 
 ```bash
 export PATH="$MITTO_WORKSPACE/depot_tools:$PATH"
+```
+
+On Windows, in PowerShell, also tell depot_tools to use the installed Visual Studio:
+
+```powershell
+$env:PATH = "$env:MITTO_WORKSPACE\depot_tools;$env:PATH"
+$env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
 ```
 
 Change GN arguments in `tools/workspace/args.gn` and rerun the script; the copy in `out/mitto` is overwritten on every run. For experiments, create another build directory under `out/` instead.

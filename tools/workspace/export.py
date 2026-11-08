@@ -6,7 +6,7 @@ from an archive that holds only what that build reads. Each Host reads different
 files, and gn on one Host knows nothing of another's, so the list comes from a
 real build on each Host:
 
-    export.py slice           on each Host, in a workspace set up by bootstrap
+    export.py slice           on each Host, in a workspace set up by bootstrap.py
     export.py merge           on one Host, once it holds every Host's slice
     export.py build <dir>     anywhere, with no Chromium checkout
 
@@ -268,7 +268,7 @@ def read_tag() -> str:
 def workspace_dir() -> Path:
     value = os.environ.get("MITTO_WORKSPACE")
     if not value:
-        die("set MITTO_WORKSPACE to the workspace that tools/workspace/bootstrap set up")
+        die("set MITTO_WORKSPACE to the workspace that tools/workspace/bootstrap.py set up")
     return Path(value).resolve()
 
 
@@ -521,7 +521,7 @@ def third_party_without_licence(files: Iterable[str]) -> list[str]:
 def checkout_of(workspace: Path, tag: str) -> Path:
     src = workspace / f"chromium-{tag}" / "src"
     if not (src / "DEPS").is_file():
-        die(f"{src} is not a checkout; run tools/workspace/bootstrap first")
+        die(f"{src} is not a checkout; run tools/workspace/bootstrap.py first")
     return src
 
 
@@ -539,9 +539,9 @@ def check_checkout(src: Path) -> None:
     for patch in sorted(PATCHES.glob("*.patch")):
         applied = subprocess.run(["git", "-C", src, "apply", "--reverse", "--check", patch], capture_output=True)
         if applied.returncode != 0:
-            die(f"{patch.name} is not applied to {src}; rerun tools/workspace/bootstrap")
+            die(f"{patch.name} is not applied to {src}; rerun tools/workspace/bootstrap.py")
     if not (src / "mitto").is_dir() or not same_tree((src / "mitto").resolve(), NATIVE):
-        die(f"{src / 'mitto'} differs from {NATIVE}; rerun tools/workspace/bootstrap from this repository")
+        die(f"{src / 'mitto'} differs from {NATIVE}; rerun tools/workspace/bootstrap.py from this repository")
 
 
 def write_args(config: BuildConfig, build_dir: Path) -> None:
