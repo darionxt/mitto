@@ -644,7 +644,8 @@ A slice holds:
 - every file of the source tree that a build step's command line names, such as a compiler's warning suppression list, which no depfile lists;
 - every file below a directory that compilers search with `-isystem`, because `-MMD` leaves those headers out of its depfiles;
 - every file that a build script's Python opened or got as an argument, recorded through Python's audit events, which see this on every Host without root;
-- `DEPS`; `build/modules/linux/BUILD.gn`, which `gn` only checks with `path_exists()`; and `build/toolchain/win/rc/win/rc.exe.sha1`, the SHA-1 by which a hook of `DEPS` downloads `rc.exe`;
+- `DEPS`, and `build/toolchain/win/rc/win/rc.exe.sha1`, the SHA-1 by which a hook of `DEPS` downloads `rc.exe`, both of which the merge reads;
+- the `BUILD.gn` of the Host's Clang modules, which `gn` only checks with `path_exists()`: `build/modules/linux/BUILD.gn` on Linux and `build/modules/win/BUILD.gn` on Windows, under the name that `gn` writes into `gen/module_platform.txt`. macOS has none;
 - the licence files that apply to all of the above: `LICENSE`, `COPYING`, `NOTICE`, `AUTHORS` and similar names in each directory on the way up to a kept file, and `README.chromium` with the file its `License File:` field names.
 
 It leaves out the build output, `//mitto` and the toolchain. It stops if it would keep a prebuilt program, for macOS, Linux or Windows, because that belongs in the toolchain list at the top of the script. Paths in a slice use `/` on every Host. Windows finds a file whatever the case of its path, so a tool there can name a file in another case than its directory does, and a Windows slice names each file as its directory spells it. Visual Studio's and the SDK's headers are system headers there, which the compiler does not report, and they lie outside the checkout in any case.

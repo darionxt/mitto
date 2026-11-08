@@ -265,19 +265,27 @@ def test_text_that_starts_like_a_windows_program_is_not_one(tmp_path: Path, cont
     assert not export.is_program(write(tmp_path, "notes.txt", content))
 
 
-def test_files_to_keep_drops_directories_and_missing_files_and_adds_what_gn_only_checks(tmp_path: Path) -> None:
+def test_files_to_keep_drops_directories_and_missing_files_and_adds_what_the_merge_reads(tmp_path: Path) -> None:
     write(tmp_path, "DEPS")
     write(tmp_path, "LICENSE")
-    write(tmp_path, "build/modules/linux/BUILD.gn")
+    write(tmp_path, "build/toolchain/win/rc/win/rc.exe.sha1")
     write(tmp_path, "net/a.cc")
     (tmp_path / "net/dir").mkdir()
 
     assert export.files_to_keep(tmp_path, ["net/a.cc", "net/dir", "net/missing.h", "out/x/gen.h"]) == {
         "DEPS",
         "LICENSE",
-        "build/modules/linux/BUILD.gn",
+        "build/toolchain/win/rc/win/rc.exe.sha1",
         "net/a.cc",
     }
+
+
+@pytest.mark.parametrize("platform", ["linux", "win"])
+def test_the_modules_that_gn_only_checks_follow_the_host(tmp_path: Path, platform: str) -> None:
+    write(tmp_path, "out/x/gen/module_platform.txt", platform)
+
+    assert export.paths_gn_only_checks(tmp_path / "out/x") == {f"build/modules/{platform}/BUILD.gn"}
+    assert export.paths_gn_only_checks(tmp_path / "out/other") == set()
 
 
 def test_the_trace_hook_sees_imports_and_reads(tmp_path: Path) -> None:

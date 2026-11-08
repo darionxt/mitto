@@ -80,10 +80,9 @@ PER_HOST_FILES = {"build/config/gclient_args.gni"}
 RC_EXE = "build/toolchain/win/rc/win/rc.exe"
 RC_BUCKET = "chromium-browser-clang/rc"
 
-# What no list of a build's inputs names. The merge reads the toolchain pins from
-# DEPS and the SHA-1 of rc.exe, and gn only checks that the BUILD.gn file exists,
-# with path_exists().
-ALWAYS_KEPT = {"DEPS", "build/modules/linux/BUILD.gn", f"{RC_EXE}.sha1"}
+# What no list of a build's inputs names, and the merge reads: the toolchain pins
+# in DEPS and the SHA-1 of rc.exe.
+ALWAYS_KEPT = {"DEPS", f"{RC_EXE}.sha1"}
 
 # Build output, and what comes from this repository rather than the export.
 NEVER_KEPT_DIRS = ("out", "mitto")
@@ -703,7 +702,20 @@ def paths_used_by_build(src: Path, host: Host, build_dir: Path, logs: Path) -> s
         relative = source_relative(path, src, build_dir)
         if relative is not None:
             paths.add(relative)
-    return paths | paths_read_by_python(logs, src)
+    return paths | paths_read_by_python(logs, src) | paths_gn_only_checks(build_dir)
+
+
+def paths_gn_only_checks(build_dir: Path) -> set[str]:
+    """Returns what gn only checks with path_exists(), which no list of a build's inputs names.
+
+    That is the BUILD.gn of the Clang modules of the Host, under the name that gn
+    writes down for them. A Host that has none, such as macOS, names one that
+    does not exist.
+    """
+    platform_file = build_dir / "gen/module_platform.txt"
+    if not platform_file.is_file():
+        return set()
+    return {f"build/modules/{platform_file.read_text().strip()}/BUILD.gn"}
 
 
 def files_to_keep(src: Path, used: Iterable[str]) -> set[str]:
