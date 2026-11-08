@@ -3,13 +3,16 @@
 A process of its own, with the server in another, so that what holds up the loop here is only this client, and what counts
 its threads sees only this client's. tests/test_asyncio_load.py runs this.
 
-It opens the Session and makes one request, says "ready" and waits for a line, so that the threads it has by then can be
-counted first. Then it prints one line of JSON.
+It opens the Session and makes one request, says "ready" with its process ID and waits for a line, so that the threads it
+has by then can be counted first. On Windows the python.exe of a virtual environment starts the interpreter in a process of
+its own, so the ID is not the one its parent started. Then it prints one line of JSON. Its last argument names the way the loop hears of the Session's events, as
+tests/event_loops.py does.
 """
 
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import sys
 import threading
@@ -17,6 +20,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import mitto
+from mitto import _async_api
 
 # How long the heartbeat sleeps, which is how finely it can tell.
 _TICK_SECONDS = 0.001
@@ -109,7 +113,7 @@ async def _main(load: str, url: str, size: int) -> dict[str, object]:
     loop = asyncio.get_running_loop()
     async with mitto.AsyncSession() as session:
         await session.get(f"{url}small")
-        print("ready", flush=True)
+        print(f"ready {os.getpid()}", flush=True)
         await loop.run_in_executor(None, sys.stdin.readline)
 
         heartbeat = _Heartbeat()
@@ -144,8 +148,12 @@ def main() -> None:
     parser.add_argument("load", choices=sorted(_LOADS))
     parser.add_argument("url")
     parser.add_argument("size", type=int)
+    parser.add_argument("loop_class", help="the name of the class of event loop in asyncio")
+    parser.add_argument("--wait-on-a-thread", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(asyncio.run(_main(args.load, args.url, args.size))), flush=True)
+    _async_api._WAIT_ON_A_THREAD = args.wait_on_a_thread  # pyright: ignore[reportPrivateUsage]
+    loop_factory = getattr(asyncio, args.loop_class)
+    print(json.dumps(asyncio.run(_main(args.load, args.url, args.size), loop_factory=loop_factory)), flush=True)
 
 
 if __name__ == "__main__":

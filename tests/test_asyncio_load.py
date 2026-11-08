@@ -4,6 +4,7 @@ The client is tests/asyncio_load_client.py, in a process of its own, and this co
 leave room for a slow CI runner. What the code does here today is far below them, and the pull request has the numbers.
 """
 
+import ctypes
 import http.server
 import json
 import queue
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from mitto._native import find_library
+from tests import event_loops
 from tests.local_server import QuietServer
 
 _MIB = 1024**2
@@ -104,8 +106,44 @@ def _url_of(server: _Server) -> str:
     return f"http://127.0.0.1:{server.server_port}/"
 
 
+class _ThreadEntry(ctypes.Structure):
+    """THREADENTRY32 of the Windows API."""
+
+    _fields_ = (
+        ("dwSize", ctypes.c_uint32),
+        ("cntUsage", ctypes.c_uint32),
+        ("th32ThreadID", ctypes.c_uint32),
+        ("th32OwnerProcessID", ctypes.c_uint32),
+        ("tpBasePri", ctypes.c_int32),
+        ("tpDeltaPri", ctypes.c_int32),
+        ("dwFlags", ctypes.c_uint32),
+    )
+
+
 def _threads_of(pid: int) -> int:
     """Return how many threads a process has now, the operating system's and all."""
+    if sys.platform == "win32":
+        # Windows lists the threads of every process at once.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+        kernel32.CreateToolhelp32Snapshot.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
+        kernel32.Thread32First.argtypes = (ctypes.c_void_p, ctypes.POINTER(_ThreadEntry))
+        kernel32.Thread32Next.argtypes = (ctypes.c_void_p, ctypes.POINTER(_ThreadEntry))
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        th32cs_snapthread = 0x4
+        snapshot = kernel32.CreateToolhelp32Snapshot(th32cs_snapthread, 0)
+        if snapshot in (None, ctypes.c_void_p(-1).value):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            entry = _ThreadEntry(dwSize=ctypes.sizeof(_ThreadEntry))
+            count = 0
+            found = kernel32.Thread32First(snapshot, ctypes.byref(entry))
+            while found:
+                count += entry.th32OwnerProcessID == pid
+                found = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+            return count
+        finally:
+            kernel32.CloseHandle(snapshot)
     if sys.platform == "linux":
         return sum(1 for _ in Path(f"/proc/{pid}/task").iterdir())
     listing = subprocess.run(["ps", "-M", "-p", str(pid)], capture_output=True, text=True, check=True).stdout
@@ -124,18 +162,28 @@ def _lines_of(process: subprocess.Popen[str]) -> "queue.Queue[str]":
     return lines
 
 
-def run_load(load: str, url: str, size: int) -> dict[str, Any]:
+@pytest.fixture(params=event_loops.KINDS)
+def kind_of_loop(request: pytest.FixtureRequest) -> str:
+    """The way that the client's event loop hears of its Session's events, each in turn."""
+    return request.param
+
+
+def run_load(load: str, url: str, size: int, kind_of_loop: str) -> dict[str, Any]:
     """Run the client, and return what it printed, with the threads it had before the load and at most during it."""
     if find_library() is None:
         pytest.skip("no native library")
+    wait_on_a_thread = ["--wait-on-a-thread"] if event_loops.waits_on_a_thread(kind_of_loop) else []
+    arguments = [load, url, str(size), event_loops.loop_class_name(kind_of_loop), *wait_on_a_thread]
     with subprocess.Popen(
-        [sys.executable, str(_CLIENT), load, url, str(size)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        [sys.executable, str(_CLIENT), *arguments], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     ) as process:
         assert process.stdin is not None
         lines = _lines_of(process)
         try:
-            assert lines.get(timeout=_RUN_SECONDS).strip() == "ready"
-            threads_before = _threads_of(process.pid)
+            ready, pid = lines.get(timeout=_RUN_SECONDS).split()
+            assert ready == "ready"
+            client = int(pid)
+            threads_before = _threads_of(client)
             process.stdin.write("go\n")
             process.stdin.flush()
             most_threads = threads_before
@@ -144,7 +192,7 @@ def run_load(load: str, url: str, size: int) -> dict[str, Any]:
                 assert time.monotonic() < deadline
                 # A process that has ended before its line got here has no threads, and no list of them.
                 if process.poll() is None:
-                    most_threads = max(most_threads, _threads_of(process.pid))
+                    most_threads = max(most_threads, _threads_of(client))
                 time.sleep(0.01)
             result = json.loads(lines.get())
         finally:
@@ -152,8 +200,8 @@ def run_load(load: str, url: str, size: int) -> dict[str, Any]:
     return {**result, "threads_before": threads_before, "most_threads": most_threads}
 
 
-def test_a_thousand_requests_on_one_loop_take_no_thread_each(server: _Server) -> None:
-    result = run_load("concurrent", _url_of(server), 1000)
+def test_a_thousand_requests_on_one_loop_take_no_thread_each(server: _Server, kind_of_loop: str) -> None:
+    result = run_load("concurrent", _url_of(server), 1000, kind_of_loop)
     print(result)
 
     assert result["ok"] == 1000
@@ -174,8 +222,10 @@ def test_a_thousand_requests_on_one_loop_take_no_thread_each(server: _Server) ->
     ],
     ids=["stream_download_1GiB", "whole_download_256MiB", "iterable_upload_256MiB", "async_iterable_upload_256MiB"],
 )
-def test_the_loop_stays_responsive_during_a_large_body(server: _Server, load: str, size: int) -> None:
-    result = run_load(load, _url_of(server), size)
+def test_the_loop_stays_responsive_during_a_large_body(
+    server: _Server, load: str, size: int, kind_of_loop: str
+) -> None:
+    result = run_load(load, _url_of(server), size, kind_of_loop)
     print(result)
 
     assert result["received"] == size

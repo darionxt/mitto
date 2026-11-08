@@ -243,9 +243,11 @@ MITTO_EXPORT int32_t mitto_session_create(const char* settings,
 // until that is done, so that another Session can open the same cache.
 // May be called from any thread. Each request still running on it ends, with a
 // last event that holds -3 (ERR_ABORTED), and its handle stays valid until it is
-// released. No request may start and no call for cookies may be made once this
-// has been called. The file descriptor from mitto_session_event_fd() closes.
-// Does nothing if `session` is null.
+// released. No request may start and no other call may be made on the Session
+// once this has been called. The file descriptor from mitto_session_event_fd()
+// closes. A call to mitto_session_wait_for_event() that waits returns, as
+// mitto_session_end_waits() makes it, and this waits for it to return before it
+// releases the Session. Does nothing if `session` is null.
 MITTO_EXPORT void mitto_session_destroy(MittoSession* session);
 
 // Stores all the Session's cookies, in the order the store lists them: longest
@@ -372,16 +374,18 @@ MITTO_EXPORT void mitto_cookies_free(char* cookies);
 //
 // This is for a caller that cannot block, such as an event loop. A caller gets
 // this before it starts requests, because only events that arrive after the
-// first call count.
+// first call to this or to mitto_session_wait_for_event() count.
 //
 // Returns 0 on success. On failure, such as when the process has too many open
 // files, returns a negative Chromium net error code and stores -1. On Windows a
 // Session has no such descriptor, so it fails with -11 (ERR_NOT_IMPLEMENTED)
-// where it would succeed elsewhere.
+// where it would succeed elsewhere. An event loop there has a thread wait in
+// mitto_session_wait_for_event() instead.
 MITTO_EXPORT int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd);
 
 // Stores the request behind the next waiting event, and takes that entry off the
-// list that keeps the file descriptor readable. A request with several events
+// list that keeps the file descriptor readable and that
+// mitto_session_wait_for_event() waits for. A request with several events
 // waiting is named once for each. May be called from any thread.
 //
 // The caller uses this only to find the request among the handles it holds, and
@@ -394,6 +398,34 @@ MITTO_EXPORT int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd);
 // waiting.
 MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
                                                       MittoRequest** request);
+
+// Blocks until mitto_session_next_ready_request() would name a request, for a
+// caller that waits on a thread of its own for an event loop that cannot watch
+// the file descriptor, as on Windows. May be called from any thread.
+//
+// It returns once each time the list goes from empty to naming a request: after
+// a return, it waits until mitto_session_next_ready_request() has emptied the
+// list and another event has arrived. So a thread that hands each return to an
+// event loop sleeps while the loop has not caught up, however many events wait.
+// Only events that arrive after the first call to this or to
+// mitto_session_event_fd() count, so a caller makes one before it starts
+// requests, with a `timeout_ms` of 0 so as not to block.
+//
+// Blocks for up to `timeout_ms` milliseconds if that is positive, not at all if
+// it is 0, and for as long as it takes if it is negative.
+//
+// Returns 0 when a request waits to be named, -1 (ERR_IO_PENDING) if none came
+// in time, -3 (ERR_ABORTED) at once after mitto_session_end_waits(), and -4
+// (ERR_INVALID_ARGUMENT) for a null `session`.
+MITTO_EXPORT int32_t mitto_session_wait_for_event(MittoSession* session,
+                                                  int64_t timeout_ms);
+
+// Ends each call to mitto_session_wait_for_event() that waits, and makes each
+// later one return -3 (ERR_ABORTED) at once. A caller ends its waiting thread
+// this way before it destroys the Session, because no call may start once
+// mitto_session_destroy() has been called. May be called from any thread, and
+// does not wait for anything. Does nothing if `session` is null.
+MITTO_EXPORT void mitto_session_end_waits(MittoSession* session);
 
 // Starts a request for `url`, a NUL-terminated UTF-8 string, on the library's
 // network thread, and returns without waiting for it. May be called from any

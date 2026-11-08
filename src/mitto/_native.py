@@ -227,6 +227,10 @@ def load_library() -> ctypes.CDLL:
         library.mitto_session_event_fd.restype = ctypes.c_int32
         library.mitto_session_next_ready_request.argtypes = (session_pointer, ctypes.POINTER(request_pointer))
         library.mitto_session_next_ready_request.restype = ctypes.c_int32
+        library.mitto_session_wait_for_event.argtypes = (session_pointer, ctypes.c_int64)
+        library.mitto_session_wait_for_event.restype = ctypes.c_int32
+        library.mitto_session_end_waits.argtypes = (session_pointer,)
+        library.mitto_session_end_waits.restype = None
         library.mitto_request_start.argtypes = (
             session_pointer,
             ctypes.c_char_p,
@@ -743,12 +747,14 @@ class Session:
         self.detach()()
 
     def detach(self) -> Callable[[], None]:
-        """Refuse every later call at once, as a closed Session does, and return what closes this one.
+        """Refuse every later call at once, as a closed Session does, end every wait_for_event(), and return what closes it.
 
         What it returns can block for a moment, on the network thread and any cache on disk, so that a caller who cannot
-        block can call it elsewhere. A Session that has been detached already gets back something that does nothing.
+        block can call it elsewhere. A thread that waits in wait_for_event() has to end before that is called. A Session
+        that has been detached already gets back something that does nothing.
         """
         handle, self._handle = self._handle, ctypes.POINTER(MittoSession)()
+        self._library.mitto_session_end_waits(handle)
         return functools.partial(self._library.mitto_session_destroy, handle)
 
     def list_cookies(self) -> bytes:
@@ -823,8 +829,26 @@ class Session:
             raise OSError(f"the native core has no file descriptor to give, with net error {net_error}")
         return fd.value
 
+    def wait_for_event(self, timeout: float | None = None) -> bool:
+        """Block, with the GIL released, until next_ready_request() would name a request, for a caller with no event_fd().
+
+        It returns once each time the list goes from empty to naming a request, and then waits until next_ready_request()
+        has emptied it and another event has arrived, so a thread that hands each return to an event loop sleeps until
+        the loop has caught up. Only events that arrive after the first call to this or to event_fd() count, so make one
+        before starting requests, with a timeout of 0 so as not to block.
+
+        Args:
+            timeout: How many seconds to wait at most, or None to wait for as long as it takes.
+
+        Returns:
+            True if a request waits to be named. False if none came in time, and at once after detach() or close().
+        """
+        timeout_ms = -1 if timeout is None else math.ceil(timeout * 1000)
+        net_error: int = self._library.mitto_session_wait_for_event(self._handle, timeout_ms)
+        return net_error == 0
+
     def next_ready_request(self) -> int | None:
-        """Take the entry for the next waiting event, which is what keeps event_fd() readable.
+        """Take the next waiting event's entry off the list behind event_fd() and wait_for_event().
 
         Returns:
             The NativeRequest.identity of the request whose event is waiting, or None if no event is waiting. A request

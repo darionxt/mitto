@@ -1142,6 +1142,7 @@ int32_t mitto_session_create(const char* settings,
 
 void mitto_session_destroy(MittoSession* session) {
   if (session) {
+    session->ready_requests.EndWaitsAndWaitForThem();
     mitto::NetworkCore::Get().DestroySession(base::WrapUnique(session));
   }
 }
@@ -1241,6 +1242,24 @@ int32_t mitto_session_next_ready_request(MittoSession* session,
   }
   *request = reinterpret_cast<MittoRequest*>(*ready);
   return net::OK;
+}
+
+int32_t mitto_session_wait_for_event(MittoSession* session,
+                                     int64_t timeout_ms) {
+  if (!session) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  std::optional<base::TimeDelta> timeout;
+  if (timeout_ms >= 0) {
+    timeout = base::Milliseconds(timeout_ms);
+  }
+  return session->ready_requests.Wait(timeout);
+}
+
+void mitto_session_end_waits(MittoSession* session) {
+  if (session) {
+    session->ready_requests.EndWaits();
+  }
 }
 
 int32_t mitto_request_start(MittoSession* session,
