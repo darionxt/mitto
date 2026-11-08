@@ -858,8 +858,6 @@ def example_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[N
 @pytest.mark.parametrize("path", PAGES, ids=lambda path: path.stem)
 def test_each_example_runs_and_reaches_every_line(path: Path) -> None:
     examples = examples_on(_read_page(path))
-    if sys.platform == "win32" and any("AsyncSession" in example.code for example in examples):
-        pytest.skip("the page has examples of the asyncio API, which does not run on Windows yet")
 
     assert examples
     assert run_examples(path, examples) == []

@@ -1178,6 +1178,43 @@ def test_a_request_closed_with_an_event_waiting_can_still_come_up(scripted_serve
         assert session.request(scripted_server.url("/small")).body == b"small"
 
 
+def test_a_wait_returns_once_each_time_the_list_fills(scripted_server: ScriptedServer) -> None:
+    url = scripted_server.url("/small")
+
+    with Session() as session:
+        # The first wait starts the list.
+        assert not session.wait_for_event(0)
+        with session.start(url) as first, session.start(url) as second:
+            assert session.wait_for_event(EVENT_TIMEOUT_SECONDS)
+            assert isinstance(next_event(first), ResponseStarted)
+            assert isinstance(next_event(second), ResponseStarted)
+
+            # Both events are listed now, and the wait has returned for the list as it is.
+            assert not session.wait_for_event(0.05)
+            assert {session.next_ready_request(), session.next_ready_request()} == {first.identity, second.identity}
+            assert session.next_ready_request() is None
+
+            # The list is empty, so the next event is news.
+            assert first.read() is None
+            assert session.wait_for_event(EVENT_TIMEOUT_SECONDS)
+            assert session.next_ready_request() == first.identity
+            assert isinstance(next_event(first), BodyAvailable)
+
+
+def test_detaching_a_session_ends_a_wait_on_another_thread() -> None:
+    session = Session()
+    assert not session.wait_for_event(0)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        waiting = executor.submit(session.wait_for_event)
+        assert not waiting.done()
+
+        destroy = session.detach()
+
+        assert waiting.result(timeout=EVENT_TIMEOUT_SECONDS) is False
+    assert session.wait_for_event() is False
+    destroy()
+
+
 # Each of these starts a request and exits with it running. Each waits to be told to exit, once the request has reached
 # the server. What the test wants to see is how the interpreter's shutdown and the network thread get along: a thread
 # that is waiting for an event when Python goes away must not stop the network thread or the process.

@@ -38,6 +38,8 @@ int32_t mitto_session_delete_cookies(void* session, const char* filter, unsigned
 void mitto_cookies_free(char* cookies) {{}}
 int32_t mitto_session_event_fd(void* session, int32_t* fd) {{ return -2; }}
 int32_t mitto_session_next_ready_request(void* session, void** request) {{ return -2; }}
+int32_t mitto_session_wait_for_event(void* session, int64_t timeout_ms) {{ return -2; }}
+void mitto_session_end_waits(void* session) {{}}
 int32_t mitto_request_start(void* session, const char* url, const void* headers, unsigned long header_count,
                             const char* options, unsigned long options_size, const char* body,
                             unsigned long body_size, void** request) {{ return -2; }}
@@ -51,6 +53,7 @@ void mitto_event_free(void* event) {{}}
 """
 
 ERR_IO_PENDING = -1
+ERR_ABORTED = -3
 ERR_INVALID_ARGUMENT = -4
 ERR_NOT_IMPLEMENTED = -11
 ERR_INVALID_URL = -300
@@ -789,6 +792,47 @@ def test_next_ready_request_stores_null_when_nothing_is_waiting(
 
     assert native_library.mitto_session_next_ready_request(session_handle, ctypes.byref(request)) == ERR_IO_PENDING
     assert not request
+
+
+def test_wait_for_event_refuses_a_null_session_and_end_waits_takes_one(native_library: ctypes.CDLL) -> None:
+    assert native_library.mitto_session_wait_for_event(None, 0) == ERR_INVALID_ARGUMENT
+    native_library.mitto_session_end_waits(None)
+
+
+def test_wait_for_event_says_when_nothing_came_in_time(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    assert native_library.mitto_session_wait_for_event(session_handle, 0) == ERR_IO_PENDING
+    assert native_library.mitto_session_wait_for_event(session_handle, 50) == ERR_IO_PENDING
+
+
+def test_end_waits_ends_every_wait_from_then_on(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    waited: list[int] = []
+    waiting = threading.Thread(
+        target=lambda: waited.append(native_library.mitto_session_wait_for_event(session_handle, -1))
+    )
+    waiting.start()
+    waiting.join(0.05)
+    assert waiting.is_alive()
+
+    native_library.mitto_session_end_waits(session_handle)
+
+    waiting.join(EVENT_TIMEOUT_MS / 1000)
+    assert waited == [ERR_ABORTED]
+    assert native_library.mitto_session_wait_for_event(session_handle, -1) == ERR_ABORTED
+
+
+def test_destroying_a_session_ends_a_wait_and_waits_for_it(native_library: ctypes.CDLL) -> None:
+    error, handle = create_session(native_library, NO_SETTINGS)
+    assert error == 0
+    waited: list[int] = []
+    waiting = threading.Thread(target=lambda: waited.append(native_library.mitto_session_wait_for_event(handle, -1)))
+    waiting.start()
+    waiting.join(0.05)
+    assert waiting.is_alive()
+
+    native_library.mitto_session_destroy(handle)
+
+    waiting.join(EVENT_TIMEOUT_MS / 1000)
+    assert waited == [ERR_ABORTED]
 
 
 def test_request_start_takes_the_url_as_bytes(native_library: ctypes.CDLL, session_handle: Any) -> None:

@@ -22,6 +22,7 @@
 #define STRINGIFY_VALUE(value) #value
 #define STRINGIFY(value) STRINGIFY_VALUE(value)
 
+#define ERR_IO_PENDING (-1)
 #define ERR_ABORTED (-3)
 #define ERR_NOT_IMPLEMENTED (-11)
 #define ERR_UPLOAD_FILE_CHANGED (-14)
@@ -370,6 +371,53 @@ static int FetchWithFileDescriptor(const char* url) {
   }
 }
 #endif
+
+// Waits in mitto_session_wait_for_event(), as a thread of its own does for an
+// event loop on Windows, and takes every event it says is waiting before it
+// waits again.
+static int FetchWithWaits(const char* url) {
+  int32_t error = mitto_session_wait_for_event(g_session, 0);
+  if (error != ERR_IO_PENDING) {
+    fprintf(stderr, "a first wait gave net error %" PRId32 "\n", error);
+    return 1;
+  }
+  if (Start(url) != 0) {
+    return 1;
+  }
+  size_t body_size = 0;
+  int32_t result = 0;
+  while (1) {
+    error = mitto_session_wait_for_event(g_session, EVENT_TIMEOUT_MS);
+    if (error != 0) {
+      fprintf(stderr, "no event came: net error %" PRId32 "\n", error);
+      return 1;
+    }
+    MittoRequest* ready;
+    while (mitto_session_next_ready_request(g_session, &ready) == 0) {
+      if (ready != g_request) {
+        fprintf(stderr, "another request is ready\n");
+        return 1;
+      }
+      MittoEvent event;
+      error = mitto_request_next_event(ready, 0, &event);
+      if (error != 0) {
+        fprintf(stderr, "next event failed with net error %" PRId32 "\n",
+                error);
+        return 1;
+      }
+      if (HandleEvent(&event, &body_size, &result)) {
+        mitto_session_end_waits(g_session);
+        error = mitto_session_wait_for_event(g_session, -1);
+        if (error != ERR_ABORTED) {
+          fprintf(stderr, "a wait after the end gave net error %" PRId32 "\n",
+                  error);
+          return 1;
+        }
+        return FinishFetch(url, body_size, result);
+      }
+    }
+  }
+}
 
 // Waits for the event of `type`, leaving the body unread. Returns 0 if it came.
 static int WaitFor(int32_t type) {
@@ -759,6 +807,7 @@ static const struct {
     {"write-stream-before-it-is-wanted", WriteStreamBeforeItIsWanted},
     {"end-stream-before-its-size", EndStreamBeforeItsSize},
     {"fetch-with-file-descriptor", FetchWithFileDescriptor},
+    {"fetch-with-waits", FetchWithWaits},
     {"fetch-without-redirects", FetchWithoutRedirects},
     {"navigation-from-a-page", NavigationFromAPage},
     {"cors-from-a-page", CorsFromAPage},

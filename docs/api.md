@@ -1025,7 +1025,7 @@ A response's status says that the request failed, as raised by [`Response.raise_
 
 ## asyncio
 
-The same browsing state, the same arguments and the same errors, also on the wire. What differs is how a caller waits, and this section says only that. One file descriptor per Session tells the event loop when any of its requests has an event waiting, so 1000 requests need no thread each.
+The same browsing state, the same arguments and the same errors, also on the wire. What differs is how a caller waits, and this section says only that. One file descriptor per Session tells the event loop when any of its requests has an event waiting, so 1000 requests need no thread each. Windows' event loops cannot watch one, so there a thread per Session waits for the same news in the native core, with the GIL released, and it works with `ProactorEventLoop` and `SelectorEventLoop` alike.
 
 ```python
 import asyncio

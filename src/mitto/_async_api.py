@@ -1,14 +1,16 @@
 """The asyncio API: a Session driven from an event loop, on the request building and the native stepping that Session has.
 
 One file descriptor per Session tells the loop when any of its requests has an event waiting, so 1000 requests need no
-thread each. Nothing on the loop waits in the native core. What can block goes to a thread of the loop's: opening and
-closing a Session, the file of its cookies, a caller's file or iterable, and joining a large body.
+thread each. Windows' event loops cannot watch one, so there one thread per Session waits for the same news in the native
+core and hands it to the loop. Nothing on the loop waits in the native core. What can block goes to a thread of the loop's:
+opening and closing a Session, the file of its cookies, a caller's file or iterable, and joining a large body.
 """
 
 import asyncio
 import concurrent.futures
 import functools
 import os
+import sys
 import threading
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Buffer, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager
@@ -45,20 +47,81 @@ __all__ = ["AsyncSession"]
 _ERR_INVALID_ARGUMENT = -4
 _ERR_INVALID_ARGUMENT_NAME = "ERR_INVALID_ARGUMENT"
 
+# Whether a thread that waits in the native core tells the loop of a Session's events, rather than a file descriptor that
+# the loop watches. On Windows, ProactorEventLoop has no add_reader(), and SelectorEventLoop watches sockets only.
+_WAIT_ON_A_THREAD = sys.platform == "win32"
 
-class _Events:
-    """Wakes each request that waits for an event, when the event fd of its Session names it."""
 
-    def __init__(self, native: _native.Session, fd: int, loop: asyncio.AbstractEventLoop) -> None:
-        self._native = native
+class _WatchedFd:
+    """Has the loop call `on_ready` whenever the event fd of a Session is readable."""
+
+    def __init__(self, fd: int, loop: asyncio.AbstractEventLoop, on_ready: Callable[[], None]) -> None:
         self._fd = fd
         self._loop = loop
-        self._waiting: dict[int, list[asyncio.Future[None]]] = {}
-        loop.add_reader(fd, self._on_readable)
+        loop.add_reader(fd, on_ready)
 
-    def stop_watching(self) -> None:
-        """Stop watching the fd, which has to happen before the native Session closes it."""
+    def stop(self) -> Callable[[], None]:
+        """Stop watching the fd, which has to happen before the native Session closes it, and return what does nothing."""
         self._loop.remove_reader(self._fd)
+        return _do_nothing
+
+
+class _WaitingThread:
+    """Has the loop call `on_ready` from a thread that waits in the native core until a Session's requests have events.
+
+    The native core returns from a wait once each time its list of them fills, and waits again until the loop has emptied
+    it, so the thread sleeps for as long as the loop is busy. It waits with the GIL released, and never keeps the
+    interpreter from exiting.
+    """
+
+    def __init__(self, native: _native.Session, loop: asyncio.AbstractEventLoop, on_ready: Callable[[], None]) -> None:
+        self._native = native
+        self._loop = loop
+        self._on_ready = on_ready
+        self._thread = threading.Thread(target=self._wait, name="mitto-session-events", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> Callable[[], None]:
+        """Return what waits for the thread to end, which it does once the native Session has been detached.
+
+        That has to happen before the native Session closes, and it can block for a moment.
+        """
+        return self._thread.join
+
+    def _wait(self) -> None:
+        while self._native.wait_for_event():
+            try:
+                self._loop.call_soon_threadsafe(self._on_ready)
+            except RuntimeError:
+                # The loop has closed with this Session open, and nothing is left on it to wake.
+                return
+
+
+def _do_nothing() -> None:
+    pass
+
+
+class _Events:
+    """Wakes each request that waits for an event, when its Session names it.
+
+    The loop hears of events from the Session's event fd, or else from a thread that waits for them in the native core.
+    """
+
+    def __init__(self, native: _native.Session, fd: int | None, loop: asyncio.AbstractEventLoop) -> None:
+        """Start watching for the events of `native`: on `fd`, or on a thread of its own if that is None."""
+        self._native = native
+        self._loop = loop
+        self._waiting: dict[int, list[asyncio.Future[None]]] = {}
+        self._watcher = (
+            _WatchedFd(fd, loop, self._on_ready) if fd is not None else _WaitingThread(native, loop, self._on_ready)
+        )
+
+    def stop_watching(self) -> Callable[[], None]:
+        """Stop watching, and return what waits for that to end, which can block for a moment.
+
+        Both have to happen before the native Session closes, and a thread that waits ends once it has been detached.
+        """
+        return self._watcher.stop()
 
     def wake_all(self) -> None:
         """Wake every request that waits, to find the last event that closing the native Session has given each."""
@@ -86,8 +149,9 @@ class _Events:
             event = request.next_event(0)
         return event
 
-    def _on_readable(self) -> None:
-        # An entry may name a request that has gone, or one that has taken its event already, which next_of() allows for.
+    def _on_ready(self) -> None:
+        # Until the list is empty, which is what lets a thread that waits return again. An entry may name a request that has
+        # gone, or one that has taken its event already, which next_of() allows for.
         while (identity := self._native.next_ready_request()) is not None:
             _wake(self._waiting.pop(identity, ()))
 
@@ -206,25 +270,29 @@ def _on_a_thread_of_its_own[T](function: Callable[[], T]) -> asyncio.Future[T]:
     return future
 
 
-def _create_state(arguments: dict[str, Any]) -> tuple[SessionState, int]:
-    """Open what can block, and return it with its event fd, before anything can start a request on it.
+def _create_state(arguments: dict[str, Any]) -> tuple[SessionState, int | None]:
+    """Open what can block, and return it with its event fd, or None if a thread is to wait for its events.
 
-    Only events that arrive after the first call for the fd count.
+    Only events that arrive after the first call for the fd, or the first wait for an event, count, so that comes before
+    anything can start a request on it.
     """
     state = SessionState(**arguments)
     try:
+        if _WAIT_ON_A_THREAD:
+            state.native.wait_for_event(0)
+            return state, None
         return state, state.native.event_fd()
     except BaseException:
         state.close()
         raise
 
 
-async def _create_off_the_loop(arguments: dict[str, Any]) -> tuple[SessionState, int]:
+async def _create_off_the_loop(arguments: dict[str, Any]) -> tuple[SessionState, int | None]:
     """Return what _create_state() returns, from a thread of its own, which closes it if nobody is left to take it.
 
     A task that waits here can be cancelled, by its caller or by the end of the event loop, and the thread cannot be.
     """
-    created: concurrent.futures.Future[tuple[SessionState, int]] = concurrent.futures.Future()
+    created: concurrent.futures.Future[tuple[SessionState, int | None]] = concurrent.futures.Future()
 
     def create() -> None:
         try:
@@ -248,7 +316,7 @@ async def _create_off_the_loop(arguments: dict[str, Any]) -> tuple[SessionState,
         raise
 
 
-def _close_created(created: concurrent.futures.Future[tuple[SessionState, int]]) -> None:
+def _close_created(created: concurrent.futures.Future[tuple[SessionState, int | None]]) -> None:
     if created.exception() is None:
         threading.Thread(target=created.result()[0].close, name="mitto-session-close").start()
 
@@ -516,7 +584,11 @@ class AsyncSession:
         opened = opening.result()
         # This all happens in one go on the loop, so nothing there can use a native Session that is closing.
         finish = opened.state.begin_close()
-        opened.events.stop_watching()
+        end_watching = opened.events.stop_watching()
+
+        def close_native() -> None:
+            end_watching()
+            finish()
 
         def finished(thread: asyncio.Future[None]) -> None:
             opened.events.wake_all()
@@ -526,7 +598,7 @@ class AsyncSession:
             else:
                 closing.set_exception(error)
 
-        _on_a_thread_of_its_own(finish).add_done_callback(finished)
+        _on_a_thread_of_its_own(close_native).add_done_callback(finished)
 
     async def _start(self, method: str, url: str, options: AsyncRequestOptions) -> _Driver:
         """Start a request and return what drives it, which the caller closes through its `request`."""

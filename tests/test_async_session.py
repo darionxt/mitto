@@ -1,7 +1,8 @@
 """What only an AsyncSession has: an event loop to keep moving, tasks to cancel, and an await where a Session blocks.
 
 The feature tests go through it too, by the both_apis fixture in tests/conftest.py. These go through the real native core to
-local servers, so they need no network connection, and are skipped when this machine has no native library.
+local servers, so they need no network connection, and are skipped when this machine has no native library. Each goes
+through every way that an event loop can hear of a Session's events on this Host, which tests/event_loops.py names.
 """
 
 import asyncio
@@ -26,6 +27,7 @@ import mitto
 from mitto import _async_api, _cookie_file, _native
 from mitto._request import AsyncRequestOptions, RequestOptions
 from mitto._session_state import SessionState
+from tests import event_loops
 from tests.local_server import QuietServer
 from tools.capture import CASES, HTTP2, CaptureServer, normal_form
 from tools.parity.replay import run_of, session_settings
@@ -47,6 +49,22 @@ LARGE_PART = bytes(range(256)) * 1024
 
 # For a test to wait on while the thread of an event loop's default executor is taken.
 _OTHER_THREAD = ThreadPoolExecutor(max_workers=1)
+
+# The name of the thread that waits for a Session's events, where one does.
+WAITING_THREAD = "mitto-session-events"
+
+
+@pytest.fixture(autouse=True, params=event_loops.KINDS)
+def kind_of_loop(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run each test once for each way that an event loop can hear of a Session's events, and return its name."""
+    event_loops.use(request.param, monkeypatch)
+    return request.param
+
+
+@pytest.fixture
+def waiting_thread_only(kind_of_loop: str) -> None:
+    if not event_loops.waits_on_a_thread(kind_of_loop):
+        pytest.skip("the loop watches a file descriptor, and no thread waits")
 
 
 class Server(QuietServer):
@@ -148,7 +166,7 @@ def run[T](coroutine: Coroutine[Any, Any, T]) -> T:
         async with asyncio.timeout(WAIT_SECONDS):
             return await coroutine
 
-    result = asyncio.run(limited())
+    result = asyncio.run(limited(), loop_factory=event_loops.new_event_loop)
     assert not errors
     return result
 
@@ -377,6 +395,141 @@ def test_a_request_that_always_has_an_event_waiting_still_gives_the_loop_a_turn(
         return seen
 
     assert run(main()) >= 100
+
+
+# A thread that waits for the events.
+
+# How long a test keeps its loop busy while events arrive.
+BUSY_SECONDS = 1.0
+
+
+def waiting_thread(session: mitto.AsyncSession) -> threading.Thread:
+    opening = session._opening  # pyright: ignore[reportPrivateUsage]
+    assert opening is not None
+    watcher = opening.result().events._watcher  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(watcher, _async_api._WaitingThread)  # pyright: ignore[reportPrivateUsage]
+    return watcher._thread  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.usefixtures("waiting_thread_only")
+def test_each_session_has_a_thread_of_its_own_that_ends_with_it(server: Server) -> None:
+    async def main() -> None:
+        async with mitto.AsyncSession() as first, mitto.AsyncSession() as second:
+            threads = {waiting_thread(first), waiting_thread(second)}
+            assert len(threads) == 2
+            for thread in threads:
+                assert (thread.name, thread.daemon, thread.is_alive()) == (WAITING_THREAD, True, True)
+            assert (await first.get(server.url("/body"))).content == BODY
+        assert not any(thread.is_alive() for thread in threads)
+
+    run(main())
+
+
+@pytest.mark.usefixtures("waiting_thread_only")
+def test_the_waiting_thread_ends_before_the_native_session_closes(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    threads: list[threading.Thread] = []
+    alive_at_close: list[bool] = []
+    detach = _native.Session.detach
+
+    def recorded(self: _native.Session) -> Callable[[], None]:
+        destroy = detach(self)
+
+        def checked() -> None:
+            alive_at_close.extend(thread.is_alive() for thread in threads)
+            destroy()
+
+        return checked
+
+    monkeypatch.setattr(_native.Session, "detach", recorded)
+
+    async def main() -> None:
+        async with mitto.AsyncSession() as session:
+            threads.append(waiting_thread(session))
+            assert (await session.get(server.url("/body"))).content == BODY
+
+    run(main())
+    assert alive_at_close == [False]
+
+
+@pytest.mark.usefixtures("waiting_thread_only")
+def test_the_waiting_thread_sleeps_while_events_wait_for_a_busy_loop(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """However many events arrive while the loop is busy, the thread wakes the loop once and then sleeps until it drains."""
+    # When each wait on the thread returned, by the clock and by the thread's own CPU time.
+    returns: list[tuple[float, float]] = []
+    taken: list[int] = []
+    wait_for_event = _native.Session.wait_for_event
+    next_ready_request = _native.Session.next_ready_request
+
+    def timed(self: _native.Session, timeout: float | None = None) -> bool:
+        woke = wait_for_event(self, timeout)
+        if threading.current_thread().name == WAITING_THREAD:
+            returns.append((time.monotonic(), time.thread_time()))
+        return woke
+
+    def counted(self: _native.Session) -> int | None:
+        identity = next_ready_request(self)
+        if identity is not None:
+            taken.append(identity)
+        return identity
+
+    monkeypatch.setattr(_native.Session, "wait_for_event", timed)
+    monkeypatch.setattr(_native.Session, "next_ready_request", counted)
+    count = 20
+
+    async def main() -> tuple[float, float, int]:
+        async with mitto.AsyncSession() as session:
+            assert (await session.get(server.url("/body"))).content == BODY
+            requests = [asyncio.create_task(session.get(server.url(f"/echo/{i}"))) for i in range(count)]
+            # Each starts its native request, and waits for its first event.
+            await asyncio.sleep(0)
+            busy_from = time.monotonic()
+            # On purpose this holds up the loop, while the responses arrive.
+            time.sleep(BUSY_SECONDS)
+            busy_until = time.monotonic()
+            taken_before = len(taken)
+            await asyncio.sleep(0)
+            taken_at_once = len(taken) - taken_before
+            responses = await asyncio.gather(*requests)
+            assert [response.content for response in responses] == [f"/echo/{i}".encode() for i in range(count)]
+        return busy_from, busy_until, taken_at_once
+
+    busy_from, busy_until, taken_at_once = run(main())
+    returns_while_busy = sum(busy_from <= at <= busy_until for at, _ in returns)
+    thread_seconds = returns[-1][1]
+    print(
+        f"loop busy {busy_until - busy_from:.3f} s; waits that returned then: {returns_while_busy}; "
+        f"events the loop took at once after: {taken_at_once}; waits in all: {len(returns)}; "
+        f"CPU of the waiting thread in all: {thread_seconds:.4f} s"
+    )
+    assert returns_while_busy <= 1
+    assert taken_at_once > 1
+    assert thread_seconds < BUSY_SECONDS / 10
+
+
+@pytest.mark.usefixtures("waiting_thread_only")
+def test_an_event_after_its_loop_has_closed_ends_the_waiting_thread_quietly(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raised: list[threading.ExceptHookArgs] = []
+    monkeypatch.setattr(threading, "excepthook", raised.append)
+
+    async def main() -> tuple[SessionState, threading.Thread]:
+        session = await mitto.AsyncSession().open()
+        return opened_state(session), waiting_thread(session)
+
+    state, thread = run(main())
+    # The loop has closed with the Session open, and a request on it now has events that no loop takes.
+    with state.native.start(server.url("/body")) as request:
+        assert request.next_event(WAIT_SECONDS) is not None
+        thread.join(WAIT_SECONDS)
+    state.close()
+
+    assert not thread.is_alive()
+    assert raised == []
 
 
 # Opening.
@@ -770,7 +923,9 @@ def test_close_ends_what_reads_a_body(server: Server) -> None:
     run(main())
 
 
-def test_close_leaves_no_reader_on_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_close_leaves_no_reader_on_the_loop(monkeypatch: pytest.MonkeyPatch, kind_of_loop: str) -> None:
+    if event_loops.waits_on_a_thread(kind_of_loop):
+        pytest.skip("a thread waits, and the loop watches no file descriptor")
     fds: list[int] = []
     event_fd = _native.Session.event_fd
 
@@ -855,7 +1010,7 @@ def test_the_end_of_the_loop_while_it_opens_leaves_nothing_open(
             with pytest.raises(asyncio.CancelledError):
                 await entering
 
-    asyncio.run(main())
+    asyncio.run(main(), loop_factory=event_loops.new_event_loop)
     held_opening.let_go_and_wait()
     run(_cache_opens(cache))
 
@@ -907,7 +1062,7 @@ def test_the_end_of_the_loop_during_a_close_leaves_it_closed(tmp_path: Path, mon
         asyncio.create_task(session.close())  # noqa: RUF006
         await asyncio.sleep(0)
 
-    asyncio.run(main())
+    asyncio.run(main(), loop_factory=event_loops.new_event_loop)
     run(_cache_opens(cache))
 
 
@@ -1388,19 +1543,21 @@ def _run_python(code: str) -> subprocess.CompletedProcess[str]:
     ["pass", "asyncio.create_task(session.get(URL)); await asyncio.sleep(0.05)"],
     ids=["nothing_running", "a_request_running"],
 )
-def test_a_process_that_never_closes_it_ends_as_it_should(server: Server, ending: str) -> None:
+def test_a_process_that_never_closes_it_ends_as_it_should(server: Server, ending: str, kind_of_loop: str) -> None:
     ended = _run_python(
         f"""
         import asyncio
         import mitto
+        from mitto import _async_api
 
         URL = {server.url("/silent")!r}
+        _async_api._WAIT_ON_A_THREAD = {event_loops.waits_on_a_thread(kind_of_loop)!r}
 
         async def main():
             session = await mitto.AsyncSession().open()
             {ending}
 
-        asyncio.run(main())
+        asyncio.run(main(), loop_factory=asyncio.{event_loops.loop_class_name(kind_of_loop)})
         print("ended")
         """
     )

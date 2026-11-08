@@ -83,7 +83,7 @@ def _settings(server: CaptureServer, protocol: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("scenario", ["fetch", "fetch-with-file-descriptor"])
+@pytest.mark.parametrize("scenario", ["fetch", "fetch-with-file-descriptor", "fetch-with-waits"])
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2, HTTP3])
 def test_a_request_over_each_protocol(program: Path, protocol: str, scenario: str) -> None:
     with CaptureServer() as server:
