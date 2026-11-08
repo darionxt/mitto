@@ -132,7 +132,7 @@ In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1
 
 | Hints | The Machine of mitto 0.1 says | Because |
 | --- | --- | --- |
-| `sec-ch-ua-platform-version` | `"19.0.0"` | The Baselines hold this. It only says how new Windows is, and Windows 11 24H2 says the same |
+| `sec-ch-ua-platform-version` | `"19.0.0"` | The Windows that recorded the Baselines says this, which the normal form hides. It only says how new Windows is, and Windows 11 24H2 says the same |
 | `device-memory`, `sec-ch-device-memory` | `8` | A value [no Baseline holds](capture.md#what-stays-and-what-does-not). A common size, where the real value is the machine's, rounded |
 | `dpr`, `sec-ch-dpr` | `1` | No Baseline holds it. The scale of a display at 100% |
 | `viewport-width`, `sec-ch-viewport-width`, `sec-ch-viewport-height` | `1920`, `1920`, `945` | No Baseline holds it. A Chrome window that fills a 1920 by 1080 display at that scale |
@@ -209,7 +209,7 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 In mitto 0.1, once a server asked for the hints that follow the machine, every Session of a Persona sent [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions landed on one point, which a server can count. A Session that saved its cookies and came back also came back as that one machine.
 
-So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Built so far: the Machine, its draw from the table, its values in the hints, and a step of the release routine that refreshes the table. Not yet: the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, and `sec-ch-ua-platform-version` hidden in the normal form.
+So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Built so far: the Machine, its draw from the table, its values in the hints, a step of the release routine that refreshes the table, and `sec-ch-ua-platform-version` hidden in the normal form. Not yet: the Machine saved with the cookies, and the noise on `rtt` and `downlink` for each host.
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -265,7 +265,7 @@ Chrome 155, 156 and 157 run on Windows 10 and 11. Anything older counts as obsol
 | 11, 26H2 | 26300 | `"19.0.0"` | Read from the registry, on 2026-11-08 |
 | 11, 26H1 | 28000 | Not known | Its SDK adds contract 20 as experimental only. It only comes on new devices, not as an update |
 
-Microsoft's sources are its page on [detecting Windows 11 through client hints](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/how-to-detect-win11), which stops at 21H2 for Windows 10 and gives Windows 11 as "13 and above", the contract versions of each SDK in [its API catalog](https://apisof.net/), the pages of APIs that came with 24H2 such as [`UserAgeRange`](https://learn.microsoft.com/en-us/uwp/api/windows.system.useragerange), and [its release information](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) for builds and dates, all read on 2026-11-08. Reading the registry on each version would confirm the rest. The Baselines hold `"19.0.0"`, which [Windows 11 24H2 also says](#what-they-say).
+Microsoft's sources are its page on [detecting Windows 11 through client hints](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/how-to-detect-win11), which stops at 21H2 for Windows 10 and gives Windows 11 as "13 and above", the contract versions of each SDK in [its API catalog](https://apisof.net/), the pages of APIs that came with 24H2 such as [`UserAgeRange`](https://learn.microsoft.com/en-us/uwp/api/windows.system.useragerange), and [its release information](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) for builds and dates, all read on 2026-11-08. Reading the registry on each version would confirm the rest. The Windows that recorded the Baselines says `"19.0.0"`, as [Windows 11 24H2 does](#what-they-say), and the normal form hides it.
 
 ### What goes together
 
@@ -388,14 +388,14 @@ The cookie file today is what the native core lists, `{"version": 1, "cookies": 
 
 ### What happens to Parity Checks
 
-A drawn value cannot be compared with a Baseline, so the normal form keeps its line in its place and hides the value as `<machine>`, as it does for 13 hints today. A drawn platform version joins them: `sec-ch-ua-platform-version` becomes `<machine>` too, and the Baselines are written again with that one value changed. The order of the lines stays compared. Until then, the Parity Checks claim the Machine of mitto 0.1, whose platform version the Baselines hold.
+A drawn value cannot be compared with a Baseline, so the normal form keeps its line in its place and hides the value as `<machine>`, for each of the 14 hints. `sec-ch-ua-platform-version` is one of them since 2026-11-08, when the Baselines were [written again](baselines.md#the-platform-version-hidden) with that one value changed. The order of the lines stays compared, and each Parity Check claims a Machine drawn for its Session.
 
 What checks the values instead:
 
 - Tests of each rounding against the cases of Chromium's own tests, `approximated_device_memory_unittest.cc` and `content/browser/client_hints/client_hints_unittest.cc`.
 - A test that each value a draw can give is one that Chrome can send, by [the table above](#what-decides-each-value), and that a drawn machine keeps to [what goes together](#what-goes-together).
 - Tests that a Session sends its machine's values on each hop, with `rtt` and `downlink` worked out for each host.
-- A check of each recording, where the recordings are kept, that a value the normal form hides has the form a Session's has. Real Chrome's formats are then compared, and the recording machine's values still never reach the repository.
+- [A check of each recording](capture.md#the-form-of-a-hidden-value), where the recordings are kept, that a value the normal form hides has the form a Session's has, and tests that hold a Session's values to the same forms. Real Chrome's formats are then compared, and the recording machine's values still never reach the repository.
 
 ### The Runtime
 

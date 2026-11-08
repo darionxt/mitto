@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
-from mitto import Machine, RequestError, Session
+from mitto import RequestError, Session
 from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
@@ -115,10 +115,11 @@ def _persona_of(release: str) -> str:
 def record(baseline: Baseline) -> dict[str, Json]:
     """Replay the Recording Case of a Baseline through a new Session to a new capture server.
 
-    The request presents the Persona of the Baseline's Chrome Release, and goes where the Chrome that recorded the Baseline
-    went, also through the server's proxy. The Session accepts the server's private certificate and finds the case pages'
-    names, in settings that the public API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, because //net refuses QUIC to that
-    certificate otherwise.
+    The request presents the Persona of the Baseline's Chrome Release, with a Machine drawn for the Session as a caller's
+    is, whose values the normal form hides. It goes where the Chrome that recorded the Baseline went, also through the
+    server's proxy. The Session accepts the server's private certificate and finds the case pages' names, in settings that
+    the public API keeps private. Over HTTP/3 it has Chrome's --origin-to-force-quic-on as well, because //net refuses QUIC
+    to that certificate otherwise.
 
     Returns:
         The fingerprint of what the capture server received. A request that never reached the server is None there, and
@@ -140,8 +141,6 @@ def record(baseline: Baseline) -> dict[str, Json]:
         tempfile.TemporaryDirectory(prefix="mitto-parity-") as cache_directory,
         Session(
             persona=persona,
-            # The normal form does not hide sec-ch-ua-platform-version yet, and the Baselines hold this Machine's.
-            machine=Machine.named("mitto-0.1"),
             proxy=proxy_of(server, run),
             cache=cache_directory if needs_cache(baseline.case) else None,
             _settings=session_settings(server, run),

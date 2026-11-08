@@ -276,14 +276,14 @@ def test_a_hint_from_the_machine_keeps_its_place_and_not_its_value(name: str) ->
 
 
 def test_a_hint_that_says_what_chrome_is_keeps_its_value() -> None:
-    head = b'GET /fetch HTTP/1.1\r\nsec-ch-ua-platform-version: "19.0.0"\r\nsec-ch-ua-arch: "x86"\r\n\r\n'
+    head = b'GET /fetch HTTP/1.1\r\nsec-ch-ua-full-version: "157.0.8103.39"\r\nsec-ch-ua-arch: "x86"\r\n\r\n'
 
     requests = normal_form(http1_recording(head))["requests"]
 
     assert isinstance(requests, dict)
     assert requests["fetch"] == {
         "request_line": "GET /fetch HTTP/1.1",
-        "headers": ['sec-ch-ua-platform-version: "19.0.0"', 'sec-ch-ua-arch: "x86"'],
+        "headers": ['sec-ch-ua-full-version: "157.0.8103.39"', 'sec-ch-ua-arch: "x86"'],
     }
 
 

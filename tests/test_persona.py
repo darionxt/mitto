@@ -284,7 +284,7 @@ def test_a_persona_holds_the_placeholder_for_each_hint_that_follows_the_machine(
     lines = dict(load_persona(WINDOWS_PERSONAS[release]).request_defaults(kind)["headers"])
 
     assert {name: lines[name] for name in MACHINE_HINTS} == dict.fromkeys(MACHINE_HINTS, MACHINE_PLACEHOLDER)
-    assert MACHINE_HINTS >= HINTS_FROM_THE_MACHINE
+    assert MACHINE_HINTS == HINTS_FROM_THE_MACHINE
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)

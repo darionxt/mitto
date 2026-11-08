@@ -21,6 +21,7 @@ from mitto._machine import (
     rounded_rtt,
     windows_of,
 )
+from tools.capture.machine_forms import FORMS
 from tools.capture.normal_form import HINTS_FROM_THE_MACHINE
 
 TABLE = load_table()
@@ -40,20 +41,6 @@ FIRST_WINDOW_SIDES = {1: 16, 1.25: 14, 1.5: 15, 2: 13}
 
 SEEDS = range(500)
 
-# What each hint can say on Windows, by "What decides each value" in docs/persona.md.
-CHROME_SENDS = {
-    "device-memory": re.compile(r"2|4|8|16|32"),
-    "dpr": re.compile(r"[1-9](\.[0-9]+)?"),
-    "viewport-width": re.compile(r"[1-9][0-9]*"),
-    "sec-ch-viewport-height": re.compile(r"[1-9][0-9]*"),
-    "rtt": re.compile(r"0|[1-9][0-9]*[05]0"),
-    "downlink": re.compile(r"10|[0-9](\.[0-9]?[05])?"),
-    "ect": re.compile(r"slow-2g|2g|3g|4g"),
-    "sec-ch-prefers-color-scheme": re.compile(r"light|dark"),
-    "sec-ch-prefers-reduced-motion": re.compile(r"no-preference|reduce"),
-    "sec-ch-prefers-reduced-transparency": re.compile(r"no-preference|reduce"),
-    "sec-ch-ua-platform-version": re.compile(r'"(1|2|3|4|5|6|7|8|10|14|15|19)\.0\.0"'),
-}
 SAME_AS = {
     "sec-ch-device-memory": "device-memory",
     "sec-ch-dpr": "dpr",
@@ -155,12 +142,41 @@ def test_dpr_is_the_scale_as_chrome_writes_a_number(scale: float, dpr: str) -> N
     assert client_hints(machine)["dpr"] == client_hints(machine)["sec-ch-dpr"] == dpr
 
 
+# The forms that the normal form checks real Chrome's hidden values against, in tools/capture/machine_forms.py.
+
+
+def test_every_rtt_downlink_and_ect_has_the_form_chrome_writes() -> None:
+    for estimate in range(0, 11_000, 5):
+        machine = dataclasses.replace(Machine.named("mitto-0.1"), round_trip_ms=estimate, throughput_kbps=estimate)
+        hints = client_hints(machine)
+
+        for name in ("rtt", "downlink", "ect"):
+            assert FORMS[name].fits(hints[name]), (name, estimate)
+
+
+@pytest.mark.parametrize("scale", [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5, 5])
+def test_every_scale_windows_offers_has_the_form_chrome_writes(scale: float) -> None:
+    machine = dataclasses.replace(Machine.named("mitto-0.1"), scale=scale, viewport_width=300, viewport_height=200)
+
+    assert FORMS["dpr"].fits(client_hints(machine)["dpr"])
+
+
+@pytest.mark.parametrize(
+    "platform_version",
+    ["1.0.0", "2.0.0", "3.0.0", "4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.0.0", "10.0.0", "14.0.0", "15.0.0", "19.0.0"],
+)
+def test_every_platform_version_a_machine_takes_has_the_form_chrome_writes(platform_version: str) -> None:
+    machine = dataclasses.replace(Machine.named("mitto-0.1"), platform_version=platform_version)
+
+    assert FORMS["sec-ch-ua-platform-version"].fits(client_hints(machine)["sec-ch-ua-platform-version"])
+
+
 # The hints
 
 
 def test_a_machine_gives_each_hint_that_follows_the_machine() -> None:
     assert set(client_hints(Machine.draw(seed=1))) == MACHINE_HINTS
-    assert {*HINTS_FROM_THE_MACHINE, "sec-ch-ua-platform-version"} == MACHINE_HINTS
+    assert HINTS_FROM_THE_MACHINE == MACHINE_HINTS
 
 
 def test_the_machine_of_mitto_0_1_says_what_every_session_of_mitto_0_1_said() -> None:
@@ -270,8 +286,8 @@ def test_each_windows_has_the_same_displays_with_the_same_weights() -> None:
 def test_each_value_a_draw_gives_is_one_chrome_sends(seed: int) -> None:
     hints = client_hints(Machine.draw(seed=seed))
 
-    for name, form in CHROME_SENDS.items():
-        assert form.fullmatch(hints[name]), name
+    for name, value in hints.items():
+        assert FORMS[name].fits(value), name
     for name, same_as in SAME_AS.items():
         assert hints[name] == hints[same_as]
 

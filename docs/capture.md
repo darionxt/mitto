@@ -261,7 +261,7 @@ Whatever a server can observe and a client decides stays as it was sent, in the 
 | Server name | The placeholder `<host>` | It says where the server is, not who the client is |
 | The server's name and port in header values and in a `CONNECT` line | The placeholders `<authority>` and, with the page's scheme, `<origin>`. For the other names, `<same-site-authority>`, `<same-site-origin>`, `<cross-site-authority>` and `<cross-site-origin>` | The same |
 | The random part of a multipart boundary, in headers and bodies | `----WebKitFormBoundary<random>`, for that prefix and 16 alphanumerics. Any other boundary stays as sent | Chrome picks it at random |
-| The value of `device-memory`, `dpr`, `viewport-width`, `rtt`, `downlink`, `ect` and of `sec-ch-device-memory`, `sec-ch-dpr`, `sec-ch-viewport-width`, `sec-ch-viewport-height`, `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion` and `sec-ch-prefers-reduced-transparency` | The placeholder `<machine>`, in its place | It says what the machine, its window, its network and its user are, and not which Chrome this is. So [a Session claims the value of its own Machine](persona.md#what-they-say). `rtt` and `downlink` also change between requests |
+| The value of `device-memory`, `dpr`, `viewport-width`, `rtt`, `downlink`, `ect` and of `sec-ch-device-memory`, `sec-ch-dpr`, `sec-ch-viewport-width`, `sec-ch-viewport-height`, `sec-ch-prefers-color-scheme`, `sec-ch-prefers-reduced-motion`, `sec-ch-prefers-reduced-transparency` and `sec-ch-ua-platform-version` | The placeholder `<machine>`, in its place | It says what the machine, its window, its network, its Windows and its user are, and not which Chrome this is. So [a Session claims the value of its own Machine](persona.md#what-they-say). `rtt` and `downlink` also change between requests. [Their form](#the-form-of-a-hidden-value) is checked instead |
 | HTTP/2 stream IDs and stream dependencies of requests and `later_frames` | Dropped | They depend on which requests happened to be open. In `preface` they stay, because no request has started yet |
 | HTTP/3 stream IDs of requests | Dropped | The same. On unidirectional streams they stay, because a client opens those whatever it requests |
 | HTTP/3 GOAWAY on the control stream | Dropped | It depends on when the client leaves |
@@ -269,6 +269,16 @@ Whatever a server can observe and a client decides stays as it was sent, in the 
 A number with a known name is written as that name, such as `TLS_AES_128_GCM_SHA256`. Any other number stays in hexadecimal, such as `0x1234`, and an extension with no known structure keeps its content in hexadecimal too. If a known extension is malformed, its content shows under `malformed`. Naming another number later changes the normal forms that hold it, so those need recording again.
 
 Only connections that carried a request of a Recording Case count, and a run's normal form looks only for that run's cases. Chrome also opens connections that never carry a request, and it can spread one page's requests over several connections. Those that count must all have the same ClientHello and preface, the same `quic` and `http3` over QUIC, or the recording has no normal form and the kit says so.
+
+### The form of a hidden value
+
+A value hidden as `<machine>` cannot be compared, but how it is written can. [`tools/capture/machine_forms.py`](../tools/capture/machine_forms.py) holds one form for each of those hints: what Chrome on Windows can send, by [what decides each value](persona.md#what-decides-each-value), such as `2`, `4`, `8`, `16` or `32` for `device-memory`, a multiple of 0.05 from 0 to 10 in its shortest decimal for `downlink`, and a version in quotes such as `"19.0.0"` for `sec-ch-ua-platform-version`. [`tests/test_machine.py`](../tests/test_machine.py) holds every value a Session can work out from its Machine to those forms, and this holds a recording's:
+
+```bash
+uv run python -m tools.capture.machine_forms recordings/a recordings/b
+```
+
+It reads every raw recording under each directory, `cases` included, and prints for each directory and hint the form, how many values had it and whether all did, and never a value. A directory fails when a value lacks its form, or when it has no value to check at all. The values are those of the machine that recorded them, so it runs where the recordings are kept, and [baselines.md](baselines.md#check-and-commit) says when.
 
 ### What it does not capture yet
 
