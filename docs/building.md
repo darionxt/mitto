@@ -133,7 +133,7 @@ On Linux the library needs only glibc and libgcc from the system at run time, as
 
 A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on each **Host**, with the patches already applied. It needs no workspace and no depot_tools.
 
-Run this from the repository root, with a new directory on a path without spaces. It needs about 4.1 GiB there on Linux and 3.2 GiB on macOS, including the build output, as well as `curl` and `tar`. It took about 6 minutes on a 10-core Mac, one of them for the downloads. macOS also needs the same Xcode as a checkout (see [Requirements](#requirements)).
+Run this from the repository root, with a new directory on a path without spaces. It needs about 4.1 GiB there on Linux, 3.2 GiB on macOS and 4.6 GiB on Windows, including the build output, as well as `curl` and `tar`, which Windows brings: there the command takes them from `System32`, whatever else is on `PATH`. It took about 6 minutes on a 10-core Mac, one of them for the downloads, and about 10 minutes on a 16-thread Windows machine. macOS also needs the same Xcode as a checkout, and Windows the same Visual Studio and Windows SDK (see [Requirements](#requirements)). On Windows the longest path lies 195 characters below the directory, in the build output, so a directory of up to 64 characters keeps every path within Windows' limit of 260.
 
 ```bash
 uv run tools/workspace/export.py build /absolute/path/to/new/directory
@@ -171,22 +171,25 @@ uv run pytest
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.6 MiB compressed, 174 MiB unpacked, about 12,400 files. The export of 157.0.8103.39 is the same size, with the same paths and the same toolchain.
+Measured for Chromium 157.0.8103.39. The archive is the same for every Host: 25.1 MiB compressed, 199 MiB unpacked, about 13,000 files. Of those, about 10,800 are in every slice, and the Windows slice alone adds about 800, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
 
-| Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked |
-| --- | --- | --- | --- | --- | --- |
-| Clang | Google Storage | 55 MiB | 325 MiB | 47 MiB | 303 MiB |
-| Rust | Google Storage | 274 MiB | 1.41 GiB | 246 MiB | 1.28 GiB |
-| Linux sysroot | Google Storage | 19 MiB | 221 MiB | | |
-| CPython, for build scripts | CIPD | 46 MiB | 152 MiB | 24 MiB | 82 MiB |
-| mold, the Linux linker | CIPD | 12 MiB | 41 MiB | | |
-| gn | CIPD | 4 MiB | 9 MiB | 1 MiB | 2 MiB |
-| ninja | CIPD | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB |
-| Total | | 410 MiB | 2.14 GiB | 319 MiB | 1.66 GiB |
+| Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked | Windows x64: download | unpacked |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Clang | Google Storage | 55 MiB | 325 MiB | 47 MiB | 303 MiB | 49 MiB | 224 MiB |
+| Rust | Google Storage | 274 MiB | 1.41 GiB | 246 MiB | 1.28 GiB | 406 MiB | 2.41 GiB |
+| Linux sysroot | Google Storage | 19 MiB | 221 MiB | | | | |
+| `rc.exe`, the resource compiler | Google Storage | | | | | under 1 MiB | under 1 MiB |
+| CPython, for build scripts | CIPD | 46 MiB | 152 MiB | 24 MiB | 82 MiB | 19 MiB | 51 MiB |
+| mold, the Linux linker | CIPD | 12 MiB | 41 MiB | | | | |
+| gn | CIPD | 4 MiB | 9 MiB | 1 MiB | 2 MiB | 1 MiB | 3 MiB |
+| ninja | CIPD | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB |
+| Total | | 410 MiB | 2.14 GiB | 319 MiB | 1.66 GiB | 476 MiB | 2.68 GiB |
+
+On Windows, Visual Studio and the Windows SDK come from the machine, as Xcode does on macOS: Chromium's own bots take them from a package that only Google's machines can download. The native core never runs `rc.exe` today, but gn's toolchain for Windows names it, and a resource file in `native/` would need it.
 
 ### Why the toolchain is not an asset
 
-These packages come from Google Storage and CIPD, Chromium's package store, rather than from a release asset of ours. `DEPS` pins each of them for a Chromium release, they are the very packages Chromium's bots build with, and they stay available for old releases. An asset for each Host would fit within GitHub's 2 GiB limit, but it would only copy 300 to 400 MiB per Host and per **Engine Release** for no gain in what is checked: `export.json` records each package's SHA-256, and the build refuses anything else. If a package ever disappears from Chromium's storage, an asset can take over by changing its URL in `export.json`.
+These packages come from Google Storage and CIPD, Chromium's package store, rather than from a release asset of ours. `DEPS` pins each of them for a Chromium release, they are the very packages Chromium's bots build with, and they stay available for old releases. An asset for each Host would fit within GitHub's 2 GiB limit, but it would only copy 300 to 500 MiB per Host and per **Engine Release** for no gain in what is checked: `export.json` records each package's SHA-256, and the build refuses anything else. If a package ever disappears from Chromium's storage, an asset can take over by changing its URL in `export.json`.
 
 ### In CI
 
