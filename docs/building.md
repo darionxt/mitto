@@ -162,11 +162,11 @@ export MITTO_NATIVE_LIBRARY=/absolute/path/to/new/directory/chromium-<tag>/src/o
 uv run pytest
 ```
 
-On macOS the file is `libmitto_core.dylib`. On Windows it is `mitto_core.dll`, and the tests run [as in a checkout](#work-on-the-python-package):
+On macOS the file is `libmitto_core.dylib`. On Windows, in PowerShell:
 
 ```powershell
 $env:MITTO_NATIVE_LIBRARY = 'C:\ex\chromium-<tag>\src\out\mitto\mitto_core.dll'
-uv run pytest --ignore=tests/test_async_session.py --ignore=tests/test_asyncio_load.py -k "not asyncio"
+uv run pytest
 ```
 
 ### Sizes
