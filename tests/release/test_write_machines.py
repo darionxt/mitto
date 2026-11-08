@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import urllib.parse
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
@@ -10,15 +11,20 @@ import pytest
 
 from tools.release.machines import (
     STATISTICS,
+    STATISTICS_PATH,
     TABLE_PATH,
     MachineTableError,
     Source,
     approximated_device_memory,
     display_shares,
+    dumps_statistics,
     dumps_table,
+    read_statistics,
     table_data,
     write_table,
 )
+
+REPOSITORY = Path(__file__).parents[2]
 
 
 def rows(data: dict[str, Any], group: str) -> list[dict[str, Any]]:
@@ -33,6 +39,24 @@ def test_writing_the_table_writes_the_file(tmp_path: Path) -> None:
     path = write_table(path=tmp_path / "table.json")
 
     assert path.read_bytes() == TABLE_PATH.read_bytes()
+
+
+def test_the_statistics_are_byte_for_byte_what_they_write(tmp_path: Path) -> None:
+    path = tmp_path / "statistics.json"
+    path.write_text(dumps_statistics(STATISTICS), encoding="utf-8")
+
+    assert path.read_bytes() == STATISTICS_PATH.read_bytes()
+    assert read_statistics(path) == STATISTICS
+
+
+def test_the_statistics_have_one_line_for_each_share() -> None:
+    text = STATISTICS_PATH.read_text(encoding="utf-8")
+    sources = [STATISTICS.windows_versions, STATISTICS.css_displays, STATISTICS.pixel_displays, STATISTICS.memory]
+
+    assert json.loads(text)["licence"] == "CC-BY-SA-3.0"
+    assert all(
+        f"\n      {json.dumps(name)}: {share!r}" in text for source in sources for name, share in source.shares.items()
+    )
 
 
 def test_the_table_is_json_with_one_line_for_each_row() -> None:
@@ -212,3 +236,10 @@ def test_the_table_credits_each_source_and_says_its_licence() -> None:
     assert data["licence"] == "CC-BY-SA-3.0"
     for source in (STATISTICS.windows_versions, STATISTICS.css_displays, STATISTICS.pixel_displays, STATISTICS.memory):
         assert f"{source.credit}, {source.url}, under CC BY-SA 3.0" in data["credits"]
+
+
+def test_the_notice_that_goes_with_the_table_names_the_site_of_each_source() -> None:
+    notice = (REPOSITORY / "MACHINE_TABLE_NOTICE").read_text(encoding="utf-8")
+
+    for source in (STATISTICS.windows_versions, STATISTICS.css_displays, STATISTICS.pixel_displays, STATISTICS.memory):
+        assert f"https://{urllib.parse.urlsplit(source.url).netloc}/" in notice
