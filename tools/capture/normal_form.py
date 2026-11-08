@@ -94,12 +94,13 @@ HINTS_FROM_THE_MACHINE = frozenset(
         "sec-ch-prefers-color-scheme",
         "sec-ch-prefers-reduced-motion",
         "sec-ch-prefers-reduced-transparency",
+        "sec-ch-ua-platform-version",
         "sec-ch-viewport-height",
         "sec-ch-viewport-width",
         "viewport-width",
     }
 )
-"""The client hints that follow the machine's memory, display, window and network, and the settings of its user."""
+"""The client hints that follow the machine's memory, display, window, network and Windows, and its user's settings."""
 
 _MULTIPART_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
 _MULTIPART_BOUNDARY_PLACEHOLDER = r"\1<random>"

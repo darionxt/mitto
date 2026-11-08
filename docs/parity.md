@@ -18,7 +18,7 @@ On Linux the file is `libmitto_core.so`. Without a native library, the tests tha
 For each Baseline, it:
 
 1. starts a [capture server](capture.md);
-2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise. For a Baseline recorded through the capture server's proxy it has that proxy, and then the proxy is what finds the names;
+2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release**, and with no `machine=`, so it claims a **Machine** drawn for it, as a caller's Session does. It accepts the server's private certificate and finds the names of the case pages, through settings that only the private `_settings` argument reaches. For an `h3` Baseline it also forces QUIC on the server's HTTP/3 origins, as the Chrome that recorded it was told to, because `//net` refuses QUIC to a private certificate otherwise. For a Baseline recorded through the capture server's proxy it has that proxy, and then the proxy is what finds the names;
 3. [replays](#replaying-a-recording-case) the Baseline's **Recording Case** through the public API, with what the Persona sends for that case's **Request Kind** ([persona.md](persona.md));
 4. takes the normal form of what the server received, and compares it with the Baseline.
 
@@ -33,6 +33,8 @@ The test of the real Baselines runs all this twice: through `mitto.Session`, and
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
 
 Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
+
+A value that [follows the machine](capture.md#what-stays-and-what-does-not), such as `sec-ch-ua-platform-version`, is `<machine>` in a Baseline and in what a Session sent, so a check compares where its line is and not what it says. That is why a drawn Machine passes as any other does. Its form is checked instead, against the same [forms](capture.md#the-form-of-a-hidden-value): `tests/test_machine.py` for every value a Session works out from its Machine, and [`tools.capture.machine_forms`](baselines.md#check-and-commit) for real Chrome's recordings, on the machine that keeps them.
 
 ## Replaying a Recording Case
 
@@ -257,7 +259,11 @@ A `fetch` has the `credentials_mode` of a page's `fetch()` that does not ask for
 
 ### Saved cookies
 
-`session.cookies.save(path)` writes what the C API lists to a JSON file, in the Python layer. That keeps SQLite out of the build. The file has mode 0600 whatever the umask, and the values are not encrypted. A new file takes the old one's place by a rename, so a crash leaves one or the other whole. `Session(cookie_file=path)` loads when it opens and saves when it closes, so a crash loses what came after the last save. A file that holds anything else stops the Session from opening, because closing it would otherwise overwrite that file.
+`session.cookies.save(path)` writes what the C API lists to a JSON file, in the Python layer, with the Session's **Machine** beside the cookies. That keeps SQLite out of the build. The file has mode 0600 whatever the umask, and the values are not encrypted. A new file takes the old one's place by a rename, so a crash leaves one or the other whole. `Session(cookie_file=path)` loads when it opens and saves when it closes, so a crash loses what came after the last save. A file that holds anything else stops the Session from opening, because closing it would otherwise overwrite that file.
+
+The native core lists the cookies alone, as `{"version": 1, "cookies": [...]}`, and refuses what it does not know ([ADR-0003](adr/0003-c-abi-and-ctypes.md)). So the file is of version 2, `{"version": 2, "machine": {...}, "cookies": [...]}`, and the Python layer takes the Machine out and hands the native core the rest as version 1. The Machine keeps each of its fields and its seed, so that a later mitto that knows more fields can draw them from the seed and keep the others. A file of version 1, from mitto 0.1, holds no Machine and loads as `Machine.named("mitto-0.1")`, which every Session of mitto 0.1 claimed, and the next save writes version 2.
+
+A Session that opens on a file claims its Machine, since a server that sees the same cookies from another machine can tell. A `machine=` that differs stops the Session from opening, and `Cookies.load()` of a file whose Machine is not the Session's adds nothing. Both raise a `ValueError`. Taking cookies to another Machine is up to a caller, cookie by cookie, with `Cookies.set()`.
 
 Session cookies are saved too, as a browser does that restores its last session. A cookie that has expired by the time it loads stays out, because the store removes it on the next read.
 

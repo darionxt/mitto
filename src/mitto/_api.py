@@ -53,7 +53,7 @@ class Session:
         Args:
             persona: The Persona to present, such as "chrome_157_windows". The default is the Engine Release's.
             machine: The Machine to claim, whose values go in the client hints that follow the machine. The default draws
-                one with Machine.draw(), so that each Session has its own.
+                one with Machine.draw(), so that each Session has its own, unless `cookie_file` holds one.
             accept_language: The value of the Accept-Language header in place of the Persona's. An empty string sends none.
             additional_trust_anchors: Root certificates that this Session trusts beside the Chrome Root Store. Each entry is
                 the text of a PEM file that holds at least one. A self-signed server certificate can be its own root. The
@@ -61,9 +61,10 @@ class Session:
                 reached over HTTP/1.1 or HTTP/2, whatever its Alt-Svc says.
             timeout: What a request's `timeout` defaults to: a number is the total time in seconds, and a Timeout sets each
                 timer. The default runs no timer, leaving what //net has of its own.
-            cookie_file: A file to keep the cookies in. They load from it now, if it exists, and close() saves them to it,
-                as Cookies.save() does. A crash loses what came after the last save, which a caller can make more often
-                with `session.cookies.save(path)`. The default keeps them only until the Session closes.
+            cookie_file: A file to keep the cookies in, with the Machine. They load from it now, if it exists, and the
+                Session claims the Machine it holds. close() saves them to it, as Cookies.save() does. A crash loses what
+                came after the last save, which a caller can make more often with `session.cookies.save(path)`. The
+                default keeps them only until the Session closes.
             proxy: The proxy for every request, as a URL: "http://user:password@host:port", or the same with the scheme
                 https or socks5. A username and password are percent-encoded, and answer the proxy when it asks, as they do
                 in Chrome once a person has typed them. A SOCKS5 proxy, which Chrome has no way to answer, gets them by
@@ -86,8 +87,9 @@ class Session:
                 Timeout nor None, or `cookie_file` or `cache` that is neither text, a path nor None.
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
                 `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
-                `cookie_file` does not hold cookies that this Session can use, `proxy` cannot be used or `cache` is an empty
-                string. The message leaves out `proxy`, which may hold a password.
+                `cookie_file` does not hold cookies that this Session can use or holds another Machine than `machine`,
+                `proxy` cannot be used or `cache` is an empty string. The message leaves out `proxy`, which may hold a
+                password.
             OSError: If `cookie_file` exists and cannot be read, a cache cannot be kept in the directory of `cache`, or
                 another Session has that directory open.
             NativeLibraryError: If the native library cannot be used.
@@ -116,7 +118,7 @@ class Session:
 
     @property
     def machine(self) -> Machine:
-        """The Machine this Session claims, which `machine` gave or which was drawn for it."""
+        """The Machine this Session claims, which `cookie_file` or `machine` gave or which was drawn for it."""
         return self._state.machine
 
     def close(self) -> None:

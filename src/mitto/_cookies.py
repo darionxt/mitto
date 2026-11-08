@@ -1,4 +1,4 @@
-"""A Session's cookies: what the cookie store in //net holds, and a file to keep them in.
+"""A Session's cookies: what the cookie store in //net holds, and a file to keep them in with the Session's Machine.
 
 //net decides which cookies a response sets and which a request sends. This module only reads and changes that store,
 through the native core, so that nothing here can disagree with it. See docs/parity.md for how a Session uses them.
@@ -7,18 +7,18 @@ through the native core, so that nothing here can disagree with it. See docs/par
 import asyncio
 import json
 import os
-import tempfile
 from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import UnionType
 from typing import Any, Literal
 
 from mitto import _native
 from mitto._arguments import require_path, require_type
+from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
+from mitto._machine import Machine
 
-__all__ = ["AsyncCookies", "Cookie", "CookiePartitionKey", "Cookies", "write_cookie_file"]
+__all__ = ["AsyncCookies", "Cookie", "CookiePartitionKey", "Cookies"]
 
 type SameSite = Literal["unspecified", "none", "lax", "strict"]
 """A cookie's SameSite attribute. "unspecified" is a cookie without one, which //net treats as "lax"."""
@@ -154,8 +154,9 @@ class _CookieStore:
     released. The calls may come from any thread, but not after the Session has closed, when they raise a ValueError.
     """
 
-    def __init__(self, native: _native.Session) -> None:
+    def __init__(self, native: _native.Session, machine: Machine) -> None:
         self._native = native
+        self._machine = machine
 
     def __iter__(self) -> Iterator[Cookie]:
         """Iterate over the cookies as they are now, with the longest path first, then the earliest created.
@@ -222,11 +223,19 @@ class _CookieStore:
         """Delete every cookie, and return how many went."""
         return self._delete({})
 
-    def _set_from_file(self, path: str | os.PathLike[str], contents: bytes) -> None:
-        try:
-            self._native.set_cookies(contents)
-        except ValueError as error:
-            raise ValueError(f"{path} does not hold cookies that this Session can use") from error
+    def _add_from(self, file: CookieFile) -> None:
+        """Add the cookies of a file, which has to hold this Session's Machine.
+
+        Raises:
+            ValueError: If the file holds another Machine, or the native core refuses its cookies. Either way, no cookie
+                is added.
+        """
+        if file.machine != self._machine:
+            raise ValueError(
+                f"{file.path} holds the cookies of another Machine than this Session claims: open a Session with"
+                " cookie_file= to claim the file's"
+            )
+        file.add_to(self._native)
 
     def _list(self) -> list[Cookie]:
         return [_from_native(cookie) for cookie in json.loads(self._native.list_cookies())["cookies"]]
@@ -243,7 +252,7 @@ class Cookies(_CookieStore):
     """
 
     def save(self, path: str | os.PathLike[str]) -> None:
-        """Write all the cookies to a JSON file that only its owner can read or write.
+        """Write all the cookies, with the Session's Machine, to a JSON file that only its owner can read or write.
 
         The values are not encrypted. Session cookies are written too, as a browser does that restores its last session.
         A crash during this call leaves the file as it was.
@@ -253,18 +262,21 @@ class Cookies(_CookieStore):
             OSError: If the file cannot be written.
         """
         require_path("path", path)
-        write_cookie_file(path, self._native.list_cookies())
+        write_cookie_file(path, self._machine, self._native.list_cookies())
 
     def load(self, path: str | os.PathLike[str]) -> None:
         """Add the cookies of a file from save(), each with the attributes it had there, replacing any of the same name.
 
+        The file has to hold the Machine that this Session claims. A file from mitto 0.1 holds Machine.named("mitto-0.1").
+
         Raises:
             TypeError: If `path` is neither text nor a path.
             OSError: If the file cannot be read, such as a FileNotFoundError.
-            ValueError: If the native core refuses what the file holds, in which case no cookie is added.
+            ValueError: If the file holds no cookies that this Session can use, or holds another Machine, in which case
+                no cookie is added.
         """
         require_path("path", path)
-        self._set_from_file(path, Path(path).read_bytes())
+        self._add_from(read_cookie_file(path))
 
 
 class AsyncCookies(_CookieStore):
@@ -283,7 +295,7 @@ class AsyncCookies(_CookieStore):
         """
         require_path("path", path)
         # This asks the network thread here, so that nothing off the loop can use a native Session that is closing.
-        await asyncio.to_thread(write_cookie_file, path, self._native.list_cookies())
+        await asyncio.to_thread(write_cookie_file, path, self._machine, self._native.list_cookies())
 
     async def load(self, path: str | os.PathLike[str]) -> None:
         """Read a file from save() off the event loop and add its cookies, as Cookies.load() does.
@@ -291,10 +303,10 @@ class AsyncCookies(_CookieStore):
         Raises:
             TypeError: As Cookies.load() does.
             OSError: If the file cannot be read, such as a FileNotFoundError.
-            ValueError: If the native core refuses what the file holds, in which case no cookie is added.
+            ValueError: As Cookies.load() does, in which case no cookie is added.
         """
         require_path("path", path)
-        self._set_from_file(path, await asyncio.to_thread(Path(path).read_bytes))
+        self._add_from(await asyncio.to_thread(read_cookie_file, path))
 
 
 def _require_keys(name: object, domain: object, path: object) -> None:
@@ -306,15 +318,6 @@ def _require_keys(name: object, domain: object, path: object) -> None:
     require_type("name", name, str, "text")
     require_type("domain", domain, str | None, "text or None")
     require_type("path", path, str | None, "text or None")
-
-
-def write_cookie_file(path: str | os.PathLike[str], contents: bytes) -> None:
-    """Write what the native core lists as a file of cookies that only its owner can read or write.
-
-    Raises:
-        OSError: If the file cannot be written.
-    """
-    _replace_file(Path(path).resolve(), contents)
 
 
 def _to_microseconds(time: datetime | None) -> int | None:
@@ -376,19 +379,3 @@ def _from_native(native: dict[str, Any]) -> Cookie:
         source_port=native["source_port"],
         source_type=native["source_type"],
     )
-
-
-def _replace_file(path: Path, contents: bytes) -> None:
-    """Make `path` hold `contents`, with mode 0600, so that a crash leaves either the old file or the whole new one."""
-    # mkstemp() gives mode 0600 whatever the umask, and the same directory keeps the replace on one file system.
-    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(descriptor, "wb") as file:
-            file.write(contents)
-            # Otherwise a power cut after the replace could leave an empty file there.
-            file.flush()
-            os.fsync(file.fileno())
-        Path(temporary).replace(path)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
