@@ -9,13 +9,13 @@ Machine, since every one of its Sessions claimed the same.
 import dataclasses
 import json
 import os
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 from mitto import _native
 from mitto._machine import Machine
+from mitto._private_file import create_private_file
 
 __all__ = ["FILE_VERSION", "CookieFile", "read_cookie_file", "write_cookie_file"]
 
@@ -136,16 +136,19 @@ def _not_cookies(path: str | os.PathLike[str]) -> ValueError:
 
 
 def _replace_file(path: Path, contents: bytes) -> None:
-    """Make `path` hold `contents`, with mode 0600, so that a crash leaves either the old file or the whole new one."""
-    # mkstemp() gives mode 0600 whatever the umask, and the same directory keeps the replace on one file system.
-    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    """Make `path` a file that holds `contents` and that only its owner can use.
+
+    A crash leaves either the old file or the whole new one.
+    """
+    # The same directory keeps the replace on one file system, a rename that keeps who can use the file.
+    descriptor, temporary = create_private_file(path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(descriptor, "wb") as file:
             file.write(contents)
             # Otherwise a power cut after the replace could leave an empty file there.
             file.flush()
             os.fsync(file.fileno())
-        Path(temporary).replace(path)
+        temporary.replace(path)
     except BaseException:
-        Path(temporary).unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
         raise
