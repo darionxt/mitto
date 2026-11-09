@@ -103,6 +103,7 @@ def test_the_notes_name_the_supported_window_and_the_engine_release(tree: Path) 
         f"mitto 0.9.0 presents Chrome {window}, its Supported Window, with Chrome {ENGINE} as its Engine Release. "
         f"Its network code is built from Chromium {engine_build}.\n"
     )
+    assert "Install it on macOS on arm64, Linux on x86_64 or Windows on x64, with Python 3.12 or later:\n" in notes
     assert "pip install mitto==0.9.0\n" in notes
     assert "https://github.com/darionxt/mitto/blob/v0.9.0/docs/building.md#build-a-wheel" in notes
 

@@ -113,7 +113,7 @@ def release_notes(version: str, root: Path = REPOSITORY) -> str:
         _LINK.sub(lambda link: f"]({urljoin(changelog, link['target'])})", changes),
         "Each Persona presents the build of Chrome that recorded its Baselines:\n\n"
         + "\n".join(f"- Chrome {release}: {build}" for release, build in builds.items()),
-        "Install it on macOS on arm64 or Linux on x86_64, with Python 3.12 or later:",
+        "Install it on macOS on arm64, Linux on x86_64 or Windows on x64, with Python 3.12 or later:",
         f"```bash\npip install mitto=={version}\n```",
         "The wheels here are the ones on PyPI. Each symbols archive holds what stripping removed from the library in "
         "the wheel of the same name, to turn an address from a crash report into a function name "

@@ -90,36 +90,9 @@ jobs:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
           key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
           lookup-only: ${{ github.event_name != 'pull_request' }}
-      # The image had only the SDK 10.0.26100 on 2026-10-30, and Chromium 157 asks for 10.0.28000.0 in its
-      # build/vs_toolchain.py, which the build checks before it starts. Only the headers and libraries for x64 apps.
-      - name: Install the Windows SDK
-        if: runner.os == 'Windows' && steps.cached-library.outputs.cache-hit != 'true'
-        shell: pwsh
-        env:
-          SDK_VERSION: 10.0.28000.0
-          # The installer of the SDK 10.0.28000.2270, from Microsoft's Windows SDK downloads page.
-          SDK_INSTALLER: https://download.microsoft.com/download/78b533c3-6724-4e28-a984-b9fa93265781/KIT_BUNDLE_WINDOWSSDK_MEDIACREATION/winsdksetup.exe
-          SDK_INSTALLER_SHA256: e9f1bde566381355e594e2f90daf4f714eb5c7ef2c45c501ce236afe2abea300
-        run: |
-          $header = "${env:ProgramFiles(x86)}\Windows Kits\10\Include\$env:SDK_VERSION\um\windows.h"
-          if (Test-Path $header) {
-            "The image has the Windows SDK $env:SDK_VERSION."
-            exit 0
-          }
-          $installer = "$env:RUNNER_TEMP\winsdksetup.exe"
-          curl.exe --fail --location --silent --show-error --retry 5 --output $installer $env:SDK_INSTALLER
-          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne $env:SDK_INSTALLER_SHA256) {
-            throw "$env:SDK_INSTALLER is not the installer it was."
-          }
-          # The installer writes a log for each of its packages next to its own.
-          $log = (New-Item -ItemType Directory "$env:RUNNER_TEMP\winsdk").FullName + '\install.log'
-          $process = Start-Process $installer -Wait -PassThru -ArgumentList @(
-            '/features', 'OptionId.DesktopCPPx64', '/quiet', '/norestart', '/ceip', 'off', '/log', $log
-          )
-          if ($process.ExitCode -ne 0 -or -not (Test-Path $header)) {
-            Get-ChildItem "$env:RUNNER_TEMP\winsdk" | ForEach-Object { Get-Content $_.FullName -Tail 40 }
-            throw "The installer of the Windows SDK ended with $($process.ExitCode)."
-          }
+      # A build on Windows needs the Windows SDK that the Engine Release asks for, which the image may lack.
+      - if: runner.os == 'Windows' && steps.cached-library.outputs.cache-hit != 'true'
+        uses: ./.github/actions/install-windows-sdk
       - name: Build the native core
         if: steps.cached-library.outputs.cache-hit != 'true'
         env:
