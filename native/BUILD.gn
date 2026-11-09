@@ -41,6 +41,8 @@ shared_library("mitto_core") {
     "body_stream.h",
     "client_hints.cc",
     "client_hints.h",
+    "connect_retrying_socket_factory.cc",
+    "connect_retrying_socket_factory.h",
     "cookie_json.cc",
     "cookie_json.h",
     "directory_lock.h",

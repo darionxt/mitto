@@ -46,6 +46,7 @@ constexpr std::string_view kEveryOrigin = "*";
 constexpr std::string_view kDnsNameserverKey = "dns_nameserver";
 constexpr std::string_view kHostResolverRulesKey = "host_resolver_rules";
 constexpr std::string_view kAcceptCHViaALPSKey = "accept_ch_via_alps";
+constexpr std::string_view kRefusedConnectsKey = "refused_connects";
 constexpr std::string_view kHttpCacheKey = "http_cache";
 constexpr std::string_view kMemoryCache = "memory";
 constexpr std::string_view kNetworkQualityKey = "network_quality";
@@ -374,6 +375,13 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
       if (!ReadAcceptCHViaALPS(value, settings)) {
         return std::nullopt;
       }
+      continue;
+    }
+    if (key == kRefusedConnectsKey) {
+      if (!value.is_int() || value.GetInt() < 0) {
+        return std::nullopt;
+      }
+      settings.refused_connects = value.GetInt();
       continue;
     }
     if (key == kHttpCacheKey) {

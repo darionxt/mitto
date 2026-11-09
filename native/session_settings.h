@@ -70,6 +70,11 @@ struct SessionSettings {
   // it. No server in the tests can say anything there. For tests only.
   std::map<url::Origin, std::string> accept_ch_via_alps;
 
+  // How many of the first connect attempts of each of the Session's TCP sockets
+  // fail as if the system had refused them, before they reach it. For tests
+  // only.
+  int refused_connects = 0;
+
   // What rtt and downlink are worked out from on each hop, or nothing, which
   // leaves the values of their lines.
   std::optional<NetworkQuality> network_quality;

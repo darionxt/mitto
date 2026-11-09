@@ -45,6 +45,7 @@
 #include "build/build_config.h"
 #include "mitto/body_stream.h"
 #include "mitto/client_hints.h"
+#include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
 #include "mitto/directory_lock.h"
 #include "mitto/feature_list.h"
@@ -100,6 +101,7 @@
 #include "net/proxy_resolution/proxy_config_service_fixed.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "net/quic/quic_context.h"
+#include "net/socket/client_socket_factory.h"
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
@@ -753,11 +755,20 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   session->proxy_credentials = std::move(settings.proxy_credentials);
   session->accept_ch_via_alps = std::move(settings.accept_ch_via_alps);
   session->network_quality = std::move(settings.network_quality);
-  // Only for such a Session, so that no other has anything between //net and its
-  // sockets.
+  // Only for a Session that needs one, so that no other has anything between
+  // //net and its sockets: one with a SOCKS5 proxy and credentials, and on
+  // Windows every Session, whose connects the system refuses now and then.
+  std::unique_ptr<net::ClientSocketFactory> socket_factory;
   if (settings.socks5_credentials) {
-    builder.set_client_socket_factory(std::make_unique<Socks5AuthSocketFactory>(
-        *std::move(settings.socks5_credentials)));
+    socket_factory = std::make_unique<Socks5AuthSocketFactory>(
+        *std::move(settings.socks5_credentials));
+  }
+  if (BUILDFLAG(IS_WIN) || settings.refused_connects > 0) {
+    socket_factory = std::make_unique<ConnectRetryingSocketFactory>(
+        std::move(socket_factory), settings.refused_connects);
+  }
+  if (socket_factory) {
+    builder.set_client_socket_factory(std::move(socket_factory));
   }
   std::unique_ptr<net::CertVerifier> cert_verifier = CreateCertVerifier(
       session->cert_net_fetcher, std::move(settings.additional_trust_anchors));
