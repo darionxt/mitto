@@ -495,6 +495,8 @@ A tag that fails the first job has published nothing. Delete it, fix what the jo
 
 In the first dry run, on 2026-11-07, the whole run took 33 minutes. The build jobs took 27 minutes on macOS and 32 on Linux, of which the native core took 18 and 24 minutes and the tests about 8 minutes on either Host. Each later job took under half a minute.
 
+In the first dry run with Windows, on 2026-11-09, the build jobs took 24 minutes on macOS, 28 on Linux and 36 on Windows, of which the native core took 15, 19 and 24 minutes, the tests about 9 minutes on each Host, and the install of the Windows SDK 2 minutes. CI's two builds from nothing on Windows had taken 40 and 41 minutes. Each later job took under half a minute. The Linux and Windows jobs needed two reruns with `gh run rerun <run-id> --failed`, because GitHub answered 504 to the download of the source export during an incident on its side, and their last attempt took 37 minutes from start to the end of the run.
+
 ### A dry run
 
 Run by hand, the workflow is a dry run. It publishes a pre-release to TestPyPI from the `testpypi` environment, which waits for nobody, and makes no public GitHub release. For example, from `main`:

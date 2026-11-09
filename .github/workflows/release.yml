@@ -93,7 +93,7 @@ jobs:
     name: Build and test on ${{ matrix.runner }}
     needs: check
     runs-on: ${{ matrix.runner }}
-    # The build from nothing takes 15 to 30 minutes on Linux and macOS and about 40 on Windows, and the tests 8 to 11 more.
+    # The build from nothing takes 15 to 30 minutes on Linux and macOS and 25 to 40 on Windows, and the tests 8 to 11 more.
     timeout-minutes: 90
     strategy:
       fail-fast: false
