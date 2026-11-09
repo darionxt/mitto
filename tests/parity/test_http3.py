@@ -33,6 +33,10 @@ _REPOSITORY = Path(__file__).parents[2]
 _ALL_KINDS = ["navigation", "fetch", "script", "image"]
 _CONNECTION_REFUSED = -102
 _QUIC_PROTOCOL_ERROR = -356
+_NO_BUFFER_SPACE = -176
+
+# How many times in all a Session tries a connect that the system refuses, as Windows does now and then.
+_CONNECT_ATTEMPTS = 3
 
 
 @pytest.fixture
@@ -173,6 +177,37 @@ def test_a_session_reaches_a_forced_origin_over_http3() -> None:
         response = session.request(f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}")
 
     assert (response.status, response.protocol) == (200, "h3")
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_quic_connect_that_the_system_refuses_is_tried_again_with_a_new_socket() -> None:
+    with (
+        CaptureServer() as server,
+        Session(
+            ignore_certificate_errors_spki_list=[server.spki_hash],
+            origins_to_force_quic_on=[server.authority(HTTP3)],
+            refused_connects=_CONNECT_ATTEMPTS - 1,
+        ) as session,
+    ):
+        response = session.request(f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}")
+
+    assert (response.status, response.protocol) == (200, "h3")
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_quic_connect_that_the_system_refuses_each_time_fails_with_what_it_said() -> None:
+    with (
+        CaptureServer() as server,
+        Session(
+            ignore_certificate_errors_spki_list=[server.spki_hash],
+            origins_to_force_quic_on=[server.authority(HTTP3)],
+            refused_connects=_CONNECT_ATTEMPTS,
+        ) as session,
+        pytest.raises(RequestError) as caught,
+    ):
+        session.request(f"https://{server.authority(HTTP3)}{KIND_PATHS[RequestKind.FETCH]}")
+
+    assert caught.value.net_error == _NO_BUFFER_SPACE
 
 
 @pytest.mark.usefixtures("native_library")

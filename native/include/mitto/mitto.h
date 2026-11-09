@@ -207,11 +207,11 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   ACCEPT_CH frame in ALPS, for tests, in place of what //net read. The default
 //   holds nothing, so what //net read counts.
 // - "refused_connects" fails this many of the first connect attempts of each of
-//   the Session's TCP sockets with ERR_NO_BUFFER_SPACE before they reach the
-//   system, as Windows refuses one now and then, for tests. A Session tries a
-//   connect that the system refused so again, with a new socket, up to 2 more
-//   times: on Windows always, and on another Host only when this is more than
-//   0. The default is 0.
+//   the Session's TCP and UDP sockets with ERR_NO_BUFFER_SPACE before they
+//   reach the system, as Windows refuses one now and then, for tests. A Session
+//   tries a connect that the system refused so again, with a new socket, up to
+//   2 more times: on Windows always, and on another Host only when this is more
+//   than 0. The default is 0.
 // - "http_cache" keeps responses as Chrome's HTTP cache does, split by
 //   top-level site. "memory" keeps them until the Session is destroyed. An
 //   absolute path keeps them in that directory, which is made if it does not
