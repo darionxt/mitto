@@ -4,7 +4,7 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 
 ## Requirements
 
-- A macOS arm64, Linux x86_64 or Windows x64 Host. There is no wheel for Windows yet, and CI does not build on Windows yet.
+- A macOS arm64, Linux x86_64 or Windows x64 Host. CI builds and tests a wheel for each, but PyPI has none for Windows yet.
 - About 31 GiB of free disk space for the workspace, including compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
 - `git`, and [uv](https://docs.astral.sh/uv/) to run the set-up script with Python 3.12 or later. The script needs only Python's standard library. On macOS and Linux, depot_tools also needs `curl` and `bash`.
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
@@ -193,21 +193,28 @@ These packages come from Google Storage and CIPD, Chromium's package store, rath
 
 ### In CI
 
-A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, [builds a wheel](#build-a-wheel) from the library and runs `pytest` against the installed wheel. Times are from 14 runs from a cold cache for Chromium 157.0.8103.27, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS.
+A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, [builds a wheel](#build-a-wheel) from the library and runs `pytest` against the installed wheel. Builds on Linux and macOS are from 14 runs from a cold cache for Chromium 157.0.8103.27, and on Windows from two for 157.0.8103.39, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS. On Linux and macOS, the tests and the whole jobs are from the runs of 2026-11-08 and 2026-11-09, when the suite had about 6,800 tests. On Windows, the tests are from four runs, and each whole job from two.
 
-| | Linux x86_64 | macOS arm64 |
-| --- | --- | --- |
-| Runner | `ubuntu-latest`, 4 cores, 16 GB of memory | `xcode-27`, 3 cores, 7 GB of memory |
-| Build | 13 to 24 minutes, under one of them for the downloads | 14 to 28 minutes, under one of them for the downloads |
-| Tests | 25 to 33 seconds | 30 to 66 seconds |
-| Peak disk use of the job | 4.3 GiB, of which 4.1 GiB is the build's directory | 3.5 GiB, of which 3.2 GiB is the build's directory |
-| Disk free when the job starts | 86 GiB | 37 GiB |
-| Whole job | 14 to 24 minutes | 15 to 29 minutes |
-| Whole job with a cached library | 33 to 41 seconds | 42 to 83 seconds |
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Runner | `ubuntu-latest`, 4 cores, 16 GB of memory | `xcode-27`, 3 cores, 7 GB of memory | `windows-2025-vs2026`, 4 cores, 16 GB of memory |
+| Install of the Windows SDK | | | 1.7 to 2.8 minutes, in a job that builds |
+| Build | 13 to 24 minutes, under one of them for the downloads | 14 to 28 minutes, under one of them for the downloads | 40 and 41 minutes, under one of them for the downloads |
+| Tests | 7.5 to 9 minutes | 8 to 9.5 minutes | 10.5 minutes |
+| Peak disk use of the job | 4.3 GiB, of which 4.1 GiB is the build's directory | 3.5 GiB, of which 3.2 GiB is the build's directory | 5.0 GiB on `D:`, of which 4.7 GiB is the build's directory, and 1.2 GiB on `C:` for the SDK |
+| Disk free when the job starts | 86 GiB | 37 GiB | 147 GiB on `D:`, where the job works, and 31 GiB on `C:` |
+| Whole job | 23 to 34 minutes | 25 to 37 minutes | 55 minutes, both times |
+| Whole job with a cached library | 8 to 9.5 minutes | 8.5 to 10 minutes | 11 minutes |
 
-The job keeps only the library, in the Actions cache: 28 MB on Linux and 12 MB on macOS, compressed. The key is the runner's name and a hash of `native/` and `tools/workspace/`, which holds the pin of the export. When none of that has changed, the job skips the build. A pull request can read the caches of `main` and its own, so one that changes neither directory uses the library that `main` built. One that changes either builds once, and `main` builds again after the merge.
+On 2026-10-30 the Windows image had only the Windows SDK 10.0.26100, and Chromium 157's `build/vs_toolchain.py` asks for `10.0.28000.0`. So a Windows job that builds, and only such a job, first installs the SDK 10.0.28000.2270, unless the image already has that version. The installer comes from Microsoft's downloads page and is checked against its SHA-256. It installs only the feature for desktop C++ apps on x64, `OptionId.DesktopCPPx64`, which brings in 46 packages: the headers and libraries for x64 and x86 and the SDK's own tools, 1.2 GiB. The build needs nothing more. That took 1.7 to 2.8 minutes in three runs, downloads included, so the job installs the SDK each time rather than keeping its `10.0.28000.0` directories in the Actions cache, where they would take 1.2 GiB of the room that this repository's caches share, to save those two minutes at most. The version and the installer are pinned in the workflow, and change only when a new **Engine Release** asks for another SDK.
 
-A second cache keeps the build's directory, about 300 MB per **Host** and build, because what the export compiles to changes only with `tools/workspace/`. Its key is the runner's or the build's name and a hash of that directory. `main` saves it the first time it builds with that hash, and a pull request restores it and rebuilds only `native/`. In one trial, a change to one file in `native/` rebuilt 11 of about 4,000 objects, and the whole job took about 2 minutes on either Host. `main` never restores it, so each merge still builds from nothing and shows a mistake in an incremental build. A pull request that changes `tools/workspace/` also builds from nothing. CIPD packages are unpacked with a fixed file time, because ninja would otherwise rebuild what depends on them.
+On Windows 11 22H2 and later, and on the Windows Server of `windows-2025-vs2026`, `//net` asks Windows for a random source port before each TCP connect, with `SO_RANDOMIZE_PORT`, as Chrome there does (`kTcpPortRandomizationWin`). Windows then fails a connect now and then with `WSAENOBUFS` or `WSAEADDRINUSE`, which a request reports as `ERR_NO_BUFFER_SPACE` or `ERR_ADDRESS_IN_USE`. A plain Python client on the runner saw 5 such failures in one series of 12,000 connects to a local server, and none in another, and none in 12,000 without the option. In 2 of 9 runs of the whole suite on Windows, one test failed this way.
+
+The Windows job runs the same steps as the other Hosts, in Git's bash. Git for Windows sets `core.autocrlf` to true, which would check text files out with CRLF line ends, so the Windows jobs set it to false before the checkout, and every file has the bytes that the repository holds, as on the other Hosts.
+
+The job keeps only the library, in the Actions cache: 21 MB on Linux, 6 MB on macOS and 28 MB on Windows, compressed. On Windows that includes the DLL's PDB, which the wheel's symbols archive holds. The key is the runner's name and a hash of `native/` and `tools/workspace/`, which holds the pin of the export. When none of that has changed, the job skips the build. A pull request can read the caches of `main` and its own, so one that changes neither directory uses the library that `main` built. One that changes either builds once, and `main` builds again after the merge.
+
+A second cache keeps the build's directory, about 300 MB per **Host** and build, because what the export compiles to changes only with `tools/workspace/`. Its key is the runner's or the build's name and a hash of that directory. `main` saves it the first time it builds with that hash, and a pull request restores it and rebuilds only `native/`. In one trial, a change to one file in `native/` rebuilt 11 of about 4,000 objects on Linux and macOS. On Windows it rebuilt 27 of 4,082 steps, every object of `//mitto` and its links, in a minute and a half, and the whole job took 14 minutes. `main` never restores it, so each merge still builds from nothing and shows a mistake in an incremental build. A pull request that changes `tools/workspace/` also builds from nothing. CIPD packages are unpacked with a fixed file time, because ninja would otherwise rebuild what depends on them.
 
 `xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use. The Python jobs use it as well, because 9 of 90 jobs on `macos-latest` got no runner within 15 minutes and were cancelled, and none of 36 on `xcode-27` did.
 
@@ -262,18 +269,25 @@ A wheel of mitto is for one **Host**. Its tag is `py3-none-PLATFORM`, and it hol
 MITTO_WHEEL_LIBRARY=/absolute/path/to/libmitto_core.dylib uv build --wheel
 ```
 
-On Linux the file is `libmitto_core.so`. The build hook in [`tools/wheel.py`](../tools/wheel.py):
+On Linux the file is `libmitto_core.so`. On Windows, in PowerShell:
 
-1. strips a copy of the library. On macOS it runs `dsymutil` and then `strip -x`, and checks that the copy's code signature still holds, because macOS on arm64 does not load a library whose signature does not. On Linux it runs `objcopy --only-keep-debug`, `strip` and `objcopy --add-gnu-debuglink`;
-2. takes the wheel's platform from the stripped library: `macosx_X_0_arm64` from the `minos` of its `LC_BUILD_VERSION` on macOS, and `manylinux_2_X_x86_64` from the highest glibc symbol version it needs on Linux. `auditwheel`, which checks manylinux wheels, has a policy for some versions of glibc only, and a version without one becomes the next version with one;
-3. puts it into the wheel as `mitto/libmitto_core.dylib`, or `mitto/libmitto_core.so`;
-4. writes what stripping removed into an archive next to the wheel, named after it: `mitto-<version>-py3-none-<platform>.symbols.tar.xz`. It holds the dSYM bundle on macOS and `libmitto_core.so.debug` on Linux.
+```powershell
+$env:MITTO_WHEEL_LIBRARY = 'C:\ex\chromium-<tag>\src\out\mitto\mitto_core.dll'
+uv build --wheel
+```
+
+The build hook in [`tools/wheel.py`](../tools/wheel.py):
+
+1. strips a copy of the library. On macOS it runs `dsymutil` and then `strip -x`, and checks that the copy's code signature still holds, because macOS on arm64 does not load a library whose signature does not. On Linux it runs `objcopy --only-keep-debug`, `strip` and `objcopy --add-gnu-debuglink`. A DLL holds no debug information to strip: its CodeView debug record names its PDB, `mitto_core.dll.pdb`, by file name alone, because Chromium's build links with `/pdbaltpath:%_PDB%`. The hook copies the DLL as it is, and takes the PDB of that name next to the library, once it has checked that the PDB's GUID and age are those the record names;
+2. takes the wheel's platform from the stripped library: `macosx_X_0_arm64` from the `minos` of its `LC_BUILD_VERSION` on macOS, `manylinux_2_X_x86_64` from the highest glibc symbol version it needs on Linux, and `win_amd64` from the machine in its PE header on Windows. `auditwheel`, which checks manylinux wheels, has a policy for some versions of glibc only, and a version without one becomes the next version with one;
+3. puts it into the wheel as `mitto/libmitto_core.dylib`, `mitto/libmitto_core.so` or `mitto/mitto_core.dll`;
+4. writes what stripping removed into an archive next to the wheel, named after it: `mitto-<version>-py3-none-<platform>.symbols.tar.xz`. It holds the dSYM bundle on macOS, `libmitto_core.so.debug` on Linux and `mitto_core.dll.pdb` on Windows.
 
 Every wheel also holds `LICENSE` and the [third-party notices](#third-party-notices) of its library, [`THIRD_PARTY_NOTICES`](../THIRD_PARTY_NOTICES), in its `.dist-info/licenses` directory. `license-files` in `pyproject.toml` names both, and the wheel's `METADATA` lists them in `License-File` lines.
 
 Without `MITTO_WHEEL_LIBRARY` the build stops, so that no wheel without a library can go out: it would install anywhere and fail on its first request. An editable install, which `uv sync` makes, needs no library, because the loader takes the one in `MITTO_NATIVE_LIBRARY`. mitto ships no sdist, because a build from source needs the source export and Chromium's toolchain.
 
-The hook needs Xcode on macOS, and `objcopy` and `strip` from GNU binutils on Linux. On macOS the library only points to the debug information, which stays in the build's object files. For a library whose build directory is gone, such as one restored from CI's cache, `dsymutil` warns about each missing file, and the symbols keep function names but lose line numbers.
+The hook needs Xcode on macOS, `objcopy` and `strip` from GNU binutils on Linux, and nothing more on Windows. On macOS the library only points to the debug information, which stays in the build's object files. For a library whose build directory is gone, such as one restored from CI's cache, `dsymutil` warns about each missing file, and the symbols keep function names but lose line numbers.
 
 To turn an address in the library, such as one from a crash report, back into a function name, unpack the symbols archive and run one of these, on macOS and on Linux, with the address's offset from the start of the library in place of `0x3c44`:
 
@@ -282,16 +296,22 @@ atos -o libmitto_core.dylib.dSYM -l 0 0x3c44
 addr2line -f -C -e libmitto_core.so.debug 0x3c44
 ```
 
+On Windows, put `mitto_core.dll` from the wheel next to `mitto_core.dll.pdb` from the archive, and run LLVM's `llvm-symbolizer`, such as the one in the toolchain of a [build from the source export](#build-from-the-source-export), under `third_party\llvm-build\Release+Asserts\bin`. A crash report names the address as `mitto_core.dll+0x3c44`, an offset from the start of the DLL, which `--relative-address` asks for. Without it, the tool takes the address as one in the DLL loaded at its preferred base, `0x180000000`. It prints the function and the file and line it lies in:
+
+```powershell
+llvm-symbolizer --obj=mitto_core.dll --relative-address 0x3c44
+```
+
 Measured for Chromium 157.0.8103.39, in MB of 1,000,000 bytes:
 
-| | Linux x86_64 | macOS arm64 |
-| --- | --- | --- |
-| Tag | `py3-none-manylinux_2_26_x86_64` | `py3-none-macosx_13_0_arm64` |
-| Wheel | 6.1 MB | 5.5 MB |
-| Library, installed | 12.3 MB | 10.8 MB |
-| Symbols archive | 12.8 MB | 11.5 MB, or under 1 MB without the object files |
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Tag | `py3-none-manylinux_2_26_x86_64` | `py3-none-macosx_13_0_arm64` | `py3-none-win_amd64` |
+| Wheel | 6.1 MB | 5.5 MB | 6.7 MB |
+| Library, installed | 12.3 MB | 10.8 MB | 13.4 MB |
+| Symbols archive | 12.8 MB | 11.5 MB, or under 1 MB without the object files | 16.6 MB |
 
-The tag follows from Chromium's build. Chromium 157 sets `mac_deployment_target` to 13.0 in `build/config/mac/mac_sdk.gni`. Its Linux sysroot is Debian bullseye, and `build/linux/sysroot_scripts/reversion_glibc.py` rewrites the sysroot's glibc so that no symbol needs a version above 2.26. The library needs 2.25, for `getentropy` and `getrandom`, and auditwheel has no policy for 2.25, so the tag says 2.26. [`tests/test_wheel.py`](../tests/test_wheel.py) keeps the tag equal to what the library needs: what `auditwheel show` says on Linux, and the `minos` that `otool -l` shows on macOS.
+The tag follows from Chromium's build. Chromium 157 sets `mac_deployment_target` to 13.0 in `build/config/mac/mac_sdk.gni`. Its Linux sysroot is Debian bullseye, and `build/linux/sysroot_scripts/reversion_glibc.py` rewrites the sysroot's glibc so that no symbol needs a version above 2.26. The library needs 2.25, for `getentropy` and `getrandom`, and auditwheel has no policy for 2.25, so the tag says 2.26. A Windows wheel's tag names only the CPU, as Windows has no version in a tag. [`tests/test_wheel.py`](../tests/test_wheel.py) keeps the tag equal to what the library needs: what `auditwheel show` says on Linux, the `minos` that `otool -l` shows on macOS, and the machine in the DLL's PE header on Windows.
 
 To check a wheel, install it into a new environment and run the tests there, with `MITTO_WHEEL` naming the wheel, `MITTO_HOST_NOTICES` naming what the [notices script](#third-party-notices) prints for the library's build, and `MITTO_NATIVE_LIBRARY` unset. Print the notices first, because `uv run` would install the project into the new environment:
 
@@ -302,6 +322,8 @@ uv sync --no-install-project
 uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" dist/mitto-*.whl
 MITTO_WHEEL="$(ls "$PWD"/dist/mitto-*.whl)" MITTO_HOST_NOTICES="$PWD/dist/host-notices.txt" "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest
 ```
+
+On Windows the environment's Python is `Scripts\python.exe` instead of `bin/python`.
 
 The suite then runs against the installed package, and `MITTO_WHEEL` adds the tests of the wheel itself: that the installed package loads the wheel's library, that the tag is what the library needs, that the symbols archive belongs to the library and names a function that the stripped library does not, and that the wheel holds the notice of every project that its library links on this Host.
 
@@ -317,7 +339,7 @@ The library links Chromium and about 80 projects that Chromium uses, such as Bor
 4. A directory belongs to the nearest project: a directory under a `third_party` directory, or a crate's `third_party/rust/<crate>/<epoch>`, that holds a `README.chromium`. One without, such as a project inside another project, is the nearest directory with licence files, and one with neither belongs to the project around it. Code outside any project is Chromium's, and the library's own code is under `LICENSE`.
 5. The `README.chromium` gives each project's name, URL, licence and licence files, with `COPYING` when the files it names do not exist. A dependency marked `Shipped: no` gets no entry: Chromium marks code whose licence another entry already carries that way, such as the part of ICU that `//base` copies. The Rust standard library has no `README.chromium`, and its licence texts come from the Rust toolchain. A linked project without a licence file stops the script.
 
-The Hosts link slightly different projects: only Linux links compiler-rt, glog's symbolizer and xdg-user-dirs. gn on one Host cannot describe the other Host's build, so each entry says which Hosts link its project, and each Host writes its own part, from a build of the [source export](#build-from-the-source-export) or of a [checkout](#build-the-native-core):
+The Hosts link slightly different projects: only Linux links glog's symbolizer and xdg-user-dirs, and Windows does not link libc++abi or the crates that the Rust standard library reads backtraces with. Linux and Windows link compiler-rt, and only Windows links the code that `//net` takes from Mozilla to read Windows' certificate stores. gn on one Host cannot describe another Host's build, so each entry says which Hosts link its project, and each Host writes its own part, from a build of the [source export](#build-from-the-source-export) or of a [checkout](#build-the-native-core):
 
 ```bash
 uv run python -m tools.workspace.notices update /absolute/path/to/chromium-<tag>/src/out/mitto
@@ -332,11 +354,11 @@ uv run python -m tools.workspace.notices merge /absolute/path/to/new/directory/h
 
 Update both parts whenever what the library links may change: when the **Engine Release** moves, in [the release routine](releasing.md#3-make-the-source-export), when `native/BUILD.gn` changes its dependencies, and when `tools/workspace/args.gn` changes. Until a Host's part is right, the test of the installed wheel fails on that Host and names each project that the notices get wrong: one they miss, one they say is linked but is not, and one whose licence text changed.
 
-Measured for Chromium 157.0.8103.27, the notices are 0.6 MB, and they add 0.1 MB to a wheel.
+Measured for Chromium 157.0.8103.39, the notices are 0.6 MB, and they add 0.1 MB to a wheel.
 
 ### In CI
 
-The native job of each Host builds a wheel from the library it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. It installs the wheel into a new environment and runs the tests as above. This adds about 10 seconds on either Host.
+The native job of each Host builds a wheel from the library it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. It installs the wheel into a new environment and runs the tests as above. Building, keeping and installing the wheel adds about 10 seconds on every Host.
 
 Once, the wheels also passed their tests on the oldest system that their tags claim and that GitHub offers. The Linux wheel ran in an `amazonlinux:2` container on `ubuntu-latest`, with glibc 2.26. The macOS wheel ran on `macos-15`, with macOS 15.8: GitHub no longer offers `macos-14`, and never had an arm64 runner with macOS 13.
 
@@ -532,7 +554,7 @@ The tests of the asyncio API go through each way that an event loop can hear of 
 
 Those tests include the **Parity Checks**, described in [parity.md](parity.md).
 
-Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler. A new Ubuntu install has none, and the native core's build does not need one. Install `gcc` to run these tests. Windows has no `cc`, so they are skipped there.
+Tests of how the loader rejects a library compile small stub libraries with `cc`, and are skipped when there is no C compiler. A new Ubuntu install has none, and the native core's build does not need one. Install `gcc` to run these tests. Windows has no `cc` of its own, so they are skipped there unless one is on `PATH`, such as MinGW's on GitHub's Windows runners. The tests of the wheel's build hook do not compile a stub on Windows, because a DLL from `cc` has no PDB: they build a wheel from a made-up DLL and PDB instead, on every Host.
 
 To check the whole path from Python through the native core to a real server, with `MITTO_NATIVE_LIBRARY` set as above and a network connection:
 

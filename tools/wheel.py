@@ -5,10 +5,12 @@ library in MITTO_WHEEL_LIBRARY and build as usual:
 
     MITTO_WHEEL_LIBRARY=/path/to/libmitto_core.dylib uv build --wheel
 
-The hook strips a copy of the library and keeps what it removed in an archive next to the wheel, named after it. The
-wheel's tag is py3-none-PLATFORM, with the platform taken from the library itself: the macOS version it needs, or the
-highest glibc version it needs, as auditwheel names it. A wheel without a library would install anywhere and fail on its first request, so the
-hook refuses to build one. An editable install needs none, because it takes the library from MITTO_NATIVE_LIBRARY.
+The hook strips a copy of the library and keeps what it removed in an archive next to the wheel, named after it. A
+Windows DLL holds no debug information to strip: it names a PDB next to it, which goes into the archive instead. The
+wheel's tag is py3-none-PLATFORM, with the platform taken from the library itself: the macOS version it needs, the
+highest glibc version it needs, as auditwheel names it, or the CPU of a DLL. A wheel without a library would install
+anywhere and fail on its first request, so the hook refuses to build one. An editable install needs none, because it
+takes the library from MITTO_NATIVE_LIBRARY.
 
 Hatchling loads this file by its path, outside the project's environment, so it imports nothing but the standard library
 and hatchling. See docs/building.md.
@@ -22,7 +24,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from hatchling.builders.config import BuilderConfig
@@ -37,6 +39,7 @@ SYMBOLS_SUFFIX = ".symbols.tar.xz"
 
 MACOS_LIBRARY = "libmitto_core.dylib"
 LINUX_LIBRARY = "libmitto_core.so"
+WINDOWS_LIBRARY = "mitto_core.dll"
 
 MACH_O_MAGIC = b"\xcf\xfa\xed\xfe"
 MACH_O_HEADER_SIZE = 32
@@ -49,6 +52,24 @@ ELF_64_LITTLE_ENDIAN = b"\x02\x01"
 ELF_ARCHITECTURES = {62: "x86_64"}
 SHT_GNU_VERNEED = 0x6FFFFFFE
 GLIBC_VERSION = re.compile(r"GLIBC_(\d+)\.(\d+)(\.\d+)?")
+
+# A Windows program starts with an MS-DOS header, whose field at this offset says where the PE signature lies.
+PE_MAGIC = b"MZ"
+PE_OFFSET_FIELD = 0x3C
+PE_SIGNATURE = b"PE\0\0"
+PE_ARCHITECTURES = {0x8664: "amd64"}
+PE_FILE_HEADER_SIZE = 20
+PE32_PLUS = 0x20B
+IMAGE_FILE_DLL = 0x2000
+PE_DATA_DIRECTORIES_OFFSET = 112
+PE_DEBUG_DIRECTORY = 6
+PE_DEBUG_ENTRY_SIZE = 28
+PE_DEBUG_TYPE_CODEVIEW = 2
+PE_SECTION_HEADER_SIZE = 40
+# A CodeView record names the PDB by its file name, its GUID and its age, which the PDB's info stream holds too.
+CODEVIEW_PDB70 = b"RSDS"
+PDB_MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0"
+PDB_INFO_STREAM = 1
 
 # The glibc versions that auditwheel, which checks manylinux wheels, has a policy for. A tag can name any version, but
 # auditwheel accepts no other, so a library that needs another version gets the next of these.
@@ -87,7 +108,9 @@ def platform_tag(library: Path) -> str:
         return _macos_tag(library, data)
     if data.startswith(ELF_MAGIC):
         return _manylinux_tag(library, data)
-    raise WheelError(f"{library} is neither a Mach-O nor an ELF file")
+    if data.startswith(PE_MAGIC):
+        return _windows_tag(library, data)
+    raise WheelError(f"{library} is neither a Mach-O, an ELF nor a PE file")
 
 
 def _macos_tag(library: Path, data: bytes) -> str:
@@ -134,6 +157,18 @@ def _manylinux_tag(library: Path, data: bytes) -> str:
     return f"manylinux_{policy[0]}_{policy[1]}_{ELF_ARCHITECTURES[machine]}"
 
 
+def _windows_tag(library: Path, data: bytes) -> str:
+    (pe_offset,) = struct.unpack_from("<I", data, PE_OFFSET_FIELD)
+    if data[pe_offset : pe_offset + len(PE_SIGNATURE)] != PE_SIGNATURE:
+        raise WheelError(f"{library} has an MS-DOS header but no PE signature")
+    machine, characteristics = struct.unpack_from("<H16xH", data, pe_offset + 4)
+    if machine not in PE_ARCHITECTURES:
+        raise WheelError(f"{library} is for PE machine {machine:#x}, not for x64")
+    if not characteristics & IMAGE_FILE_DLL:
+        raise WheelError(f"{library} is a program, not a DLL")
+    return f"win_{PE_ARCHITECTURES[machine]}"
+
+
 def _needed_versions(data: bytes) -> set[str]:
     """Returns the symbol versions that an ELF file needs from other libraries, such as GLIBC_2.17."""
     (section_headers,) = struct.unpack_from("<Q", data, 0x28)
@@ -163,10 +198,11 @@ def strip_library(library: Path, directory: Path) -> tuple[Path, Path]:
 
     Returns:
         The stripped library, under the name the loader looks for, and what stripping removed from it: a dSYM bundle
-        on macOS, and a file that the library links to by name on Linux.
+        on macOS, and a file that the library links to by name on Linux. A DLL is only copied, and its PDB stays
+        where the build put it.
 
     Raises:
-        WheelError: If the file is not a library of a Host, or a tool fails.
+        WheelError: If the file is not a library of a Host, or a tool fails, or a DLL's PDB is missing or another's.
     """
     with library.open("rb") as file:
         magic = file.read(len(ELF_MAGIC))
@@ -174,7 +210,9 @@ def strip_library(library: Path, directory: Path) -> tuple[Path, Path]:
         return _strip_mach_o(library, directory)
     if magic == ELF_MAGIC:
         return _strip_elf(library, directory)
-    raise WheelError(f"{library} is neither a Mach-O nor an ELF file")
+    if magic.startswith(PE_MAGIC):
+        return _copy_dll(library, directory)
+    raise WheelError(f"{library} is neither a Mach-O, an ELF nor a PE file")
 
 
 def _strip_mach_o(library: Path, directory: Path) -> tuple[Path, Path]:
@@ -200,6 +238,88 @@ def _strip_elf(library: Path, directory: Path) -> tuple[Path, Path]:
     # The link holds the file's name and checksum, so that a debugger finds it next to the library and knows it.
     _run("objcopy", f"--add-gnu-debuglink={symbols}", stripped)
     return stripped, symbols
+
+
+def _copy_dll(library: Path, directory: Path) -> tuple[Path, Path]:
+    copy = directory / WINDOWS_LIBRARY
+    shutil.copy(library, copy)
+    name, identity = codeview_record(copy)
+    # The linker names the PDB by its path, or by its file name alone, as Chromium's build asks with /pdbaltpath.
+    symbols = library.parent / PureWindowsPath(name).name
+    if not symbols.is_file():
+        raise WheelError(f"{library} names its PDB {name}, and {symbols} is missing")
+    if pdb_identity(symbols) != identity:
+        raise WheelError(f"{symbols} is not the PDB of {library}, but one of another build")
+    return copy, symbols
+
+
+def codeview_record(dll: Path) -> tuple[str, bytes]:
+    """Returns what a DLL's CodeView debug record says of its PDB: its path, and its GUID followed by its age.
+
+    Raises:
+        WheelError: If the DLL is not 64-bit or has no such record.
+    """
+    data = dll.read_bytes()
+    (pe_offset,) = struct.unpack_from("<I", data, PE_OFFSET_FIELD)
+    section_count, optional_size = struct.unpack_from("<H12xH", data, pe_offset + 6)
+    optional = pe_offset + len(PE_SIGNATURE) + PE_FILE_HEADER_SIZE
+    (magic,) = struct.unpack_from("<H", data, optional)
+    if magic != PE32_PLUS:
+        raise WheelError(f"{dll} is not a 64-bit PE file")
+    directory = optional + PE_DATA_DIRECTORIES_OFFSET + 8 * PE_DEBUG_DIRECTORY
+    debug_address, debug_size = struct.unpack_from("<2I", data, directory)
+    for index in range(section_count):
+        virtual_size, address, _, raw_offset = struct.unpack_from(
+            "<4I", data, optional + optional_size + index * PE_SECTION_HEADER_SIZE + 8
+        )
+        if not address <= debug_address < address + virtual_size:
+            continue
+        start = raw_offset + debug_address - address
+        for entry in range(start, start + debug_size, PE_DEBUG_ENTRY_SIZE):
+            kind, size, _, record = struct.unpack_from("<4I", data, entry + 12)
+            if kind == PE_DEBUG_TYPE_CODEVIEW and data[record : record + len(CODEVIEW_PDB70)] == CODEVIEW_PDB70:
+                body = data[record + len(CODEVIEW_PDB70) : record + size]
+                return body[20 : body.index(b"\0", 20)].decode(), body[:20]
+    raise WheelError(f"{dll} names no PDB; it must be linked with /DEBUG")
+
+
+def pdb_identity(pdb: Path) -> bytes:
+    """Returns the GUID and the age of a PDB, from its info stream, as a CodeView record names them.
+
+    A PDB is an MSF file: fixed-size blocks, a directory of streams, each stream a list of blocks.
+
+    Raises:
+        WheelError: If the file is not a PDB.
+    """
+    with pdb.open("rb") as file:
+        header = file.read(len(PDB_MAGIC) + 24)
+        if not header.startswith(PDB_MAGIC):
+            raise WheelError(f"{pdb} is not a PDB")
+        block_size, _, _, directory_size, _, block_map = struct.unpack_from("<6I", header, len(PDB_MAGIC))
+
+        def read_blocks(blocks: list[int], size: int) -> bytes:
+            parts: list[bytes] = []
+            for block in blocks:
+                file.seek(block * block_size)
+                parts.append(file.read(block_size))
+            return b"".join(parts)[:size]
+
+        directory_block_count = -(-directory_size // block_size)
+        file.seek(block_map * block_size)
+        directory_blocks = list(struct.unpack(f"<{directory_block_count}I", file.read(4 * directory_block_count)))
+        directory = read_blocks(directory_blocks, directory_size)
+        (stream_count,) = struct.unpack_from("<I", directory)
+        if stream_count <= PDB_INFO_STREAM:
+            raise WheelError(f"{pdb} has no info stream")
+        sizes = struct.unpack_from(f"<{stream_count}I", directory, 4)
+        # A stream that does not exist has the size 0xFFFFFFFF and no blocks.
+        block_counts = [0 if size == 0xFFFFFFFF else -(-size // block_size) for size in sizes]
+        first = 4 + 4 * stream_count + 4 * sum(block_counts[:PDB_INFO_STREAM])
+        blocks = list(struct.unpack_from(f"<{block_counts[PDB_INFO_STREAM]}I", directory, first))
+        info = read_blocks(blocks, sizes[PDB_INFO_STREAM])
+    # Version and time, then the age and the GUID, which a CodeView record holds in the other order.
+    (age,) = struct.unpack_from("<I", info, 8)
+    return info[12:28] + struct.pack("<I", age)
 
 
 def _run(*command: str | Path) -> str:

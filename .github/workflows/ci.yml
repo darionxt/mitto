@@ -15,13 +15,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux x86_64 and macOS arm64. macos-latest often gets no runner.
-        runner: [ubuntu-latest, xcode-27]
+        # Linux x86_64, macOS arm64 and Windows x64. macos-latest often gets no runner.
+        runner: [ubuntu-latest, xcode-27, windows-2025-vs2026]
         # The oldest supported Python and the newest released one.
         python: ["3.12", "3.15"]
     env:
       UV_LOCKED: "1"
     steps:
+      # Git for Windows would check text files out with CRLF line ends, and the tests read files as the repository
+      # holds them.
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -36,19 +40,34 @@ jobs:
   native:
     name: Native core on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    # On Windows, a build from nothing takes about 40 minutes and the tests 11.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
             library: libmitto_core.so
+            environment-python: bin/python
           # The one hosted macOS image with the macOS SDK that Chromium's bots use.
           - runner: xcode-27
             library: libmitto_core.dylib
+            environment-python: bin/python
+          # Visual Studio 2026, which Chromium 157 asks for.
+          - runner: windows-2025-vs2026
+            library: mitto_core.dll
+            # The DLL's debug information, which the wheel's symbols archive holds.
+            symbols: mitto_core.dll.pdb
+            environment-python: Scripts/python.exe
     env:
       UV_LOCKED: "1"
+    defaults:
+      run:
+        # Git's bash on Windows.
+        shell: bash
     steps:
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -71,16 +90,51 @@ jobs:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
           key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
           lookup-only: ${{ github.event_name != 'pull_request' }}
+      # The image had only the SDK 10.0.26100 on 2026-10-30, and Chromium 157 asks for 10.0.28000.0 in its
+      # build/vs_toolchain.py, which the build checks before it starts. Only the headers and libraries for x64 apps.
+      - name: Install the Windows SDK
+        if: runner.os == 'Windows' && steps.cached-library.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          SDK_VERSION: 10.0.28000.0
+          # The installer of the SDK 10.0.28000.2270, from Microsoft's Windows SDK downloads page.
+          SDK_INSTALLER: https://download.microsoft.com/download/78b533c3-6724-4e28-a984-b9fa93265781/KIT_BUNDLE_WINDOWSSDK_MEDIACREATION/winsdksetup.exe
+          SDK_INSTALLER_SHA256: e9f1bde566381355e594e2f90daf4f714eb5c7ef2c45c501ce236afe2abea300
+        run: |
+          $header = "${env:ProgramFiles(x86)}\Windows Kits\10\Include\$env:SDK_VERSION\um\windows.h"
+          if (Test-Path $header) {
+            "The image has the Windows SDK $env:SDK_VERSION."
+            exit 0
+          }
+          $installer = "$env:RUNNER_TEMP\winsdksetup.exe"
+          curl.exe --fail --location --silent --show-error --retry 5 --output $installer $env:SDK_INSTALLER
+          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne $env:SDK_INSTALLER_SHA256) {
+            throw "$env:SDK_INSTALLER is not the installer it was."
+          }
+          # The installer writes a log for each of its packages next to its own.
+          $log = (New-Item -ItemType Directory "$env:RUNNER_TEMP\winsdk").FullName + '\install.log'
+          $process = Start-Process $installer -Wait -PassThru -ArgumentList @(
+            '/features', 'OptionId.DesktopCPPx64', '/quiet', '/norestart', '/ceip', 'off', '/log', $log
+          )
+          if ($process.ExitCode -ne 0 -or -not (Test-Path $header)) {
+            Get-ChildItem "$env:RUNNER_TEMP\winsdk" | ForEach-Object { Get-Content $_.FullName -Tail 40 }
+            throw "The installer of the Windows SDK ended with $($process.ExitCode)."
+          }
       - name: Build the native core
         if: steps.cached-library.outputs.cache-hit != 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          LIBRARY: ${{ matrix.library }}
+          SYMBOLS: ${{ matrix.symbols }}
         run: |
-          set -o pipefail
-          uv run tools/workspace/export.py build "$RUNNER_TEMP/export" | tee "$RUNNER_TEMP/build.log"
-          library="$(tail -n 1 "$RUNNER_TEMP/build.log")"
+          uv run tools/workspace/export.py build "$RUNNER_TEMP/export"
+          build_dir="$RUNNER_TEMP/export/chromium-$TAG/src/out/mitto"
           mkdir "$RUNNER_TEMP/native-core"
-          cp "$library" "$RUNNER_TEMP/native-core"
+          for file in $LIBRARY $SYMBOLS; do
+            cp "$build_dir/$file" "$RUNNER_TEMP/native-core"
+          done
           # The notices of what this library links, which the test of the wheel's notices compares with them.
-          uv run python -m tools.workspace.notices host "$(dirname "$library")" > "$RUNNER_TEMP/native-core/host-notices.txt"
+          uv run python -m tools.workspace.notices host "$build_dir" > "$RUNNER_TEMP/native-core/host-notices.txt"
       # Before the tests, so that a test that fails does not waste the build.
       - if: steps.cached-library.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -114,13 +168,15 @@ jobs:
       - name: Install the wheel
         env:
           UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wheel-env
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
         run: |
           uv sync --no-install-project
-          uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" "$RUNNER_TEMP"/dist/*.whl
+          uv pip install --python "$ENVIRONMENT_PYTHON" "$RUNNER_TEMP"/dist/*.whl
       - name: Test the installed wheel
         env:
           MITTO_HOST_NOTICES: ${{ runner.temp }}/native-core/host-notices.txt
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
         run: |
           MITTO_WHEEL="$(ls "$RUNNER_TEMP"/dist/*.whl)"
           export MITTO_WHEEL
-          "$RUNNER_TEMP/wheel-env/bin/python" -m pytest -rs
+          "$ENVIRONMENT_PYTHON" -m pytest -rs

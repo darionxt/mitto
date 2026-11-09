@@ -1,10 +1,10 @@
 Third-party notices for mitto's native library
 
-Each wheel of mitto holds a native library, mitto/libmitto_core.so on Linux and
-mitto/libmitto_core.dylib on macOS, built from Chromium's network stack. mitto's
-own code is under the licence in LICENSE. The entries below are the projects
-linked into the library: Chromium itself and the projects it uses, each with the
-text of its licence.
+Each wheel of mitto holds a native library, mitto/libmitto_core.so on Linux,
+mitto/libmitto_core.dylib on macOS and mitto/mitto_core.dll on Windows, built
+from Chromium's network stack. mitto's own code is under the licence in LICENSE.
+The entries below are the projects linked into the library: Chromium itself and
+the projects it uses, each with the text of its licence.
 
 "Directory" is where a project lies in Chromium's source tree, and "Linked on"
 names the Hosts whose library links it.
@@ -15,7 +15,7 @@ docs/building.md.
 ================================================================================
 Name: The Chromium Project
 Directory: //
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://www.chromium.org
 Licence: BSD-3-Clause
 
@@ -52,7 +52,7 @@ Licence file: //LICENSE
 ================================================================================
 Name: Abseil
 Directory: //third_party/abseil-cpp
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/abseil/abseil-cpp
 Licence: Apache-2.0
 
@@ -750,7 +750,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: base64
 Directory: //third_party/rust/base64/v0_22
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/base64
 Licence: Apache-2.0
 
@@ -961,7 +961,7 @@ limitations under the License.
 ================================================================================
 Name: BoringSSL
 Directory: //third_party/boringssl
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://boringssl.googlesource.com/boringssl
 Licence: Apache-2.0, BSD-3-Clause
 
@@ -1208,7 +1208,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ================================================================================
 Name: Brotli
 Directory: //third_party/brotli
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/brotli
 Licence: MIT
 
@@ -1237,7 +1237,7 @@ THE SOFTWARE.
 ================================================================================
 Name: cfg-if-1.0.4
 Directory: //third_party/rust-toolchain/lib/rustlib/src/rust/library/vendor/cfg-if-1.0.4
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 
 Licence file: //third_party/rust-toolchain/lib/rustlib/src/rust/library/vendor/cfg-if-1.0.4/LICENSE-APACHE
 
@@ -1474,7 +1474,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: CityHash
 Directory: //base/third_party/cityhash
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/cityhash
 Licence: MIT
 
@@ -1503,7 +1503,7 @@ Licence file: //base/third_party/cityhash/COPYING
 ================================================================================
 Name: CityHash
 Directory: //base/third_party/cityhash_v103
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/cityhash
 Licence: MIT
 
@@ -1532,7 +1532,7 @@ Licence file: //base/third_party/cityhash_v103/COPYING
 ================================================================================
 Name: Compact Encoding Detection
 Directory: //third_party/ced
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/compact_enc_det
 Licence: Apache-2.0
 
@@ -1743,7 +1743,7 @@ Licence file: //third_party/ced/LICENSE
 ================================================================================
 Name: compiler-builtins
 Directory: //third_party/rust-toolchain/lib/rustlib/src/rust/library/compiler-builtins
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 
 Licence file: //third_party/rust-toolchain/lib/rustlib/src/rust/library/compiler-builtins/LICENSE.txt
 
@@ -2026,7 +2026,7 @@ or licenses.
 ================================================================================
 Name: compiler-rt
 Directory: //third_party/compiler-rt
-Linked on: Linux x86_64
+Linked on: Linux x86_64, Windows x64
 URL: https://compiler-rt.llvm.org/
 Licence: NCSA, Apache-with-LLVM-Exception, MIT
 
@@ -2347,7 +2347,7 @@ THE SOFTWARE.
 ================================================================================
 Name: cxx
 Directory: //third_party/rust/cxx/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/cxx
 Licence: Apache-2.0
 
@@ -2533,7 +2533,7 @@ END OF TERMS AND CONDITIONS
 ================================================================================
 Name: diplomat-runtime
 Directory: //third_party/rust/diplomat_runtime/v0_15
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/diplomat-runtime
 Licence: Apache-2.0
 
@@ -2744,7 +2744,7 @@ limitations under the License.
 ================================================================================
 Name: either
 Directory: //third_party/rust/either/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/either
 Licence: Apache-2.0
 
@@ -2955,7 +2955,7 @@ limitations under the License.
 ================================================================================
 Name: Fiat-Crypto: Synthesizing Correct-by-Construction Code for Cryptographic Primitives
 Directory: //third_party/boringssl/src/third_party/fiat
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/mit-plv/fiat-crypto
 Licence: Apache-2.0
 
@@ -2980,7 +2980,7 @@ limitations under the License.
 ================================================================================
 Name: fixed_decimal
 Directory: //third_party/rust/fixed_decimal/v0_7
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/fixed_decimal
 Licence: Unicode-3.0
 
@@ -3036,7 +3036,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: foldhash
 Directory: //third_party/rust/foldhash/v0_2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/foldhash
 Licence: Zlib
 
@@ -3302,7 +3302,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: Google Double Conversion
 Directory: //base/third_party/double_conversion
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/double-conversion
 Licence: BSD-3-Clause
 
@@ -3376,7 +3376,7 @@ Licence file: //base/third_party/symbolize/LICENSE
 ================================================================================
 Name: hashbrown-0.17.1
 Directory: //third_party/rust-toolchain/lib/rustlib/src/rust/library/vendor/hashbrown-0.17.1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 
 Licence file: //third_party/rust-toolchain/lib/rustlib/src/rust/library/vendor/hashbrown-0.17.1/LICENSE-APACHE
 
@@ -3613,7 +3613,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: icu
 Directory: //third_party/icu
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/unicode-org/icu
 Licence: MIT, BSD-2-Clause, BSD-3-Clause, HPND-sell-variant, ICU, MIT-0, NAIST-2003, Unicode-3.0
 
@@ -4191,7 +4191,7 @@ SOFTWARE.
 ================================================================================
 Name: icu_capi
 Directory: //third_party/rust/icu_capi/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_capi
 Licence: Unicode-3.0
 
@@ -4247,7 +4247,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_collections
 Directory: //third_party/rust/icu_collections/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_collections
 Licence: Unicode-3.0
 
@@ -4303,7 +4303,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_decimal
 Directory: //third_party/rust/icu_decimal/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_decimal
 Licence: Unicode-3.0
 
@@ -4359,7 +4359,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_decimal_data
 Directory: //third_party/rust/icu_decimal_data/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_decimal_data
 Licence: Unicode-3.0
 
@@ -4415,7 +4415,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_locale
 Directory: //third_party/rust/icu_locale/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_locale
 Licence: Unicode-3.0
 
@@ -4471,7 +4471,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_locale_core
 Directory: //third_party/rust/icu_locale_core/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_locale_core
 Licence: Unicode-3.0
 
@@ -4527,7 +4527,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_locale_data
 Directory: //third_party/rust/icu_locale_data/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_locale_data
 Licence: Unicode-3.0
 
@@ -4583,7 +4583,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_normalizer
 Directory: //third_party/rust/icu_normalizer/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_normalizer
 Licence: Unicode-3.0
 
@@ -4639,7 +4639,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_normalizer_data
 Directory: //third_party/rust/icu_normalizer_data/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_normalizer_data
 Licence: Unicode-3.0
 
@@ -4695,7 +4695,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_pattern
 Directory: //third_party/rust/icu_pattern/v0_4
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_pattern
 Licence: Unicode-3.0
 
@@ -4751,7 +4751,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_plurals
 Directory: //third_party/rust/icu_plurals/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_plurals
 Licence: Unicode-3.0
 
@@ -4807,7 +4807,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_plurals_data
 Directory: //third_party/rust/icu_plurals_data/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_plurals_data
 Licence: Unicode-3.0
 
@@ -4863,7 +4863,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_provider
 Directory: //third_party/rust/icu_provider/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_provider
 Licence: Unicode-3.0
 
@@ -4919,7 +4919,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: icu_provider_adapters
 Directory: //third_party/rust/icu_provider_adapters/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/icu_provider_adapters
 Licence: Unicode-3.0
 
@@ -4975,7 +4975,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: itoa
 Directory: //third_party/rust/itoa/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/itoa
 Licence: Apache-2.0
 
@@ -5373,7 +5373,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: libcxx
 Directory: //third_party/libc++
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://chromium.googlesource.com/external/github.com/llvm/llvm-project/libcxx.git
 Licence: NCSA, Apache-with-LLVM-Exception, MIT
 
@@ -6015,7 +6015,7 @@ THE SOFTWARE.
 ================================================================================
 Name: litemap
 Directory: //third_party/rust/litemap/v0_8
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/litemap
 Licence: Unicode-3.0
 
@@ -6071,7 +6071,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: log
 Directory: //third_party/rust/log/v0_4
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/log
 Licence: Apache-2.0
 
@@ -6282,7 +6282,7 @@ limitations under the License.
 ================================================================================
 Name: memchr
 Directory: //third_party/rust/memchr/v2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/memchr
 Licence: MIT
 
@@ -6631,7 +6631,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 ================================================================================
 Name: modp base64 decoder
 Directory: //third_party/modp_b64
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/client9/stringencoders
 Licence: BSD-3-Clause
 
@@ -6672,9 +6672,422 @@ Licence file: //third_party/modp_b64/LICENSE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ================================================================================
+Name: Mozilla Windows Cert code
+Directory: //net/third_party/mozilla_win
+Linked on: Windows x64
+URL: https://searchfox.org/mozilla-central/rev/0fec57c05d3996cc00c55a66f20dd5793a9bfb5d/security/manager/ssl/EnterpriseRoots.cpp
+Licence: MPL-2.0
+
+Licence file: //net/third_party/mozilla_win/LICENSE
+
+Mozilla Windows Cert code is available under the Mozilla Public License, version 2, a copy of which
+is below.
+
+Note on GPL Compatibility
+-------------------------
+
+The MPL 2, section 3.3, permits you to combine NSS with code under the GNU
+General Public License (GPL) version 2, or any later version of that
+license, to make a Larger Work, and distribute the result under the GPL.
+The only condition is that you must also make NSS, and any changes you
+have made to it, available to recipients under the terms of the MPL 2 also.
+
+Anyone who receives the combined code from you does not have to continue
+to dual licence in this way, and may, if they wish, distribute under the
+terms of either of the two licences - either the MPL alone or the GPL
+alone. However, we discourage people from distributing copies of NSS under
+the GPL alone, because it means that any improvements they make cannot be
+reincorporated into the main version of NSS. There is never a need to do
+this for license compatibility reasons.
+
+Note on LGPL Compatibility
+--------------------------
+
+The above also applies to combining MPLed code in a single library with
+code under the GNU Lesser General Public License (LGPL) version 2.1, or
+any later version of that license. If the LGPLed code and the MPLed code
+are not in the same library, then the copyleft coverage of the two
+licences does not overlap, so no issues arise.
+
+
+Mozilla Public License Version 2.0
+==================================
+
+1. Definitions
+--------------
+
+1.1. "Contributor"
+    means each individual or legal entity that creates, contributes to
+    the creation of, or owns Covered Software.
+
+1.2. "Contributor Version"
+    means the combination of the Contributions of others (if any) used
+    by a Contributor and that particular Contributor's Contribution.
+
+1.3. "Contribution"
+    means Covered Software of a particular Contributor.
+
+1.4. "Covered Software"
+    means Source Code Form to which the initial Contributor has attached
+    the notice in Exhibit A, the Executable Form of such Source Code
+    Form, and Modifications of such Source Code Form, in each case
+    including portions thereof.
+
+1.5. "Incompatible With Secondary Licenses"
+    means
+
+    (a) that the initial Contributor has attached the notice described
+        in Exhibit B to the Covered Software; or
+
+    (b) that the Covered Software was made available under the terms of
+        version 1.1 or earlier of the License, but not also under the
+        terms of a Secondary License.
+
+1.6. "Executable Form"
+    means any form of the work other than Source Code Form.
+
+1.7. "Larger Work"
+    means a work that combines Covered Software with other material, in
+    a separate file or files, that is not Covered Software.
+
+1.8. "License"
+    means this document.
+
+1.9. "Licensable"
+    means having the right to grant, to the maximum extent possible,
+    whether at the time of the initial grant or subsequently, any and
+    all of the rights conveyed by this License.
+
+1.10. "Modifications"
+    means any of the following:
+
+    (a) any file in Source Code Form that results from an addition to,
+        deletion from, or modification of the contents of Covered
+        Software; or
+
+    (b) any new file in Source Code Form that contains any Covered
+        Software.
+
+1.11. "Patent Claims" of a Contributor
+    means any patent claim(s), including without limitation, method,
+    process, and apparatus claims, in any patent Licensable by such
+    Contributor that would be infringed, but for the grant of the
+    License, by the making, using, selling, offering for sale, having
+    made, import, or transfer of either its Contributions or its
+    Contributor Version.
+
+1.12. "Secondary License"
+    means either the GNU General Public License, Version 2.0, the GNU
+    Lesser General Public License, Version 2.1, the GNU Affero General
+    Public License, Version 3.0, or any later versions of those
+    licenses.
+
+1.13. "Source Code Form"
+    means the form of the work preferred for making modifications.
+
+1.14. "You" (or "Your")
+    means an individual or a legal entity exercising rights under this
+    License. For legal entities, "You" includes any entity that
+    controls, is controlled by, or is under common control with You. For
+    purposes of this definition, "control" means (a) the power, direct
+    or indirect, to cause the direction or management of such entity,
+    whether by contract or otherwise, or (b) ownership of more than
+    fifty percent (50%) of the outstanding shares or beneficial
+    ownership of such entity.
+
+2. License Grants and Conditions
+--------------------------------
+
+2.1. Grants
+
+Each Contributor hereby grants You a world-wide, royalty-free,
+non-exclusive license:
+
+(a) under intellectual property rights (other than patent or trademark)
+    Licensable by such Contributor to use, reproduce, make available,
+    modify, display, perform, distribute, and otherwise exploit its
+    Contributions, either on an unmodified basis, with Modifications, or
+    as part of a Larger Work; and
+
+(b) under Patent Claims of such Contributor to make, use, sell, offer
+    for sale, have made, import, and otherwise transfer either its
+    Contributions or its Contributor Version.
+
+2.2. Effective Date
+
+The licenses granted in Section 2.1 with respect to any Contribution
+become effective for each Contribution on the date the Contributor first
+distributes such Contribution.
+
+2.3. Limitations on Grant Scope
+
+The licenses granted in this Section 2 are the only rights granted under
+this License. No additional rights or licenses will be implied from the
+distribution or licensing of Covered Software under this License.
+Notwithstanding Section 2.1(b) above, no patent license is granted by a
+Contributor:
+
+(a) for any code that a Contributor has removed from Covered Software;
+    or
+
+(b) for infringements caused by: (i) Your and any other third party's
+    modifications of Covered Software, or (ii) the combination of its
+    Contributions with other software (except as part of its Contributor
+    Version); or
+
+(c) under Patent Claims infringed by Covered Software in the absence of
+    its Contributions.
+
+This License does not grant any rights in the trademarks, service marks,
+or logos of any Contributor (except as may be necessary to comply with
+the notice requirements in Section 3.4).
+
+2.4. Subsequent Licenses
+
+No Contributor makes additional grants as a result of Your choice to
+distribute the Covered Software under a subsequent version of this
+License (see Section 10.2) or under the terms of a Secondary License (if
+permitted under the terms of Section 3.3).
+
+2.5. Representation
+
+Each Contributor represents that the Contributor believes its
+Contributions are its original creation(s) or it has sufficient rights
+to grant the rights to its Contributions conveyed by this License.
+
+2.6. Fair Use
+
+This License is not intended to limit any rights You have under
+applicable copyright doctrines of fair use, fair dealing, or other
+equivalents.
+
+2.7. Conditions
+
+Sections 3.1, 3.2, 3.3, and 3.4 are conditions of the licenses granted
+in Section 2.1.
+
+3. Responsibilities
+-------------------
+
+3.1. Distribution of Source Form
+
+All distribution of Covered Software in Source Code Form, including any
+Modifications that You create or to which You contribute, must be under
+the terms of this License. You must inform recipients that the Source
+Code Form of the Covered Software is governed by the terms of this
+License, and how they can obtain a copy of this License. You may not
+attempt to alter or restrict the recipients' rights in the Source Code
+Form.
+
+3.2. Distribution of Executable Form
+
+If You distribute Covered Software in Executable Form then:
+
+(a) such Covered Software must also be made available in Source Code
+    Form, as described in Section 3.1, and You must inform recipients of
+    the Executable Form how they can obtain a copy of such Source Code
+    Form by reasonable means in a timely manner, at a charge no more
+    than the cost of distribution to the recipient; and
+
+(b) You may distribute such Executable Form under the terms of this
+    License, or sublicense it under different terms, provided that the
+    license for the Executable Form does not attempt to limit or alter
+    the recipients' rights in the Source Code Form under this License.
+
+3.3. Distribution of a Larger Work
+
+You may create and distribute a Larger Work under terms of Your choice,
+provided that You also comply with the requirements of this License for
+the Covered Software. If the Larger Work is a combination of Covered
+Software with a work governed by one or more Secondary Licenses, and the
+Covered Software is not Incompatible With Secondary Licenses, this
+License permits You to additionally distribute such Covered Software
+under the terms of such Secondary License(s), so that the recipient of
+the Larger Work may, at their option, further distribute the Covered
+Software under the terms of either this License or such Secondary
+License(s).
+
+3.4. Notices
+
+You may not remove or alter the substance of any license notices
+(including copyright notices, patent notices, disclaimers of warranty,
+or limitations of liability) contained within the Source Code Form of
+the Covered Software, except that You may alter any license notices to
+the extent required to remedy known factual inaccuracies.
+
+3.5. Application of Additional Terms
+
+You may choose to offer, and to charge a fee for, warranty, support,
+indemnity or liability obligations to one or more recipients of Covered
+Software. However, You may do so only on Your own behalf, and not on
+behalf of any Contributor. You must make it absolutely clear that any
+such warranty, support, indemnity, or liability obligation is offered by
+You alone, and You hereby agree to indemnify every Contributor for any
+liability incurred by such Contributor as a result of warranty, support,
+indemnity or liability terms You offer. You may include additional
+disclaimers of warranty and limitations of liability specific to any
+jurisdiction.
+
+4. Inability to Comply Due to Statute or Regulation
+---------------------------------------------------
+
+If it is impossible for You to comply with any of the terms of this
+License with respect to some or all of the Covered Software due to
+statute, judicial order, or regulation then You must: (a) comply with
+the terms of this License to the maximum extent possible; and (b)
+describe the limitations and the code they affect. Such description must
+be placed in a text file included with all distributions of the Covered
+Software under this License. Except to the extent prohibited by statute
+or regulation, such description must be sufficiently detailed for a
+recipient of ordinary skill to be able to understand it.
+
+5. Termination
+--------------
+
+5.1. The rights granted under this License will terminate automatically
+if You fail to comply with any of its terms. However, if You become
+compliant, then the rights granted under this License from a particular
+Contributor are reinstated (a) provisionally, unless and until such
+Contributor explicitly and finally terminates Your grants, and (b) on an
+ongoing basis, if such Contributor fails to notify You of the
+non-compliance by some reasonable means prior to 60 days after You have
+come back into compliance. Moreover, Your grants from a particular
+Contributor are reinstated on an ongoing basis if such Contributor
+notifies You of the non-compliance by some reasonable means, this is the
+first time You have received notice of non-compliance with this License
+from such Contributor, and You become compliant prior to 30 days after
+Your receipt of the notice.
+
+5.2. If You initiate litigation against any entity by asserting a patent
+infringement claim (excluding declaratory judgment actions,
+counter-claims, and cross-claims) alleging that a Contributor Version
+directly or indirectly infringes any patent, then the rights granted to
+You by any and all Contributors for the Covered Software under Section
+2.1 of this License shall terminate.
+
+5.3. In the event of termination under Sections 5.1 or 5.2 above, all
+end user license agreements (excluding distributors and resellers) which
+have been validly granted by You or Your distributors under this License
+prior to termination shall survive termination.
+
+************************************************************************
+*                                                                      *
+*  6. Disclaimer of Warranty                                           *
+*  -------------------------                                           *
+*                                                                      *
+*  Covered Software is provided under this License on an "as is"       *
+*  basis, without warranty of any kind, either expressed, implied, or  *
+*  statutory, including, without limitation, warranties that the       *
+*  Covered Software is free of defects, merchantable, fit for a        *
+*  particular purpose or non-infringing. The entire risk as to the     *
+*  quality and performance of the Covered Software is with You.        *
+*  Should any Covered Software prove defective in any respect, You     *
+*  (not any Contributor) assume the cost of any necessary servicing,   *
+*  repair, or correction. This disclaimer of warranty constitutes an   *
+*  essential part of this License. No use of any Covered Software is   *
+*  authorized under this License except under this disclaimer.         *
+*                                                                      *
+************************************************************************
+
+************************************************************************
+*                                                                      *
+*  7. Limitation of Liability                                          *
+*  --------------------------                                          *
+*                                                                      *
+*  Under no circumstances and under no legal theory, whether tort      *
+*  (including negligence), contract, or otherwise, shall any           *
+*  Contributor, or anyone who distributes Covered Software as          *
+*  permitted above, be liable to You for any direct, indirect,         *
+*  special, incidental, or consequential damages of any character      *
+*  including, without limitation, damages for lost profits, loss of    *
+*  goodwill, work stoppage, computer failure or malfunction, or any    *
+*  and all other commercial damages or losses, even if such party      *
+*  shall have been informed of the possibility of such damages. This   *
+*  limitation of liability shall not apply to liability for death or   *
+*  personal injury resulting from such party's negligence to the       *
+*  extent applicable law prohibits such limitation. Some               *
+*  jurisdictions do not allow the exclusion or limitation of           *
+*  incidental or consequential damages, so this exclusion and          *
+*  limitation may not apply to You.                                    *
+*                                                                      *
+************************************************************************
+
+8. Litigation
+-------------
+
+Any litigation relating to this License may be brought only in the
+courts of a jurisdiction where the defendant maintains its principal
+place of business and such litigation shall be governed by laws of that
+jurisdiction, without reference to its conflict-of-law provisions.
+Nothing in this Section shall prevent a party's ability to bring
+cross-claims or counter-claims.
+
+9. Miscellaneous
+----------------
+
+This License represents the complete agreement concerning the subject
+matter hereof. If any provision of this License is held to be
+unenforceable, such provision shall be reformed only to the extent
+necessary to make it enforceable. Any law or regulation which provides
+that the language of a contract shall be construed against the drafter
+shall not be used to construe this License against a Contributor.
+
+10. Versions of the License
+---------------------------
+
+10.1. New Versions
+
+Mozilla Foundation is the license steward. Except as provided in Section
+10.3, no one other than the license steward has the right to modify or
+publish new versions of this License. Each version will be given a
+distinguishing version number.
+
+10.2. Effect of New Versions
+
+You may distribute the Covered Software under the terms of the version
+of the License under which You originally received the Covered Software,
+or under the terms of any subsequent version published by the license
+steward.
+
+10.3. Modified Versions
+
+If you create software not governed by this License, and you want to
+create a new license for such software, you may create and use a
+modified version of this License if you rename the license and remove
+any references to the name of the license steward (except to note that
+such modified license differs from this License).
+
+10.4. Distributing Source Code Form that is Incompatible With Secondary
+Licenses
+
+If You choose to distribute Source Code Form that is Incompatible With
+Secondary Licenses under the terms of this version of the License, the
+notice described in Exhibit B of this License must be attached.
+
+Exhibit A - Source Code Form License Notice
+-------------------------------------------
+
+  This Source Code Form is subject to the terms of the Mozilla Public
+  License, v. 2.0. If a copy of the MPL was not distributed with this
+  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+If it is not possible or desirable to put the notice in a particular
+file, then You may include the notice in a location (such as a LICENSE
+file in a relevant directory) where a recipient would be likely to look
+for such a notice.
+
+You may add additional accurate notices of copyright ownership.
+
+Exhibit B - "Incompatible With Secondary Licenses" Notice
+---------------------------------------------------------
+
+  This Source Code Form is "Incompatible With Secondary Licenses", as
+  defined by the Mozilla Public License, v. 2.0.
+
+================================================================================
 Name: Netscape Portable Runtime (NSPR)
 Directory: //base/third_party/nspr
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://hg.mozilla.org/projects/nspr
 Licence: MPL-2.0
 
@@ -7294,7 +7707,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: Paul Hsieh's SuperFastHash
 Directory: //base/third_party/superfasthash
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: http://www.azillionmonkeys.com/qed/hash.html
 Licence: BSD-3-Clause
 
@@ -7331,7 +7744,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ================================================================================
 Name: Perfetto
 Directory: //third_party/perfetto
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/perfetto/
 Licence: blessing, BSD-3-Clause, Apache-2.0
 
@@ -7626,7 +8039,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ================================================================================
 Name: potential_utf
 Directory: //third_party/rust/potential_utf/v0_1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/potential_utf
 Licence: Unicode-3.0
 
@@ -7682,7 +8095,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: Protocol Buffers
 Directory: //third_party/protobuf
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/protobuf
 Licence: BSD-3-Clause
 
@@ -7724,7 +8137,7 @@ support library is itself covered by the above license.
 ================================================================================
 Name: QUICHE
 Directory: //net/third_party/quiche
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://quiche.googlesource.com/quiche
 Licence: BSD-3-Clause
 
@@ -7761,7 +8174,7 @@ Licence file: //net/third_party/quiche/src/LICENSE
 ================================================================================
 Name: re2 - an efficient, principled regular expression library
 Directory: //third_party/re2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/re2
 Licence: BSD-3-Clause
 
@@ -7798,7 +8211,7 @@ Licence file: //third_party/re2/LICENSE
 ================================================================================
 Name: ref-cast
 Directory: //third_party/rust/ref_cast/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/ref-cast
 Licence: Apache-2.0
 
@@ -7984,7 +8397,7 @@ END OF TERMS AND CONDITIONS
 ================================================================================
 Name: rustc-demangle-0.1.28
 Directory: //third_party/rust-toolchain/lib/rustlib/src/rust/library/vendor/rustc-demangle-0.1.28
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 
 Licence file: //third_party/rust-toolchain/lib/rustlib/src/rust/library/vendor/rustc-demangle-0.1.28/LICENSE-APACHE
 
@@ -8221,7 +8634,7 @@ DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: ryu
 Directory: //third_party/rust/ryu/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/ryu
 Licence: Apache-2.0
 
@@ -8407,7 +8820,7 @@ END OF TERMS AND CONDITIONS
 ================================================================================
 Name: serde
 Directory: //third_party/rust/serde/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/serde
 Licence: Apache-2.0
 
@@ -8593,7 +9006,7 @@ END OF TERMS AND CONDITIONS
 ================================================================================
 Name: serde_core
 Directory: //third_party/rust/serde_core/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/serde_core
 Licence: Apache-2.0
 
@@ -8779,7 +9192,7 @@ END OF TERMS AND CONDITIONS
 ================================================================================
 Name: serde_json_lenient
 Directory: //third_party/rust/serde_json_lenient/v0_2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/serde_json_lenient
 Licence: Apache-2.0
 
@@ -8965,7 +9378,7 @@ END OF TERMS AND CONDITIONS
 ================================================================================
 Name: sfv
 Directory: //third_party/rust/sfv/v0_15
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/sfv
 Licence: Apache-2.0
 
@@ -9176,7 +9589,7 @@ limitations under the License.
 ================================================================================
 Name: simdutf unicode transcoder
 Directory: //third_party/simdutf
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/simdutf/simdutf
 Licence: MIT
 
@@ -9204,7 +9617,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ================================================================================
 Name: smallvec
 Directory: //third_party/rust/smallvec/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/smallvec
 Licence: Apache-2.0
 
@@ -9415,7 +9828,7 @@ limitations under the License.
 ================================================================================
 Name: stable_deref_trait
 Directory: //third_party/rust/stable_deref_trait/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/stable_deref_trait
 Licence: Apache-2.0
 
@@ -9626,7 +10039,7 @@ limitations under the License.
 ================================================================================
 Name: The Rust Standard Library
 Directory: //third_party/rust-toolchain/lib/rustlib/src/rust/library
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://www.rust-lang.org
 Licence: Apache-2.0 OR MIT, by the Rust Project Developers; Unicode-3.0 for the Unicode tables in core
 
@@ -9763,7 +10176,7 @@ authorization of the copyright holder.
 ================================================================================
 Name: tinystr
 Directory: //third_party/rust/tinystr/v0_8
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/tinystr
 Licence: Unicode-3.0
 
@@ -9819,7 +10232,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: URI Template Parser
 Directory: //net/third_party/uri_template
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/google/google-api-cpp-client/
 Licence: Apache-2.0
 
@@ -10030,7 +10443,7 @@ Licence file: //net/third_party/uri_template/LICENSE
 ================================================================================
 Name: url_parse
 Directory: //url/third_party/mozilla
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/mozilla-firefox/firefox.git
 Licence: BSD-3-Clause, MPL-1.1
 
@@ -10105,7 +10518,7 @@ the terms of any one of the MPL, the GPL or the LGPL.
 ================================================================================
 Name: utf16_iter
 Directory: //third_party/rust/utf16_iter/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/utf16_iter
 Licence: Apache-2.0
 
@@ -10316,7 +10729,7 @@ Licence file: //third_party/rust/chromium_crates_io/vendor/utf16_iter-v1/LICENSE
 ================================================================================
 Name: utf8_iter
 Directory: //third_party/rust/utf8_iter/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/utf8_iter
 Licence: Apache-2.0
 
@@ -10527,7 +10940,7 @@ Licence file: //third_party/rust/chromium_crates_io/vendor/utf8_iter-v1/LICENSE-
 ================================================================================
 Name: utf8_range
 Directory: //third_party/protobuf/third_party/utf8_range
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 
 Licence file: //third_party/protobuf/third_party/utf8_range/LICENSE
 
@@ -10557,7 +10970,7 @@ SOFTWARE.
 ================================================================================
 Name: write16
 Directory: //third_party/rust/write16/v1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/write16
 Licence: Apache-2.0
 
@@ -10768,7 +11181,7 @@ Licence file: //third_party/rust/chromium_crates_io/vendor/write16-v1/LICENSE-AP
 ================================================================================
 Name: writeable
 Directory: //third_party/rust/writeable/v0_6
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/writeable
 Licence: Unicode-3.0
 
@@ -10855,7 +11268,7 @@ Licence file: //base/third_party/xdg_user_dirs/LICENSE
 ================================================================================
 Name: yoke
 Directory: //third_party/rust/yoke/v0_8
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/yoke
 Licence: Unicode-3.0
 
@@ -10911,7 +11324,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: zerofrom
 Directory: //third_party/rust/zerofrom/v0_1
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/zerofrom
 Licence: Unicode-3.0
 
@@ -10967,7 +11380,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: zerotrie
 Directory: //third_party/rust/zerotrie/v0_2
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/zerotrie
 Licence: Unicode-3.0
 
@@ -11023,7 +11436,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: zerovec
 Directory: //third_party/rust/zerovec/v0_11
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://crates.io/crates/zerovec
 Licence: Unicode-3.0
 
@@ -11079,7 +11492,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 Name: zlib
 Directory: //third_party/zlib
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/madler/zlib
 Licence: Zlib
 
@@ -11111,7 +11524,7 @@ Copyright notice:
 ================================================================================
 Name: Zstandard
 Directory: //third_party/zstd
-Linked on: Linux x86_64, macOS arm64
+Linked on: Linux x86_64, macOS arm64, Windows x64
 URL: https://github.com/facebook/zstd
 Licence: BSD-3-Clause
 
