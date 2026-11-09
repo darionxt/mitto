@@ -791,7 +791,7 @@ Delete every cookie, and return how many went.
 Cookies.save(path: str | os.PathLike[str]) -> None
 ```
 
-Write all the cookies, with the Session's Machine, to a JSON file that only its owner can read or write. On Windows, for now, the file takes the access of its folder instead. The values are not encrypted. Session cookies are written too, as a browser does that restores its last session. A crash during this call leaves the file as it was. It raises an `OSError` if the file cannot be written, and a `TypeError` if `path` is neither text nor a path.
+Write all the cookies, with the Session's Machine, to a JSON file that only its owner can read or write. On Windows its owner is the user that writes it, and its access list lets that user alone in, whatever its folder allows. An administrator can still take the file, as root can read it on macOS and Linux. The values are not encrypted. Session cookies are written too, as a browser does that restores its last session. A crash during this call leaves the file as it was. It raises an `OSError` if the file cannot be written, and a `TypeError` if `path` is neither text nor a path.
 
 #### `Cookies.load()`
 

@@ -5,6 +5,7 @@ connection, and are skipped when this machine has no native library. Every name 
 use names that say how they relate.
 """
 
+import ctypes
 import dataclasses
 import http.server
 import json
@@ -142,6 +143,79 @@ def machine_with(**changes: object) -> dict[str, object]:
     """Return MACHINE as a file holds it, with `changes` made, where a value of ... leaves its field out."""
     saved = {**dataclasses.asdict(MACHINE), **changes}
     return {name: value for name, value in saved.items() if value is not ...}
+
+
+# What windows_access() reads of a security descriptor: OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION.
+WINDOWS_OWNER_AND_ACCESS_LIST = 0x1 | 0x4
+
+
+def assert_only_its_owner_can_use(file: Path) -> None:
+    """Check that only the user running the tests can use `file`.
+
+    On macOS and Linux its mode is 0600. On Windows that user owns it, and its access list lets that user alone in,
+    protected (P) from what its folder hands down.
+    """
+    if sys.platform == "win32":
+        user = windows_user()
+        # Both through Windows, which writes some SIDs as aliases, such as LA for the built-in Administrator.
+        assert windows_access(file) == windows_sddl(f"O:{user}D:P(A;;FA;;;{user})")
+    else:
+        assert stat.S_IMODE(file.stat().st_mode) == 0o600
+
+
+def windows_user() -> str:
+    """Return the SID of the user running the tests, as whoami says it."""
+    line = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], check=True, capture_output=True).stdout
+    # "DOMAIN\name","S-1-5-...", where the name may be in any language, but holds no comma.
+    return line.strip().rsplit(b",", 1)[1].strip(b'"').decode("ascii")
+
+
+def windows_access(path: Path) -> str:
+    """Return the owner and the access list of `path` on Windows, in SDDL."""
+    assert sys.platform == "win32"
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    size = ctypes.c_uint32()
+    # This one fails, saying how large the security descriptor is.
+    advapi32.GetFileSecurityW(str(path), WINDOWS_OWNER_AND_ACCESS_LIST, None, 0, ctypes.byref(size))
+    descriptor = ctypes.create_string_buffer(size.value)
+    if not advapi32.GetFileSecurityW(str(path), WINDOWS_OWNER_AND_ACCESS_LIST, descriptor, size, ctypes.byref(size)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return windows_sddl_of(descriptor)
+
+
+def windows_sddl(sddl: str) -> str:
+    """Return the owner and the access list that `sddl` gives, as Windows writes them back."""
+    assert sys.platform == "win32"
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    descriptor = ctypes.c_void_p()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return windows_sddl_of(descriptor)
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def windows_sddl_of(descriptor: ctypes.Array[ctypes.c_char] | ctypes.c_void_p) -> str:
+    """Return the owner and the access list of a security descriptor on Windows, in SDDL."""
+    assert sys.platform == "win32"
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    sddl = ctypes.c_void_p()
+    if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+        descriptor, 1, WINDOWS_OWNER_AND_ACCESS_LIST, ctypes.byref(sddl), None
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.wstring_at(sddl)
+    finally:
+        kernel32.LocalFree(sddl)
+
+
+def grant_everyone(path: Path, rights: str) -> None:
+    """Add `rights`, as icacls writes them, for every user to the access list of `path` on Windows."""
+    subprocess.run(["icacls", path, "/grant", f"*S-1-1-0:{rights}"], check=True, capture_output=True)
 
 
 # What //net does with a server's cookies.
@@ -1267,10 +1341,12 @@ def test_a_file_with_a_cookie_only_the_store_refuses_changes_nothing(tmp_path: P
         assert [cookie.value for cookie in session.cookies] == ["old"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no mode bits: a file takes the access of its folder")
 @pytest.mark.usefixtures("native_library")
 def test_save_makes_a_file_only_its_owner_can_use(tmp_path: Path) -> None:
     file = tmp_path / "cookies.json"
+    # What would otherwise let every user use a new file there, which on Windows its folder hands down.
+    if sys.platform == "win32":
+        grant_everyone(tmp_path, "(OI)(CI)F")
     old_umask = os.umask(0)
     try:
         with new_session() as session:
@@ -1278,21 +1354,23 @@ def test_save_makes_a_file_only_its_owner_can_use(tmp_path: Path) -> None:
     finally:
         os.umask(old_umask)
 
-    assert stat.S_IMODE(file.stat().st_mode) == 0o600
+    assert_only_its_owner_can_use(file)
     assert [path.name for path in tmp_path.iterdir()] == ["cookies.json"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no mode bits: a file takes the access of its folder")
 @pytest.mark.usefixtures("native_library")
 def test_save_tightens_a_file_that_others_could_read(tmp_path: Path) -> None:
     file = tmp_path / "cookies.json"
     file.write_text("old")
-    file.chmod(0o644)
+    if sys.platform == "win32":
+        grant_everyone(file, "R")
+    else:
+        file.chmod(0o644)
 
     with new_session() as session:
         session.cookies.save(file)
 
-    assert stat.S_IMODE(file.stat().st_mode) == 0o600
+    assert_only_its_owner_can_use(file)
 
 
 @pytest.mark.usefixtures("native_library")
@@ -1443,9 +1521,7 @@ def test_a_cookie_file_starts_empty_saves_at_close_and_loads_at_open(servers: Se
         session.get(setting(servers.https(), "a=1"))
         assert not file.exists()
 
-    # Windows has no mode bits: a file takes the access of its folder.
-    if sys.platform != "win32":
-        assert stat.S_IMODE(file.stat().st_mode) == 0o600
+    assert_only_its_owner_can_use(file)
     with new_session(file) as session:
         assert sent(session, servers.https()) == "a=1"
         session.cookies.delete("a")

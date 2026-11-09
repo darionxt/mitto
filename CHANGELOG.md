@@ -10,7 +10,6 @@ mitto installs on Windows on x64 too, from a `py3-none-win_amd64` wheel, with Py
 - On Windows a Session trusts, beside the Chrome Root Store, the roots that a user, an administrator or group policy has added to Windows' certificate stores, as Chrome there does ([`additional_trust_anchors=`](docs/api.md#additional_trust_anchors)).
 - On Windows, as in Chrome there, a URL that starts with two slashes names a file on a network share, which a Session does not fetch: the request raises a `RequestError` with `ERR_UNKNOWN_URL_SCHEME`, where macOS and Linux give `ERR_INVALID_URL`.
 - On Windows 11 from 22H2 and on Windows Server 2025, a request that needs a new connection now and then fails with a `RequestError` of `ERR_NO_BUFFER_SPACE` or `ERR_ADDRESS_IN_USE`, as a request in Chrome there does. `//net` asks Windows for a random source port for each connection, as Chrome does, and Windows sometimes refuses one ([#168](https://github.com/darionxt/mitto/issues/168)). A request on a connection that is already open is not affected.
-- On Windows a [`cookie_file`](docs/api.md#cookie_file), and a file that [`Cookies.save()`](docs/api.md#cookiessave) writes, takes the access of its folder, where on macOS and Linux only its owner can read or write it ([#163](https://github.com/darionxt/mitto/issues/163)). A folder in a user's profile lets in only that user and the administrators, unless someone has changed that.
 
 ## 0.2.0
 
