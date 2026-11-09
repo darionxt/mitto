@@ -4,7 +4,7 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 
 ## Requirements
 
-- A macOS arm64, Linux x86_64 or Windows x64 Host. On Windows the native core builds in a checkout only: there is no [source export](#build-from-the-source-export) and no wheel for Windows yet.
+- A macOS arm64, Linux x86_64 or Windows x64 Host. There is no wheel for Windows yet, and CI does not build on Windows yet.
 - About 31 GiB of free disk space for the workspace, including compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
 - `git`, and [uv](https://docs.astral.sh/uv/) to run the set-up script with Python 3.12 or later. The script needs only Python's standard library. On macOS and Linux, depot_tools also needs `curl` and `bash`.
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
@@ -131,22 +131,29 @@ On Linux the library needs only glibc and libgcc from the system at run time, as
 
 ## Build from the source export
 
-A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on either **Host**, with the patches already applied. It needs no workspace and no depot_tools.
+A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on each **Host**, with the patches already applied. It needs no workspace and no depot_tools.
 
-Run this from the repository root, with a new directory on a path without spaces. It needs about 4.1 GiB there on Linux and 3.2 GiB on macOS, including the build output, as well as `curl` and `tar`. It took about 6 minutes on a 10-core Mac, one of them for the downloads. macOS also needs the same Xcode as a checkout (see [Requirements](#requirements)).
+Run this from the repository root, with a new directory on a path without spaces. It needs about 4.1 GiB there on Linux, 3.2 GiB on macOS and 4.6 GiB on Windows, including the build output, as well as `curl` and `tar`, which Windows brings: there the command takes them from `System32`, whatever else is on `PATH`. It took about 6 minutes on a 10-core Mac, one of them for the downloads, and about 10 minutes on a 16-thread Windows machine. macOS also needs the same Xcode as a checkout, and Windows the same Visual Studio and Windows SDK (see [Requirements](#requirements)). On Windows the longest path lies 195 characters below the directory, in the build output, so a directory of up to 64 characters keeps every path within Windows' limit of 260.
 
 ```bash
 uv run tools/workspace/export.py build /absolute/path/to/new/directory
+```
+
+On Windows, in PowerShell, with a short path such as `C:\ex`:
+
+```powershell
+uv run tools/workspace/export.py build C:\ex
 ```
 
 The command:
 
 1. downloads the archive that [`tools/workspace/source_export.json`](../tools/workspace/source_export.json) names and checks its hash, or uses a local archive given with `--archive`;
 2. unpacks it as `chromium-<tag>`, with `src` next to an `export.json` that lists the toolchain;
-3. downloads this Host's toolchain from Chromium's own storage and checks each package's hash;
-4. links the repository's `native/` in as `//mitto` and copies [`tools/workspace/args.gn`](../tools/workspace/args.gn), so that these two come from the repository and not from the export;
-5. runs `gn gen --check`, so that an include that `gn check` refuses stops the build before it compiles anything;
-6. runs `ninja`, says whether the library is the same as the one the export's slice built, as it is until `native/` changes, and prints the library's path.
+3. on Windows, runs the export's `build/vs_toolchain.py`, Chromium's own script that picks the Visual Studio a build uses, and stops unless it finds one and the Windows SDK has the version that the script asks for. The script knows the SDK only by that version, so a missing SDK would otherwise stop the build later, with a message that does not say so;
+4. downloads this Host's toolchain from Chromium's own storage and checks each package's hash;
+5. links the repository's `native/` in as `//mitto`, a junction on Windows, and copies [`tools/workspace/args.gn`](../tools/workspace/args.gn), so that these two come from the repository and not from the export;
+6. runs `gn gen --check`, so that an include that `gn check` refuses stops the build before it compiles anything;
+7. runs `ninja`, says whether the library is the same as the one the export's slice built, as it is until `native/` changes, and prints the library's path.
 
 Running it again continues where it stopped, and rebuilds what changed in `native/`. It refuses a directory that holds another export of the same release, so a new export needs a new directory. To run the tests against the library:
 
@@ -155,26 +162,34 @@ export MITTO_NATIVE_LIBRARY=/absolute/path/to/new/directory/chromium-<tag>/src/o
 uv run pytest
 ```
 
-On macOS the file is `libmitto_core.dylib`.
+On macOS the file is `libmitto_core.dylib`. On Windows, in PowerShell:
+
+```powershell
+$env:MITTO_NATIVE_LIBRARY = 'C:\ex\chromium-<tag>\src\out\mitto\mitto_core.dll'
+uv run pytest
+```
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.27. The archive is the same for both Hosts: 23.6 MiB compressed, 174 MiB unpacked, about 12,400 files. The export of 157.0.8103.39 is the same size, with the same paths and the same toolchain.
+Measured for Chromium 157.0.8103.39. The archive is the same for every Host: 25.1 MiB compressed, 199 MiB unpacked, about 13,000 files. Of those, about 10,800 are in every slice, and the Windows slice alone adds about 800, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
 
-| Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked |
-| --- | --- | --- | --- | --- | --- |
-| Clang | Google Storage | 55 MiB | 325 MiB | 47 MiB | 303 MiB |
-| Rust | Google Storage | 274 MiB | 1.41 GiB | 246 MiB | 1.28 GiB |
-| Linux sysroot | Google Storage | 19 MiB | 221 MiB | | |
-| CPython, for build scripts | CIPD | 46 MiB | 152 MiB | 24 MiB | 82 MiB |
-| mold, the Linux linker | CIPD | 12 MiB | 41 MiB | | |
-| gn | CIPD | 4 MiB | 9 MiB | 1 MiB | 2 MiB |
-| ninja | CIPD | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB |
-| Total | | 410 MiB | 2.14 GiB | 319 MiB | 1.66 GiB |
+| Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked | Windows x64: download | unpacked |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Clang | Google Storage | 55 MiB | 325 MiB | 47 MiB | 303 MiB | 49 MiB | 224 MiB |
+| Rust | Google Storage | 274 MiB | 1.41 GiB | 246 MiB | 1.28 GiB | 406 MiB | 2.41 GiB |
+| Linux sysroot | Google Storage | 19 MiB | 221 MiB | | | | |
+| `rc.exe`, the resource compiler | Google Storage | | | | | under 1 MiB | under 1 MiB |
+| CPython, for build scripts | CIPD | 46 MiB | 152 MiB | 24 MiB | 82 MiB | 19 MiB | 51 MiB |
+| mold, the Linux linker | CIPD | 12 MiB | 41 MiB | | | | |
+| gn | CIPD | 4 MiB | 9 MiB | 1 MiB | 2 MiB | 1 MiB | 3 MiB |
+| ninja | CIPD | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB | under 1 MiB |
+| Total | | 410 MiB | 2.14 GiB | 319 MiB | 1.66 GiB | 476 MiB | 2.68 GiB |
+
+On Windows, Visual Studio and the Windows SDK come from the machine, as Xcode does on macOS: Chromium's own bots take them from a package that only Google's machines can download. The native core never runs `rc.exe` today, but gn's toolchain for Windows names it, and a resource file in `native/` would need it.
 
 ### Why the toolchain is not an asset
 
-These packages come from Google Storage and CIPD, Chromium's package store, rather than from a release asset of ours. `DEPS` pins each of them for a Chromium release, they are the very packages Chromium's bots build with, and they stay available for old releases. An asset for each Host would fit within GitHub's 2 GiB limit, but it would only copy 300 to 400 MiB per Host and per **Engine Release** for no gain in what is checked: `export.json` records each package's SHA-256, and the build refuses anything else. If a package ever disappears from Chromium's storage, an asset can take over by changing its URL in `export.json`.
+These packages come from Google Storage and CIPD, Chromium's package store, rather than from a release asset of ours. `DEPS` pins each of them for a Chromium release, they are the very packages Chromium's bots build with, and they stay available for old releases. An asset for each Host would fit within GitHub's 2 GiB limit, but it would only copy 300 to 500 MiB per Host and per **Engine Release** for no gain in what is checked: `export.json` records each package's SHA-256, and the build refuses anything else. If a package ever disappears from Chromium's storage, an asset can take over by changing its URL in `export.json`.
 
 ### In CI
 
@@ -585,18 +600,25 @@ The repositories keep every tag and commit they fetch. Delete `$MITTO_WORKSPACE/
 - a new build configuration, such as another sanitizer, needs files that this one does not;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's inputs, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: only the plain one on macOS, and also `asan`, `ubsan` and `fuzz` on Linux. The steps take about 45 minutes on two machines that have built the native core before.
+What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: only the plain one on macOS and Windows, and also `asan`, `ubsan` and `fuzz` on Linux. The steps take about an hour on three machines that have built the native core before, most of it on the Linux machine, which traces and checks four builds.
 
-1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository:
+1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository, with the bootstrap script run again from that commit:
 
    ```bash
    export MITTO_WORKSPACE=/absolute/path/to/mitto-workspace
    uv run tools/workspace/export.py slice
    ```
 
-   This builds the native core from nothing in `out/export-trace-<config>`, once per build configuration, with depot_tools off the `PATH`, and then copies what those builds used to `$MITTO_WORKSPACE/export/<tag>/<host>`. It removes each build directory afterwards, and `out/mitto` stays as it was.
+   On Windows, in PowerShell:
 
-2. Copy the macOS slice to the same place on the Linux machine, for example with `rsync -az`.
+   ```powershell
+   $env:MITTO_WORKSPACE = 'C:\ws'
+   uv run tools/workspace/export.py slice
+   ```
+
+   This builds the native core from nothing in `out/export-trace-<config>`, once per build configuration, with depot_tools off the `PATH`, and then copies what those builds used to `$MITTO_WORKSPACE/export/<tag>/<host>`, where `<host>` is `linux`, `mac` or `win`. It removes each build directory afterwards, and `out/mitto` stays as it was.
+
+2. Copy the macOS and the Windows slices to the same place on the Linux machine, for example with `rsync -az`, or from Windows with its `tar` and `scp`.
 
 3. On the Linux machine, merge the slices:
 
@@ -606,7 +628,7 @@ What a build reads differs per Host, and `gn` on Linux knows nothing of macOS's 
 
    This writes `$MITTO_WORKSPACE/export/<tag>/mitto-chromium-<tag>.tar.xz` and prints its size, its hash and its contents per directory. The same slices give the same bytes.
 
-4. On each Host, [build from that archive](#build-from-the-source-export) with `--archive` in a new directory, once with each `--config` that the Host has, and run the tests. The build must not find its way back to the checkout: keep depot_tools off the `PATH` and `MITTO_WORKSPACE` unset. The command must also say each time that the library is the same as the one the slice built. A difference means that a file the export left out changed the result without stopping the build, for example through `path_exists()` in GN or `__has_include` in C++. On Linux the comparison covers the whole file. On macOS it covers the file's sections, because the rest holds the absolute paths of the object files.
+4. On each Host, [build from that archive](#build-from-the-source-export) with `--archive` in a new directory, once with each `--config` that the Host has, and run the tests. The build must not find its way back to the checkout: keep depot_tools off the `PATH` and `MITTO_WORKSPACE` unset. The command must also say each time that the library is the same as the one the slice built. A difference means that a file the export left out changed the result without stopping the build, for example through `path_exists()` in GN or `__has_include` in C++. On Linux the comparison covers the whole file. On macOS it covers the file's sections, because the rest holds the absolute paths of the object files. On Windows it covers the whole DLL except the 16 bytes that name its PDB, the signature in its CodeView debug record: the linker hashes that signature from the PDB, which holds the absolute paths of the build. A DLL built in another directory differs from the slice's in those 16 bytes alone.
 
 5. Publish the archive, with the owner's OK:
 
@@ -623,11 +645,12 @@ A slice holds:
 - every file that `gn` read, and every source, header, input and script that a target in the build graph declares;
 - every file in `ninja -t deps` and in the depfiles that build steps left behind;
 - every file of the source tree that a build step's command line names, such as a compiler's warning suppression list, which no depfile lists;
-- every file below a directory that compilers search with `-isystem`, because `-MMD` leaves those headers out of its depfiles;
-- every file that a build script's Python opened or got as an argument, recorded through Python's audit events, which see this on both Hosts without root;
-- `DEPS`, and `build/modules/linux/BUILD.gn`, which `gn` only checks with `path_exists()`;
+- every file below a directory of the source tree that compilers search with `-isystem`, or `-imsvc` on Windows, because `-MMD` and `/showIncludes:user` leave those headers out of what they report;
+- every file that a build script's Python opened or got as an argument, recorded through Python's audit events, which see this on every Host without root;
+- `DEPS`, and `build/toolchain/win/rc/win/rc.exe.sha1`, the SHA-1 by which a hook of `DEPS` downloads `rc.exe`, both of which the merge reads;
+- the `BUILD.gn` of the Host's Clang modules, which `gn` only checks with `path_exists()`: `build/modules/linux/BUILD.gn` on Linux and `build/modules/win/BUILD.gn` on Windows, under the name that `gn` writes into `gen/module_platform.txt`. macOS has none;
 - the licence files that apply to all of the above: `LICENSE`, `COPYING`, `NOTICE`, `AUTHORS` and similar names in each directory on the way up to a kept file, and `README.chromium` with the file its `License File:` field names.
 
-It leaves out the build output, `//mitto` and the toolchain. It stops if it would keep a prebuilt program, because that belongs in the toolchain list at the top of the script.
+It leaves out the build output, `//mitto` and the toolchain. It stops if it would keep a prebuilt program, for macOS, Linux or Windows, because that belongs in the toolchain list at the top of the script. Paths in a slice use `/` on every Host. Windows finds a file whatever the case of its path, so a tool there can name a file in another case than its directory does, and a Windows slice names each file as its directory spells it. Visual Studio's and the SDK's headers are system headers there, which the compiler does not report, and they lie outside the checkout in any case.
 
-The merge stops if a path differs between slices, other than `build/config/gclient_args.gni`, which gclient writes per Host and whose `checkout_*` values decide nothing in this build graph. It also stops if a third-party project in the export has no licence file. It reads the toolchain's pins from `DEPS`, and resolves those in CIPD to a hash with depot_tools.
+The merge stops if a path differs between slices, other than `build/config/gclient_args.gni`, which gclient writes per Host and whose `checkout_*` values decide nothing in this build graph. So a file must have the same bytes in every slice, which the bootstrap script's git settings make sure of on Windows. A file that several slices hold comes from the Linux slice, then the macOS one, then the Windows one. Windows keeps no file modes, so a file that only the Windows slice holds goes into the archive as `0644`: only Windows builds with it, and Windows has no use for a mode. The merge also stops if a third-party project in the export has no licence file. It reads the toolchain's pins from `DEPS`, resolves those in CIPD to a hash with depot_tools, and downloads `rc.exe` to check it against its SHA-1 and record its SHA-256.
