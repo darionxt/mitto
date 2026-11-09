@@ -145,6 +145,10 @@ def machine_with(**changes: object) -> dict[str, object]:
     return {name: value for name, value in saved.items() if value is not ...}
 
 
+# What windows_access() reads of a security descriptor: OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION.
+WINDOWS_OWNER_AND_ACCESS_LIST = 0x1 | 0x4
+
+
 def assert_only_its_owner_can_use(file: Path) -> None:
     """Check that only the user running the tests can use `file`.
 
@@ -153,7 +157,8 @@ def assert_only_its_owner_can_use(file: Path) -> None:
     """
     if sys.platform == "win32":
         user = windows_user()
-        assert windows_access(file) == f"O:{user}D:P(A;;FA;;;{user})"
+        # Both through Windows, which writes some SIDs as aliases, such as LA for the built-in Administrator.
+        assert windows_access(file) == windows_sddl(f"O:{user}D:P(A;;FA;;;{user})")
     else:
         assert stat.S_IMODE(file.stat().st_mode) == 0o600
 
@@ -169,17 +174,37 @@ def windows_access(path: Path) -> str:
     """Return the owner and the access list of `path` on Windows, in SDDL."""
     assert sys.platform == "win32"
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    owner_and_access_list = 0x1 | 0x4  # OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
     size = ctypes.c_uint32()
     # This one fails, saying how large the security descriptor is.
-    advapi32.GetFileSecurityW(str(path), owner_and_access_list, None, 0, ctypes.byref(size))
+    advapi32.GetFileSecurityW(str(path), WINDOWS_OWNER_AND_ACCESS_LIST, None, 0, ctypes.byref(size))
     descriptor = ctypes.create_string_buffer(size.value)
-    if not advapi32.GetFileSecurityW(str(path), owner_and_access_list, descriptor, size, ctypes.byref(size)):
+    if not advapi32.GetFileSecurityW(str(path), WINDOWS_OWNER_AND_ACCESS_LIST, descriptor, size, ctypes.byref(size)):
         raise ctypes.WinError(ctypes.get_last_error())
+    return windows_sddl_of(descriptor)
+
+
+def windows_sddl(sddl: str) -> str:
+    """Return the owner and the access list that `sddl` gives, as Windows writes them back."""
+    assert sys.platform == "win32"
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    descriptor = ctypes.c_void_p()
+    if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, ctypes.byref(descriptor), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return windows_sddl_of(descriptor)
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def windows_sddl_of(descriptor: ctypes.Array[ctypes.c_char] | ctypes.c_void_p) -> str:
+    """Return the owner and the access list of a security descriptor on Windows, in SDDL."""
+    assert sys.platform == "win32"
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     sddl = ctypes.c_void_p()
     if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-        descriptor, 1, owner_and_access_list, ctypes.byref(sddl), None
+        descriptor, 1, WINDOWS_OWNER_AND_ACCESS_LIST, ctypes.byref(sddl), None
     ):
         raise ctypes.WinError(ctypes.get_last_error())
     try:
