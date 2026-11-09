@@ -4,7 +4,7 @@ The native core is built inside a Chromium checkout ([ADR-0002](adr/0002-build-i
 
 ## Requirements
 
-- A macOS arm64, Linux x86_64 or Windows x64 Host. CI builds and tests a wheel for each, but PyPI has none for Windows yet.
+- A macOS arm64, Linux x86_64 or Windows x64 Host.
 - About 31 GiB of free disk space for the workspace, including compiled output (see [Disk usage](#disk-usage)), on a path without spaces.
 - `git`, and [uv](https://docs.astral.sh/uv/) to run the set-up script with Python 3.12 or later. The script needs only Python's standard library. On macOS and Linux, depot_tools also needs `curl` and `bash`.
 - On macOS, a full Xcode installation that includes the macOS SDK. The Command Line Tools are not enough: `gn gen` already looks for the SDK inside Xcode. Chromium's bots build Chromium 157 with the macOS 27.0 SDK (`mac_sdk_official_version` in `build/config/mac/mac_sdk.gni`), so that version is known to work. The native core also builds with Xcode 27.2 and its macOS 27.2 SDK. `xcode-select -p` must point into Xcode.
