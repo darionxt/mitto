@@ -1,6 +1,6 @@
 [project]
 name = "mitto"
-version = "0.2.0"
+version = "0.2.1"
 description = "A Python HTTP client whose traffic matches real Chrome, built on Chromium's network stack."
 readme = "README.md"
 requires-python = ">=3.12"

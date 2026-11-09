@@ -2,6 +2,16 @@
 
 What changes for callers in each version of mitto, newest first. The notes of each version's GitHub release hold its entry, and [releasing.md](docs/releasing.md#what-changes-for-callers) says how one is written.
 
+## 0.2.1
+
+mitto installs on Windows on x64 too, from a `py3-none-win_amd64` wheel, with Python 3.12 or later, as on macOS on arm64 and Linux on x86_64. A Session presents Windows Chrome on every **Host**, on Windows as on macOS and Linux, with the same Personas and Machines. On macOS and Linux nothing changes for callers.
+
+- The [asyncio API](docs/api.md#asyncio) works with both of Windows' event loops, `ProactorEventLoop` and `SelectorEventLoop`. Neither can watch the file descriptor that tells the loop of a Session's events on macOS and Linux, so on Windows a thread per Session waits for them in the native core, with the GIL released.
+- On Windows a Session trusts, beside the Chrome Root Store, the roots that a user, an administrator or group policy has added to Windows' certificate stores, as Chrome there does ([`additional_trust_anchors=`](docs/api.md#additional_trust_anchors)).
+- On Windows, as in Chrome there, a URL that starts with two slashes names a file on a network share, which a Session does not fetch: the request raises a `RequestError` with `ERR_UNKNOWN_URL_SCHEME`, where macOS and Linux give `ERR_INVALID_URL`.
+- On Windows 11 from 22H2 and on Windows Server 2025, a request that needs a new connection now and then fails with a `RequestError` of `ERR_NO_BUFFER_SPACE` or `ERR_ADDRESS_IN_USE`, as a request in Chrome there does. `//net` asks Windows for a random source port for each connection, as Chrome does, and Windows sometimes refuses one ([#168](https://github.com/darionxt/mitto/issues/168)). A request on a connection that is already open is not affected.
+- On Windows a [`cookie_file`](docs/api.md#cookie_file), and a file that [`Cookies.save()`](docs/api.md#cookiessave) writes, takes the access of its folder, where on macOS and Linux only its owner can read or write it ([#163](https://github.com/darionxt/mitto/issues/163)). A folder in a user's profile lets in only that user and the administrators, unless someone has changed that.
+
 ## 0.2.0
 
 Each Session claims a **Machine** of its own: the memory, display, window, network, user settings and Windows version that its client hints say, once a server asks for them. In mitto 0.1, every Session of a Persona sent the same values. A server that does not ask for these hints sees no change.
