@@ -600,7 +600,7 @@ The repositories keep every tag and commit they fetch. Delete `$MITTO_WORKSPACE/
 - a new build configuration, such as another sanitizer, needs files that this one does not;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: only the plain one on macOS and Windows, and also `asan`, `ubsan` and `fuzz` on Linux. The steps take about TOTAL_TIME on three machines that have built the native core before.
+What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: only the plain one on macOS and Windows, and also `asan`, `ubsan` and `fuzz` on Linux. The steps take about an hour on three machines that have built the native core before, most of it on the Linux machine, which traces and checks four builds.
 
 1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository, with the bootstrap script run again from that commit:
 
@@ -645,7 +645,7 @@ A slice holds:
 - every file that `gn` read, and every source, header, input and script that a target in the build graph declares;
 - every file in `ninja -t deps` and in the depfiles that build steps left behind;
 - every file of the source tree that a build step's command line names, such as a compiler's warning suppression list, which no depfile lists;
-- every file below a directory that compilers search with `-isystem`, because `-MMD` leaves those headers out of its depfiles;
+- every file below a directory of the source tree that compilers search with `-isystem`, or `-imsvc` on Windows, because `-MMD` and `/showIncludes:user` leave those headers out of what they report;
 - every file that a build script's Python opened or got as an argument, recorded through Python's audit events, which see this on every Host without root;
 - `DEPS`, and `build/toolchain/win/rc/win/rc.exe.sha1`, the SHA-1 by which a hook of `DEPS` downloads `rc.exe`, both of which the merge reads;
 - the `BUILD.gn` of the Host's Clang modules, which `gn` only checks with `path_exists()`: `build/modules/linux/BUILD.gn` on Linux and `build/modules/win/BUILD.gn` on Windows, under the name that `gn` writes into `gen/module_platform.txt`. macOS has none;
