@@ -1,8 +1,9 @@
 """Tests of the build hook that puts the native core into the wheel.
 
 Tests of the tag read made-up headers. Tests of the build run hatchling on this repository. Those that need a library
-compile a stub with cc, and are skipped when there is no C compiler. Those that take the built_wheel fixture check a wheel
-of the real native core, named in MITTO_WHEEL, and the package installed from it. The test of its notices also needs
+compile a stub with cc, and are skipped when there is no C compiler and on Windows, whose DLL and PDB are made up instead.
+Those that take the built_wheel fixture check a wheel of the real native core, named in MITTO_WHEEL, and the package
+installed from it. The test of its notices also needs
 what the library links, which `python -m tools.workspace.notices host` prints from the library's build, in
 MITTO_HOST_NOTICES.
 """
@@ -25,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from mitto import _native
+from tests.pe_file import PeFile
 from tools import wheel
 from tools.workspace import export, notices
 
@@ -55,6 +57,18 @@ CPU_TYPE_X86_64 = 0x01000007
 PLATFORM_IOS = 2
 EM_AARCH64 = 183
 SHT_STRTAB = 3
+
+IMAGE_FILE_MACHINE_AMD64 = 0x8664
+IMAGE_FILE_MACHINE_ARM64 = 0xAA64
+IMAGE_FILE_EXECUTABLE_IMAGE = 0x2
+IMAGE_FILE_LARGE_ADDRESS_AWARE = 0x20
+PE_OPTIONAL_HEADER_SIZE = 240
+PE_SECTION_ADDRESS = 0x1000
+PE_SECTION_OFFSET = 0x200
+PDB_BLOCK_SIZE = 512
+PDB_VERSION = 20000404
+PDB_GUID = bytes(range(16))
+PDB_NAME = "mitto_core.dll.pdb"
 
 
 def mach_o_library(
@@ -96,6 +110,59 @@ def elf_library(needs: Mapping[str, Sequence[str]], machine: int = 62) -> bytes:
         "<16s2HI3QI6H", identity, 3, machine, 1, 0, 0, sections_offset, 0, 64, 0, 0, 64, len(sections), 0
     )
     return header + strings + needed + b"".join(sections)
+
+
+def pe_library(
+    machine: int = IMAGE_FILE_MACHINE_AMD64,
+    dll: bool = True,
+    pdb: str | None = PDB_NAME,
+    guid: bytes = PDB_GUID,
+    age: int = 1,
+) -> bytes:
+    """Return a 64-bit PE file with only what the hook reads: its CPU, whether it is a DLL, and the PDB it names."""
+    record = b"RSDS" + guid + struct.pack("<I", age) + (pdb or "").encode() + b"\0"
+    debug_entry_size = 28
+    section = (
+        struct.pack(
+            "<2I2H4I",
+            0,
+            0,
+            0,
+            0,
+            wheel.PE_DEBUG_TYPE_CODEVIEW,
+            len(record),
+            PE_SECTION_ADDRESS + debug_entry_size,
+            PE_SECTION_OFFSET + debug_entry_size,
+        )
+        + record
+    )
+    characteristics = (
+        IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_LARGE_ADDRESS_AWARE | (wheel.IMAGE_FILE_DLL if dll else 0)
+    )
+    dos_header = b"MZ" + bytes(0x3A) + struct.pack("<I", 64)
+    file_header = struct.pack("<2H3I2H", machine, 1, 0, 0, 0, PE_OPTIONAL_HEADER_SIZE, characteristics)
+    directories = bytearray(8 * 16)
+    if pdb is not None:
+        struct.pack_into("<2I", directories, 8 * wheel.PE_DEBUG_DIRECTORY, PE_SECTION_ADDRESS, debug_entry_size)
+    optional_header = struct.pack("<H", wheel.PE32_PLUS).ljust(112, b"\0") + directories
+    section_header = b".rdata\0\0" + struct.pack(
+        "<4I", len(section), PE_SECTION_ADDRESS, len(section), PE_SECTION_OFFSET
+    ).ljust(32, b"\0")
+    headers = dos_header + b"PE\0\0" + file_header + optional_header + section_header
+    return headers.ljust(PE_SECTION_OFFSET, b"\0") + section
+
+
+def pdb_file(guid: bytes = PDB_GUID, age: int = 1) -> bytes:
+    """Return a PDB with only what the hook reads: an MSF file whose info stream holds a GUID and an age.
+
+    Block 0 is the header, 1 the free block map, 2 the list of the directory's blocks, 3 the directory and 4 the info
+    stream. Stream 0 does not exist, as its size of 0xFFFFFFFF says.
+    """
+    info = struct.pack("<3I", PDB_VERSION, 0, age) + guid
+    directory = struct.pack("<4I", 2, 0xFFFFFFFF, len(info), 4)
+    header = wheel.PDB_MAGIC + struct.pack("<6I", PDB_BLOCK_SIZE, 1, 5, len(directory), 0, 2)
+    blocks = [header, b"", struct.pack("<I", 3), directory, info]
+    return b"".join(block.ljust(PDB_BLOCK_SIZE, b"\0") for block in blocks)
 
 
 def write(directory: Path, data: bytes) -> Path:
@@ -194,11 +261,79 @@ def test_an_elf_library_for_another_cpu_has_no_tag(tmp_path: Path) -> None:
         wheel.platform_tag(library)
 
 
+def test_the_windows_tag_is_the_cpu_of_the_dll(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+
+    assert wheel.platform_tag(library) == "win_amd64"
+
+
+def test_a_dll_for_another_cpu_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library(machine=IMAGE_FILE_MACHINE_ARM64))
+
+    with pytest.raises(wheel.WheelError, match="not for x64"):
+        wheel.platform_tag(library)
+
+
+def test_a_windows_program_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library(dll=False))
+
+    with pytest.raises(wheel.WheelError, match="a program, not a DLL"):
+        wheel.platform_tag(library)
+
+
 def test_a_file_that_is_not_a_library_has_no_tag(tmp_path: Path) -> None:
     library = write(tmp_path, b"#!/bin/sh\n")
 
-    with pytest.raises(wheel.WheelError, match="neither a Mach-O nor an ELF file"):
+    with pytest.raises(wheel.WheelError, match="neither a Mach-O, an ELF nor a PE file"):
         wheel.platform_tag(library)
+
+
+@pytest.mark.parametrize("named", [PDB_NAME, rf"C:\build\out\mitto\{PDB_NAME}"])
+def test_a_dll_goes_into_the_wheel_as_it_is_and_its_pdb_into_the_symbols(tmp_path: Path, named: str) -> None:
+    built = tmp_path / "out"
+    built.mkdir()
+    library = built / "library.dll"
+    library.write_bytes(pe_library(pdb=named))
+    (built / PDB_NAME).write_bytes(pdb_file())
+    copies = tmp_path / "copies"
+    copies.mkdir()
+
+    copy, symbols = wheel.strip_library(library, copies)
+
+    assert copy == copies / wheel.WINDOWS_LIBRARY
+    assert copy.read_bytes() == library.read_bytes()
+    assert symbols == built / PDB_NAME
+
+
+def test_a_dll_whose_pdb_is_missing_is_refused(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+
+    with pytest.raises(wheel.WheelError, match=f"names its PDB {PDB_NAME}, and .* is missing"):
+        wheel.strip_library(library, tmp_path)
+
+
+@pytest.mark.parametrize(("guid", "age"), [(PDB_GUID[::-1], 1), (PDB_GUID, 2)], ids=["guid", "age"])
+def test_the_pdb_of_another_build_is_refused(tmp_path: Path, guid: bytes, age: int) -> None:
+    library = write(tmp_path, pe_library())
+    (tmp_path / PDB_NAME).write_bytes(pdb_file(guid, age))
+
+    with pytest.raises(wheel.WheelError, match="is not the PDB of"):
+        wheel.strip_library(library, tmp_path)
+
+
+def test_a_dll_that_names_no_pdb_is_refused(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library(pdb=None))
+
+    with pytest.raises(wheel.WheelError, match="names no PDB"):
+        wheel.strip_library(library, tmp_path)
+
+
+def test_a_file_that_is_not_a_pdb_is_refused(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+    (tmp_path / PDB_NAME).write_bytes(b"not a PDB")
+
+    with pytest.raises(wheel.WheelError, match="is not a PDB"):
+        wheel.strip_library(library, tmp_path)
 
 
 def build_wheel(directory: Path, library: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -227,8 +362,40 @@ def test_a_wheel_from_a_missing_library_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.fixture(scope="module")
+def dll_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a wheel from a made-up DLL and its PDB, which any Host can do, as hatchling never loads the library."""
+    directory = tmp_path_factory.mktemp("dll")
+    (directory / wheel.WINDOWS_LIBRARY).write_bytes(pe_library())
+    (directory / PDB_NAME).write_bytes(pdb_file())
+
+    result = build_wheel(directory / "dist", directory / wheel.WINDOWS_LIBRARY)
+    assert result.returncode == 0, result.stderr
+    (built,) = (directory / "dist").glob("*.whl")
+    return built
+
+
+def test_a_wheel_of_a_dll_is_for_windows_and_its_symbols_are_the_pdb(dll_wheel: Path, tmp_path: Path) -> None:
+    with zipfile.ZipFile(dll_wheel) as archive:
+        (metadata,) = (name for name in archive.namelist() if name.endswith(".dist-info/WHEEL"))
+        lines = archive.read(metadata).decode().splitlines()
+        library = archive.read(f"mitto/{wheel.WINDOWS_LIBRARY}")
+    with tarfile.open(wheel.symbols_archive_of(dll_wheel)) as archive:
+        names = archive.getnames()
+        archive.extractall(tmp_path, filter="data")
+
+    assert dll_wheel.name.endswith("-py3-none-win_amd64.whl")
+    assert "Tag: py3-none-win_amd64" in lines
+    assert "Root-Is-Purelib: false" in lines
+    assert library == pe_library()
+    assert names == [PDB_NAME]
+    assert (tmp_path / PDB_NAME).read_bytes() == pdb_file()
+
+
+@pytest.fixture(scope="module")
 def stub_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Build a wheel from a stub of the native core, with its object file kept for the debug information."""
+    if sys.platform == "win32":
+        pytest.skip("a DLL from cc has no PDB, so a made-up DLL stands in for the stub on Windows")
     compiler = shutil.which("cc")
     if compiler is None:
         pytest.skip("no C compiler")
@@ -253,12 +420,19 @@ def unpack(built: Path, directory: Path) -> tuple[Path, Path]:
         archive.extractall(directory, filter="data")
     if sys.platform == "darwin":
         return library, directory / f"{_native.LIBRARY_NAME}.dSYM/Contents/Resources/DWARF/{_native.LIBRARY_NAME}"
+    if sys.platform == "win32":
+        return library, directory / f"{_native.LIBRARY_NAME}.pdb"
     return library, directory / f"{_native.LIBRARY_NAME}.debug"
 
 
 def check_symbols(built: Path, function: str, directory: Path) -> None:
     """Check that the symbols archive of a wheel belongs to its library and names a function that the library does not."""
     library, symbols = unpack(built, directory)
+    if sys.platform == "win32":
+        _, name = debug_help_lookup(library, symbols.parent, function)
+        assert function not in PeFile(library).exported_names()
+        assert name == function
+        return
     if sys.platform == "darwin":
         assert uuid_of(library) == uuid_of(symbols)
     else:
@@ -295,6 +469,89 @@ def function_at(symbols: Path, address: int) -> str:
     if sys.platform == "darwin":
         return run(["atos", "-o", symbols, "-l", "0", hex(address)])
     return run(["addr2line", "--functions", "--demangle", "--exe", symbols, hex(address)])
+
+
+_SYMBOL_NAME_SIZE = 1024
+
+
+class _SymbolInfo(ctypes.Structure):
+    """SYMBOL_INFOW of Windows' debug help library, with room for a long name."""
+
+    _fields_ = (
+        ("SizeOfStruct", ctypes.c_uint32),
+        ("TypeIndex", ctypes.c_uint32),
+        ("Reserved", ctypes.c_uint64 * 2),
+        ("Index", ctypes.c_uint32),
+        ("Size", ctypes.c_uint32),
+        ("ModBase", ctypes.c_uint64),
+        ("Flags", ctypes.c_uint32),
+        ("Value", ctypes.c_uint64),
+        ("Address", ctypes.c_uint64),
+        ("Register", ctypes.c_uint32),
+        ("Scope", ctypes.c_uint32),
+        ("Tag", ctypes.c_uint32),
+        ("NameLen", ctypes.c_uint32),
+        ("MaxNameLen", ctypes.c_uint32),
+        ("Name", ctypes.c_wchar * _SYMBOL_NAME_SIZE),
+    )
+
+
+# sizeof(SYMBOL_INFOW), whose name has room for one character.
+_SYMBOL_INFO_SIZE = 88
+_SYMOPT_UNDNAME = 0x2
+_SYMOPT_FAIL_CRITICAL_ERRORS = 0x200
+_SYMOPT_EXACT_SYMBOLS = 0x400
+# The debug help library names a session by a process handle, or by any other value when it reads no process.
+_DEBUG_HELP_SESSION = 0x6D6974746F
+
+
+def debug_help_lookup(library: Path, symbol_path: Path, function: str) -> tuple[int, str]:
+    """Return the address of a function in a DLL, and the function that the address one past it lies in.
+
+    Both come from Windows' debug help library, the one that Windows' debuggers read symbols with. It looks for the PDB
+    that the DLL names in the symbol path, and with exact symbols it takes it only if its GUID and age are the DLL's.
+    """
+    if sys.platform != "win32":
+        raise NotImplementedError("the debug help library is Windows'")
+    dbghelp = ctypes.WinDLL("dbghelp", use_last_error=True)
+    dbghelp.SymInitializeW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
+    dbghelp.SymLoadModuleExW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint64,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    )
+    dbghelp.SymLoadModuleExW.restype = ctypes.c_uint64
+    dbghelp.SymFromNameW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.POINTER(_SymbolInfo))
+    dbghelp.SymFromAddrW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(_SymbolInfo),
+    )
+    dbghelp.SymCleanup.argtypes = (ctypes.c_void_p,)
+    dbghelp.SymSetOptions(_SYMOPT_UNDNAME | _SYMOPT_FAIL_CRITICAL_ERRORS | _SYMOPT_EXACT_SYMBOLS)
+    if not dbghelp.SymInitializeW(_DEBUG_HELP_SESSION, str(symbol_path), False):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not dbghelp.SymLoadModuleExW(_DEBUG_HELP_SESSION, None, str(library), None, 0, 0, None, 0):
+            raise ctypes.WinError(ctypes.get_last_error())
+        info = _SymbolInfo(SizeOfStruct=_SYMBOL_INFO_SIZE, MaxNameLen=_SYMBOL_NAME_SIZE)
+        if not dbghelp.SymFromNameW(_DEBUG_HELP_SESSION, function, ctypes.byref(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        address: int = info.Address
+        info = _SymbolInfo(SizeOfStruct=_SYMBOL_INFO_SIZE, MaxNameLen=_SYMBOL_NAME_SIZE)
+        displacement = ctypes.c_uint64()
+        if not dbghelp.SymFromAddrW(_DEBUG_HELP_SESSION, address + 1, ctypes.byref(displacement), ctypes.byref(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        name: str = info.Name
+        return address, name
+    finally:
+        dbghelp.SymCleanup(_DEBUG_HELP_SESSION)
 
 
 def uuid_of(file: Path) -> str:
@@ -339,16 +596,16 @@ def licence_files_of(built: Path) -> dict[str, bytes]:
     return files
 
 
-def test_the_wheel_holds_the_licence_and_the_notices(stub_wheel: Path) -> None:
-    assert licence_files_of(stub_wheel) == {
+def test_the_wheel_holds_the_licence_and_the_notices(dll_wheel: Path) -> None:
+    assert licence_files_of(dll_wheel) == {
         "LICENSE": (REPOSITORY / "LICENSE").read_bytes(),
         "MACHINE_TABLE_NOTICE": (REPOSITORY / "MACHINE_TABLE_NOTICE").read_bytes(),
         notices.NOTICES_FILE.name: notices.NOTICES_FILE.read_bytes(),
     }
 
 
-def test_the_wheel_declares_both_licences_and_holds_the_table(stub_wheel: Path) -> None:
-    with zipfile.ZipFile(stub_wheel) as archive:
+def test_the_wheel_declares_both_licences_and_holds_the_table(dll_wheel: Path) -> None:
+    with zipfile.ZipFile(dll_wheel) as archive:
         (metadata,) = (name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
         lines = archive.read(metadata).decode().splitlines()
         table = archive.read("mitto/machine_table.json")
@@ -389,7 +646,10 @@ def test_the_installed_package_holds_the_library_of_the_wheel(built_wheel: Path)
 
 def test_the_wheel_is_tagged_for_what_its_library_needs(built_wheel: Path, tmp_path: Path) -> None:
     platform = built_wheel.name.removesuffix(".whl").rsplit("-", 1)[1]
-    if sys.platform == "darwin":
+    if sys.platform == "win32":
+        library, _ = unpack(built_wheel, tmp_path)
+        assert (PeFile(library).machine, platform) == (IMAGE_FILE_MACHINE_AMD64, "win_amd64")
+    elif sys.platform == "darwin":
         library, _ = unpack(built_wheel, tmp_path)
         match = re.search(r"minos (\d+)\.(\d+)", run(["otool", "-l", library]))
         assert match is not None
@@ -407,7 +667,7 @@ def test_the_wheel_holds_the_notice_of_every_project_its_library_links(built_whe
     value = os.environ.get(HOST_NOTICES_ENV_VAR)
     if not value:
         pytest.skip(f"nothing says what the library links; set {HOST_NOTICES_ENV_VAR} to run this test")
-    linked = notices.parse(Path(value).read_text())
+    linked = notices.parse(Path(value).read_text(encoding="utf-8"))
     host = export.current_host().name
     in_wheel = notices.parse(licence_files_of(built_wheel)[notices.NOTICES_FILE.name].decode())
 

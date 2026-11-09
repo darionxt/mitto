@@ -455,8 +455,10 @@ def test_a_request_that_stops_with_a_cache(program: Path, protocol: str, scenari
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="holds the directory with flock(), which Windows does not have")
 def test_a_directory_that_something_else_holds(program: Path, tmp_path: Path) -> None:
+    # In the body rather than in a mark, so that a type checker on Windows skips the rest too.
+    if sys.platform == "win32":
+        pytest.skip("holds the directory with flock(), which Windows does not have")
     import fcntl
 
     lock = os.open(tmp_path, os.O_RDONLY)

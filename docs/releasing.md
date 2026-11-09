@@ -25,7 +25,7 @@ A run raises the minor version: 0.1.0, 0.2.0 and so on. Between two runs, a chan
 | 11. [The tag](#11-the-tag) | Any machine | The owner |
 | 12. [The publish](#12-the-publish) | GitHub's hosted runners | The owner, in the `pypi` environment |
 
-"Any machine" is one with the repository and uv. The scripts of steps 1, 6, 7 and 8 need no native library. Steps 2 to 10 end in one pull request, and CI builds it from the new export on its macOS and Linux runners.
+"Any machine" is one with the repository and uv. The scripts of steps 1, 6, 7 and 8 need no native library. Steps 2 to 10 end in one pull request, and CI builds it from the new export on its macOS, Linux and Windows runners.
 
 ### 1. Find the builds
 
@@ -49,9 +49,9 @@ Each release has its own checkout because a shallow checkout cannot move to a ne
 
 ### 3. Make the source export
 
-[Make the source export](building.md#make-the-source-export) of the new release, with a slice from each of the three machines, publish it with the owner's OK, and write its URL and SHA-256 into [`tools/workspace/source_export.json`](../tools/workspace/source_export.json). CI then builds the native core from it. On the Windows machine, check first that Visual Studio and the Windows SDK are the versions that the new release asks for, in its `docs/windows_build_instructions.md` and `build/vs_toolchain.py`: they stay the machine's and are not in the export, and a build from the export stops before it starts without that SDK.
+[Make the source export](building.md#make-the-source-export) of the new release, with a slice from each of the three machines, publish it with the owner's OK, and write its URL and SHA-256 into [`tools/workspace/source_export.json`](../tools/workspace/source_export.json). CI then builds the native core from it. On the Windows machine, check first that Visual Studio and the Windows SDK are the versions that the new release asks for, in its `docs/windows_build_instructions.md` and `build/vs_toolchain.py`: they stay the machine's and are not in the export, and a build from the export stops before it starts without that SDK. CI's Windows job installs the SDK that `.github/workflows/ci.yml` pins, so a new SDK version goes there too, with its installer and that installer's SHA-256.
 
-On the macOS and the Linux machine, [update its part of the third-party notices](building.md#third-party-notices) from a build of the new export, such as the one that checks the archive, and commit the result with the run's pull request. CI's test of the installed wheel fails on a Host whose part is wrong. Windows has no part yet, because no wheel for Windows ships yet.
+On the macOS and the Linux machine, [update its part of the third-party notices](building.md#third-party-notices) from a build of the new export, such as the one that checks the archive, and commit the result with the run's pull request. CI's test of the installed wheel fails on a Host whose part is wrong. Windows' part can come from the run of that pull request: [merge](building.md#third-party-notices) the notices that CI's Windows job keeps.
 
 From the same build on either machine, check [ICU's data](building.md#icus-data) again. Disassemble the unstripped library with `objdump -d`, and find every call to ICU's entry points to its data, whose names end in the ICU version, such as `ures_openDirect_78`. A caller that the table of that section does not name, or a new caller of one that passes a name on, such as `base::CodepageToUTF16()`, may ask for an item that the library lacks. Read what it asks for, and add the item to [`native/make_icu_data.py`](../native/make_icu_data.py). The build stops if an item in that list is missing from ICU's new data.
 

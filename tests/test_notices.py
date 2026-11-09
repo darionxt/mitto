@@ -4,7 +4,6 @@ They build small source trees and build graphs of their own. The test that a whe
 its library links is in test_wheel.py, because it needs a wheel of the real native core.
 """
 
-import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,7 @@ REPOSITORY = Path(__file__).parents[1]
 
 LINUX = export.LINUX.name
 MAC = export.MAC.name
+WINDOWS = export.WINDOWS.name
 
 
 def write(root: Path, path: str, content: str = "") -> Path:
@@ -238,7 +238,6 @@ def test_a_project_without_a_readme_is_named_after_its_directory(tree: Path) -> 
     ]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the notices know the parts of macOS and Linux only")
 def test_this_host_s_entries_come_from_what_the_library_links(tree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     graph = {
         notices.ROOT_TARGET: target("shared_library", ["//net:net"], ["//mitto/mitto_core.cc"]),
@@ -287,7 +286,7 @@ def test_a_licence_text_with_the_line_between_entries_is_refused(tmp_path: Path)
 
 def test_notices_read_back_as_they_were_written() -> None:
     entries = [
-        entry("zlib", {LINUX, MAC}),
+        entry("zlib", {LINUX, MAC, WINDOWS}),
         entry("Abseil", {MAC}, "URL: https://abseil.io\n\nLicence file: //third_party/abseil-cpp/LICENSE\n\na\n\nb\n"),
         entry("The Chromium Project", {LINUX, MAC}, directory="//"),
     ]
@@ -297,13 +296,14 @@ def test_notices_read_back_as_they_were_written() -> None:
     assert notices.parse(text) == [entries[2], entries[1], entries[0]]
     assert text.startswith(notices.HEADER + "\n" + notices.SEPARATOR + "\nName: The Chromium Project\n")
     assert "\nLinked on: Linux x86_64, macOS arm64\n" in text
+    assert "\nLinked on: Linux x86_64, macOS arm64, Windows x64\n" in text
 
 
 def test_text_that_render_did_not_write_is_refused() -> None:
     with pytest.raises(notices.NoticesError, match="header"):
         notices.parse("Some other notices\n")
     with pytest.raises(notices.NoticesError, match="names a Host"):
-        notices.parse(f"{notices.HEADER}\n{notices.SEPARATOR}\nName: a\nDirectory: //a\nLinked on: Windows\n")
+        notices.parse(f"{notices.HEADER}\n{notices.SEPARATOR}\nName: a\nDirectory: //a\nLinked on: FreeBSD\n")
 
 
 def test_a_host_s_part_replaces_only_that_host_s_entries() -> None:
@@ -351,7 +351,7 @@ def test_a_part_is_for_one_host() -> None:
 
 
 def test_the_notices_are_as_the_script_writes_them_and_go_into_each_wheel() -> None:
-    text = notices.NOTICES_FILE.read_text()
+    text = notices.NOTICES_FILE.read_text(encoding="utf-8")
     entries = notices.parse(text)
     project = tomllib.loads((REPOSITORY / "pyproject.toml").read_text())["project"]
 

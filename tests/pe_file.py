@@ -1,6 +1,7 @@
 """Reads what a Windows DLL exports and which DLLs it loads, from its PE headers, with no tool of Windows' own.
 
-Only what the tests of the native library need: a 64-bit DLL, its export table, and its import and delay import tables.
+Only what the tests of the native library need: a 64-bit DLL, its CPU, its export table, and its import and delay
+import tables.
 """
 
 import struct
@@ -49,7 +50,8 @@ class PeFile:
         if self._data[pe_offset : pe_offset + 4] != _SIGNATURE:
             raise ValueError(f"{path} is not a PE file")
         file_header = pe_offset + 4
-        section_count, optional_header_size = struct.unpack_from("<H12xH", self._data, file_header + 2)
+        self.machine: int
+        self.machine, section_count, optional_header_size = struct.unpack_from("<2H12xH", self._data, file_header)
         optional_header = file_header + _FILE_HEADER_SIZE
         (magic,) = struct.unpack_from("<H", self._data, optional_header)
         if magic != _PE32_PLUS:

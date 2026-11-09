@@ -6,8 +6,8 @@ library links, through static libraries, source sets, Rust libraries and groups.
 tool that only runs during the build is not linked, so it needs no notice. Each project is named by the README.chromium
 of its directory, as Chromium's tools/licenses/licenses.py does for Chrome.
 
-The two Hosts link slightly different projects, and gn on one Host cannot describe the other's build, so each entry
-says which Hosts link its project, and each Host has its own part:
+The Hosts link slightly different projects, and gn on one Host cannot describe another's build, so each entry says
+which Hosts link its project, and each Host has its own part:
 
     uv run python -m tools.workspace.notices update /path/to/chromium-<tag>/src/out/mitto
     uv run python -m tools.workspace.notices host /path/to/chromium-<tag>/src/out/mitto > part
@@ -40,7 +40,7 @@ ROOT_TARGET = "//mitto:mitto_core"
 LINKED_TYPES = {"group", "rust_library", "source_set", "static_library"}
 CODE_TYPES = {"rust_library", "shared_library", "source_set", "static_library"}
 
-HOST_NAMES = {export.LINUX.name: "Linux x86_64", export.MAC.name: "macOS arm64"}
+HOST_NAMES = {export.LINUX.name: "Linux x86_64", export.MAC.name: "macOS arm64", export.WINDOWS.name: "Windows x64"}
 
 # A third-party project lies in a directory under third_party, and a Rust crate in third_party/rust/<crate>/<epoch>. The
 # last such directory in a path is the project, so that a project inside another one counts on its own.
@@ -63,11 +63,11 @@ SEPARATOR = "=" * 80
 HEADER = """\
 Third-party notices for mitto's native library
 
-Each wheel of mitto holds a native library, mitto/libmitto_core.so on Linux and
-mitto/libmitto_core.dylib on macOS, built from Chromium's network stack. mitto's
-own code is under the licence in LICENSE. The entries below are the projects
-linked into the library: Chromium itself and the projects it uses, each with the
-text of its licence.
+Each wheel of mitto holds a native library, mitto/libmitto_core.so on Linux,
+mitto/libmitto_core.dylib on macOS and mitto/mitto_core.dll on Windows, built
+from Chromium's network stack. mitto's own code is under the licence in LICENSE.
+The entries below are the projects linked into the library: Chromium itself and
+the projects it uses, each with the text of its licence.
 
 "Directory" is where a project lies in Chromium's source tree, and "Linked on"
 names the Hosts whose library links it.
@@ -141,7 +141,7 @@ def describe(src: Path, build_dir: Path) -> dict[str, Any]:
         (directory / "build.ninja").touch()
         command = [src / host.gn, "desc", directory, "//*", "--format=json", *export.GN_ROOT]
         result = subprocess.run(
-            command, cwd=src, env=export.build_environment(), capture_output=True, text=True, check=False
+            command, cwd=src, env=export.build_environment(), capture_output=True, encoding="utf-8", check=False
         )
     if result.returncode != 0:
         raise NoticesError(f"gn desc failed with status {result.returncode}:\n{result.stdout}{result.stderr}")
@@ -246,7 +246,7 @@ def dependencies_of(src: Path, project: str) -> list[Dependency]:
             raise NoticesError(f"//{project} has neither a {README_CHROMIUM} nor a licence file")
         return [Dependency(PurePosixPath(project).name, "", "", tuple(files))]
     dependencies: list[Dependency] = []
-    for fields in parse_readme(readme.read_text(errors="replace")):
+    for fields in parse_readme(readme.read_text(encoding="utf-8", errors="replace")):
         files = [file.strip() for file in fields.get("license file", "LICENSE").split(",")]
         shipped = fields.get("shipped in chromium", fields.get("shipped", "no" if NOT_SHIPPED in files else "yes"))
         if shipped.lower() == "no":
@@ -435,9 +435,9 @@ def host_of(entries: Sequence[Entry]) -> str:
 
 def update(host: str, fresh: Sequence[Entry]) -> None:
     """Replaces one Host's part of THIRD_PARTY_NOTICES, and says what changed."""
-    entries = parse(NOTICES_FILE.read_text()) if NOTICES_FILE.is_file() else []
+    entries = parse(NOTICES_FILE.read_text(encoding="utf-8")) if NOTICES_FILE.is_file() else []
     changes = differences(entries, host, fresh)
-    NOTICES_FILE.write_text(render(merge(entries, host, fresh)))
+    NOTICES_FILE.write_text(render(merge(entries, host, fresh)), encoding="utf-8", newline="\n")
     for line in changes:
         print(f"notices: {line}", file=sys.stderr)
     print(f"notices: {len(fresh)} entries linked on {HOST_NAMES[host]}, {len(changes)} changed", file=sys.stderr)
@@ -463,12 +463,13 @@ def main() -> int:
                 build_dir: Path = arguments.build_dir
                 fresh = host_entries(source_tree_of(build_dir), build_dir)
                 if arguments.command == "host":
-                    sys.stdout.write(render(fresh))
+                    # As the file is written, whatever the console's encoding and line ends.
+                    sys.stdout.buffer.write(render(fresh).encode())
                 else:
                     update(export.current_host().name, fresh)
             case _:
                 part: Path = arguments.part
-                fresh = parse(part.read_text())
+                fresh = parse(part.read_text(encoding="utf-8"))
                 update(host_of(fresh), fresh)
     except (NoticesError, export.ExportError) as error:
         print(f"notices: error: {error}", file=sys.stderr)
