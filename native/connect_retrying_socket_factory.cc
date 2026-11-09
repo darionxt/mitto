@@ -19,6 +19,7 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_handle.h"
+#include "net/log/net_log.h"
 #include "net/log/net_log_source.h"
 #include "net/socket/datagram_client_socket.h"
 #include "net/socket/diff_serv_code_point.h"

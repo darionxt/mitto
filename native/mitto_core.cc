@@ -717,6 +717,16 @@ void ConfigureHttpCache(net::URLRequestContextBuilder& builder,
   builder.EnableHttpCache(params);
 }
 
+// Whether a Session's sockets try a connect again that the system refused.
+bool RetriesRefusedConnects(const SessionSettings& settings) {
+#if BUILDFLAG(IS_WIN)
+  // Windows refuses one now and then, see ConnectRetryingSocketFactory.
+  return true;
+#else
+  return settings.refused_connects > 0;
+#endif
+}
+
 // Called on the network thread.
 std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     SessionSettings settings,
@@ -763,7 +773,7 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     socket_factory = std::make_unique<Socks5AuthSocketFactory>(
         *std::move(settings.socks5_credentials));
   }
-  if (BUILDFLAG(IS_WIN) || settings.refused_connects > 0) {
+  if (RetriesRefusedConnects(settings)) {
     socket_factory = std::make_unique<ConnectRetryingSocketFactory>(
         std::move(socket_factory), settings.refused_connects);
   }
