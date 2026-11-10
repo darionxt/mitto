@@ -105,7 +105,7 @@ Goal: each **Session** claims a **Machine** of its own instead of the one its **
 Goal: prove the **Runtime**'s whole pipeline on every Host before investing in breadth, as M0 did for the HTTP client.
 
 - V8 from the Engine Release in the native build, with Chrome's settings, and Chrome's whole ICU data file ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)). The source export and its Windows slice carry what they need.
-- The Page program, which the native core starts for each **Page**, and the channel between them ([ADR-0009](adr/0009-a-process-for-each-page.md)). M6 chooses the channel: Chromium's Mojo or one of the native core's own.
+- The Page program, which the native core starts for each **Page**, and the channel between them, which is the native core's own on `//base` and not Chromium's Mojo ([ADR-0009](adr/0009-a-process-for-each-page.md)).
 - A bindings generator that reads the Engine Release's Web IDL files and writes V8 bindings, with members in the order Chrome installs them. At first it covers what the skeleton needs, such as `Window`, `Document`, `Element` and `console`.
 - A first HTML parser, which builds the tree of simple documents and runs their classic scripts, inline and external, in document order. It gets a fuzz target, as every parser mitto writes does.
 - An event loop with tasks, microtasks and timers, on the real clock.
