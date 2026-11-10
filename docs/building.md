@@ -164,6 +164,8 @@ gn gen out\runtime --root-target=//mitto '--root-pattern=//mitto:*'
 third_party\ninja\ninja.exe -C out\runtime runtime
 ```
 
+A compile job of V8 needs far more memory than one of the library, and ninja runs as many jobs as the machine has cores, plus two. On a Mac with 16 GB, a build at that default took about 14 GiB with the system's compression of memory, and left the other programs on the machine with almost nothing, so build V8 there with about 5 jobs, such as `autoninja -j5 -C out/runtime runtime`, or on a larger machine.
+
 This builds two targets:
 
 - `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. For now it starts V8, runs the script on its command line in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version. It talks to nothing else yet.
