@@ -4,6 +4,15 @@
 
 import("//build/config/sanitizers/sanitizers.gni")
 
+declare_args() {
+  # Adds the Runtime's targets: the Page program, with V8, and Blink's Web IDL
+  # database. A build directory of their own turns it on with
+  # tools/workspace/runtime_args.gn, which also has what else they need. The
+  # source export does not carry their files yet, so builds from it leave it
+  # off.
+  mitto_enable_runtime = false
+}
+
 config("public_api") {
   include_dirs = [ "include" ]
 }
@@ -261,6 +270,19 @@ group("mitto") {
       ":request_options_fuzzer",
       ":session_settings_fuzzer",
       ":socks5_auth_fuzzer",
+    ]
+  }
+}
+
+if (mitto_enable_runtime) {
+  # The Runtime's targets, which a build directory of their own builds without
+  # the library: on Linux, a shared library takes every object of each static
+  # library it links, so ICU's stub data, which runtime_args.gn turns on for
+  # V8's build, would clash there with //mitto:icu_data.
+  group("runtime") {
+    deps = [
+      "bindings:web_idl_database",
+      "page:mitto_page",
     ]
   }
 }

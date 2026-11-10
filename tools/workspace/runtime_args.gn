@@ -1,0 +1,35 @@
+# GN args that a build directory of the Runtime adds after args.gn: the Page
+# program, with V8, and Blink's Web IDL database, which //mitto:runtime builds.
+# That directory does not build the library, which args.gn alone builds. See
+# docs/building.md.
+
+mitto_enable_runtime = true
+
+# V8's mksnapshot, which runs during the build, links ICU and reads ICU's whole
+# data file from the build directory, as in Chromium's own builds. ICU's stub
+# data gives it the symbol that //mitto:icu_data gives the library, and ICU's
+# build copies the data file there. The Page program holds ICU's whole data in
+# its own way: see native/page/BUILD.gn.
+icu_use_stub_data = true
+icu_copy_icudata_to_root_build_dir = true
+
+# V8 as Chrome's releases build it, where V8 decides by settings of Chrome's
+# official builds that the library's build leaves off. V8's other settings
+# follow from the CPU and the OS, as in Chrome: tools/workspace/v8_settings.py
+# compares them all with Chrome's. With PGO, which official builds use, V8 lays
+# out its builtins by profiles of Chrome's, which bootstrap.py fetches.
+v8_enable_builtins_optimization = true
+
+# A failed check ends the process with no message, and V8 leaves out its helpers
+# for fuzzers.
+v8_logging_level = 0
+v8_wasm_random_fuzzers = false
+
+# V8 takes the instance types and layouts of its objects from its Torque
+# compiler, as before metagen, which reads them from V8's headers with libclang.
+# Metagen asks gn for the flags of those headers over all of Chromium's build
+# graph, which these args leave broken on Linux (use_gio = false) and which the
+# source export does not hold on any Host. Chrome builds with metagen. V8 keeps
+# both ways while it moves, and on macOS the two gave the same Page program: see
+# docs/building.md.
+v8_use_metagen = false

@@ -1,0 +1,82 @@
+# Blink's Web IDL database: the interfaces, dictionaries and other definitions
+# of every Web IDL file that Blink exposes to pages, in one file that says
+# nothing yet about how bindings are written. The bindings generator will read
+# it.
+#
+# These targets run Blink's own scripts on Blink's own lists of files, as
+# Blink's build does. Blink's targets cannot be used as they are, because their
+# visibility leaves out everything outside Blink. They also read the IDL files
+# that only Blink's own tests see, such as those of `internals`, which a page
+# never has and which Blink generates from files of its own. This database
+# leaves them out, and with them the one file of Blink's list for pages that
+# only adds to them.
+#
+# Upstream: third_party/blink/renderer/bindings/BUILD.gn
+
+import("//build/config/python.gni")
+import("//third_party/blink/renderer/bindings/idl_in_core.gni")
+import("//third_party/blink/renderer/bindings/idl_in_modules.gni")
+
+# Collects the IDL files of one of Blink's components into one file.
+template("collect_idl_files") {
+  action_with_pydeps(target_name) {
+    script =
+        "//third_party/blink/renderer/bindings/scripts/collect_idl_files.py"
+    inputs = invoker.inputs
+    outputs = [ invoker.output ]
+
+    # The list of files goes into a file of its own, which is too long for a
+    # command line.
+    response_file_contents = rebase_path(inputs, root_build_dir)
+    args = [
+      "--idl_list_file",
+      "{{response_file_name}}",
+      "--component",
+      invoker.component,
+      "--output",
+      rebase_path(invoker.output, root_build_dir),
+    ]
+  }
+}
+
+collect_idl_files("web_idl_in_core") {
+  component = "core"
+
+  # Blink lists this file with those of pages, but it only adds to Internals,
+  # which only Blink's tests have.
+  inputs = filter_exclude(
+          static_idl_files_in_core,
+          [ "//third_party/blink/renderer/core/timing/internals_profiler.idl" ])
+  output = "$target_gen_dir/web_idl_in_core.pickle"
+}
+
+collect_idl_files("web_idl_in_modules") {
+  component = "modules"
+  inputs = static_idl_files_in_modules
+  output = "$target_gen_dir/web_idl_in_modules.pickle"
+}
+
+action_with_pydeps("web_idl_database") {
+  script =
+      "//third_party/blink/renderer/bindings/scripts/build_web_idl_database.py"
+  components = get_target_outputs(":web_idl_in_core") +
+               get_target_outputs(":web_idl_in_modules")
+
+  # Which features are on for stable, and the like, which the database records
+  # for each definition.
+  runtime_enabled_features =
+      "//third_party/blink/renderer/platform/runtime_enabled_features.json5"
+  inputs = components + [ runtime_enabled_features ]
+  outputs = [ "$target_gen_dir/web_idl_database.pickle" ]
+  args = [
+           "--output",
+           rebase_path(outputs[0], root_build_dir),
+           "--runtime_enabled_features",
+           rebase_path(runtime_enabled_features, root_build_dir),
+           "--",
+         ] + rebase_path(components, root_build_dir)
+  deps = [
+    ":web_idl_in_core",
+    ":web_idl_in_modules",
+  ]
+}

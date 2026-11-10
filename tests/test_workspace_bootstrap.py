@@ -3,6 +3,8 @@
 import os
 import shutil
 import subprocess
+import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -112,6 +114,32 @@ def test_depot_tools_commands_are_their_batch_files_on_windows(tmp_path: Path) -
 
     assert bootstrap.depot_tool(workspace, "win", "gsutil.py") == tmp_path / "depot_tools/gsutil.py.bat"
     assert bootstrap.depot_tool(workspace, "linux", "gclient") == tmp_path / "depot_tools/gclient"
+
+
+def test_v8s_builtins_profiles_come_from_v8s_own_script_with_the_workspaces_depot_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = bootstrap.Workspace(tmp_path, "157.0.8103.39")
+    calls: list[tuple[list[str], Path | None]] = []
+
+    def record(
+        command: Sequence[str | Path], env: Mapping[str, str], cwd: Path | None = None, quiet: bool = False
+    ) -> None:
+        del env, quiet
+        calls.append(([str(part) for part in command], cwd))
+
+    monkeypatch.setattr(bootstrap, "run", record)
+
+    bootstrap.fetch_builtins_profiles(workspace, {})
+
+    script = str(workspace.src / "v8/tools/builtins-pgo/download_profiles.py")
+    depot_tools = str(tmp_path / "depot_tools")
+    assert calls == [
+        (
+            [sys.executable, script, "download", "--depot-tools", depot_tools, "--check-v8-revision", "--quiet"],
+            workspace.src,
+        )
+    ]
 
 
 def test_gclient_file_pins_the_revision() -> None:
