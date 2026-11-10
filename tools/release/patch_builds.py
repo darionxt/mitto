@@ -104,6 +104,18 @@ class BuildChanges:
     rolls: tuple[Roll, ...]
     deps_alone: tuple[Commit, ...]
 
+    @property
+    def carried(self) -> tuple[SecurityFix, ...]:
+        """The security fixes that the build ends up with, once each, from what it gained.
+
+        A fix that a later revert takes out is not carried, unless a reland brings it back: a fix counts when more of
+        the gained commits bring it than revert it.
+        """
+        balance = Counter(fix.bug for change in self.gained for fix in change.fixes)
+        balance.subtract(fix.bug for change in self.gained for fix in change.reverted)
+        carried = {fix.bug: fix for change in self.gained for fix in change.fixes if balance[fix.bug] > 0}
+        return tuple(carried.values())
+
 
 def build_changes(
     since: str,
@@ -282,7 +294,7 @@ def patch_builds_report(since: str, export_build: str, export_files: int, change
                 str(build.build.first_served),
                 "pinnable" if build.build.pinnable else _share(build.build.rollout),
                 touched,
-                _severest([fix for change in build.gained for fix in change.fixes]),
+                _severest(build.carried),
             )
         )
     widths = [max(len(row[column]) for row in rows) for column in range(len(rows[0]))]
@@ -333,7 +345,7 @@ def _verdict(changes: list[BuildChanges]) -> str:
     """Say whether a build carries a fix for which the owner may start a patch run, which takes a pinnable build."""
 
     def candidates(build: BuildChanges) -> list[SecurityFix]:
-        return [fix for change in build.gained for fix in change.fixes if may_start_a_patch_run(fix)]
+        return [fix for fix in build.carried if may_start_a_patch_run(fix)]
 
     pinnable = [build for build in changes if build.build.pinnable]
     if pinnable and (fixes := candidates(pinnable[-1])):
@@ -353,7 +365,7 @@ def _verdict(changes: list[BuildChanges]) -> str:
     )
 
 
-def _severest(fixes: list[SecurityFix]) -> str:
+def _severest(fixes: tuple[SecurityFix, ...]) -> str:
     if not fixes:
         return "none"
     severest = max((fix.severity for fix in fixes), key=SEVERITIES.index)

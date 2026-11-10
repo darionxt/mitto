@@ -451,3 +451,37 @@ def test_a_revert_of_a_fix_takes_it_out_and_starts_no_patch_run() -> None:
         in report.splitlines()
     )
     assert report.splitlines()[-1].startswith("No build carries a fix in exported files")
+
+
+def fixed_and_reverted(*kinds: str) -> BuildChanges:
+    """Return what 157.0.8103.51 changes when its commits fix a socket, revert or reland the fix, in this order."""
+    messages = {
+        "fix": "[M157] Fix a socket\n\nBug: 580000002\n",
+        "revert": f'[M157] Revert "Fix a socket"\n\nThis reverts commit {"a" * 40}.\n\nBug: 580000002\n',
+        "reland": f'[M157] Reland "Fix a socket"\n\nThis is a reland of commit {"a" * 40}\n\nBug: 580000002\n',
+    }
+    commits = [
+        commit(str(index) * 40, messages[kind], file("net/socket/socket.cc")) for index, kind in enumerate(kinds, 1)
+    ]
+    fetch, _ = answering({gitiles_log_url(CHROMIUM_URL, "157.0.8103.39", "157.0.8103.51"): list(reversed(commits))})
+    found_fix = fix("580000002", "Critical")
+    (found,) = build_changes("157.0.8103.39", [build("157.0.8103.51")], EXPORTED, {found_fix.bug: found_fix}, fetch)
+    return found
+
+
+def test_a_fix_and_its_revert_carry_nothing_and_start_no_patch_run() -> None:
+    found = fixed_and_reverted("fix", "revert")
+
+    assert len(found.gained) == 2
+    assert found.carried == ()
+    report = patch_builds_report("157.0.8103.39", "157.0.8103.39", len(EXPORTED), [found])
+    assert "157.0.8103.51  2026-11-09    pinnable  2 commits                  none" in report
+    assert report.splitlines()[-1].startswith("No build carries a fix in exported files")
+
+
+def test_a_reland_after_a_revert_carries_the_fix_once() -> None:
+    found = fixed_and_reverted("fix", "revert", "reland")
+
+    assert [carried.bug for carried in found.carried] == ["580000002"]
+    report = patch_builds_report("157.0.8103.39", "157.0.8103.39", len(EXPORTED), [found])
+    assert report.splitlines()[-1].startswith("The newest pinnable build, 157.0.8103.51, carries 1 fix")
