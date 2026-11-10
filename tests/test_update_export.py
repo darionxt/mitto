@@ -307,3 +307,17 @@ def test_builds_of_another_milestone_are_not_updated(tmp_path: Path) -> None:
 
     with pytest.raises(update_export.UpdateError, match="one milestone"):
         update_export.update_export(tree.workspace, tree.archive(tmp_path), "158.0.8200.1")
+
+
+@needs_posix
+@pytest.mark.usefixtures("no_patches")
+def test_a_file_that_becomes_a_link_asks_for_slices(tmp_path: Path) -> None:
+    tree = Tree(tmp_path, {}, {})
+    upstream = tmp_path / "upstream-src"
+    git(upstream, "tag", "-d", NEW)
+    (upstream / "net/a.h").unlink()
+    (upstream / "net/a.h").symlink_to("a.cc")
+    commit(upstream, {}, NEW)
+
+    with pytest.raises(update_export.UpdateError, match=r"net/a\.h changed its type"):
+        update_export.update_export(tree.workspace, tree.archive(tmp_path), NEW)

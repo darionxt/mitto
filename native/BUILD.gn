@@ -7,9 +7,7 @@ import("//build/config/sanitizers/sanitizers.gni")
 declare_args() {
   # Adds the Runtime's targets: the Page program, with V8, and Blink's Web IDL
   # database. A build directory of their own turns it on with
-  # tools/workspace/runtime_args.gn, which also has what else they need. The
-  # source export does not carry their files yet, so builds from it leave it
-  # off.
+  # tools/workspace/runtime_args.gn, which also has what else they need.
   mitto_enable_runtime = false
 }
 

@@ -260,7 +260,7 @@ def exported_paths(src: Path) -> list[str]:
 
 
 def diff_changes(
-    workspace: Path, old_tag: str, new_tag: str, exported: Sequence[str]
+    workspace: Path, src: Path, old_tag: str, new_tag: str, exported: Sequence[str]
 ) -> tuple[list[Change], set[str], list[str], int, Mapping[str, Any]]:
     """Returns the new content of each exported file that git changed, the untracked ones, what calls for slices,
     the new build's commit time and its DEPS.
@@ -301,12 +301,18 @@ def diff_changes(
         statuses = changed_files(repository, old_rev, new_rev)
         for path in paths:
             relative = path.removeprefix(prefix)
+            status = statuses.get(relative)
             if relative not in tracked:
                 untracked.add(path)
-            elif statuses.get(relative) == "D":
+            elif status == "D":
                 reasons.append(f"{path} is gone in {new_tag}")
-            elif statuses.get(relative) == "M":
+            elif status == "M" and (src / path).is_symlink():
+                reasons.append(f"{path}, a symbolic link, changed")
+            elif status == "M":
                 changes.append(Change(path, git_bytes(repository, "show", f"{new_rev}:{relative}")))
+            elif status is not None:
+                # Such as T, a file that became a link.
+                reasons.append(f"{path} changed its type")
     return changes, untracked, reasons, commit_time, new_deps
 
 
@@ -346,7 +352,7 @@ def update_export(workspace: Path, archive: Path, new_tag: str) -> Path:
         exported = exported_paths(src)
 
         # The old export's patched files are the patched versions; git holds the unpatched ones.
-        changes, untracked, reasons, commit_time, new_deps = diff_changes(workspace, old_tag, new_tag, exported)
+        changes, untracked, reasons, commit_time, new_deps = diff_changes(workspace, src, old_tag, new_tag, exported)
         for change in changes:
             old = (src / change.path).read_bytes()
             new = change.new
