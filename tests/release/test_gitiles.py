@@ -185,3 +185,27 @@ def test_the_submodules_of_a_build_are_those_of_its_gitmodules() -> None:
 def test_a_gitmodules_without_submodules_is_an_error(body: bytes) -> None:
     with pytest.raises(WebError, match=r"\.gitmodules"):
         submodule_urls(CHROMIUM_URL, "157.0.8103.38", lambda _url: body)
+
+
+_REVERTED = "Original change's description:\n> Fix a socket\n>\n> Bug: 580000002\n\nBug: 580000002\n"
+
+
+@pytest.mark.parametrize(
+    ("message", "reverts"),
+    [
+        (f'Revert "Fix a socket"\n\nThis reverts commit {"a" * 40}.\n\n{_REVERTED}', True),
+        (f'[M157] Revert "Fix a socket"\n\nThis reverts commit {"a" * 40}.\n\n{_REVERTED}', True),
+        (f'Revert "Revert "Fix a socket""\n\nThis reverts commit {"b" * 40}.\n\n{_REVERTED}', False),
+        (f"Undo the socket fix\n\nThis reverts commit {'a' * 12}.\n\nBug: 580000002\n", True),
+        (f'Reland "Fix a socket"\n\nThis is a reland of commit {"a" * 40}\n\n{_REVERTED}', False),
+        (f'Revert "Fix a socket" in a subject, without the line\n\n{_REVERTED}', False),
+        (f"Fix a socket\n\n> This reverts commit {'a' * 40}.\n\nBug: 580000002\n", False),
+    ],
+)
+def test_a_revert_is_a_commit_that_says_what_it_reverts_and_no_revert_of_a_revert(message: str, reverts: bool) -> None:
+    fetch, _ = answering({"log": [commit("c" * 40, message)]})
+
+    (found,) = commits_between(CHROMIUM_URL, "157.0.8103.39", "157.0.8103.51", fetch)
+
+    assert found.reverts is reverts
+    assert found.bugs == ("580000002",)

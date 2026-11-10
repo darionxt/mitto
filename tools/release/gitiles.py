@@ -32,6 +32,12 @@ _PAGE_SIZE = 1000
 _BUG_LINE = re.compile(r"^[> ]*(?:Bug|Fixed):(.*)$", re.MULTILINE)
 _BUG_NUMBER = re.compile(r"\b\d{5,}\b")
 
+# A revert says which commit it reverts on a line of its own. Its subject starts with Revert "...", after any tags such
+# as [M157], once for a revert and twice for a revert of a revert, which brings the change back.
+_REVERT_LINE = re.compile(r"^This reverts commit [0-9a-f]{7,40}\b", re.MULTILINE)
+_TAGS = re.compile(r"^(?:\[[^\]]*\]\s*)*")
+_REVERT_PREFIX = 'Revert "'
+
 _SUBMODULE = re.compile(r"^\s*path\s*=\s*(\S+)\s*\n\s*url\s*=\s*(\S+)\s*$", re.MULTILINE)
 
 
@@ -63,12 +69,14 @@ class Commit:
         subject: The first line of its message.
         bugs: The bugs that its message names on Bug: or Fixed: lines, in their order.
         changes: What it changes, path by path.
+        reverts: Whether it takes a change out again, so that the bugs it names are those of the change it reverts.
     """
 
     id: str
     subject: str
     bugs: tuple[str, ...]
     changes: tuple[Change, ...]
+    reverts: bool = False
 
 
 def commits_between(repository: str, old: str, new: str, fetch: Fetch) -> list[Commit]:
@@ -139,12 +147,24 @@ def _commit(entry: Any, url: str) -> Commit:
     if not isinstance(commit, str) or not isinstance(message, str) or not isinstance(tree_diff, list):
         raise WebError(f"{url} gave a commit without its hash, message or changes: {entry.get('commit')!r}")
     bugs = [number for line in _BUG_LINE.findall(message) for number in _BUG_NUMBER.findall(line)]
+    subject = message.split("\n", 1)[0]
     return Commit(
         id=commit,
-        subject=message.split("\n", 1)[0],
+        subject=subject,
         bugs=tuple(dict.fromkeys(bugs)),
         changes=tuple(_change(change, url) for change in cast(list[Any], tree_diff)),
+        reverts=_reverts(subject, message),
     )
+
+
+def _reverts(subject: str, message: str) -> bool:
+    """Return whether a commit takes a change out: a revert, but not a revert of a revert."""
+    if not _REVERT_LINE.search(message):
+        return False
+    rest, prefixes = _TAGS.sub("", subject, count=1), 0
+    while rest.startswith(_REVERT_PREFIX):
+        rest, prefixes = rest.removeprefix(_REVERT_PREFIX), prefixes + 1
+    return prefixes % 2 == 1 or prefixes == 0
 
 
 def _change(entry: Any, url: str) -> Change:

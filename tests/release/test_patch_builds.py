@@ -424,3 +424,30 @@ def test_a_revert_of_a_roll_that_the_engines_build_has_lacks_its_commits_once() 
     (change,) = found.lacks
     assert change.commit.subject == "Fix the record layer"
     assert found.gained == ()
+
+
+def test_a_revert_of_a_fix_takes_it_out_and_starts_no_patch_run() -> None:
+    message = (
+        f'[M157] Revert "Fix a socket"\n\nThis reverts commit {"a" * 40}.\n\nOriginal change\'s description:\n'
+        "> Fix a socket\n>\n> Bug: 580000002\n\nBug: 580000002\n"
+    )
+    fetch, _ = answering(
+        {
+            gitiles_log_url(CHROMIUM_URL, "157.0.8103.39", "157.0.8103.51"): [
+                commit("4" * 40, message, file("net/socket/socket.cc"))
+            ],
+        }
+    )
+    found_fix = fix("580000002", "Critical")
+
+    (found,) = build_changes("157.0.8103.39", [build("157.0.8103.51")], EXPORTED, {found_fix.bug: found_fix}, fetch)
+
+    (change,) = found.gained
+    assert (change.fixes, change.reverted) == ((), (found_fix,))
+    report = patch_builds_report("157.0.8103.39", "157.0.8103.39", len(EXPORTED), [found])
+    assert "157.0.8103.51  2026-11-09    pinnable  1 commit                   none" in report
+    assert (
+        "      Reverts the fix of Critical CVE-2026-580000002: Use after free in Network (bug 580000002, notes of 2026-11-09)"
+        in report.splitlines()
+    )
+    assert report.splitlines()[-1].startswith("No build carries a fix in exported files")

@@ -40,13 +40,15 @@ class ExportedChange:
         commit: The commit.
         submodule: The submodule's path, such as "third_party/boringssl/src", or "" for Chromium's own tree.
         files: The files of the export it changes, from the top of Chromium's tree.
-        fixes: The security fixes of the release notes whose bugs it names.
+        fixes: The security fixes of the release notes whose bugs it names, unless it is a revert.
+        reverted: The security fixes of the release notes whose bugs it names, if it is a revert, which takes them out.
     """
 
     commit: Commit
     submodule: str
     files: tuple[str, ...]
     fixes: tuple[SecurityFix, ...]
+    reverted: tuple[SecurityFix, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +235,8 @@ class _Reader:
 
     def _exported_change(self, commit: Commit, submodule: str, files: tuple[str, ...]) -> ExportedChange:
         fixes = tuple(self._fixes[bug] for bug in commit.bugs if bug in self._fixes)
+        if commit.reverts:
+            return ExportedChange(commit, submodule, files, fixes=(), reverted=fixes)
         return ExportedChange(commit, submodule, files, fixes)
 
     def _between(self, repository: str, old: str, new: str) -> list[Commit]:
@@ -365,6 +369,10 @@ def _describe(change: ExportedChange) -> list[str]:
         f"      {fix.severity} {fix.cve}: {fix.title} (bug {fix.bug}, notes of {fix.published})"
         + (", exploited in the wild" if fix.in_the_wild else "")
         for fix in change.fixes
+    ]
+    lines += [
+        f"      Reverts the fix of {fix.severity} {fix.cve}: {fix.title} (bug {fix.bug}, notes of {fix.published})"
+        for fix in change.reverted
     ]
     lines += [f"      {file}" for file in change.files]
     return lines
