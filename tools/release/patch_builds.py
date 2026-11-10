@@ -5,6 +5,7 @@ submodule such as BoringSSL or QUICHE, which Chromium rolls to a new commit. Bot
 even while the bugs behind its fixes stay restricted. See docs/releasing.md.
 """
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -126,16 +127,34 @@ def build_changes(
     for build in builds:
         gained = reader.changes(since, build.version)
         lacks = reader.changes(build.version, since)
+        has, lacking = _net(
+            [*reversed(gained.exported), *reversed(lacks.removed)],
+            [*reversed(lacks.exported), *reversed(gained.removed)],
+        )
         found.append(
-            BuildChanges(
-                build,
-                (*reversed(gained.exported), *reversed(lacks.removed)),
-                (*reversed(lacks.exported), *reversed(gained.removed)),
-                tuple(reversed(gained.rolls)),
-                tuple(reversed(gained.deps_alone)),
-            )
+            BuildChanges(build, has, lacking, tuple(reversed(gained.rolls)), tuple(reversed(gained.deps_alone)))
         )
     return found
+
+
+def _net(
+    brought: list[ExportedChange], taken: list[ExportedChange]
+) -> tuple[tuple[ExportedChange, ...], tuple[ExportedChange, ...]]:
+    """Return what a build has and lacks of the commits that its rolls bring in and take out, once each.
+
+    Rolls can bring a commit of a submodule in and take it out again, such as a roll and its revert, so a commit counts
+    as had when it comes in more often than it goes out, and as lacking when it goes out more often. A commit of
+    Chromium's own tree comes in or goes out once at most.
+    """
+
+    def key(change: ExportedChange) -> tuple[str, str]:
+        return change.submodule, change.commit.id
+
+    balance = Counter(key(change) for change in brought)
+    balance.subtract(key(change) for change in taken)
+    has = {key(change): change for change in brought if balance[key(change)] > 0}
+    lacks = {key(change): change for change in taken if balance[key(change)] < 0}
+    return tuple(has.values()), tuple(lacks.values())
 
 
 class _Reader:

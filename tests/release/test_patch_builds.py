@@ -1,6 +1,7 @@
 """Tests of which new builds of the Engine Release change files of the source export, with no network."""
 
 import base64
+import itertools
 import json
 from datetime import date
 
@@ -9,7 +10,13 @@ import pytest
 from tests.release.saved import gitiles_log_url, saved
 from tools.release.chrome_releases import SecurityFix, security_fixes
 from tools.release.gitiles import CHROMIUM_URL
-from tools.release.patch_builds import build_changes, builds_after, may_start_a_patch_run, patch_builds_report
+from tools.release.patch_builds import (
+    BuildChanges,
+    build_changes,
+    builds_after,
+    may_start_a_patch_run,
+    patch_builds_report,
+)
 from tools.release.version_history import StableBuild, stable_builds
 from tools.release.web import Fetch
 
@@ -367,3 +374,53 @@ def test_a_roll_back_to_an_older_commit_lacks_what_it_takes_out() -> None:
     report = patch_builds_report("157.0.8103.39", "157.0.8103.39", len(EXPORTED), [found])
     assert "none, lacks 1 commit" in report
     assert "0 commits, of which 0 change exported files, and takes out 2 commits, of which 1 change them." in report
+
+
+def rolled_back_and_forth(*revisions: str) -> list[BuildChanges]:
+    """Return what 157.0.8103.51 changes when its commits roll BoringSSL through these revisions in turn.
+
+    Between revisions a and b, BoringSSL has one commit, a Critical fix to an exported file.
+    """
+    a, b = "a" * 40, "b" * 40
+    rolls = [
+        commit(str(index) * 40, "Roll BoringSSL\n", submodule("third_party/boringssl/src", old, new))
+        for index, (old, new) in enumerate(itertools.pairwise(revisions), start=1)
+    ]
+    fetch, _ = answering(
+        {
+            gitiles_log_url(CHROMIUM_URL, "157.0.8103.39", "157.0.8103.51"): list(reversed(rolls)),
+            gitiles_log_url(BORINGSSL_URL, a, b): [
+                commit("e" * 40, "Fix the record layer\n\nBug: 580000001\n", file("ssl/s3.cc"))
+            ],
+            gitiles_log_url(BORINGSSL_URL, b, a): [],
+        },
+        '[submodule "third_party/boringssl/src"]\n\tpath = third_party/boringssl/src\n'
+        "\turl = https://boringssl.googlesource.com/boringssl\n",
+    )
+    found_fix = fix("580000001", "Critical")
+    return build_changes("157.0.8103.39", [build("157.0.8103.51")], EXPORTED, {found_fix.bug: found_fix}, fetch)
+
+
+def test_a_roll_and_its_revert_bring_nothing() -> None:
+    (found,) = rolled_back_and_forth("a" * 40, "b" * 40, "a" * 40)
+
+    assert (found.gained, found.lacks) == ((), ())
+    assert len(found.rolls) == 2
+    report = patch_builds_report("157.0.8103.39", "157.0.8103.39", len(EXPORTED), [found])
+    assert report.splitlines()[-1].startswith("No build carries a fix in exported files")
+
+
+def test_a_roll_again_after_its_revert_brings_its_commits_once() -> None:
+    (found,) = rolled_back_and_forth("a" * 40, "b" * 40, "a" * 40, "b" * 40)
+
+    (change,) = found.gained
+    assert change.commit.subject == "Fix the record layer"
+    assert found.lacks == ()
+
+
+def test_a_revert_of_a_roll_that_the_engines_build_has_lacks_its_commits_once() -> None:
+    (found,) = rolled_back_and_forth("b" * 40, "a" * 40, "b" * 40, "a" * 40)
+
+    (change,) = found.lacks
+    assert change.commit.subject == "Fix the record layer"
+    assert found.gained == ()
