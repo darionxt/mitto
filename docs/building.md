@@ -260,7 +260,7 @@ Of the stripped program, ICU's data is 10.8 MB and V8's snapshot 0.37 MB. A whee
 
 A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on each **Host**, with the patches already applied. It needs no workspace and no depot_tools.
 
-Run this from the repository root, with a new directory on a path without spaces. It needs about 4.1 GiB there on Linux, 3.2 GiB on macOS and 4.6 GiB on Windows, including the build output, as well as `curl` and `tar`, which Windows brings: there the command takes them from `System32`, whatever else is on `PATH`. It took about 6 minutes on a 10-core Mac, one of them for the downloads, and about 10 minutes on a 16-thread Windows machine. macOS also needs the same Xcode as a checkout, and Windows the same Visual Studio and Windows SDK (see [Requirements](#requirements)). On Windows the longest path lies 195 characters below the directory, in the build output, so a directory of up to 64 characters keeps every path within Windows' limit of 260.
+Run this from the repository root, with a new directory on a path without spaces. It needs about 4.2 GiB there on Linux, 3.2 GiB on macOS and 4.7 GiB on Windows, including the build output, as well as `curl` and `tar`, which Windows brings: there the command takes them from `System32`, whatever else is on `PATH`. It took about 6 minutes on a 10-core Mac, one of them for the downloads, and about 10 minutes on a 16-thread Windows machine. macOS also needs the same Xcode as a checkout, and Windows the same Visual Studio and Windows SDK (see [Requirements](#requirements)). On Windows the longest path lies 198 characters below the directory, in the Runtime's build output, so a directory of up to 61 characters keeps every path within Windows' limit of 260.
 
 ```bash
 uv run tools/workspace/export.py build /absolute/path/to/new/directory
@@ -304,7 +304,15 @@ The same command builds [the Runtime](#build-the-runtime), the Page program and 
 uv run tools/workspace/export.py build /absolute/path/to/new/directory --config runtime -j 5
 ```
 
-`-j` sets how many build steps ninja runs at once, which by default is the number of cores plus two. V8's compile jobs need far more memory than the library's, so on a Mac with 16 GB build it with about 5. The command says whether `mitto_page` is the same as the one that the export's slice built, in the same way as for the library, and prints its path. The database is `out/runtime/gen/mitto/bindings/web_idl_database.pickle` beside it. The build of the library and the Runtime's can share one directory, each in its own build directory under `out/`. TODO178-RUNTIME-TIMES
+`-j` sets how many build steps ninja runs at once, which by default is the number of cores plus two. V8's compile jobs need far more memory than the library's, so on a Mac with 16 GB build it with about 5. The command says whether `mitto_page` is the same as the one that the export's slice built, in the same way as for the library, and prints its path. The database is `out/runtime/gen/mitto/bindings/web_idl_database.pickle` beside it. The build of the library and the Runtime's can share one directory, each in its own build directory under `out/`, and then share the sources and the toolchain too.
+
+Measured for Chromium 157.0.8103.39, in a directory where the library's build had run first:
+
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Machine | 16 threads | 10 cores, `-j 5` | 16 threads |
+| Build of `runtime` | 18.5 minutes | 20 minutes | 22 minutes |
+| `out/runtime` | 2.3 GiB | 1.6 GiB | 2.4 GiB |
 
 CI does not build the Runtime yet.
 
@@ -785,7 +793,7 @@ The script collects those paths, runs `tools/workspace/compare` on them, and the
 - `native/page` or `native/bindings` starts to depend on a target outside the Runtime's build graph, as for `native/` below;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan` and `fuzz` on Linux. TODO178-TIME
+What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan` and `fuzz` on Linux. The steps took about three and a half hours on 2026-11-10, on machines that had built the native core and the Runtime before, and most of it on the machine that runs Linux and Windows in turn. The slices took 36 minutes on Linux for its five builds, 29 minutes on macOS with `-j 5` and 33 minutes on Windows. The builds from the archive in step 4 took 48 minutes on Linux, 29 minutes on macOS and 33 minutes on Windows, before the tests.
 
 1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository, with the bootstrap script run again from that commit:
 
@@ -870,3 +878,5 @@ Those are the ways in which a build can come to read a file that the export does
 The archive's `export.json` names the export it came from, under `updated_from`, and holds no fingerprints of traced builds, since no slice built anything. So a build from it says that it has nothing to compare its library with. [Build from that archive](#build-from-the-source-export) on the machine, with `--archive` and no checkout, once with each `--config` that it has, and let CI build it on every Host, as for any export.
 
 On 2026-11-10 this updated the export of 157.0.8103.27 (`mitto-chromium-157.0.8103.27-2.tar.xz`) to 157.0.8103.39 in 2 minutes on the Mac, with both tags already in `compare/src`. Upstream had changed 7 of its files: five of the HTTP cache, the fix for a 206 that overruns its range, as well as `DEPS` and `chrome/VERSION`. Of the dependencies, only ANGLE had moved, which the export holds 5 files of, licences and a `.gni` file, none of them changed. All 12,380 files under `src/` of the result had the same bytes, modes and times as in the export that slices made of 157.0.8103.39, `mitto-chromium-157.0.8103.39.tar.xz`, and so did the toolchain's pins. Only `export.json`, with its `updated_from` and no fingerprints, differed, and the README, whose text names Windows since the export of 157.0.8103.39 that added its slice.
+
+With the Runtime in the export, a patch build changes V8 too. The same day, the script took `mitto-chromium-157.0.8103.39-3.tar.xz` to 157.0.8103.27, the other way through the same diff, in 3 minutes. 32 of its files changed: 23 of V8, from ten of its rolls, Blink's `runtime_enabled_features.json5`, the HTTP cache's five, `DEPS` and `chrome/VERSION`. None was a build file or added an include, and it fetched the builtins profiles of V8 15.7.112.12. On the Mac the result built the library and the Runtime with no checkout, and that `mitto_page` printed `15.7.112.12` for `--version`. No export of 157.0.8103.27 that carries the Runtime exists to compare that with.
