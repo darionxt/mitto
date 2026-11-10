@@ -43,7 +43,14 @@ Each Chrome Release is recorded at its newest pinnable build, because that is th
 2. Rerun [`tools/workspace/bootstrap.py`](building.md#set-up-the-workspace) on each of the workspace's three machines: the macOS, the Linux and the Windows machine. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`. If a patch no longer applies, the script stops after the sync. Update the patch against the new checkout and rerun the script. Delete a patch the new release no longer needs.
 3. [Build the native core](building.md#build-the-native-core) in the new checkout on each machine. On the Windows machine, check first that Visual Studio and the Windows SDK are the versions that the new release asks for, in its `docs/windows_build_instructions.md` and `build/vs_toolchain.py`. They are the machine's and not the checkout's, and a build stops before it starts without that SDK.
 4. [Compare](building.md#compare-two-releases) the build of each older Chrome Release in the new Supported Window with the new one. A change in the network code that sets up a connection is one that Persona data may have to undo for the older Chrome Releases ([what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases)). It is a decision for the milestone's plan.
-5. Once the new release works, delete the old release's `chromium-<tag>` directory on each machine.
+5. On the macOS or the Linux machine, [compare the files that mitto ports](building.md#the-files-mitto-ports), from the build that `tools/workspace/chromium_tag` named before this run, as `git show main:tools/workspace/chromium_tag` prints it, to the new one:
+
+   ```bash
+   uv run python -m tools.workspace.upstream OLD_BUILD BUILD
+   ```
+
+   Review the diff of each upstream file. A change that a port must follow goes into the run's pull request. One that it need not follow is written down there, with why. If the script stops because a file is missing at the new build, find where its code went, and move the `Upstream:` line with the port.
+6. Once the new release works, delete the old release's `chromium-<tag>` directory on each machine.
 
 Each release has its own checkout because a shallow checkout cannot move to a new release in place: gclient would fetch every branch with full history. Until the last step, the old checkout and its build output stay usable.
 

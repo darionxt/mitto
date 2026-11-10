@@ -35,6 +35,24 @@ void SetUpTopLevelNavigation(net::URLRequest& request);
 // ported here with the upstream names kept. What each part comes from is on the
 // part.
 //
+// Upstream: content/browser/browsing_data/clear_site_data_utils.cc
+// Upstream: content/browser/client_hints/client_hints.cc
+// Upstream: content/browser/client_hints/critical_client_hints_throttle.cc
+// Upstream: content/browser/loader/navigation_url_loader_impl.cc
+// Upstream: content/browser/loader/navigation_url_loader_impl.h
+// Upstream: content/browser/loader/url_loader_throttles.cc
+// Upstream: content/browser/renderer_host/navigation_request.cc
+// Upstream: content/public/common/referrer.cc
+// Upstream: services/network/accept_ch_frame_interceptor.cc
+// Upstream: services/network/cors/cors_url_loader.cc
+// Upstream: services/network/url_loader.cc
+// Upstream: services/network/url_loader_util.cc
+// Upstream: third_party/blink/common/client_hints/client_hints.cc
+// Upstream: third_party/blink/common/loader/throttling_url_loader.cc
+// Upstream: third_party/blink/renderer/core/loader/frame_fetch_context.cc
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_loader.cc
+// Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
+//
 // A Persona's line keeps its place in the headers, and this sets its value or
 // removes it. A name in `FetchParams::fixed_headers` is the caller's, so
 // nothing here touches it.

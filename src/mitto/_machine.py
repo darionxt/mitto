@@ -60,6 +60,7 @@ MACHINE_HINTS = frozenset(
 _TABLE_PATH = Path(__file__).with_name("machine_table.json")
 
 # What Chrome on a desktop sends for the memory, which it takes to the nearer power of two and holds between 2 and 32 GiB.
+# Upstream: third_party/blink/common/device_memory/approximated_device_memory.cc
 _MEMORY_SIZES = (2, 4, 8, 16, 32)
 
 # The scales that Windows' display settings offer.
@@ -88,8 +89,10 @@ _REDUCED = ("no-preference", "reduce")
 # Chrome holds the throughput as 32 bits of kbps, and nothing larger is a round trip either.
 _LARGEST_ESTIMATE = 2**31 - 1
 
-# How Chrome caps and rounds the estimates before it sends them, in content/browser/client_hints/client_hints.cc and in
-# Blink's network_state_notifier.cc.
+# How Chrome caps and rounds the estimates before it sends them, ported from content/browser/client_hints/client_hints.cc
+# and from Blink's network_state_notifier.cc.
+# Upstream: content/browser/client_hints/client_hints.cc
+# Upstream: third_party/blink/renderer/platform/network/network_state_notifier.cc
 _LARGEST_RTT_MS = 3000
 _RTT_GRANULARITY_MS = 50
 _LARGEST_DOWNLINK_KBPS = 10_000
@@ -97,6 +100,7 @@ _DOWNLINK_GRANULARITY_KBPS = 50
 
 # The round trip from which Chrome's network quality estimator gives each effective connection type, slowest first, in
 # net/nqe/network_quality_estimator_params.cc.
+# Upstream: net/nqe/network_quality_estimator_params.cc
 _ECT_THRESHOLDS_MS = (("slow-2g", 2010), ("2g", 1420), ("3g", 272))
 _FASTEST_ECT = "4g"
 

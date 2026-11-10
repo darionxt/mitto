@@ -3,6 +3,9 @@
 // found in the LICENSE file of Chromium's source tree.
 //
 // See the header for where this comes from and what is left out.
+//
+// Upstream: services/network/ssl_config_service_mojo.cc
+// Upstream: services/network/public/mojom/ssl_config.mojom
 
 #include "mitto/ssl_config_service_mojo.h"
 

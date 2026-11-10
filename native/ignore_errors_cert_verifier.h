@@ -6,6 +6,9 @@
 // target brings in the whole network service. SPKIHashSet comes from
 // services/network/public/cpp/spki_hash_set.h. Reading the allowlist from the
 // command line and the hook for testing are left out.
+//
+// Upstream: services/network/ignore_errors_cert_verifier.h
+// Upstream: services/network/public/cpp/spki_hash_set.h
 
 #ifndef MITTO_IGNORE_ERRORS_CERT_VERIFIER_H_
 #define MITTO_IGNORE_ERRORS_CERT_VERIFIER_H_

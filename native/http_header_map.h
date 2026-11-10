@@ -7,6 +7,9 @@
 // them. The source export leaves Blink out, so this is ported from
 // third_party/blink/renderer/platform/network/http_header_map.h and
 // .../wtf/hash_table.h, with the hash of a name in string_hasher.h.
+//
+// Upstream: third_party/blink/renderer/platform/network/http_header_map.h
+// Upstream: third_party/blink/renderer/platform/wtf/hash_table.h
 
 #ifndef MITTO_HTTP_HEADER_MAP_H_
 #define MITTO_HTTP_HEADER_MAP_H_
