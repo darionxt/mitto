@@ -1,5 +1,7 @@
 // Ported from services/network/sec_header_helpers.h in Chromium, which the
 // source export leaves out.
+//
+// Upstream: services/network/sec_header_helpers.h
 
 #ifndef MITTO_SEC_HEADER_HELPERS_H_
 #define MITTO_SEC_HEADER_HELPERS_H_

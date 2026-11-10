@@ -4,6 +4,8 @@
 //
 // Ported from components/network_session_configurator/browser/
 // network_session_configurator.cc. See the header for what is left out.
+//
+// Upstream: components/network_session_configurator/browser/network_session_configurator.cc
 
 #include "mitto/network_session_configurator.h"
 
@@ -29,6 +31,8 @@ namespace {
 // default in //net cannot change what mitto sends without a Parity Check
 // failing. On the wire they are what tests/baselines/157/http2.json holds under
 // http2.preface.
+// Upstream: net/http/http_network_session.cc
+// Upstream: net/http/http_network_session.h
 
 // How much a connection may receive. The WINDOW_UPDATE on stream 0 raises the
 // window to this from the protocol's initial 65535, an increment of 15663105.

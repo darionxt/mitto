@@ -2,6 +2,10 @@
 // 2-Clause license in third_party/rapidhash/LICENSE of Chromium's source tree.
 // The readers follow third_party/blink/renderer/platform/wtf, under the license
 // in that directory.
+//
+// Upstream: third_party/rapidhash/rapidhash.h
+// Upstream: third_party/blink/renderer/platform/wtf/text/string_hasher.h
+// Upstream: third_party/blink/renderer/platform/wtf/text/case_folding_hash.h
 
 #include "mitto/string_hasher.h"
 

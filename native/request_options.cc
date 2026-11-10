@@ -39,6 +39,7 @@ constexpr double kMaxSize = 9007199254740992.0;
 
 // Chrome's network service refuses the methods that the Fetch standard forbids,
 // in network::cors::IsForbiddenMethod(), so Chrome never sends them.
+// Upstream: services/network/public/cpp/cors/cors.cc
 bool IsValidMethod(std::string_view method) {
   const std::string upper_method = base::ToUpperASCII(method);
   return net::HttpUtil::IsToken(method) &&

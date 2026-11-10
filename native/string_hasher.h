@@ -2,6 +2,10 @@
 // use. The source export leaves Blink out, so this is ported from
 // third_party/blink/renderer/platform/wtf/text/string_hasher.h,
 // .../wtf/text/case_folding_hash.h and third_party/rapidhash/rapidhash.h.
+//
+// Upstream: third_party/blink/renderer/platform/wtf/text/string_hasher.h
+// Upstream: third_party/blink/renderer/platform/wtf/text/case_folding_hash.h
+// Upstream: third_party/rapidhash/rapidhash.h
 
 #ifndef MITTO_STRING_HASHER_H_
 #define MITTO_STRING_HASHER_H_

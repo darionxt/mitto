@@ -12,6 +12,7 @@ namespace {
 // How much of the body stays here, for //net to send again on a new connection
 // when a reused one turns out to be gone. This is what Chrome keeps of a page's
 // stream, ChunkedDataPipeUploadDataStream::kDefaultDestinationWindowSize.
+// Upstream: services/network/chunked_data_pipe_upload_data_stream.h
 constexpr size_t kKeptSize = 65535;
 
 }  // namespace

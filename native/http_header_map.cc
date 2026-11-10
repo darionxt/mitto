@@ -1,5 +1,8 @@
 // The table follows third_party/blink/renderer/platform/wtf/hash_table.h, under
 // the license in that directory.
+//
+// Upstream: third_party/blink/renderer/platform/wtf/hash_table.h
+// Upstream: third_party/blink/renderer/platform/wtf/hash_traits.h
 
 #include "mitto/http_header_map.h"
 
