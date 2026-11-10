@@ -119,7 +119,7 @@ Goal: prove the **Runtime**'s whole pipeline on every Host before investing in b
 Goal: a Page's **Script Fingerprint** matches real Chrome's for its Persona and Machine, before breadth, as M1 did for the wire.
 
 - A probe: a script that walks everything a page can reach from its global object. It records each interface, property and function: their order, attributes, `length`s and names, prototype chains, the source text of native functions, and the error each check throws. It also records the values that the Persona and the Machine decide, such as `navigator`, `screen`, the window's sizes, `matchMedia()`, `Intl`'s defaults and the time zone.
-- **Baselines** of the probe, recorded by hand in real Windows Chrome for each Chrome Release in the **Supported Window**. They start with a top-level page, and get more **Recording Cases** as later milestones make them possible. They are recorded with the capture kit and kept as M1's are.
+- **Baselines** of the probe, recorded by hand in real Windows Chrome for each Chrome Release in the **Supported Window**. They start with a top-level page, and get more **Recording Cases** as later milestones make them possible. They are recorded with the capture kit and kept as M1's are. They replace the values that M6's tests recorded by hand from Chrome, and that step of the release routine.
 - A **Normal Form** for a Script Fingerprint, which hides what the machine decides as M5 does on the wire, and **Parity Checks** that gate CI.
 - Bindings for every interface that Chrome exposes to a page, from the generator. A member whose behaviour is missing is a **Known Gap**, and M7 decides what it does when a page calls it.
 - `navigator`, `screen`, `devicePixelRatio`, `matchMedia()`, `navigator.connection` and `navigator.userAgentData` from the Persona and the Machine, as [persona.md](persona.md#the-runtime) lists them. The Machine gains what the Runtime reads and HTTP does not, such as the time zone, the number of processors and the window's place ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)).
@@ -159,14 +159,16 @@ Goal: the rest of what pages commonly measure, and the first release with the Ru
 - WebGL with the parameters, extensions and strings of a GPU that the Machine claims, drawn from a table like its other values.
 - Web Audio's offline rendering.
 - WebCrypto on BoringSSL.
+- The Page process in Chromium's sandbox on every Host, with no access to files or the network of its own, as Chrome's renderers run ([ADR-0009](adr/0009-a-process-for-each-page.md)).
 - The Page API becomes public, with its reference in [api.md](api.md), and the release workflow puts the Page program in the wheel.
-- **Left out:** WebSocket, WebRTC, WebGPU's behaviour, media playback, the behaviour of service workers, and an OS sandbox for the Page process ([ADR-0009](adr/0009-a-process-for-each-page.md)).
-- **Exit:** the Parity Checks pass over the whole Script Fingerprint with every Known Gap written down, `pip install mitto` gives a working Runtime on every Host, and a minor version ships it with release notes.
+- **Left out:** WebSocket, WebRTC, WebGPU's behaviour, media playback and the behaviour of service workers.
+- **Exit:** the Parity Checks pass over the whole Script Fingerprint with every Known Gap written down, the Page process runs sandboxed on every Host, `pip install mitto` gives a working Runtime on every Host, and a minor version ships it with release notes.
 
 ## Cross-cutting rules
 
 - C++ follows Chromium's style guide and allowed-features list ([ADR-0002](adr/0002-build-inside-chromium-tree.md)). Python follows ruff with strict type checking.
 - Security: sanitizer builds (ASan, UBSan) run in CI. Every parser we write ourselves gets a fuzz target.
+- Security fixes between runs: when Chrome ships a patch build of the Engine Release that fixes a security bug in code mitto ships, such as `//net`, BoringSSL, QUICHE or V8, mitto moves to that build and ships a patch version. The release routine says what starts such a patch, and how soon it follows Chrome's build.
 - Large artifacts (checkouts, build output, caches) live in the workspace, never in the repository.
 
 ## Risks
@@ -179,4 +181,5 @@ Goal: the rest of what pages commonly measure, and the first release with the Ru
 - **Breadth of the Script Fingerprint.** Chrome exposes hundreds of interfaces to a page, and each behaviour that is missing or differs is something a page can see. Mitigation: their shape is generated for all of them, missing behaviour is written down as Known Gaps, and Parity Checks and web-platform-tests show the rest.
 - **Fonts and graphics.** What a page reads through text, canvas and WebGL comes from the fonts, the rasteriser and the GPU of a Windows machine, which a Linux or macOS Host lacks and which mitto cannot ship. Exact values may be out of reach, and M9 and M10 decide how close the Runtime comes.
 - **Size and build time of the Runtime.** V8 and Chrome's ICU data make the wheel several times larger and CI builds longer. The trimmed export and the build caches must keep hosted runners within their limits, and M6 measures both.
+- **Security fixes between runs.** Chrome ships security fixes in patch builds of a milestone, most often in V8 and sometimes in `//net` or BoringSSL, and mitto ships those components to read what servers and pages send. Mitigation: the rule above, and a source export that a patch build can update without new slices on every machine, which M6 checks.
 - **Maintenance cadence.** Chrome ships a new stable milestone every two weeks, and falling behind makes the Persona stale. The routine, including its manual steps, has to be cheap and scripted.
