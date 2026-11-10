@@ -1329,7 +1329,10 @@ def build_from_export(
     check_call([*ninja_command(src, host, relative, jobs), config.target], cwd=src, env=env)
     output = build_dir / config.output(host)
     kind = "library" if config.program is None else "program"
-    if fingerprint_of(output) == metadata["traced_outputs"][host.name][config.name]:
+    traced = metadata["traced_outputs"].get(host.name, {}).get(config.name)
+    if traced is None:
+        note(f"this export holds no fingerprint of a traced {kind}, as one updated from a patch build's diff does not")
+    elif fingerprint_of(output) == traced:
         note(f"the {kind} is the same as the one the slice of this export built")
     else:
         note(f"the {kind} differs from the one the slice of this export built, as it should once native/ has changed")
