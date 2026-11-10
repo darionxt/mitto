@@ -84,6 +84,22 @@ def test_an_include_found_below_an_include_directory_is_not_missing() -> None:
     assert update_export.missing_includes("net/x.h", b"", new, exported) == set()
 
 
+def test_a_header_of_the_cpp_library_has_no_suffix_and_includes_too() -> None:
+    old = b"#include <__vector/vector.h>\n"
+    new = b"#include <__vector/vector.h>\n#include <__vector/new_header.h>\n"
+    exported = ["third_party/libc++/src/include/vector", "third_party/libc++/src/include/__vector/vector.h"]
+
+    assert update_export.missing_includes("third_party/libc++/src/include/vector", old, new, exported) == {
+        "__vector/new_header.h"
+    }
+
+
+def test_torque_includes_in_single_quotes() -> None:
+    new = b"#include 'src/builtins/builtins-new.h'\n"
+
+    assert update_export.missing_includes("v8/src/builtins/x.tq", b"", new, []) == {"src/builtins/builtins-new.h"}
+
+
 def test_only_sources_have_includes() -> None:
     assert update_export.missing_includes("net/data.json", b"", b'#include "x.h"\n', []) == set()
 

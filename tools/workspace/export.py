@@ -1294,6 +1294,15 @@ def unpack_export(archive: Path, checkout: Path) -> None:
         unpacked.rename(checkout)
 
 
+def traced_fingerprint(metadata: Mapping[str, Any], host: Host, config: BuildConfig) -> str | None:
+    """Returns the fingerprint of what the slice of an export built, or None if it holds none.
+
+    An export made before the Runtime's build was traced names them `traced_libraries`.
+    """
+    traced: Mapping[str, Mapping[str, str]] = metadata.get("traced_outputs", metadata.get("traced_libraries", {}))
+    return traced.get(host.name, {}).get(config.name)
+
+
 def build_from_export(
     directory: Path, archive: Path | None, config: BuildConfig = PLAIN, jobs: int | None = None
 ) -> Path:
@@ -1329,7 +1338,7 @@ def build_from_export(
     check_call([*ninja_command(src, host, relative, jobs), config.target], cwd=src, env=env)
     output = build_dir / config.output(host)
     kind = "library" if config.program is None else "program"
-    traced = metadata["traced_outputs"].get(host.name, {}).get(config.name)
+    traced = traced_fingerprint(metadata, host, config)
     if traced is None:
         note(f"this export holds no fingerprint of a traced {kind}, as one updated from a patch build's diff does not")
     elif fingerprint_of(output) == traced:

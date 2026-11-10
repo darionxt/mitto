@@ -61,10 +61,27 @@ BUILD_FILE_SUFFIXES = {".gn", ".gni", ".pydeps"}
 # The root's .gn, whose name has no suffix in Python's eyes.
 BUILD_FILE_NAMES = {".gn"}
 
-# Files whose includes the preprocessor follows.
-INCLUDING_SUFFIXES = {".c", ".cc", ".cpp", ".def", ".h", ".hpp", ".inc", ".inl", ".m", ".mm", ".S", ".s", ".asm"}
+# Files whose includes the preprocessor follows, or Torque's. The C++ library's own headers, such as
+# third_party/libc++/src/include/vector, have no suffix.
+INCLUDING_SUFFIXES = {
+    "",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".def",
+    ".h",
+    ".hpp",
+    ".inc",
+    ".inl",
+    ".m",
+    ".mm",
+    ".S",
+    ".s",
+    ".asm",
+    ".tq",
+}
 INCLUDE = re.compile(
-    r"""^\s*#\s*(?:include|import|include_next)\s*[<"]([^>"]+)[>"]|__has_include(?:_next)?\s*\(\s*[<"]([^>"]+)[>"]"""
+    r"""^\s*#\s*(?:include|import|include_next)\s*[<"']([^>"']+)[>"']|__has_include(?:_next)?\s*\(\s*[<"]([^>"]+)[>"]"""
 )
 
 # Where a build puts what it generates, which an include can name without the export holding it.

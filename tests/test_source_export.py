@@ -992,3 +992,14 @@ def test_ninja_runs_as_many_jobs_as_asked(tmp_path: Path) -> None:
 
     assert export.ninja_command(tmp_path, export.MAC, Path("out/x"), 5) == [ninja, "-j", "5", "-C", Path("out/x")]
     assert export.ninja_command(tmp_path, export.MAC, Path("out/x"), None) == [ninja, "-C", Path("out/x")]
+
+
+def test_the_fingerprints_of_an_export_made_before_the_runtime_are_read() -> None:
+    before = {"traced_libraries": {"linux": {"mitto": "a"}}}
+    after = {"traced_outputs": {"linux": {"mitto": "b", "runtime": "c"}}}
+
+    assert export.traced_fingerprint(before, export.LINUX, export.PLAIN) == "a"
+    assert export.traced_fingerprint(before, export.LINUX, export.RUNTIME) is None
+    assert export.traced_fingerprint(after, export.LINUX, export.RUNTIME) == "c"
+    assert export.traced_fingerprint(after, export.MAC, export.PLAIN) is None
+    assert export.traced_fingerprint({"traced_outputs": {}}, export.LINUX, export.PLAIN) is None
