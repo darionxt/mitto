@@ -34,6 +34,39 @@ source_set("icu_data") {
   deps = [ ":icu_data_assembly" ]
 }
 
+# The channel prototype's framing, which the library and the Page program share.
+# Nothing of the prototype merges.
+source_set("page_channel") {
+  sources = [
+    "page_channel.cc",
+    "page_channel.h",
+  ]
+  deps = [ "//base" ]
+}
+
+executable("mitto_page_prototype") {
+  sources = [ "page_main.cc" ]
+  deps = [
+    ":page_channel",
+    "//base",
+  ]
+}
+
+executable("page_channel_prototype_test") {
+  sources = [ "test/page_channel_prototype_test.c" ]
+  deps = [ ":mitto_core" ]
+  data_deps = [ ":mitto_page_prototype" ]
+  configs -= [
+    "//build/config/clang:find_bad_constructs",
+    "//build/config/clang:unsafe_buffers",
+  ]
+  if (is_mac) {
+    ldflags = [ "-Wl,-rpath,@loader_path" ]
+  } else if (!is_win) {
+    configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
+  }
+}
+
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
   sources = [
@@ -59,6 +92,8 @@ shared_library("mitto_core") {
     "network_quality.h",
     "network_session_configurator.cc",
     "network_session_configurator.h",
+    "page_host.cc",
+    "page_host.h",
     "ready_requests.cc",
     "ready_requests.h",
     "request_channel.cc",
@@ -95,6 +130,7 @@ shared_library("mitto_core") {
   defines = [ "MITTO_IMPLEMENTATION" ]
   deps = [
     ":icu_data",
+    ":page_channel",
     "//base",
     "//crypto",
     "//net",
@@ -252,6 +288,8 @@ group("mitto") {
   deps = [
     ":mitto_core",
     ":mitto_core_test",
+    ":mitto_page_prototype",
+    ":page_channel_prototype_test",
   ]
   if (use_libfuzzer) {
     deps += [

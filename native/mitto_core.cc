@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <algorithm>
 #include <map>
@@ -27,6 +28,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -54,6 +56,7 @@
 #include "mitto/mitto.h"
 #include "mitto/network_quality.h"
 #include "mitto/network_session_configurator.h"
+#include "mitto/page_host.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
 #include "mitto/request_options.h"
@@ -159,6 +162,17 @@ struct MittoSession {
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
   mitto::ReadyRequests ready_requests;
+  // The channel prototype's Pages. After `ready_requests`, which they list
+  // their handles in, so that they go first.
+  std::set<std::unique_ptr<mitto::PageHost>, base::UniquePtrComparator> pages;
+};
+
+// The channel prototype's handle for a Page, which works as MittoRequest does.
+struct MittoPage {
+  scoped_refptr<mitto::PageEvents> events;
+  base::WeakPtr<mitto::PageHost> host;
+  raw_ptr<MittoSession> session = nullptr;
+  int64_t pid = 0;
 };
 
 // The handle the C API hands out for a request. Whichever thread holds it talks
@@ -1441,6 +1455,133 @@ void mitto_event_free(MittoEvent* event) {
   free(event->url);
   free(event->headers);
   *event = {};
+}
+
+int32_t mitto_page_open(MittoSession* session,
+                        const char* program,
+                        MittoPage** page) {
+  if (!page) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *page = nullptr;
+  if (!session || !program) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  auto created = std::make_unique<MittoPage>();
+  created->events = base::MakeRefCounted<mitto::PageEvents>();
+  created->session = session;
+  std::optional<int64_t> pid;
+  base::WaitableEvent done;
+  mitto::NetworkCore::Get().PostTask(base::BindOnce(
+      [](MittoSession* session, MittoPage* page, base::FilePath program,
+         std::optional<int64_t>* pid, base::WaitableEvent* done) {
+        auto host = std::make_unique<mitto::PageHost>(
+            page->events, session->ready_requests,
+            reinterpret_cast<uintptr_t>(page));
+        *pid = host->Launch(program);
+        if (*pid) {
+          page->host = host->GetWeakPtr();
+          session->pages.insert(std::move(host));
+        }
+        done->Signal();
+      },
+      base::Unretained(session), base::Unretained(created.get()),
+      base::FilePath(program), base::Unretained(&pid),
+      base::Unretained(&done)));
+  done.Wait();
+  if (!pid) {
+    return net::ERR_FAILED;
+  }
+  created->pid = *pid;
+  *page = created.release();
+  return net::OK;
+}
+
+int64_t mitto_page_pid(MittoPage* page) {
+  return page ? page->pid : 0;
+}
+
+int32_t mitto_page_evaluate(MittoPage* page,
+                            const char* script,
+                            size_t script_size) {
+  if (!page || !script) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  mitto::NetworkCore::Get().PostTask(base::BindOnce(
+      [](base::WeakPtr<mitto::PageHost> host, std::string script) {
+        if (host) {
+          host->Evaluate(std::move(script));
+        }
+      },
+      page->host,
+      // SAFETY: The C API says `script` holds `script_size` bytes.
+      std::string(UNSAFE_BUFFERS(std::string_view(script, script_size)))));
+  return net::OK;
+}
+
+int32_t mitto_page_stream_body(MittoPage* page, uint64_t size) {
+  if (!page) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  mitto::NetworkCore::Get().PostTask(base::BindOnce(
+      [](base::WeakPtr<mitto::PageHost> host, uint64_t size) {
+        if (host) {
+          host->StreamBody(size);
+        }
+      },
+      page->host, size));
+  return net::OK;
+}
+
+int32_t mitto_page_send_unknown(MittoPage* page) {
+  if (!page) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  mitto::NetworkCore::Get().PostTask(base::BindOnce(
+      [](base::WeakPtr<mitto::PageHost> host) {
+        if (host) {
+          host->SendUnknownForTest();
+        }
+      },
+      page->host));
+  return net::OK;
+}
+
+int32_t mitto_page_next_event(MittoPage* page, int32_t* type, char** text) {
+  if (!page || !type || !text) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  std::optional<mitto::PageEvent> event = page->events->Take();
+  if (!event) {
+    return net::ERR_IO_PENDING;
+  }
+  *type = event->type;
+  char* copy = static_cast<char*>(malloc(event->text.size() + 1));
+  // SAFETY: `copy` holds one byte more than the text.
+  UNSAFE_BUFFERS({
+    memcpy(copy, event->text.data(), event->text.size());
+    copy[event->text.size()] = '\0';
+  })
+  *text = copy;
+  return net::OK;
+}
+
+void mitto_page_text_free(char* text) {
+  free(text);
+}
+
+void mitto_page_close(MittoPage* page) {
+  if (!page) {
+    return;
+  }
+  mitto::NetworkCore::Get().PostTask(base::BindOnce(
+      [](MittoSession* session, base::WeakPtr<mitto::PageHost> host) {
+        if (host) {
+          session->pages.erase(session->pages.find(host.get()));
+        }
+      },
+      base::Unretained(page->session.get()), page->host));
+  delete page;
 }
 
 }  // extern "C"

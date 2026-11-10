@@ -654,6 +654,45 @@ MITTO_EXPORT void mitto_request_release(MittoRequest* request);
 // zeroes it. Does nothing if `event` is null or already zeroed.
 MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 
+// A prototype of a Page and its channel, on the branch that answers which
+// channel the Runtime takes. None of this merges.
+//
+// A Page's handle is listed by mitto_session_next_ready_request(), cast to
+// MittoRequest*, beside the Session's requests, whenever it has an event.
+typedef struct MittoPage MittoPage;
+
+// The Page answered the library's hello in the protocol version it speaks.
+#define MITTO_PAGE_EVENT_READY 1
+// `text` is what a script that mitto_page_evaluate() sent gave back.
+#define MITTO_PAGE_EVENT_RESULT 2
+// `text` says what the Page saw of a body that mitto_page_stream_body() sent.
+#define MITTO_PAGE_EVENT_BODY_DONE 3
+// `text` says which end refused which message. The channel closes after it.
+#define MITTO_PAGE_EVENT_REFUSED 4
+// The Page process has ended, and `text` says how. Its last event.
+#define MITTO_PAGE_EVENT_GONE 5
+
+// Starts the Page program at `program` for `session`, and returns at once.
+MITTO_EXPORT int32_t mitto_page_open(MittoSession* session,
+                                     const char* program,
+                                     MittoPage** page);
+MITTO_EXPORT int64_t mitto_page_pid(MittoPage* page);
+MITTO_EXPORT int32_t mitto_page_evaluate(MittoPage* page,
+                                         const char* script,
+                                         size_t script_size);
+// Sends the Page a body of `size` bytes, with flow control.
+MITTO_EXPORT int32_t mitto_page_stream_body(MittoPage* page, uint64_t size);
+// Sends the Page a message type it does not know.
+MITTO_EXPORT int32_t mitto_page_send_unknown(MittoPage* page);
+// Takes the next event: its type, and its text, which mitto_page_text_free()
+// frees. Returns -1 (ERR_IO_PENDING) if none is waiting.
+MITTO_EXPORT int32_t mitto_page_next_event(MittoPage* page,
+                                           int32_t* type,
+                                           char** text);
+MITTO_EXPORT void mitto_page_text_free(char* text);
+// Closes the channel, which ends the Page process, and releases the handle.
+MITTO_EXPORT void mitto_page_close(MittoPage* page);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

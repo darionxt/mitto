@@ -2,6 +2,14 @@ _mitto_abi_version
 _mitto_cookies_free
 _mitto_event_free
 _mitto_net_error_name
+_mitto_page_close
+_mitto_page_evaluate
+_mitto_page_next_event
+_mitto_page_open
+_mitto_page_pid
+_mitto_page_send_unknown
+_mitto_page_stream_body
+_mitto_page_text_free
 _mitto_request_cancel
 _mitto_request_end_body
 _mitto_request_next_event

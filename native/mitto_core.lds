@@ -1,5 +1,13 @@
 {
   global:
+    mitto_page_open;
+    mitto_page_pid;
+    mitto_page_evaluate;
+    mitto_page_stream_body;
+    mitto_page_send_unknown;
+    mitto_page_next_event;
+    mitto_page_text_free;
+    mitto_page_close;
     mitto_abi_version;
     mitto_cookies_free;
     mitto_event_free;
