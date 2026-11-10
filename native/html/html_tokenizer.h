@@ -7,8 +7,7 @@
 //
 // Upstream: third_party/blink/renderer/core/html/parser/html_tokenizer.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_tokenizer.cc
-// Upstream:
-// third_party/blink/renderer/core/html/parser/input_stream_preprocessor.h
+// Upstream: third_party/blink/renderer/core/html/parser/input_stream_preprocessor.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_entity_parser.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_entity_search.cc
 
