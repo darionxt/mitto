@@ -310,7 +310,15 @@ CI does not build the Runtime yet.
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.39. The archive is the same for every Host: 25.1 MiB compressed, 199 MiB unpacked, about 13,000 files. Of those, about 10,800 are in every slice, and the Windows slice alone adds about 800, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
+Measured for Chromium 157.0.8103.39, `mitto-chromium-157.0.8103.39-3.tar.xz`. The archive is the same for every Host: 34.3 MiB compressed, 278 MiB unpacked, 20,063 files. Of those, 17,619 are in every slice. The Windows slice alone adds 815, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API, the Linux slice alone 262 and the macOS slice alone 289.
+
+| Slice | Files | Unpacked |
+| --- | --- | --- |
+| Linux x86_64, from five builds | 18,957 | 232 MiB |
+| macOS arm64, from two builds | 18,930 | 231 MiB |
+| Windows x64, from two builds | 18,492 | 256 MiB |
+
+[The Runtime](#build-the-runtime)'s build reads 7,084 files that the native core's builds do not, 79 MiB unpacked, which make the archive 9.2 MiB larger than the 25.1 MiB of the export before it: V8, 3,122 files and 65 MiB, of which its two builtins profiles, `x64.profile` and `x64-rl.profile`, are 10.7 MB; Blink's IDL files and the scripts that read them, 2,229, with the Python projects that those scripts import, `tools/idl_parser`, ply, pyjson5, jinja2 and markupsafe; llvm-libc, 1,067; the Rust crates of V8's Temporal and libm, 547; and highway, fast_float, fp16 and dragonbox. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
 
 | Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked | Windows x64: download | unpacked |
 | --- | --- | --- | --- | --- | --- | --- | --- |
