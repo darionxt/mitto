@@ -144,7 +144,7 @@ The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of
 
 ## Build the Runtime
 
-The **Runtime** runs a **Page**'s scripts in a process of its own, on the **Engine Release**'s V8 ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md), [ADR-0009](adr/0009-a-process-for-each-page.md)). Its targets are in [`native/page`](../native/page) and [`native/bindings`](../native/bindings), and the group `//mitto:runtime` builds them. It exists only in a build directory that asks for it with the GN argument `mitto_enable_runtime`, which is off in [`tools/workspace/args.gn`](../tools/workspace/args.gn), because the [source export](#build-from-the-source-export) does not carry V8 or Blink's Web IDL files yet, and CI builds from it. [`tools/workspace/runtime_args.gn`](../tools/workspace/runtime_args.gn) turns it on, with the other arguments that the Runtime needs. That build directory builds the Runtime and not the library, which `out/mitto` builds as before: [one of those arguments](#icus-data-and-v8s-snapshot) would clash with the library on Linux.
+The **Runtime** runs a **Page**'s scripts in a process of its own, on the **Engine Release**'s V8 ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md), [ADR-0009](adr/0009-a-process-for-each-page.md)). Its targets are in [`native/page`](../native/page) and [`native/bindings`](../native/bindings), and the group `//mitto:runtime` builds them. It exists only in a build directory that asks for it with the GN argument `mitto_enable_runtime`, which is off in [`tools/workspace/args.gn`](../tools/workspace/args.gn). [`tools/workspace/runtime_args.gn`](../tools/workspace/runtime_args.gn) turns it on, with the other arguments that the Runtime needs. The [source export](#build-from-the-source-export) carries what it reads, so it also [builds from there](#the-runtime-from-the-source-export), with no checkout. That build directory builds the Runtime and not the library, which `out/mitto` builds as before: [one of those arguments](#icus-data-and-v8s-snapshot) would clash with the library on Linux.
 
 From `$MITTO_WORKSPACE/chromium-<tag>/src`, with depot_tools on your `PATH`, make a build directory of its own from both files and build it:
 
@@ -260,7 +260,7 @@ Of the stripped program, ICU's data is 10.8 MB and V8's snapshot 0.37 MB. A whee
 
 A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on each **Host**, with the patches already applied. It needs no workspace and no depot_tools.
 
-Run this from the repository root, with a new directory on a path without spaces. It needs about 4.1 GiB there on Linux, 3.2 GiB on macOS and 4.6 GiB on Windows, including the build output, as well as `curl` and `tar`, which Windows brings: there the command takes them from `System32`, whatever else is on `PATH`. It took about 6 minutes on a 10-core Mac, one of them for the downloads, and about 10 minutes on a 16-thread Windows machine. macOS also needs the same Xcode as a checkout, and Windows the same Visual Studio and Windows SDK (see [Requirements](#requirements)). On Windows the longest path lies 195 characters below the directory, in the build output, so a directory of up to 64 characters keeps every path within Windows' limit of 260.
+Run this from the repository root, with a new directory on a path without spaces. It needs about 4.2 GiB there on Linux, 3.2 GiB on macOS and 4.7 GiB on Windows, including the build output, as well as `curl` and `tar`, which Windows brings: there the command takes them from `System32`, whatever else is on `PATH`. It took about 6 minutes on a 10-core Mac, one of them for the downloads, and about 10 minutes on a 16-thread Windows machine. macOS also needs the same Xcode as a checkout, and Windows the same Visual Studio and Windows SDK (see [Requirements](#requirements)). On Windows the longest path lies 198 characters below the directory, in the Runtime's build output, so a directory of up to 61 characters keeps every path within Windows' limit of 260.
 
 ```bash
 uv run tools/workspace/export.py build /absolute/path/to/new/directory
@@ -296,9 +296,37 @@ $env:MITTO_NATIVE_LIBRARY = 'C:\ex\chromium-<tag>\src\out\mitto\mitto_core.dll'
 uv run pytest
 ```
 
+### The Runtime from the source export
+
+The same command builds [the Runtime](#build-the-runtime), the Page program and the Web IDL database, in `out/runtime`, from `args.gn` followed by `runtime_args.gn`, as in a checkout:
+
+```bash
+uv run tools/workspace/export.py build /absolute/path/to/new/directory --config runtime -j 5
+```
+
+`-j` sets how many build steps ninja runs at once, which by default is the number of cores plus two. V8's compile jobs need far more memory than the library's, so on a Mac with 16 GB build it with about 5. The command says whether `mitto_page` is the same as the one that the export's slice built, in the same way as for the library, and prints its path. The database is `out/runtime/gen/mitto/bindings/web_idl_database.pickle` beside it. The build of the library and the Runtime's can share one directory, each in its own build directory under `out/`, and then share the sources and the toolchain too.
+
+Measured for Chromium 157.0.8103.39, in a directory where the library's build had run first:
+
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Machine | 16 threads | 10 cores, `-j 5` | 16 threads |
+| Build of `runtime` | 18.5 minutes | 20 minutes | 22 minutes |
+| `out/runtime` | 2.3 GiB | 1.6 GiB | 2.4 GiB |
+
+CI does not build the Runtime yet.
+
 ### Sizes
 
-Measured for Chromium 157.0.8103.39. The archive is the same for every Host: 25.1 MiB compressed, 199 MiB unpacked, about 13,000 files. Of those, about 10,800 are in every slice, and the Windows slice alone adds about 800, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
+Measured for Chromium 157.0.8103.39, `mitto-chromium-157.0.8103.39-3.tar.xz`. The archive is the same for every Host: 34.3 MiB compressed, 278 MiB unpacked, 20,063 files. Of those, 17,619 are in every slice. The Windows slice alone adds 815, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API, the Linux slice alone 262 and the macOS slice alone 289.
+
+| Slice | Files | Unpacked |
+| --- | --- | --- |
+| Linux x86_64, from five builds | 18,957 | 232 MiB |
+| macOS arm64, from two builds | 18,930 | 231 MiB |
+| Windows x64, from two builds | 18,492 | 256 MiB |
+
+[The Runtime](#build-the-runtime)'s build reads 7,084 files that the native core's builds do not, 79 MiB unpacked, which make the archive 9.2 MiB larger than the 25.1 MiB of the export before it: V8, 3,122 files and 65 MiB, of which its two builtins profiles, `x64.profile` and `x64-rl.profile`, are 10.7 MB; Blink's IDL files and the scripts that read them, 2,229, with the Python projects that those scripts import, `tools/idl_parser`, ply, pyjson5, jinja2 and markupsafe; llvm-libc, 1,067; the Rust crates of V8's Temporal and libm, 547; and highway, fast_float, fp16 and dragonbox. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
 
 | Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked | Windows x64: download | unpacked |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -344,6 +372,8 @@ The Windows job runs the same steps as the other Hosts, in Git's bash. Git for W
 The job keeps only the library, in the Actions cache: 21 MB on Linux, 6 MB on macOS and 28 MB on Windows, compressed. On Windows that includes the DLL's PDB, which the wheel's symbols archive holds. The key is the runner's name and a hash of `native/` and `tools/workspace/`, which holds the pin of the export. When none of that has changed, the job skips the build. A pull request can read the caches of `main` and its own, so one that changes neither directory uses the library that `main` built. One that changes either builds once, and `main` builds again after the merge.
 
 A second cache keeps the build's directory, about 300 MB per **Host** and build, because what the export compiles to changes only with `tools/workspace/`. Its key is the runner's or the build's name and a hash of that directory. `main` saves it the first time it builds with that hash, and a pull request restores it and rebuilds only `native/`. In one trial, a change to one file in `native/` rebuilt 11 of about 4,000 objects on Linux and macOS. On Windows it rebuilt 27 of 4,082 steps, every object of `//mitto` and its links, in a minute and a half, and the whole job took 14 minutes. `main` never restores it, so each merge still builds from nothing and shows a mistake in an incremental build. A pull request that changes `tools/workspace/` also builds from nothing. CIPD packages are unpacked with a fixed file time, because ninja would otherwise rebuild what depends on them.
+
+No cache keeps the export itself, so every job that builds downloads it from its release asset. Since it carries the Runtime it is 34.3 MiB rather than 25.1 MiB, so each such job downloads 9.2 MiB more, beside the toolchain's 319 to 476 MiB, and unpacks 79 MiB more into the build's directory. Neither cache grows: the library and `out/mitto` are what they were, because the native core's build reads the same files. A new pin changes `tools/workspace/`, though, so as with any new export each cache gets a new key, and the first build on each runner, on `main` and in the pull request that pins it, starts from nothing. CI does not build the Runtime yet.
 
 `xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use. The Python jobs use it as well, because 9 of 90 jobs on `macos-latest` got no runner within 15 minutes and were cancelled, and none of 36 on `xcode-27` did.
 
@@ -762,9 +792,10 @@ The script collects those paths, runs `tools/workspace/compare` on them, and the
 - the **Engine Release** moves, in [the release routine](releasing.md);
 - a patch in [`tools/workspace/patches`](../tools/workspace/patches) or a value in [`tools/workspace/args.gn`](../tools/workspace/args.gn) changes;
 - a new build configuration, such as another sanitizer, needs files that this one does not;
+- `native/page` or `native/bindings` starts to depend on a target outside the Runtime's build graph, as for `native/` below;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: only the plain one on macOS and Windows, and also `asan`, `ubsan` and `fuzz` on Linux. The steps take about an hour on three machines that have built the native core before, most of it on the Linux machine, which traces and checks four builds.
+What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan` and `fuzz` on Linux. The steps took about three and a half hours on 2026-11-10, on machines that had built the native core and the Runtime before, and most of it on the machine that runs Linux and Windows in turn. The slices took 36 minutes on Linux for its five builds, 29 minutes on macOS with `-j 5` and 33 minutes on Windows. The builds from the archive in step 4 took 48 minutes on Linux, 29 minutes on macOS and 33 minutes on Windows, before the tests.
 
 1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository, with the bootstrap script run again from that commit:
 
@@ -780,19 +811,19 @@ What a build reads differs per Host, and `gn` on Linux knows nothing of the inpu
    uv run tools/workspace/export.py slice
    ```
 
-   This builds the native core from nothing in `out/export-trace-<config>`, once per build configuration, with depot_tools off the `PATH`, and then copies what those builds used to `$MITTO_WORKSPACE/export/<tag>/<host>`, where `<host>` is `linux`, `mac` or `win`. It removes each build directory afterwards, and `out/mitto` stays as it was.
+   This builds each configuration from nothing in `out/export-trace-<config>`, the native core or, for `runtime`, the group `//mitto:runtime`, with depot_tools off the `PATH`, and then copies what those builds used to `$MITTO_WORKSPACE/export/<tag>/<host>`, where `<host>` is `linux`, `mac` or `win`. It removes each build directory afterwards, and `out/mitto` stays as it was. The Runtime's build compiles V8, whose compile jobs need far more memory than the library's, so on a Mac with 16 GB add `-j 5`, as for [the Runtime](#build-the-runtime) in a checkout: it sets how many build steps ninja runs at once, which by default is the number of cores plus two.
 
-2. Copy the macOS and the Windows slices to the same place on the Linux machine, for example with `rsync -az`, or from Windows with its `tar` and `scp`.
+2. Copy the other two slices to the same place on the Linux or the macOS machine, for example with `rsync -az`, or from Windows with its `tar` and `scp`.
 
-3. On the Linux machine, merge the slices:
+3. There, merge the slices:
 
    ```bash
    uv run tools/workspace/export.py merge
    ```
 
-   This writes `$MITTO_WORKSPACE/export/<tag>/mitto-chromium-<tag>.tar.xz` and prints its size, its hash and its contents per directory. The same slices give the same bytes.
+   This writes `$MITTO_WORKSPACE/export/<tag>/mitto-chromium-<tag>.tar.xz` and prints its size, its hash and its contents per directory. The same slices give the same bytes, on macOS as on Linux.
 
-4. On each Host, [build from that archive](#build-from-the-source-export) with `--archive` in a new directory, once with each `--config` that the Host has, and run the tests. The build must not find its way back to the checkout: keep depot_tools off the `PATH` and `MITTO_WORKSPACE` unset. The command must also say each time that the library is the same as the one the slice built. A difference means that a file the export left out changed the result without stopping the build, for example through `path_exists()` in GN or `__has_include` in C++. On Linux the comparison covers the whole file. On macOS it covers the file's sections, because the rest holds the absolute paths of the object files. On Windows it covers the whole DLL except the 16 bytes that name its PDB, the signature in its CodeView debug record: the linker hashes that signature from the PDB, which holds the absolute paths of the build. A DLL built in another directory differs from the slice's in those 16 bytes alone.
+4. On each Host, [build from that archive](#build-from-the-source-export) with `--archive` in a new directory, once with each `--config` that the Host has, and run the tests. The build must not find its way back to the checkout: keep depot_tools off the `PATH` and `MITTO_WORKSPACE` unset. The command must also say each time that the library is the same as the one the slice built, or for `runtime` that the Page program is. A difference means that a file the export left out changed the result without stopping the build, for example through `path_exists()` in GN or `__has_include` in C++. On Linux the comparison covers the whole file. On macOS it covers the file's sections, because the rest holds the absolute paths of the object files. On Windows it covers the whole DLL except the 16 bytes that name its PDB, the signature in its CodeView debug record: the linker hashes that signature from the PDB, which holds the absolute paths of the build. A DLL built in another directory differs from the slice's in those 16 bytes alone.
 
 5. Publish the archive, with the owner's OK:
 
@@ -818,3 +849,36 @@ A slice holds:
 It leaves out the build output, `//mitto` and the toolchain. It stops if it would keep a prebuilt program, for macOS, Linux or Windows, because that belongs in the toolchain list at the top of the script. Paths in a slice use `/` on every Host. Windows finds a file whatever the case of its path, so a tool there can name a file in another case than its directory does, and a Windows slice names each file as its directory spells it. Visual Studio's and the SDK's headers are system headers there, which the compiler does not report, and they lie outside the checkout in any case.
 
 The merge stops if a path differs between slices, other than `build/config/gclient_args.gni`, which gclient writes per Host and whose `checkout_*` values decide nothing in this build graph. So a file must have the same bytes in every slice, which the bootstrap script's git settings make sure of on Windows. A file that several slices hold comes from the Linux slice, then the macOS one, then the Windows one. Windows keeps no file modes, so a file that only the Windows slice holds goes into the archive as `0644`: only Windows builds with it, and Windows has no use for a mode. The merge also stops if a third-party project in the export has no licence file. It reads the toolchain's pins from `DEPS`, resolves those in CIPD to a hash with depot_tools, and downloads `rc.exe` to check it against its SHA-1 and record its SHA-256.
+
+### Update the export to a patch build
+
+A patch build of the **Engine Release** changes few files of the tree, and seldom what the native core's build reads, so the export of the build before it still names every file that the new build reads, on every **Host**. For a [patch run](releasing.md#a-patch-run), one machine can then update that export from the diff between the two tags, with no checkout of the new build and no slices. [`tools/workspace/update_export.py`](../tools/workspace/update_export.py) does it, on macOS or Linux, in a workspace whose depot_tools the bootstrap script set up, once [`tools/workspace/chromium_tag`](../tools/workspace/chromium_tag) names the new build:
+
+```bash
+export MITTO_WORKSPACE=/absolute/path/to/mitto-workspace
+uv run python -m tools.workspace.update_export
+```
+
+It updates the pinned export, or the one that `--archive` names. It:
+
+1. fetches the two tags of chromium/src at depth 1 into `$MITTO_WORKSPACE/compare/src`, as [`compare`](#compare-two-releases) does, and into `compare/deps` each dependency that `DEPS` moved between them and that the export holds files of, such as V8, BoringSSL or ICU, at the two commits that `DEPS` names;
+2. takes each file of the export that git changed from the new tag, in chromium/src or in the dependency that holds it, and applies a patch of [`tools/workspace/patches`](../tools/workspace/patches) again where upstream changed a patched file;
+3. writes again the files that hooks of `DEPS` write, not git: `build/util/LASTCHANGE.committime`, which holds the new build's commit time, and, when V8 moved, V8's builtins profiles for the new V8's version, from Chromium's storage;
+4. pins the toolchain of the new `DEPS`, as the merge does;
+5. writes `$MITTO_WORKSPACE/export/<tag>/mitto-chromium-<tag>.tar.xz`, with the same files as the old export, and prints its size, its hash and the files that changed.
+
+It stops before it writes anything, and the export then needs slices as above, when the diff:
+
+- deletes a file of the export;
+- changes a build file of the export, a `BUILD.gn`, another `.gn` or `.gni` file or a `.pydeps` list, which can add a file to the build or a target to its graph;
+- adds to a file of the export an `#include`, `#import` or `__has_include` of a header that no file of the export ends with, other than a generated one, or an import to a Python script;
+- changes a patched file so that its patch no longer applies, which needs the patch updated as in a run;
+- is between builds of different branches, such as of two milestones.
+
+Those are the ways in which a build can come to read a file that the export does not hold, on any Host. The rule is stricter than it needs to be: a change to a `BUILD.gn` that only changes a flag stops it too.
+
+The archive's `export.json` names the export it came from, under `updated_from`, and holds no fingerprints of traced builds, since no slice built anything. So a build from it says that it has nothing to compare its library with. [Build from that archive](#build-from-the-source-export) on the machine, with `--archive` and no checkout, once with each `--config` that it has, and let CI build it on every Host, as for any export.
+
+On 2026-11-10 this updated the export of 157.0.8103.27 (`mitto-chromium-157.0.8103.27-2.tar.xz`) to 157.0.8103.39 in 2 minutes on the Mac, with both tags already in `compare/src`. Upstream had changed 7 of its files: five of the HTTP cache, the fix for a 206 that overruns its range, as well as `DEPS` and `chrome/VERSION`. Of the dependencies, only ANGLE had moved, which the export holds 5 files of, licences and a `.gni` file, none of them changed. All 12,380 files under `src/` of the result had the same bytes, modes and times as in the export that slices made of 157.0.8103.39, `mitto-chromium-157.0.8103.39.tar.xz`, and so did the toolchain's pins. Only `export.json`, with its `updated_from` and no fingerprints, differed, and the README, whose text names Windows since the export of 157.0.8103.39 that added its slice.
+
+With the Runtime in the export, a patch build changes V8 too. The same day, the script took `mitto-chromium-157.0.8103.39-3.tar.xz` to 157.0.8103.27, the other way through the same diff, in 3 minutes. 32 of its files changed: 23 of V8, from ten of its rolls, Blink's `runtime_enabled_features.json5`, the HTTP cache's five, `DEPS` and `chrome/VERSION`. None was a build file or added an include, and it fetched the builtins profiles of V8 15.7.112.12. On the Mac the result built the library and the Runtime with no checkout, and that `mitto_page` printed `15.7.112.12` for `--version`. No export of 157.0.8103.27 that carries the Runtime exists to compare that with.

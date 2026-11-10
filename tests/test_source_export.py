@@ -689,7 +689,7 @@ def test_a_mach_o_fingerprint_ignores_where_it_was_built(tmp_path: Path) -> None
     second = write(tmp_path, "second", mach_o(b"code", b"/a/longer/second/out/a.o", b"identity" + b"2" * 8))
 
     assert first.read_bytes() != second.read_bytes()
-    assert export.library_fingerprint(first) == export.library_fingerprint(second)
+    assert export.fingerprint_of(first) == export.fingerprint_of(second)
 
 
 @pytest.mark.parametrize(
@@ -703,7 +703,7 @@ def test_a_mach_o_fingerprint_follows_its_sections(tmp_path: Path, other: bytes)
     first = write(tmp_path, "first", mach_o(b"code", b"/out/a.o", b"identity" + b"1" * 8))
     second = write(tmp_path, "second", other)
 
-    assert export.library_fingerprint(first) != export.library_fingerprint(second)
+    assert export.fingerprint_of(first) != export.fingerprint_of(second)
 
 
 def windows_dll(code: bytes, pdb_signature: bytes) -> bytes:
@@ -726,21 +726,21 @@ def test_a_windows_dll_fingerprint_ignores_the_signature_of_its_pdb(tmp_path: Pa
     second = write(tmp_path, "second.dll", windows_dll(b"code", b"\x02" * 8 + b"LLD PDB."))
 
     assert first.read_bytes() != second.read_bytes()
-    assert export.library_fingerprint(first) == export.library_fingerprint(second)
-    assert export.library_fingerprint(first) != hashlib.sha256(first.read_bytes()).hexdigest()
+    assert export.fingerprint_of(first) == export.fingerprint_of(second)
+    assert export.fingerprint_of(first) != hashlib.sha256(first.read_bytes()).hexdigest()
 
 
 def test_a_windows_dll_fingerprint_follows_its_code(tmp_path: Path) -> None:
     first = write(tmp_path, "first.dll", windows_dll(b"code", b"\x01" * 16))
     second = write(tmp_path, "second.dll", windows_dll(b"CODE", b"\x01" * 16))
 
-    assert export.library_fingerprint(first) != export.library_fingerprint(second)
+    assert export.fingerprint_of(first) != export.fingerprint_of(second)
 
 
 def test_any_other_file_is_fingerprinted_whole(tmp_path: Path) -> None:
     library = write(tmp_path, "libmitto_core.so", b"\x7fELF and the rest")
 
-    assert export.library_fingerprint(library) == hashlib.sha256(b"\x7fELF and the rest").hexdigest()
+    assert export.fingerprint_of(library) == hashlib.sha256(b"\x7fELF and the rest").hexdigest()
 
 
 def tar_of(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
@@ -957,3 +957,49 @@ def test_a_build_that_this_host_has_not_traced_is_refused(tmp_path: Path, monkey
         export.build_from_export(tmp_path / "new", None, export.ASAN)
 
     assert not (tmp_path / "new").exists()
+
+
+def test_the_runtime_build_adds_its_own_args_file(tmp_path: Path) -> None:
+    export.write_args(export.RUNTIME, tmp_path)
+
+    assert (tmp_path / "args.gn").read_text() == export.ARGS_GN.read_text() + export.RUNTIME_ARGS_GN.read_text()
+    assert "mitto_enable_runtime = true" in export.RUNTIME_ARGS_GN.read_text()
+
+
+def test_every_host_traces_the_runtime() -> None:
+    assert all(export.RUNTIME in host.configs for host in export.HOSTS)
+
+
+@pytest.mark.parametrize(
+    ("config", "host", "output"),
+    [
+        (export.PLAIN, export.LINUX, "libmitto_core.so"),
+        (export.ASAN, export.LINUX, "libmitto_core.so"),
+        (export.RUNTIME, export.LINUX, "mitto_page"),
+        (export.RUNTIME, export.MAC, "mitto_page"),
+        (export.RUNTIME, export.WINDOWS, "mitto_page.exe"),
+        (export.PLAIN, export.WINDOWS, "mitto_core.dll"),
+    ],
+)
+def test_a_slice_fingerprints_the_library_or_the_program_of_each_build(
+    config: export.BuildConfig, host: export.Host, output: str
+) -> None:
+    assert config.output(host) == output
+
+
+def test_ninja_runs_as_many_jobs_as_asked(tmp_path: Path) -> None:
+    ninja = tmp_path / export.MAC.ninja
+
+    assert export.ninja_command(tmp_path, export.MAC, Path("out/x"), 5) == [ninja, "-j", "5", "-C", Path("out/x")]
+    assert export.ninja_command(tmp_path, export.MAC, Path("out/x"), None) == [ninja, "-C", Path("out/x")]
+
+
+def test_the_fingerprints_of_an_export_made_before_the_runtime_are_read() -> None:
+    before = {"traced_libraries": {"linux": {"mitto": "a"}}}
+    after = {"traced_outputs": {"linux": {"mitto": "b", "runtime": "c"}}}
+
+    assert export.traced_fingerprint(before, export.LINUX, export.PLAIN) == "a"
+    assert export.traced_fingerprint(before, export.LINUX, export.RUNTIME) is None
+    assert export.traced_fingerprint(after, export.LINUX, export.RUNTIME) == "c"
+    assert export.traced_fingerprint(after, export.MAC, export.PLAIN) is None
+    assert export.traced_fingerprint({"traced_outputs": {}}, export.LINUX, export.PLAIN) is None

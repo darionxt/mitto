@@ -46,6 +46,7 @@ from typing import Any, NoReturn, cast
 REPO = Path(__file__).resolve().parents[2]
 TAG_FILE = REPO / "tools/workspace/chromium_tag"
 ARGS_GN = REPO / "tools/workspace/args.gn"
+RUNTIME_ARGS_GN = REPO / "tools/workspace/runtime_args.gn"
 PATCHES = REPO / "tools/workspace/patches"
 NATIVE = REPO / "native"
 PIN_FILE = REPO / "tools/workspace/source_export.json"
@@ -149,10 +150,24 @@ class GcsFile:
 
 @dataclasses.dataclass(frozen=True)
 class BuildConfig:
-    """A way to build the native core: GN args on top of args.gn, in a build directory of its own."""
+    """A way to build the native core: GN args on top of args.gn, in a build directory of its own.
+
+    `args_file` comes after args.gn and before `args`. `target` is what ninja builds
+    there, and `program` the program whose fingerprint a build from the export
+    compares with the one its slice built, where the build makes no library.
+    """
 
     name: str
     args: str = ""
+    args_file: Path | None = None
+    target: str = "mitto"
+    program: str | None = None
+
+    def output(self, host: "Host") -> str:
+        """Returns the file whose fingerprint a slice records, relative to the build directory."""
+        if self.program is None:
+            return host.library
+        return self.program + host.executable_suffix
 
 
 # The build that ships.
@@ -166,7 +181,10 @@ UBSAN = BuildConfig("ubsan", UNSHRUNK + "is_ubsan = true\nis_ubsan_no_recover = 
 # FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION, which changes BoringSSL's random numbers
 # among other things. Its owners files would ask git, and an export has no git.
 FUZZ = BuildConfig("fuzz", UNSHRUNK + "is_asan = true\nuse_libfuzzer = true\ngenerate_fuzzer_owners = false\n")
-CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ)
+# The Page program, with V8, and Blink's Web IDL database. It builds no library:
+# see runtime_args.gn.
+RUNTIME = BuildConfig("runtime", args_file=RUNTIME_ARGS_GN, target="runtime", program="mitto_page")
+CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ, RUNTIME)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -178,6 +196,7 @@ class Host:
     library: str
     configs: tuple[BuildConfig, ...]
     ninja: str = "third_party/ninja/ninja"
+    executable_suffix: str = ""
     # Windows keeps no file modes, so its slice cannot say which file is a program.
     file_modes: bool = True
 
@@ -215,7 +234,7 @@ MAC = Host(
         CipdPackage("third_party/cpython3/host"),
     ),
     library="libmitto_core.dylib",
-    configs=(PLAIN,),
+    configs=(PLAIN, RUNTIME),
 )
 # Visual Studio and the Windows SDK stay the machine's, as Xcode does on macOS.
 # The build of the native core never runs rc.exe today, but gn's toolchain for
@@ -234,7 +253,8 @@ WINDOWS = Host(
         GcsFile(RC_EXE, RC_BUCKET),
     ),
     library="mitto_core.dll",
-    configs=(PLAIN,),
+    configs=(PLAIN, RUNTIME),
+    executable_suffix=".exe",
     file_modes=False,
 )
 # The merge takes a file that several slices hold from the first of them, so a
@@ -369,16 +389,17 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def library_fingerprint(library: Path) -> str:
-    """Returns a hash of a library that does not depend on where it was built.
+def fingerprint_of(binary: Path) -> str:
+    """Returns a hash of a library or a program that does not depend on where it was built.
 
     A Mach-O file names each of its object files by absolute path for the
     debugger, which changes its symbol table, its identity and its signature. So
     that format gets a hash of its sections alone. A Windows DLL names its PDB by
     a signature that the linker hashes from the PDB, which holds absolute paths,
-    so that signature does not count. An ELF file has no such paths.
+    so that signature does not count, nor in a Windows program. An ELF file has no
+    such paths.
     """
-    data = library.read_bytes()
+    data = binary.read_bytes()
     if data[:2] == b"MZ":
         return hashlib.sha256(_without_pdb_signature(data)).hexdigest()
     if data[:4] != MACH_O_MAGIC:
@@ -685,10 +706,18 @@ def check_checkout(src: Path) -> None:
 
 
 def write_args(config: BuildConfig, build_dir: Path) -> None:
-    (build_dir / "args.gn").write_text(ARGS_GN.read_text() + config.args)
+    extra = config.args_file.read_text() if config.args_file else ""
+    (build_dir / "args.gn").write_text(ARGS_GN.read_text() + extra + config.args)
 
 
-def traced_build(src: Path, host: Host, config: BuildConfig, build_dir: Path, trace_dir: Path) -> None:
+def ninja_command(src: Path, host: Host, build_dir: Path, jobs: int | None) -> list[str | Path]:
+    """Returns ninja for a build directory, with as many jobs as asked, or ninja's own default."""
+    return [src / host.ninja, *(["-j", str(jobs)] if jobs else []), "-C", build_dir]
+
+
+def traced_build(
+    src: Path, host: Host, config: BuildConfig, build_dir: Path, trace_dir: Path, jobs: int | None = None
+) -> None:
     """Builds the native core from nothing, so that every file it needs gets read."""
     site = trace_dir / "site"
     logs = trace_dir / "logs"
@@ -711,7 +740,7 @@ def traced_build(src: Path, host: Host, config: BuildConfig, build_dir: Path, tr
     note(f"generating the traced {config.name} build")
     check_call([src / host.gn, "gen", relative, *GN_ROOT, "--ide=json"], cwd=src, env=env)
     note("building; a first build takes minutes")
-    check_call([src / host.ninja, "-C", relative, "mitto"], cwd=src, env=env)
+    check_call([*ninja_command(src, host, relative, jobs), config.target], cwd=src, env=env)
 
 
 def paths_read_by_python(logs: Path, src: Path) -> set[str]:
@@ -724,11 +753,11 @@ def paths_read_by_python(logs: Path, src: Path) -> set[str]:
     return paths
 
 
-def paths_used_by_build(src: Path, host: Host, build_dir: Path, logs: Path) -> set[str]:
-    """Returns every file of the source tree that the finished build used."""
+def paths_used_by_build(src: Path, host: Host, build_dir: Path, logs: Path, target: str = PLAIN.target) -> set[str]:
+    """Returns every file of the source tree that the finished build of a target used."""
     ninja = src / host.ninja
     paths = paths_in_project(json.loads((build_dir / "project.json").read_text()))
-    commands = output_of([ninja, "-C", build_dir, "-t", "commands", "mitto"])
+    commands = output_of([ninja, "-C", build_dir, "-t", "commands", target])
     relative_to_build = paths_in_ninja_deps(output_of([ninja, "-C", build_dir, "-t", "deps"]))
     relative_to_build |= paths_in_commands(commands)
     for directory in system_include_dirs(commands):
@@ -805,20 +834,20 @@ def copy_files(src: Path, paths: Iterable[str], destination: Path) -> None:
             target.chmod(0o755 if source.stat().st_mode & stat.S_IXUSR else 0o644)
 
 
-def make_slice(workspace: Path, tag: str, host: Host) -> Path:
+def make_slice(workspace: Path, tag: str, host: Host, jobs: int | None = None) -> Path:
     src = checkout_of(workspace, tag)
     check_checkout(src)
     destination = export_dir(workspace, tag) / host.name
     used: set[str] = set()
-    libraries: dict[str, str] = {}
+    outputs: dict[str, str] = {}
     with tempfile.TemporaryDirectory(dir=workspace) as temporary:
         trace_dir = Path(temporary)
         for config in host.configs:
             build_dir = src / "out" / f"export-trace-{config.name}"
-            traced_build(src, host, config, build_dir, trace_dir)
-            used |= paths_used_by_build(src, host, build_dir, trace_dir / "logs")
-            libraries[config.name] = library_fingerprint(build_dir / host.library)
-            note(f"{config.name} {host.library}: fingerprint {libraries[config.name]}")
+            traced_build(src, host, config, build_dir, trace_dir, jobs)
+            used |= paths_used_by_build(src, host, build_dir, trace_dir / "logs", config.target)
+            outputs[config.name] = fingerprint_of(build_dir / config.output(host))
+            note(f"{config.name} {config.output(host)}: fingerprint {outputs[config.name]}")
             shutil.rmtree(build_dir)
     paths = files_to_keep(src, used)
     shutil.rmtree(destination, ignore_errors=True)
@@ -831,7 +860,7 @@ def make_slice(workspace: Path, tag: str, host: Host) -> Path:
                 "host": host.name,
                 "commit_time": int(output_of(["git", "-C", src, "log", "-1", "--format=%ct"]).strip()),
                 "patches": {patch.name: sha256_of(patch) for patch in sorted(PATCHES.glob("*.patch"))},
-                "libraries": libraries,
+                "outputs": outputs,
             },
             indent=2,
         )
@@ -1084,7 +1113,7 @@ def make_archive(workspace: Path, tag: str) -> Path:
     metadata = {
         "chromium_tag": tag,
         "patches": patches,
-        "traced_libraries": {info["host"]: info["libraries"] for info in infos},
+        "traced_outputs": {info["host"]: info["outputs"] for info in infos},
         "toolchain": {host.name: toolchain_pins(deps, files, host, stores) for host in HOSTS},
     }
     is_executable = executable_in_merge([directory / host.name for host in HOSTS if not host.file_modes])
@@ -1265,7 +1294,18 @@ def unpack_export(archive: Path, checkout: Path) -> None:
         unpacked.rename(checkout)
 
 
-def build_from_export(directory: Path, archive: Path | None, config: BuildConfig = PLAIN) -> Path:
+def traced_fingerprint(metadata: Mapping[str, Any], host: Host, config: BuildConfig) -> str | None:
+    """Returns the fingerprint of what the slice of an export built, or None if it holds none.
+
+    An export made before the Runtime's build was traced names them `traced_libraries`.
+    """
+    traced: Mapping[str, Mapping[str, str]] = metadata.get("traced_outputs", metadata.get("traced_libraries", {}))
+    return traced.get(host.name, {}).get(config.name)
+
+
+def build_from_export(
+    directory: Path, archive: Path | None, config: BuildConfig = PLAIN, jobs: int | None = None
+) -> Path:
     tag = read_tag()
     host = current_host()
     if config not in host.configs:
@@ -1295,22 +1335,32 @@ def build_from_export(directory: Path, archive: Path | None, config: BuildConfig
 
     # The check takes seconds, and stops the build before it compiles anything.
     check_call([src / host.gn, "gen", relative, *GN_ROOT, "--check"], cwd=src, env=env)
-    check_call([src / host.ninja, "-C", relative, "mitto"], cwd=src, env=env)
-    library = build_dir / host.library
-    if library_fingerprint(library) == metadata["traced_libraries"][host.name][config.name]:
-        note("the library is the same as the one the slice of this export built")
+    check_call([*ninja_command(src, host, relative, jobs), config.target], cwd=src, env=env)
+    output = build_dir / config.output(host)
+    kind = "library" if config.program is None else "program"
+    traced = traced_fingerprint(metadata, host, config)
+    if traced is None:
+        note(f"this export holds no fingerprint of a traced {kind}, as one updated from a patch build's diff does not")
+    elif fingerprint_of(output) == traced:
+        note(f"the {kind} is the same as the one the slice of this export built")
     else:
-        note("the library differs from the one the slice of this export built, as it should once native/ has changed")
-    print(library)
-    return library
+        note(f"the {kind} differs from the one the slice of this export built, as it should once native/ has changed")
+    print(output)
+    return output
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("slice", help="trace a build in this Host's checkout and keep what it used")
+    jobs = argparse.ArgumentParser(add_help=False)
+    jobs.add_argument(
+        "-j", "--jobs", type=int, help="how many build steps ninja runs at once; V8 needs fewer than ninja's default"
+    )
+    commands.add_parser(
+        "slice", parents=[jobs], help="trace each build in this Host's checkout and keep what they used"
+    )
     commands.add_parser("merge", help="merge every Host's slice into the export")
-    build = commands.add_parser("build", help="build the native core from the export")
+    build = commands.add_parser("build", parents=[jobs], help="build the native core from the export")
     build.add_argument("directory", type=Path, help="where to unpack and build")
     build.add_argument("--archive", type=Path, help="a local archive, instead of the published export")
     build.add_argument(
@@ -1320,12 +1370,12 @@ def main() -> int:
     try:
         match arguments.command:
             case "slice":
-                make_slice(workspace_dir(), read_tag(), current_host())
+                make_slice(workspace_dir(), read_tag(), current_host(), arguments.jobs)
             case "merge":
                 make_archive(workspace_dir(), read_tag())
             case _:
                 config = next(config for config in CONFIGS if config.name == arguments.config)
-                build_from_export(arguments.directory, arguments.archive, config)
+                build_from_export(arguments.directory, arguments.archive, config, arguments.jobs)
     except ExportError as error:
         print(f"export: error: {error}", file=sys.stderr)
         return 1
