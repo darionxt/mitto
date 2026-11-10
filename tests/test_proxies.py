@@ -336,6 +336,27 @@ def test_a_socks5_proxy_that_asks_gets_the_credentials_and_then_the_name(protoco
 
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
+def test_a_connect_to_a_socks5_proxy_that_the_system_refuses_is_tried_again_before_anything_is_sent(
+    protocol: str,
+) -> None:
+    with (
+        serving(LocalProxy(socks=True, socks_credentials=_SOCKS5_LOGIN)) as proxy,
+        CaptureServer() as server,
+        mitto.Session(
+            proxy=_socks5_with_credentials(proxy),
+            _settings=PrivateSettings(ignore_certificate_errors_spki_list=[server.spki_hash], refused_connects=2),
+        ) as session,
+    ):
+        response = session.get(server.url(protocol, host=CASE_HOST))
+
+    assert response.status == 200
+    assert response.protocol == protocol
+    assert proxy.socks_greetings == [_SOCKS5_GREETING]
+    assert proxy.socks_logins == [_SOCKS5_LOGIN]
+
+
+@pytest.mark.usefixtures("native_library")
+@pytest.mark.parametrize("protocol", [HTTP1, HTTP2])
 def test_credentials_a_socks5_proxy_refuses_end_the_request_after_one_answer(protocol: str) -> None:
     with (
         serving(LocalProxy(socks=True, socks_credentials=(_USER.encode(), b"other"))) as proxy,

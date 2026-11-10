@@ -53,6 +53,35 @@ def free_ports(count: int, kind: int = socket.SOCK_STREAM) -> list[int]:
     return ports
 
 
+def free_ports_for_tcp_and_udp(count: int) -> list[int]:
+    """Return port numbers that both TCP and UDP can bind now, each different.
+
+    Windows refuses a bind to a port in a range that it excludes, with WSAEACCES, and excludes some ranges for one of the
+    two only, such as those that Docker's network reserves. So a number that one of them has free may be refused to the
+    other.
+    """
+    held: list[socket.socket] = []
+    ports: list[int] = []
+    try:
+        for _ in range(count * 100):
+            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            held.append(tcp)
+            tcp.bind(("127.0.0.1", 0))
+            port = tcp.getsockname()[1]
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                try:
+                    udp.bind(("127.0.0.1", port))
+                except OSError:
+                    continue
+            ports.append(port)
+            if len(ports) == count:
+                return ports
+    finally:
+        for sock in held:
+            sock.close()
+    raise AssertionError(f"found only {ports} for both TCP and UDP")
+
+
 def wait_for_ended_connection(server: CaptureServer, protocol: str) -> ConnectionRecord:
     """Wait until the first connection on a port has ended in an error, which a real client's close does."""
     deadline = time.monotonic() + _TIMEOUT_SECONDS
@@ -476,11 +505,32 @@ def steer_first_bind(
     monkeypatch.setattr(socket.socket, "bind", bind)
 
 
+def steer_tcp_binds(monkeypatch: pytest.MonkeyPatch, ports: list[int]) -> None:
+    """Send each TCP bind to port 0 to the next of ports, while any are left.
+
+    Args:
+        monkeypatch: Undoes this when the test ends.
+        ports: The numbers, in the order the binds get them.
+    """
+    real_bind = socket.socket.bind
+    left = list(ports)
+
+    def bind(sock: socket.socket, address: tuple[str, int]) -> None:
+        host, port = address
+        if sock.type == socket.SOCK_STREAM and port == 0 and left:
+            port = left.pop(0)
+        real_bind(sock, (host, port))
+
+    monkeypatch.setattr(socket.socket, "bind", bind)
+
+
 @pytest.mark.parametrize(("route", "position"), [(HTTP1, 0), (HTTP2, 1), (PLAIN_HTTP, 2), (PROXY, 3)])
 def test_a_chosen_http3_port_does_not_take_the_number_of_a_tcp_port(
     monkeypatch: pytest.MonkeyPatch, route: str, position: int
 ) -> None:
     """TCP to the HTTP/3 port must be refused, not reach another port's listener and get a response."""
+    # Numbers that UDP can bind too, so that the steered bind below meets the server's check rather than a refusal.
+    steer_tcp_binds(monkeypatch, free_ports_for_tcp_and_udp(8))
     # Each of the four TCP ports listens on one or two loopback addresses, whichever the machine has.
     steer_first_bind(monkeypatch, socket.SOCK_DGRAM, lambda tcp_ports: tcp_ports[position * len(tcp_ports) // 4])
 
@@ -489,7 +539,7 @@ def test_a_chosen_http3_port_does_not_take_the_number_of_a_tcp_port(
 
 
 def test_a_chosen_tcp_port_does_not_take_the_number_of_a_named_http3_port(monkeypatch: pytest.MonkeyPatch) -> None:
-    named = free_ports(1, socket.SOCK_DGRAM)[0]
+    named = free_ports_for_tcp_and_udp(1)[0]
     steer_first_bind(monkeypatch, socket.SOCK_STREAM, lambda _: named)
 
     with CaptureServer(http3_port=named) as server:
@@ -498,7 +548,7 @@ def test_a_chosen_tcp_port_does_not_take_the_number_of_a_named_http3_port(monkey
 
 
 def test_named_ports_may_share_a_number_across_tcp_and_udp() -> None:
-    port = free_ports(1)[0]
+    port = free_ports_for_tcp_and_udp(1)[0]
 
     with CaptureServer(http1_port=port, http3_port=port) as server:
         assert server.port(HTTP1) == server.port(HTTP3) == port

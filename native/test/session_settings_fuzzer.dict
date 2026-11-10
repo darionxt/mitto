@@ -14,6 +14,7 @@
 "\"dns_nameserver\""
 "\"host_resolver_rules\""
 "\"accept_ch_via_alps\""
+"\"refused_connects\""
 "\"http_cache\""
 "\"memory\""
 "\"/cache\""

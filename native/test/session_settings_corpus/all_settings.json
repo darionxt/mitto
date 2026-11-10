@@ -8,6 +8,7 @@
   "origins_to_force_quic_on": ["capture.localhost:8445", "127.0.0.1:443", "*"],
   "dns_nameserver": "127.0.0.1:53",
   "host_resolver_rules": "MAP capture.test 127.0.0.1, MAP *.capture.test [::1]:443, EXCLUDE other.capture.test",
+  "refused_connects": 2,
   "http_cache": "memory",
   "network_quality": {"http_rtt_ms": 116, "downstream_throughput_kbps": 2658, "browser_salt": 21, "renderer_salt_key": "key"}
 }

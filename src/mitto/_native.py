@@ -636,6 +636,7 @@ class PrivateSettings(TypedDict, total=False):
     dns_nameserver: str | None
     host_resolver_rules: str
     accept_ch_via_alps: Mapping[str, str]
+    refused_connects: int
 
 
 class Session:
@@ -657,6 +658,7 @@ class Session:
         host_resolver_rules: str = "",
         proxy: str | None = None,
         accept_ch_via_alps: Mapping[str, str] | None = None,
+        refused_connects: int = 0,
         http_cache: str | None = None,
         network_quality: NetworkQuality | None = None,
     ) -> None:
@@ -688,6 +690,10 @@ class Session:
             accept_ch_via_alps: What each origin counts as having said in the ACCEPT_CH frame in ALPS, by the URL of its
                 origin. No server in the tests can say anything there, so this stands for what //net would read. It is for
                 tests, so the public API does not offer it.
+            refused_connects: Fail this many of the first connect attempts of each of this Session's TCP and UDP sockets
+                with ERR_NO_BUFFER_SPACE before they reach the system, as Windows refuses one now and then. The Session tries a
+                refused connect again, with a new socket, up to 2 more times: on Windows always, and on another Host only
+                when this is more than 0. It is for tests, so the public API does not offer it.
             http_cache: Keep responses as Chrome's HTTP cache does: MEMORY_CACHE until this Session closes, or the absolute
                 path of a directory for later Sessions too. //net only touches its subdirectory Cache_Data there. None keeps
                 no responses.
@@ -716,6 +722,8 @@ class Session:
         }
         if dns_nameserver is not None:
             settings_dict["dns_nameserver"] = dns_nameserver
+        if refused_connects:
+            settings_dict["refused_connects"] = refused_connects
         if proxy is not None:
             settings_dict["proxy"] = proxy
         if http_cache is not None:

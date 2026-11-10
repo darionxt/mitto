@@ -16,6 +16,7 @@ import pytest
 
 import mitto
 from mitto._errors import ERROR_TYPES_BY_NAME, ERROR_TYPES_BY_PREFIX, request_error
+from mitto._native import PrivateSettings
 from tests.local_server import LocalHTTPServer
 from tools.capture import HTTP2, CaptureServer
 
@@ -29,6 +30,7 @@ ERR_CONTENT_LENGTH_MISMATCH = -354
 ERR_EMPTY_RESPONSE = -324
 ERR_INVALID_URL = -300
 ERR_NAME_NOT_RESOLVED = -105
+ERR_NO_BUFFER_SPACE = -176
 ERR_SSL_PROTOCOL_ERROR = -107
 ERR_TOO_MANY_REDIRECTS = -310
 
@@ -37,6 +39,9 @@ UNKNOWN_NET_ERRORS = (-999999, 1)
 
 # Every code that //net's list could hold.
 NET_ERROR_CODES = range(-1, -1000, -1)
+
+# How many times in all a Session tries a connect that the system refuses, as Windows does now and then.
+CONNECT_ATTEMPTS = 3
 
 ALL_REQUEST_ERRORS = (
     mitto.RequestError,
@@ -52,12 +57,17 @@ ALL_REQUEST_ERRORS = (
 
 
 class FailingHandler(http.server.BaseHTTPRequestHandler):
-    """Answers in the ways that make a request fail."""
+    """Answers in the ways that make a request fail, and at /ok as one that succeeds."""
 
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:
         match self.path:
+            case "/ok":
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
             case "/loop":
                 self.send_response(302)
                 self.send_header("Location", "/loop")
@@ -111,6 +121,31 @@ def test_a_connection_that_is_refused() -> None:
     assert caught.value.url == url
     assert caught.value.net_error == ERR_CONNECTION_REFUSED
     assert caught.value.name == "ERR_CONNECTION_REFUSED"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_connect_that_the_system_refuses_is_tried_again_with_a_new_socket(server_url: str) -> None:
+    with mitto.Session(_settings=PrivateSettings(refused_connects=CONNECT_ATTEMPTS - 1)) as session:
+        response = session.get(f"{server_url}/ok")
+
+    assert response.status == 200
+    assert response.text == "ok"
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_connect_that_the_system_refuses_each_time_fails_with_what_it_said(server_url: str) -> None:
+    url = f"{server_url}/ok"
+
+    with (
+        mitto.Session(_settings=PrivateSettings(refused_connects=CONNECT_ATTEMPTS)) as session,
+        pytest.raises(mitto.RequestError) as caught,
+    ):
+        session.get(url)
+
+    assert type(caught.value) is mitto.RequestError
+    assert caught.value.url == url
+    assert caught.value.net_error == ERR_NO_BUFFER_SPACE
+    assert caught.value.name == "ERR_NO_BUFFER_SPACE"
 
 
 @pytest.mark.usefixtures("native_library")
