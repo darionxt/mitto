@@ -57,8 +57,9 @@ PROFILES_URL = "https://storage.googleapis.com/chromium-v8-builtins-pgo/by-versi
 V8_VERSION_FILE = "v8/include/v8-version.h"
 
 # Build files, whose change can add a file to the build or a dependency to the graph.
-BUILD_FILE_NAMES = {"BUILD.gn", "DEPS.gn"}
 BUILD_FILE_SUFFIXES = {".gn", ".gni", ".pydeps"}
+# The root's .gn, whose name has no suffix in Python's eyes.
+BUILD_FILE_NAMES = {".gn"}
 
 # Files whose includes the preprocessor follows.
 INCLUDING_SUFFIXES = {".c", ".cc", ".cpp", ".def", ".h", ".hpp", ".inc", ".inl", ".m", ".mm", ".S", ".s", ".asm"}

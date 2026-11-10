@@ -51,6 +51,7 @@ def test_a_file_belongs_to_the_innermost_dependency() -> None:
     ("path", "changed"),
     [
         ("net/BUILD.gn", True),
+        (".gn", True),
         ("build/config/compiler/compiler.gni", True),
         ("build/dotfile_settings.gn", True),
         ("third_party/blink/renderer/bindings/scripts/build_web_idl_database.pydeps", True),
