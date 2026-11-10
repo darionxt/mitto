@@ -168,7 +168,7 @@ Goal: the rest of what pages commonly measure, and the first release with the Ru
 
 - C++ follows Chromium's style guide and allowed-features list ([ADR-0002](adr/0002-build-inside-chromium-tree.md)). Python follows ruff with strict type checking.
 - Security: sanitizer builds (ASan, UBSan) run in CI. Every parser we write ourselves gets a fuzz target.
-- Security fixes between runs: when Chrome ships a patch build of the Engine Release that fixes a security bug in code mitto ships, such as `//net`, BoringSSL, QUICHE or V8, mitto moves to that build and ships a patch version. The release routine says what starts such a patch, and how soon it follows Chrome's build.
+- Security fixes between runs: a security fix that Chrome ships in a patch build of the Engine Release reaches mitto with the next run. When the fix is in code mitto ships, such as `//net`, BoringSSL, QUICHE or V8, and the release notes rate it Critical or say it is exploited in the wild, the owner may start a patch run, which moves to that build and ships a patch version. [The release routine](releasing.md#a-patch-run) says how.
 - Large artifacts (checkouts, build output, caches) live in the workspace, never in the repository.
 
 ## Risks

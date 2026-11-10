@@ -7,18 +7,37 @@ from pathlib import Path
 
 from mitto._persona import WINDOWS_PERSONAS
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError
+from tools.release.chrome_releases import security_fixes
 from tools.release.drop import REPOSITORY, DropError, drop_oldest
 from tools.release.machine_sources import refresh_table
 from tools.release.machines import STATISTICS_PATH, TABLE_PATH, MachineTableError, read_statistics, write_table
+from tools.release.patch_builds import build_changes, builds_after, patch_builds_report
 from tools.release.persona import PERSONAS_DIRECTORY, PersonaDataError, write_persona
 from tools.release.publish import PublishError, dry_run_version, release_notes, tag_version
-from tools.release.web import WebError
+from tools.release.source_export import ExportError, pinned_export, read_export
+from tools.release.version_history import stable_builds
+from tools.release.web import WebError, fetch_from_the_network, version_parts
 from tools.release.window import builds_report, next_window
+
+ENGINE_BUILD_PATH = Path(__file__).resolve().parents[1] / "workspace" / "chromium_tag"
+"""Where the repository names the build that the engine is checked out and exported from."""
 
 
 def _builds(args: argparse.Namespace) -> int:
     window = next_window(WINDOWS_PERSONAS) if args.engine is None else next_window([str(args.engine - 1)])
     print(builds_report(window, date.today()))
+    return 0
+
+
+def _patch_builds(args: argparse.Namespace) -> int:
+    since = args.since or ENGINE_BUILD_PATH.read_text(encoding="utf-8").strip()
+    release = str(version_parts(since, "--since")[0])
+    if args.until is not None and version_parts(args.until, "--until")[0] != int(release):
+        raise WebError(f"--until {args.until} is not a build of Chrome {release}, as --since {since} is")
+    export = read_export(args.archive.read_bytes()) if args.archive else pinned_export(fetch_from_the_network)
+    builds = builds_after(stable_builds(release), since, args.until)
+    changes = build_changes(since, builds, export.files, security_fixes(fetch_from_the_network), fetch_from_the_network)
+    print(patch_builds_report(since, export.build, len(export.files), changes))
     return 0
 
 
@@ -77,6 +96,19 @@ def main() -> int:
     )
     builds.set_defaults(run=_builds)
 
+    patch_builds = commands.add_parser(
+        "patch-builds",
+        help="list the Engine Release's new stable builds, and which of them change files of the source export",
+    )
+    patch_builds.add_argument(
+        "--since", help="the build to compare with (default: the engine's, in tools/workspace/chromium_tag)"
+    )
+    patch_builds.add_argument("--until", help="the newest build to list (default: every newer one)")
+    patch_builds.add_argument(
+        "--archive", type=Path, help="a local archive of the source export, instead of downloading the pinned one"
+    )
+    patch_builds.set_defaults(run=_patch_builds)
+
     persona = commands.add_parser("persona", help="write the Persona's file of a Chrome Release from its Baselines")
     persona.add_argument("release", help="the Chrome Release, such as 158")
     persona.add_argument(
@@ -127,6 +159,7 @@ def main() -> int:
     except (
         BaselineError,
         DropError,
+        ExportError,
         KnownGapsError,
         MachineTableError,
         PersonaDataError,

@@ -6,7 +6,7 @@ Each mitto release ships one engine, built from the **Engine Release**, and pres
 
 A run starts when a milestone reaches its stable date in [Chromium Dash](https://chromiumdash.appspot.com/schedule), not its early stable date. About two weeks before the stable date, the early stable date gives the milestone to a small share of users only, and most installations are still on the one before. The run makes that milestone the Engine Release, records every Chrome Release of the new Supported Window, drops the oldest, and publishes.
 
-A run raises the minor version: 0.1.0, 0.2.0 and so on. Between two runs, a change that every caller can take as it is raises the patch, or waits for the next minor version. While mitto is at 0.x, a change that is not compatible, such as one whose files an older mitto cannot read, may also ship in a minor version of its own, without waiting for a run. Either goes through the [last three steps](#10-the-version) only, and the next run still raises the minor version by one. Every version is made from `main`, so a patch only follows the newest minor version, and no patch of an older one ships. How versions are numbered from 1.0 on is decided when 1.0 comes. Dropping a Chrome Release, and with it its Persona, only happens in a run.
+A run raises the minor version: 0.1.0, 0.2.0 and so on. Between two runs, a change that every caller can take as it is raises the patch, or waits for the next minor version. [A patch run](#a-patch-run) says when a security fix in a patch build of the Engine Release gets a patch of its own. While mitto is at 0.x, a change that is not compatible, such as one whose files an older mitto cannot read, may also ship in a minor version of its own, without waiting for a run. Either goes through the [last three steps](#10-the-version) only, and the next run still raises the minor version by one. Every version is made from `main`, so a patch only follows the newest minor version, and no patch of an older one ships. How versions are numbered from 1.0 on is decided when 1.0 comes. Dropping a Chrome Release, and with it its Persona, only happens in a run.
 
 ## The steps
 
@@ -143,6 +143,64 @@ Once the pull request is merged, tag its commit on `main` as `vX.Y.Z`, with the 
 The tag starts [the release workflow](building.md#the-release-workflow), `.github/workflows/release.yml`. It checks that the tag is the version in `pyproject.toml` and that its commit is on `main`, builds the wheels from nothing, with no Actions cache, on the hosted runners that CI uses, and runs every test against each installed wheel. It then waits for the owner's approval in the `pypi` environment: approve the run's deployment once the three builds have passed. It uploads the wheels to PyPI with Trusted Publishing. No API token can upload to `mitto`. The symbols archives go to the GitHub release of the tag, not to PyPI. There are wheels only, and no sdist. Last, it installs the version from PyPI on each Host and makes a request with it.
 
 A [dry run](building.md#a-dry-run) does the same with a pre-release on TestPyPI, and needs no tag and no approval.
+
+## A patch run
+
+Between two runs, Chrome ships patch builds of each milestone, and many of them fix security bugs. Some fix code that mitto ships and that reads what servers send, such as `//net`, BoringSSL, QUICHE, and the parts of `//base` and ICU that the native core links, and V8 once the **Runtime** ships. A patch run moves the engine to such a build of the **Engine Release**, and ships a patch version.
+
+### When one starts
+
+The owner chose this on 2026-11-10, in [#188](https://github.com/darionxt/mitto/issues/188):
+
+- By default, none starts. A fix in a patch build reaches mitto with the next run, whose [first step](#1-find-the-builds) takes the newest pinnable build of the next milestone, which carries the same fix. 157.0.8103.39 carried the fix for a 206 that overruns its range, which 156.0.8078.79 shipped first.
+- The owner may start one when the newest pinnable build of the Engine Release carries a fix, in a file of the source export, that the release notes rate Critical or say is exploited in the wild. It is the owner's call each time, and nothing promises one.
+- It has no deadline, and follows Chrome's build when the owner has the time.
+
+### Find what a build changes
+
+Run this after the [Chrome Releases](https://chromereleases.googleblog.com/) blog posts a stable update for desktop of the Engine Release:
+
+```bash
+uv run python -m tools.release patch-builds
+```
+
+It lists each Windows stable build of the Engine Release after the build in [`tools/workspace/chromium_tag`](../tools/workspace/chromium_tag), from Google's version history, partial rollouts included, with the day it first went out and whether it can be pinned. For each one it gives the commits since that build that change files of the [source export](building.md#make-the-source-export), and the severest fix that the release notes list for them. Its last line says whether a build carries a fix for which the owner may start a patch run. `--since BUILD` and `--until BUILD` look at other builds of the same milestone, and `--archive PATH` reads a local copy of the export instead of downloading the pinned one, which is 25 MiB. It needs the network, and no workspace, and took about 20 seconds.
+
+The bugs behind a fix stay restricted until most users have it, but what changed does not. Each build is a tag of Chromium's repository, and the commits between two tags are public on its Gitiles server as soon as the build ships. The command reads them there:
+
+- A file counts when the export holds it. `chrome/VERSION` changes in every build, and `DEPS` with every roll, so neither counts by itself.
+- A submodule that the export holds files of, such as BoringSSL in `third_party/boringssl/src`, QUICHE or ICU, moves in a commit that Chromium titles "Roll commits from side projects". The command reads the submodule's own commits between the two that Chromium names, and counts those that change files of the export. It does not read a submodule that the export holds nothing of, such as V8 today.
+- It lists apart a commit that changes `DEPS` and rolls no submodule, because one can move the toolchain that the export pins in `export.json`.
+- It says when a build lacks a commit of the engine's build that changes exported files. A respin on a branch of its own can: 157.0.8103.50 and 157.0.8103.51 are on a branch from 157.0.8103.38, and lack the one commit of 157.0.8103.39, which only sets its version.
+- The release notes list each security fix with the number of its bug and how severe it is, and a commit that fixes it names the same number on a `Bug:` line. The command matches the two, from the blog's posts of about the last two months.
+
+The notes only rate what the commits show. They can list a fix late or leave it out, and they name the component that the bug was filed under, which need not be where the fix is. The commits decide what a build changed.
+
+### What the patch builds of 155 to 157 changed
+
+Measured on 2026-11-10 with the command, against the export of 157.0.8103.39, for each pinnable patch build of a Chrome Release while it was the newest stable one:
+
+| Build | Pinnable from | Days to the next stable date | What it changed in exported files | Fixes in the notes |
+| --- | --- | --- | --- | --- |
+| 155.0.8059.80 | 2026-10-13 | 7 | `net/socket/transport_client_socket_pool.cc` | Critical CVE-2026-110161, use after free in Network |
+| 155.0.8059.85 | 2026-10-15 | 5 | Nothing | |
+| 156.0.8078.74 | 2026-10-27 | 7 | The HTTP cache, ICU's `charstr.cpp` and its time zones, `base/metrics`, the epoll pump of `//base`, and the blocklist of certificates | High CVE-2026-118352 in the cache, CVE-2026-118318 in ICU, which the notes file under V8, and CVE-2026-118335 in Metrics. The blocklist, which adds eMudhra's compromised intermediates, is in no notes |
+| 156.0.8078.80 | 2026-10-29 | 5 | How the HTTP cache handles a 206 that overruns its range | High CVE-2026-76029, improper input validation in Network |
+| 157.0.8103.51 | 2026-11-09 | 8 | Nothing | |
+
+- Three of the five changed exported code, and each of those carried a High or Critical fix. By the owner's rule, only 155.0.8059.80 called for a patch run.
+- Each came five to eight days before the next stable date, so the next run followed within about a week.
+- The notes of 2026-11-09 list nine fixes for 157.0.8103.50 and 157.0.8103.51. Those builds bring the two in XML. One shipped in 157.0.8103.39 already, and no commit from 157.0.8103.27 to 157.0.8103.51 names the bugs of the other six.
+- V8 rolled in four of the five, and the notes listed V8 fixes for each of those four. Once the export holds V8, nearly every patch build will change exported code.
+
+### What a patch run does
+
+It takes the newest pinnable build of the Engine Release that the command names, and goes through fewer steps than a run:
+
+1. Write the build into `tools/workspace/chromium_tag`, as in [step 2](#2-check-out-the-new-engine-release), and [make the source export](#3-make-the-source-export) of it, with the third-party notices and, if the build rolled ICU, a new check of ICU's data. That takes a new checkout and a slice on each of the workspace's three machines, as in a run, until [#178](https://github.com/darionxt/mitto/issues/178) finds out whether a patch build can update the export on one machine, from the diff between the two tags. [building.md](building.md) will then say how.
+2. Compare each ported file with its upstream from the engine's old build to the new one, with the upstream check that [#187](https://github.com/darionxt/mitto/issues/187) adds after the comparison of step 2. A change that a port has to follow goes into the patch run's pull request.
+3. Record no Baselines and write no Persona data. Step 2 gives the checkout and the Baselines of the Engine Release the same build, and a patch run is the exception: until the next run, the Engine Release's Persona keeps the build of its Baselines, which `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name, while the engine runs the new build. CI's Parity Checks still compare the engine with those Baselines, so a gap there is network code that the patch build changed, and a decision for the owner.
+4. Raise the patch in [the version](#10-the-version), with an entry in `CHANGELOG.md` that names each fix the build brings to exported files, with its severity and CVE from the command, and says that the Persona still names the build of its Baselines. Then [the tag](#11-the-tag) and [the publish](#12-the-publish), as in a run.
 
 ## What changes for callers
 

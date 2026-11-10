@@ -2,11 +2,12 @@
 
 import json
 import urllib.parse
+from datetime import date
 
 import pytest
 
 from tests.release.saved import saved
-from tools.release.version_history import RELEASES_URL, newest_pinnable_builds
+from tools.release.version_history import RELEASES_URL, StableBuild, newest_pinnable_builds, stable_builds
 from tools.release.web import Fetch, WebError
 
 
@@ -112,3 +113,59 @@ def test_an_answer_that_is_not_a_list_of_releases_is_an_error(answer: object) ->
 
     with pytest.raises(WebError, match=r"versionhistory\.googleapis\.com"):
         newest_pinnable_builds(["157"], fetch)
+
+
+def test_the_stable_builds_of_a_chrome_release_are_those_of_the_day() -> None:
+    builds = stable_builds("157", saved)
+
+    assert [(build.version, build.pinnable) for build in builds] == [
+        ("157.0.8103.15", False),
+        ("157.0.8103.26", False),
+        ("157.0.8103.27", False),
+        ("157.0.8103.38", False),
+        ("157.0.8103.39", True),
+        ("157.0.8103.40", False),
+        ("157.0.8103.50", False),
+        ("157.0.8103.51", True),
+    ]
+    assert builds[4] == StableBuild("157.0.8103.39", date(2026, 11, 3), 1.0, pinnable=True)
+
+
+def test_a_stable_build_takes_its_first_start_its_largest_share_and_any_pin() -> None:
+    fetch, asked = answering(
+        {
+            "releases": [
+                {"version": "157.0.8103.39", "fraction": 0.5, "serving": {"startTime": "2026-11-05T21:11:00Z"}},
+                {
+                    "version": "157.0.8103.39",
+                    "fraction": 0.1,
+                    "pinnable": True,
+                    "serving": {"startTime": "2026-11-03T21:11:00.5Z"},
+                },
+                {"version": "157.0.8103.100", "fraction": 0.005, "serving": {"startTime": "2026-11-09T20:47:31Z"}},
+                {"version": "158.0.8127.18", "fraction": 0.005, "serving": {"startTime": "2026-11-09T20:47:31Z"}},
+            ]
+        }
+    )
+
+    assert stable_builds("157", fetch) == [
+        StableBuild("157.0.8103.39", date(2026, 11, 3), 0.5, pinnable=True),
+        StableBuild("157.0.8103.100", date(2026, 11, 9), 0.005, pinnable=False),
+    ]
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(asked[0]).query) == {"filter": ["version>=157,version<158"]}
+
+
+@pytest.mark.parametrize(
+    "release",
+    [
+        {"version": "157.0.8103.39", "fraction": 1},
+        {"version": "157.0.8103.39", "fraction": 1, "serving": {"startTime": "yesterday"}},
+        {"version": "157.0.8103.39", "fraction": "all", "serving": {"startTime": "2026-11-03T21:11:00Z"}},
+        {"fraction": 1, "serving": {"startTime": "2026-11-03T21:11:00Z"}},
+    ],
+)
+def test_a_stable_build_that_cannot_be_read_is_an_error(release: dict[str, object]) -> None:
+    fetch, _ = answering({"releases": [release]})
+
+    with pytest.raises(WebError, match=r"versionhistory\.googleapis\.com"):
+        stable_builds("157", fetch)
