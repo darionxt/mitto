@@ -42,6 +42,15 @@ Each Chrome Release is recorded at its newest pinnable build, because that is th
 1. Write the new Engine Release's newest pinnable build from [step 1](#1-find-the-builds) into [`tools/workspace/chromium_tag`](../tools/workspace/chromium_tag). Its checkout and its Baselines take the same build, so that the engine runs the network code that was recorded.
 2. Rerun [`tools/workspace/bootstrap.py`](building.md#set-up-the-workspace) on each of the workspace's three machines: the macOS, the Linux and the Windows machine. It creates `$MITTO_WORKSPACE/chromium-<tag>` for the new release, with its own checkout and `out/mitto`. If a patch no longer applies, the script stops after the sync. Update the patch against the new checkout and rerun the script. Delete a patch the new release no longer needs.
 3. [Build the native core](building.md#build-the-native-core) in the new checkout on each machine. On the Windows machine, check first that Visual Studio and the Windows SDK are the versions that the new release asks for, in its `docs/windows_build_instructions.md` and `build/vs_toolchain.py`. They are the machine's and not the checkout's, and a build stops before it starts without that SDK.
+
+   On the macOS or the Linux machine, run [html5lib's tokenizer tests](building.md#the-html-tokenizers-tests) of the new release against the HTML tokenizer, which that build makes. From the new checkout's `src`, where `mitto` is the repository's `native/`, copy the new release's copy of the tests over the repository's, from where [`ORIGIN.md`](../native/test/html5lib_tokenizer/ORIGIN.md) names it, and run them:
+
+   ```bash
+   cp third_party/catapult/third_party/html5lib-1.1/html5lib/tests/testdata/tokenizer/*.test mitto/test/html5lib_tokenizer/
+   out/mitto/html_tokenizer_test mitto/test/html5lib_tokenizer mitto/test/html5lib_tokenizer_failures.txt
+   ```
+
+   If the tree has moved them, such as to a newer html5lib or to a `third_party/html5lib-tests` of its own, take them from there and update `ORIGIN.md`, and copy their `README.md`, `LICENSE` and `AUTHORS.rst` along. Read the diff of the tests and what the program prints. A test that fails now, or one in [the list of failures](../native/test/html5lib_tokenizer_failures.txt) that passes, is a new test or a change to an old one. Fix the tokenizer, or put the test in the list under the reason it fails, and say which in the run's pull request.
 4. [Compare](building.md#compare-two-releases) the build of each older Chrome Release in the new Supported Window with the new one. A change in the network code that sets up a connection is one that Persona data may have to undo for the older Chrome Releases ([what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases)). It is a decision for the milestone's plan.
 5. On the macOS or the Linux machine, [compare the files that mitto ports](building.md#the-files-mitto-ports), from the build that `tools/workspace/chromium_tag` named before this run, as `git show main:tools/workspace/chromium_tag` prints it, to the new one:
 

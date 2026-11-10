@@ -252,6 +252,7 @@ group("mitto") {
   deps = [
     ":mitto_core",
     ":mitto_core_test",
+    "html",
   ]
   if (use_libfuzzer) {
     deps += [

@@ -1,0 +1,58 @@
+# The HTML parser of the Runtime. Nothing here goes into the library, whose
+# exports and size stay as they are: a Page runs in a process of its own.
+
+import("//build/config/sanitizers/sanitizers.gni")
+
+action("entity_table") {
+  script = "make_html_entity_table.py"
+  inputs = [ "html_entity_names.csv" ]
+  outputs = [ "$target_gen_dir/html_entity_table.cc" ]
+  args = rebase_path(inputs + outputs, root_build_dir)
+}
+
+source_set("tokenizer") {
+  sources = [
+    "html_entity_table.h",
+    "html_parse_error.cc",
+    "html_parse_error.h",
+    "html_token.cc",
+    "html_token.h",
+    "html_tokenizer.cc",
+    "html_tokenizer.h",
+  ]
+  sources += get_target_outputs(":entity_table")
+  deps = [
+    ":entity_table",
+    "//base",
+  ]
+}
+
+# Runs html5lib's tokenizer tests, which native/test/html5lib_tokenizer holds.
+executable("html_tokenizer_test") {
+  sources = [ "//mitto/test/html_tokenizer_test.cc" ]
+  deps = [
+    ":tokenizer",
+    "//base",
+  ]
+}
+
+# Only the fuzz build loads this, so that no other build reads //testing.
+if (use_libfuzzer) {
+  import("//testing/libfuzzer/fuzzer_test.gni")
+
+  fuzzer_test("html_tokenizer_fuzzer") {
+    sources = [ "//mitto/test/html_tokenizer_fuzzer.cc" ]
+    deps = [
+      ":tokenizer",
+      "//base",
+    ]
+  }
+}
+
+group("html") {
+  testonly = use_libfuzzer
+  deps = [ ":html_tokenizer_test" ]
+  if (use_libfuzzer) {
+    deps += [ ":html_tokenizer_fuzzer" ]
+  }
+}

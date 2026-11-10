@@ -34,11 +34,11 @@ jobs:
         include:
           # What the job runs, and the libraries that each of those loads.
           - config: asan
-            files: mitto_core_test libmitto_core.so libsanitizer_shared_hooks.so
+            files: mitto_core_test libmitto_core.so html_tokenizer_test libsanitizer_shared_hooks.so
           - config: ubsan
-            files: mitto_core_test libmitto_core.so
+            files: mitto_core_test libmitto_core.so html_tokenizer_test
           - config: fuzz
-            files: client_hints_fuzzer cookies_fuzzer request_options_fuzzer session_settings_fuzzer socks5_auth_fuzzer libsanitizer_shared_hooks.so
+            files: client_hints_fuzzer cookies_fuzzer request_options_fuzzer session_settings_fuzzer socks5_auth_fuzzer html_tokenizer_fuzzer libsanitizer_shared_hooks.so
     env:
       UV_LOCKED: "1"
     steps:
@@ -98,11 +98,18 @@ jobs:
           MITTO_CORE_TEST: ${{ runner.temp }}/native-core/mitto_core_test
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
-      - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers and client hints
+      - name: Run html5lib's tokenizer tests
+        if: matrix.config != 'fuzz'
+        run: |
+          "$RUNNER_TEMP/native-core/html_tokenizer_test" native/test/html5lib_tokenizer native/test/html5lib_tokenizer_failures.txt
+        env:
+          ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+          UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+      - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers, client hints and HTML
         if: matrix.config == 'fuzz'
         run: |
           mkdir "$RUNNER_TEMP/crashes"
-          for target in session_settings request_options cookies socks5_auth client_hints; do
+          for target in session_settings request_options cookies socks5_auth client_hints html_tokenizer; do
             mkdir "$RUNNER_TEMP/corpus-$target"
             "$RUNNER_TEMP/native-core/${target}_fuzzer" \
               -max_total_time="$FUZZ_SECONDS" \

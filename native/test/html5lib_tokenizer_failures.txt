@@ -1,0 +1,80 @@
+# The html5lib tokenizer tests in html5lib_tokenizer that the HTML tokenizer
+# fails, each under the reason why. html_tokenizer_test checks that each test
+# here fails and every other test passes.
+#
+# A line names one run of a test: its file, its index in the file from 0, and
+# the initial state it runs in. What follows # is the test's description.
+
+# The HTML Standard has since added processing instructions, <?target data>,
+# which Blink parses with its feature HTMLProcessingInstruction, on for stable
+# in the Engine Release. These tests predate them: they expect a bogus comment
+# where the input ends inside one or has one, and where <? starts a bogus
+# comment, they expect its parse error from before, which the standard has
+# replaced with its own. Each passes with --without-processing-instructions.
+domjs.test:0:Data state  # CR in bogus comment state
+domjs.test:1:Data state  # CRLF in bogus comment state
+domjs.test:2:Data state  # CRLFLF in bogus comment state
+test2.test:31:Data state  # Simili processing instruction
+test2.test:32:Data state  # A bogus comment stops at >, even if preceeded by two dashes
+test3.test:1158:Data state  # <?
+test3.test:1159:Data state  # <?\u0000
+test3.test:1160:Data state  # <?\u0009
+test3.test:1161:Data state  # <?\u000A
+test3.test:1162:Data state  # <?\u000B
+test3.test:1163:Data state  # <?\u000C
+test3.test:1164:Data state  # <? 
+test3.test:1165:Data state  # <? \u0000
+test3.test:1166:Data state  # <?!
+test3.test:1167:Data state  # <?"
+test3.test:1168:Data state  # <?&
+test3.test:1169:Data state  # <?'
+test3.test:1170:Data state  # <?-
+test3.test:1171:Data state  # <?/
+test3.test:1172:Data state  # <?0
+test3.test:1173:Data state  # <?1
+test3.test:1174:Data state  # <?9
+test3.test:1175:Data state  # <?<
+test3.test:1176:Data state  # <?=
+test3.test:1177:Data state  # <?>
+test3.test:1178:Data state  # <??
+test3.test:1179:Data state  # <?@
+test3.test:1180:Data state  # <?A
+test3.test:1181:Data state  # <?B
+test3.test:1182:Data state  # <?Y
+test3.test:1183:Data state  # <?Z
+test3.test:1184:Data state  # <?`
+test3.test:1185:Data state  # <?a
+test3.test:1186:Data state  # <?b
+test3.test:1187:Data state  # <?y
+test3.test:1188:Data state  # <?z
+test3.test:1189:Data state  # <?{
+test3.test:1190:Data state  # <?\uDBC0\uDC00
+
+# Blink's tokenizer drops U+0000 in the data state unless its tree builder is
+# in foreign content or its text insertion mode, where the standard emits it
+# for the tree builder to ignore. Blink makes U+0000 U+FFFD in the states that
+# do not drop it, also after < and in a CDATA section, where the standard
+# emits U+0000. The test expects the standard's U+0000.
+domjs.test:4:CDATA section state  # NUL in CDATA section
+test2.test:34:Data state  # Null Byte Replacement
+test3.test:69:Data state  # <\u0000
+test4.test:57:Data state  # U+0000 in lookahead region after non-matching character
+unicodeCharsProblematic.test:4:Data state  # CR followed by U+0000
+
+# The Engine Release's copy of the test expects a parse error at another
+# position than the one the tokenizer reports. html5lib-tests has since
+# corrected the test to that position.
+test3.test:1:CDATA section state  # [empty]
+test3.test:5:CDATA section state  # \u000A
+test3.test:67:CDATA section state  # ;􀀀
+test3.test:192:Data state  # <!----! >
+test3.test:193:Data state  # <!----!LF>
+test3.test:194:Data state  # <!----!CR>
+test3.test:195:Data state  # <!----!CRLF>
+test3.test:1589:CDATA section state  # 􀀀
+
+# The test expects tokens made fit for an XML infoset, as the standard asks of
+# a tool that converts an HTML document to XML, and not of a tokenizer.
+xmlViolation.test:0:Data state  # Non-XML character
+xmlViolation.test:1:Data state  # Non-XML space
+xmlViolation.test:2:Data state  # Double hyphen in comment
