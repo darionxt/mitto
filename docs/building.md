@@ -104,10 +104,11 @@ third_party\ninja\ninja.exe -C out\mitto mitto
 
 depot_tools' `ninja` command refuses a build directory where Siso has run, and this one does not.
 
-This builds two targets from [`native/`](../native), about 4,200 steps in all:
+This builds three targets from [`native/`](../native), about 4,200 steps in all:
 
 - `mitto_core`, the shared library `out/mitto/libmitto_core.dylib`, `libmitto_core.so` on Linux and `mitto_core.dll` on Windows. It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h), and on Windows also `GetHandleVerifier`, which `//base` marks `__declspec(dllexport)` in `base/win/scoped_handle_verifier.cc`. A linker cannot take that away, and it clashes with nothing, because Windows looks up an import in the DLL that the import names. `//base` only looks for it in the program that started the process.
 - `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result.
+- `html_tokenizer_test`, which runs html5lib's tokenizer tests against the **Runtime**'s HTML tokenizer in [`native/html`](../native/html). The library does not link the tokenizer: a **Page** runs in a process of its own ([ADR-0009](adr/0009-a-process-for-each-page.md)). See [The HTML tokenizer's tests](#the-html-tokenizers-tests).
 
 Run the test program, which needs a network connection:
 
@@ -128,6 +129,18 @@ A first build took about 5 minutes on a 10-core Mac and on a 16-core Linux machi
 On Windows x64, for Chromium 157.0.8103.39, the first build took 9 minutes, 4,082 steps, on the same 16-thread machine that builds it in 5 minutes on Linux, with Windows' real-time virus scan on. The DLL is 13.4 MB and 6.5 MB compressed. It needs no stripping, because its debug information is in `mitto_core.dll.pdb` beside it, 92 MB, and the build directory takes 1.3 GiB.
 
 On Linux the library needs only glibc and libgcc from the system at run time, as `ldd` shows, and a test checks this. On Windows it loads only Windows' own DLLs, and no C runtime of Visual Studio, because Chromium's build links the C runtime into it. A test reads that from the DLL's import tables. [`tools/workspace/args.gn`](../tools/workspace/args.gn) turns off GLib, GIO, D-Bus, NSS and NSPR, and a patch to `//net` makes that possible for NSS and NSPR. So on Linux the Chrome Root Store is the only source of trust: certificates added to an NSS database are ignored ([ADR-0006](adr/0006-linux-library-without-system-libraries.md)).
+
+### The HTML tokenizer's tests
+
+The HTML tokenizer follows the HTML Standard's tokenization section, and Blink's `HTMLTokenizer` where Blink emits something else, which the code says at each place. [`native/test/html5lib_tokenizer`](../native/test/html5lib_tokenizer) holds html5lib's tokenizer tests as the **Engine Release**'s tree has them, and [its `ORIGIN.md`](../native/test/html5lib_tokenizer/ORIGIN.md) says where from. They are in the repository because CI has no checkout, and the source export holds only what a build reads. Run them from `$MITTO_WORKSPACE/chromium-<tag>/src`, where `mitto` is the repository's `native/`:
+
+```bash
+out/mitto/html_tokenizer_test mitto/test/html5lib_tokenizer mitto/test/html5lib_tokenizer_failures.txt
+```
+
+It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
+
+The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
 ## Build from the source export
 
@@ -232,7 +245,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer` | 2.2 GiB |
 
 Each of them stops at the first report.
 
@@ -247,7 +260,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers and `client_hints_fuzzer` for what a server asks for, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for and `html_tokenizer_fuzzer` for HTML, with the files of that name:
 
 ```bash
 mkdir corpus
