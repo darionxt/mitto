@@ -1,6 +1,6 @@
 # mitto
 
-mitto is a Python library that talks to web servers the way Chrome does, so that what a server can observe about the traffic matches a real Chrome. It starts as an HTTP client; a headless JavaScript runtime is planned as a second phase.
+mitto is a Python library that talks to web servers the way Chrome does, so that what a server can observe about the traffic matches a real Chrome. It started as an HTTP client. Its second phase is the Runtime, which runs a page's scripts.
 
 ## Language
 
@@ -33,7 +33,7 @@ _Avoid_: device, hardware profile, environment, fingerprint
 ### Requests
 
 **Session**:
-A long-lived client that holds one Chrome-like browsing state: its Persona, its Machine, cookies, cache and open connections.
+A long-lived client that holds one Chrome-like browsing state: its Persona, its Machine, cookies, cache, open connections and open Pages.
 _Avoid_: client, browser, context
 
 **Request Kind**:
@@ -44,34 +44,42 @@ _Avoid_: request type, mode
 The page a request is made from, such as the page that holds a clicked link. It decides whether the request counts as same-origin, same-site or cross-site. A navigation the user starts elsewhere, such as from the address bar, has none.
 _Avoid_: referrer, document URL, origin
 
+### Pages
+
+**Runtime**:
+The headless JavaScript environment, without rendering, that runs a Page's scripts against a Chrome-like DOM and Web APIs.
+_Avoid_: browser, headless browser, engine
+
+**Page**:
+What a tab holds in Chrome, in a Session: the document loaded in it, its frames, its scripts and their state, run by the Runtime in a process of its own. Its requests are its Session's.
+_Avoid_: tab, window, browser context, document
+
 ### Fidelity
 
 **Wire Fingerprint**:
 Everything a server can observe about a request below the application payload: the TLS handshake, HTTP/2 and QUIC parameters, and the header names, order and values.
 _Avoid_: TLS fingerprint, JA3, JA4
 
+**Script Fingerprint**:
+Everything a page's scripts can observe about where they run: which interfaces, properties and functions exist, in what order and with which attributes, what they return and how they fail, and the values that come from the Persona and the Machine.
+_Avoid_: JS fingerprint, browser fingerprint, environment
+
 **Recording Case**:
-One situation in which real Chrome is recorded: a Request Kind, how its Initiator relates to where it goes, and what it carries, such as a cross-site fetch with a text body. A hop of a redirect chain is a Recording Case of its own, and so is a same-origin request of each main Request Kind.
+One situation in which real Chrome is recorded: a Request Kind, how its Initiator relates to where it goes, and what it carries, such as a cross-site fetch with a text body. A hop of a redirect chain is a Recording Case of its own, and so is a same-origin request of each main Request Kind. For a Script Fingerprint, it is where the scripts run, such as a top-level page, a frame of another site or a worker.
 _Avoid_: scenario, test case, fixture
 
 **Baseline**:
-A recorded Wire Fingerprint of real Chrome for one Persona and Recording Case, used as ground truth.
+A recorded Wire Fingerprint or Script Fingerprint of real Chrome for one Persona and Recording Case, used as ground truth.
 _Avoid_: golden file, reference capture
 
 **Normal Form**:
-A Wire Fingerprint written so that two recordings of the same client compare equal: what the client randomizes drops out or becomes a placeholder, and only what it decides stays.
+A Wire Fingerprint or Script Fingerprint written so that two recordings of the same client compare equal: what the client randomizes drops out or becomes a placeholder, and only what it decides stays.
 _Avoid_: canonical form, normalized capture
 
 **Parity Check**:
-An automated comparison of mitto's Wire Fingerprint against a Baseline.
+An automated comparison of mitto's Wire Fingerprint or Script Fingerprint against a Baseline.
 _Avoid_: fingerprint test, diff
 
 **Known Gap**:
 A difference from a Baseline that is written down in the repository, so that a Parity Check accepts it until the difference is fixed.
 _Avoid_: exception, allowlist, expected failure
-
-### Later phase
-
-**Runtime**:
-The planned headless JavaScript environment, without rendering, that runs a page's scripts against a Chrome-like DOM and Web APIs.
-_Avoid_: browser, headless browser, engine

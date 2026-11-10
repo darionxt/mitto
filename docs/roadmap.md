@@ -6,14 +6,15 @@ Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). Architectural deci
 
 | Topic | Decision |
 |---|---|
-| First deliverable | The HTTP client. The **Runtime** is a later phase. |
+| Phases | The HTTP client first, M0 to M5. Then the **Runtime**, from M6. |
 | Hosts | Linux x86_64 and macOS arm64, and Windows x64 from M4 |
 | Persona | Windows Chrome |
 | Machine | Drawn for each **Session** from a weighted table, from M5 ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)) |
 | Supported Window | Current stable plus the two previous Chrome Releases ([ADR-0005](adr/0005-older-releases-as-data.md)) |
 | Network | Chromium's own stack, built from source ([ADR-0001](adr/0001-chromium-network-stack.md), [ADR-0002](adr/0002-build-inside-chromium-tree.md)) |
 | Python API | Its own API, familiar to people who know `requests`, with both sync and asyncio versions. The network stack owns HTTP semantics ([ADR-0004](adr/0004-network-stack-owns-http-semantics.md)). |
-| Python boundary | C ABI and `ctypes`, one `py3-none` wheel per Host ([ADR-0003](adr/0003-c-abi-and-ctypes.md)) |
+| Python boundary | C ABI and `ctypes`, one `py3-none` wheel per Host ([ADR-0003](adr/0003-c-abi-and-ctypes.md)), which also carries the Runtime ([ADR-0009](adr/0009-a-process-for-each-page.md)) |
+| Runtime | V8 from the Engine Release, bindings generated from Chromium's Web IDL files, and a DOM, CSS and layout of its own ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)). Each **Page** runs in a process of its own and sends its requests through its Session ([ADR-0009](adr/0009-a-process-for-each-page.md)). |
 | Python versions | 3.12 and later |
 | Licence and distribution | Apache-2.0, public on GitHub, published on PyPI as `mitto`. From M5 the wheel also carries a data table under CC BY-SA 3.0 ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)) |
 | Build resources | CI runs only on GitHub-hosted runners. Anything outside CI, such as producing source exports and recording Baselines, is done by hand. |
@@ -99,9 +100,68 @@ Goal: each **Session** claims a **Machine** of its own instead of the one its **
 - M5 runs beside M4 and holds back neither. It ships in a minor version, with release notes on what a Session sends now.
 - **Exit:** a Session sends the hints of a drawn Machine, the same ones after its cookie file is loaded in another process, `rtt` and `downlink` differ from host to host as Chrome's do, and the Parity Checks pass.
 
-### Later phase: Runtime
+### M6: Runtime skeleton
 
-The headless JavaScript **Runtime** gets its own planning once M3 ships. The direction is V8 from the Engine Release, bindings generated from Chromium's Web IDL files, and a self-written DOM, CSS and layout. Its network requests go through the same Session machinery.
+Goal: prove the **Runtime**'s whole pipeline on every Host before investing in breadth, as M0 did for the HTTP client.
+
+- V8 from the Engine Release in the native build, with Chrome's settings, and Chrome's whole ICU data file ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)). The source export and its Windows slice carry what they need.
+- The Page program, which the native core starts for each **Page**, and the channel between them ([ADR-0009](adr/0009-a-process-for-each-page.md)). M6 chooses the channel: Chromium's Mojo or one of the native core's own.
+- A bindings generator that reads the Engine Release's Web IDL files and writes V8 bindings, with members in the order Chrome installs them. At first it covers what the skeleton needs, such as `Window`, `Document`, `Element` and `console`.
+- A first HTML parser, which builds the tree of simple documents and runs their classic scripts, inline and external, in document order. It gets a fuzz target, as every parser mitto writes does.
+- An event loop with tasks, microtasks and timers, on the real clock.
+- A page's `fetch()`, `XMLHttpRequest` and scripts, loaded through its Session with the Request Kind and Initiator that the page gives them, and `document.cookie` on the Session's cookies.
+- `Session.open_page()`, sync and asyncio, a Page's `evaluate()` and `close()`, and an error when its process ends. The API stays private until the Runtime ships.
+- CI builds the Page program and runs its tests on every Host. The release workflow leaves it out of the wheel.
+- **Exit:** on every Host, a Page that a Session opens loads a page whose script fetches JSON with the Session's cookies and writes it into the document, and Python reads the result through both the sync and the asyncio API. A Page whose process crashes raises an error, and its Session goes on working. CI builds the Runtime within the hosted runners' limits, and the size it would add to the wheel is measured.
+
+### M7: Script parity
+
+Goal: a Page's **Script Fingerprint** matches real Chrome's for its Persona and Machine, before breadth, as M1 did for the wire.
+
+- A probe: a script that walks everything a page can reach from its global object. It records each interface, property and function: their order, attributes, `length`s and names, prototype chains, the source text of native functions, and the error each check throws. It also records the values that the Persona and the Machine decide, such as `navigator`, `screen`, the window's sizes, `matchMedia()`, `Intl`'s defaults and the time zone.
+- **Baselines** of the probe, recorded by hand in real Windows Chrome for each Chrome Release in the **Supported Window**. They start with a top-level page, and get more **Recording Cases** as later milestones make them possible. They are recorded with the capture kit and kept as M1's are.
+- A **Normal Form** for a Script Fingerprint, which hides what the machine decides as M5 does on the wire, and **Parity Checks** that gate CI.
+- Bindings for every interface that Chrome exposes to a page, from the generator. A member whose behaviour is missing is a **Known Gap**, and M7 decides what it does when a page calls it.
+- `navigator`, `screen`, `devicePixelRatio`, `matchMedia()`, `navigator.connection` and `navigator.userAgentData` from the Persona and the Machine, as [persona.md](persona.md#the-runtime) lists them. The Machine gains what the Runtime reads and HTTP does not, such as the time zone, the number of processors and the window's place ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)).
+- A Persona of an older Chrome Release turns off the V8 and Blink features that its release did not ship ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)).
+- **Exit:** Parity Checks of the Script Fingerprint pass for every Chrome Release in the Supported Window, on every Host, with Known Gaps for missing behaviour only.
+
+### M8: Documents
+
+Goal: real pages load and run as they do in Chrome.
+
+- HTML parsing as the specification has it, with its error recovery, `document.write()`, and `async`, `defer` and module scripts.
+- The DOM and its events: mutation observers, event dispatch, and `requestAnimationFrame()` at the Machine's refresh rate.
+- Navigation: `readyState`, `DOMContentLoaded` and `load`, `location` and history, redirects, `<meta http-equiv="refresh">` and form submission, each as a navigation through the Session.
+- Frames, with documents of their own and Chrome's rules for access between origins. The Initiator learns which frame a request comes from.
+- More Request Kinds, for what pages request: styles, fonts, frames, workers and `sendBeacon()`, and the `credentials` modes of `fetch()`.
+- `localStorage`, `sessionStorage` and IndexedDB, saved with the Session as its cookies are.
+- Dedicated workers.
+- Tests from web-platform-tests. The Engine Release's tree records Chrome's own results for them, so mitto is held to Chrome's results, failures included.
+- **Exit:** the chosen directories of web-platform-tests give Chrome's results, and the Parity Checks pass in frames and workers as well as in top-level pages.
+
+### M9: Style, geometry and input
+
+Goal: what a page measures through style and layout matches Chrome, and a caller can act as a user.
+
+- CSS parsing, selectors, the cascade with Chrome's user agent stylesheet, computed style and the CSSOM.
+- Layout for what scripts read: the boxes of elements, `getBoundingClientRect()`, the `offset`, `client` and `scroll` sizes, hit testing, `IntersectionObserver` and `ResizeObserver`. Nothing is painted.
+- Text measured as Windows Chrome measures it, with the fonts a Windows machine has. M9 decides which fonts a Machine claims, and how mitto measures them without shipping Windows' fonts.
+- The window and the screen from the Machine, the window's place included.
+- Input from Python as trusted events: clicks, typing, mouse movement along a path and scrolling. They come with Chrome's sequence of pointer, mouse, keyboard, focus and input events, and with user activation, which decides `Sec-Fetch-User` on the navigations it starts.
+- **Exit:** the chosen directories of web-platform-tests for CSS and geometry give Chrome's results, a caller's clicks and typing produce the events recorded from real Chrome, and the Parity Checks pass.
+
+### M10: Graphics, and the Runtime ships
+
+Goal: the rest of what pages commonly measure, and the first release with the Runtime.
+
+- Canvas 2D on Skia, with text from M9's fonts.
+- WebGL with the parameters, extensions and strings of a GPU that the Machine claims, drawn from a table like its other values.
+- Web Audio's offline rendering.
+- WebCrypto on BoringSSL.
+- The Page API becomes public, with its reference in [api.md](api.md), and the release workflow puts the Page program in the wheel.
+- **Left out:** WebSocket, WebRTC, WebGPU's behaviour, media playback, the behaviour of service workers, and an OS sandbox for the Page process ([ADR-0009](adr/0009-a-process-for-each-page.md)).
+- **Exit:** the Parity Checks pass over the whole Script Fingerprint with every Known Gap written down, `pip install mitto` gives a working Runtime on every Host, and a minor version ships it with release notes.
 
 ## Cross-cutting rules
 
@@ -116,4 +176,7 @@ The headless JavaScript **Runtime** gets its own planning once M3 ships. The dir
 - **Build cost.** Chromium builds are slow on ordinary developer machines. Building only the native core's targets, never the browser, keeps iteration usable.
 - **Hosted runner limits.** GitHub-hosted runners have little disk space and a six-hour job limit, and their minutes are free only for public repositories. The trimmed export and build caching must keep a CI build inside those limits.
 - **Windows toolchain.** Chromium takes Visual Studio and the Windows SDK from the machine, and a new milestone can ask for newer versions of them. A hosted image can lag behind: in October 2026, `windows-2025-vs2026` had Visual Studio 2026 but not the SDK that Chromium 157 asks for, so a job may have to install it first.
+- **Breadth of the Script Fingerprint.** Chrome exposes hundreds of interfaces to a page, and each behaviour that is missing or differs is something a page can see. Mitigation: their shape is generated for all of them, missing behaviour is written down as Known Gaps, and Parity Checks and web-platform-tests show the rest.
+- **Fonts and graphics.** What a page reads through text, canvas and WebGL comes from the fonts, the rasteriser and the GPU of a Windows machine, which a Linux or macOS Host lacks and which mitto cannot ship. Exact values may be out of reach, and M9 and M10 decide how close the Runtime comes.
+- **Size and build time of the Runtime.** V8 and Chrome's ICU data make the wheel several times larger and CI builds longer. The trimmed export and the build caches must keep hosted runners within their limits, and M6 measures both.
 - **Maintenance cadence.** Chrome ships a new stable milestone every two weeks, and falling behind makes the Persona stale. The routine, including its manual steps, has to be cheap and scripted.
