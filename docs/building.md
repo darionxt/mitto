@@ -617,6 +617,17 @@ These costs come on top of the [disk usage](#disk-usage) above. They were measur
 
 The repositories keep every tag and commit they fetch. Delete `$MITTO_WORKSPACE/compare` to free the space; the next run fetches what it needs again.
 
+### The files mitto ports
+
+Some of mitto is ported from Chromium rather than built from it: code that the source export leaves out, such as Blink's and the browser process's, and code whose build target brings in too much, such as the network service's. Each file in `native/` and `src/mitto/` that ports code or copies values names each file they come from, by its path in Chromium's `src`, on a line of its own beside its prose: `// Upstream: services/network/sec_header_helpers.cc` in C++, and `# Upstream: <path>` in Python and GN. Code from a project inside the tree, such as `third_party/rapidhash`, gets the line too. A file that only calls Chromium's code, the way Chrome does, names nothing. A test checks that every file whose comments say it is ported, or a port, has such a line, and that every line that is meant as one is in this form. CI has no checkout, so the test does not check the paths.
+
+```bash
+export MITTO_WORKSPACE=/absolute/path/to/mitto-workspace
+uv run python -m tools.workspace.upstream 156.0.8078.80 157.0.8103.39
+```
+
+The script collects those paths, runs `tools/workspace/compare` on them, and then prints the diff of each one between the two tags, with the files that port it. It fails if a path is not a file at either tag, as when upstream moves a file, and before it compares anything if a file that says it is ported names nothing or a line is not in the form. `compare` is a bash script, so this runs on macOS or Linux. From 156.0.8078.80 to 157.0.8103.39, 19 of the 56 files changed, and none of the changes was one that a port had to follow.
+
 ## Make the source export
 
 [`tools/workspace/export.py`](../tools/workspace/export.py) makes the source export by hand, on machines that hold a workspace. Make a new one when:

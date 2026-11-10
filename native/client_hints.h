@@ -3,6 +3,13 @@
 // services/network/public/cpp/client_hints.cc,
 // third_party/blink/common/client_hints, components/client_hints/browser and
 // content/browser/client_hints. The source export leaves those out.
+//
+// Upstream: services/network/public/cpp/client_hints.cc
+// Upstream: services/network/public/cpp/parsed_headers.cc
+// Upstream: third_party/blink/common/client_hints/client_hints.cc
+// Upstream: components/client_hints/browser/client_hints.cc
+// Upstream: content/browser/client_hints/client_hints.cc
+// Upstream: content/browser/browsing_data/browsing_data_remover_impl.cc
 
 #ifndef MITTO_CLIENT_HINTS_H_
 #define MITTO_CLIENT_HINTS_H_

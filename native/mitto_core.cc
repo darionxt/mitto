@@ -541,6 +541,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     // Cookie, because a page cannot send one, but a caller's has no domain to
     // keep it where it belongs. //net adds the store's cookies on each hop, so
     // this does not touch them.
+    // Upstream: third_party/blink/renderer/platform/loader/fetch/resource_loader.cc
     std::vector<std::string> removed_headers;
     if (!url::IsSameOriginWith(request_->url(), redirect_info.new_url)) {
       removed_headers.emplace_back(net::HttpRequestHeaders::kAuthorization);
@@ -752,6 +753,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
   ConfigureHttpCache(builder, settings);
   // Chrome's network service turns these on. They add to what //net puts in
   // Accept-Encoding, over HTTPS and to localhost only.
+  // Upstream: services/network/public/mojom/network_context.mojom
+  // Upstream: chrome/browser/net/system_network_context_manager.cc
   builder.set_enable_brotli(true);
   builder.set_enable_zstd(true);
   builder.set_accept_language(settings.accept_language);

@@ -7,6 +7,8 @@
 // //components/variations. A source build sees no field trials, so instead of
 // reading them this states the values that Chrome ends up with. Reading the
 // command line is left out.
+//
+// Upstream: components/network_session_configurator/browser/network_session_configurator.h
 
 #ifndef MITTO_NETWORK_SESSION_CONFIGURATOR_H_
 #define MITTO_NETWORK_SESSION_CONFIGURATOR_H_
@@ -33,6 +35,7 @@ void ConfigureQuicParams(net::HttpNetworkSessionParams* params,
 // before it has seen an Alt-Svc from them. Chrome does this while constructing
 // HttpServerProperties, in MaybeProcessQuicHints(). That reads a feature, and a
 // feature cannot vary per Session, so this is a call of its own.
+// Upstream: net/http/http_server_properties.cc
 void ConfigureQuicHints(net::HttpServerProperties* http_server_properties);
 
 }  // namespace mitto

@@ -3,6 +3,8 @@
 // found in the LICENSE file of Chromium's source tree.
 //
 // Ported from services/network/ignore_errors_cert_verifier.cc. See the header.
+//
+// Upstream: services/network/ignore_errors_cert_verifier.cc
 
 #include "mitto/ignore_errors_cert_verifier.h"
 

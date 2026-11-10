@@ -5,6 +5,11 @@
 // third_party/blink/renderer/platform/network/network_state_notifier.cc, where
 // the renderer process of a page works them out for a subresource. The source
 // export leaves both out.
+//
+// Upstream: content/browser/client_hints/client_hints.cc
+// Upstream: third_party/blink/renderer/platform/network/network_state_notifier.cc
+// Upstream: third_party/blink/renderer/platform/network/network_state_notifier.h
+// Upstream: third_party/blink/renderer/core/loader/frame_fetch_context.cc
 
 #ifndef MITTO_NETWORK_QUALITY_H_
 #define MITTO_NETWORK_QUALITY_H_

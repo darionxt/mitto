@@ -5,6 +5,13 @@
 // Ported from NetworkService::ConfigureStubHostResolver() in
 // services/network/network_service.cc, with the values that
 // chrome/browser/net/stub_resolver_config_reader.cc passes it by default.
+// The comments below name where each default comes from.
+//
+// Upstream: services/network/network_service.cc
+// Upstream: chrome/browser/net/stub_resolver_config_reader.cc
+// Upstream: chrome/browser/net/default_dns_over_https_config_source.cc
+// Upstream: services/network/public/cpp/features.cc
+// Upstream: net/base/features.cc
 
 #include "mitto/stub_resolver_config_reader.h"
 

@@ -9,6 +9,10 @@
 // that class from chrome/browser/ssl/ssl_config_service_manager.cc through
 // services/network/ssl_config_type_converter.cc. What that configuration says
 // about verifying certificates is left out, because it is not in the handshake.
+//
+// Upstream: services/network/ssl_config_service_mojo.h
+// Upstream: chrome/browser/ssl/ssl_config_service_manager.cc
+// Upstream: services/network/ssl_config_type_converter.cc
 
 #ifndef MITTO_SSL_CONFIG_SERVICE_MOJO_H_
 #define MITTO_SSL_CONFIG_SERVICE_MOJO_H_

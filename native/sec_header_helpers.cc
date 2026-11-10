@@ -4,6 +4,8 @@
 //
 // Ported from services/network/sec_header_helpers.cc, with the upstream names
 // kept. A caller's own line is what differs: a renderer cannot give one.
+//
+// Upstream: services/network/sec_header_helpers.cc
 
 #include "mitto/sec_header_helpers.h"
 
@@ -158,6 +160,7 @@ void SetSecFetchDestHeader(net::URLRequest& request,
 // for a URL that is not third-party. Otherwise it is "active" wherever the
 // settings allow full cookie access, as a Chrome with no such settings does,
 // and a Session has none.
+// Upstream: components/content_settings/core/common/cookie_settings_base.cc
 void SetSecFetchStorageAccessHeader(
     net::URLRequest& request,
     const FetchParams& params,
