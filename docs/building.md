@@ -142,6 +142,120 @@ It runs each test once for each of its initial states, with its whole input in o
 
 The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
+## Build the Runtime
+
+The **Runtime** runs a **Page**'s scripts in a process of its own, on the **Engine Release**'s V8 ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md), [ADR-0009](adr/0009-a-process-for-each-page.md)). Its targets are in [`native/page`](../native/page) and [`native/bindings`](../native/bindings), and the group `//mitto:runtime` builds them. It exists only in a build directory that asks for it with the GN argument `mitto_enable_runtime`, which is off in [`tools/workspace/args.gn`](../tools/workspace/args.gn), because the [source export](#build-from-the-source-export) does not carry V8 or Blink's Web IDL files yet, and CI builds from it. [`tools/workspace/runtime_args.gn`](../tools/workspace/runtime_args.gn) turns it on, with the other arguments that the Runtime needs. That build directory builds the Runtime and not the library, which `out/mitto` builds as before: [one of those arguments](#icus-data-and-v8s-snapshot) would clash with the library on Linux.
+
+From `$MITTO_WORKSPACE/chromium-<tag>/src`, with depot_tools on your `PATH`, make a build directory of its own from both files and build it:
+
+```bash
+mkdir -p out/runtime
+cat /path/to/mitto/tools/workspace/args.gn /path/to/mitto/tools/workspace/runtime_args.gn > out/runtime/args.gn
+gn gen out/runtime --root-target=//mitto '--root-pattern=//mitto:*'
+autoninja -C out/runtime runtime
+```
+
+On Windows, in PowerShell, with the checkout's ninja as for the native core:
+
+```powershell
+New-Item -ItemType Directory -Force out\runtime | Out-Null
+Get-Content C:\path\to\mitto\tools\workspace\args.gn, C:\path\to\mitto\tools\workspace\runtime_args.gn | Set-Content out\runtime\args.gn
+gn gen out\runtime --root-target=//mitto '--root-pattern=//mitto:*'
+third_party\ninja\ninja.exe -C out\runtime runtime
+```
+
+A compile job of V8 needs far more memory than one of the library, and ninja runs as many jobs as the machine has cores, plus two. On a Mac with 16 GB, a build at that default took about 14 GiB with the system's compression of memory, and left the other programs on the machine with almost nothing, so build V8 there with about 5 jobs, such as `autoninja -j5 -C out/runtime runtime`, or on a larger machine.
+
+This builds two targets:
+
+- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. For now it starts V8, runs the script on its command line in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version. It talks to nothing else yet.
+- The Web IDL database, `out/runtime/gen/mitto/bindings/web_idl_database.pickle`, which nothing reads yet: see [below](#the-web-idl-database).
+
+```text
+$ out/runtime/mitto_page --version
+15.7.112.23
+$ out/runtime/mitto_page 'typeof WebAssembly'
+object
+```
+
+[`tests/test_page_program.py`](../tests/test_page_program.py) runs the program that `MITTO_PAGE_PROGRAM` names, and skips without it.
+
+The build needs one thing from the checkout that the native core does not: the profiles by which Chrome's releases lay out V8's builtins, about 20 MB, which [`tools/workspace/bootstrap.py`](../tools/workspace/bootstrap.py) fetches with V8's own `v8/tools/builtins-pgo/download_profiles.py`, as a hook of Chromium's `DEPS` does when `checkout_pgo_profiles` is set. That setting would also fetch Chrome's own profiles for its compiler, which nothing here reads.
+
+### V8's settings
+
+V8 builds with the settings that Chrome's releases build it with on 64-bit desktops ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)). Chrome's releases come from official builds, and Chromium's tree keeps the GN arguments of its official builder for each OS in `infra/config/generated/builders/ci/<os>-official/gn-args.json`. For Chromium 157 they are `is_official_build = true`, the OS and the CPU, and a few that only say how the build runs on Google's machines. Everything else that V8 builds with follows from those, by V8's own defaults in `v8/gni/v8.gni` and `v8/BUILD.gn`, so the Runtime's build takes the same defaults for the same CPU and OS. Where V8 decides by `is_official_build`, which the library's build leaves off, `runtime_args.gn` sets what an official build would.
+
+| Setting | Value | Where it comes from |
+| --- | --- | --- |
+| Turbofan, `v8_enable_turbofan` | On | `v8/gni/v8.gni`: on unless in V8's lite mode, which only Chrome on iOS without Blink and on tvOS turns on |
+| Maglev, `v8_enable_maglev` | On | `v8/BUILD.gn`: with Turbofan, on x64 and arm64 |
+| Sparkplug, `v8_enable_sparkplug` | On | `v8/BUILD.gn`: unless V8 is built without compilers, `v8_jitless`, which follows lite mode |
+| WebAssembly, `v8_enable_webassembly` | On | `v8/gni/v8.gni`: unless in lite mode |
+| DrumBrake, V8's interpreter of WebAssembly, `v8_enable_drumbrake` | Off | `v8/gni/v8.gni`: only tvOS turns it on |
+| Pointer compression, `v8_enable_pointer_compression`, in a cage that isolates share | On | `v8/gni/v8.gni`: on x64 and arm64. The cage follows it in `v8/BUILD.gn` |
+| The external code space, `v8_enable_external_code_space` | On | `v8/BUILD.gn`: with pointer compression in a shared cage, on x64 and arm64 |
+| V8's sandbox, `v8_enable_sandbox` | On | `v8/BUILD.gn`: with pointer compression in a shared cage and the external code space |
+| cppgc's caged heap, `cppgc_enable_caged_heap` | On | `v8/BUILD.gn`: on x64 and arm64 |
+| `Intl`, `v8_enable_i18n_support` | On | `v8/gni/v8.gni`. The program gives it ICU's whole data file, [as Chrome does](#icus-data-and-v8s-snapshot) |
+| Temporal, `v8_enable_temporal_support` | On | `v8/gni/v8.gni`: everywhere but in Node.js |
+| The startup snapshot in a file of its own, `v8_use_external_startup_data` | On | `v8/gni/v8.gni`: everywhere but iOS. The program holds that file |
+| Builtins laid out by profiles, `v8_enable_builtins_optimization` | On | `v8/gni/v8.gni`: with Chrome's PGO, which official builds use on Windows, macOS and Linux (`build/config/compiler/pgo/pgo.gni`). Set in `runtime_args.gn` |
+| V8's logging, `v8_logging_level` | 0: a failed check ends the process without a message | `v8/BUILD.gn`: 0 in official builds. Set in `runtime_args.gn` |
+| V8's helpers for fuzzers, `v8_wasm_random_fuzzers` | Off | `v8/gni/v8.gni`: off in official builds. Set in `runtime_args.gn` |
+| Instance types and layouts of V8's objects from metagen, `v8_use_metagen` | Off, from Torque | On in Chrome, as `v8/gni/v8.gni` has it. Set in `runtime_args.gn`: see below |
+
+[`tools/workspace/v8_settings.py`](../tools/workspace/v8_settings.py) checks this on the Host it runs on, in the workspace's checkout, and [the release routine](releasing.md#2-check-out-the-new-engine-release) runs it on each:
+
+```bash
+export MITTO_WORKSPACE=/absolute/path/to/mitto-workspace
+uv run python -m tools.workspace.v8_settings
+```
+
+It asks gn what V8 compiles with under `args.gn` followed by `runtime_args.gn`, and under the arguments of the Host's official builder: the defines of V8's code, of its builtins, of cppgc and of V8's platform, and the arguments of `mksnapshot`, which writes the builtins. The official builder's arguments go in without those that only say how the build runs and how much debug information it keeps, and with `chrome_pgo_phase = 0`, because Chrome's own profiles for its compiler are not in the checkout and only change how the compiler lays out code that it has anyway. Without them `v8_enable_builtins_optimization` would follow PGO off, so it stays on there as in Chrome. The script prints every difference, and exits with 1 if there is one. It accepts three, which `DIFFERENT_ON_PURPOSE` in the script explains: `OFFICIAL_BUILD`, which an official build defines for all of Chromium and which in V8 only decides whether its compiler keeps the names of its operators for debugging; `USE_GLIB=1`, which Chrome's Linux build defines for all of Chromium because it links GLib, which `args.gn` leaves out of the library and so of the Page program, and which no code of V8 reads; and `V8_USE_METAGEN=0`, below. For Chromium 157.0.8103.39 it found no other difference on any Host. Without the three settings of `runtime_args.gn`, it reports each of them, `V8_ENABLE_BUILTINS_OPTIMIZATION`, `V8_LOGGING_LEVEL` and `V8_WASM_RANDOM_FUZZERS`, and the profile that `mksnapshot` reads.
+
+The one setting that differs from Chrome's is where V8's build takes the instance types and the layouts of V8's objects from. Chrome's build reads them from V8's headers with metagen, which loads `third_party/llvm-libclang`. Metagen asks gn for the flags it reads those headers with, by `gn desc` over all of Chromium's build graph, without the two switches above, and under `args.gn` that graph does not generate on Linux: `ui/gtk` asserts that GIO is on, and `args.gn` turns it off for the library. The source export also holds none of the build files that such a `gn desc` reads, on any Host. So `runtime_args.gn` takes them from V8's Torque compiler, as V8's build did before metagen, and as it still can while it moves to metagen (`v8/src/objects/instance-types-gen.h`). For Chromium 157.0.8103.39 on macOS, a Page program built each way was the same in every section, and V8's snapshot and builtins (`snapshot_blob.bin` and `gen/v8/embedded.S`) were the same byte for byte.
+
+The script compares with the official builder of the Host's own OS, because the Page program is built for that OS as Chrome is. The three official builders differ only in their OS and CPU, and in arguments that only say how their builds run.
+
+What differs from Chrome's renderers is outside V8's build. A renderer gets V8's flags from Chrome's features at run time, starts from Blink's own snapshot of a context with its bindings, and allocates its memory with PartitionAlloc, which the library leaves out (`use_allocator_shim = false` in `args.gn`) and the Page program inherits. V8 itself still puts its `ArrayBuffer`s into PartitionAlloc, as in Chrome (`v8_enable_partition_alloc`, which follows the shared cage). The milestones that compare what a page sees with Chrome decide each of these.
+
+### ICU's data and V8's snapshot
+
+The Page program holds ICU's whole data file, `third_party/icu/common/icudtl.dat`, 10.8 MB, and V8's startup snapshot, `snapshot_blob.bin`, which V8's build writes next to it. [`native/page/embed_data.py`](../native/page/embed_data.py) writes each into an assembly file while the program builds, as [`native/make_icu_data.py`](../native/make_icu_data.py) does for the library. When it starts, the program gives ICU its data with `udata_setCommonData()` and V8 its snapshot with `v8::V8::SetSnapshotDataBlob()`, as Chrome's renderers do with the files that the browser maps for them, so ICU and V8 read the same bytes as in Chrome.
+
+They go inside the program rather than beside it as files for two reasons. The Page process opens no files of its own, so that Chromium's sandbox can hold it before the Runtime ships ([ADR-0009](adr/0009-a-process-for-each-page.md)), and the program then needs neither a file nor a handle from the library to start. And the wheel then ships one more file, not three. The data costs the same either way: the wheel compresses it, and the system maps it into memory from the program's file as it would from a data file, once for all Pages.
+
+The library still holds only the few items of ICU's data that its own code reads ([ICU's data](#icus-data)). The Page program links no part of the library, and the library links no part of V8.
+
+`runtime_args.gn` also gives ICU's build its stub data and the copy of the data file in the build directory, which `args.gn` turns off for the library. V8's `mksnapshot` runs during the build, links ICU and reads ICU's data from the file next to it, as in Chromium's own builds, and the stub gives it the symbol that ICU looks up its data by. The library defines that symbol itself (`//mitto:icu_data`). On macOS and Windows the linker then leaves the stub out of the library, but on Linux Chromium's build links a shared library with `--whole-archive`, so every object of ICU's static library goes into it, the stub's too, and the two clash. That is why a Runtime build directory does not build the library.
+
+### The Page program stands alone
+
+`mitto_page` links V8, ICU's code and the parts of `//base` it uses, and not the library. The library exports only its C API, and V8's API is C++, so the program could only reach V8 through the library if the library exported it, with its own copy of libc++ and everything else that Chromium builds. The library would also grow by all of V8 for every caller who never opens a Page. The cost is that the two each hold their own copy of the code they share, such as `//base` and ICU's code.
+
+The library builds as before: its target, its sources and `args.gn` are unchanged, and nothing of the Runtime is in its build graph while `mitto_enable_runtime` is off. On macOS, where the linker leaves the stub out, a library built in a Runtime build directory was also compared with one from `args.gn` alone, section by section as [a build from the export](#make-the-source-export) compares its library with its slice's. They were the same, with the same 20 exports and the same size.
+
+### The Web IDL database
+
+[`native/bindings/BUILD.gn`](../native/bindings/BUILD.gn) builds Blink's Web IDL database, as Blink's `web_idl_database` target in `third_party/blink/renderer/bindings/BUILD.gn` does: it runs Blink's `collect_idl_files.py` on Blink's lists of IDL files in `idl_in_core.gni` and `idl_in_modules.gni`, and then `build_web_idl_database.py` on the result, with `runtime_enabled_features.json5`. Blink's own targets cannot be used as they are, because their visibility leaves out everything outside Blink. They also read the IDL files that only Blink's tests see, such as those of `internals`, which a page never has and which Blink generates from files of its own, so this database leaves them out. That includes `core/timing/internals_profiler.idl`, which Blink lists with the files of pages but which only adds to `Internals`, so that the database cannot be built without Blink's tests. For Chromium 157.0.8103.39 it reads 2,177 of the 2,237 IDL files under `third_party/blink/renderer`: 864 of Blink's core and 1,313 of its modules. Of the others, 54 are for Blink's tests, 4 for Android's WebView, 1 for ChromeOS alone, and 1 is in no list of Blink's build. The database file is 12.9 MB. The bindings generator will read it. Its build reads each of these IDL files and Blink's scripts with the modules they import, so a source export made from a build of the Runtime carries them all.
+
+### Times and sizes
+
+Measured for Chromium 157.0.8103.39, each from an empty build directory:
+
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Machine | 16 threads | 10 cores | 16 threads |
+| Cold build of `runtime` in `out/runtime` | 15 minutes | 25 minutes | 22 minutes |
+| Steps | 4,441 | 4,473 | 4,415 |
+| `mitto_page` as built | 236.27 MB | 60.22 MB | 44.70 MB |
+| `mitto_page`, stripped as the wheel strips the library | 42.21 MB | 40.73 MB | 44.70 MB |
+| `mitto_page`, stripped and compressed with deflate | 16.08 MB | 15.22 MB | 16.98 MB |
+| Build directory | 2.3 GiB | 1.5 GiB | 2.4 GiB |
+
+Of the stripped program, ICU's data is 10.8 MB and V8's snapshot 0.37 MB. A wheel that carried the program would grow by about its compressed size, nearly three times what the wheel is today. On Linux the program needs only glibc and libgcc from the system, as `ldd` shows, like the library. On Windows, as for the library, the program holds no debug information to strip: it is in `mitto_page.exe.pdb` beside it, 301 MB. Sizes are in MB of 1,000,000 bytes.
+
 ## Build from the source export
 
 A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on each **Host**, with the patches already applied. It needs no workspace and no depot_tools.

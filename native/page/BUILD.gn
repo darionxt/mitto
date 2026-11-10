@@ -1,0 +1,64 @@
+# The Page program, which runs a Page's scripts in a process of its own, on the
+# Engine Release's V8 with the settings Chrome builds it with. It stands alone:
+# the library does not link V8, and this program does not link the library.
+# docs/building.md says why, and why the program holds the data it reads.
+
+# Writes the file `input` into an assembly file, under the symbol `symbol`, so
+# that the program holds its bytes and opens no file to read them.
+template("embedded_data") {
+  if (is_win) {
+    # The assembler there reads another syntax, so the assembly goes into C++,
+    # as ICU's own build does it there.
+    _assembly = "$target_gen_dir/${target_name}.cc"
+  } else {
+    _assembly = "$target_gen_dir/${target_name}.S"
+  }
+
+  action("${target_name}_assembly") {
+    forward_variables_from(invoker, [ "deps" ])
+    script = "embed_data.py"
+    inputs = [ invoker.input ]
+    outputs = [ _assembly ]
+    args = [
+      "--symbol",
+      invoker.symbol,
+    ]
+    if (is_win) {
+      args += [ "--format=coff" ]
+    } else if (is_mac) {
+      args += [ "--format=mach-o" ]
+    }
+    args += rebase_path(inputs + outputs, root_build_dir)
+  }
+
+  source_set(target_name) {
+    sources = [ _assembly ]
+    deps = [ ":${target_name}_assembly" ]
+  }
+}
+
+# ICU's whole data file, which V8's Intl reads, as Chrome ships it. The library
+# holds only the few items that its code reads: see //mitto:icu_data.
+embedded_data("icu_data") {
+  input = "//third_party/icu/common/icudtl.dat"
+  symbol = "mitto_icu_data"
+}
+
+# V8's startup snapshot, which V8's build writes beside the program because
+# Chrome builds V8 to read it from a file.
+embedded_data("v8_snapshot") {
+  input = "$root_out_dir/snapshot_blob.bin"
+  symbol = "mitto_v8_snapshot"
+  deps = [ "//v8:run_mksnapshot_default" ]
+}
+
+executable("mitto_page") {
+  sources = [ "mitto_page.cc" ]
+  deps = [
+    ":icu_data",
+    ":v8_snapshot",
+    "//base",
+    "//third_party/icu",
+    "//v8",
+  ]
+}

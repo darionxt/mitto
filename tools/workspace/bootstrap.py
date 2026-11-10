@@ -318,6 +318,23 @@ def apply_patches(src: Path, applied: Path, patches: Path, git: str, env: Mappin
         shutil.copyfile(patch, applied / patch.name)
 
 
+def fetch_builtins_profiles(workspace: Workspace, env: Mapping[str, str]) -> None:
+    """Fetches the profiles by which V8 lays out its builtins in Chrome's releases.
+
+    The Runtime's build reads them, as tools/workspace/runtime_args.gn asks.
+    Chromium's DEPS fetches them only with checkout_pgo_profiles, which also
+    fetches Chrome's own profiles for its compiler, of no use here. So this runs
+    V8's own script, as that hook of DEPS does. It downloads nothing when the
+    profiles for this V8 are there already.
+    """
+    script = workspace.src / "v8/tools/builtins-pgo/download_profiles.py"
+    run(
+        [sys.executable, script, "download", "--depot-tools", workspace.depot_tools, "--check-v8-revision", "--quiet"],
+        env,
+        workspace.src,
+    )
+
+
 def link_native(src: Path, native: Path = NATIVE) -> None:
     """Exposes the repository's native sources to GN as //mitto.
 
@@ -403,6 +420,7 @@ def set_up(workspace: Workspace, host: Host, gclient_args: Sequence[str]) -> Non
         [gclient, "sync", "--no-history", "--delete_unversioned_trees", *gclient_args], host, env, workspace.chromium
     )
     apply_patches(workspace.src, workspace.applied_patches, PATCHES, git, env, workspace.tag)
+    fetch_builtins_profiles(workspace, env)
 
     link_native(workspace.src)
     exclude_link(workspace.src)
