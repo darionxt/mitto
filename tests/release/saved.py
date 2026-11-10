@@ -58,6 +58,9 @@ _ANSWERS = {
     gitiles_log_url(
         ANGLE_URL, "7bf673433dd1a7602a9323608d7e3fb1583dfd1e", "751417514a521b2e92d6928260c62122138824d3"
     ): "gitiles_angle_roll_157.0.8103.38.json",
+    gitiles_log_url(
+        ANGLE_URL, "751417514a521b2e92d6928260c62122138824d3", "7bf673433dd1a7602a9323608d7e3fb1583dfd1e"
+    ): "gitiles_angle_roll_157.0.8103.38_back.json",
     **{
         f"{CHROMIUM_URL}/+/{build}/.gitmodules?format=TEXT": f"gitmodules_{build}.txt"
         for build in ("157.0.8103.38", "157.0.8103.39")

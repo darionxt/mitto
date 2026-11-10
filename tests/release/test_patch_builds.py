@@ -337,3 +337,33 @@ def test_a_submodule_of_the_export_that_goes_changes_its_files_and_is_never_read
     assert change.files == ("third_party/boringssl/src",)
     assert found.rolls == ()
     assert not any("boringssl" in url or ".gitmodules" in url for url in asked)
+
+
+def test_a_roll_back_to_an_older_commit_lacks_what_it_takes_out() -> None:
+    old, new = "a" * 40, "b" * 40
+    fetch, _ = answering(
+        {
+            gitiles_log_url(CHROMIUM_URL, "157.0.8103.39", "157.0.8103.51"): [
+                commit("2" * 40, "Revert the roll of BoringSSL\n", submodule("third_party/boringssl/src", old, new)),
+            ],
+            gitiles_log_url(BORINGSSL_URL, new, old): [
+                commit("e" * 40, "Fix the record layer\n\nBug: 580000001\n", file("ssl/s3.cc")),
+                commit("d" * 40, "Update the docs\n", file("README.md")),
+            ],
+        },
+        '[submodule "third_party/boringssl/src"]\n\tpath = third_party/boringssl/src\n'
+        "\turl = https://boringssl.googlesource.com/boringssl\n",
+    )
+
+    (found,) = build_changes(
+        "157.0.8103.39", [build("157.0.8103.51")], EXPORTED, {"580000001": fix("580000001")}, fetch
+    )
+
+    assert found.gained == ()
+    (lacking,) = found.lacks
+    assert (lacking.submodule, lacking.files) == ("third_party/boringssl/src", ("third_party/boringssl/src/ssl/s3.cc",))
+    (roll,) = found.rolls
+    assert (roll.commits, roll.exported, roll.removed, roll.removed_exported) == (0, 0, 2, 1)
+    report = patch_builds_report("157.0.8103.39", "157.0.8103.39", len(EXPORTED), [found])
+    assert "none, lacks 1 commit" in report
+    assert "0 commits, of which 0 change exported files, and takes out 2 commits, of which 1 change them." in report

@@ -59,6 +59,8 @@ class Roll:
         new: The submodule's commit after.
         commits: How many commits of the submodule it rolls in.
         exported: How many of those change files of the export.
+        removed: How many commits of the submodule it takes out, as a roll back to an older commit does.
+        removed_exported: How many of those change files of the export.
     """
 
     commit: Commit
@@ -67,11 +69,15 @@ class Roll:
     new: str
     commits: int
     exported: int
+    removed: int = 0
+    removed_exported: int = 0
 
 
 @dataclass(slots=True)
 class _Changes:
     exported: list[ExportedChange] = field(default_factory=list[ExportedChange])
+    # Commits of submodules that a roll takes out.
+    removed: list[ExportedChange] = field(default_factory=list[ExportedChange])
     rolls: list[Roll] = field(default_factory=list[Roll])
     deps_alone: list[Commit] = field(default_factory=list[Commit])
 
@@ -83,7 +89,8 @@ class BuildChanges:
     Attributes:
         build: The build.
         gained: What it has that the engine's build has not, oldest first.
-        lacks: What the engine's build has that it has not, such as on a branch made for a respin.
+        lacks: What the engine's build has that it has not, such as on a branch made for a respin, or in a submodule
+            that it rolls back.
         rolls: The rolls of submodules that the export holds files of, among what it gained.
         deps_alone: Commits it gained that change DEPS and roll no submodule, such as a new toolchain.
     """
@@ -122,8 +129,8 @@ def build_changes(
         found.append(
             BuildChanges(
                 build,
-                tuple(reversed(gained.exported)),
-                tuple(reversed(lacks.exported)),
+                (*reversed(gained.exported), *reversed(lacks.removed)),
+                (*reversed(lacks.exported), *reversed(gained.removed)),
                 tuple(reversed(gained.rolls)),
                 tuple(reversed(gained.deps_alone)),
             )
@@ -168,20 +175,42 @@ class _Reader:
         return changes
 
     def _read_roll(self, commit: Commit, change: Change, ref: str, changes: _Changes) -> None:
-        """Add what a roll of a submodule changes in the export, and the roll, to changes."""
-        rolled = self._between(self._submodule_url(ref, change.path), change.old_id, change.new_id)
-        exported = 0
-        for inner in rolled:
+        """Add what a roll of a submodule changes in the export, and the roll, to changes.
+
+        A roll can move a submodule forward, back to an older commit, or to a commit on another branch, so it reads
+        both the commits it rolls in and those it takes out.
+        """
+        url = self._submodule_url(ref, change.path)
+        rolled_in = self._exported_in(change.path, self._between(url, change.old_id, change.new_id))
+        taken_out = self._exported_in(change.path, self._between(url, change.new_id, change.old_id))
+        changes.exported += rolled_in[1]
+        changes.removed += taken_out[1]
+        changes.rolls.append(
+            Roll(
+                commit,
+                change.path,
+                change.old_id,
+                change.new_id,
+                commits=rolled_in[0],
+                exported=len(rolled_in[1]),
+                removed=taken_out[0],
+                removed_exported=len(taken_out[1]),
+            )
+        )
+
+    def _exported_in(self, submodule: str, commits: list[Commit]) -> tuple[int, list[ExportedChange]]:
+        """Return how many commits of a submodule there are, and those of them that change files of the export."""
+        found: list[ExportedChange] = []
+        for inner in commits:
             files = tuple(
-                f"{change.path}/{inner_change.path}"
+                f"{submodule}/{inner_change.path}"
                 for inner_change in inner.changes
-                if f"{change.path}/{inner_change.path}" in self._exported
-                or f"{change.path}/{inner_change.old_path}" in self._exported
+                if f"{submodule}/{inner_change.path}" in self._exported
+                or f"{submodule}/{inner_change.old_path}" in self._exported
             )
             if files:
-                changes.exported.append(self._exported_change(inner, change.path, files))
-                exported += 1
-        changes.rolls.append(Roll(commit, change.path, change.old_id, change.new_id, len(rolled), exported))
+                found.append(self._exported_change(inner, submodule, files))
+        return len(commits), found
 
     def _exported_change(self, commit: Commit, submodule: str, files: tuple[str, ...]) -> ExportedChange:
         fixes = tuple(self._fixes[bug] for bug in commit.bugs if bug in self._fixes)
@@ -251,7 +280,12 @@ def patch_builds_report(since: str, export_build: str, export_files: int, change
             lines += [line for change in new for line in _describe(change)]
         lines += [
             f"  Rolls {roll.submodule} {roll.old[:12]}..{roll.new[:12]} in {roll.commit.id[:12]}: "
-            f"{_count(roll.commits, 'commit')}, of which {roll.exported} change exported files."
+            f"{_count(roll.commits, 'commit')}, of which {roll.exported} change exported files"
+            + (
+                f", and takes out {_count(roll.removed, 'commit')}, of which {roll.removed_exported} change them."
+                if roll.removed
+                else "."
+            )
             for roll in rolls
         ]
         if deps_alone:
