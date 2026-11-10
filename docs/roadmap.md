@@ -109,7 +109,7 @@ Goal: prove the **Runtime**'s whole pipeline on every Host before investing in b
 - A bindings generator that reads the Engine Release's Web IDL files and writes V8 bindings, with members in the order Chrome installs them. At first it covers what the skeleton needs, such as `Window`, `Document`, `Element` and `console`.
 - A first HTML parser, which builds the tree of simple documents and runs their classic scripts, inline and external, in document order. It gets a fuzz target, as every parser mitto writes does.
 - An event loop with tasks, microtasks and timers, on the real clock.
-- A page's `fetch()`, `XMLHttpRequest` and scripts, loaded through its Session with the Request Kind and Initiator that the page gives them, and `document.cookie` on the Session's cookies.
+- A page's `fetch()` and scripts, loaded through its Session with the Request Kind and Initiator that the page gives them, and `document.cookie` on the Session's cookies. These need no Request Kind beyond the four that M2 has.
 - `Session.open_page()`, sync and asyncio, a Page's `evaluate()` and `close()`, and an error when its process ends. The API stays private until the Runtime ships.
 - CI builds the Page program and runs its tests on every Host. The release workflow leaves it out of the wheel.
 - **Exit:** on every Host, a Page that a Session opens loads a page whose script fetches JSON with the Session's cookies and writes it into the document, and Python reads the result through both the sync and the asyncio API. A Page whose process crashes raises an error, and its Session goes on working. CI builds the Runtime within the hosted runners' limits, and the size it would add to the wheel is measured.
@@ -134,7 +134,7 @@ Goal: real pages load and run as they do in Chrome.
 - The DOM and its events: mutation observers, event dispatch, and `requestAnimationFrame()` at the Machine's refresh rate.
 - Navigation: `readyState`, `DOMContentLoaded` and `load`, `location` and history, redirects, `<meta http-equiv="refresh">` and form submission, each as a navigation through the Session.
 - Frames, with documents of their own and Chrome's rules for access between origins. The Initiator learns which frame a request comes from.
-- More Request Kinds, for what pages request: styles, fonts, frames, workers and `sendBeacon()`, and the `credentials` modes of `fetch()`.
+- More Request Kinds, for what pages request: `XMLHttpRequest`, styles, fonts, frames, workers and `sendBeacon()`, and the `credentials` modes of `fetch()`.
 - `localStorage`, `sessionStorage` and IndexedDB, saved with the Session as its cookies are.
 - Dedicated workers.
 - Tests from web-platform-tests. The Engine Release's tree records Chrome's own results for them, so mitto is held to Chrome's results, failures included.
