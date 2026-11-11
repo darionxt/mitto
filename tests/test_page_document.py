@@ -214,6 +214,29 @@ def test_selectors_may_hold_comments(program: Path, selector: str, found: str) -
     assert _evaluate(program, script, "<p id=a><p id=b class=x>") == found
 
 
+@pytest.mark.parametrize(
+    ("selector", "found"),
+    [
+        pytest.param('[title="a\\\r\nb"]', "a", id="escaped-crlf"),
+        pytest.param('[title="a\\\rb"]', "a", id="escaped-cr"),
+        pytest.param('[title="a\\\fb"]', "a", id="escaped-ff"),
+        pytest.param("p\r\n+\r\np", "b", id="crlf-around-a-combinator"),
+        pytest.param("#\\61 \r\n.x", None, id="crlf-after-an-escape"),
+    ],
+)
+def test_newlines_in_a_selector_are_preprocessed_as_css_says(program: Path, selector: str, found: str | None) -> None:
+    # CSS Syntax turns CR LF, CR and FF into LF before it tokenizes, so an escaped one continues a string.
+    script = f"(document.querySelector({selector!r}) || {{id: null}}).id"
+
+    assert _evaluate(program, script, "<p id=a title=ab><p id=b class=x>") == ("null" if found is None else found)
+
+
+def test_a_newline_ends_a_string_in_a_selector(program: Path) -> None:
+    result = _run(program, "document.querySelector('[title=\"a\\r\\nb\"]')")
+
+    assert result.stderr.startswith("Uncaught SyntaxError: Failed to execute 'querySelector' on 'Document': ")
+
+
 @pytest.mark.parametrize("selector", ["div/**/p", "p >/**/", "#/**/a", "[a~/**/=b]"])
 def test_a_comment_is_not_whitespace_in_a_selector(program: Path, selector: str) -> None:
     # A comment makes no token, so names on each side of it are not a descendant combinator.

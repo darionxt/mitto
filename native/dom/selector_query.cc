@@ -65,7 +65,7 @@ bool EqualsInCase(std::u16string_view a,
 // CSS's tokenizer does as it goes.
 class Parser {
  public:
-  explicit Parser(std::u16string_view text) : text_(text) {}
+  explicit Parser(std::u16string_view text) : text_(Preprocess(text)) {}
 
   enum class Result {
     kValid,
@@ -129,8 +129,7 @@ class Parser {
   // Whether a backslash at `offset` starts a valid escape: one not followed by
   // a newline.
   bool IsValidEscape(size_t offset) const {
-    return Peek(offset) == '\\' && Peek(offset + 1) != '\n' &&
-           Peek(offset + 1) != '\r' && Peek(offset + 1) != '\f';
+    return Peek(offset) == '\\' && Peek(offset + 1) != '\n';
   }
 
   bool StartsIdentifier(size_t offset = 0) const {
@@ -211,11 +210,11 @@ class Parser {
         ++position_;
         return true;
       }
-      if (c == '\n' || c == '\r' || c == '\f') {
+      if (c == '\n') {
         return false;
       }
       if (c == '\\') {
-        if (Peek(1) == '\n' || Peek(1) == '\r' || Peek(1) == '\f') {
+        if (Peek(1) == '\n') {
           position_ += 2;
           continue;
         }
@@ -392,7 +391,30 @@ class Parser {
     return Result::kValid;
   }
 
-  const std::u16string_view text_;
+  // CSS Syntax's input preprocessing: CR LF, CR and FF become LF, and U+0000
+  // becomes U+FFFD, before anything is tokenized.
+  static std::u16string Preprocess(std::u16string_view text) {
+    std::u16string result;
+    result.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+      const char16_t c = text[i];
+      if (c == '\r') {
+        result += u'\n';
+        if (i + 1 < text.size() && text[i + 1] == '\n') {
+          ++i;
+        }
+      } else if (c == '\f') {
+        result += u'\n';
+      } else if (c == 0) {
+        result += u'\uFFFD';
+      } else {
+        result += c;
+      }
+    }
+    return result;
+  }
+
+  const std::u16string text_;
   size_t position_ = 0;
 };
 
