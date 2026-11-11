@@ -4,8 +4,10 @@ name: Nightly
 # main holds from nothing on every Host, with CI's and the sanitizers' jobs and tests, once main has moved since the last
 # run that passed.
 on:
+  # GitHub may start a scheduled run hours late. A failure reaches the owner in two ways: the job at the end opens an
+  # issue, and GitHub mails the person who last changed this line, if their notification settings ask for it.
   schedule:
-    - cron: "23 19 * * *"
+    - cron: "20 21 * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -67,3 +69,39 @@ jobs:
     uses: ./.github/workflows/sanitizers.yml
     with:
       from-nothing: true
+
+  # Whatever the build from nothing found lies in what merged since the last commit that passed. One issue names it, and
+  # a later failure while that issue is open adds a comment to it.
+  report:
+    name: Report the failure
+    needs: [moved, ci, sanitizers]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SINCE: ${{ needs.moved.outputs.since }}
+          TITLE: Nightly build from nothing failed
+        run: |
+          failed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | "- \(.name)"')"
+          body="The nightly build from nothing failed on ${GITHUB_SHA:0:7}: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Failed jobs:
+          $failed
+
+          "
+          if [ -n "$SINCE" ]; then
+            body+="What it found lies in what merged since ${SINCE:0:7}, the last commit that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/${SINCE:0:7}...${GITHUB_SHA:0:7}"
+          else
+            body+="No run on $GITHUB_REF_NAME had passed before this one."
+          fi
+          open="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title --jq 'map(select(.title == env.TITLE)) | .[0].number // empty')"
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$TITLE" --label needs-triage --body "$body"
+          fi

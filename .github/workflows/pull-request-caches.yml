@@ -20,4 +20,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           REF: refs/pull/${{ github.event.pull_request.number }}/merge
-        run: gh cache delete --all --ref "$REF" --succeed-on-no-caches
+        # The list goes to the log, since the deletion prints nothing.
+        run: |
+          gh cache list --ref "$REF" --limit 1000
+          gh cache delete --all --ref "$REF" --succeed-on-no-caches
