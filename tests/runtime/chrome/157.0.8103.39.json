@@ -542,6 +542,7 @@
           ]
         ],
         "prototypeParent": "Error",
+        "interfaceObjectParent": "Function",
         "toStringTag": "DOMException",
         "callWithoutNew": {
           "threw": "TypeError: Failed to construct 'DOMException': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
@@ -906,6 +907,7 @@
           ]
         ],
         "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
         "toStringTag": "Event",
         "callWithoutNew": {
           "threw": "TypeError: Failed to construct 'Event': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
@@ -1132,6 +1134,7 @@
           ]
         ],
         "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
         "toStringTag": "EventTarget",
         "callWithoutNew": {
           "threw": "TypeError: Failed to construct 'EventTarget': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
@@ -1244,6 +1247,7 @@
           ]
         ],
         "prototypeParent": "Event",
+        "interfaceObjectParent": "Event",
         "toStringTag": "PopStateEvent",
         "callWithoutNew": {
           "threw": "TypeError: Failed to construct 'PopStateEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function."

@@ -88,6 +88,8 @@
       interfaceObject: ownProperties(object),
       prototype: ownProperties(object.prototype),
       prototypeParent: parent === Object.prototype ? "Object" : parent.constructor.name,
+      interfaceObjectParent:
+        Object.getPrototypeOf(object) === Function.prototype ? "Function" : Object.getPrototypeOf(object).name,
       toStringTag: object.prototype[Symbol.toStringTag],
       callWithoutNew: outcome(() => object()),
       constructWithoutArguments: outcome(() => new object()),

@@ -73,6 +73,7 @@ def test_there_is_a_recording_of_the_engine_release() -> None:
         "interfaceObject",
         "prototype",
         "prototypeParent",
+        "interfaceObjectParent",
         "toStringTag",
         "callWithoutNew",
         "constructWithoutArguments",

@@ -7,6 +7,7 @@
 //
 // Upstream: third_party/blink/renderer/platform/bindings/idl_member_installer.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+// Upstream: third_party/blink/renderer/platform/bindings/v8_object_constructor.cc
 
 #ifndef MITTO_BINDINGS_IDL_MEMBER_INSTALLER_H_
 #define MITTO_BINDINGS_IDL_MEMBER_INSTALLER_H_
@@ -15,6 +16,7 @@
 
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-function-callback.h"
+#include "v8/include/v8-function.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-object.h"
 #include "v8/include/v8-template.h"
@@ -63,6 +65,11 @@ void InstallConstant(v8::Isolate* isolate,
                      v8::Local<v8::Template> target,
                      const char* name,
                      int64_t value);
+
+// The interface object in `context`, whose own prototype is its parent's
+// interface object, if it has a parent.
+v8::Local<v8::Function> InterfaceObject(v8::Local<v8::Context> context,
+                                        const WrapperTypeInfo& info);
 
 // Puts the interface object on the global object of `context`, writable,
 // configurable and not enumerable, as Blink's exposed constructs are.

@@ -131,15 +131,31 @@ void InstallConstant(v8::Isolate* isolate,
       static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete));
 }
 
-void InstallInterfaceObject(v8::Local<v8::Context> context,
-                            const char* name,
-                            const WrapperTypeInfo& info) {
+v8::Local<v8::Function> InterfaceObject(v8::Local<v8::Context> context,
+                                        const WrapperTypeInfo& info) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::Local<v8::Function> interface_object =
       PerIsolateData::From(isolate)
           ->InterfaceTemplate(isolate, &info)
           ->GetFunction(context)
           .ToLocalChecked();
+  // As Blink's V8ObjectConstructor::CreateInterfaceObject() does: the template
+  // links the prototypes, and the interface object of an interface that
+  // inherits gets its parent's for its own prototype here.
+  if (info.parent) {
+    CHECK(interface_object
+              ->SetPrototype(context, InterfaceObject(context, *info.parent))
+              .FromJust());
+  }
+  return interface_object;
+}
+
+void InstallInterfaceObject(v8::Local<v8::Context> context,
+                            const char* name,
+                            const WrapperTypeInfo& info) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::Local<v8::Function> interface_object =
+      InterfaceObject(context, info);
   CHECK(context->Global()
             ->DefineOwnProperty(context, ToV8StringFromUtf8(isolate, name),
                                 interface_object, v8::DontEnum)
