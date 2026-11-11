@@ -21,20 +21,30 @@ on:
       - tests/test_page_bindings.py
       - tests/test_page_program.py
       - tools/workspace/**
-  # A build that has not changed comes from the cache, so that a scheduled run
-  # costs little more than the fuzzing, which finds something new each time.
-  schedule:
-    - cron: "23 4 * * *"
+  # The nightly run calls these jobs to build from nothing, and fuzzes then as main does.
+  workflow_call:
+    inputs:
+      from-nothing:
+        description: Restore and save no cache, so that each build starts from nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# A push to a pull request cancels the runs of its earlier commits. A run on main, or in the nightly run, has a group of
+# its own, so it is never cancelled and never waits.
+concurrency:
+  group: sanitizers-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native:
     name: Native core, ${{ matrix.config }}
     runs-on: ubuntu-latest
-    # The Runtime takes about 65 minutes to build from nothing, and the library under a sanitizer 18 to 26.
-    timeout-minutes: 120
+    # From nothing, as in the nightly run, the Runtime takes 63 to 85 minutes to build, and the library under a sanitizer
+    # 17 to 26.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -64,24 +74,24 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # tools/workspace holds the pin of the source export, and this file the list of
-      # what is cached, so this key covers both.
+      # what is cached, so this key covers both. The nightly run neither restores nor saves a cache.
       - id: cached-build
+        if: ${{ !inputs.from-nothing }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/native-core
           key: native-core-${{ matrix.config }}-${{ hashFiles('.github/workflows/sanitizers.yml', 'native/**', 'tools/workspace/**') }}
       - id: tag
         run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
-      # What the export compiles to changes only with tools/workspace, so a pull request
-      # reuses main's objects and rebuilds only native/. main always builds from nothing,
-      # so a mistake in an incremental build cannot go unnoticed there.
+      # What the export compiles to changes only with tools/workspace, so main and pull requests reuse the build
+      # directory that main saved first with it, and rebuild only native/. The nightly run builds from nothing, which
+      # shows a mistake in an incremental build.
       - id: cached-objects
-        if: steps.cached-build.outputs.cache-hit != 'true'
+        if: steps.cached-build.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
           key: native-objects-${{ matrix.config }}-${{ hashFiles('tools/workspace/**') }}
-          lookup-only: ${{ github.event_name != 'pull_request' }}
       - name: Build the native core
         if: steps.cached-build.outputs.cache-hit != 'true'
         env:
@@ -97,13 +107,16 @@ jobs:
           done
           # Without this a report names no source lines, and the toolchain is not cached.
           cp "$build_dir/../../third_party/llvm-build/Release+Asserts/bin/llvm-symbolizer" "$RUNNER_TEMP/native-core"
-      # Before the tests, so that a test that fails does not waste the build.
-      - if: steps.cached-build.outputs.cache-hit != 'true'
+      # Before the tests, so that a test that fails does not waste the build. Only main saves: these builds take 460 MB
+      # for each commit, and a pull request that runs again rebuilds them from main's build directories in a minute or
+      # two.
+      - if: steps.cached-build.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-build.outputs.cache-primary-key }}
-      - if: steps.cached-build.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true'
+      # Only main saves a build directory, the first time it builds with a tools/workspace.
+      - if: steps.cached-build.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
@@ -143,7 +156,7 @@ jobs:
           done
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
-          # A pull request only checks that new code does not fail quickly. The daily run looks harder.
+          # A pull request only checks that new code does not fail quickly. main and the nightly run look harder.
           FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 60 || 300 }}
       # A run is random, so the input that crashed it is the only way to repeat it.
       - if: failure() && matrix.tests == 'fuzz'
