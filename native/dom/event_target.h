@@ -57,6 +57,10 @@ class EventListenerEntry final
   bool removed() const { return removed_; }
   void set_removed() { removed_ = true; }
 
+  // The next listener of the target, in the order they were added.
+  EventListenerEntry* next() const { return next_.Get(); }
+  void set_next(EventListenerEntry* next) { next_ = next; }
+
  private:
   const std::u16string type_;
   v8::TracedReference<v8::Object> callback_;
@@ -64,6 +68,7 @@ class EventListenerEntry final
   const bool passive_;
   const bool once_;
   bool removed_ = false;
+  cppgc::Member<EventListenerEntry> next_;
 };
 
 class EventTarget : public bindings::ScriptWrappable {
@@ -98,7 +103,14 @@ class EventTarget : public bindings::ScriptWrappable {
   bool FireEventListeners(Event* event);
   void RemoveEntry(EventListenerEntry* entry);
 
-  std::vector<cppgc::Member<EventListenerEntry>> listeners_;
+  // The listeners, in the order they were added, as a list of objects on the
+  // C++ heap. V8's collector traces objects on threads of its own while
+  // scripts run, which is safe for a Member in an object on the heap, but not
+  // for one in a std::vector's buffer, which the main thread can reallocate
+  // meanwhile. Blink has HeapVector, whose buffer is on the heap; cppgc alone
+  // has no such vector.
+  cppgc::Member<EventListenerEntry> first_listener_;
+  cppgc::Member<EventListenerEntry> last_listener_;
   // Whether Blink would have made this target's EventTargetData, which it does
   // when a page first adds a listener.
   bool has_event_target_data_ = false;

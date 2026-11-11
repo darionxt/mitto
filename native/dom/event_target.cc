@@ -117,6 +117,7 @@ EventListenerEntry::~EventListenerEntry() = default;
 
 void EventListenerEntry::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(callback_);
+  visitor->Trace(next_);
 }
 
 // static
@@ -133,9 +134,8 @@ const bindings::WrapperTypeInfo* EventTarget::GetWrapperTypeInfo() const {
 
 void EventTarget::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
-  for (const cppgc::Member<EventListenerEntry>& entry : listeners_) {
-    visitor->Trace(entry);
-  }
+  visitor->Trace(first_listener_);
+  visitor->Trace(last_listener_);
 }
 
 void EventTarget::AddEventListener(
@@ -149,15 +149,23 @@ void EventTarget::AddEventListener(
   // Blink makes a target's EventTargetData here, before it checks for the same
   // listener, and keeps it after its listeners are removed.
   has_event_target_data_ = true;
-  for (const cppgc::Member<EventListenerEntry>& entry : listeners_) {
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
     if (entry->type() == type && entry->capture() == flat.capture &&
         entry->callback(v8::Isolate::GetCurrent())->StrictEquals(listener)) {
       return;
     }
   }
-  listeners_.push_back(bindings::MakeGarbageCollected<EventListenerEntry>(
-      v8::Isolate::GetCurrent(), type, listener, flat.capture, flat.passive,
-      flat.once));
+  EventListenerEntry* const entry =
+      bindings::MakeGarbageCollected<EventListenerEntry>(
+          v8::Isolate::GetCurrent(), type, listener, flat.capture, flat.passive,
+          flat.once);
+  if (last_listener_) {
+    last_listener_->set_next(entry);
+  } else {
+    first_listener_ = entry;
+  }
+  last_listener_ = entry;
 }
 
 void EventTarget::RemoveEventListener(
@@ -168,10 +176,11 @@ void EventTarget::RemoveEventListener(
   if (listener.IsEmpty()) {
     return;
   }
-  for (const cppgc::Member<EventListenerEntry>& entry : listeners_) {
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
     if (entry->type() == type && entry->capture() == capture &&
         entry->callback(v8::Isolate::GetCurrent())->StrictEquals(listener)) {
-      RemoveEntry(entry.Get());
+      RemoveEntry(entry);
       return;
     }
   }
@@ -179,10 +188,24 @@ void EventTarget::RemoveEventListener(
 
 void EventTarget::RemoveEntry(EventListenerEntry* entry) {
   entry->set_removed();
-  std::erase_if(listeners_,
-                [entry](const cppgc::Member<EventListenerEntry>& m) {
-                  return m.Get() == entry;
-                });
+  EventListenerEntry* previous = nullptr;
+  for (EventListenerEntry* current = first_listener_.Get(); current;
+       current = current->next()) {
+    if (current != entry) {
+      previous = current;
+      continue;
+    }
+    if (previous) {
+      previous->set_next(entry->next());
+    } else {
+      first_listener_ = entry->next();
+    }
+    if (last_listener_ == entry) {
+      last_listener_ = previous;
+    }
+    entry->set_next(nullptr);
+    return;
+  }
 }
 
 bool EventTarget::DispatchEventForBindings(
@@ -222,8 +245,11 @@ bool EventTarget::FireEventListeners(Event* event) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   // A copy, so that listeners that a listener adds wait for the next event,
   // and Persistent, so that the collector keeps them while scripts run.
-  std::vector<cppgc::Persistent<EventListenerEntry>> entries(listeners_.begin(),
-                                                             listeners_.end());
+  std::vector<cppgc::Persistent<EventListenerEntry>> entries;
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    entries.emplace_back(entry);
+  }
   const v8::Local<v8::Value> current_target = ToV8(isolate);
   const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
   for (const cppgc::Persistent<EventListenerEntry>& entry : entries) {
