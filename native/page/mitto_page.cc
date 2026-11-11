@@ -1,10 +1,12 @@
-// The Page program, which runs a Page's scripts in a process of its own. For
-// now it starts V8, runs the script on its command line in a new context and
-// prints what the script returns, as String() would write it. It talks to
-// nothing else yet.
+// The Page program, which runs a Page's scripts in a process of its own. The
+// library starts it for a Page with --session=, and it serves that Page's
+// Session over the channel that the argument names: see session_channel.h and
+// docs/runtime.md. Given a script instead, it starts V8, runs the script in a
+// new context and prints what the script returns, as String() would write it.
 //
 // Usage: mitto_page SCRIPT
 //        mitto_page --version
+//        mitto_page --session=CHANNEL,PARENT
 //
 // Exits with 1 if the script throws, and with 2 if the arguments are wrong.
 
@@ -16,11 +18,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/safe_conversions.h"
+#include "mitto/page/script_runner.h"
+#include "mitto/page/session_channel.h"
+#include "mitto/page_messages.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "v8/include/libplatform/libplatform.h"
@@ -107,13 +113,22 @@ int main(int argc, char** argv) {
   const base::span<char*> arguments =
       UNSAFE_BUFFERS(base::span(argv, base::checked_cast<size_t>(argc)));
   if (arguments.size() != 2) {
-    WriteLine(stderr, "usage: mitto_page SCRIPT | --version");
+    WriteLine(stderr,
+              "usage: mitto_page SCRIPT | --version | --session=CHANNEL,PARENT");
     return kWrongArguments;
   }
   const std::string_view argument = arguments[1];
   if (argument == "--version") {
     WriteLine(stdout, v8::V8::GetVersion());
     return 0;
+  }
+  std::optional<mitto::SessionArgument> session;
+  if (argument.starts_with(mitto::kSessionArgumentPrefix)) {
+    session = mitto::ParseSessionArgument(argument);
+    if (!session) {
+      WriteLine(stderr, "--session= names no channel and process");
+      return kWrongArguments;
+    }
   }
 
   // ICU reads its data from memory, as in Chrome's renderers, which map the
@@ -122,6 +137,8 @@ int main(int argc, char** argv) {
   udata_setCommonData(mitto_icu_data, &status);
   CHECK(U_SUCCESS(status));
 
+  // Before anything of V8 asks for a random number, as in Chrome's renderers.
+  v8::V8::SetEntropySource(&mitto::GenerateEntropy);
   v8::StartupData snapshot = {mitto_v8_snapshot,
                               base::checked_cast<int>(mitto_v8_snapshot_size)};
   v8::V8::SetSnapshotDataBlob(&snapshot);
@@ -138,7 +155,11 @@ int main(int argc, char** argv) {
   bool finished = false;
   {
     const v8::Isolate::Scope isolate_scope(isolate);
-    finished = RunScript(isolate, argument);
+    if (session) {
+      mitto::ServeSession(*platform, isolate, *std::move(session));
+    } else {
+      finished = RunScript(isolate, argument);
+    }
   }
   isolate->Dispose();
   v8::V8::Dispose();

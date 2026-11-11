@@ -107,7 +107,7 @@ depot_tools' `ninja` command refuses a build directory where Siso has run, and t
 This builds three targets from [`native/`](../native), about 4,200 steps in all:
 
 - `mitto_core`, the shared library `out/mitto/libmitto_core.dylib`, `libmitto_core.so` on Linux and `mitto_core.dll` on Windows. It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h), and on Windows also `GetHandleVerifier`, which `//base` marks `__declspec(dllexport)` in `base/win/scoped_handle_verifier.cc`. A linker cannot take that away, and it clashes with nothing, because Windows looks up an import in the DLL that the import names. `//base` only looks for it in the program that started the process.
-- `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result.
+- `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result. Its scenarios of Pages need the Page program beside the library ([runtime.md](runtime.md#tests)).
 - `html_tokenizer_test`, which runs html5lib's tokenizer tests against the **Runtime**'s HTML tokenizer in [`native/html`](../native/html). The library does not link the tokenizer: a **Page** runs in a process of its own ([ADR-0009](adr/0009-a-process-for-each-page.md)). See [The HTML tokenizer's tests](#the-html-tokenizers-tests).
 
 Run the test program, which needs a network connection:
@@ -168,7 +168,7 @@ A compile job of V8 needs far more memory than one of the library, and ninja run
 
 This builds two targets:
 
-- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. For now it starts V8, runs the script on its command line in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version. It talks to nothing else yet.
+- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version.
 - The Web IDL database, `out/runtime/gen/mitto/bindings/web_idl_database.pickle`, which nothing reads yet: see [below](#the-web-idl-database).
 
 ```text
@@ -410,7 +410,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
 | `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 
@@ -434,7 +434,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for and `html_tokenizer_fuzzer` for HTML, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
 
 ```bash
 mkdir corpus

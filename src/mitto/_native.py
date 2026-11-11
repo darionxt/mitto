@@ -28,6 +28,7 @@ __all__ = [
     "LIBRARY_ENV_VAR",
     "LIBRARY_NAME",
     "MEMORY_CACHE",
+    "PAGE_OPTIONS_VERSION",
     "REQUEST_OPTIONS_VERSION",
     "SETTINGS_VERSION",
     "WRITE_SIZE",
@@ -38,6 +39,8 @@ __all__ = [
     "Finished",
     "MittoEvent",
     "MittoHeader",
+    "MittoPage",
+    "MittoPageEvent",
     "MittoRequest",
     "MittoSession",
     "NativeEvent",
@@ -45,8 +48,11 @@ __all__ = [
     "NativeRequest",
     "NativeResponse",
     "NetworkQuality",
+    "PageError",
+    "PageEventType",
     "Priority",
     "PrivateSettings",
+    "ReadyKind",
     "RedirectFollowed",
     "RequestError",
     "ResponseStarted",
@@ -61,7 +67,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 7
+ABI_VERSION = 8
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -71,6 +77,9 @@ REQUEST_OPTIONS_VERSION = 1
 
 # The MITTO_COOKIES_VERSION of the C header this module is written against.
 COOKIES_VERSION = 1
+
+# The MITTO_PAGE_OPTIONS_VERSION of the C header this module is written against.
+PAGE_OPTIONS_VERSION = 1
 
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
@@ -116,6 +125,34 @@ class MittoRequest(ctypes.Structure):
     """The opaque type behind a request handle in the C API."""
 
 
+class MittoPage(ctypes.Structure):
+    """The opaque type behind a Page handle in the C API."""
+
+
+class ReadyKind(enum.IntEnum):
+    """What Session.next_ready() names, with the values of the C header's MITTO_READY constants."""
+
+    REQUEST = 1
+    PAGE = 2
+
+
+class PageEventType(enum.IntEnum):
+    """The type of a Page's event, with the values of the C header's MITTO_PAGE_EVENT constants."""
+
+    EVALUATED = 1
+    ENDED = 2
+
+
+class PageError(enum.IntEnum):
+    """Why a call to a Page failed or the Page ended, with the values of the C header's MITTO_PAGE_ERROR constants."""
+
+    NONE = 0
+    SCRIPT = 1
+    PROCESS_ENDED = 2
+    REFUSED = 3
+    SESSION_DESTROYED = 4
+
+
 class EventType(enum.IntEnum):
     """The type of a request's event, with the values of the C header's MITTO_EVENT constants."""
 
@@ -152,6 +189,22 @@ class MittoEvent(ctypes.Structure):
         ("url", ctypes.c_char_p),
         ("headers", ctypes.POINTER(ctypes.c_char)),
         ("headers_size", ctypes.c_size_t),
+    )
+
+
+class MittoPageEvent(ctypes.Structure):
+    """One event of a Page, laid out like the C struct of the same name.
+
+    The native core owns the buffers. Copy what is needed, then release them with mitto_page_event_free().
+    """
+
+    _fields_ = (
+        ("type", ctypes.c_int32),
+        ("error", ctypes.c_int32),
+        ("call", ctypes.c_uint64),
+        ("json", ctypes.POINTER(ctypes.c_char)),
+        ("json_size", ctypes.c_size_t),
+        ("message", ctypes.c_char_p),
     )
 
 
@@ -225,8 +278,12 @@ def load_library() -> ctypes.CDLL:
         library.mitto_cookies_free.restype = None
         library.mitto_session_event_fd.argtypes = (session_pointer, ctypes.POINTER(ctypes.c_int32))
         library.mitto_session_event_fd.restype = ctypes.c_int32
-        library.mitto_session_next_ready_request.argtypes = (session_pointer, ctypes.POINTER(request_pointer))
-        library.mitto_session_next_ready_request.restype = ctypes.c_int32
+        library.mitto_session_next_ready.argtypes = (
+            session_pointer,
+            ctypes.POINTER(ctypes.c_int32),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        library.mitto_session_next_ready.restype = ctypes.c_int32
         library.mitto_session_wait_for_event.argtypes = (session_pointer, ctypes.c_int64)
         library.mitto_session_wait_for_event.restype = ctypes.c_int32
         library.mitto_session_end_waits.argtypes = (session_pointer,)
@@ -257,6 +314,29 @@ def load_library() -> ctypes.CDLL:
         library.mitto_request_release.restype = None
         library.mitto_event_free.argtypes = (ctypes.POINTER(MittoEvent),)
         library.mitto_event_free.restype = None
+        page_pointer = ctypes.POINTER(MittoPage)
+        library.mitto_page_open.argtypes = (
+            session_pointer,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(page_pointer),
+        )
+        library.mitto_page_open.restype = ctypes.c_int32
+        library.mitto_page_process_id.argtypes = (page_pointer, ctypes.POINTER(ctypes.c_int64))
+        library.mitto_page_process_id.restype = ctypes.c_int32
+        library.mitto_page_evaluate.argtypes = (
+            page_pointer,
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint64),
+        )
+        library.mitto_page_evaluate.restype = ctypes.c_int32
+        library.mitto_page_next_event.argtypes = (page_pointer, ctypes.c_int64, ctypes.POINTER(MittoPageEvent))
+        library.mitto_page_next_event.restype = ctypes.c_int32
+        library.mitto_page_event_free.argtypes = (ctypes.POINTER(MittoPageEvent),)
+        library.mitto_page_event_free.restype = None
+        library.mitto_page_close.argtypes = (page_pointer,)
+        library.mitto_page_close.restype = None
     except (AttributeError, OSError) as error:
         raise NativeLibraryError(f"cannot use {path} as the native library: {error}") from error
 
@@ -411,7 +491,7 @@ class NativeRequest:
     Each call into the native core releases the GIL, and nothing in the native core ever waits for it.
 
     Attributes:
-        identity: What Session.next_ready_request() names this request by.
+        identity: What Session.next_ready() names this request by.
     """
 
     def __init__(
@@ -838,10 +918,10 @@ class Session:
         return fd.value
 
     def wait_for_event(self, timeout: float | None = None) -> bool:
-        """Block, with the GIL released, until next_ready_request() would name a request, for a caller with no event_fd().
+        """Block, with the GIL released, until next_ready() would name a request or Page, for a caller with no event_fd().
 
-        It returns once each time the list goes from empty to naming a request, and then waits until next_ready_request()
-        has emptied it and another event has arrived, so a thread that hands each return to an event loop sleeps until
+        It returns once each time the list goes from empty to naming a handle, and then waits until next_ready() has
+        emptied it and another event has arrived, so a thread that hands each return to an event loop sleeps until
         the loop has caught up. Only events that arrive after the first call to this or to event_fd() count, so make one
         before starting requests, with a timeout of 0 so as not to block.
 
@@ -849,24 +929,28 @@ class Session:
             timeout: How many seconds to wait at most, or None to wait for as long as it takes.
 
         Returns:
-            True if a request waits to be named. False if none came in time, and at once after detach() or close().
+            True if a handle waits to be named. False if none came in time, and at once after detach() or close().
         """
         timeout_ms = -1 if timeout is None else math.ceil(timeout * 1000)
         net_error: int = self._library.mitto_session_wait_for_event(self._handle, timeout_ms)
         return net_error == 0
 
-    def next_ready_request(self) -> int | None:
+    def next_ready(self) -> int | None:
         """Take the next waiting event's entry off the list behind event_fd() and wait_for_event().
 
+        A request and a Page that are open at the same time never share an identity, so the identity alone says which
+        it names.
+
         Returns:
-            The NativeRequest.identity of the request whose event is waiting, or None if no event is waiting. A request
-            with several events waiting comes up once for each. The request may have been closed, or its identity may
-            be in use by a newer one that has no event yet, so expect NativeRequest.next_event(0) to find nothing at
+            The identity of the request or Page whose event is waiting, such as NativeRequest.identity, or None if no
+            event is waiting. One with several events waiting comes up once for each. It may have been closed, or its
+            identity may be in use by a newer one that has no event yet, so expect its next event to be missing at
             times.
         """
-        request = ctypes.POINTER(MittoRequest)()
-        self._library.mitto_session_next_ready_request(self._handle, ctypes.byref(request))
-        return ctypes.addressof(request.contents) if request else None
+        kind = ctypes.c_int32()
+        handle = ctypes.c_void_p()
+        self._library.mitto_session_next_ready(self._handle, ctypes.byref(kind), ctypes.byref(handle))
+        return handle.value
 
     def start(
         self,

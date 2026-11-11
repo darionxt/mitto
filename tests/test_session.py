@@ -1117,27 +1117,27 @@ def test_the_event_fd_is_readable_while_an_event_is_waiting(scripted_server: Scr
         fd = session.event_fd()
         assert session.event_fd() == fd
         assert not is_readable(fd)
-        assert session.next_ready_request() is None
+        assert session.next_ready() is None
 
         with session.start(scripted_server.url("/small")) as request:
             assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
-            assert session.next_ready_request() == request.identity
+            assert session.next_ready() == request.identity
             assert not is_readable(fd)
             assert isinstance(request.next_event(0), ResponseStarted)
-            assert session.next_ready_request() is None
+            assert session.next_ready() is None
 
             # The body waits to be asked for, so nothing else can arrive yet.
             assert not is_readable(fd, timeout=0.05)
             assert request.read() is None
 
             assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
-            assert session.next_ready_request() == request.identity
+            assert session.next_ready() == request.identity
             assert isinstance(request.next_event(0), BodyAvailable)
             assert request.read() == b"small"
             assert request.read() is None
 
             assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
-            assert session.next_ready_request() == request.identity
+            assert session.next_ready() == request.identity
             assert request.next_event(0) == Finished(net_error=0)
             assert not is_readable(fd)
 
@@ -1152,7 +1152,7 @@ def test_the_event_fd_serves_all_the_requests_of_a_session(scripted_server: Scri
         remaining = set(requests)
         while remaining:
             assert is_readable(fd, timeout=EVENT_TIMEOUT_SECONDS)
-            identity = session.next_ready_request()
+            identity = session.next_ready()
             assert identity is not None
             event = requests[identity].next_event(0)
             if isinstance(event, ResponseStarted | BodyAvailable):
@@ -1174,7 +1174,7 @@ def test_a_request_closed_with_an_event_waiting_can_still_come_up(scripted_serve
 
         request.close()
 
-        assert session.next_ready_request() == identity
+        assert session.next_ready() == identity
         assert session.request(scripted_server.url("/small")).body == b"small"
 
 
@@ -1191,13 +1191,13 @@ def test_a_wait_returns_once_each_time_the_list_fills(scripted_server: ScriptedS
 
             # Both events are listed now, and the wait has returned for the list as it is.
             assert not session.wait_for_event(0.05)
-            assert {session.next_ready_request(), session.next_ready_request()} == {first.identity, second.identity}
-            assert session.next_ready_request() is None
+            assert {session.next_ready(), session.next_ready()} == {first.identity, second.identity}
+            assert session.next_ready() is None
 
             # The list is empty, so the next event is news.
             assert first.read() is None
             assert session.wait_for_event(EVENT_TIMEOUT_SECONDS)
-            assert session.next_ready_request() == first.identity
+            assert session.next_ready() == first.identity
             assert isinstance(next_event(first), BodyAvailable)
 
 

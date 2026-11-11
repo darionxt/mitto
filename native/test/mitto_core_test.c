@@ -15,8 +15,14 @@
 
 #include "mitto/mitto.h"
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <errno.h>
 #include <poll.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
 #endif
 
 #define STRINGIFY_VALUE(value) #value
@@ -353,12 +359,14 @@ static int FetchWithFileDescriptor(const char* url) {
       fprintf(stderr, "the file descriptor did not become readable\n");
       return 1;
     }
-    MittoRequest* ready;
-    error = mitto_session_next_ready_request(g_session, &ready);
-    if (error != 0 || ready != g_request) {
+    int32_t kind;
+    void* handle;
+    error = mitto_session_next_ready(g_session, &kind, &handle);
+    if (error != 0 || kind != MITTO_READY_REQUEST || handle != g_request) {
       fprintf(stderr, "no request is ready: net error %" PRId32 "\n", error);
       return 1;
     }
+    MittoRequest* ready = handle;
     MittoEvent event;
     error = mitto_request_next_event(ready, 0, &event);
     if (error != 0) {
@@ -392,12 +400,14 @@ static int FetchWithWaits(const char* url) {
       fprintf(stderr, "no event came: net error %" PRId32 "\n", error);
       return 1;
     }
-    MittoRequest* ready;
-    while (mitto_session_next_ready_request(g_session, &ready) == 0) {
-      if (ready != g_request) {
+    int32_t kind;
+    void* handle;
+    while (mitto_session_next_ready(g_session, &kind, &handle) == 0) {
+      if (kind != MITTO_READY_REQUEST || handle != g_request) {
         fprintf(stderr, "another request is ready\n");
         return 1;
       }
+      MittoRequest* ready = handle;
       MittoEvent event;
       error = mitto_request_next_event(ready, 0, &event);
       if (error != 0) {
@@ -792,6 +802,296 @@ static int Cookies(const char* url) {
   return PrintCookies();
 }
 
+// The scenarios of Pages. A Page's process runs the Page program that lies
+// beside the library.
+
+static const char kPageOptions[] = "{\"version\": 1}";
+
+static MittoPage* g_page;
+static int64_t g_page_process;
+// The Page's MITTO_PAGE_EVENT_ENDED event has been printed.
+static int g_page_ended;
+
+#if defined(_WIN32)
+static int ProcessIsGone(int64_t process_id) {
+  HANDLE process =
+      OpenProcess(SYNCHRONIZE, FALSE, (DWORD)process_id);
+  if (!process) {
+    return GetLastError() == ERROR_INVALID_PARAMETER;
+  }
+  const int gone = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
+  CloseHandle(process);
+  return gone;
+}
+
+static int KillProcess(int64_t process_id) {
+  HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)process_id);
+  if (!process) {
+    return 1;
+  }
+  const int killed = TerminateProcess(process, 9);
+  CloseHandle(process);
+  return !killed;
+}
+
+static void SleepForever(void) {
+  Sleep(INFINITE);
+}
+#else
+static int ProcessIsGone(int64_t process_id) {
+  return kill((pid_t)process_id, 0) != 0 && errno == ESRCH;
+}
+
+static int KillProcess(int64_t process_id) {
+  return kill((pid_t)process_id, SIGKILL) != 0;
+}
+
+static void SleepForever(void) {
+  while (1) {
+    pause();
+  }
+}
+#endif
+
+static const char* PageErrorName(int32_t error) {
+  switch (error) {
+    case MITTO_PAGE_ERROR_NONE:
+      return "none";
+    case MITTO_PAGE_ERROR_SCRIPT:
+      return "script";
+    case MITTO_PAGE_ERROR_PROCESS_ENDED:
+      return "process ended";
+    case MITTO_PAGE_ERROR_REFUSED:
+      return "refused";
+    case MITTO_PAGE_ERROR_SESSION_DESTROYED:
+      return "session destroyed";
+    default:
+      return "unknown";
+  }
+}
+
+static int OpenPage(void) {
+  const int32_t error =
+      mitto_page_open(g_session, kPageOptions, strlen(kPageOptions), &g_page);
+  if (error != 0) {
+    fprintf(stderr, "opening a Page failed with net error %" PRId32 "\n",
+            error);
+    return 1;
+  }
+  if (mitto_page_process_id(g_page, &g_page_process) != 0 ||
+      g_page_process <= 0) {
+    fprintf(stderr, "the Page has no process\n");
+    return 1;
+  }
+  return 0;
+}
+
+static int Evaluate(const char* script, uint64_t* call) {
+  const int32_t error =
+      mitto_page_evaluate(g_page, script, strlen(script), call);
+  if (error != 0) {
+    fprintf(stderr, "evaluating failed with net error %" PRId32 "\n", error);
+    return 1;
+  }
+  return 0;
+}
+
+// Takes the Page's next event into `event`, which the caller frees.
+static int NextPageEvent(MittoPageEvent* event) {
+  const int32_t error = mitto_page_next_event(g_page, EVENT_TIMEOUT_MS, event);
+  if (error != 0) {
+    fprintf(stderr, "no event of the Page came: net error %" PRId32 "\n",
+            error);
+    return 1;
+  }
+  return 0;
+}
+
+// Waits for the result of `call` and prints it.
+static int PrintResult(uint64_t call) {
+  while (1) {
+    MittoPageEvent event;
+    if (NextPageEvent(&event) != 0) {
+      return 1;
+    }
+    const int done = event.type == MITTO_PAGE_EVENT_EVALUATED &&
+                     event.call == call;
+    if (done && event.error == MITTO_PAGE_ERROR_NONE) {
+      printf("evaluated %s\n", event.json);
+    } else if (done) {
+      printf("failed, %s: %s\n", PageErrorName(event.error), event.message);
+    } else if (event.type == MITTO_PAGE_EVENT_ENDED) {
+      printf("ended, %s: %s\n", PageErrorName(event.error), event.message);
+      g_page_ended = 1;
+    }
+    mitto_page_event_free(&event);
+    if (done) {
+      return 0;
+    }
+  }
+}
+
+// Waits for the Page to end, unless it has, and prints why.
+static int PrintEnded(void) {
+  while (!g_page_ended) {
+    MittoPageEvent event;
+    if (NextPageEvent(&event) != 0) {
+      return 1;
+    }
+    const int ended = event.type == MITTO_PAGE_EVENT_ENDED;
+    if (event.type == MITTO_PAGE_EVENT_EVALUATED) {
+      printf("call %" PRIu64 " failed, %s: %s\n", event.call,
+             PageErrorName(event.error),
+             event.message ? event.message : "");
+    } else if (ended) {
+      printf("ended, %s: %s\n", PageErrorName(event.error), event.message);
+      g_page_ended = 1;
+    }
+    mitto_page_event_free(&event);
+  }
+  return 0;
+}
+
+static int ClosePage(void) {
+  mitto_page_close(g_page);
+  g_page = NULL;
+  if (!ProcessIsGone(g_page_process)) {
+    fprintf(stderr, "the Page process is still there\n");
+    return 1;
+  }
+  printf("the Page process is gone\n");
+  return 0;
+}
+
+// Opens a Page, runs 1 + 1 in it, finds the result through the Session's list
+// of what is ready, closes the Page and checks that its process is gone.
+static int Page(const char* url) {
+  // From now on the Session lists what is ready.
+  int32_t error = mitto_session_wait_for_event(g_session, 0);
+  if (error != ERR_IO_PENDING) {
+    fprintf(stderr, "a first wait gave net error %" PRId32 "\n", error);
+    return 1;
+  }
+  uint64_t call;
+  if (OpenPage() != 0 || Evaluate("1 + 1", &call) != 0) {
+    return 1;
+  }
+  error = mitto_session_wait_for_event(g_session, EVENT_TIMEOUT_MS);
+  int32_t kind;
+  void* handle;
+  if (error != 0 || mitto_session_next_ready(g_session, &kind, &handle) != 0 ||
+      kind != MITTO_READY_PAGE || handle != g_page) {
+    fprintf(stderr, "the Page is not ready: net error %" PRId32 "\n", error);
+    return 1;
+  }
+  if (PrintResult(call) != 0) {
+    return 1;
+  }
+  return ClosePage();
+}
+
+// Kills the Page process, prints how its calls and the Page end, and then
+// fetches `url` on the same Session.
+static int PageKill(const char* url) {
+  uint64_t call;
+  if (OpenPage() != 0 || Evaluate("1 + 1", &call) != 0 ||
+      PrintResult(call) != 0) {
+    return 1;
+  }
+  if (KillProcess(g_page_process) != 0) {
+    fprintf(stderr, "the Page process could not be killed\n");
+    return 1;
+  }
+  // Whether this call is in progress when the library notices or comes after,
+  // it fails the same way.
+  if (Evaluate("2 + 2", &call) != 0 || PrintResult(call) != 0 ||
+      PrintEnded() != 0) {
+    return 1;
+  }
+  if (Evaluate("3 + 3", &call) != 0 || PrintResult(call) != 0) {
+    return 1;
+  }
+  if (ClosePage() != 0) {
+    return 1;
+  }
+  return Fetch(url);
+}
+
+// Prints the Page's process ID and waits to be ended.
+static int PageHold(const char* url) {
+  uint64_t call;
+  if (OpenPage() != 0 || Evaluate("1 + 1", &call) != 0 ||
+      PrintResult(call) != 0) {
+    return 1;
+  }
+  printf("page process %" PRId64 "\n", g_page_process);
+  fflush(stdout);
+  SleepForever();
+  return 1;
+}
+
+#if !defined(_WIN32)
+// As PageHold, but first forks a child that holds this process's end of the
+// Page's channel and outlives it, so that the Page reads no end of the stream
+// when this process is killed.
+static int PageHoldForked(const char* url) {
+  uint64_t call;
+  if (OpenPage() != 0 || Evaluate("1 + 1", &call) != 0 ||
+      PrintResult(call) != 0) {
+    return 1;
+  }
+  const pid_t child = fork();
+  if (child < 0) {
+    return 1;
+  }
+  if (child == 0) {
+    // Ends when the test kills it, and holds every descriptor until then.
+    while (1) {
+      pause();
+    }
+  }
+  printf("fork %" PRId64 "\n", (int64_t)child);
+  printf("page process %" PRId64 "\n", g_page_process);
+  fflush(stdout);
+  SleepForever();
+  return 1;
+}
+#endif
+
+// Opens a Page and prints how its first call ends, for a Page program that
+// refuses or is refused.
+static int PageFirstCall(const char* url) {
+  uint64_t call;
+  if (OpenPage() != 0 || Evaluate("1 + 1", &call) != 0 ||
+      PrintResult(call) != 0 || PrintEnded() != 0) {
+    return 1;
+  }
+  return ClosePage();
+}
+
+// Destroys the Session while its Page is open, and prints how the Page ends.
+static int PageDestroySession(const char* url) {
+  uint64_t call;
+  if (OpenPage() != 0 || Evaluate("1 + 1", &call) != 0 ||
+      PrintResult(call) != 0) {
+    return 1;
+  }
+  mitto_session_destroy(g_session);
+  g_session = NULL;
+  if (!ProcessIsGone(g_page_process)) {
+    fprintf(stderr, "the Page process outlived its Session\n");
+    return 1;
+  }
+  if (PrintEnded() != 0 || Evaluate("2 + 2", &call) != 0 ||
+      PrintResult(call) != 0) {
+    return 1;
+  }
+  mitto_page_close(g_page);
+  g_page = NULL;
+  printf("closed\n");
+  return 0;
+}
+
 static const struct {
   const char* name;
   int (*run)(const char* url);
@@ -826,6 +1126,14 @@ static const struct {
     {"destroy-session-when-told", DestroySessionWhenTold},
     {"exit-when-told", ExitWhenTold},
     {"cookies", Cookies},
+    {"page", Page},
+    {"page-kill", PageKill},
+    {"page-hold", PageHold},
+#if !defined(_WIN32)
+    {"page-hold-forked", PageHoldForked},
+#endif
+    {"page-first-call", PageFirstCall},
+    {"page-destroy-session", PageDestroySession},
 };
 
 int main(int argc, char** argv) {
@@ -862,6 +1170,7 @@ int main(int argc, char** argv) {
   if (result == EXIT_NOW) {
     return 0;
   }
+  mitto_page_close(g_page);
   mitto_request_release(g_request);
   mitto_session_destroy(g_session);
   return result;
