@@ -2,23 +2,19 @@ name: Nightly
 
 # main reuses its build directories, so a mistake in an incremental build would not show there. This run builds what
 # main holds from nothing on every Host, with CI's and the sanitizers' jobs and tests, once main has moved since the last
-# run that passed.
+# run that finished.
 on:
   # GitHub may start a scheduled run hours late. A failure reaches the owner in two ways: the job at the end opens an
-  # issue, and GitHub mails the person who last changed this line, if their notification settings ask for it.
+  # issue, and GitHub mails the person who last changed this schedule, if their notification settings ask for it.
   schedule:
     - cron: "20 21 * * *"
+  # A run started by hand always builds, which is how a failure that may be a flake is tried again.
   workflow_dispatch:
-    inputs:
-      force:
-        description: Build even if this commit has passed a run already
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
-# A run started while another runs waits for it, and then finds its commit checked.
+# A run started while another runs waits for it.
 concurrency:
   group: nightly-${{ github.ref }}
 
@@ -32,26 +28,36 @@ jobs:
       build: ${{ steps.compare.outputs.build }}
       since: ${{ steps.compare.outputs.since }}
     steps:
-      # A run whose builds were skipped passes too, with the commit that the last build passed with.
+      # A scheduled run skips a commit that the last run to finish checked, whether it passed or failed, so a failure
+      # is reported once. A cancelled run, such as one whose macOS job got no runner, checked nothing.
       - id: compare
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE: ${{ inputs.force }}
         run: |
-          since="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?branch=$GITHUB_REF_NAME&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty')"
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?branch=$GITHUB_REF_NAME&status=completed&per_page=100" --jq '.workflow_runs[] | select(.conclusion == "success" or .conclusion == "failure" or .conclusion == "timed_out") | "\(.id) \(.conclusion) \(.head_sha)"')"
+          checked="$(head -n 1 <<< "$runs" | cut -d " " -f 3)"
+          # The last run that passed with its builds, since a run that skipped them passes too.
+          since=""
+          while read -r id conclusion sha; do
+            [ "$conclusion" = "success" ] || continue
+            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '.jobs[] | select((.name | startswith("CI / ")) and .conclusion == "success") | .id' | grep -q .; then
+              since="$sha"
+              break
+            fi
+          done <<< "$runs"
           echo "since=$since" >> "$GITHUB_OUTPUT"
-          if [ -z "$since" ]; then
-            echo "No run on $GITHUB_REF_NAME has passed yet, so this one builds $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          elif [ "$since" != "$GITHUB_SHA" ]; then
-            echo "This run builds what merged since the last run that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$since...$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          elif [ "$FORCE" = "true" ]; then
-            echo "$GITHUB_SHA passed the last run, and this one builds it again because it was asked to." >> "$GITHUB_STEP_SUMMARY"
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "$GITHUB_SHA passed the last run, so this one builds nothing." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$checked" = "$GITHUB_SHA" ]; then
+            echo "The last run to finish checked $GITHUB_SHA, so this one builds nothing." >> "$GITHUB_STEP_SUMMARY"
             echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+          if [ "$since" = "$GITHUB_SHA" ]; then
+            echo "This run builds $GITHUB_SHA again, which passed before." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$since" ]; then
+            echo "This run builds what merged since the last run that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$since...$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No run on $GITHUB_REF_NAME has passed yet, and this one builds $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   ci:
