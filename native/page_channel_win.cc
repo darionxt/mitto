@@ -69,20 +69,17 @@ class PipeIo final : public base::RefCounted<PipeIo>,
     }
   }
 
-  bool all_written() const { return outgoing_.empty() || !writable_; }
+  bool all_written() const {
+    return (!write_pending_ && outgoing_.empty()) || !writable_;
+  }
 
   // The owner has gone. Pending reads and writes end with
-  // ERROR_OPERATION_ABORTED, and the owner hears of nothing more.
+  // ERROR_OPERATION_ABORTED, and the owner hears of nothing more. `writing_`
+  // stays until its write completes.
   void ShutDown() {
     owner_ = nullptr;
     writable_ = false;
-    // The system reads the frame that is being written until its write
-    // completes, so that one stays until then.
-    if (write_pending_) {
-      outgoing_.erase(outgoing_.begin() + 1, outgoing_.end());
-    } else {
-      outgoing_.clear();
-    }
+    outgoing_.clear();
     // CancelIo() would only cancel what this thread started.
     CancelIoEx(pipe_.get(), nullptr);
     pipe_.Close();
@@ -109,7 +106,11 @@ class PipeIo final : public base::RefCounted<PipeIo>,
   std::vector<uint8_t> read_buffer_ = std::vector<uint8_t>(kReadSize);
   bool write_pending_ = false;
   bool writable_ = true;
-  // The first is being written.
+  // The frame being written, which the system reads until its write
+  // completes. It is not in `outgoing_`, which moves its frames as it grows, and
+  // a short string holds its bytes in itself.
+  std::string writing_;
+  // The frames that wait their turn.
   base::circular_deque<std::string> outgoing_;
 };
 
@@ -203,18 +204,16 @@ void PipeIo::OnIOCompleted(base::MessagePumpForIO::IOContext* context,
   Release();
   if (context == &write_context_) {
     write_pending_ = false;
-    if (error != ERROR_SUCCESS ||
-        bytes_transferred != outgoing_.front().size()) {
+    if (error != ERROR_SUCCESS || bytes_transferred != writing_.size()) {
       // The other end has gone, or ShutDown() cancelled the write. What the
       // other end sent before still waits to be read, and the broken pipe that
       // follows says that it has gone.
       writable_ = false;
       outgoing_.clear();
-    } else {
-      outgoing_.pop_front();
-      if (writable_ && !outgoing_.empty()) {
-        WriteNext();
-      }
+    }
+    writing_.clear();
+    if (writable_ && !outgoing_.empty()) {
+      WriteNext();
     }
     if (owner_) {
       owner_->OnWritten();
@@ -264,9 +263,10 @@ void PipeIo::ReadMore() {
 }
 
 void PipeIo::WriteNext() {
-  const std::string& frame = outgoing_.front();
-  if (WriteFile(pipe_.get(), frame.data(),
-                base::checked_cast<DWORD>(frame.size()), nullptr,
+  writing_ = std::move(outgoing_.front());
+  outgoing_.pop_front();
+  if (WriteFile(pipe_.get(), writing_.data(),
+                base::checked_cast<DWORD>(writing_.size()), nullptr,
                 write_context_.GetOverlapped()) ||
       GetLastError() == ERROR_IO_PENDING) {
     write_pending_ = true;
@@ -274,6 +274,7 @@ void PipeIo::WriteNext() {
     return;
   }
   writable_ = false;
+  writing_.clear();
   outgoing_.clear();
 }
 
