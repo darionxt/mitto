@@ -184,8 +184,8 @@ FUZZ = BuildConfig("fuzz", UNSHRUNK + "is_asan = true\nuse_libfuzzer = true\ngen
 # The Page program, with V8, and Blink's Web IDL database. It builds no library:
 # see runtime_args.gn.
 RUNTIME = BuildConfig("runtime", args_file=RUNTIME_ARGS_GN, target="runtime", program="mitto_page")
-# The same under a sanitizer, on Linux. Each has a directory of its own, because
-# a Runtime build directory builds no library.
+# The Runtime under a sanitizer, on Linux. Like RUNTIME, each builds no library,
+# so each has a directory of its own beside the sanitizer's build of the library.
 RUNTIME_ASAN = dataclasses.replace(RUNTIME, name="runtime-asan", args=ASAN.args)
 RUNTIME_UBSAN = dataclasses.replace(RUNTIME, name="runtime-ubsan", args=UBSAN.args)
 CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ, RUNTIME, RUNTIME_ASAN, RUNTIME_UBSAN)

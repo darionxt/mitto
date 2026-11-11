@@ -314,7 +314,7 @@ Measured for Chromium 157.0.8103.39, in a directory where the library's build ha
 | Build of `runtime` | 18.5 minutes | 20 minutes | 22 minutes |
 | `out/runtime` | 2.3 GiB | 1.6 GiB | 2.4 GiB |
 
-CI does not build the Runtime yet.
+[CI](#in-ci) builds it the same way on every Host.
 
 ### Sizes
 
@@ -348,7 +348,7 @@ These packages come from Google Storage and CIPD, Chromium's package store, rath
 
 ### In CI
 
-A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, [builds a wheel](#build-a-wheel) from the library and runs `pytest` against the installed wheel. Builds on Linux and macOS are from 14 runs from a cold cache for Chromium 157.0.8103.27, and on Windows from two for 157.0.8103.39, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS. On Linux and macOS, the tests and the whole jobs are from the runs of 2026-11-08 and 2026-11-09, when the suite had about 6,800 tests. On Windows, the tests are from four runs, and each whole job from two.
+A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs this command, runs it again with `--config runtime` in the same directory for [the Runtime](#the-runtime-from-the-source-export), [builds a wheel](#build-a-wheel) from the library and the Page program and runs `pytest` against the installed wheel. Builds on Linux and macOS are from 14 runs from a cold cache for Chromium 157.0.8103.27, and on Windows from two for 157.0.8103.39, and disk use is from the first. The range is mostly the runners: the same `native/` took 21 and 27 minutes on macOS. On Linux and macOS, the tests and the whole jobs are from the runs of 2026-11-08 and 2026-11-09, when the suite had about 6,800 tests. On Windows, the tests are from four runs, and each whole job from two.
 
 | | Linux x86_64 | macOS arm64 | Windows x64 |
 | --- | --- | --- | --- |
@@ -360,6 +360,23 @@ A job per Host in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs
 | Disk free when the job starts | 86 GiB | 37 GiB | 147 GiB on `D:`, where the job works, and 31 GiB on `C:` |
 | Whole job | 23 to 34 minutes | 25 to 37 minutes | 55 minutes, both times |
 | Whole job with a cached library | 8 to 9.5 minutes | 8.5 to 10 minutes | 11 minutes |
+
+The table above is from before the job built the Runtime. With it, on 2026-11-11, in one run from nothing and in runs that took the builds from the caches, on a branch whose pushes ran the job:
+
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Build of the library | 21 minutes | 18 minutes | 24 minutes |
+| Build of the Runtime, after it | 74 minutes | 83 minutes, with `-j 3` | 58 minutes |
+| Build of the wheel with the Page program | 12 seconds | 11 seconds, or 50 when `dsymutil` reads the object files of a build that the job made | 20 seconds |
+| Tests | 9 minutes | 9 to 9.5 minutes | 9.5 to 11 minutes |
+| Whole job from nothing | 104 minutes | 112 minutes | 94 minutes |
+| Whole job after a change in `native/page`, from `main`'s build directories | 11 minutes, of which the Runtime's build took 4 seconds | 13 minutes, the Runtime 8 seconds | 16 minutes, the Runtime 13 seconds |
+| Whole job with both builds cached | 9.5 minutes | 10.5 minutes | 12.5 minutes |
+| `out/runtime` | 2.3 GiB | 1.6 GiB | 2.5 GiB |
+| Peak disk use of the job | 7.4 GiB | 5.7 GiB | 7.9 GiB on `D:` |
+| Disk free when the job starts | 88 GiB | 36 GiB | 220 GiB on `D:` |
+
+So a job that builds from nothing, as `main` does after each merge that changes `native/` or `tools/workspace/`, and as a pull request does that changes `tools/workspace/`, takes 94 to 112 minutes. The job's timeout is 180 minutes, and GitHub stops a job on a hosted runner after 6 hours. On Linux the job used at most 6.9 GiB of the runner's 16 GB of memory. On macOS the Runtime's build runs 3 steps at once, as many as the runner has cores: at ninja's default of 5, the build of the Runtime alone took 108 minutes on another runner of the same image, where the runner's 7 GB of memory never ran short enough to swap.
 
 On 2026-10-30 the Windows image had only the Windows SDK 10.0.26100, and Chromium 157's `build/vs_toolchain.py` asks for `10.0.28000.0`. So a Windows job that builds, and only such a job, first installs the SDK 10.0.28000.2270, unless the image already has that version. The installer comes from Microsoft's downloads page and is checked against its SHA-256. It installs only the feature for desktop C++ apps on x64, `OptionId.DesktopCPPx64`, which brings in 46 packages: the headers and libraries for x64 and x86 and the SDK's own tools, 1.2 GiB. The build needs nothing more. That took 1.7 to 2.8 minutes in three runs, downloads included, so the job installs the SDK each time rather than keeping its `10.0.28000.0` directories in the Actions cache, where they would take 1.2 GiB of the room that this repository's caches share, to save those two minutes at most. The version and the installer are pinned in [`.github/actions/install-windows-sdk/action.yml`](../.github/actions/install-windows-sdk/action.yml), which the [release workflow](#the-release-workflow) uses too, and change only when a new **Engine Release** asks for another SDK.
 
@@ -373,7 +390,11 @@ The job keeps only the library, in the Actions cache: 21 MB on Linux, 6 MB on ma
 
 A second cache keeps the build's directory, about 300 MB per **Host** and build, because what the export compiles to changes only with `tools/workspace/`. Its key is the runner's or the build's name and a hash of that directory. `main` saves it the first time it builds with that hash, and a pull request restores it and rebuilds only `native/`. In one trial, a change to one file in `native/` rebuilt 11 of about 4,000 objects on Linux and macOS. On Windows it rebuilt 27 of 4,082 steps, every object of `//mitto` and its links, in a minute and a half, and the whole job took 14 minutes. `main` never restores it, so each merge still builds from nothing and shows a mistake in an incremental build. A pull request that changes `tools/workspace/` also builds from nothing. CIPD packages are unpacked with a fixed file time, because ninja would otherwise rebuild what depends on them.
 
-No cache keeps the export itself, so every job that builds downloads it from its release asset. Since it carries the Runtime it is 34.3 MiB rather than 25.1 MiB, so each such job downloads 9.2 MiB more, beside the toolchain's 319 to 476 MiB, and unpacks 79 MiB more into the build's directory. Neither cache grows: the library and `out/mitto` are what they were, because the native core's build reads the same files. A new pin changes `tools/workspace/`, though, so as with any new export each cache gets a new key, and the first build on each runner, on `main` and in the pull request that pins it, starts from nothing. CI does not build the Runtime yet.
+The Runtime is cached in the same two ways. The job keeps the Page program, with its PDB on Windows, which the wheel's symbols archive holds: 40 MB on Linux, 16 MB on macOS and 70 MB on Windows, compressed. Its key is `runtime-`, the runner's name and the same hash of `native/` and `tools/workspace/` as the library's, so it changes whenever anything that the Runtime builds from in this repository changes, as well as whenever the library's key does. `out/runtime` has a cache of its own, keyed like the library's build directory by a hash of `tools/workspace/` alone: 447 MB on Linux, 390 MB on macOS and 543 MB on Windows. `main` saves it the first time it builds with that hash, and a pull request restores it. After a change in `native/page`, the Runtime then built in 6 steps, the compile of `mitto_page.cc` and the link among them.
+
+With the Runtime and [its sanitizer builds](#sanitizer-builds-and-the-fuzz-target), one set of `main`'s caches, for one hash of `native/` and `tools/workspace/`, takes about 5.8 GB of the 10 GB that GitHub keeps for a repository, where it took about 2.9 GB before: the Runtime adds 1.38 GB for its build directories, 1.2 GB for those of its two sanitizer builds and 0.29 GB for the programs. GitHub evicts the caches used least recently once a repository holds more than 10 GB, and every pull request that builds restores `main`'s build directories, so the caches that go first are those of older pull requests and those of a `tools/workspace/` that has changed since.
+
+No cache keeps the export itself, so every job that builds downloads it from its release asset. Since it carries the Runtime it is 34.3 MiB rather than 25.1 MiB, so each such job downloads 9.2 MiB more, beside the toolchain's 319 to 476 MiB, and unpacks 79 MiB more into the build's directory. The library's caches do not grow from it: the library and `out/mitto` are what they were, because the native core's build reads the same files. A new pin changes `tools/workspace/`, though, so as with any new export each cache gets a new key, and the first build on each runner, on `main` and in the pull request that pins it, starts from nothing.
 
 `xcode-27` is a preview image. Its default is Xcode 27.1 with the macOS 27.0 SDK, the SDK that Chromium's bots use. The Python jobs use it as well, because 9 of 90 jobs on `macos-latest` got no runner within 15 minutes and were cancelled, and none of 36 on `xcode-27` did.
 
@@ -390,10 +411,19 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
 | `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer` | 2.2 GiB |
+| `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
+| `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 
 Each of them stops at the first report.
 
 The fuzz targets have a build of their own because Chromium's fuzzing builds define `FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION`, which changes what BoringSSL does, so the library in that build is not the one that ships.
+
+`runtime-asan` and `runtime-ubsan` add the sanitizer's arguments to [the Runtime](#build-the-runtime)'s, `args.gn` followed by `runtime_args.gn`, so each builds `//mitto:runtime` without the library in a directory of its own, as `runtime` does. Under UndefinedBehaviorSanitizer V8 turns on every check of `-fsanitize=undefined` for its own code, where Chromium picks a few (`v8/BUILD.gn`). The source export's Linux slice traces both, but `mitto-chromium-157.0.8103.39-3.tar.xz` was made before they existed and builds them all the same. To run the Page program's tests against one of them:
+
+```bash
+export MITTO_PAGE_PROGRAM=/absolute/path/to/new/directory/chromium-<tag>/src/out/runtime-asan/mitto_page
+ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py
+```
 
 To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:
 
@@ -413,12 +443,13 @@ ASAN_OPTIONS=detect_leaks=1 /absolute/path/to/new/directory/chromium-<tag>/src/o
 
 [`.github/workflows/sanitizers.yml`](../.github/workflows/sanitizers.yml) runs one job per build on `ubuntu-latest`. It runs when a pull request or `main` changes `native/` or `tools/workspace/`, and every day, when the unchanged builds come from the cache and only the fuzzing takes real time. It fuzzes each target for five minutes, or for one minute on a pull request, and keeps any input that crashed one as an artifact of the run. Builds reuse objects from `main` in the same way as in the job above. These jobs are not required checks, because they do not run on every pull request.
 
-Times are from two runs from a cold cache.
+Builds of the native core are from two runs from a cold cache, and those of the Runtime from one, on 2026-11-11, when the sizes were measured too. After a change in `native/page`, with `main`'s build directories, each of the Runtime's builds took under a minute, and their whole jobs about a minute.
 
-| | `asan` | `ubsan` | `fuzz` |
-| --- | --- | --- | --- |
-| Build | 19 and 26 minutes | 17 and 20 minutes | 24 and 26 minutes |
-| Cached, compressed | 59 MiB | 43 MiB | 39 MiB |
+| | `asan` | `ubsan` | `fuzz` | `runtime-asan` | `runtime-ubsan` |
+| --- | --- | --- | --- | --- | --- |
+| Build | 19 and 26 minutes | 17 and 20 minutes | 24 and 26 minutes | 63 minutes | 66 minutes |
+| Cached, compressed | 65 MiB | 41 MiB | 182 MiB | 89 MiB | 70 MiB |
+| Build directory in the cache | 426 MiB | 356 MiB | 622 MiB | 609 MiB | 536 MiB |
 
 ## Build a wheel
 
@@ -474,6 +505,8 @@ Measured for Chromium 157.0.8103.39, in MB of 1,000,000 bytes:
 
 The tag follows from Chromium's build. Chromium 157 sets `mac_deployment_target` to 13.0 in `build/config/mac/mac_sdk.gni`. Its Linux sysroot is Debian bullseye, and `build/linux/sysroot_scripts/reversion_glibc.py` rewrites the sysroot's glibc so that no symbol needs a version above 2.26. The library needs 2.25, for `getentropy` and `getrandom`, and auditwheel has no policy for 2.25, so the tag says 2.26. A Windows wheel's tag names only the CPU, as Windows has no version in a tag. [`tests/test_wheel.py`](../tests/test_wheel.py) keeps the tag equal to what the library needs: what `auditwheel show` says on Linux, the `minos` that `otool -l` shows on macOS, and the machine in the DLL's PE header on Windows.
 
+A wheel with the Page program is tagged for the highest version that any of its binaries needs. On Linux the Page program needs glibc 2.27, for `memfd_create()`, which V8 calls in `v8/src/base/platform/platform-posix.cc`, and which `reversion_glibc.py` leaves at 2.27 on purpose, in its `SYMBOL_ALLOWLIST`. So CI's Linux wheel is tagged `manylinux_2_27_x86_64`, and a release that ships the Runtime will need glibc 2.27 too, unless the Page program stops needing it. On macOS and Windows its tag is the library's. Measured for Chromium 157.0.8103.39, a wheel with the Page program, as CI builds it, is 22.2 MB on Linux, 20.8 MB on macOS and 23.7 MB on Windows, and its symbols archive 33.2 MB, 42.4 MB and 57.6 MB.
+
 To check a wheel, install it into a new environment and run the tests there, with `MITTO_WHEEL` naming the wheel, `MITTO_HOST_NOTICES` naming what the [notices script](#third-party-notices) prints for the library's build, and `MITTO_NATIVE_LIBRARY` unset. Print the notices first, because `uv run` would install the project into the new environment:
 
 ```bash
@@ -519,7 +552,7 @@ Measured for Chromium 157.0.8103.39, the notices are 0.6 MB, and they add 0.1 MB
 
 ### In CI
 
-The native job of each Host builds a wheel from the library it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. It installs the wheel into a new environment and runs the tests as above. Building, keeping and installing the wheel adds about 10 seconds on every Host.
+The native job of each Host builds a wheel from the library and the Page program that it built or restored, and keeps the wheel and its symbols archive as an artifact of the run. When it builds the library, it also prints this Host's part of the [third-party notices](#third-party-notices) from the same build, and keeps it next to the library in the cache and as an artifact. It installs the wheel into a new environment and runs the tests as above, with `MITTO_PAGE_PROGRAM` naming the Page program in the installed package, so that [`tests/test_page_program.py`](../tests/test_page_program.py) runs the one from the wheel. Building the wheel takes 12 seconds on Linux, 20 on Windows and 11 on macOS, or 50 when `dsymutil` reads the object files of a build that the job made, and keeping and installing it a few seconds more.
 
 Once, the wheels also passed their tests on the oldest system that their tags claim and that GitHub offers. The Linux wheel ran in an `amazonlinux:2` container on `ubuntu-latest`, with glibc 2.26. The macOS wheel ran on `macos-15`, with macOS 15.8: GitHub no longer offers `macos-14`, and never had an arm64 runner with macOS 13.
 

@@ -40,7 +40,7 @@ jobs:
   native:
     name: Native core on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
-    # From nothing, the library takes 18 to 41 minutes, the Runtime 58 to 83 more and the tests 9 to 11.
+    # From nothing, the library takes 13 to 41 minutes, the Runtime 58 to 83 more and the tests 9 to 11.
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -55,7 +55,7 @@ jobs:
           - runner: xcode-27
             library: libmitto_core.dylib
             page-program: mitto_page
-            # V8's compile jobs need more memory than ninja's default number of them leaves each on this runner.
+            # One build step per core. With ninja's default of 5, the Runtime's build took 108 minutes rather than 83.
             runtime-jobs: 3
             html-tokenizer-test: html_tokenizer_test
             environment-python: bin/python
