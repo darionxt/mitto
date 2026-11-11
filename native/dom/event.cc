@@ -3,6 +3,8 @@
 #include <cmath>
 
 #include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_event.h"
 #include "mitto/dom/event_target.h"
 #include "v8/include/v8-isolate.h"
@@ -50,8 +52,21 @@ EventTarget* Event::CurrentTarget() const {
 }
 
 std::vector<EventTarget*> Event::ComposedPath() const {
-  // While it is dispatched, the path is its one target.
+  // Blink's Event::composedPath() for a target that is neither a node nor a
+  // window, the only kind the Runtime has yet: the path is the target while it
+  // dispatches the event, and without ComposedPathReturnTargetBeingDispatched,
+  // which is on for stable, it is empty, since Blink then gives one only to a
+  // window.
   if (!current_target_) {
+    return {};
+  }
+  const bool return_target =
+      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+          ->features()
+          .IsEnabled(bindings::RuntimeFeature::
+                         kComposedPathReturnTargetBeingDispatched) &&
+      IsBeingDispatched();
+  if (!return_target) {
     return {};
   }
   return {current_target_.Get()};

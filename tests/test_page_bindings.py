@@ -140,6 +140,30 @@ def test_a_feature_can_be_turned_on_and_off_as_in_chrome(program: Path) -> None:
     assert _evaluate(program, script, "--enable-blink-features=HasUAVisualTransition") == "true"
 
 
+@pytest.mark.parametrize(
+    ("disabled", "lengths"),
+    [
+        pytest.param([], "1,0", id="stable"),
+        # Without it the current target stays after dispatch, and the path still ends with the dispatch.
+        pytest.param(["ClearCurrentTargetAfterDispatch"], "1,0", id="current-target-kept"),
+        # Without it Blink gives a path only to a window, which no target of the Runtime is.
+        pytest.param(["ComposedPathReturnTargetBeingDispatched"], "0,0", id="no-path"),
+    ],
+)
+def test_the_composed_path_follows_the_features_as_in_blink(program: Path, disabled: list[str], lengths: str) -> None:
+    script = """
+        const target = new EventTarget();
+        const event = new Event("x");
+        let during;
+        target.addEventListener("x", () => { during = event.composedPath().length; });
+        target.dispatchEvent(event);
+        [during, event.composedPath().length].join()
+    """
+    options = [f"--disable-blink-features={','.join(disabled)}"] if disabled else []
+
+    assert _evaluate(program, script, *options) == lengths
+
+
 def test_it_refuses_a_feature_it_does_not_know(program: Path) -> None:
     result = _run(program, "--disable-blink-features=HasUAVisualTransition,NoSuchFeature", "1")
 
