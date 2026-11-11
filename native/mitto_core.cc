@@ -27,14 +27,17 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
+#include "base/process/process_handle.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
@@ -54,6 +57,10 @@
 #include "mitto/mitto.h"
 #include "mitto/network_quality.h"
 #include "mitto/network_session_configurator.h"
+#include "mitto/page_channel.h"
+#include "mitto/page_host.h"
+#include "mitto/page_launcher.h"
+#include "mitto/page_messages.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
 #include "mitto/request_options.h"
@@ -159,6 +166,8 @@ struct MittoSession {
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
   mitto::ReadyRequests ready_requests;
+  // After `ready_requests`, which a Page lists its handle in.
+  std::set<std::unique_ptr<mitto::PageHost>, base::UniquePtrComparator> pages;
 };
 
 // The handle the C API hands out for a request. Whichever thread holds it talks
@@ -174,6 +183,23 @@ struct MittoRequest {
 
 MittoRequest::MittoRequest() = default;
 MittoRequest::~MittoRequest() = default;
+
+// The handle the C API hands out for a Page. Whichever thread holds it takes the
+// Page's events from `events`, and has the network thread act on `host`, which
+// goes away when the Page closes or its Session does.
+struct MittoPage {
+  MittoPage();
+  ~MittoPage();
+
+  scoped_refptr<mitto::PageEvents> events;
+  base::WeakPtr<mitto::PageHost> host;
+  scoped_refptr<mitto::PageProcess> process;
+  // Only used on the network thread, while `host` is there.
+  raw_ptr<MittoSession> session;
+};
+
+MittoPage::MittoPage() = default;
+MittoPage::~MittoPage() = default;
 
 namespace mitto {
 namespace {
@@ -309,7 +335,9 @@ class RequestJob final : public net::URLRequest::Delegate,
   void Cancel() { Finish(net::ERR_ABORTED); }
 
   // BodyStream::Delegate:
-  void OnBodyWanted() override { session_->ready_requests.Add(handle_); }
+  void OnBodyWanted() override {
+    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
+  }
 
   // A wait for the caller is not a wait for the server. //net reads no response
   // until it has the whole body, so nothing else needs this timer in that time.
@@ -430,7 +458,7 @@ class RequestJob final : public net::URLRequest::Delegate,
       return;
     }
     channel_->BodyArrived(static_cast<size_t>(bytes_read));
-    session_->ready_requests.Add(handle_);
+    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
   }
 
  private:
@@ -505,7 +533,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.url = request_->url().spec();
     event.headers = HeaderLines(*request_->response_headers());
     channel_->Push(std::move(event));
-    session_->ready_requests.Add(handle_);
+    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
   }
 
   // Goes on from a redirect that OnReceivedRedirect() deferred. This may delete
@@ -595,7 +623,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     // Deleting the request from its delegate's callback is allowed.
     request_.reset();
     channel_->Finish(result);
-    session_->ready_requests.Add(handle_);
+    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
     session_->jobs.erase(session_->jobs.find(this));
   }
 
@@ -920,10 +948,84 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     return result;
   }
 
+  // Ends the Session's requests and Pages and destroys it, and then waits for
+  // each Page process to end.
   void DestroySession(std::unique_ptr<MittoSession> session) {
+    std::vector<scoped_refptr<PageProcess>> processes;
     RunAndWait(base::BindOnce(
-        [](std::unique_ptr<MittoSession> session) { session->CancelJobs(); },
-        std::move(session)));
+        [](std::unique_ptr<MittoSession> session,
+           std::vector<scoped_refptr<PageProcess>>* processes) {
+          session->CancelJobs();
+          for (const std::unique_ptr<PageHost>& page : session->pages) {
+            processes->push_back(page->process());
+            page->EndWithSession();
+          }
+        },
+        std::move(session), base::Unretained(&processes)));
+    for (const scoped_refptr<PageProcess>& process : processes) {
+      process->WaitForExit(kPageExitGrace);
+    }
+  }
+
+  // Starts the Page program with `theirs` as its end of the channel, on a
+  // thread of its own that never ends: on Linux the kernel kills a Page
+  // process when the thread that started it ends. Starting a process can take
+  // milliseconds, which the network thread would take from its traffic.
+  scoped_refptr<PageProcess> LaunchPage(const base::FilePath& program,
+                                        PageChannelEnd theirs) {
+    {
+      base::AutoLock lock(page_launcher_lock_);
+      if (!page_launcher_.IsRunning()) {
+        CHECK(page_launcher_.Start());
+      }
+    }
+    scoped_refptr<PageProcess> process;
+    base::WaitableEvent done;
+    page_launcher_.task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](const base::FilePath& program, PageChannelEnd theirs,
+               scoped_refptr<PageProcess>* process, base::WaitableEvent* done) {
+              *process = PageProcess::Launch(program, std::move(theirs));
+              done->Signal();
+            },
+            program, std::move(theirs), base::Unretained(&process),
+            base::Unretained(&done)));
+    done.Wait();
+    return process;
+  }
+
+  // Has `session` own `host`, which starts to read `ours` on the network
+  // thread. Returns false if it cannot.
+  bool AddPage(MittoSession& session,
+               std::unique_ptr<PageHost> host,
+               PageChannelEnd ours,
+               PageStart start) {
+    bool added = false;
+    RunAndWait(base::BindOnce(
+        [](MittoSession* session, std::unique_ptr<PageHost> host,
+           PageChannelEnd ours, PageStart start, bool* added) {
+          if (host->Start(std::move(ours), start)) {
+            session->pages.insert(std::move(host));
+            *added = true;
+          }
+        },
+        base::Unretained(&session), std::move(host), std::move(ours),
+        std::move(start), base::Unretained(&added)));
+    return added;
+  }
+
+  // Destroys the Page that `host` names, which closes its channel, unless its
+  // Session has gone already.
+  void RemovePage(MittoSession* session, base::WeakPtr<PageHost> host) {
+    RunAndWait(base::BindOnce(
+        [](MittoSession* session, base::WeakPtr<PageHost> host) {
+          // The Session owns the Page, so it is there while the Page is.
+          if (host) {
+            session->pages.erase(session->pages.find(host.get()));
+          }
+        },
+        base::Unretained(session), std::move(host)));
   }
 
   void StartJob(MittoSession& session, std::unique_ptr<RequestJob> job) {
@@ -1054,6 +1156,9 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   base::AtExitManager at_exit_manager_;
   base::Thread network_thread_;
   base::WaitableEvent system_dns_config_read_;
+  // Started for the first Page.
+  base::Lock page_launcher_lock_;
+  base::Thread page_launcher_{"mitto page launcher"};
 
   // These are used only on the network thread.
   std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
@@ -1251,20 +1356,24 @@ int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd) {
 #endif
 }
 
-int32_t mitto_session_next_ready_request(MittoSession* session,
-                                         MittoRequest** request) {
-  if (!request) {
+int32_t mitto_session_next_ready(MittoSession* session,
+                                 int32_t* kind,
+                                 void** handle) {
+  if (!kind || !handle) {
     return net::ERR_INVALID_ARGUMENT;
   }
-  *request = nullptr;
+  *kind = 0;
+  *handle = nullptr;
   if (!session) {
     return net::ERR_INVALID_ARGUMENT;
   }
-  const std::optional<uintptr_t> ready = session->ready_requests.Take();
+  const std::optional<mitto::ReadyHandle> ready =
+      session->ready_requests.Take();
   if (!ready) {
     return net::ERR_IO_PENDING;
   }
-  *request = reinterpret_cast<MittoRequest*>(*ready);
+  *kind = ready->kind;
+  *handle = reinterpret_cast<void*>(ready->address);
   return net::OK;
 }
 
@@ -1444,6 +1553,156 @@ void mitto_event_free(MittoEvent* event) {
   free(event->url);
   free(event->headers);
   *event = {};
+}
+
+int32_t mitto_page_open(MittoSession* session,
+                        const char* options,
+                        size_t options_size,
+                        MittoPage** page) {
+  if (!page) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *page = nullptr;
+  if (!session || !options) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  // SAFETY: The C API says `options` holds `options_size` bytes.
+  std::optional<mitto::PageStart> start = mitto::ParsePageOptions(
+      UNSAFE_BUFFERS(std::string_view(options, options_size)));
+  if (!start) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  const base::FilePath program = mitto::PageProgramPath();
+  if (program.empty() || !base::PathExists(program)) {
+    return net::ERR_FILE_NOT_FOUND;
+  }
+
+  mitto::NetworkCore& core = mitto::NetworkCore::Get();
+  mitto::PageChannelEnd ours;
+  mitto::PageChannelEnd theirs;
+  if (!mitto::CreatePageChannel(ours, theirs)) {
+    return net::ERR_INSUFFICIENT_RESOURCES;
+  }
+  scoped_refptr<mitto::PageProcess> process =
+      core.LaunchPage(program, std::move(theirs));
+  if (!process) {
+    return net::ERR_FAILED;
+  }
+  auto handle = std::make_unique<MittoPage>();
+  handle->events = base::MakeRefCounted<mitto::PageEvents>();
+  handle->process = process;
+  handle->session = session;
+  auto host = std::make_unique<mitto::PageHost>(
+      handle->events, process, session->ready_requests,
+      reinterpret_cast<uintptr_t>(handle.get()));
+  handle->host = host->GetWeakPtr();
+  if (!core.AddPage(*session, std::move(host), std::move(ours),
+                    *std::move(start))) {
+    process->Kill();
+    process->WaitForExit(mitto::kPageExitGrace);
+    return net::ERR_FAILED;
+  }
+  *page = handle.release();
+  return net::OK;
+}
+
+int32_t mitto_page_process_id(MittoPage* page, int64_t* process_id) {
+  if (!process_id) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *process_id = 0;
+  if (!page) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *process_id = page->process->pid();
+  return net::OK;
+}
+
+int32_t mitto_page_evaluate(MittoPage* page,
+                            const char* script,
+                            size_t script_size,
+                            uint64_t* call) {
+  if (!call) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *call = 0;
+  if (!page || !script) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  // SAFETY: The C API says `script` holds `script_size` bytes.
+  const std::string_view text =
+      UNSAFE_BUFFERS(std::string_view(script, script_size));
+  if (text.size() > mitto::kMaxScriptSize) {
+    return net::ERR_MSG_TOO_BIG;
+  }
+  if (!base::IsStringUTF8AllowingNoncharacters(text)) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *call = page->events->NewCall();
+  mitto::NetworkCore::Get().PostTask(base::BindOnce(
+      [](base::WeakPtr<mitto::PageHost> host,
+         scoped_refptr<mitto::PageEvents> events, uint64_t call,
+         std::string script) {
+        if (host) {
+          host->Evaluate(call, std::move(script));
+        } else {
+          // The Session has gone, and the Page with it.
+          events->PushCallAfterEnd(call);
+        }
+      },
+      page->host, page->events, *call, std::string(text)));
+  return net::OK;
+}
+
+int32_t mitto_page_next_event(MittoPage* page,
+                              int64_t timeout_ms,
+                              MittoPageEvent* event) {
+  if (!event) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  *event = {};
+  if (!page) {
+    return net::ERR_INVALID_ARGUMENT;
+  }
+  std::optional<base::TimeDelta> timeout;
+  if (timeout_ms >= 0) {
+    timeout = base::Milliseconds(timeout_ms);
+  }
+  mitto::PageEvent next;
+  const int result = page->events->NextEvent(timeout, next);
+  if (result != net::OK) {
+    return result;
+  }
+  event->type = next.type;
+  event->error = next.error;
+  event->call = next.call;
+  if (next.type == MITTO_PAGE_EVENT_EVALUATED &&
+      next.error == MITTO_PAGE_ERROR_NONE) {
+    event->json = mitto::CopyToNewBuffer(next.json);
+    event->json_size = next.json.size();
+  }
+  if (next.error != MITTO_PAGE_ERROR_NONE) {
+    event->message = mitto::CopyToNewBuffer(next.message);
+  }
+  return net::OK;
+}
+
+void mitto_page_event_free(MittoPageEvent* event) {
+  if (!event) {
+    return;
+  }
+  free(event->json);
+  free(event->message);
+  *event = {};
+}
+
+void mitto_page_close(MittoPage* page) {
+  if (!page) {
+    return;
+  }
+  mitto::NetworkCore::Get().RemovePage(page->session, page->host);
+  page->process->WaitForExit(mitto::kPageExitGrace);
+  delete page;
 }
 
 }  // extern "C"

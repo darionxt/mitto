@@ -37,7 +37,7 @@ int32_t mitto_session_set_cookies(void* session, const char* cookies, unsigned l
 int32_t mitto_session_delete_cookies(void* session, const char* filter, unsigned long size, uint32_t* deleted) {{ return -2; }}
 void mitto_cookies_free(char* cookies) {{}}
 int32_t mitto_session_event_fd(void* session, int32_t* fd) {{ return -2; }}
-int32_t mitto_session_next_ready_request(void* session, void** request) {{ return -2; }}
+int32_t mitto_session_next_ready(void* session, int32_t* kind, void** handle) {{ return -2; }}
 int32_t mitto_session_wait_for_event(void* session, int64_t timeout_ms) {{ return -2; }}
 void mitto_session_end_waits(void* session) {{}}
 int32_t mitto_request_start(void* session, const char* url, const void* headers, unsigned long header_count,
@@ -50,6 +50,12 @@ int32_t mitto_request_end_body(void* request) {{ return -2; }}
 void mitto_request_cancel(void* request) {{}}
 void mitto_request_release(void* request) {{}}
 void mitto_event_free(void* event) {{}}
+int32_t mitto_page_open(void* session, const char* options, unsigned long size, void** page) {{ return -2; }}
+int32_t mitto_page_process_id(void* page, int64_t* process_id) {{ return -2; }}
+int32_t mitto_page_evaluate(void* page, const char* script, unsigned long size, uint64_t* call) {{ return -2; }}
+int32_t mitto_page_next_event(void* page, int64_t timeout_ms, void* event) {{ return -2; }}
+void mitto_page_event_free(void* event) {{}}
+void mitto_page_close(void* page) {{}}
 """
 
 ERR_IO_PENDING = -1
@@ -255,6 +261,25 @@ def test_event_type_matches_the_c_header(event_type: _native.EventType) -> None:
 @pytest.mark.parametrize("priority", _native.Priority)
 def test_priority_matches_the_c_header(priority: _native.Priority) -> None:
     assert header_constant(f"MITTO_PRIORITY_{priority.name}") == priority
+
+
+def test_page_options_version_matches_the_c_header() -> None:
+    assert header_constant("MITTO_PAGE_OPTIONS_VERSION") == _native.PAGE_OPTIONS_VERSION
+
+
+@pytest.mark.parametrize("kind", _native.ReadyKind)
+def test_ready_kind_matches_the_c_header(kind: _native.ReadyKind) -> None:
+    assert header_constant(f"MITTO_READY_{kind.name}") == kind
+
+
+@pytest.mark.parametrize("event_type", _native.PageEventType)
+def test_page_event_type_matches_the_c_header(event_type: _native.PageEventType) -> None:
+    assert header_constant(f"MITTO_PAGE_EVENT_{event_type.name}") == event_type
+
+
+@pytest.mark.parametrize("error", _native.PageError)
+def test_page_error_matches_the_c_header(error: _native.PageError) -> None:
+    assert header_constant(f"MITTO_PAGE_ERROR_{error.name}") == error
 
 
 def test_find_library_returns_none_without_a_library(package_dir: Path) -> None:
@@ -781,21 +806,26 @@ def test_cookies_free_takes_null(native_library: ctypes.CDLL) -> None:
     native_library.mitto_cookies_free(None)
 
 
-def test_next_ready_request_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
-    request = ctypes.pointer(_native.MittoRequest())
+def test_next_ready_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    kind = ctypes.c_int32(7)
+    handle = ctypes.c_void_p(1)
 
-    assert native_library.mitto_session_next_ready_request(None, ctypes.byref(request)) == ERR_INVALID_ARGUMENT
-    assert not request
-    assert native_library.mitto_session_next_ready_request(session_handle, None) == ERR_INVALID_ARGUMENT
+    assert (
+        native_library.mitto_session_next_ready(None, ctypes.byref(kind), ctypes.byref(handle)) == ERR_INVALID_ARGUMENT
+    )
+    assert (kind.value, handle.value) == (0, None)
+    assert native_library.mitto_session_next_ready(session_handle, None, ctypes.byref(handle)) == ERR_INVALID_ARGUMENT
+    assert native_library.mitto_session_next_ready(session_handle, ctypes.byref(kind), None) == ERR_INVALID_ARGUMENT
 
 
-def test_next_ready_request_stores_null_when_nothing_is_waiting(
-    native_library: ctypes.CDLL, session_handle: Any
-) -> None:
-    request = ctypes.pointer(_native.MittoRequest())
+def test_next_ready_stores_nothing_when_nothing_is_waiting(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    kind = ctypes.c_int32(7)
+    handle = ctypes.c_void_p(1)
 
-    assert native_library.mitto_session_next_ready_request(session_handle, ctypes.byref(request)) == ERR_IO_PENDING
-    assert not request
+    assert native_library.mitto_session_next_ready(session_handle, ctypes.byref(kind), ctypes.byref(handle)) == (
+        ERR_IO_PENDING
+    )
+    assert (kind.value, handle.value) == (0, None)
 
 
 def test_wait_for_event_refuses_a_null_session_and_end_waits_takes_one(native_library: ctypes.CDLL) -> None:
@@ -1094,3 +1124,189 @@ def test_request_start_refuses_a_null_header_name(
 
     assert error == ERR_INVALID_ARGUMENT
     assert not handle
+
+
+NO_PAGE_OPTIONS = f'{{"version": {_native.PAGE_OPTIONS_VERSION}}}'.encode()
+ERR_MSG_TOO_BIG = -142
+# The longest script that one message to a Page carries.
+MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
+
+
+def open_page(library: ctypes.CDLL, session: Any, options: bytes | None) -> tuple[int, Any]:
+    """Call mitto_page_open and return its result and the handle it stored."""
+    # Not null at first, to show that a failed call stores null.
+    handle = ctypes.pointer(_native.MittoPage())
+    error: int = library.mitto_page_open(session, options, len(options or b""), ctypes.byref(handle))
+    return error, handle
+
+
+def next_page_event(library: ctypes.CDLL, page: Any) -> tuple[int, int, int, str, str]:
+    """Take the Page's next event, and return its type, error, call, JSON and message."""
+    event = _native.MittoPageEvent()
+    assert library.mitto_page_next_event(page, EVENT_TIMEOUT_MS, ctypes.byref(event)) == 0
+    try:
+        json_text = ctypes.string_at(event.json, event.json_size).decode() if event.json else ""
+        message = event.message.decode() if event.message else ""
+        return event.type, event.error, event.call, json_text, message
+    finally:
+        library.mitto_page_event_free(ctypes.byref(event))
+        assert not event.json
+        assert not event.message
+
+
+def evaluate(library: ctypes.CDLL, page: Any, script: bytes) -> tuple[int, int]:
+    """Call mitto_page_evaluate and return its result and the call it stored."""
+    call = ctypes.c_uint64(99)
+    error: int = library.mitto_page_evaluate(page, script, len(script), ctypes.byref(call))
+    return error, call.value
+
+
+@pytest.fixture
+def page_handle(native_library: ctypes.CDLL, session_handle: Any) -> Iterator[Any]:
+    """Open a Page on a real Session, or skip if no Page program lies beside the library."""
+    library_path = _native.find_library()
+    assert library_path is not None
+    if not library_path.with_name("mitto_page.exe" if sys.platform == "win32" else "mitto_page").is_file():
+        pytest.skip("no Page program beside the library")
+    error, handle = open_page(native_library, session_handle, NO_PAGE_OPTIONS)
+    assert error == 0
+    yield handle
+    native_library.mitto_page_close(handle)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"{}", id="no-version"),
+        pytest.param(b'{"version": 2}', id="another-version"),
+        pytest.param(b'{"version": 1, "url": "https://example.com/"}', id="unknown-key"),
+        pytest.param(b'{"version": 1, "time_zone": 9}', id="time-zone-not-a-string"),
+        pytest.param(b'{"version": 1, "time_zone": ""}', id="empty-time-zone"),
+        pytest.param(b'{"version": 1, "time_zone": "Europe/Paris\\u0000"}', id="time-zone-with-nul"),
+        pytest.param(b'{"version": 1, "locale": "de DE"}', id="locale-with-space"),
+        pytest.param(('{"version": 1, "locale": "' + "a" * 65 + '"}').encode(), id="locale-too-long"),
+    ],
+)
+def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_handle: Any, options: bytes) -> None:
+    error, handle = open_page(native_library, session_handle, options)
+
+    assert error == ERR_INVALID_ARGUMENT
+    assert not handle
+
+
+def test_page_open_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
+    error, handle = open_page(native_library, None, NO_PAGE_OPTIONS)
+    assert (error, bool(handle)) == (ERR_INVALID_ARGUMENT, False)
+    error, handle = open_page(native_library, session_handle, None)
+    assert (error, bool(handle)) == (ERR_INVALID_ARGUMENT, False)
+    assert native_library.mitto_page_open(session_handle, NO_PAGE_OPTIONS, len(NO_PAGE_OPTIONS), None) == (
+        ERR_INVALID_ARGUMENT
+    )
+
+
+def test_null_pages_are_refused_or_accepted_where_nothing_needs_doing(native_library: ctypes.CDLL) -> None:
+    process_id = ctypes.c_int64(7)
+    assert native_library.mitto_page_process_id(None, ctypes.byref(process_id)) == ERR_INVALID_ARGUMENT
+    assert process_id.value == 0
+    assert evaluate(native_library, None, b"1") == (ERR_INVALID_ARGUMENT, 0)
+    event = _native.MittoPageEvent(type=7)
+    assert native_library.mitto_page_next_event(None, 0, ctypes.byref(event)) == ERR_INVALID_ARGUMENT
+    assert event.type == 0
+    native_library.mitto_page_event_free(None)
+    native_library.mitto_page_close(None)
+
+
+def test_a_page_gives_each_result_as_json_with_its_call(native_library: ctypes.CDLL, page_handle: Any) -> None:
+    first = evaluate(native_library, page_handle, b"var a = {b: [1, 'two', null]}; a")
+    second = evaluate(native_library, page_handle, b"a.b.length")
+    third = evaluate(native_library, page_handle, b"undefined")
+
+    assert [first[0], second[0], third[0]] == [0, 0, 0]
+    assert first[1] < second[1] < third[1]
+    evaluated = _native.PageEventType.EVALUATED
+    assert next_page_event(native_library, page_handle) == (evaluated, 0, first[1], '{"b":[1,"two",null]}', "")
+    assert next_page_event(native_library, page_handle) == (evaluated, 0, second[1], "3", "")
+    assert next_page_event(native_library, page_handle) == (evaluated, 0, third[1], "", "")
+
+
+def test_a_pages_context_has_the_interfaces_that_the_runtime_implements(
+    native_library: ctypes.CDLL, page_handle: Any
+) -> None:
+    # The bindings: tests/test_page_bindings.py compares them with Chrome through the Page program's script argument.
+    script = b"const t = new EventTarget(); let n = 0; t.addEventListener('x', () => n++); [t.dispatchEvent(new Event('x')), n]"
+    _, call = evaluate(native_library, page_handle, script)
+
+    assert next_page_event(native_library, page_handle)[2:4] == (call, "[true,1]")
+
+
+def test_a_script_that_throws_fails_its_call_and_the_page_goes_on(
+    native_library: ctypes.CDLL, page_handle: Any
+) -> None:
+    _, call = evaluate(native_library, page_handle, b"null.x")
+
+    event_type, error, answered, json_text, message = next_page_event(native_library, page_handle)
+
+    assert (event_type, error, answered, json_text) == (
+        _native.PageEventType.EVALUATED,
+        _native.PageError.SCRIPT,
+        call,
+        "",
+    )
+    assert message.startswith("Uncaught TypeError: ")
+    _, call = evaluate(native_library, page_handle, b"6 * 7")
+    assert next_page_event(native_library, page_handle)[2:4] == (call, "42")
+
+
+def test_page_evaluate_refuses_a_script_that_is_not_utf8_or_too_long(
+    native_library: ctypes.CDLL, page_handle: Any
+) -> None:
+    assert evaluate(native_library, page_handle, b"'\xff'") == (ERR_INVALID_ARGUMENT, 0)
+    assert evaluate(native_library, page_handle, b" " * (MAX_SCRIPT_SIZE + 1)) == (ERR_MSG_TOO_BIG, 0)
+    assert native_library.mitto_page_evaluate(page_handle, b"1", 1, None) == ERR_INVALID_ARGUMENT
+
+
+def test_page_next_event_says_when_no_event_is_waiting(native_library: ctypes.CDLL, page_handle: Any) -> None:
+    event = _native.MittoPageEvent()
+
+    assert native_library.mitto_page_next_event(page_handle, 0, ctypes.byref(event)) == ERR_IO_PENDING
+    assert event.type == 0
+
+
+def test_a_page_has_a_process(native_library: ctypes.CDLL, page_handle: Any) -> None:
+    process_id = ctypes.c_int64()
+
+    assert native_library.mitto_page_process_id(page_handle, ctypes.byref(process_id)) == 0
+    assert process_id.value > 0
+    assert process_id.value != os.getpid()
+
+
+def test_a_page_starts_with_the_time_zone_and_locale_of_its_options(
+    native_library: ctypes.CDLL, session_handle: Any, page_handle: Any
+) -> None:
+    options = b'{"version": 1, "time_zone": "America/Sao_Paulo", "locale": "pt-BR"}'
+    error, page = open_page(native_library, session_handle, options)
+    assert error == 0
+    try:
+        script = (
+            b"Intl.DateTimeFormat().resolvedOptions().timeZone + ' ' + Intl.NumberFormat().resolvedOptions().locale"
+        )
+        _, call = evaluate(native_library, page, script)
+        assert next_page_event(native_library, page)[1:4] == (0, call, '"America/Sao_Paulo pt-BR"')
+    finally:
+        native_library.mitto_page_close(page)
+
+
+def test_a_page_that_refuses_its_time_zone_ends_and_says_why(
+    native_library: ctypes.CDLL, session_handle: Any, page_handle: Any
+) -> None:
+    error, page = open_page(native_library, session_handle, b'{"version": 1, "time_zone": "Mars/Olympus_Mons"}')
+    assert error == 0
+    try:
+        _, call = evaluate(native_library, page, b"1")
+        why = 'the Page refused a message from the library: the time zone "Mars/Olympus_Mons" is unknown'
+        refused = _native.PageError.REFUSED
+        assert next_page_event(native_library, page) == (_native.PageEventType.EVALUATED, refused, call, "", why)
+        assert next_page_event(native_library, page) == (_native.PageEventType.ENDED, refused, 0, "", why)
+    finally:
+        native_library.mitto_page_close(page)

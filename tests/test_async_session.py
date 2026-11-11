@@ -463,7 +463,7 @@ def test_the_waiting_thread_sleeps_while_events_wait_for_a_busy_loop(
     returns: list[tuple[float, float]] = []
     taken: list[int] = []
     wait_for_event = _native.Session.wait_for_event
-    next_ready_request = _native.Session.next_ready_request
+    next_ready = _native.Session.next_ready
 
     def timed(self: _native.Session, timeout: float | None = None) -> bool:
         woke = wait_for_event(self, timeout)
@@ -472,13 +472,13 @@ def test_the_waiting_thread_sleeps_while_events_wait_for_a_busy_loop(
         return woke
 
     def counted(self: _native.Session) -> int | None:
-        identity = next_ready_request(self)
+        identity = next_ready(self)
         if identity is not None:
             taken.append(identity)
         return identity
 
     monkeypatch.setattr(_native.Session, "wait_for_event", timed)
-    monkeypatch.setattr(_native.Session, "next_ready_request", counted)
+    monkeypatch.setattr(_native.Session, "next_ready", counted)
     count = 20
 
     async def main() -> tuple[float, float, int]:

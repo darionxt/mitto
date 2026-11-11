@@ -1,13 +1,15 @@
-// The Page program, which runs a Page's scripts in a process of its own. For
-// now it starts V8, runs the script on its command line in a new context and
-// prints what the script returns, as String() would write it. It talks to
-// nothing else yet.
+// The Page program, which runs a Page's scripts in a process of its own. The
+// library starts it for a Page with --session=, and it serves that Page's
+// Session over the channel that the argument names: see session_channel.h and
+// docs/runtime.md. Given a script instead, it starts V8, runs the script in a
+// new context and prints what the script returns, as String() would write it.
 //
 // Usage: mitto_page [--enable-blink-features=NAMES]
-//                   [--disable-blink-features=NAMES] SCRIPT
+//                   [--disable-blink-features=NAMES]
+//                   SCRIPT | --session=CHANNEL,PARENT
 //        mitto_page --version
 //
-// The context has the interfaces that the Runtime implements, as the Page's
+// Each context has the interfaces that the Runtime implements, as the Page's
 // runtime-enabled features expose them: the Engine Release's for stable on
 // Windows, with those that the options name, separated by commas, turned on or
 // off, as Chrome's options of the same names do.
@@ -32,6 +34,9 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/page/script_runner.h"
+#include "mitto/page/session_channel.h"
+#include "mitto/page_messages.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "v8/include/libplatform/libplatform.h"
@@ -63,7 +68,8 @@ constexpr int kWrongArguments = 2;
 
 constexpr std::string_view kUsage =
     "usage: mitto_page [--enable-blink-features=NAMES] "
-    "[--disable-blink-features=NAMES] SCRIPT | --version";
+    "[--disable-blink-features=NAMES] SCRIPT | --session=CHANNEL,PARENT | "
+    "--version";
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
 
@@ -155,6 +161,14 @@ int main(int argc, char** argv) {
     return kWrongArguments;
   }
   const std::string_view argument = arguments.back();
+  std::optional<mitto::SessionArgument> session;
+  if (argument.starts_with(mitto::kSessionArgumentPrefix)) {
+    session = mitto::ParseSessionArgument(argument);
+    if (!session) {
+      WriteLine(stderr, "--session= names no channel and process");
+      return kWrongArguments;
+    }
+  }
 
   // ICU reads its data from memory, as in Chrome's renderers, which map the
   // file that the browser gives them.
@@ -162,6 +176,8 @@ int main(int argc, char** argv) {
   udata_setCommonData(mitto_icu_data, &status);
   CHECK(U_SUCCESS(status));
 
+  // Before anything of V8 asks for a random number, as in Chrome's renderers.
+  v8::V8::SetEntropySource(&mitto::GenerateEntropy);
   v8::StartupData snapshot = {mitto_v8_snapshot,
                               base::checked_cast<int>(mitto_v8_snapshot_size)};
   v8::V8::SetSnapshotDataBlob(&snapshot);
@@ -185,7 +201,11 @@ int main(int argc, char** argv) {
     const v8::Isolate::Scope isolate_scope(isolate);
     const std::unique_ptr<mitto::bindings::PerIsolateData> data =
         mitto::bindings::PerIsolateData::Create(isolate, std::move(*features));
-    finished = RunScript(isolate, argument);
+    if (session) {
+      mitto::ServeSession(*platform, isolate, *std::move(session));
+    } else {
+      finished = RunScript(isolate, argument);
+    }
   }
   isolate->Dispose();
   v8::V8::Dispose();

@@ -41,6 +41,22 @@ source_set("icu_data") {
   deps = [ ":icu_data_assembly" ]
 }
 
+# The channel between a Page and its Session, and the messages it carries,
+# which the library and the Page program share. It needs only //base.
+source_set("page_channel") {
+  sources = [
+    "page_channel.h",
+    "page_messages.cc",
+    "page_messages.h",
+  ]
+  if (is_win) {
+    sources += [ "page_channel_win.cc" ]
+  } else {
+    sources += [ "page_channel_posix.cc" ]
+  }
+  deps = [ "//base" ]
+}
+
 shared_library("mitto_core") {
   public = [ "include/mitto/mitto.h" ]
   sources = [
@@ -66,6 +82,10 @@ shared_library("mitto_core") {
     "network_quality.h",
     "network_session_configurator.cc",
     "network_session_configurator.h",
+    "page_host.cc",
+    "page_host.h",
+    "page_launcher.cc",
+    "page_launcher.h",
     "ready_requests.cc",
     "ready_requests.h",
     "request_channel.cc",
@@ -90,11 +110,15 @@ shared_library("mitto_core") {
   if (is_win) {
     sources += [
       "directory_lock_win.cc",
+      "page_launcher_win.cc",
       "pin_library.h",
       "pin_library_win.cc",
     ]
   } else {
-    sources += [ "directory_lock_posix.cc" ]
+    sources += [
+      "directory_lock_posix.cc",
+      "page_launcher_posix.cc",
+    ]
   }
   public_configs = [ ":public_api" ]
 
@@ -102,6 +126,7 @@ shared_library("mitto_core") {
   defines = [ "MITTO_IMPLEMENTATION" ]
   deps = [
     ":icu_data",
+    ":page_channel",
     "//base",
     "//crypto",
     "//net",
@@ -194,6 +219,15 @@ if (use_libfuzzer) {
     ]
   }
 
+  fuzzer_test("page_messages_fuzzer") {
+    # How the library reads what a Page sends, which may be hostile.
+    sources = [ "test/page_messages_fuzzer.cc" ]
+    deps = [
+      ":page_channel",
+      "//base",
+    ]
+  }
+
   fuzzer_test("request_options_fuzzer") {
     # The parser and not the library, whose exports list hides everything but the
     # C API.
@@ -265,6 +299,7 @@ group("mitto") {
     deps += [
       ":client_hints_fuzzer",
       ":cookies_fuzzer",
+      ":page_messages_fuzzer",
       ":request_options_fuzzer",
       ":session_settings_fuzzer",
       ":socks5_auth_fuzzer",

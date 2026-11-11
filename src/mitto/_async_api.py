@@ -152,7 +152,7 @@ class _Events:
     def _on_ready(self) -> None:
         # Until the list is empty, which is what lets a thread that waits return again. An entry may name a request that has
         # gone, or one that has taken its event already, which next_of() allows for.
-        while (identity := self._native.next_ready_request()) is not None:
+        while (identity := self._native.next_ready()) is not None:
             _wake(self._waiting.pop(identity, ()))
 
 
