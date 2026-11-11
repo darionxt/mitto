@@ -1,0 +1,28 @@
+name: Pull request caches
+
+# A pull request's caches serve only its own runs, so they go when it closes, merged or not, rather than take room from
+# main's until GitHub evicts them.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    name: Delete the caches of a closed pull request
+    # A pull request from a fork gets a token that can only read, so its caches stay until GitHub evicts them.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        # The list goes to the log, since the deletion prints nothing.
+        run: |
+          gh cache list --ref "$REF" --limit 1000
+          gh cache delete --all --ref "$REF" --succeed-on-no-caches

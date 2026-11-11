@@ -1,0 +1,128 @@
+name: Nightly
+
+# main reuses its build directories, so a mistake in an incremental build would not show there. This run builds what
+# main holds from nothing on every Host, with CI's and the sanitizers' jobs and tests, once main has moved since the
+# last run that finished.
+on:
+  # GitHub may start a scheduled run hours late. A failure reaches the owner in two ways: the job at the end opens an
+  # issue, and GitHub mails the person who last changed this schedule, if their notification settings ask for it.
+  schedule:
+    - cron: "20 21 * * *"
+  # A run started by hand always builds, which is how a failure that may be a flake is tried again.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A run started while another runs waits for it.
+concurrency:
+  group: nightly-${{ github.ref }}
+
+jobs:
+  moved:
+    name: Has main moved
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      build: ${{ steps.compare.outputs.build }}
+      since: ${{ steps.compare.outputs.since }}
+    steps:
+      # A scheduled run skips the commit that the last run with builds checked, whether they passed or failed, so a
+      # failure is reported once. A cancelled run, such as one whose macOS job got no runner, checked nothing.
+      - id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A run that waited for the one before it starts seconds after that one ends, before the list of runs shows it
+          # as finished, so this waits until every earlier run shows as finished, for five minutes at most.
+          for attempt in {1..30}; do
+            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?branch=$GITHUB_REF_NAME&per_page=100" --jq ".workflow_runs[] | select(.run_number < $GITHUB_RUN_NUMBER) | \"\(.id) \(.status) \(.conclusion) \(.head_sha)\"")"
+            awk '$2 != "completed"' <<< "$runs" | grep -q . || break
+            sleep 10
+          done
+          runs="$(awk '$2 == "completed" && ($3 == "success" || $3 == "failure" || $3 == "timed_out") { print $1, $3, $4 }' <<< "$runs")"
+          checked=""
+          since=""
+          while read -r id conclusion sha; do
+            [ -n "$id" ] || continue
+            jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '.jobs[] | "\(.conclusion) \(.name)"')"
+            # A run checked its commit when one of its builds ran to the end. One whose first job failed, or that
+            # skipped its builds, did not.
+            if [ -z "$checked" ] && grep -qE '^(success|failure|timed_out) (CI|Sanitizers) / ' <<< "$jobs"; then
+              checked="$sha"
+            fi
+            # The last run that passed with its builds, since a run that skipped them passes too.
+            if [ -z "$since" ] && [ "$conclusion" = "success" ] && grep -q '^success CI / ' <<< "$jobs"; then
+              since="$sha"
+            fi
+            [ -z "$checked" ] || [ -z "$since" ] || break
+          done <<< "$runs"
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$checked" = "$GITHUB_SHA" ]; then
+            echo "The last run with builds checked $GITHUB_SHA, so this one builds nothing." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+          if [ "$since" = "$GITHUB_SHA" ]; then
+            echo "This run builds $GITHUB_SHA again, which passed before." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$since" ]; then
+            echo "This run builds what merged since the last run that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$since...$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No run on $GITHUB_REF_NAME has passed yet, and this one builds $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  ci:
+    name: CI
+    needs: moved
+    if: needs.moved.outputs.build == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      from-nothing: true
+
+  sanitizers:
+    name: Sanitizers
+    needs: moved
+    if: needs.moved.outputs.build == 'true'
+    uses: ./.github/workflows/sanitizers.yml
+    with:
+      from-nothing: true
+
+  # Whatever the build from nothing found lies in what merged since the last commit that passed. One issue names it, and
+  # a later failure while that issue is open adds a comment to it.
+  report:
+    name: Report the failure
+    needs: [moved, ci, sanitizers]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MOVED: ${{ needs.moved.result }}
+          SINCE: ${{ needs.moved.outputs.since }}
+          TITLE: Nightly build from nothing failed
+        run: |
+          failed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | "- \(.name)"')"
+          body="The nightly build from nothing failed on ${GITHUB_SHA:0:7}: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Failed jobs:
+          $failed
+
+          "
+          if [ -n "$SINCE" ]; then
+            body+="What it found lies in what merged since ${SINCE:0:7}, the last commit that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/${SINCE:0:7}...${GITHUB_SHA:0:7}"
+          elif [ "$MOVED" = "success" ]; then
+            body+="No run on $GITHUB_REF_NAME had passed before this one."
+          fi
+          # Not through search, whose index can lag behind an issue that was just opened.
+          open="$(gh issue list --state open --limit 1000 --json number,title --jq 'map(select(.title == env.TITLE)) | .[0].number // empty')"
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$TITLE" --label needs-triage --body "$body"
+          fi

@@ -4,13 +4,28 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The nightly run calls these jobs to build from nothing.
+  workflow_call:
+    inputs:
+      from-nothing:
+        description: Restore and save no cache, so that each build starts from nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# A push to a pull request cancels the runs of its earlier commits. A run on main, or in the nightly run, has a group of
+# its own, so it is never cancelled and never waits.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   python:
     name: Python ${{ matrix.python }} on ${{ matrix.runner }}
+    # It builds nothing, so the nightly run leaves it out.
+    if: ${{ !inputs.from-nothing }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -40,8 +55,9 @@ jobs:
   native:
     name: Native core on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
-    # From nothing, the library takes 13 to 41 minutes, the Runtime 58 to 83 more and the tests 9 to 11.
-    timeout-minutes: 180
+    # From nothing, as in the nightly run, the library takes 13 to 42 minutes, the Runtime 58 to 107 more and the tests
+    # 9 to 12.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -87,38 +103,39 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-      # tools/workspace holds the pin of the source export, so this key covers it too.
+      # tools/workspace holds the pin of the source export, so this key covers it too. The nightly run neither
+      # restores nor saves a cache.
       - id: cached-library
+        if: ${{ !inputs.from-nothing }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/native-core
           key: native-core-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
       # The Runtime's Page program, from the same files as the library.
       - id: cached-runtime
+        if: ${{ !inputs.from-nothing }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/runtime
           key: runtime-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
       - id: tag
         run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
-      # What the export compiles to changes only with tools/workspace, so a pull request
-      # reuses main's objects and rebuilds only native/. main always builds from nothing,
-      # so a mistake in an incremental build cannot go unnoticed there.
+      # What the export compiles to changes only with tools/workspace, so main and pull requests reuse the build
+      # directory that main saved first with it, and rebuild only native/. The nightly run builds from nothing, which
+      # shows a mistake in an incremental build.
       - id: cached-objects
-        if: steps.cached-library.outputs.cache-hit != 'true'
+        if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
           key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
-          lookup-only: ${{ github.event_name != 'pull_request' }}
       # The same for the Runtime's build directory.
       - id: cached-runtime-objects
-        if: steps.cached-runtime.outputs.cache-hit != 'true'
+        if: steps.cached-runtime.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/runtime
           key: runtime-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
-          lookup-only: ${{ github.event_name != 'pull_request' }}
       # A build on Windows needs the Windows SDK that the Engine Release asks for, which the image may lack.
       - if: runner.os == 'Windows' && (steps.cached-library.outputs.cache-hit != 'true' || steps.cached-runtime.outputs.cache-hit != 'true')
         uses: ./.github/actions/install-windows-sdk
@@ -140,12 +157,13 @@ jobs:
           # The notices of what this library links, which the test of the wheel's notices compares with them.
           uv run python -m tools.workspace.notices host "$build_dir" > "$RUNNER_TEMP/native-core/host-notices.txt"
       # Before the tests, so that a test that fails does not waste the build.
-      - if: steps.cached-library.outputs.cache-hit != 'true'
+      - if: steps.cached-library.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/native-core
           key: ${{ steps.cached-library.outputs.cache-primary-key }}
-      - if: steps.cached-library.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true'
+      # Only main saves a build directory, the first time it builds with a tools/workspace.
+      - if: steps.cached-library.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
@@ -166,12 +184,12 @@ jobs:
           for file in $PAGE_PROGRAM $PAGE_PROGRAM_SYMBOLS $HTML_TREE_BUILDER_TEST; do
             cp "$build_dir/$file" "$RUNNER_TEMP/runtime"
           done
-      - if: steps.cached-runtime.outputs.cache-hit != 'true'
+      - if: steps.cached-runtime.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/runtime
           key: ${{ steps.cached-runtime.outputs.cache-primary-key }}
-      - if: steps.cached-runtime.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-runtime-objects.outputs.cache-hit != 'true'
+      - if: steps.cached-runtime.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-runtime-objects.outputs.cache-hit != 'true' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/runtime
