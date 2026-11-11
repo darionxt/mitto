@@ -54,9 +54,14 @@ def program() -> Path:
     return Path(path)
 
 
-def _run(program: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run(program: Path, *arguments: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [program, *arguments], capture_output=True, encoding="utf-8", timeout=_TIMEOUT_SECONDS, check=False
+        [program, *arguments],
+        input=stdin,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
     )
 
 
@@ -151,6 +156,20 @@ def test_markup_in_utf8_reads_back_the_same(program: Path) -> None:
     html = "<p title='café'>日本 \U0001f600 &eacute;</p>"
 
     assert _evaluate(program, "document.body.innerHTML", html) == '<p title="café">日本 \U0001f600 é</p>'
+
+
+def test_a_script_on_the_command_line_reads_in_utf8(program: Path) -> None:
+    # On Windows the program takes its arguments from the command line in UTF-16, not in the ANSI code page.
+    assert _evaluate(program, "'caf\u00e9 \u65e5\u672c \U0001f600'.length + ' caf\u00e9'") == "10 caf\u00e9"
+
+
+def test_a_script_can_come_on_standard_input(program: Path) -> None:
+    # For a script longer than a command line holds, such as the probe of the bindings' tests on Windows, which allows
+    # 32,767 characters.
+    script = "/* " + "x" * 40000 + " */ [document.body.innerHTML, '\u00e9t\u00e9'].join(' ')"
+    result = _run(program, "--html=<p>caf\u00e9</p>", "-", stdin=script)
+
+    assert (result.returncode, result.stdout, result.stderr) == (0, "<p>caf\u00e9</p> \u00e9t\u00e9\n", "")
 
 
 def test_the_window_is_the_global_object(program: Path) -> None:

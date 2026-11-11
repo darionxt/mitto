@@ -68,9 +68,14 @@ def program() -> Path:
     return Path(path)
 
 
-def _run(program: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run(program: Path, *arguments: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [program, *arguments], capture_output=True, encoding="utf-8", timeout=_TIMEOUT_SECONDS, check=False
+        [program, *arguments],
+        input=stdin,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
     )
 
 
@@ -90,8 +95,11 @@ def chrome() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def page(program: Path) -> dict[str, Any]:
-    """What the Page program records with the same probe."""
-    return json.loads(_evaluate(program, (_RECORDINGS / "probe.js").read_text(encoding="utf-8")))
+    """What the Page program records with the same probe, which it reads from standard input: the probe is longer than
+    a command line holds on Windows."""
+    result = _run(program, "-", stdin=(_RECORDINGS / "probe.js").read_text(encoding="utf-8"))
+    assert (result.returncode, result.stderr) == (0, "")
+    return json.loads(result.stdout)
 
 
 def test_there_is_a_recording_of_the_engine_release() -> None:
