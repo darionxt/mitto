@@ -12,6 +12,8 @@ permissions:
 jobs:
   delete:
     name: Delete the caches of a closed pull request
+    # A pull request from a fork gets a token that can only read, so its caches stay until GitHub evicts them.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       actions: write
