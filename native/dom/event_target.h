@@ -93,10 +93,15 @@ class EventTarget : public bindings::ScriptWrappable {
   bool DispatchEvent(Event* event);
 
  private:
-  void FireEventListeners(Event* event);
+  // Runs the listeners of the event's type, and returns whether the event is
+  // canceled, as Blink's EventTarget::FireEventListeners() does.
+  bool FireEventListeners(Event* event);
   void RemoveEntry(EventListenerEntry* entry);
 
   std::vector<cppgc::Member<EventListenerEntry>> listeners_;
+  // Whether Blink would have made this target's EventTargetData, which it does
+  // when a page first adds a listener.
+  bool has_event_target_data_ = false;
 };
 
 }  // namespace mitto

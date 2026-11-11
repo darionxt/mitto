@@ -146,6 +146,9 @@ void EventTarget::AddEventListener(
   if (listener.IsEmpty()) {
     return;
   }
+  // Blink makes a target's EventTargetData here, before it checks for the same
+  // listener, and keeps it after its listeners are removed.
+  has_event_target_data_ = true;
   for (const cppgc::Member<EventListenerEntry>& entry : listeners_) {
     if (entry->type() == type && entry->capture() == flat.capture &&
         entry->callback(v8::Isolate::GetCurrent())->StrictEquals(listener)) {
@@ -199,7 +202,7 @@ bool EventTarget::DispatchEvent(Event* event) {
   event->SetTarget(this);
   event->SetCurrentTarget(this);
   event->SetPhase(Event::Phase::kAtTarget);
-  FireEventListeners(event);
+  const bool canceled = FireEventListeners(event);
   if (bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
           ->features()
           .IsEnabled(
@@ -207,10 +210,15 @@ bool EventTarget::DispatchEvent(Event* event) {
     event->SetCurrentTarget(nullptr);
   }
   event->SetPhase(Event::Phase::kNone);
-  return !event->DefaultPrevented();
+  return !canceled;
 }
 
-void EventTarget::FireEventListeners(Event* event) {
+bool EventTarget::FireEventListeners(Event* event) {
+  // A target that never had a listener has no EventTargetData in Blink, and
+  // its dispatch counts as not canceled, even for an event canceled before.
+  if (!has_event_target_data_) {
+    return false;
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   // A copy, so that listeners that a listener adds wait for the next event,
   // and Persistent, so that the collector keeps them while scripts run.
@@ -233,6 +241,7 @@ void EventTarget::FireEventListeners(Event* event) {
                  event_wrapper);
     event->SetInPassiveListener(false);
   }
+  return event->DefaultPrevented();
 }
 
 }  // namespace mitto

@@ -1397,6 +1397,12 @@
         }
       ],
       [
+        "dispatchEvent of a canceled event",
+        {
+          "value": "[true,false,false,true]"
+        }
+      ],
+      [
         "a listener added twice runs once",
         {
           "value": "1"

@@ -165,6 +165,27 @@
       calls.push([result, event.defaultPrevented, event.eventPhase, event.currentTarget, event.target === target]);
       return calls;
     },
+    "dispatchEvent of a canceled event": () => {
+      const canceled = () => {
+        const event = new Event("x", { cancelable: true });
+        event.preventDefault();
+        return event;
+      };
+      const removed = new EventTarget();
+      const listener = () => {};
+      removed.addEventListener("x", listener);
+      removed.removeEventListener("x", listener);
+      const otherType = new EventTarget();
+      otherType.addEventListener("y", listener);
+      const withNull = new EventTarget();
+      withNull.addEventListener("x", null);
+      return [
+        new EventTarget().dispatchEvent(canceled()),
+        removed.dispatchEvent(canceled()),
+        otherType.dispatchEvent(canceled()),
+        withNull.dispatchEvent(canceled()),
+      ];
+    },
     "a listener added twice runs once": () => {
       const target = new EventTarget();
       let count = 0;
