@@ -1,11 +1,16 @@
 #include "mitto/page/document_loader.h"
 
+#include <algorithm>
 #include <array>
 #include <optional>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
@@ -21,8 +26,7 @@ namespace {
 
 // The HTML Standard's JavaScript MIME types, which Blink's
 // MIMETypeRegistry::IsSupportedJavaScriptMIMEType() holds.
-// Upstream:
-// third_party/blink/renderer/platform/network/mime/mime_type_registry.cc
+// Upstream: third_party/blink/renderer/platform/network/mime/mime_type_registry.cc
 constexpr std::array<std::u16string_view, 16> kJavaScriptMimeTypes = {
     u"application/ecmascript",
     u"application/javascript",
@@ -41,6 +45,15 @@ constexpr std::array<std::u16string_view, 16> kJavaScriptMimeTypes = {
     u"text/x-ecmascript",
     u"text/x-javascript",
 };
+
+bool IsJavaScriptMimeType(std::u16string_view mime_type) {
+  for (const std::u16string_view javascript : kJavaScriptMimeTypes) {
+    if (mime_type == javascript) {
+      return true;
+    }
+  }
+  return false;
+}
 
 enum class ScriptType {
   kClassic,
@@ -63,12 +76,102 @@ ScriptType TypeOf(const HTMLScriptElement& element) {
       type ? std::u16string(base::TrimWhitespace(*type, base::TRIM_ALL))
            : u"text/" + *language;
   const std::u16string lower = base::ToLowerASCII(block_type);
-  for (const std::u16string_view mime_type : kJavaScriptMimeTypes) {
-    if (lower == mime_type) {
-      return ScriptType::kClassic;
-    }
+  if (IsJavaScriptMimeType(lower)) {
+    return ScriptType::kClassic;
   }
   return lower == u"module" ? ScriptType::kModule : ScriptType::kOther;
+}
+
+// The values of each header line named `name`, joined by commas, as Blink's
+// ResourceResponse::HttpHeaderField() joins a header that comes more than
+// once. `headers` holds a line feed after each "name: value".
+std::string HeaderField(std::string_view headers, std::string_view name) {
+  std::vector<std::string_view> values;
+  for (const std::string_view line : base::SplitStringPiece(
+           headers, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(':');
+    if (colon != std::string_view::npos &&
+        base::EqualsCaseInsensitiveASCII(line.substr(0, colon), name)) {
+      values.push_back(
+          base::TrimString(line.substr(colon + 1), " \t", base::TRIM_ALL));
+    }
+  }
+  return base::JoinString(values, ", ");
+}
+
+// Blink's ResourceResponse::HttpContentType(): the MIME type of the last
+// media type in Content-Type that has one, in lower case, without parameters.
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_response.cc
+// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
+std::string HttpContentType(std::string_view headers) {
+  std::string mime_type;
+  const std::string field =
+      base::ToLowerASCII(HeaderField(headers, "content-type"));
+  for (const std::string_view value : base::SplitStringPiece(
+           field, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const std::string_view type = base::TrimString(
+        value.substr(0, value.find(';')), " \t", base::TRIM_ALL);
+    if (type.find('/') != std::string_view::npos && type != "*/*") {
+      mime_type = std::string(type);
+    }
+  }
+  return mime_type;
+}
+
+// Blink's ParseContentTypeOptionsHeader(), as the Fetch Standard splits the
+// header.
+bool IsNosniff(std::string_view headers) {
+  const std::string field = HeaderField(headers, "x-content-type-options");
+  const std::string_view first = std::string_view(field).substr(
+      0, std::min(field.find(','), field.size()));
+  return base::EqualsCaseInsensitiveASCII(
+      base::TrimString(first, " \t", base::TRIM_ALL), "nosniff");
+}
+
+// KURL::ElidedString(), for a URL in a console message.
+// Upstream: third_party/blink/renderer/platform/weborigin/kurl.cc
+std::string ElidedUrl(const GURL& url) {
+  const std::string& spec = url.possibly_invalid_spec();
+  if (spec.size() <= 1024) {
+    return spec;
+  }
+  return base::StrCat(
+      {spec.substr(0, 511), "...", spec.substr(spec.size() - 510)});
+}
+
+// Blink's AllowedByNosniff::MimeTypeAsScript() for a classic script of an
+// element: whether a response of `url` with `headers` may run as one, and
+// otherwise the console error that says why not.
+// Upstream: third_party/blink/renderer/platform/loader/allowed_by_nosniff.cc
+std::optional<std::string> RefusedAsScript(const GURL& url,
+                                           std::string_view headers) {
+  const std::string mime_type = HttpContentType(headers);
+  const bool is_javascript =
+      IsJavaScriptMimeType(base::ASCIIToUTF16(mime_type));
+  if (IsNosniff(headers) && !is_javascript) {
+    return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
+                         "' because its MIME type ('", mime_type,
+                         "') is not executable, and strict MIME type "
+                         "checking is enabled."});
+  }
+  if (is_javascript) {
+    return std::nullopt;
+  }
+  // The Fetch Standard's should response to request be blocked due to MIME
+  // type.
+  for (const std::string_view blocked : {"image/", "audio/", "video/"}) {
+    if (mime_type.starts_with(blocked)) {
+      return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
+                           "' because its MIME type ('", mime_type,
+                           "') is not executable."});
+    }
+  }
+  if (mime_type.starts_with("text/csv")) {
+    return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
+                         "' because its MIME type ('", mime_type,
+                         "') is not executable."});
+  }
+  return std::nullopt;
 }
 
 // Fires a trusted event of `type` at `target`, which does not bubble, as the
@@ -126,12 +229,10 @@ std::u16string Utf8StreamDecoder::Decode(std::string_view bytes) {
 }
 
 std::u16string Utf8StreamDecoder::Flush() {
+  // A sequence that the stream cut off is not UTF-8, also one that began as a
+  // byte order mark.
   std::u16string text;
-  // A sequence that the stream cut off is not UTF-8.
-  if (!pending_.empty() &&
-      (started_ || !std::string_view("\xEF\xBB\xBF").starts_with(pending_))) {
-    base::UTF8ToUTF16(pending_.data(), pending_.size(), &text);
-  }
+  base::UTF8ToUTF16(pending_.data(), pending_.size(), &text);
   pending_.clear();
   started_ = true;
   return text;
@@ -162,6 +263,7 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   HTMLScriptElement& element() const { return *element_; }
   // The URL of the response, after any redirects.
   const GURL& response_url() const { return response_url_; }
+  const std::string& response_headers() const { return response_headers_; }
   std::u16string TakeSource() {
     Utf8StreamDecoder decoder;
     std::u16string source = decoder.Decode(source_);
@@ -174,6 +276,7 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   void OnResponseStarted(const PageResponseStarted& response) override {
     status_ = response.status;
     response_url_ = GURL(response.url);
+    response_headers_ = response.headers;
   }
   void OnResponseBody(std::string bytes) override {
     source_ += bytes;
@@ -193,6 +296,7 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   uint64_t number_ = 0;
   int status_ = 0;
   GURL response_url_;
+  std::string response_headers_;
   std::string source_;
   bool ended_ = false;
   // Until the fetch ends, it has not succeeded.
@@ -299,6 +403,17 @@ bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
 void DocumentLoader::ExecuteFetched(ScriptFetch& fetch) {
   HTMLScriptElement& element = fetch.element();
   if (!fetch.succeeded()) {
+    FireSimpleEvent(element, u"error");
+    return;
+  }
+  // A response whose MIME type cannot run as a script is a network error, and
+  // Chrome's console says why.
+  if (std::optional<std::string> refused =
+          RefusedAsScript(fetch.response_url(), fetch.response_headers())) {
+    PageConsoleMessage message;
+    message.level = ConsoleLevel::kError;
+    message.text = *std::move(refused);
+    send_.Run(EncodeConsole(message));
     FireSimpleEvent(element, u"error");
     return;
   }

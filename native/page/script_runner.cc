@@ -275,6 +275,10 @@ Document& ScriptRunner::CommitDocument(const GURL& url) {
 
 void ScriptRunner::RunClassicScript(std::u16string_view source,
                                     const GURL& url) {
+  // V8 holds no longer string, and a script that it cannot hold does not run.
+  if (source.size() > static_cast<size_t>(v8::String::kMaxLength)) {
+    return;
+  }
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
   const v8::Context::Scope context_scope(context);

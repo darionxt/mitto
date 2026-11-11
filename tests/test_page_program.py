@@ -604,3 +604,19 @@ def test_a_document_of_a_session_runs_in_a_context_of_its_own_and_ends_waiting_c
     _end(session, 0)
     assert session.receive() == (_LOADED, b"")
     assert session.evaluate("[typeof before, document.body.innerHTML]") == (False, '["undefined","<p>new</p>"]')
+
+
+def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(session: _Session) -> None:
+    session.start()
+    document = "﻿<p id=text>café 𝄞</p>".encode()
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    # The byte order mark, é and 𝄞 each cut between two pieces.
+    pieces = [document[:1], document[1:2], document[2:18], document[18:21], document[21:]]
+    for piece in pieces:
+        _body(session, 0, piece)
+        assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(piece)))
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+
+    assert session.evaluate("document.getElementById('text').textContent") == (False, '"café 𝄞"')
+    assert session.evaluate("document.body.firstChild.nodeName") == (False, '"P"')

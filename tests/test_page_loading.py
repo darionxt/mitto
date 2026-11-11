@@ -290,6 +290,37 @@ def test_a_script_fires_load_once_it_has_run_and_error_when_it_cannot_run(
         ]
 
 
+def test_a_script_whose_mime_type_cannot_run_fires_error_as_in_chrome(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    def script(path: str, content_type: str, nosniff: bool) -> None:
+        headers = [("Content-Type", content_type), *([("X-Content-Type-Options", "nosniff")] if nosniff else [])]
+        server.routes[path] = _Route(f"seen.push('{path} ran');".encode(), headers=headers)
+
+    script("/plain.js", "text/plain", nosniff=True)
+    script("/image.js", "image/png", nosniff=False)
+    script("/javascript.js", "Text/JavaScript; charset=utf-8", nosniff=True)
+    script("/lax.js", "text/plain", nosniff=False)
+    url = server.page(
+        "/",
+        "<script>window.seen = [];</script>"
+        "<script defer src=/plain.js></script><script defer src=/image.js></script>"
+        "<script defer src=/javascript.js></script><script defer src=/lax.js></script>"
+        "<script>for (const name of ['/plain.js', '/image.js']) {"
+        "  document.querySelector(`script[src='${name}']`).addEventListener('error', () => seen.push(name + ' error'));"
+        "}</script>",
+    )
+
+    with _open_page(session, url) as page:
+        assert page.evaluate("seen") == ["/plain.js error", "/image.js error", "/javascript.js ran", "/lax.js ran"]
+        assert [message.text for message in page.console_messages if message.level == "error"] == [
+            f"Refused to execute script from '{server.url('/plain.js')}' because its MIME type ('text/plain') is not"
+            " executable, and strict MIME type checking is enabled.",
+            f"Refused to execute script from '{server.url('/image.js')}' because its MIME type ('image/png') is not"
+            " executable.",
+        ]
+
+
 def test_a_deferred_script_runs_after_parsing_and_before_domcontentloaded(
     session: mitto.Session, server: _PageServer
 ) -> None:
