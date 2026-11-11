@@ -971,6 +971,21 @@ def test_every_host_traces_the_runtime() -> None:
 
 
 @pytest.mark.parametrize(
+    ("config", "sanitizer"), [(export.RUNTIME_ASAN, export.ASAN), (export.RUNTIME_UBSAN, export.UBSAN)]
+)
+def test_a_sanitized_runtime_build_adds_the_sanitizers_args_to_the_runtimes(
+    tmp_path: Path, config: export.BuildConfig, sanitizer: export.BuildConfig
+) -> None:
+    export.write_args(config, tmp_path)
+
+    assert (tmp_path / "args.gn").read_text() == (
+        export.ARGS_GN.read_text() + export.RUNTIME_ARGS_GN.read_text() + sanitizer.args
+    )
+    assert (config.target, config.output(export.LINUX)) == ("runtime", "mitto_page")
+    assert [host for host in export.HOSTS if config in host.configs] == [export.LINUX]
+
+
+@pytest.mark.parametrize(
     ("config", "host", "output"),
     [
         (export.PLAIN, export.LINUX, "libmitto_core.so"),
