@@ -3,6 +3,7 @@ _mitto_cookies_free
 _mitto_event_free
 _mitto_net_error_name
 _mitto_page_close
+_mitto_page_end_waits
 _mitto_page_evaluate
 _mitto_page_event_free
 _mitto_page_next_event

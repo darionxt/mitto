@@ -90,9 +90,7 @@ class SessionLink final : public PageChannel::Delegate
     channel_->Send(EncodeHello());
   }
 
-  void SendEvaluated(PageEvaluated evaluated) {
-    channel_->Send(EncodeEvaluated(evaluated));
-  }
+  void SendToSession(std::string frame) { channel_->Send(std::move(frame)); }
 
   // Tells the Session why, and ends the process once it has been told.
   void Refuse(std::string why) {
@@ -156,14 +154,14 @@ class SessionLink final : public PageChannel::Delegate
           return;
         }
         main_thread_->PostTask(
-            FROM_HERE,
-            base::BindOnce(&SessionLink::EvaluateOnMainThread,
-                           base::Unretained(this),
-                           base::SingleThreadTaskRunner::GetCurrentDefault(),
-                           frame->call, std::move(frame->script)));
+            FROM_HERE, base::BindOnce(&SessionLink::EvaluateOnMainThread,
+                                      base::Unretained(this), frame->call,
+                                      std::move(frame->script)));
         return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
+      case PageMessage::kConsole:
+      case PageMessage::kUncaughtError:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -184,21 +182,26 @@ class SessionLink final : public PageChannel::Delegate
 
   void StartOnMainThread(scoped_refptr<base::SingleThreadTaskRunner> io_thread,
                          PageStart start) {
-    if (std::optional<std::string> why = runner_->Start(start)) {
+    // What the Page sends, which the I/O thread sends in the order it came.
+    SendFrame send = base::BindRepeating(
+        [](scoped_refptr<base::SingleThreadTaskRunner> io_thread,
+           SessionLink* link, std::string frame) {
+          io_thread->PostTask(
+              FROM_HERE,
+              base::BindOnce(&SessionLink::SendToSession,
+                             base::Unretained(link), std::move(frame)));
+        },
+        io_thread, base::Unretained(this));
+    if (std::optional<std::string> why =
+            runner_->Start(start, std::move(send))) {
       io_thread->PostTask(FROM_HERE,
                           base::BindOnce(&SessionLink::Refuse,
                                          base::Unretained(this), *why));
     }
   }
 
-  void EvaluateOnMainThread(
-      scoped_refptr<base::SingleThreadTaskRunner> io_thread,
-      uint64_t call,
-      std::string script) {
-    io_thread->PostTask(
-        FROM_HERE,
-        base::BindOnce(&SessionLink::SendEvaluated, base::Unretained(this),
-                       runner_->Evaluate(call, script)));
+  void EvaluateOnMainThread(uint64_t call, std::string script) {
+    runner_->Evaluate(call, script);
   }
 
   // The end of the channel says that the process that holds the library has

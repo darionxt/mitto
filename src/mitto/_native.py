@@ -34,6 +34,8 @@ __all__ = [
     "WRITE_SIZE",
     "BodyAvailable",
     "BodyWanted",
+    "ConsoleLevel",
+    "ConsoleMessage",
     "EventType",
     "FetchParams",
     "Finished",
@@ -45,10 +47,14 @@ __all__ = [
     "MittoSession",
     "NativeEvent",
     "NativeLibraryError",
+    "NativePage",
+    "NativePageEvent",
     "NativeRequest",
     "NativeResponse",
     "NetworkQuality",
-    "PageError",
+    "PageEnded",
+    "PageErrorCode",
+    "PageEvaluated",
     "PageEventType",
     "Priority",
     "PrivateSettings",
@@ -57,6 +63,7 @@ __all__ = [
     "RequestError",
     "ResponseStarted",
     "Session",
+    "UncaughtError",
     "encode_url",
     "find_library",
     "finished_response",
@@ -67,7 +74,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 8
+ABI_VERSION = 9
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -93,6 +100,17 @@ _ERR_IO_PENDING = -1
 # What mitto_session_create() returns for settings that it refuses, and when another Session has a directory for a cache.
 _ERR_INVALID_ARGUMENT = -4
 _ERR_CACHE_LOCK_TIMEOUT = -409
+
+# What mitto_page_open() returns when no Page program lies beside the library, and mitto_page_evaluate() for too long a
+# script.
+_ERR_FILE_NOT_FOUND = -6
+_ERR_MSG_TOO_BIG = -142
+
+# The longest script, in bytes of UTF-8, that a Page takes: what one message over its channel carries.
+MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
+
+# The file name of the Page program, which a build with the Runtime puts beside the library.
+PAGE_PROGRAM_NAME = "mitto_page.exe" if sys.platform == "win32" else "mitto_page"
 
 # What the "http_cache" setting says for a cache that is not in a directory.
 MEMORY_CACHE = "memory"
@@ -141,9 +159,21 @@ class PageEventType(enum.IntEnum):
 
     EVALUATED = 1
     ENDED = 2
+    CONSOLE = 3
+    UNCAUGHT_ERROR = 4
 
 
-class PageError(enum.IntEnum):
+class ConsoleLevel(enum.IntEnum):
+    """The level of a console message, with the values of the C header's MITTO_PAGE_CONSOLE constants."""
+
+    DEBUG = 1
+    LOG = 2
+    INFO = 3
+    WARNING = 4
+    ERROR = 5
+
+
+class PageErrorCode(enum.IntEnum):
     """Why a call to a Page failed or the Page ended, with the values of the C header's MITTO_PAGE_ERROR constants."""
 
     NONE = 0
@@ -204,7 +234,9 @@ class MittoPageEvent(ctypes.Structure):
         ("call", ctypes.c_uint64),
         ("json", ctypes.POINTER(ctypes.c_char)),
         ("json_size", ctypes.c_size_t),
-        ("message", ctypes.c_char_p),
+        ("message", ctypes.POINTER(ctypes.c_char)),
+        ("message_size", ctypes.c_size_t),
+        ("level", ctypes.c_int32),
     )
 
 
@@ -335,6 +367,8 @@ def load_library() -> ctypes.CDLL:
         library.mitto_page_next_event.restype = ctypes.c_int32
         library.mitto_page_event_free.argtypes = (ctypes.POINTER(MittoPageEvent),)
         library.mitto_page_event_free.restype = None
+        library.mitto_page_end_waits.argtypes = (page_pointer,)
+        library.mitto_page_end_waits.restype = None
         library.mitto_page_close.argtypes = (page_pointer,)
         library.mitto_page_close.restype = None
     except (AttributeError, OSError) as error:
@@ -632,6 +666,144 @@ class NativeRequest:
         """Cancel the request if it is still running, and release it. Later calls do nothing or raise a RequestError."""
         self._library.mitto_request_release(self._handle)
         self._handle = ctypes.POINTER(MittoRequest)()
+
+
+@dataclass(frozen=True, slots=True)
+class PageEvaluated:
+    """A script that NativePage.evaluate() sent has its result, or its call has failed.
+
+    Attributes:
+        call: The number of the call, as NativePage.evaluate() returned it.
+        error: PageErrorCode.NONE if the script has a result, and otherwise why the call failed.
+        result: The result as JSON, as JSON.stringify() writes it. Empty if it writes nothing, as for undefined, and if the
+            call failed. The Page process writes it, so a caller reads it as it would read JSON from a server.
+        message: Why the call failed, such as "Uncaught TypeError: x is not a function", or empty.
+    """
+
+    call: int
+    error: PageErrorCode
+    result: str = ""
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PageEnded:
+    """The Page has ended, and each later call fails with the same error.
+
+    Attributes:
+        error: Why it ended.
+        message: How it ended, such as "the Page process was ended by signal 9".
+    """
+
+    error: PageErrorCode
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleMessage:
+    """A message that a Page's script wrote to the console.
+
+    Attributes:
+        level: "debug", "log", "info", "warning" or "error", as the console method that wrote it says: console.warn()
+            writes "warning", and V8 sorts the other methods among these.
+        text: The message, with its arguments written as V8's inspector writes them for Chrome's log, separated by spaces.
+    """
+
+    level: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class UncaughtError:
+    """An error that no script of the Page caught, such as a promise rejected with no handler. The Page goes on.
+
+    Attributes:
+        text: What a console says of it, such as "Uncaught (in promise) Error: no".
+    """
+
+    text: str
+
+
+NativePageEvent = PageEvaluated | PageEnded | ConsoleMessage | UncaughtError
+
+
+class NativePage:
+    """A Page that a Session has opened, whose scripts run in a process of its own. Release it with close().
+
+    Each call into the native core releases the GIL, and nothing in the native core ever waits for it. No call may use it
+    once close() has begun, so a thread that waits in next_event() ends its wait with end_waits() first.
+
+    Attributes:
+        identity: What Session.next_ready() names this Page by.
+        process_id: The ID of the Page's process, which stays the same after the process has ended.
+    """
+
+    def __init__(self, library: ctypes.CDLL, handle: Any) -> None:
+        self._library = library
+        self._handle = handle
+        self.identity: int = ctypes.addressof(handle.contents)
+        process_id = ctypes.c_int64()
+        library.mitto_page_process_id(handle, ctypes.byref(process_id))
+        self.process_id: int = process_id.value
+
+    def evaluate(self, script: str) -> int:
+        """Send `script` to the Page, which runs it as a classic script after the ones sent before it, without waiting.
+
+        Returns:
+            The number of the call, which the PageEvaluated event of its result holds.
+
+        Raises:
+            ValueError: If `script` holds a lone surrogate, which UTF-8 cannot encode, or is longer than MAX_SCRIPT_SIZE
+                bytes of UTF-8, or this Page has been closed.
+        """
+        try:
+            encoded = script.encode()
+        except UnicodeEncodeError:
+            # Its own message shows the character, which is part of the script.
+            raise ValueError("the script holds a lone surrogate, which UTF-8 cannot encode") from None
+        call = ctypes.c_uint64()
+        result: int = self._library.mitto_page_evaluate(self._handle, encoded, len(encoded), ctypes.byref(call))
+        if result == _ERR_MSG_TOO_BIG:
+            raise ValueError(f"the script is {len(encoded)} bytes of UTF-8, and a Page takes at most {MAX_SCRIPT_SIZE}")
+        if result != 0:
+            raise ValueError("this Page has been closed")
+        return call.value
+
+    def next_event(self, timeout: float | None = None) -> NativePageEvent | None:
+        """Take the next event, which waits in the native core for as long as the caller takes.
+
+        Args:
+            timeout: How many seconds to wait for an event, or None to wait for as long as it takes.
+
+        Returns:
+            The event, or None if none arrived in time, or end_waits() ended the wait.
+
+        Raises:
+            ValueError: If this Page has been closed.
+        """
+        timeout_ms = -1 if timeout is None else math.ceil(timeout * 1000)
+        native = MittoPageEvent()
+        result: int = self._library.mitto_page_next_event(self._handle, timeout_ms, ctypes.byref(native))
+        if result == _ERR_IO_PENDING:
+            return None
+        if result != 0:
+            raise ValueError("this Page has been closed")
+        try:
+            return _copy_page_event(native)
+        finally:
+            self._library.mitto_page_event_free(ctypes.byref(native))
+
+    def end_waits(self) -> None:
+        """End each wait in next_event() on another thread, and make each later one return at once if no event waits."""
+        self._library.mitto_page_end_waits(self._handle)
+
+    def close(self) -> None:
+        """End the Page's process, wait for it to go, which takes up to 2 seconds before a kill, and release the Page.
+
+        Later calls do nothing or raise a ValueError.
+        """
+        self._library.mitto_page_close(self._handle)
+        self._handle = ctypes.POINTER(MittoPage)()
 
 
 @dataclass(frozen=True, slots=True)
@@ -952,6 +1124,42 @@ class Session:
         self._library.mitto_session_next_ready(self._handle, ctypes.byref(kind), ctypes.byref(handle))
         return handle.value
 
+    def open_page(self, *, time_zone: str | None = None, locale: str | None = None) -> NativePage:
+        """Open a Page on this Session: start its process, and return without waiting for it to start.
+
+        Starting the process takes a few milliseconds, which this blocks for.
+
+        Args:
+            time_zone: The IANA name of the time zone that the Page's Date and Intl report, or None for UTC.
+            locale: The BCP 47 tag of the locale that the Page's Intl falls back to, or None for en-US.
+
+        Raises:
+            ValueError: If this Session has been closed, or the native core refuses `time_zone` or `locale`. One that ICU
+                does not know ends the Page, which its first call says.
+            NativeLibraryError: If no Page program lies beside the native library, which means that this build of mitto
+                has no Runtime.
+            OSError: If the Page's process cannot start.
+        """
+        self._require_open()
+        options: dict[str, object] = {"version": PAGE_OPTIONS_VERSION}
+        if time_zone is not None:
+            options["time_zone"] = time_zone
+        if locale is not None:
+            options["locale"] = locale
+        encoded = json.dumps(options).encode()
+        handle = ctypes.POINTER(MittoPage)()
+        net_error: int = self._library.mitto_page_open(self._handle, encoded, len(encoded), ctypes.byref(handle))
+        if net_error == _ERR_FILE_NOT_FOUND:
+            raise NativeLibraryError(
+                f"the Runtime is not in this build of mitto: no {PAGE_PROGRAM_NAME} lies beside the native library"
+            )
+        if net_error == _ERR_INVALID_ARGUMENT:
+            raise ValueError(f"the native core refused the options {options!r} of a Page")
+        if net_error != 0:
+            name: bytes = self._library.mitto_net_error_name(net_error)
+            raise OSError(f"the process of a Page cannot start: {name.decode()} ({net_error})")
+        return NativePage(self._library, handle)
+
     def start(
         self,
         url: str,
@@ -1161,6 +1369,25 @@ def _copy_event(native: MittoEvent) -> NativeEvent:
             return Finished(net_error=native.net_error)
         case EventType.BODY_WANTED:
             return BodyWanted()
+
+
+def _copy_page_event(native: MittoPageEvent) -> NativePageEvent:
+    """Return a copy of a Page's event from the native core, which owns its buffers.
+
+    The native core checks that what the Page process writes is UTF-8, and its own messages are, so nothing is replaced.
+    """
+    # By its size, since the Page process may write a NUL character in it.
+    message = ctypes.string_at(native.message, native.message_size).decode(errors="replace") if native.message else ""
+    match PageEventType(native.type):
+        case PageEventType.EVALUATED:
+            result = ctypes.string_at(native.json, native.json_size).decode(errors="replace") if native.json else ""
+            return PageEvaluated(call=native.call, error=PageErrorCode(native.error), result=result, message=message)
+        case PageEventType.ENDED:
+            return PageEnded(error=PageErrorCode(native.error), message=message)
+        case PageEventType.CONSOLE:
+            return ConsoleMessage(level=ConsoleLevel(native.level).name.lower(), text=message)
+        case PageEventType.UNCAUGHT_ERROR:
+            return UncaughtError(text=message)
 
 
 def _parse_headers(block: bytes) -> tuple[tuple[str, str], ...]:

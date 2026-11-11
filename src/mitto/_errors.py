@@ -10,10 +10,14 @@ __all__ = [
     "MittoError",
     "NameResolutionError",
     "NativeLibraryError",
+    "PageEndedError",
+    "PageError",
+    "PageTimeoutError",
     "ProtocolError",
     "ProxyError",
     "RequestError",
     "RequestTimeoutError",
+    "ScriptError",
     "TLSError",
     "TooManyRedirectsError",
     "request_error",
@@ -84,6 +88,55 @@ class TooManyRedirectsError(RequestError):
 
 class RequestTimeoutError(RequestError, TimeoutError):
     """A timer of the request ran out, or one that //net has of its own. This is often worth another try, or a longer one."""
+
+
+class PageError(MittoError):
+    """A call to a Page failed. A subclass says what a caller does next. Private until the Runtime ships.
+
+    Attributes:
+        message: What went wrong.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class ScriptError(PageError):
+    """The script threw, the promise it gave was rejected, or its result cannot be read as JSON. The Page goes on.
+
+    The message is what a console says, such as "Uncaught TypeError: x is not a function". Fix the script.
+    """
+
+
+class PageEndedError(PageError):
+    """The Page has ended: its process crashed, ran out of memory or was killed, or its Session closed. Open another one.
+
+    A Page whose process breaks the rules of its messages ends too, and so does one whose time zone or locale ICU does
+    not know. Each later call to the Page raises this again, with the same message.
+    """
+
+
+class PageTimeoutError(PageError, TimeoutError):
+    """The timeout passed before the script's result arrived. Wait longer, or close the Page.
+
+    The script may still be running: one that never ends keeps the Page busy, and later calls wait behind it. A promise
+    that it gave may still settle, which nothing waits for then.
+
+    Attributes:
+        timeout: How many seconds the call waited.
+    """
+
+    def __init__(self, timeout: float) -> None:
+        # Exception pickles its args, so they have to be what __init__ takes, and OSError, which this also is, would
+        # take a message and more for an errno.
+        message = f"the result of the script did not arrive within {timeout} seconds"
+        Exception.__init__(self, timeout)
+        self.message = message
+        self.timeout = timeout
+
+    def __str__(self) -> str:
+        return self.message
 
 
 # What a net error's name alone does not say. Everything here comes before ERROR_TYPES_BY_PREFIX.

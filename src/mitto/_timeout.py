@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from numbers import Real
 
-__all__ = ["NO_TIMEOUT", "Timeout", "to_timeout"]
+__all__ = ["NO_TIMEOUT", "Timeout", "to_seconds", "to_timeout"]
 
 # About 23 days. The native core takes a timer as 32 bits of milliseconds.
 _MAX_SECONDS = 2_000_000
@@ -63,6 +63,23 @@ def to_timeout(timeout: float | Timeout | None) -> Timeout:
     if not _is_number(timeout):
         raise TypeError(f"timeout has to be a number of seconds or a Timeout, not {type(timeout).__name__}")
     return Timeout(total=timeout)
+
+
+def to_seconds(timeout: float | None) -> float | None:
+    """Return the timeout that a caller's `timeout` argument of a Page's call stands for, in seconds, or None for none.
+
+    Raises:
+        TypeError: If `timeout` is neither a number nor None.
+        ValueError: If it is not positive or is more than 2,000,000 seconds.
+    """
+    if timeout is None:
+        return None
+    if not _is_number(timeout):
+        raise TypeError(f"timeout has to be a number of seconds or None, not {type(timeout).__name__}")
+    # NaN fails this as well.
+    if not 0 < timeout <= _MAX_SECONDS:
+        raise ValueError(f"timeout has to be more than 0 and at most {_MAX_SECONDS} seconds, not {timeout}")
+    return float(timeout)
 
 
 def _is_number(value: object) -> bool:

@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 8
+#define MITTO_ABI_VERSION 9
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -77,13 +77,28 @@
 // The Page has ended, after each call in progress has failed with the same
 // error. Each later call fails with it too.
 #define MITTO_PAGE_EVENT_ENDED 2
+// A script wrote a message to the console.
+#define MITTO_PAGE_EVENT_CONSOLE 3
+// An error that no script caught, such as a promise rejected with no handler.
+// The Page goes on.
+#define MITTO_PAGE_EVENT_UNCAUGHT_ERROR 4
+
+// The level of a console message, as the console method that wrote it says:
+// console.debug(), console.log(), console.info(), console.warn() and
+// console.error(), and the other methods as V8 sorts them.
+#define MITTO_PAGE_CONSOLE_DEBUG 1
+#define MITTO_PAGE_CONSOLE_LOG 2
+#define MITTO_PAGE_CONSOLE_INFO 3
+#define MITTO_PAGE_CONSOLE_WARNING 4
+#define MITTO_PAGE_CONSOLE_ERROR 5
 
 // Why a call to a Page failed, or why the Page ended.
 //
 // Nothing went wrong.
 #define MITTO_PAGE_ERROR_NONE 0
-// The script threw, or its result cannot be written as JSON, such as a BigInt
-// or an object that holds itself. The Page goes on.
+// The script threw, its result is a promise that was rejected, or its result
+// cannot be written as JSON, such as a BigInt or an object that holds itself.
+// A MITTO_PAGE_EVENT_UNCAUGHT_ERROR holds it too. The Page goes on.
 #define MITTO_PAGE_ERROR_SCRIPT 1
 // The Page process ended: it crashed, ran out of memory or was killed.
 #define MITTO_PAGE_ERROR_PROCESS_ENDED 2
@@ -182,8 +197,14 @@ typedef struct MittoPageEvent {
   size_t json_size;
   // Any event with an error: what went wrong, in UTF-8, such as "Uncaught
   // TypeError: x is not a function" or "the Page process was ended by signal
-  // 9".
+  // 9". CONSOLE: the message, in UTF-8, with its arguments written as V8's
+  // inspector writes them for Chrome's log, separated by spaces. The Page
+  // process writes both, so a caller reads them as it would read text from a
+  // server, and they may hold a NUL character, which `message_size` counts.
   char* message;
+  size_t message_size;
+  // CONSOLE: one of the MITTO_PAGE_CONSOLE values.
+  int32_t level;
 } MittoPageEvent;
 
 // Returns the ABI version of the loaded library. Callers compare it with the
@@ -778,6 +799,10 @@ MITTO_EXPORT int32_t mitto_page_process_id(MittoPage* page,
 //
 // The result comes as a MITTO_PAGE_EVENT_EVALUATED event with the number that
 // this stores in `call`. Each call gets one such event, also when it fails.
+// When the result is a promise, the event comes once the promise settles,
+// with what it was fulfilled with or why it was rejected, and the calls after
+// it go on meanwhile. So results come in any order. A promise that nothing
+// settles keeps its call in progress until the Page ends.
 //
 // Returns 0 on success. On failure, returns -4 (ERR_INVALID_ARGUMENT) for an
 // invalid argument, such as a script that is not UTF-8, or -142
@@ -805,6 +830,14 @@ MITTO_EXPORT int32_t mitto_page_next_event(MittoPage* page,
 // Releases the buffers of an event filled by mitto_page_next_event() and zeroes
 // it. Does nothing if `event` is null or already zeroed.
 MITTO_EXPORT void mitto_page_event_free(MittoPageEvent* event);
+
+// Ends each call to mitto_page_next_event() on `page` that waits, which returns
+// -1 (ERR_IO_PENDING), and makes each later one that finds no event return so
+// at once. A caller ends a wait on another thread this way before it closes
+// the Page, because no other call may use the handle then. May be called from
+// any thread, also while another thread waits in mitto_page_next_event(), and
+// does not wait for anything. Does nothing if `page` is null.
+MITTO_EXPORT void mitto_page_end_waits(MittoPage* page);
 
 // Closes the Page and releases its handle, along with any events that have not
 // been taken. It closes the channel, waits for the Page process to end, for up
