@@ -295,9 +295,11 @@ class _InterfaceWriter:
                 f"{setter}, {attributes}, {side_effect});"
             ]
         if isinstance(member, Constant):
-            _check_written(f"constant {self.where(member.name)}", member.extended_attributes)
-            value = str(member.value).lower() if isinstance(member.value, bool) else repr(member.value)
-            return [f"InstallConstant(isolate, {target}, {_quote(member.name)}, {value});"]
+            where = f"constant {self.where(member.name)}"
+            _check_written(where, member.extended_attributes)
+            if isinstance(member.value, bool) or not isinstance(member.value, int):
+                raise UnhandledError(f"{where}: the C++ writer handles integer constants only")
+            return [f"InstallConstant(isolate, {target}, {_quote(member.name)}, {member.value});"]
         if isinstance(member, OperationGroup):
             where = f"operation {self.where(member.name)}"
             _check_written(where, member.extended_attributes)

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from bindings_generator.cpp_names import file_name
 from bindings_generator.cpp_writer import ImplementedInterface, write_bindings
 from bindings_generator.errors import UnhandledError
 from bindings_generator.listing import write_listing
@@ -79,6 +80,4 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
 
 
 def _class_header(name: str) -> str:
-    from bindings_generator.cpp_names import file_name
-
     return f"mitto/dom/{file_name(name)}.h"
