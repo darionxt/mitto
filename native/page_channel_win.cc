@@ -76,7 +76,13 @@ class PipeIo final : public base::RefCounted<PipeIo>,
   void ShutDown() {
     owner_ = nullptr;
     writable_ = false;
-    outgoing_.clear();
+    // The system reads the frame that is being written until its write
+    // completes, so that one stays until then.
+    if (write_pending_) {
+      outgoing_.erase(outgoing_.begin() + 1, outgoing_.end());
+    } else {
+      outgoing_.clear();
+    }
     // CancelIo() would only cancel what this thread started.
     CancelIoEx(pipe_.get(), nullptr);
     pipe_.Close();
@@ -197,19 +203,16 @@ void PipeIo::OnIOCompleted(base::MessagePumpForIO::IOContext* context,
   Release();
   if (context == &write_context_) {
     write_pending_ = false;
-    // ShutDown() has emptied it.
-    if (outgoing_.empty()) {
-      return;
-    }
     if (error != ERROR_SUCCESS ||
         bytes_transferred != outgoing_.front().size()) {
-      // The other end has gone. What it sent before still waits to be read,
-      // and the broken pipe that follows says that it has gone.
+      // The other end has gone, or ShutDown() cancelled the write. What the
+      // other end sent before still waits to be read, and the broken pipe that
+      // follows says that it has gone.
       writable_ = false;
       outgoing_.clear();
     } else {
       outgoing_.pop_front();
-      if (!outgoing_.empty()) {
+      if (writable_ && !outgoing_.empty()) {
         WriteNext();
       }
     }

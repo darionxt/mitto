@@ -28,7 +28,7 @@ namespace {
 
 // What the library ends a Page process with. TerminateProcess() takes any code,
 // and this one says that the library ended it.
-constexpr UINT kKilledExitCode = 1;
+constexpr int kKilledExitCode = 1;
 
 // How long a Page process that was killed may take to end, before this gives up
 // on reaping it.

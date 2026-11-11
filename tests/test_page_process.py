@@ -181,6 +181,7 @@ def test_the_page_process_ends_when_the_process_that_holds_the_library_is_killed
 def test_the_page_process_ends_with_its_parent_while_a_fork_holds_the_channel(program: Path) -> None:
     # The fork holds the parent's end of the channel, so the Page reads no end of the stream: the kernel on Linux and
     # the Page's watch on its parent on macOS end it.
+    assert sys.platform != "win32"
     holder = _hold(program, "page-hold-forked")
     fork = 0
     try:
