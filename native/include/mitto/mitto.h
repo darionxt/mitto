@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 9
+#define MITTO_ABI_VERSION 10
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -82,6 +82,13 @@
 // An error that no script caught, such as a promise rejected with no handler.
 // The Page goes on.
 #define MITTO_PAGE_EVENT_UNCAUGHT_ERROR 4
+// The navigation that mitto_page_open() started has its response, after any
+// redirects, and the document it loads takes the place of about:blank's; or
+// it failed before a response, and the Page keeps about:blank.
+#define MITTO_PAGE_EVENT_NAVIGATED 5
+// The window's load event has been dispatched: the document and its classic
+// scripts have loaded and run.
+#define MITTO_PAGE_EVENT_LOADED 6
 
 // The level of a console message, as the console method that wrote it says:
 // console.debug(), console.log(), console.info(), console.warn() and
@@ -205,6 +212,16 @@ typedef struct MittoPageEvent {
   size_t message_size;
   // CONSOLE: one of the MITTO_PAGE_CONSOLE values.
   int32_t level;
+  // NAVIGATED with no net error: the response's HTTP status code.
+  int32_t status;
+  // NAVIGATED: 0 if the navigation has a response, and otherwise the negative
+  // Chromium net error code that it failed with, as a request's
+  // MITTO_EVENT_FINISHED says.
+  int32_t net_error;
+  // NAVIGATED: the URL of the document, after any redirects, or the URL that
+  // the navigation failed at, in UTF-8 with a trailing NUL byte.
+  char* url;
+  size_t url_size;
 } MittoPageEvent;
 
 // Returns the ABI version of the loaded library. Callers compare it with the
@@ -750,7 +767,18 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // `options` is a buffer of `options_size` bytes that holds one UTF-8 JSON object
 // and needs no trailing NUL byte:
 //
-//   {"version": 1, "time_zone": "America/New_York", "locale": "en-US"}
+//   {
+//     "version": 1,
+//     "time_zone": "America/New_York",
+//     "locale": "en-US",
+//     "url": "https://example.com/",
+//     "requests": {
+//       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
+//                      "options": {"version": 1, "fetch": {...}, ...}},
+//       "script": {...},
+//       "fetch": {...}
+//     }
+//   }
 //
 // - "version" is required and must be MITTO_PAGE_OPTIONS_VERSION.
 // - "time_zone" is the IANA name of the time zone that the Page's Date and Intl
@@ -760,6 +788,26 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // The Page process checks both, because only it holds ICU's whole data. If it
 // does not know one, it refuses it, and the Page ends with
 // MITTO_PAGE_ERROR_REFUSED.
+// - "url" is where the Page navigates once it opens, through the Session, as a
+//   request of the navigation template does without an Initiator. The
+//   response, after any redirects, is the Page's document, and its URL the
+//   document's. A MITTO_PAGE_EVENT_NAVIGATED event says how it went, and
+//   MITTO_PAGE_EVENT_LOADED when the document has loaded. Without "url" the
+//   Page stays at about:blank.
+// - "requests" holds what a request of each Request Kind sends, as the
+//   Session's Persona says: "headers", the header lines as [name, value] pairs
+//   in the order mitto_request_start() takes them, each character at most
+//   U+00FF, and "options", what mitto_request_start() reads, with "fetch" and
+//   without "initiator", "fixed_headers", "referrer", a stream body or
+//   timers. "navigation" is required with "url". The Page's own requests use
+//   "script" and "fetch", with the Page's document as their Initiator, and fail
+//   with ERR_NOT_IMPLEMENTED for a kind that is not here.
+//
+// The Page's requests and cookies are the Session's: its scripts' requests go
+// through the Session's connections and cookies, as a request of their kind
+// does, and document.cookie reads and writes the Session's cookies for the
+// document's URL as a top-level page's script does, so it never sees an
+// HttpOnly cookie and a cookie it sets is one set by script.
 //
 // An unknown key or an invalid value is refused, so a mistake cannot go
 // unnoticed.

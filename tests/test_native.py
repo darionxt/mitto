@@ -7,6 +7,7 @@ fixture call the real native core and are skipped when this machine has none.
 import concurrent.futures
 import ctypes
 import http.server
+import json
 import os
 import re
 import shutil
@@ -64,6 +65,7 @@ void mitto_page_close(void* page) {{}}
 ERR_IO_PENDING = -1
 ERR_ABORTED = -3
 ERR_INVALID_ARGUMENT = -4
+ERR_UNSAFE_PORT = -312
 ERR_NOT_IMPLEMENTED = -11
 ERR_INVALID_URL = -300
 
@@ -1184,16 +1186,53 @@ def evaluate(library: ctypes.CDLL, page: Any, script: bytes) -> tuple[int, int]:
 
 
 @pytest.fixture
-def page_handle(native_library: ctypes.CDLL, session_handle: Any) -> Iterator[Any]:
-    """Open a Page on a real Session, or skip if no Page program lies beside the library."""
+def page_program(native_library: ctypes.CDLL) -> None:
+    """Skip if no Page program lies beside the library."""
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name("mitto_page.exe" if sys.platform == "win32" else "mitto_page").is_file():
         pytest.skip("no Page program beside the library")
+
+
+@pytest.fixture
+def page_handle(native_library: ctypes.CDLL, session_handle: Any, page_program: None) -> Iterator[Any]:
+    """Open a Page on a real Session, or skip if no Page program lies beside the library."""
     error, handle = open_page(native_library, session_handle, NO_PAGE_OPTIONS)
     assert error == 0
     yield handle
     native_library.mitto_page_close(handle)
+
+
+def _page_options(**changes: Any) -> bytes:
+    """Return the options of a Page that navigates, with each of `changes` in place: None leaves a key out."""
+    template: dict[str, Any] = {
+        "headers": [["Accept", "*/*"]],
+        "options": {
+            "version": _native.REQUEST_OPTIONS_VERSION,
+            "fetch": {"mode": "navigate", "destination": "document", "credentials_mode": "include"},
+        },
+    }
+    options: dict[str, Any] = {
+        "version": _native.PAGE_OPTIONS_VERSION,
+        "url": "http://127.0.0.1:1/",
+        "requests": {"navigation": template, "script": template},
+    }
+    for key, value in changes.items():
+        if value is None:
+            options.pop(key)
+        else:
+            options[key] = value
+    return json.dumps(options).encode()
+
+
+def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, Any]:
+    return {
+        "headers": [list(header) for header in headers],
+        "options": {
+            "version": _native.REQUEST_OPTIONS_VERSION,
+            "fetch": {"mode": "no-cors", "destination": "script", "credentials_mode": "include", **fetch},
+        },
+    }
 
 
 @pytest.mark.parametrize(
@@ -1202,7 +1241,26 @@ def page_handle(native_library: ctypes.CDLL, session_handle: Any) -> Iterator[An
         pytest.param(b"", id="empty"),
         pytest.param(b"{}", id="no-version"),
         pytest.param(b'{"version": 2}', id="another-version"),
-        pytest.param(b'{"version": 1, "url": "https://example.com/"}', id="unknown-key"),
+        pytest.param(b'{"version": 1, "referrer": "https://example.com/"}', id="unknown-key"),
+        pytest.param(b'{"version": 1, "url": "https://example.com/"}', id="url-without-a-navigation"),
+        pytest.param(_page_options(url=7), id="url-not-a-string"),
+        pytest.param(_page_options(requests=[]), id="requests-not-an-object"),
+        pytest.param(_page_options(requests={"image": _template()}), id="unknown-kind"),
+        pytest.param(_page_options(requests={"navigation": _template(initiator="https://a.test/")}), id="initiator"),
+        pytest.param(_page_options(requests={"navigation": _template(fixed_headers=["accept"])}), id="fixed-headers"),
+        pytest.param(
+            _page_options(requests={"navigation": _template(headers=[["Accept", "\u0100"]])}), id="not-latin1"
+        ),
+        pytest.param(_page_options(requests={"navigation": _template(headers=[["Referer", "x"]])}), id="referer"),
+        pytest.param(_page_options(requests={"navigation": _template(headers=[["A", "1"], ["a", "2"]])}), id="twice"),
+        pytest.param(_page_options(requests={"navigation": {"headers": [], "options": {"version": 1}}}), id="no-fetch"),
+        pytest.param(
+            _page_options(
+                requests={"navigation": {**_template(), "options": {**_template()["options"], "total_timeout_ms": 5}}}
+            ),
+            id="timer",
+        ),
+        pytest.param(_page_options(requests={"navigation": {"headers": []}}), id="no-options"),
         pytest.param(b'{"version": 1, "time_zone": 9}', id="time-zone-not-a-string"),
         pytest.param(b'{"version": 1, "time_zone": ""}', id="empty-time-zone"),
         pytest.param(b'{"version": 1, "time_zone": "Europe/Paris\\u0000"}', id="time-zone-with-nul"),
@@ -1215,6 +1273,29 @@ def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_
 
     assert error == ERR_INVALID_ARGUMENT
     assert not handle
+
+
+def test_page_open_takes_a_url_and_what_each_kind_sends(
+    native_library: ctypes.CDLL, session_handle: Any, page_program: None
+) -> None:
+    # The navigation fails, since Chrome never connects to port 1, which its event says.
+    error, handle = open_page(native_library, session_handle, _page_options())
+    assert error == 0
+    try:
+        event = _native.MittoPageEvent()
+        assert native_library.mitto_page_next_event(handle, 30_000, ctypes.byref(event)) == 0
+        try:
+            assert (event.type, event.error, event.status, event.net_error) == (
+                _native.PageEventType.NAVIGATED,
+                0,
+                0,
+                ERR_UNSAFE_PORT,
+            )
+            assert ctypes.string_at(event.url, event.url_size) == b"http://127.0.0.1:1/"
+        finally:
+            native_library.mitto_page_event_free(ctypes.byref(event))
+    finally:
+        native_library.mitto_page_close(handle)
 
 
 def test_page_open_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:

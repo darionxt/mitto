@@ -96,6 +96,10 @@ class EventTarget : public bindings::ScriptWrappable {
   // Dispatches `event` to this target's listeners, and returns whether no
   // listener canceled it.
   bool DispatchEvent(Event* event);
+  // The same, with `target` as the event's target, as the HTML Standard fires
+  // an event at a window with the legacy target override flag, such as load,
+  // whose target is the window's document.
+  bool DispatchEventWithTarget(Event* event, EventTarget* target);
 
  private:
   // Runs the listeners of the event's type, and returns whether the event is

@@ -103,6 +103,12 @@ void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
       context, kContextGroupId, v8_inspector::StringView()));
 }
 
+void PageReporter::ContextDestroyed(v8::Local<v8::Context> context) {
+  inspector_->contextDestroyed(context);
+  // A rejection in that context no longer has a console to go to.
+  rejections_.clear();
+}
+
 void PageReporter::ReportUnhandledRejections(v8::Local<v8::Context> context) {
   const v8::HandleScope handle_scope(isolate_);
   const v8::Context::Scope context_scope(context);

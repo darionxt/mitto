@@ -34,18 +34,17 @@ from mitto._native import (
     NativeEvent,
     NativePage,
     NativeRequest,
-    PageEvaluated,
     PrivateSettings,
     RedirectFollowed,
     ResponseStarted,
     encode_url,
     finished_response,
 )
-from mitto._page import KEPT_REPORTS, PageRecord, outcome_of, take_waiting_events
+from mitto._page import KEPT_REPORTS, PageRecord, loaded_url, outcome_of, take_waiting_events
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import AsyncRequestOptions, BuiltRequest, RequestOptions
 from mitto._response import AsyncResponseStream, Response, join_chunks, to_async_response_stream, to_response
-from mitto._session_state import SessionState
+from mitto._session_state import ABOUT_BLANK, SessionState
 from mitto._timeout import Timeout, to_seconds
 
 __all__ = ["AsyncPage", "AsyncSession"]
@@ -294,7 +293,7 @@ class AsyncPage:
 
     @property
     def url(self) -> str:
-        """The URL that the Page was opened for, as Page.url says."""
+        """The URL of the Page's document, as Page.url says."""
         return self._url
 
     @property
@@ -334,13 +333,31 @@ class AsyncPage:
         self._record.expect(call)
         try:
             async with asyncio.timeout(seconds):
-                evaluated = await self._wait_for(call)
+                evaluated = await self._wait_until(lambda: self._record.take(call))
         except TimeoutError:
             assert seconds is not None
             raise PageTimeoutError(seconds) from None
         finally:
             self._record.forget(call)
         return outcome_of(evaluated)
+
+    async def wait_for_load(self, seconds: float | None) -> None:
+        """Return once the document that opening the Page navigated to has loaded, as Page.wait_for_load() does.
+
+        Raises:
+            ValueError: As Page.wait_for_load() does.
+            RequestError: As Page.wait_for_load() does.
+            PageEndedError: As Page.wait_for_load() does.
+            PageTimeoutError: As Page.wait_for_load() does.
+        """
+        self._require_open()
+        try:
+            async with asyncio.timeout(seconds):
+                outcome = await self._wait_until(self._record.load_outcome)
+        except TimeoutError:
+            assert seconds is not None
+            raise PageTimeoutError(seconds) from None
+        self._url = loaded_url(self._native, self._url, outcome)
 
     async def close(self) -> None:
         """Close the Page, as Page.close() does, off the event loop for the wait, which goes on if the caller is cancelled.
@@ -365,8 +382,8 @@ class AsyncPage:
         if self._closing is not None:
             raise ValueError("this Page has been closed")
 
-    async def _wait_for(self, call: int) -> PageEvaluated:
-        """Return the result of `call` once it has arrived.
+    async def _wait_until[T](self, outcome: Callable[[], T | None]) -> T:
+        """Return what `outcome` gives once it gives something.
 
         Raises:
             ValueError: If this Page has been closed meanwhile.
@@ -374,8 +391,8 @@ class AsyncPage:
         while True:
             self._require_open()
             more = take_waiting_events(self._native, self._record)
-            if (evaluated := self._record.take(call)) is not None:
-                return evaluated
+            if (result := outcome()) is not None:
+                return result
             if more:
                 # So that a Page that writes without end cannot hold up everything else on the loop.
                 await asyncio.sleep(0)
@@ -679,7 +696,7 @@ class AsyncSession:
         """Send an OPTIONS request, as request() does."""
         return await self.request("OPTIONS", url, **options)
 
-    async def _open_page(self, url: str) -> AsyncPage:
+    async def _open_page(self, url: str, *, timeout: float | None = None) -> AsyncPage:
         """Open a Page for `url`, as Session._open_page() does, on the event loop of this AsyncSession.
 
         It opens this AsyncSession, if nothing has yet. Starting the Page's process blocks the loop for the few
@@ -690,16 +707,28 @@ class AsyncSession:
             ValueError: As Session._open_page() does, also if this AsyncSession has been closed.
             NativeLibraryError: As Session._open_page() does.
             OSError: As Session._open_page() does.
+            RequestError: As Session._open_page() does.
+            PageEndedError: As Session._open_page() does.
+            PageTimeoutError: As Session._open_page() does.
             RuntimeError: If this AsyncSession opened on another event loop.
         """
         require_type("url", url, str, "text")
         encode_url(url)
+        seconds = to_seconds(timeout)
         if self._closing is None:
             await self.open()
         if self._closing is not None or self._opening is None:
             raise ValueError("this AsyncSession has been closed")
         opened = self._opening.result()
-        return AsyncPage(opened.state.native.open_page(), url, opened.events, asyncio.get_running_loop())
+        page = AsyncPage(opened.state.open_page(url), url, opened.events, asyncio.get_running_loop())
+        if url == ABOUT_BLANK:
+            return page
+        try:
+            await page.wait_for_load(seconds)
+        except BaseException:
+            await page.close()
+            raise
+        return page
 
     def _opened(self, what: str) -> _Opened:
         """Return what opening made.

@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 2
+_PROTOCOL_VERSION = 3
 _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
 
 
@@ -253,6 +253,25 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
             f"{_HELLO}\nchannel.sendall(struct.pack('<II', 16 * 1024 * 1024 + 1, 5))",
             "the library refused a message from the Page: a frame of 16777217 bytes is larger than the channel carries",
             id="too-large",
+        ),
+        pytest.param(
+            "unasked-credit",
+            f"{_HELLO}\nsend(9, struct.pack('<QI', 7, 10))",
+            "the library refused a message from the Page: credit for request 7, which the Page has not asked for",
+            id="unasked-credit",
+        ),
+        pytest.param(
+            "request-numbered-again",
+            f"{_HELLO}\nsend(8, struct.pack('<QB', 2, 1) + b'http://127.0.0.1:1/a.js')"
+            "\nsend(8, struct.pack('<QB', 2, 1) + b'http://127.0.0.1:1/b.js')",
+            "the library refused a message from the Page: a request numbered 2, after one numbered 2",
+            id="request-numbered-again",
+        ),
+        pytest.param(
+            "navigation-number",
+            f"{_HELLO}\nsend(8, struct.pack('<QB', 0, 1) + b'http://127.0.0.1:1/a.js')",
+            "the library refused a message from the Page: a request numbered 0, which is the navigation's",
+            id="navigation-number",
         ),
         pytest.param(
             "page-refuses",

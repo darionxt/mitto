@@ -130,7 +130,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 2
+_PROTOCOL_VERSION = 3
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 _DEFAULT_START = {"time_zone": "UTC", "locale": "en-US"}
@@ -453,3 +453,154 @@ def test_a_session_argument_that_names_no_channel_is_wrong(program: Path, argume
 
     assert result.returncode == _WRONG_ARGUMENTS
     assert result.stderr == "--session= names no channel and process\n"
+
+
+# The messages of a Page's requests, in native/page_messages.h.
+_REQUEST = 8
+_CREDIT = 9
+_GET_COOKIES = 10
+_SET_COOKIE = 11
+_LOADED = 12
+_RESPONSE_STARTED = 13
+_RESPONSE_BODY = 14
+_RESPONSE_ENDED = 15
+_COOKIES = 16
+_BODY_WINDOW = 64 * 1024
+_SCRIPT_KIND = 1
+_DOCUMENT_URL = "http://www.example.test/page"
+
+
+def _respond(session: _Session, number: int, url: str, content_type: str, status: int = 200) -> None:
+    encoded = url.encode()
+    headers = f"Content-Type: {content_type}\n".encode()
+    session.send(_RESPONSE_STARTED, struct.pack("<QiI", number, status, len(encoded)) + encoded + headers)
+
+
+def _body(session: _Session, number: int, data: bytes) -> None:
+    session.send(_RESPONSE_BODY, struct.pack("<Q", number) + data)
+
+
+def _end(session: _Session, number: int, net_error: int = 0) -> None:
+    session.send(_RESPONSE_ENDED, struct.pack("<Qi", number, net_error))
+
+
+def _nothing_comes(session: _Session, seconds: float = 0.3) -> bool:
+    """Return whether the Page sends nothing for `seconds`."""
+    session.socket.settimeout(seconds)
+    try:
+        session.socket.recv(1, socket.MSG_PEEK)
+    except TimeoutError:
+        return True
+    finally:
+        session.socket.settimeout(_TIMEOUT_SECONDS)
+    return False
+
+
+def test_a_page_loads_the_document_that_its_session_sends_and_asks_for_its_scripts(session: _Session) -> None:
+    session.start()
+    document = b"<!doctype html><p id=a>a</p><script src=app.js></script><p id=b>b</p>"
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, document)
+
+    # It takes what came, and asks for the script it reaches, with the URL resolved against the document's.
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(document)))
+    assert session.receive() == (_REQUEST, struct.pack("<QB", 1, _SCRIPT_KIND) + b"http://www.example.test/app.js")
+    _end(session, 0)
+    script = b"document.cookie = 'set=by script'; window.seen = [document.cookie, !!document.getElementById('b')];"
+    _respond(session, 1, "http://www.example.test/app.js", "text/javascript")
+    _body(session, 1, script)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, len(script)))
+    _end(session, 1)
+
+    # The script's write goes first, then its read waits for the answer.
+    assert session.receive() == (_SET_COOKIE, b"set=by script")
+    message_type, question = session.receive()
+    assert message_type == _GET_COOKIES
+    session.send(_COOKIES, question + b"from=session; set=by script")
+    assert session.receive() == (_LOADED, b"")
+
+    assert session.evaluate("[document.URL, document.readyState, seen, document.body.lastChild.id]") == (
+        False,
+        f'["{_DOCUMENT_URL}","complete",["from=session; set=by script",false],"b"]',
+    )
+    assert session.close() == 0
+
+
+def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -> None:
+    session.start()
+    first = b"<script src=/wait.js></script>"
+    second = b"<p id=later>" + b"x" * 2000 + b"</p>"
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, first)
+    assert session.receive()[0] == _CREDIT
+    assert session.receive()[0] == _REQUEST
+
+    # The parser waits for the script, so what comes meanwhile waits too, and the Session gets no room for more.
+    _body(session, 0, second)
+    assert _nothing_comes(session)
+
+    _respond(session, 1, "http://www.example.test/wait.js", "text/javascript")
+    _end(session, 1)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(second)))
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+    assert session.evaluate("document.getElementById('later').textContent.length") == (False, "2000")
+
+
+def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Session) -> None:
+    session.start()
+    first = b"<script src=/wait.js></script>"
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, first)
+    assert session.receive()[0] == _CREDIT
+    assert session.receive()[0] == _REQUEST
+
+    _body(session, 0, b"x" * _BODY_WINDOW)
+    _body(session, 0, b"x")
+
+    assert session.refusal() == "more of the body of request 0 than the Page has given credit for"
+
+
+@pytest.mark.parametrize(
+    ("message_type", "payload", "why"),
+    [
+        pytest.param(
+            _RESPONSE_BODY,
+            struct.pack("<Q", 5) + b"x",
+            "a body of request 5, which is not in progress",
+            id="body-of-no-request",
+        ),
+        pytest.param(
+            _RESPONSE_ENDED, struct.pack("<Qi", 0, 0), "the end of request 0, which is not in progress", id="end"
+        ),
+        pytest.param(
+            _COOKIES, struct.pack("<Q", 1) + b"a=b", "cookies for question 1, which no script waits for", id="cookies"
+        ),
+        pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
+        pytest.param(
+            _RESPONSE_ENDED, struct.pack("<Qi", 0, 1), "the end of a response with the net error 1", id="positive-error"
+        ),
+    ],
+)
+def test_a_page_refuses_what_a_session_should_not_send_of_its_requests(
+    session: _Session, message_type: int, payload: bytes, why: str
+) -> None:
+    session.start()
+
+    session.send(message_type, payload)
+
+    assert session.refusal() == why
+
+
+def test_a_document_of_a_session_runs_in_a_context_of_its_own_and_ends_waiting_calls(session: _Session) -> None:
+    session.start()
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"window.before = 1; new Promise(() => {})")
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+
+    # The document's response replaces the context, as a navigation does.
+    assert session.evaluated() == (1, True, "Execution context was destroyed.")
+    _body(session, 0, b"<p>new</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+    assert session.evaluate("[typeof before, document.body.innerHTML]") == (False, '["undefined","<p>new</p>"]')

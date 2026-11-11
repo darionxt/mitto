@@ -10,6 +10,7 @@ source_set("dom") {
     "character_data.h",
     "comment.cc",
     "comment.h",
+    "cookie_jar.h",
     "document.cc",
     "document.h",
     "document_type.cc",

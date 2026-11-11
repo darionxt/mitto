@@ -14,8 +14,8 @@ from mitto._page import Page
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import RequestOptions
 from mitto._response import Response, ResponseStream, to_response, to_response_stream
-from mitto._session_state import SessionState
-from mitto._timeout import Timeout
+from mitto._session_state import ABOUT_BLANK, SessionState
+from mitto._timeout import Timeout, to_seconds
 
 __all__ = ["Session", "get"]
 
@@ -217,22 +217,42 @@ class Session:
         """Send an OPTIONS request, as request() does."""
         return self.request("OPTIONS", url, **options)
 
-    def _open_page(self, url: str) -> Page:
+    def _open_page(self, url: str, *, timeout: float | None = None) -> Page:
         """Open a Page for `url` on this Session, whose scripts run in a process of its own. Private until the Runtime ships.
 
-        Until the Runtime loads documents, the Page fetches nothing: it keeps `url` as its URL and runs scripts in a
-        context that has nothing of a document yet. Starting its process takes a few milliseconds, which this blocks for.
-        Closing the Session ends the Page, which still needs closing.
+        The Page navigates to `url` through this Session, as `self.get(url)` sends it, follows its redirects, and loads the
+        response as its document, whose classic scripts run in document order. This returns once the window's load event
+        has fired. The Page's requests and document.cookie are this Session's, and its requests run no timers, as Chrome's
+        have none. "about:blank" navigates nowhere, as a new tab's first document needs no request. Starting the Page's
+        process takes a few milliseconds. Closing the Session ends the Page, which still needs closing.
+
+        Args:
+            url: Where the Page navigates.
+            timeout: How many seconds to wait for the document to load, or None to wait for as long as it takes.
 
         Raises:
-            TypeError: If `url` is not text.
-            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, or this Session has been closed.
+            TypeError: If `url` is not text, or `timeout` is neither a number nor None.
+            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, `timeout` is not a positive number of
+                at most 2,000,000 seconds, or this Session has been closed.
             NativeLibraryError: If the native library cannot be used, or this build of mitto has no Runtime.
             OSError: If the Page's process cannot start.
+            RequestError: If the navigation failed, of the type that `self.get(url)` raises for that failure. The Page is
+                closed then.
+            PageEndedError: If the Page ended before its document loaded.
+            PageTimeoutError: If `timeout` passed first. The Page is closed then.
         """
         require_type("url", url, str, "text")
         encode_url(url)
-        return Page(self._native.open_page(), url)
+        seconds = to_seconds(timeout)
+        page = Page(self._state.open_page(url), url)
+        if url == ABOUT_BLANK:
+            return page
+        try:
+            page.wait_for_load(seconds)
+        except BaseException:
+            page.close()
+            raise
+        return page
 
 
 @functools.cache

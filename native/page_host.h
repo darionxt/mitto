@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -25,14 +26,79 @@
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
+#include "mitto/request_client.h"
+#include "mitto/request_options.h"
+#include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_partition_key.h"
+#include "net/http/http_request_headers.h"
+#include "url/gurl.h"
+
+namespace net {
+class CookieStore;
+}  // namespace net
 
 namespace mitto {
 
 class ReadyRequests;
 
+// What a request of one Request Kind sends, as the Session's Persona says: its
+// header lines in their order, and its options, with no Initiator, which the
+// library sets to the Page's document.
+struct PageRequestTemplate {
+  PageRequestTemplate();
+  PageRequestTemplate(const PageRequestTemplate&);
+  PageRequestTemplate& operator=(const PageRequestTemplate&);
+  ~PageRequestTemplate();
+
+  net::HttpRequestHeaders headers;
+  RequestOptions options;
+};
+
+// What mitto_page_open() reads.
+struct PageOptions {
+  PageOptions();
+  PageOptions(PageOptions&&);
+  PageOptions& operator=(PageOptions&&);
+  ~PageOptions();
+
+  PageStart start;
+  // Where the Page navigates when it opens. Without one it stays at
+  // about:blank.
+  std::optional<GURL> url;
+  // What each Request Kind sends.
+  std::optional<PageRequestTemplate> navigation;
+  std::optional<PageRequestTemplate> script;
+  std::optional<PageRequestTemplate> fetch;
+};
+
 // Returns what mitto_page_open() reads from `json`, or nullopt if it holds an
 // unknown key or an invalid value.
-std::optional<PageStart> ParsePageOptions(std::string_view json);
+std::optional<PageOptions> ParsePageOptions(std::string_view json);
+
+// How many requests a Page may have open at once, as many as Chrome's network
+// service allows a renderer process. One that asks for more is refused.
+// Upstream: services/network/network_context.h
+inline constexpr size_t kMaxPageRequests = 2700;
+
+// What a Page's Session gives it, on the network thread: its requests and its
+// cookies.
+class PageNetwork {
+ public:
+  // Starts a request for a Page, which tells `client` how it goes until it
+  // finishes or the client abandons it. It is the Session's, as a request of
+  // the C API's is.
+  virtual base::WeakPtr<RunningRequest> StartPageRequest(
+      RequestClient& client,
+      GURL url,
+      net::HttpRequestHeaders headers,
+      RequestOptions options) = 0;
+
+  virtual net::CookieStore& cookie_store() = 0;
+
+ protected:
+  virtual ~PageNetwork() = default;
+};
 
 // How long a Page process has to end once its channel has closed, before it is
 // killed. It ends at once when it reads the end of the stream, whatever its
@@ -60,6 +126,9 @@ struct PageEvent {
   std::string json;
   std::string message;
   int32_t level = 0;
+  int32_t status = 0;
+  int32_t net_error = 0;
+  std::string url;
 };
 
 // Carries a Page's events from the network thread to whichever thread holds the
@@ -129,23 +198,30 @@ class PageEvents : public base::RefCountedThreadSafe<PageEvents> {
 // One Page, on the network thread, where its Session owns it until the Page
 // closes or the Session goes. Its events go into its PageEvents, and each lists
 // the Page's handle in the Session's ReadyRequests, beside its requests.
+//
+// It serves what the Page asks of its Session: requests, which it starts from
+// the template of their Request Kind with the Page's document as their
+// Initiator, and the document's cookies, as Chrome's network service serves a
+// renderer.
 class PageHost final : public PageChannel::Delegate {
  public:
   PageHost(scoped_refptr<PageEvents> events,
            scoped_refptr<PageProcess> process,
            ReadyRequests& ready,
-           uintptr_t handle);
+           uintptr_t handle,
+           PageNetwork& network);
 
   PageHost(const PageHost&) = delete;
   PageHost& operator=(const PageHost&) = delete;
 
-  // Closes the channel, which ends the Page process. Whoever closes the Page
-  // reaps it.
+  // Abandons the Page's requests and closes the channel, which ends the Page
+  // process. Whoever closes the Page reaps it.
   ~PageHost() override;
 
-  // Starts to read `ours`, and tells the Page how to start. Returns false if it
-  // cannot read it.
-  bool Start(PageChannelEnd ours, const PageStart& start);
+  // Starts to read `ours`, tells the Page how to start, and starts the
+  // navigation, if `options` has a URL. Returns false if it cannot read
+  // `ours`.
+  bool Start(PageChannelEnd ours, PageOptions options);
 
   void Evaluate(uint64_t call, std::string script);
 
@@ -158,9 +234,46 @@ class PageHost final : public PageChannel::Delegate {
   base::WeakPtr<PageHost> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
  private:
+  class Request;
+
   // PageChannel::Delegate:
   void OnFrame(uint32_t type, std::string payload) override;
   void OnChannelClosed(PageChannel::Closed closed, std::string why) override;
+
+  // What the Page asks for.
+  void OnRequest(PageRequest asked);
+  void OnCredit(const PageCredit& credit);
+  void OnGetCookies(uint64_t question);
+  void OnSetCookie(const std::string& line);
+
+  // Starts a request numbered `number` from `request_template`, whose client
+  // is a Request that `requests_` holds.
+  void StartRequest(uint64_t number,
+                    GURL url,
+                    const PageRequestTemplate& request_template,
+                    std::optional<GURL> initiator);
+
+  // What a Request hears of its job.
+  void OnResponseStarted(Request& request, const RequestEvent& event);
+  void OnBodyRead(Request& request, size_t size);
+  // This deletes `request`.
+  void OnRequestFinished(Request& request, int net_error);
+  // Reads more of the body of `request` if the Page has given credit for it.
+  void ReadIfCredited(Request& request);
+
+  void SendCookies(uint64_t question,
+                   const net::CookieAccessResultList& cookies,
+                   const net::CookieAccessResultList& excluded);
+
+  // Whether the Page's document can have cookies, which only one that the
+  // Session loaded over HTTP or HTTPS can.
+  bool DocumentHasCookies() const;
+  // The partition of the document's cookies, as Chrome's
+  // RestrictedCookieManager for a top-level frame has it.
+  std::optional<net::CookiePartitionKey> DocumentPartitionKey() const;
+
+  // Abandons each request in progress.
+  void AbandonRequests();
 
   // Refuses what the Page sent: tells it why, closes the channel and kills the
   // process, because a Page that sends what it should not may be hostile.
@@ -181,7 +294,17 @@ class PageHost final : public PageChannel::Delegate {
   const scoped_refptr<PageProcess> process_;
   const raw_ref<ReadyRequests> ready_;
   const uintptr_t handle_;
+  const raw_ref<PageNetwork> network_;
   std::unique_ptr<PageChannel> channel_;
+  PageOptions options_;
+  // The URL of the document that the navigation loaded, after its redirects:
+  // the Initiator of the Page's requests, and whose cookies document.cookie
+  // reads and writes. Empty until one has loaded.
+  GURL document_url_;
+  // The requests in progress, by number, and the largest number the Page has
+  // used.
+  std::map<uint64_t, std::unique_ptr<Request>> requests_;
+  uint64_t last_request_number_ = kNavigationRequest;
   bool hello_received_ = false;
   // Why the Page refused what the library sent, if it did.
   std::optional<std::string> refused_by_page_;

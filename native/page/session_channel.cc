@@ -26,6 +26,7 @@
 #include "base/threading/thread.h"
 #include "build/build_config.h"
 #include "mitto/page/script_runner.h"
+#include "mitto/page/session_cookie_jar.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-callbacks.h"
@@ -70,8 +71,11 @@ class SessionLink final : public PageChannel::Delegate
 {
  public:
   SessionLink(scoped_refptr<base::SingleThreadTaskRunner> main_thread,
-              ScriptRunner& runner)
-      : main_thread_(std::move(main_thread)), runner_(runner) {}
+              ScriptRunner& runner,
+              SessionCookieJar& cookie_jar)
+      : main_thread_(std::move(main_thread)),
+        runner_(runner),
+        cookie_jar_(cookie_jar) {}
 
   SessionLink(const SessionLink&) = delete;
   SessionLink& operator=(const SessionLink&) = delete;
@@ -158,10 +162,36 @@ class SessionLink final : public PageChannel::Delegate
                                       base::Unretained(this), frame->call,
                                       std::move(frame->script)));
         return;
+      case PageMessage::kResponseStarted:
+      case PageMessage::kResponseBody:
+      case PageMessage::kResponseEnded:
+        if (!started_) {
+          Refuse("a response came before the start");
+          return;
+        }
+        main_thread_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionLink::ResponseOnMainThread,
+                           base::Unretained(this), *std::move(frame)));
+        return;
+      case PageMessage::kCookies:
+        // The main thread waits for this, so it is handed over here.
+        if (!cookie_jar_->Answer(frame->cookies_answer,
+                                 std::move(frame->cookies))) {
+          Refuse(base::StrCat({"cookies for question ",
+                               base::NumberToString(frame->cookies_answer),
+                               ", which no script waits for"}));
+        }
+        return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
       case PageMessage::kConsole:
       case PageMessage::kUncaughtError:
+      case PageMessage::kRequest:
+      case PageMessage::kCredit:
+      case PageMessage::kGetCookies:
+      case PageMessage::kSetCookie:
+      case PageMessage::kLoaded:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -192,8 +222,18 @@ class SessionLink final : public PageChannel::Delegate
                              base::Unretained(link), std::move(frame)));
         },
         io_thread, base::Unretained(this));
-    if (std::optional<std::string> why =
-            runner_->Start(start, std::move(send))) {
+    // What the main thread refuses of what the Session sends, which the I/O
+    // thread says.
+    base::RepeatingCallback<void(std::string)> refuse = base::BindRepeating(
+        [](scoped_refptr<base::SingleThreadTaskRunner> io_thread,
+           SessionLink* link, std::string why) {
+          io_thread->PostTask(FROM_HERE, base::BindOnce(&SessionLink::Refuse,
+                                                        base::Unretained(link),
+                                                        std::move(why)));
+        },
+        io_thread, base::Unretained(this));
+    if (std::optional<std::string> why = runner_->Start(
+            start, std::move(send), std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
                           base::BindOnce(&SessionLink::Refuse,
                                          base::Unretained(this), *why));
@@ -202,6 +242,22 @@ class SessionLink final : public PageChannel::Delegate
 
   void EvaluateOnMainThread(uint64_t call, std::string script) {
     runner_->Evaluate(call, script);
+  }
+
+  void ResponseOnMainThread(FrameFromSession frame) {
+    switch (frame.type) {
+      case PageMessage::kResponseStarted:
+        runner_->OnResponseStarted(std::move(frame.response));
+        return;
+      case PageMessage::kResponseBody:
+        runner_->OnResponseBody(std::move(frame.body));
+        return;
+      case PageMessage::kResponseEnded:
+        runner_->OnResponseEnded(frame.ended);
+        return;
+      default:
+        NOTREACHED();
+    }
   }
 
   // The end of the channel says that the process that holds the library has
@@ -247,6 +303,8 @@ class SessionLink final : public PageChannel::Delegate
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
   // Lives on the main thread, until the process ends.
   const raw_ref<ScriptRunner> runner_;
+  // Lives until the process ends. The I/O thread hands it answers.
+  const raw_ref<SessionCookieJar> cookie_jar_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
   bool started_ = false;
@@ -293,6 +351,7 @@ void ServeSession(v8::Platform& platform,
   base::CommandLine::Init(0, nullptr);
   isolate->SetOOMErrorHandler(&OnOutOfMemory);
   base::SingleThreadTaskExecutor main_thread;
+  SessionCookieJar cookie_jar;
   ScriptRunner runner(platform, isolate);
 
   // Reads the channel while a script runs, so that the Page process ends when
@@ -303,9 +362,9 @@ void ServeSession(v8::Platform& platform,
     return;
   }
   // Never destroyed: the process ends while the I/O thread uses it.
-  SessionLink* const link =
-      std::make_unique<SessionLink>(main_thread.task_runner(), runner)
-          .release();
+  SessionLink* const link = std::make_unique<SessionLink>(
+                                main_thread.task_runner(), runner, cookie_jar)
+                                .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),
                                 std::move(session)));

@@ -56,6 +56,9 @@ __all__ = [
     "PageErrorCode",
     "PageEvaluated",
     "PageEventType",
+    "PageLoaded",
+    "PageNavigated",
+    "PageRequestTemplate",
     "Priority",
     "PrivateSettings",
     "ReadyKind",
@@ -74,7 +77,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 9
+ABI_VERSION = 10
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -161,6 +164,8 @@ class PageEventType(enum.IntEnum):
     ENDED = 2
     CONSOLE = 3
     UNCAUGHT_ERROR = 4
+    NAVIGATED = 5
+    LOADED = 6
 
 
 class ConsoleLevel(enum.IntEnum):
@@ -237,6 +242,10 @@ class MittoPageEvent(ctypes.Structure):
         ("message", ctypes.POINTER(ctypes.c_char)),
         ("message_size", ctypes.c_size_t),
         ("level", ctypes.c_int32),
+        ("status", ctypes.c_int32),
+        ("net_error", ctypes.c_int32),
+        ("url", ctypes.POINTER(ctypes.c_char)),
+        ("url_size", ctypes.c_size_t),
     )
 
 
@@ -724,7 +733,29 @@ class UncaughtError:
     text: str
 
 
-NativePageEvent = PageEvaluated | PageEnded | ConsoleMessage | UncaughtError
+@dataclass(frozen=True, slots=True)
+class PageNavigated:
+    """The navigation that opening the Page started has its response, and its document takes about:blank's place; or it
+    failed before a response, and the Page keeps about:blank.
+
+    Attributes:
+        url: The URL of the document, after any redirects, or the URL that the navigation failed at.
+        status: The response's HTTP status code, or 0 if it failed.
+        net_error: 0 if the navigation has a response, and otherwise the negative Chromium net error code it failed with,
+            which NativePage.request_error() turns into the error that a request raises for it.
+    """
+
+    url: str
+    status: int
+    net_error: int
+
+
+@dataclass(frozen=True, slots=True)
+class PageLoaded:
+    """The window's load event has been dispatched: the document and its classic scripts have loaded and run."""
+
+
+NativePageEvent = PageEvaluated | PageEnded | ConsoleMessage | UncaughtError | PageNavigated | PageLoaded
 
 
 class NativePage:
@@ -797,6 +828,10 @@ class NativePage:
         """End each wait in next_event() on another thread, and make each later one return at once if no event waits."""
         self._library.mitto_page_end_waits(self._handle)
 
+    def request_error(self, url: str, net_error: int) -> RequestError:
+        """Return the error that a GET request for `url` raises for `net_error`, as a navigation that failed with it."""
+        return _request_error(self._library, url, net_error, "GET")
+
     def close(self) -> None:
         """End the Page's process, wait for it to go, which takes up to 2 seconds before a kill, and release the Page.
 
@@ -845,6 +880,37 @@ class FetchParams:
             encode_url(self.initiator, "initiator")
             option["initiator"] = self.initiator
         return option
+
+
+@dataclass(frozen=True, slots=True)
+class PageRequestTemplate:
+    """What a Page's request of one Request Kind sends, as its Session's Persona says: one entry of the "requests" option
+    of mitto_page_open(). The native core adds the URL, and the Page's document as the Initiator.
+
+    Attributes:
+        headers: The (name, value) pairs to send, in the order they reach the wire, with no caller's among them.
+        priority: The priority of the request.
+        priority_incremental: Whether the response can be used as it arrives.
+        fetch: What the request says of itself, with no initiator and no fixed headers.
+    """
+
+    headers: tuple[tuple[str, str], ...]
+    priority: Priority
+    priority_incremental: bool
+    fetch: FetchParams
+
+    def to_option(self) -> dict[str, object]:
+        """Return the entry of the "requests" option of mitto_page_open()."""
+        return {
+            "headers": [[name, value] for name, value in self.headers],
+            "options": {
+                "version": REQUEST_OPTIONS_VERSION,
+                "method": "GET",
+                "priority": int(self.priority),
+                "priority_incremental": self.priority_incremental,
+                "fetch": self.fetch.to_option(),
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1124,7 +1190,14 @@ class Session:
         self._library.mitto_session_next_ready(self._handle, ctypes.byref(kind), ctypes.byref(handle))
         return handle.value
 
-    def open_page(self, *, time_zone: str | None = None, locale: str | None = None) -> NativePage:
+    def open_page(
+        self,
+        *,
+        time_zone: str | None = None,
+        locale: str | None = None,
+        url: str | None = None,
+        requests: Mapping[str, PageRequestTemplate] | None = None,
+    ) -> NativePage:
         """Open a Page on this Session: start its process, and return without waiting for it to start.
 
         Starting the process takes a few milliseconds, which this blocks for.
@@ -1132,6 +1205,10 @@ class Session:
         Args:
             time_zone: The IANA name of the time zone that the Page's Date and Intl report, or None for UTC.
             locale: The BCP 47 tag of the locale that the Page's Intl falls back to, or None for en-US.
+            url: Where the Page navigates once it opens, through this Session, whose PageNavigated and PageLoaded events
+                say how that went, or None to stay at about:blank.
+            requests: What a request of each Request Kind sends, by the kind's value: "navigation", needed with `url`,
+                and "script" and "fetch", for the Page's own requests.
 
         Raises:
             ValueError: If this Session has been closed, or the native core refuses `time_zone` or `locale`. One that ICU
@@ -1146,6 +1223,11 @@ class Session:
             options["time_zone"] = time_zone
         if locale is not None:
             options["locale"] = locale
+        if url is not None:
+            encode_url(url)
+            options["url"] = url
+        if requests is not None:
+            options["requests"] = {kind: template.to_option() for kind, template in requests.items()}
         encoded = json.dumps(options).encode()
         handle = ctypes.POINTER(MittoPage)()
         net_error: int = self._library.mitto_page_open(self._handle, encoded, len(encoded), ctypes.byref(handle))
@@ -1154,7 +1236,7 @@ class Session:
                 f"the Runtime is not in this build of mitto: no {PAGE_PROGRAM_NAME} lies beside the native library"
             )
         if net_error == _ERR_INVALID_ARGUMENT:
-            raise ValueError(f"the native core refused the options {options!r} of a Page")
+            raise ValueError(f"the native core refused the time zone {time_zone!r} or the locale {locale!r} of a Page")
         if net_error != 0:
             name: bytes = self._library.mitto_net_error_name(net_error)
             raise OSError(f"the process of a Page cannot start: {name.decode()} ({net_error})")
@@ -1388,6 +1470,11 @@ def _copy_page_event(native: MittoPageEvent) -> NativePageEvent:
             return ConsoleMessage(level=ConsoleLevel(native.level).name.lower(), text=message)
         case PageEventType.UNCAUGHT_ERROR:
             return UncaughtError(text=message)
+        case PageEventType.NAVIGATED:
+            url = ctypes.string_at(native.url, native.url_size).decode(errors="replace") if native.url else ""
+            return PageNavigated(url=url, status=native.status, net_error=native.net_error)
+        case PageEventType.LOADED:
+            return PageLoaded()
 
 
 def _parse_headers(block: bytes) -> tuple[tuple[str, str], ...]:

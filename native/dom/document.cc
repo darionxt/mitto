@@ -1,14 +1,18 @@
 #include "mitto/dom/document.h"
 
+#include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
 #include "mitto/dom/comment.h"
+#include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/event.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_element_factory.h"
@@ -105,6 +109,68 @@ const bindings::WrapperTypeInfo* Document::GetWrapperTypeInfo() const {
 void Document::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   visitor->Trace(window_);
+}
+
+// Blink's Document::cookie() and setCookie(), for a document that cookies are
+// enabled for, and whose origin can have cookies exactly when the Page
+// program has given it a jar.
+// Upstream: third_party/blink/renderer/core/dom/document.cc
+std::u16string Document::Cookie(
+    bindings::ExceptionState& exception_state) const {
+  if (!window_) {
+    return std::u16string();
+  }
+  if (!cookie_jar_) {
+    ThrowCookiesDenied(exception_state);
+    return std::u16string();
+  }
+  return cookie_jar_->Cookies();
+}
+
+void Document::SetCookie(const std::u16string& value,
+                         bindings::ExceptionState& exception_state) {
+  if (!window_) {
+    return;
+  }
+  if (!cookie_jar_) {
+    ThrowCookiesDenied(exception_state);
+    return;
+  }
+  cookie_jar_->SetCookie(value);
+}
+
+void Document::ThrowCookiesDenied(
+    bindings::ExceptionState& exception_state) const {
+  exception_state.ThrowDOMException(
+      "SecurityError", url_.starts_with(u"data:")
+                           ? "Cookies are disabled inside 'data:' URLs."
+                           : "Access is denied for this document.");
+}
+
+std::u16string Document::ReadyState() const {
+  switch (readiness_) {
+    case Readiness::kLoading:
+      return u"loading";
+    case Readiness::kInteractive:
+      return u"interactive";
+    case Readiness::kComplete:
+      return u"complete";
+  }
+  NOTREACHED();
+}
+
+void Document::SetReadiness(Readiness readiness) {
+  if (readiness == readiness_) {
+    return;
+  }
+  readiness_ = readiness;
+  if (readiness == Readiness::kLoading) {
+    return;
+  }
+  bindings::EventInit init;
+  Event* const event = Event::Create(u"readystatechange", init);
+  event->SetTrusted(true);
+  DispatchEvent(event);
 }
 
 std::u16string Document::CompatMode() const {

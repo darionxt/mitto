@@ -211,5 +211,6 @@ class SessionOnAsyncio:
     def options(self, url: str, **options: Any) -> mitto.Response:
         return self._run(self._session.options(url, **options))
 
-    def _open_page(self, url: str) -> _BlockingPage:
-        return _BlockingPage(self._run(self._session._open_page(url)), self._run)  # pyright: ignore[reportPrivateUsage]
+    def _open_page(self, url: str, *, timeout: float | None = None) -> _BlockingPage:
+        page = self._run(self._session._open_page(url, timeout=timeout))  # pyright: ignore[reportPrivateUsage]
+        return _BlockingPage(page, self._run)

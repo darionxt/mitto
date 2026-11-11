@@ -45,7 +45,20 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kUncaughtError);
+         type <= static_cast<uint32_t>(PageMessage::kCookies);
+}
+
+bool IsRequestKind(uint8_t kind) {
+  return kind == static_cast<uint8_t>(PageRequestKind::kScript) ||
+         kind == static_cast<uint8_t>(PageRequestKind::kFetch);
+}
+
+std::string EncodeInt32(int32_t value) {
+  return EncodeUint32(static_cast<uint32_t>(value));
+}
+
+int32_t DecodeInt32(std::string_view bytes) {
+  return static_cast<int32_t>(DecodeUint32(bytes));
 }
 
 bool IsConsoleLevel(uint8_t level) {
@@ -118,7 +131,108 @@ base::expected<PageStart, std::string> ReadStart(std::string_view payload) {
   return start;
 }
 
+base::expected<PageRequest, std::string> ReadRequest(std::string payload) {
+  if (payload.size() < 10) {
+    return base::unexpected(WrongSize("request", payload.size()));
+  }
+  const std::string_view bytes = payload;
+  PageRequest request;
+  request.number = DecodeUint64(bytes.substr(0, 8));
+  if (request.number == kNavigationRequest) {
+    return base::unexpected("a request numbered 0, which is the navigation's");
+  }
+  const uint8_t kind = static_cast<uint8_t>(bytes[8]);
+  if (!IsRequestKind(kind)) {
+    return base::unexpected(base::StrCat(
+        {"a request of the unknown kind ", base::NumberToString(kind)}));
+  }
+  request.kind = static_cast<PageRequestKind>(kind);
+  if (!IsText(bytes.substr(9))) {
+    return base::unexpected("a request whose URL is not UTF-8");
+  }
+  request.url = payload.substr(9);
+  return request;
+}
+
+base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
+  if (payload.size() != 12) {
+    return base::unexpected(WrongSize("credit", payload.size()));
+  }
+  PageCredit credit;
+  credit.number = DecodeUint64(payload.substr(0, 8));
+  credit.bytes = DecodeUint32(payload.substr(8, 4));
+  if (credit.bytes == 0 || credit.bytes > kBodyWindow) {
+    return base::unexpected(base::StrCat(
+        {"a credit of ", base::NumberToString(credit.bytes), " bytes"}));
+  }
+  return credit;
+}
+
+base::expected<PageResponseStarted, std::string> ReadResponseStarted(
+    std::string payload) {
+  const std::string_view bytes = payload;
+  if (bytes.size() < 16) {
+    return base::unexpected(WrongSize("response", bytes.size()));
+  }
+  PageResponseStarted response;
+  response.number = DecodeUint64(bytes.substr(0, 8));
+  response.status = DecodeInt32(bytes.substr(8, 4));
+  const uint32_t url_size = DecodeUint32(bytes.substr(12, 4));
+  if (response.status < 0 || url_size > bytes.size() - 16) {
+    return base::unexpected("a response that does not hold what it says");
+  }
+  if (!IsText(bytes.substr(16, url_size))) {
+    return base::unexpected("a response whose URL is not UTF-8");
+  }
+  response.url = payload.substr(16, url_size);
+  response.headers = payload.substr(16 + url_size);
+  return response;
+}
+
+base::expected<PageResponseBody, std::string> ReadResponseBody(
+    std::string payload) {
+  if (payload.size() < 9 || payload.size() > 8 + kBodyWindow) {
+    return base::unexpected(WrongSize("body", payload.size()));
+  }
+  PageResponseBody body;
+  body.number = DecodeUint64(std::string_view(payload).substr(0, 8));
+  body.bytes = payload.substr(8);
+  return body;
+}
+
+base::expected<PageResponseEnded, std::string> ReadResponseEnded(
+    std::string_view payload) {
+  if (payload.size() != 12) {
+    return base::unexpected(WrongSize("end of a response", payload.size()));
+  }
+  PageResponseEnded ended;
+  ended.number = DecodeUint64(payload.substr(0, 8));
+  ended.net_error = DecodeInt32(payload.substr(8, 4));
+  if (ended.net_error > 0) {
+    return base::unexpected(
+        base::StrCat({"the end of a response with the net error ",
+                      base::NumberToString(ended.net_error)}));
+  }
+  return ended;
+}
+
 }  // namespace
+
+PageRequest::PageRequest() = default;
+PageRequest::PageRequest(PageRequest&&) = default;
+PageRequest& PageRequest::operator=(PageRequest&&) = default;
+PageRequest::~PageRequest() = default;
+
+PageResponseStarted::PageResponseStarted() = default;
+PageResponseStarted::PageResponseStarted(PageResponseStarted&&) = default;
+PageResponseStarted& PageResponseStarted::operator=(PageResponseStarted&&) =
+    default;
+PageResponseStarted::~PageResponseStarted() = default;
+
+PageResponseBody::PageResponseBody() = default;
+PageResponseBody::PageResponseBody(PageResponseBody&&) = default;
+PageResponseBody& PageResponseBody::operator=(PageResponseBody&&) = default;
+PageResponseBody::~PageResponseBody() = default;
 
 PageStart::PageStart() = default;
 PageStart::PageStart(const PageStart&) = default;
@@ -189,6 +303,56 @@ std::string EncodeUncaughtError(std::string_view text) {
   return EncodeFrame(PageMessage::kUncaughtError, text);
 }
 
+std::string EncodeRequest(const PageRequest& request) {
+  const char kind = static_cast<char>(request.kind);
+  return EncodeFrame(PageMessage::kRequest,
+                     base::StrCat({EncodeUint64(request.number),
+                                   std::string_view(&kind, 1), request.url}));
+}
+
+std::string EncodeCredit(const PageCredit& credit) {
+  return EncodeFrame(
+      PageMessage::kCredit,
+      base::StrCat({EncodeUint64(credit.number), EncodeUint32(credit.bytes)}));
+}
+
+std::string EncodeGetCookies(uint64_t question) {
+  return EncodeFrame(PageMessage::kGetCookies, EncodeUint64(question));
+}
+
+std::string EncodeSetCookie(std::string_view line) {
+  return EncodeFrame(PageMessage::kSetCookie, line);
+}
+
+std::string EncodeLoaded() {
+  return EncodeFrame(PageMessage::kLoaded, "");
+}
+
+std::string EncodeResponseStarted(const PageResponseStarted& response) {
+  return EncodeFrame(
+      PageMessage::kResponseStarted,
+      base::StrCat({EncodeUint64(response.number), EncodeInt32(response.status),
+                    EncodeUint32(static_cast<uint32_t>(response.url.size())),
+                    response.url, response.headers}));
+}
+
+std::string EncodeResponseBody(uint64_t number, std::string_view bytes) {
+  CHECK_LE(bytes.size(), kBodyWindow);
+  return EncodeFrame(PageMessage::kResponseBody,
+                     base::StrCat({EncodeUint64(number), bytes}));
+}
+
+std::string EncodeResponseEnded(const PageResponseEnded& ended) {
+  return EncodeFrame(
+      PageMessage::kResponseEnded,
+      base::StrCat({EncodeUint64(ended.number), EncodeInt32(ended.net_error)}));
+}
+
+std::string EncodeCookies(uint64_t answer, std::string_view line) {
+  return EncodeFrame(PageMessage::kCookies,
+                     base::StrCat({EncodeUint64(answer), line}));
+}
+
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     uint32_t type,
     std::string payload) {
@@ -256,8 +420,47 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.uncaught_error = std::move(payload);
       return frame;
+    case PageMessage::kRequest: {
+      base::expected<PageRequest, std::string> request =
+          ReadRequest(std::move(payload));
+      if (!request.has_value()) {
+        return base::unexpected(std::move(request).error());
+      }
+      frame.request = *std::move(request);
+      return frame;
+    }
+    case PageMessage::kCredit: {
+      base::expected<PageCredit, std::string> credit = ReadCredit(payload);
+      if (!credit.has_value()) {
+        return base::unexpected(std::move(credit).error());
+      }
+      frame.credit = *credit;
+      return frame;
+    }
+    case PageMessage::kGetCookies:
+      if (payload.size() != 8) {
+        return base::unexpected(
+            WrongSize("question for cookies", payload.size()));
+      }
+      frame.cookies_question = DecodeUint64(payload);
+      return frame;
+    case PageMessage::kSetCookie:
+      if (!IsText(payload)) {
+        return base::unexpected("a cookie that is not UTF-8");
+      }
+      frame.cookie_line = std::move(payload);
+      return frame;
+    case PageMessage::kLoaded:
+      if (!payload.empty()) {
+        return base::unexpected(WrongSize("load", payload.size()));
+      }
+      return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
+    case PageMessage::kResponseStarted:
+    case PageMessage::kResponseBody:
+    case PageMessage::kResponseEnded:
+    case PageMessage::kCookies:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -309,9 +512,48 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.script = payload.substr(8);
       return frame;
     }
+    case PageMessage::kResponseStarted: {
+      base::expected<PageResponseStarted, std::string> response =
+          ReadResponseStarted(std::move(payload));
+      if (!response.has_value()) {
+        return base::unexpected(std::move(response).error());
+      }
+      frame.response = *std::move(response);
+      return frame;
+    }
+    case PageMessage::kResponseBody: {
+      base::expected<PageResponseBody, std::string> body =
+          ReadResponseBody(std::move(payload));
+      if (!body.has_value()) {
+        return base::unexpected(std::move(body).error());
+      }
+      frame.body = *std::move(body);
+      return frame;
+    }
+    case PageMessage::kResponseEnded: {
+      base::expected<PageResponseEnded, std::string> ended =
+          ReadResponseEnded(payload);
+      if (!ended.has_value()) {
+        return base::unexpected(std::move(ended).error());
+      }
+      frame.ended = *ended;
+      return frame;
+    }
+    case PageMessage::kCookies:
+      if (payload.size() < 8) {
+        return base::unexpected(WrongSize("cookies", payload.size()));
+      }
+      frame.cookies_answer = DecodeUint64(std::string_view(payload));
+      frame.cookies = payload.substr(8);
+      return frame;
     case PageMessage::kEvaluated:
     case PageMessage::kConsole:
     case PageMessage::kUncaughtError:
+    case PageMessage::kRequest:
+    case PageMessage::kCredit:
+    case PageMessage::kGetCookies:
+    case PageMessage::kSetCookie:
+    case PageMessage::kLoaded:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

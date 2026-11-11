@@ -14,12 +14,18 @@ from mitto._arguments import require_path, require_type
 from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
 from mitto._cookies import Cookies
 from mitto._machine import Machine, draw_noise_salts
-from mitto._native import MEMORY_CACHE, NetworkQuality, PrivateSettings
-from mitto._persona import load_persona
+from mitto._native import MEMORY_CACHE, NativePage, NetworkQuality, PageRequestTemplate, PrivateSettings
+from mitto._persona import RequestKind, load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
 from mitto._timeout import Timeout, to_timeout
 
-__all__ = ["SessionState"]
+__all__ = ["ABOUT_BLANK", "SessionState"]
+
+ABOUT_BLANK = "about:blank"
+"""The URL of a Page that navigates nowhere, as a new tab's first document needs no request."""
+
+# The Request Kinds of what a Page asks its Session for: its navigation, its classic scripts and its scripts' fetch().
+_PAGE_REQUEST_KINDS = (RequestKind.NAVIGATION, RequestKind.SCRIPT, RequestKind.FETCH)
 
 
 class SessionState:
@@ -97,6 +103,30 @@ class SessionState:
         """
         options.setdefault("timeout", self._timeout)
         return build_request(self._persona, method, url, **options)
+
+    def open_page(self, url: str) -> NativePage:
+        """Open a Page that navigates to `url` through this Session, or nowhere for ABOUT_BLANK.
+
+        Its requests send what this Session's Persona says each Request Kind sends, as a request of that kind does, and run
+        no timers, as Chrome's have none, whatever this Session's default timeout says.
+
+        Raises:
+            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, or the native Session has closed.
+            NativeLibraryError: If this build of mitto has no Runtime.
+            OSError: If the Page's process cannot start.
+        """
+        if url == ABOUT_BLANK:
+            return self.native.open_page()
+        requests: dict[str, PageRequestTemplate] = {}
+        for kind in _PAGE_REQUEST_KINDS:
+            defaults = self._persona.request_defaults(kind)
+            requests[kind.value] = PageRequestTemplate(
+                headers=defaults["headers"],
+                priority=defaults["priority"],
+                priority_incremental=defaults["priority_incremental"],
+                fetch=defaults["fetch"],
+            )
+        return self.native.open_page(url=url, requests=requests)
 
     def begin_close(self) -> Callable[[], None]:
         """Take the cookies to save and refuse every later call to the native Session, none of which blocks for long.

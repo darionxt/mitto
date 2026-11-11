@@ -72,8 +72,30 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kUncaughtError:
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->uncaught_error));
           break;
+        case mitto::PageMessage::kRequest:
+          CHECK_NE(frame->request.number, mitto::kNavigationRequest);
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
+          CHECK_EQ(frame->request.url.size() + 9, payload.size());
+          break;
+        case mitto::PageMessage::kCredit:
+          CHECK_GT(frame->credit.bytes, 0u);
+          CHECK_LE(frame->credit.bytes, mitto::kBodyWindow);
+          break;
+        case mitto::PageMessage::kGetCookies:
+          CHECK_EQ(payload.size(), 8u);
+          break;
+        case mitto::PageMessage::kSetCookie:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->cookie_line));
+          break;
+        case mitto::PageMessage::kLoaded:
+          CHECK(payload.empty());
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
+        case mitto::PageMessage::kResponseStarted:
+        case mitto::PageMessage::kResponseBody:
+        case mitto::PageMessage::kResponseEnded:
+        case mitto::PageMessage::kCookies:
           // Only a Session sends these.
           NOTREACHED();
       }
