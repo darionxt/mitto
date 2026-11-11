@@ -138,26 +138,33 @@ void PageEvents::Push(PageEvent event) {
 
 int PageEvents::PushReport(PageEvent event) {
   base::AutoLock lock(lock_);
-  const int pushed = dropped_reports_ > 0 ? 2 : 1;
-  if (waiting_reports_ + pushed > kMaxWaitingReports ||
-      event.message.size() > kMaxWaitingReportBytes - waiting_report_bytes_) {
-    ++dropped_reports_;
-    return 0;
-  }
+  std::optional<PageEvent> note;
   if (dropped_reports_ > 0) {
-    PageEvent note;
-    note.type = MITTO_PAGE_EVENT_CONSOLE;
-    note.level = MITTO_PAGE_CONSOLE_WARNING;
-    note.message = base::StrCat(
+    note.emplace();
+    note->type = MITTO_PAGE_EVENT_CONSOLE;
+    note->level = MITTO_PAGE_CONSOLE_WARNING;
+    note->message = base::StrCat(
         {"the library dropped ", base::NumberToString(dropped_reports_),
          " console messages and uncaught errors of this Page, because too "
          "many waited untaken"});
-    AddReport(std::move(note));
+  }
+  const size_t pushed = note ? 2 : 1;
+  const size_t bytes =
+      event.message.size() + (note ? note->message.size() : 0);
+  // Neither sum can wrap: what waits stays within the limits, and one
+  // message is at most a frame.
+  if (waiting_reports_ + pushed > kMaxWaitingReports ||
+      waiting_report_bytes_ + bytes > kMaxWaitingReportBytes) {
+    ++dropped_reports_;
+    return 0;
+  }
+  if (note) {
+    AddReport(*std::move(note));
     dropped_reports_ = 0;
   }
   AddReport(std::move(event));
   event_waiting_.Signal();
-  return pushed;
+  return static_cast<int>(pushed);
 }
 
 void PageEvents::AddReport(PageEvent event) {

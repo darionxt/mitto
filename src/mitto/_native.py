@@ -234,7 +234,8 @@ class MittoPageEvent(ctypes.Structure):
         ("call", ctypes.c_uint64),
         ("json", ctypes.POINTER(ctypes.c_char)),
         ("json_size", ctypes.c_size_t),
-        ("message", ctypes.c_char_p),
+        ("message", ctypes.POINTER(ctypes.c_char)),
+        ("message_size", ctypes.c_size_t),
         ("level", ctypes.c_int32),
     )
 
@@ -1375,7 +1376,8 @@ def _copy_page_event(native: MittoPageEvent) -> NativePageEvent:
 
     The native core checks that what the Page process writes is UTF-8, and its own messages are, so nothing is replaced.
     """
-    message = "" if native.message is None else native.message.decode(errors="replace")
+    # By its size, since the Page process may write a NUL character in it.
+    message = ctypes.string_at(native.message, native.message_size).decode(errors="replace") if native.message else ""
     match PageEventType(native.type):
         case PageEventType.EVALUATED:
             result = ctypes.string_at(native.json, native.json_size).decode(errors="replace") if native.json else ""

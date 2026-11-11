@@ -1154,12 +1154,16 @@ def next_page_event(library: ctypes.CDLL, page: Any) -> tuple[int, int, int, str
     assert library.mitto_page_next_event(page, EVENT_TIMEOUT_MS, ctypes.byref(event)) == 0
     try:
         json_text = ctypes.string_at(event.json, event.json_size).decode() if event.json else ""
-        message = event.message.decode() if event.message else ""
-        return event.type, event.error, event.call, json_text, message
+        return event.type, event.error, event.call, json_text, page_event_message(event)
     finally:
         library.mitto_page_event_free(ctypes.byref(event))
         assert not event.json
         assert not event.message
+
+
+def page_event_message(event: _native.MittoPageEvent) -> str:
+    """Return the message of a Page's event, by its size, which counts any NUL character in it."""
+    return ctypes.string_at(event.message, event.message_size).decode() if event.message else ""
 
 
 def next_page_report(library: ctypes.CDLL, page: Any) -> tuple[int, int, int, str]:
@@ -1167,7 +1171,7 @@ def next_page_report(library: ctypes.CDLL, page: Any) -> tuple[int, int, int, st
     event = _native.MittoPageEvent()
     assert library.mitto_page_next_event(page, EVENT_TIMEOUT_MS, ctypes.byref(event)) == 0
     try:
-        return event.type, event.error, event.level, event.message.decode() if event.message else ""
+        return event.type, event.error, event.level, page_event_message(event)
     finally:
         library.mitto_page_event_free(ctypes.byref(event))
 
@@ -1335,6 +1339,24 @@ def test_a_page_reports_console_messages_and_uncaught_errors_before_its_result(
     assert next_page_event(native_library, page_handle)[:4] == (_native.PageEventType.EVALUATED, 0, call, "0")
 
 
+def test_the_message_of_a_page_event_keeps_a_nul_character(native_library: ctypes.CDLL, page_handle: Any) -> None:
+    _, call = evaluate(native_library, page_handle, b"console.log('a\\0b'); throw 'c\\0d'")
+
+    assert next_page_report(native_library, page_handle) == (
+        _native.PageEventType.CONSOLE,
+        0,
+        _native.ConsoleLevel.LOG,
+        "a\0b",
+    )
+    assert next_page_event(native_library, page_handle) == (
+        _native.PageEventType.EVALUATED,
+        _native.PageErrorCode.SCRIPT,
+        call,
+        "",
+        "Uncaught c\0d",
+    )
+
+
 def test_page_end_waits_ends_a_wait_on_another_thread_and_each_later_one(
     native_library: ctypes.CDLL, page_handle: Any
 ) -> None:
@@ -1368,16 +1390,7 @@ def test_a_page_drops_reports_that_wait_untaken_past_the_limit_and_says_how_many
     _, call = evaluate(native_library, page_handle, b"for (let i = 0; i < 1500; i++) console.log(i); 'done'")
 
     # The list names the Page once for each event that it holds: 1000 console messages and the result.
-    named = 0
-    kind = ctypes.c_int32()
-    handle = ctypes.c_void_p()
-    deadline = time.monotonic() + EVENT_TIMEOUT_MS / 1000
-    while named < 1001:
-        if native_library.mitto_session_next_ready(session_handle, ctypes.byref(kind), ctypes.byref(handle)) == 0:
-            named += 1
-        else:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
+    wait_until_named(native_library, session_handle, 1001)
 
     console = _native.PageEventType.CONSOLE
     log = _native.ConsoleLevel.LOG
@@ -1393,6 +1406,52 @@ def test_a_page_drops_reports_that_wait_untaken_past_the_limit_and_says_how_many
     )
     assert next_page_report(native_library, page_handle) == (console, 0, log, "after")
     assert next_page_event(native_library, page_handle)[:3] == (_native.PageEventType.EVALUATED, 0, call)
+
+
+def test_the_note_of_dropped_reports_counts_toward_the_limit_on_their_text(
+    native_library: ctypes.CDLL, session_handle: Any, page_handle: Any
+) -> None:
+    # Two of the longest console messages fill the 32 MiB that may wait, but for 2 bytes.
+    longest = 16 * 1024 * 1024 - 1
+    native_library.mitto_session_wait_for_event(session_handle, 0)
+    script = f"const longest = 'x'.repeat({longest}); for (let i = 0; i < 3; i++) console.log(longest); 1"
+    _, first = evaluate(native_library, page_handle, script.encode())
+    wait_until_named(native_library, session_handle, 3)
+    report = next_page_report(native_library, page_handle)
+    assert (report[:3], len(report[3])) == ((_native.PageEventType.CONSOLE, 0, _native.ConsoleLevel.LOG), longest)
+
+    # With the one taken, another fits by itself, but not with the note that says the third was dropped.
+    _, second = evaluate(native_library, page_handle, b"console.log(longest); 2")
+    wait_until_named(native_library, session_handle, 1)
+
+    console = _native.PageEventType.CONSOLE
+    report = next_page_report(native_library, page_handle)
+    assert (report[0], len(report[3])) == (console, longest)
+    assert next_page_event(native_library, page_handle)[2:4] == (first, "1")
+    assert next_page_event(native_library, page_handle)[2:4] == (second, "2")
+    _, third = evaluate(native_library, page_handle, b"console.log('small')")
+    assert next_page_report(native_library, page_handle) == (
+        console,
+        0,
+        _native.ConsoleLevel.WARNING,
+        "the library dropped 2 console messages and uncaught errors of this Page, because too many waited untaken",
+    )
+    assert next_page_report(native_library, page_handle) == (console, 0, _native.ConsoleLevel.LOG, "small")
+    assert next_page_event(native_library, page_handle)[2] == third
+
+
+def wait_until_named(library: ctypes.CDLL, session: Any, count: int) -> None:
+    """Wait until the Session's list of what is ready has named `count` more events."""
+    named = 0
+    kind = ctypes.c_int32()
+    handle = ctypes.c_void_p()
+    deadline = time.monotonic() + EVENT_TIMEOUT_MS / 1000
+    while named < count:
+        if library.mitto_session_next_ready(session, ctypes.byref(kind), ctypes.byref(handle)) == 0:
+            named += 1
+        else:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
 
 
 def test_a_page_that_refuses_its_time_zone_ends_and_says_why(

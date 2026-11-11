@@ -200,8 +200,9 @@ typedef struct MittoPageEvent {
   // 9". CONSOLE: the message, in UTF-8, with its arguments written as V8's
   // inspector writes them for Chrome's log, separated by spaces. The Page
   // process writes both, so a caller reads them as it would read text from a
-  // server.
+  // server, and they may hold a NUL character, which `message_size` counts.
   char* message;
+  size_t message_size;
   // CONSOLE: one of the MITTO_PAGE_CONSOLE values.
   int32_t level;
 } MittoPageEvent;

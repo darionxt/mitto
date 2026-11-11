@@ -255,6 +255,15 @@ def test_a_page_keeps_what_its_scripts_write_to_the_console(page: Page) -> None:
     assert page.uncaught_errors == []
 
 
+def test_console_messages_and_errors_keep_a_nul_character(page: Page) -> None:
+    page.evaluate("console.log('a\\0b')")
+    with pytest.raises(ScriptError) as raised:
+        page.evaluate("throw 'c\\0d'")
+
+    assert page.console_messages == [ConsoleMessage("log", "a\0b")]
+    assert raised.value.message == "Uncaught c\0d"
+
+
 def test_a_page_keeps_the_last_of_many_console_messages(page: Page) -> None:
     page.evaluate(f"for (let i = 0; i < {KEPT_REPORTS + 500}; i++) console.log(i)")
 

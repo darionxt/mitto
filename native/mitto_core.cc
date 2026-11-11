@@ -1684,6 +1684,7 @@ int32_t mitto_page_next_event(MittoPage* page,
   if (next.error != MITTO_PAGE_ERROR_NONE ||
       next.type == MITTO_PAGE_EVENT_CONSOLE) {
     event->message = mitto::CopyToNewBuffer(next.message);
+    event->message_size = next.message.size();
   }
   event->level = next.level;
   return net::OK;
