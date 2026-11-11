@@ -3,6 +3,7 @@
 //
 // Upstream: third_party/blink/renderer/core/dom/dom_exception.h
 // Upstream: third_party/blink/renderer/core/dom/dom_exception.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.cc
 
 #ifndef MITTO_DOM_DOM_EXCEPTION_H_
 #define MITTO_DOM_DOM_EXCEPTION_H_

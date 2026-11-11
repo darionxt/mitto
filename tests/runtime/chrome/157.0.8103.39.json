@@ -1355,6 +1355,12 @@
         }
       ],
       [
+        "the own properties of a DOMException that is thrown and one that is made",
+        {
+          "value": "[[[\"stack\",{\"enumerable\":false,\"configurable\":true,\"get\":{\"name\":\"\",\"length\":0},\"set\":{\"name\":\"\",\"length\":1}}]],\"string\",[]]"
+        }
+      ],
+      [
         "Event with a number for its dictionary",
         {
           "threw": "TypeError: Failed to construct 'Event': The provided value is not of type 'EventInit'."

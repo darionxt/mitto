@@ -6,6 +6,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/v8_dom_exception.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
 
@@ -59,10 +61,17 @@ DOMException::DOMException(const std::u16string& message,
 // static
 bindings::PerIsolateData::DOMExceptionHooks DOMException::BindingsHooks() {
   bindings::PerIsolateData::DOMExceptionHooks hooks;
+  // Blink's V8ThrowDOMException::CreateOrEmpty(): one that the bindings throw
+  // gets the stack where it is thrown, which `new DOMException()` does not.
   hooks.create = [](v8::Isolate* isolate, std::string_view name,
                     std::string_view message) -> v8::Local<v8::Value> {
-    return Create(base::UTF8ToUTF16(message), base::UTF8ToUTF16(name))
-        ->ToV8(isolate);
+    const v8::Local<v8::Object> wrapper =
+        Create(base::UTF8ToUTF16(message), base::UTF8ToUTF16(name))
+            ->ToV8(isolate);
+    if (!isolate->IsExecutionTerminating()) {
+      v8::Exception::CaptureStackTrace(isolate->GetCurrentContext(), wrapper);
+    }
+    return wrapper;
   };
   // Blink's DOMException::AddContextToMessages().
   hooks.add_context = [](v8::Isolate* isolate, v8::Local<v8::Value> exception,

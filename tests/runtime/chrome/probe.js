@@ -129,6 +129,20 @@
       target.dispatchEvent(event);
       return thrown;
     },
+    "the own properties of a DOMException that is thrown and one that is made": () => {
+      const target = new EventTarget();
+      const event = new Event("x");
+      let thrown;
+      target.addEventListener("x", () => {
+        try {
+          target.dispatchEvent(event);
+        } catch (error) {
+          thrown = error;
+        }
+      });
+      target.dispatchEvent(event);
+      return [ownProperties(thrown), typeof thrown.stack, ownProperties(new DOMException("m"))];
+    },
     "Event with a number for its dictionary": () => new Event("x", 5),
     "Event with a symbol for its type": () => new Event(Symbol("s")),
     "Event with a dictionary whose getter throws": () =>
