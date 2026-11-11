@@ -303,6 +303,18 @@ def test_a_promise_that_a_later_script_settles_gives_its_result_then(session: _S
     assert session.reports == []
 
 
+def test_a_promise_settled_by_a_later_script_gives_its_result_after_that_scripts_uncaught_errors(
+    session: _Session,
+) -> None:
+    session.start()
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"new Promise(resolve => globalThis.settle = resolve)")
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"settle({toJSON() { Promise.reject('lost'); return 1; }}); 2")
+
+    assert session.evaluated() == (1, False, "1")
+    assert session.reports == [(_UNCAUGHT_ERROR, b"Uncaught (in promise) lost")]
+    assert session.evaluated() == (2, False, "2")
+
+
 def test_a_page_sends_what_its_scripts_write_to_the_console_before_their_result(session: _Session) -> None:
     session.start()
     script = """

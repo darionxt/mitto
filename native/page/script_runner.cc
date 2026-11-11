@@ -3,6 +3,7 @@
 #include <array>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
@@ -115,8 +116,6 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
   }
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
-  // Sent once the errors that the script leaves uncaught have been, so that
-  // the Session has heard of them by the time it has the result.
   std::optional<PageEvaluated> evaluated;
   {
     const v8::Context::Scope context_scope(context);
@@ -139,12 +138,20 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
       evaluated = ResultOf(call, context, result);
     }
   }
+  if (evaluated) {
+    settled_.push_back(*std::move(evaluated));
+  }
   RunPendingTasks();
   // As Blink does after each task.
   isolate_->PerformMicrotaskCheckpoint();
   reporter_->ReportUnhandledRejections(context);
-  if (evaluated) {
-    send_.Run(EncodeEvaluated(*evaluated));
+  // After the errors that the task left uncaught, so that the Session has
+  // heard of them by the time it has a result. Writing them out may have run
+  // more microtasks, which may have settled more.
+  std::vector<PageEvaluated> settled;
+  settled.swap(settled_);
+  for (const PageEvaluated& result : settled) {
+    send_.Run(EncodeEvaluated(result));
   }
 }
 
@@ -237,8 +244,8 @@ void ScriptRunner::OnFulfilled(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
   uint64_t call = 0;
   ScriptRunner& runner = FromCallback(info, call);
-  runner.send_.Run(EncodeEvaluated(
-      runner.ResultOf(call, info.GetIsolate()->GetCurrentContext(), info[0])));
+  runner.settled_.push_back(
+      runner.ResultOf(call, info.GetIsolate()->GetCurrentContext(), info[0]));
 }
 
 // static
@@ -246,9 +253,9 @@ void ScriptRunner::OnRejected(const v8::FunctionCallbackInfo<v8::Value>& info) {
   uint64_t call = 0;
   ScriptRunner& runner = FromCallback(info, call);
   v8::Isolate* const isolate = info.GetIsolate();
-  runner.send_.Run(EncodeEvaluated(runner.FailureOf(
+  runner.settled_.push_back(runner.FailureOf(
       call, DescribeUncaught(isolate, isolate->GetCurrentContext(), info[0],
-                             kUncaughtInPromise, kMaxEvaluatedTextSize))));
+                             kUncaughtInPromise, kMaxEvaluatedTextSize)));
 }
 
 void ScriptRunner::RunPendingTasks() {

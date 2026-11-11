@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
@@ -66,7 +67,7 @@ class ScriptRunner {
   static PageEvaluated FailureOf(uint64_t call, std::string text);
 
   // Returns the result of `call` if `promise` has settled. If not, returns
-  // nullopt and sends the result once it settles.
+  // nullopt and queues the result in `settled_` once it settles.
   std::optional<PageEvaluated> SettledResultOf(uint64_t call,
                                                v8::Local<v8::Context> context,
                                                v8::Local<v8::Promise> promise);
@@ -87,6 +88,9 @@ class ScriptRunner {
   const raw_ptr<v8::Isolate> isolate_;
   SendFrame send_;
   std::unique_ptr<PageReporter> reporter_;
+  // The results of the calls that the current task has settled, which go to
+  // the Session once the task's uncaught errors have.
+  std::vector<PageEvaluated> settled_;
   v8::Global<v8::Context> context_;
 };
 
