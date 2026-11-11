@@ -166,10 +166,11 @@ third_party\ninja\ninja.exe -C out\runtime runtime
 
 A compile job of V8 needs far more memory than one of the library, and ninja runs as many jobs as the machine has cores, plus two. On a Mac with 16 GB, a build at that default took about 14 GiB with the system's compression of memory, and left the other programs on the machine with almost nothing, so build V8 there with about 5 jobs, such as `autoninja -j5 -C out/runtime runtime`, or on a larger machine.
 
-This builds two targets:
+This builds three things:
 
-- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version.
-- The Web IDL database, `out/runtime/gen/mitto/bindings/web_idl_database.pickle`, which nothing reads yet: see [below](#the-web-idl-database).
+- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version. Each context has the interfaces that the Runtime implements, such as `Event` and `EventTarget`, with Chrome's members and messages. `--enable-blink-features=` and `--disable-blink-features=`, before the script, turn runtime-enabled features on and off by name, as in Chrome ([runtime.md](runtime.md#runtime-enabled-features)).
+- The Web IDL database, `out/runtime/gen/mitto/bindings/web_idl_database.pickle`: see [below](#the-web-idl-database).
+- The bindings, which the bindings generator writes from the database into `out/runtime/gen/mitto/bindings`, with a listing of every interface and member it plans, `web_idl_listing.txt`, and the generator's own test, which checks that it refuses an extended attribute it does not know ([runtime.md](runtime.md#the-bindings)). The generator reads the whole database on every build, so a construct it does not handle stops the build with a message that names it.
 
 ```text
 $ out/runtime/mitto_page --version
@@ -178,7 +179,7 @@ $ out/runtime/mitto_page 'typeof WebAssembly'
 object
 ```
 
-[`tests/test_page_program.py`](../tests/test_page_program.py) runs the program that `MITTO_PAGE_PROGRAM` names, and skips without it. CI runs it on every Host, against the program in the wheel that it installs ([In CI](#in-ci)), and on Linux against builds of the program with AddressSanitizer and UndefinedBehaviorSanitizer ([Sanitizer builds](#sanitizer-builds-and-the-fuzz-target)).
+[`tests/test_page_program.py`](../tests/test_page_program.py) and [`tests/test_page_bindings.py`](../tests/test_page_bindings.py) run the program that `MITTO_PAGE_PROGRAM` names, and skip without it. CI runs them on every Host, against the program in the wheel that it installs ([In CI](#in-ci)), and on Linux against builds of the program with AddressSanitizer and UndefinedBehaviorSanitizer ([Sanitizer builds](#sanitizer-builds-and-the-fuzz-target)).
 
 The build needs one thing from the checkout that the native core does not: the profiles by which Chrome's releases lay out V8's builtins, about 20 MB, which [`tools/workspace/bootstrap.py`](../tools/workspace/bootstrap.py) fetches with V8's own `v8/tools/builtins-pgo/download_profiles.py`, as a hook of Chromium's `DEPS` does when `checkout_pgo_profiles` is set. That setting would also fetch Chrome's own profiles for its compiler, which nothing here reads.
 
@@ -238,7 +239,7 @@ The library builds as before: its target, its sources and `args.gn` are unchange
 
 ### The Web IDL database
 
-[`native/bindings/BUILD.gn`](../native/bindings/BUILD.gn) builds Blink's Web IDL database, as Blink's `web_idl_database` target in `third_party/blink/renderer/bindings/BUILD.gn` does: it runs Blink's `collect_idl_files.py` on Blink's lists of IDL files in `idl_in_core.gni` and `idl_in_modules.gni`, and then `build_web_idl_database.py` on the result, with `runtime_enabled_features.json5`. Blink's own targets cannot be used as they are, because their visibility leaves out everything outside Blink. They also read the IDL files that only Blink's tests see, such as those of `internals`, which a page never has and which Blink generates from files of its own, so this database leaves them out. That includes `core/timing/internals_profiler.idl`, which Blink lists with the files of pages but which only adds to `Internals`, so that the database cannot be built without Blink's tests. For Chromium 157.0.8103.39 it reads 2,177 of the 2,237 IDL files under `third_party/blink/renderer`: 864 of Blink's core and 1,313 of its modules. Of the others, 54 are for Blink's tests, 4 for Android's WebView, 1 for ChromeOS alone, and 1 is in no list of Blink's build. The database file is 12.9 MB. The bindings generator will read it. Its build reads each of these IDL files and Blink's scripts with the modules they import, so a source export made from a build of the Runtime carries them all.
+[`native/bindings/BUILD.gn`](../native/bindings/BUILD.gn) builds Blink's Web IDL database, as Blink's `web_idl_database` target in `third_party/blink/renderer/bindings/BUILD.gn` does: it runs Blink's `collect_idl_files.py` on Blink's lists of IDL files in `idl_in_core.gni` and `idl_in_modules.gni`, and then `build_web_idl_database.py` on the result, with `runtime_enabled_features.json5`. Blink's own targets cannot be used as they are, because their visibility leaves out everything outside Blink. They also read the IDL files that only Blink's tests see, such as those of `internals`, which a page never has and which Blink generates from files of its own, so this database leaves them out. That includes `core/timing/internals_profiler.idl`, which Blink lists with the files of pages but which only adds to `Internals`, so that the database cannot be built without Blink's tests. For Chromium 157.0.8103.39 it reads 2,177 of the 2,237 IDL files under `third_party/blink/renderer`: 864 of Blink's core and 1,313 of its modules. Of the others, 54 are for Blink's tests, 4 for Android's WebView, 1 for ChromeOS alone, and 1 is in no list of Blink's build. The database file is 12.9 MB. The [bindings generator](runtime.md#the-bindings) reads it. Its build reads each of these IDL files and Blink's scripts with the modules they import, so a source export made from a build of the Runtime carries them all.
 
 ### Times and sizes
 
@@ -422,7 +423,7 @@ The fuzz targets have a build of their own because Chromium's fuzzing builds def
 
 ```bash
 export MITTO_PAGE_PROGRAM=/absolute/path/to/new/directory/chromium-<tag>/src/out/runtime-asan/mitto_page
-ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py
+ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py
 ```
 
 To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:

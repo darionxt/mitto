@@ -2,7 +2,7 @@
 
 Private until the Runtime ships: Session._open_page() opens one, and AsyncSession._open_page() an AsyncPage. Until the
 Runtime loads documents, a Page holds none: it keeps the URL that it was opened for, fetches nothing, and runs scripts in a
-context that has V8's built-ins and console and nothing of a browser yet. docs/runtime.md says more.
+context that has V8's built-ins, its console and the interfaces that the bindings have so far. docs/runtime.md says more.
 
 What a Page's process sends waits in the native core, as a request's events do. Page takes it with the GIL released, as
 the requests of Session do, and AsyncPage when the Session's event fd, or its waiting thread on Windows, names the Page.

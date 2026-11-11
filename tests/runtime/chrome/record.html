@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Runtime recording</title>
+<!--
+  Runs probe.js in Chrome and posts what it records to the runner that served
+  this page, record.ps1, with the build of Chrome that recorded it.
+  docs/runtime.md says how to run it.
+-->
+<p id="status">Recording.</p>
+<script>
+  (async () => {
+    const status = document.getElementById("status");
+    try {
+      const probe = await (await fetch("probe.js")).text();
+      // An indirect eval runs the probe in the global scope, as the Page
+      // program runs it.
+      const record = JSON.parse((0, eval)(probe));
+      const { fullVersionList } = await navigator.userAgentData.getHighEntropyValues(["fullVersionList"]);
+      const chrome = fullVersionList.find((brand) => brand.brand === "Google Chrome");
+      await fetch("result", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chrome: chrome ? chrome.version : null, probe: record }, null, 2),
+      });
+      status.textContent = "Recorded.";
+    } catch (error) {
+      await fetch("result", { method: "POST", body: JSON.stringify({ error: String(error) }) });
+      status.textContent = `Failed: ${error}`;
+    }
+  })();
+</script>

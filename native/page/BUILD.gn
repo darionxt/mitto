@@ -67,7 +67,17 @@ executable("mitto_page") {
     ":v8_snapshot",
     "//base",
     "//mitto:page_channel",
+    "//mitto/dom",
     "//third_party/icu",
     "//v8",
   ]
+
+  # V8's deoptimizer rewrites return addresses, which Windows' hardware-enforced
+  # shadow stacks (CET) end the process for. V8's own programs leave the linker
+  # flag that turns them on out unless v8_enable_cet_shadow_stack, which is off,
+  # and Chrome starts its renderers with CET disabled
+  # (sandbox/policy/win/sandbox_win.cc), so this program leaves it out too.
+  if (is_win) {
+    configs -= [ "//build/config/compiler:cet_shadow_stack" ]
+  }
 }

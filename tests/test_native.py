@@ -1253,6 +1253,16 @@ def test_a_page_gives_each_result_as_json_with_its_call(native_library: ctypes.C
     assert next_page_event(native_library, page_handle) == (evaluated, 0, third[1], "", "")
 
 
+def test_a_pages_context_has_the_interfaces_that_the_runtime_implements(
+    native_library: ctypes.CDLL, page_handle: Any
+) -> None:
+    # The bindings: tests/test_page_bindings.py compares them with Chrome through the Page program's script argument.
+    script = b"const t = new EventTarget(); let n = 0; t.addEventListener('x', () => n++); [t.dispatchEvent(new Event('x')), n]"
+    _, call = evaluate(native_library, page_handle, script)
+
+    assert next_page_event(native_library, page_handle)[2:4] == (call, "[true,1]")
+
+
 def test_a_script_that_throws_fails_its_call_and_the_page_goes_on(
     native_library: ctypes.CDLL, page_handle: Any
 ) -> None:

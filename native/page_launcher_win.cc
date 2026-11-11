@@ -84,11 +84,6 @@ scoped_refptr<PageProcess> PageProcess::Launch(const base::FilePath& program,
   // The program is a console program, which Windows would give a window of its
   // own when the process that holds the library has no console.
   options.start_hidden = true;
-  // Chromium links its programs to run with CET's shadow stacks where the
-  // processor has them, and V8's deoptimization swaps stacks in a way that
-  // they refuse. So, as Chrome starts its renderers, a Page runs without them.
-  // Upstream: content/browser/renderer_host/renderer_sandboxed_process_launcher_delegate.cc
-  options.disable_cetcompat = true;
   base::Process process = base::LaunchProcess(command_line, options);
   if (!process.IsValid()) {
     return nullptr;
