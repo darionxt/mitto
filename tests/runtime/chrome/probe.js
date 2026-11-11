@@ -40,10 +40,14 @@
   const ownProperties = (object) =>
     Object.getOwnPropertyNames(object).map((name) => [name, describe(object, name)]);
 
+  // JSON would write undefined in an array as null, so it is written as a
+  // string.
+  const json = (value) => JSON.stringify(value, (key, item) => (item === undefined ? "undefined" : item));
+
   const outcome = (f) => {
     try {
       const value = f();
-      return { value: typeof value === "object" && value !== null ? JSON.stringify(value) : String(value) };
+      return { value: typeof value === "object" && value !== null ? json(value) : String(value) };
     } catch (error) {
       return { threw: String(error) };
     }
@@ -241,7 +245,8 @@
     "PopStateEvent with a state": () => {
       const state = {};
       const event = new PopStateEvent("p", { state, hasUAVisualTransition: true, bubbles: true });
-      return [event.state === state, event.hasUAVisualTransition, event.bubbles, new PopStateEvent("q").state];
+      const plain = new PopStateEvent("q");
+      return [event.state === state, event.hasUAVisualTransition, event.bubbles, plain.state === null, plain.bubbles];
     },
   };
   for (const [name, run] of Object.entries(cases)) {

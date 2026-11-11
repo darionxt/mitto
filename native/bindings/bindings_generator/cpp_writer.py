@@ -138,7 +138,10 @@ class _InterfaceWriter:
             target = f"arg{index + 1}_{member_name(argument.name)}"
             site = Site(fail="return;", argument_index=index)
             value = f"info[{index}]"
-            if not argument.is_optional:
+            # A dictionary converts undefined to its members' defaults, so an optional one whose default is {} converts
+            # whatever it gets, as Blink's do.
+            converts_undefined = argument.idl_type.kind is TypeKind.DICTIONARY and argument.default == "{}"
+            if not argument.is_optional or converts_undefined:
                 lines += self.types.from_v8(argument.idl_type, value, target, site, argument_where)
                 passed.append(target)
                 continue

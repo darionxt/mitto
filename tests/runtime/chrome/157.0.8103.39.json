@@ -1465,7 +1465,7 @@
       [
         "PopStateEvent with a state",
         {
-          "value": "[true,true,true,null]"
+          "value": "[true,true,true,true,false]"
         }
       ]
     ]
