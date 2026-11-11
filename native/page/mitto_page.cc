@@ -3,10 +3,14 @@
 // Session over the channel that the argument names: see session_channel.h and
 // docs/runtime.md. Given a script instead, it starts V8, runs the script in a
 // new context and prints what the script returns, as String() would write it.
+// The context's document is about:blank's, or with --html= the one that the
+// HTML parser builds from MARKUP, in UTF-8.
 //
 // Usage: mitto_page [--enable-blink-features=NAMES]
 //                   [--disable-blink-features=NAMES]
-//                   SCRIPT | --session=CHANNEL,PARENT
+//                   [--html=MARKUP] SCRIPT
+//        mitto_page [--enable-blink-features=NAMES]
+//                   [--disable-blink-features=NAMES] --session=CHANNEL,PARENT
 //        mitto_page --version
 //
 // Each context has the interfaces that the Runtime implements, as the Page's
@@ -30,6 +34,7 @@
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/types/expected.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
@@ -68,10 +73,11 @@ constexpr int kWrongArguments = 2;
 
 constexpr std::string_view kUsage =
     "usage: mitto_page [--enable-blink-features=NAMES] "
-    "[--disable-blink-features=NAMES] SCRIPT | --session=CHANNEL,PARENT | "
-    "--version";
+    "[--disable-blink-features=NAMES] [--html=MARKUP] SCRIPT | "
+    "--session=CHANNEL,PARENT | --version";
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
+constexpr std::string_view kHtml = "--html=";
 
 void WriteLine(FILE* stream, std::string_view text) {
   // SAFETY: fwrite() reads text.size() bytes from text.data(), which `text`
@@ -94,14 +100,16 @@ std::optional<std::string> ToUtf8(v8::Isolate* isolate,
   return std::string(UNSAFE_BUFFERS(std::string_view(*text, text.length())));
 }
 
-// Runs `source` in a new context, and writes what it returns to standard
-// output, or what it throws to standard error. Returns whether it finished
-// without throwing.
-bool RunScript(v8::Isolate* isolate, std::string_view source) {
+// Runs `source` in a new context whose document `html` builds, and writes what
+// it returns to standard output, or what it throws to standard error. Returns
+// whether it finished without throwing.
+bool RunScript(v8::Isolate* isolate,
+               std::string_view html,
+               std::string_view source) {
   const v8::HandleScope handle_scope(isolate);
-  const v8::Local<v8::Context> context = v8::Context::New(isolate);
+  const v8::Local<v8::Context> context =
+      mitto::NewPageContext(isolate, base::UTF8ToUTF16(html));
   const v8::Context::Scope context_scope(context);
-  mitto::InstallPageInterfaces(context);
   const v8::TryCatch try_catch(isolate);
   v8::Local<v8::String> source_string;
   v8::Local<v8::Script> script;
@@ -142,12 +150,15 @@ int main(int argc, char** argv) {
   // Chrome's options: a second one of the same name replaces the first.
   std::string_view enable;
   std::string_view disable;
+  std::optional<std::string_view> html;
   for (const std::string_view option :
        arguments.subspan(1u).first(arguments.size() - 2)) {
     if (option.starts_with(kEnableFeatures)) {
       enable = option.substr(kEnableFeatures.size());
     } else if (option.starts_with(kDisableFeatures)) {
       disable = option.substr(kDisableFeatures.size());
+    } else if (option.starts_with(kHtml)) {
+      html = option.substr(kHtml.size());
     } else {
       WriteLine(stderr, kUsage);
       return kWrongArguments;
@@ -166,6 +177,11 @@ int main(int argc, char** argv) {
     session = mitto::ParseSessionArgument(argument);
     if (!session) {
       WriteLine(stderr, "--session= names no channel and process");
+      return kWrongArguments;
+    }
+    if (html) {
+      // A Session's Page gets its document from the Session.
+      WriteLine(stderr, kUsage);
       return kWrongArguments;
     }
   }
@@ -204,7 +220,7 @@ int main(int argc, char** argv) {
     if (session) {
       mitto::ServeSession(*platform, isolate, *std::move(session));
     } else {
-      finished = RunScript(isolate, argument);
+      finished = RunScript(isolate, html.value_or(""), argument);
     }
   }
   isolate->Dispose();

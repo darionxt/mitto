@@ -36,4 +36,13 @@ void ScriptWrappable::AssociateWithWrapper(v8::Isolate* isolate,
   wrapper_.Reset(isolate, wrapper);
 }
 
+void ScriptWrappable::AssociateWithGlobalProxy(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> global_proxy) {
+  CHECK(wrapper_.IsEmpty());
+  v8::Object::WrapGlobal(isolate, global_proxy, this,
+                         GetWrapperTypeInfo()->tag);
+  wrapper_.Reset(isolate, global_proxy);
+}
+
 }  // namespace mitto::bindings

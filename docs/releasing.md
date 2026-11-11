@@ -60,6 +60,15 @@ Each Chrome Release is recorded at its newest pinnable build, because that is th
 
    If the tree has moved them, such as to a newer html5lib or to a `third_party/html5lib-tests` of its own, take them from there and update `ORIGIN.md`, and copy their `README.md`, `LICENSE` and `AUTHORS.rst` along. Read the diff of the tests and what the program prints. A test that fails now, or one in [the list of failures](../native/test/html5lib_tokenizer_failures.txt) that passes, is a new test or a change to an old one. Fix the tokenizer, or put the test in the list under the reason it fails, and say which in the run's pull request.
 
+   Do the same for [html5lib's tree construction tests](building.md#the-tree-builders-tests), against the tree builder in the new release's Runtime build, below, from where [their `ORIGIN.md`](../native/test/html5lib_tree/ORIGIN.md) names them:
+
+   ```bash
+   cp third_party/catapult/third_party/html5lib-1.1/html5lib/tests/testdata/tree-construction/*.dat mitto/test/html5lib_tree/
+   out/runtime/html_tree_builder_test mitto/test/html5lib_tree mitto/test/html5lib_tree_failures.txt
+   ```
+
+   A test that now builds another tree without skipping a rule, or one in [their list of failures](../native/test/html5lib_tree_failures.txt) that passes or skips a rule, is a new test or a change to an old one. Fix the tree builder, or put the test in the list under the reason it fails, and say which in the run's pull request.
+
    The build of the Runtime runs [the bindings generator](runtime.md#the-bindings) over the new release's whole Web IDL database. If it stops on a kind of definition, a type or an extended attribute that it does not handle, read how the new release's `bind_gen` handles it and what it changes for a page, and teach the generator, in `extended_attributes.py` or the module that the message names. Then, on the macOS or the Linux machine, show in the run's pull request the interfaces and members that the generator adds or drops between the two Engine Releases, for review. Build its listing again in the old release's Runtime build directory, which step 3 of the run before made, so that the same generator plans both, and compare the two:
 
    ```bash

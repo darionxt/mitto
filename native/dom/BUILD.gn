@@ -1,20 +1,88 @@
 # The Page's DOM: the C++ classes of the interfaces that the Runtime implements,
-# built with the bindings that the generator writes for them, which call them.
+# built with the bindings that the generator writes for them, which call them,
+# and the tree builder of the HTML parser, which makes their nodes.
 
 import("//mitto/bindings/interfaces.gni")
 
 source_set("dom") {
   sources = [
+    "character_data.cc",
+    "character_data.h",
+    "comment.cc",
+    "comment.h",
+    "document.cc",
+    "document.h",
+    "document_type.cc",
+    "document_type.h",
     "dom_exception.cc",
     "dom_exception.h",
+    "element.cc",
+    "element.h",
     "event.cc",
     "event.h",
     "event_target.cc",
     "event_target.h",
+    "html_body_element.cc",
+    "html_body_element.h",
+    "html_br_element.cc",
+    "html_br_element.h",
+    "html_div_element.cc",
+    "html_div_element.h",
+    "html_document.cc",
+    "html_document.h",
+    "html_element.cc",
+    "html_element.h",
+    "html_element_factory.cc",
+    "html_element_factory.h",
+    "html_head_element.cc",
+    "html_head_element.h",
+    "html_heading_element.cc",
+    "html_heading_element.h",
+    "html_html_element.cc",
+    "html_html_element.h",
+    "html_li_element.cc",
+    "html_li_element.h",
+    "html_link_element.cc",
+    "html_link_element.h",
+    "html_meta_element.cc",
+    "html_meta_element.h",
+    "html_names.h",
+    "html_olist_element.cc",
+    "html_olist_element.h",
+    "html_paragraph_element.cc",
+    "html_paragraph_element.h",
+    "html_pre_element.cc",
+    "html_pre_element.h",
+    "html_script_element.cc",
+    "html_script_element.h",
+    "html_span_element.cc",
+    "html_span_element.h",
+    "html_style_element.cc",
+    "html_style_element.h",
+    "html_title_element.cc",
+    "html_title_element.h",
+    "html_tree_builder.cc",
+    "html_tree_builder.h",
+    "html_ulist_element.cc",
+    "html_ulist_element.h",
+    "html_unknown_element.cc",
+    "html_unknown_element.h",
+    "markup_serializer.cc",
+    "markup_serializer.h",
+    "node.cc",
+    "node.h",
     "page_interfaces.cc",
     "page_interfaces.h",
     "pop_state_event.cc",
     "pop_state_event.h",
+    "selector_query.cc",
+    "selector_query.h",
+    "text.cc",
+    "text.h",
+    "window.cc",
+    "window.h",
+    "window_properties.cc",
+    "window_properties.h",
   ]
 
   # What //mitto/bindings:generate_bindings writes for these classes.
@@ -34,6 +102,27 @@ source_set("dom") {
   public_deps = [ "//mitto/bindings" ]
   deps = [
     "//base",
+    "//mitto/html:tokenizer",
     "//v8",
   ]
+}
+
+# Runs html5lib's tree construction tests, which native/test/html5lib_tree
+# holds, against the tree builder, on V8's C++ heap as the Page program has it.
+executable("html_tree_builder_test") {
+  sources = [ "//mitto/test/html_tree_builder_test.cc" ]
+  deps = [
+    ":dom",
+    "//base",
+    "//mitto/page:icu_data",
+    "//mitto/page:v8_snapshot",
+    "//third_party/icu",
+    "//v8",
+  ]
+
+  # As the Page program leaves it out, since it runs V8 too: see
+  # native/page/BUILD.gn.
+  if (is_win) {
+    configs -= [ "//build/config/compiler:cet_shadow_stack" ]
+  }
 }

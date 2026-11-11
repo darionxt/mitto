@@ -64,6 +64,15 @@ class PerIsolateData {
   // When the Page started, which DOMHighResTimeStamp counts from.
   base::TimeTicks time_origin() const { return time_origin_; }
 
+  // Whether the Page's context is a secure context, which decides whether it
+  // gets the members that Web IDL's [SecureContext] puts behind one. A Page's
+  // first document is about:blank, which is. The document it loads decides it
+  // for the context made for that document.
+  bool secure_context() const { return secure_context_; }
+  void set_secure_context(bool secure_context) {
+    secure_context_ = secure_context;
+  }
+
   // The interface's template, which this makes the first time.
   v8::Local<v8::FunctionTemplate> InterfaceTemplate(
       v8::Isolate* isolate,
@@ -94,6 +103,7 @@ class PerIsolateData {
   const raw_ptr<v8::Isolate> isolate_;
   const RuntimeFeatureSet features_;
   const base::TimeTicks time_origin_;
+  bool secure_context_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::FunctionTemplate>>
       templates_;
   DOMExceptionHooks dom_exception_hooks_;

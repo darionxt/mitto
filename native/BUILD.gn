@@ -316,6 +316,7 @@ if (mitto_enable_runtime) {
     deps = [
       "bindings:generator_test",
       "bindings:web_idl_database",
+      "dom:html_tree_builder_test",
       "page:mitto_page",
     ]
   }

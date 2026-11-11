@@ -1,3 +1,7 @@
 # git apply matches a patch against Chromium's files byte for byte, so a clone
 # on Windows must not give the patches CRLF line endings.
 *.patch -text
+
+# html_tree_builder_test reads html5lib's tree construction tests line by line,
+# where a line ends with LF alone.
+native/test/html5lib_tree/*.dat -text

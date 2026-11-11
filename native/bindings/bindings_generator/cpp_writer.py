@@ -1,19 +1,25 @@
 """Writes the C++ of the bindings for the interfaces that have a C++ class.
 
 For each such interface it writes v8_<name>.h and .cc: a callback for each attribute, operation and constructor, which
-checks its receiver and arguments, converts them and calls the class, and a function that installs them on V8's
-templates in the order of the install plan. It also writes the dictionaries and unions those use, the table of
-runtime-enabled features and the function that puts the interface objects on a Page's global object.
+checks its receiver and arguments, converts them and calls the class, a function that installs them on V8's templates
+in the order of the install plan, and one that installs what each context decides on that context's objects. It also
+writes the dictionaries and unions those use, the table of runtime-enabled features and the function that puts the
+interface objects on a Page's global object.
 
 What the callbacks check, and in which order, follows bind_gen's interface.py: the receiver, through V8's signature
 check, whose message is "Illegal invocation"; then for a constructor that it is called with `new`; then the number of
 arguments; then each argument in turn. Each failure throws the message that Blink's ExceptionMessages has for it, in
 the context that ExceptionState adds, such as "Failed to execute 'x' on 'Y': ".
+
+A member whose behaviour the Runtime does not have yet is a Known Gap: it is installed as Chrome installs it, and its
+callback throws. A reflected attribute of a string or a boolean, [Reflect] without a URL or a list of values, has its
+behaviour from the writer itself, which reads and writes the content attribute through the element.
 """
 
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/dictionary.py
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/union.py
+# Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/codegen_expr.py
 
 import dataclasses
 from collections.abc import Iterable
@@ -30,7 +36,9 @@ from bindings_generator.model import (
     Constant,
     Dictionary,
     ExtendedAttributes,
+    IdlType,
     Interface,
+    Operation,
     OperationGroup,
     TypeKind,
 )
@@ -39,20 +47,47 @@ from bindings_generator.web_idl_reader import PAGE_GLOBAL_NAME, Definitions
 
 __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 
-# The extended attributes beyond those of role NONE that the writer follows on an interface it writes. Serializable and
-# Transferable only matter to structured cloning, which nothing in a Page can reach yet: it has neither postMessage()
-# nor structuredClone().
+# The extended attributes beyond those of role NONE that the writer follows on a member it writes behaviour for.
+# - CEReactions: the Runtime has no custom elements, so there are no reactions to run around a call.
+# - CachedAccessor and CachedAttribute: a page sees the same value either way; caching only saves calls.
+# - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
+# - NewObject: the class returns a new object, which Blink only checks.
+# - NoAllocDirectCall: the install plan puts the member where Blink does; V8's fast call itself only saves time.
+# - PutForwards: only an attribute's setter forwards, and the writer refuses that setter's behaviour, so an attribute
+#   with it can have its getter alone.
+# - Serializable and Transferable: only structured cloning reads them, which nothing in a Page can reach yet: it has
+#   neither postMessage() nor structuredClone().
+# The others are followed by the install plan, by the context's install function, or here. A Known Gap needs none of
+# them: the install plan and its condition decide where it goes, and its callback only throws.
 WRITTEN = frozenset(
     {
+        "CEReactions",
+        "CachedAccessor",
         "CachedAttribute",
+        "ContextEnabled",
+        "CrossOrigin",
         "Exposed",
+        "Global",
+        "HTMLConstructor",
+        "LegacyNoInterfaceObject",
         "LegacyUnforgeable",
+        "NewObject",
+        "NoAllocDirectCall",
+        "NotEnumerable",
+        "PutForwards",
         "RaisesException",
+        "Reflect",
+        "Replaceable",
         "RuntimeEnabled",
+        "SecureContext",
         "Serializable",
         "Transferable",
+        "Unscopable",
     }
 )
+
+# What makes a reflected attribute's behaviour more than reading and writing its content attribute.
+_REFLECT_BEYOND_CONTENT = ("URL", "ReflectOnly", "ReflectMissing", "ReflectInvalid", "ReflectEmpty")
 
 _BANNER = "// Written by the bindings generator in native/bindings from Blink's Web IDL\n// database. Do not edit.\n"
 
@@ -64,13 +99,25 @@ class ImplementedInterface:
     Attributes:
         name: the interface's name, whose class is mitto::<name>.
         header: the header that declares the class.
-        missing: the members whose behaviour the Runtime does not have yet, Known Gaps. Their bindings are installed as
-            Chrome's are, and throw when called.
+        missing: the members whose behaviour the Runtime does not have yet, Known Gaps, when `implemented` is None.
+            Their bindings are installed as Chrome's are, and throw when called.
+        implemented: if not None, the only members whose behaviour the class has: every other member is a Known Gap,
+            except a reflected attribute that the writer handles itself. "get x" names the getter of attribute x alone.
+            An indexed or named property operation that is a Known Gap is not installed at all.
     """
 
     name: str
     header: str
     missing: tuple[str, ...] = ()
+    implemented: tuple[str, ...] | None = None
+
+    def has_behaviour(self, member: str, accessor: str | None = None) -> bool:
+        """Whether the class has the member's behaviour, or for `accessor` "get" its getter's."""
+        if self.implemented is None:
+            return member not in self.missing
+        if member in self.implemented:
+            return True
+        return accessor == "get" and f"get {member}" in self.implemented
 
 
 def _check_written(where: str, extended: ExtendedAttributes) -> None:
@@ -80,30 +127,91 @@ def _check_written(where: str, extended: ExtendedAttributes) -> None:
             raise UnhandledError(f"{where}: the C++ writer does not handle the extended attribute [{key}]")
 
 
-def _check_condition(where: str, condition: Condition) -> None:
-    if condition.other:
-        raise UnhandledError(f"{where}: the C++ writer does not handle the condition {condition.describe()}")
+def condition_test(condition: Condition, where: str) -> str | None:
+    """The C++ test of whether a Page installs a construct, or None if it never does.
+
+    A Page is a top-level window that is a secure context, as about:blank is, and is neither isolated nor cross-origin
+    isolated, and no embedder turns a context-enabled feature on for it. A feature that a context could turn on, such
+    as one an origin trial can enable, is on if the Page's set has it, since a Page has no origin trials.
+    """
+    tests = [f"features.IsEnabled(RuntimeFeature::k{feature})" for feature in condition.features]
+    for other in condition.other:
+        if other == "SecureContext":
+            tests.append("data->secure_context()")
+        elif other.startswith("SecureContext="):
+            names = other.removeprefix("SecureContext=").split(",")
+            any_on = " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names)
+            tests.append(f"(data->secure_context() || !({any_on}))")
+        elif other.startswith("RuntimeEnabled=") and other.endswith(" in the context"):
+            name = other.removeprefix("RuntimeEnabled=").removesuffix(" in the context")
+            tests.append(f"features.IsEnabled(RuntimeFeature::k{name})")
+        elif other.startswith("Exposed with "):
+            names = other.removeprefix("Exposed with ").split(" or ")
+            tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
+        elif other.startswith("Exposed="):
+            if PAGE_GLOBAL_NAME not in other.removeprefix("Exposed=").split(","):
+                return None
+        elif other.startswith("CrossOriginIsolatedOrRuntimeEnabled="):
+            names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
+            tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
+        elif other in ("CrossOriginIsolated", "IsolatedContext", "InjectionMitigated") or other.startswith(
+            "ContextEnabled="
+        ):
+            return None
+        else:
+            raise UnhandledError(f"{where}: the C++ writer does not handle the condition {other}")
+    return " && ".join(tests) if tests else "true"
 
 
-def _features_test(condition: Condition) -> str:
-    return " && ".join(f"features.IsEnabled(RuntimeFeature::k{feature})" for feature in condition.features)
+def reflected_attribute(attribute: Attribute) -> str | None:
+    """The content attribute that the writer reflects for `attribute` itself, or None."""
+    extended = attribute.extended_attributes
+    if "Reflect" not in extended or any(key in extended for key in _REFLECT_BEYOND_CONTENT):
+        return None
+    idl_type = attribute.idl_type
+    if idl_type.nullable or idl_type.extended_attributes.entries:
+        return None
+    if not ((idl_type.kind is TypeKind.STRING and idl_type.name == "DOMString") or idl_type.kind is TypeKind.BOOLEAN):
+        return None
+    # Blink's IDL files write a content attribute's "-" as "_", as in Reflect=http_equiv.
+    return (extended.value_of("Reflect") or attribute.name.lower()).replace("_", "-")
 
 
 def _quote(text: str) -> str:
     return '"' + text + '"'
 
 
+def _indent(lines: list[str], prefix: str = "  ") -> list[str]:
+    return [prefix + line if line else "" for line in lines]
+
+
 class _InterfaceWriter:
-    def __init__(self, interface: Interface, implemented: ImplementedInterface, types: TypeMapper) -> None:
+    def __init__(
+        self,
+        interface: Interface,
+        implemented: ImplementedInterface,
+        types: TypeMapper,
+        in_global_prototype_chain: bool,
+        interface_object_parent: str | None,
+    ) -> None:
         self.interface = interface
         self.implemented = implemented
         self.types = types
+        self.in_global_prototype_chain = in_global_prototype_chain
+        self.interface_object_parent = interface_object_parent
         self.cls = f"mitto::{interface.name}"
         self.v8_class = f"V8{interface.name}"
         self.callbacks: list[str] = []
+        self.callback_names: set[str] = set()
 
     def where(self, member: str) -> str:
         return f"{self.interface.name}.{member}"
+
+    def method_name(self, member: Attribute | Operation) -> str:
+        """The C++ method of a member: its name, or its [ImplementedAs]'s, with the first letter in upper case, and
+        "ForBinding" after it when that is the class's own name, as Window's `window` would be."""
+        name = function_name(member.extended_attributes.value_of("ImplementedAs") or member.name)
+        return f"{name}ForBinding" if name == self.interface.name else name
 
     # The callbacks.
 
@@ -115,16 +223,41 @@ class _InterfaceWriter:
             "}",
         ]
 
+    def _lenient_receiver(self) -> list[str]:
+        """[LegacyLenientThis]: with no signature, a receiver of another kind gets undefined and no error."""
+        return [
+            f"{self.cls}* const impl = ToWrappableOf<{self.cls}>(isolate, {self.v8_class}::kWrapperTypeInfo, info.This());",
+            "if (!impl) {",
+            "  return;",
+            "}",
+        ]
+
+    def _promise_receiver(self) -> list[str]:
+        """An operation that returns a promise has no signature, and rejects for a receiver of another kind."""
+        return [
+            f"{self.cls}* const impl = ToWrappableOf<{self.cls}>(isolate, {self.v8_class}::kWrapperTypeInfo, info.This());",
+            "if (!impl) {",
+            '  RejectWithTypeError(info, "Illegal invocation");',
+            "  return;",
+            "}",
+        ]
+
+    @staticmethod
+    def returns_promise(group: OperationGroup) -> bool:
+        return any(overload.return_type.kind is TypeKind.PROMISE for overload in group.overloads)
+
     @staticmethod
     def _exception_state() -> str:
         return "ExceptionState exception_state(isolate);"
 
-    def _arguments(self, arguments: tuple[Argument, ...], where: str) -> tuple[list[str], list[str]]:
+    def _arguments(
+        self, arguments: tuple[Argument, ...], where: str, check_length: bool = True
+    ) -> tuple[list[str], list[str]]:
         """The statements that convert the arguments, and the expressions that pass them."""
         lines: list[str] = []
         passed: list[str] = []
         required = sum(1 for argument in arguments if not argument.is_optional and not argument.is_variadic)
-        if required:
+        if required and check_length:
             lines += [
                 f"if (info.Length() < {required}) {{",
                 f"  exception_state.ThrowTypeError(ExceptionMessages::NotEnoughArguments({required}, info.Length()));",
@@ -133,66 +266,112 @@ class _InterfaceWriter:
             ]
         for index, argument in enumerate(arguments):
             argument_where = f"argument {argument.name} of {where}"
-            if argument.is_variadic:
-                raise UnhandledError(f"{argument_where}: the C++ writer does not handle variadic arguments")
             target = f"arg{index + 1}_{member_name(argument.name)}"
-            site = Site(fail="return;", argument_index=index)
             value = f"info[{index}]"
+            if argument.is_variadic:
+                if index != len(arguments) - 1:
+                    raise UnhandledError(f"{argument_where}: a variadic argument that is not the last")
+                cpp_type = self.types.value_type(argument.idl_type, argument_where)
+                site = Site(fail="return;", argument_index_expression="i")
+                converted = self.types.from_v8(argument.idl_type, "info[i]", "item", site, argument_where)
+                lines += [
+                    f"std::vector<{cpp_type}> {target};",
+                    f"for (int i = {index}; i < info.Length(); ++i) {{",
+                    *_indent(converted),
+                    f"  {target}.push_back(std::move(item));",
+                    "}",
+                ]
+                passed.append(target)
+                continue
+            site = Site(fail="return;", argument_index=index)
             # A dictionary converts undefined to its members' defaults, so an optional one whose default is {} converts
             # whatever it gets, as Blink's do.
-            converts_undefined = argument.idl_type.kind is TypeKind.DICTIONARY and argument.default == "{}"
+            reduced = self.types.reduce(argument.idl_type)
+            converts_undefined = reduced.kind is TypeKind.DICTIONARY and argument.default == "{}"
             if not argument.is_optional or converts_undefined:
                 lines += self.types.from_v8(argument.idl_type, value, target, site, argument_where)
                 passed.append(target)
                 continue
             cpp_type = self.types.value_type(argument.idl_type, argument_where)
+            converted = self.types.from_v8(argument.idl_type, value, f"{target}_value", site, argument_where)
             if argument.default is not None:
                 default = self.types.default_value(argument.idl_type, argument.default, argument_where)
                 lines.append(f"{cpp_type} {target} = {default};")
-                lines.append(f"if (!{value}->IsUndefined()) {{")
-                converted = self.types.from_v8(argument.idl_type, value, f"{target}_value", site, argument_where)
-                lines += ["  " + line for line in converted]
-                lines.append(f"  {target} = std::move({target}_value);")
-                lines.append("}")
-                passed.append(target)
             else:
                 lines.append(f"std::optional<{cpp_type}> {target};")
-                lines.append(f"if (!{value}->IsUndefined()) {{")
-                converted = self.types.from_v8(argument.idl_type, value, f"{target}_value", site, argument_where)
-                lines += ["  " + line for line in converted]
-                lines.append(f"  {target} = std::move({target}_value);")
-                lines.append("}")
-                passed.append(target)
+            lines += [
+                f"if (!{value}->IsUndefined()) {{",
+                *_indent(converted),
+                f"  {target} = std::move({target}_value);",
+            ]
+            lines.append("}")
+            passed.append(target)
         return lines, passed
 
     def _add_callback(self, name: str, body: list[str]) -> str:
+        if name in self.callback_names:
+            raise UnhandledError(f"interface {self.interface.name}: two callbacks named {name}")
+        self.callback_names.add(name)
         lines = [
             f"void {name}(const v8::FunctionCallbackInfo<v8::Value>& info) {{",
             "  v8::Isolate* const isolate = info.GetIsolate();",
         ]
-        lines += ["  " + line if line else "" for line in body]
+        lines += _indent(body)
         lines.append("}")
         self.callbacks.append("\n".join(lines))
         return name
 
-    def _missing(self, name: str) -> str:
+    def _missing(self, name: str, has_receiver: bool = True, lenient: bool = False) -> str:
+        receiver = self._lenient_receiver() if lenient else self._receiver()
         return self._add_callback(
             name,
             [
-                *self._receiver(),
+                *(receiver if has_receiver else []),
                 self._exception_state(),
                 "exception_state.ThrowTypeError(ExceptionMessages::NotImplemented());",
             ],
         )
 
+    def _missing_promise(self, name: str, operation: str, has_receiver: bool) -> str:
+        # The error goes into the promise, so V8 adds no context to it: the message carries its own.
+        message = f"Failed to execute '{operation}' on '{self.interface.name}': Not implemented."
+        return self._add_callback(
+            name,
+            [
+                *(self._promise_receiver() if has_receiver else []),
+                f'RejectWithTypeError(info, "{message}");',
+            ],
+        )
+
+    def _has_attribute_behaviour(self, attribute: Attribute, accessor: str | None) -> bool:
+        """Whether the bindings have the behaviour of the attribute, or for `accessor` "get" its getter's."""
+        if reflected_attribute(attribute) is not None:
+            # The writer has it itself, unless the interface says it is missing.
+            return attribute.name not in self.implemented.missing
+        return self.implemented.has_behaviour(attribute.name, accessor)
+
     def attribute_getter(self, attribute: Attribute) -> str:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeGetCallback"
-        if attribute.name in self.implemented.missing:
-            return self._missing(name)
-        cpp_name = function_name(attribute.extended_attributes.value_of("ImplementedAs") or attribute.name)
+        reflected = reflected_attribute(attribute)
+        lenient = "LegacyLenientThis" in attribute.extended_attributes
+        if not self._has_attribute_behaviour(attribute, "get"):
+            return self._missing(name, has_receiver=not attribute.is_static, lenient=lenient)
+        _check_written(where, attribute.extended_attributes)
+        if attribute.is_static:
+            raise UnhandledError(f"{where}: the C++ writer does not handle static attributes")
+        if reflected is not None:
+            if attribute.idl_type.kind is TypeKind.BOOLEAN:
+                call = f'impl->ReflectedBooleanAttribute(u"{reflected}")'
+            else:
+                call = f'impl->ReflectedStringAttribute(u"{reflected}")'
+            return self._add_callback(
+                name, [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
+            )
+        cpp_name = self.method_name(attribute)
         return_type = self.types.return_type(attribute.idl_type, where)
-        if "RaisesException" not in attribute.extended_attributes:
+        raises = attribute.extended_attributes.values_of("RaisesException")
+        if "RaisesException" not in attribute.extended_attributes or (raises and "Getter" not in raises):
             call = f"impl->{cpp_name}()"
             return self._add_callback(
                 name, [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
@@ -213,35 +392,76 @@ class _InterfaceWriter:
     def attribute_setter(self, attribute: Attribute) -> str:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeSetCallback"
-        if attribute.name in self.implemented.missing:
-            return self._missing(name)
+        reflected = reflected_attribute(attribute)
+        lenient = "LegacyLenientThis" in attribute.extended_attributes
+        if not self._has_attribute_behaviour(attribute, None):
+            return self._missing(name, has_receiver=not attribute.is_static, lenient=lenient)
+        extended = attribute.extended_attributes
+        if "Replaceable" in extended:
+            # Blink's make_steps_of_replaceable(): the page's value shadows the attribute on the receiver.
+            return self._add_callback(
+                name,
+                [
+                    "bool did_create;",
+                    "if (!info.This()",
+                    "         ->CreateDataProperty(isolate->GetCurrentContext(),",
+                    f'                              v8::String::NewFromUtf8Literal(isolate, "{attribute.name}"),',
+                    "                              info[0])",
+                    "         .To(&did_create)) {",
+                    "  return;",
+                    "}",
+                ],
+            )
+        for key in ("PutForwards", "LegacyLenientSetter"):
+            if key in extended:
+                raise UnhandledError(f"{where}: the C++ writer does not handle the behaviour of [{key}]")
         if attribute.is_readonly:
             raise UnhandledError(f"{where}: the C++ writer does not handle setters of read-only attributes")
-        cpp_name = function_name(attribute.extended_attributes.value_of("ImplementedAs") or attribute.name)
         site = Site(fail="return;")
         body = [*self._receiver(), self._exception_state()]
         body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
-        body.append(f"impl->Set{cpp_name}(value);")
+        if reflected is not None:
+            setter = (
+                "SetReflectedBooleanAttribute"
+                if attribute.idl_type.kind is TypeKind.BOOLEAN
+                else "SetReflectedStringAttribute"
+            )
+            body.append(f'impl->{setter}(u"{reflected}", value);')
+            return self._add_callback(name, body)
+        cpp_name = self.method_name(attribute)
+        raises = extended.values_of("RaisesException")
+        if "RaisesException" in extended and (not raises or "Setter" in raises):
+            body.append(f"impl->Set{cpp_name}(value, exception_state);")
+        else:
+            body.append(f"impl->Set{cpp_name}(value);")
         return self._add_callback(name, body)
 
-    def operation(self, group: OperationGroup) -> str:
-        where = f"operation {self.where(group.name)}"
-        name = f"{function_name(group.name)}OperationCallback"
-        if group.name in self.implemented.missing:
-            return self._missing(name)
-        operation = group.only_overload(where)
-        if operation.is_static:
-            raise UnhandledError(f"{where}: the C++ writer does not handle static operations")
+    def _reachable_overloads(self, group: OperationGroup) -> list[Operation]:
+        """The overloads that a call can choose: not one that needs an object of an interface without a class."""
+        return [
+            overload
+            for overload in group.overloads
+            if all(
+                argument.is_optional
+                or argument.is_variadic
+                or argument.idl_type.nullable
+                or self.types.can_hold_a_value(argument.idl_type)
+                for argument in overload.arguments
+            )
+        ]
+
+    def _call(self, operation: Operation, where: str, check_length: bool) -> list[str]:
+        """The statements that convert an operation's arguments, call the class and set the result."""
         _check_written(where, operation.extended_attributes)
-        cpp_name = function_name(operation.extended_attributes.value_of("ImplementedAs") or operation.name)
-        body = [*self._receiver(), self._exception_state()]
-        conversions, passed = self._arguments(operation.arguments, where)
-        body += conversions
+        cpp_name = self.method_name(operation)
+        conversions, passed = self._arguments(operation.arguments, where, check_length)
+        body = list(conversions)
         raises = "RaisesException" in operation.extended_attributes
         if raises:
             passed.append("exception_state")
         return_type = self.types.return_type(operation.return_type, f"{where} return type")
-        call = f"impl->{cpp_name}({', '.join(passed)})"
+        receiver = f"{self.cls}::" if operation.is_static else "impl->"
+        call = f"{receiver}{cpp_name}({', '.join(passed)})"
         if return_type == "void":
             body.append(f"{call};")
         else:
@@ -249,6 +469,46 @@ class _InterfaceWriter:
             if raises:
                 body += ["if (exception_state.HadException()) {", "  return;", "}"]
             body.append(f"info.GetReturnValue().Set({self.types.to_v8(operation.return_type, 'result')});")
+        return body
+
+    def operation(self, group: OperationGroup) -> str:
+        where = f"operation {self.where(group.name)}"
+        name = f"{function_name(group.name)}{'Static' if group.is_static else ''}OperationCallback"
+        if not self.implemented.has_behaviour(group.name):
+            if self.returns_promise(group):
+                return self._missing_promise(name, group.name, has_receiver=not group.is_static)
+            return self._missing(name, has_receiver=not group.is_static)
+        if self.returns_promise(group):
+            raise UnhandledError(f"{where}: the C++ writer does not handle operations that return a promise")
+        body = [] if group.is_static else self._receiver()
+        body.append(self._exception_state())
+        overloads = self._reachable_overloads(group)
+        if not overloads:
+            raise UnhandledError(f"{where}: no overload of {group.name}() can be called")
+        if len(overloads) == 1:
+            body += self._call(overloads[0], where, check_length=True)
+            return self._add_callback(name, body)
+        # Web IDL's overload resolution, for overloads that differ in how many arguments they take: the one that takes
+        # the most of those given.
+        counts = [len(overload.arguments) for overload in overloads]
+        if len(set(counts)) != len(counts) or any(
+            argument.is_optional or argument.is_variadic for overload in overloads for argument in overload.arguments
+        ):
+            raise UnhandledError(f"{where}: the C++ writer does not handle these overloads of {group.name}()")
+        ordered = sorted(overloads, key=lambda overload: len(overload.arguments), reverse=True)
+        fewest = len(ordered[-1].arguments)
+        if fewest:
+            body += [
+                f"if (info.Length() < {fewest}) {{",
+                f"  exception_state.ThrowTypeError(ExceptionMessages::NotEnoughArguments({fewest}, info.Length()));",
+                "  return;",
+                "}",
+            ]
+        for overload in ordered[:-1]:
+            body += [f"if (info.Length() >= {len(overload.arguments)}) {{"]
+            body += _indent(self._call(overload, where, check_length=False))
+            body += ["  return;", "}"]
+        body += self._call(ordered[-1], where, check_length=False)
         return self._add_callback(name, body)
 
     def constructor(self) -> str:
@@ -261,11 +521,15 @@ class _InterfaceWriter:
             "}",
         ]
         if group is None:
-            body = ['ThrowTypeError(isolate, "Illegal constructor");']
-            return self._add_callback(name, body)
+            # V8ObjectConstructor::IsValidConstructorMode(), whatever the call.
+            return self._add_callback(name, ['ThrowTypeError(isolate, "Illegal constructor");'])
         where = f"constructor of {self.interface.name}"
         operation = group.only_overload(where)
         _check_written(where, operation.extended_attributes)
+        if "HTMLConstructor" in operation.extended_attributes:
+            # V8HTMLConstructor::HtmlConstructor(): with no custom element defined for new.target, it throws.
+            body.append('ThrowTypeError(isolate, "Illegal constructor");')
+            return self._add_callback(name, body)
         body.append(self._exception_state())
         conversions, passed = self._arguments(operation.arguments, where)
         body += conversions
@@ -277,38 +541,78 @@ class _InterfaceWriter:
         body += ["impl->AssociateWithWrapper(isolate, info.This());", "info.GetReturnValue().Set(info.This());"]
         return self._add_callback(name, body)
 
-    # The install function.
+    # The install functions.
 
-    def _install(self, property_: Property) -> list[str]:
-        target = f"{property_.target}_template"
+    def _member_where(self, property_: Property) -> str:
         member = property_.member
+        if isinstance(member, Attribute):
+            return f"attribute {self.where(member.name)}"
+        if isinstance(member, Constant):
+            return f"constant {self.where(member.name)}"
+        return f"operation {self.where(property_.name)}"
+
+    def _check_member(self, property_: Property) -> None:
+        member = property_.member
+        where = self._member_where(property_)
+        if isinstance(member, Attribute):
+            behaviour = self._has_attribute_behaviour(member, "get")
+        elif isinstance(member, OperationGroup):
+            behaviour = self.implemented.has_behaviour(member.name)
+        else:
+            behaviour = True
+        if member is not None and behaviour:
+            _check_written(where, member.extended_attributes)
+
+    def _install(self, property_: Property, on_objects: bool) -> list[str]:
+        """The statements that install one property, on a template or, for what a context decides, on an object."""
+        target = f"{property_.target}_object" if on_objects else f"{property_.target}_template"
+        member = property_.member
+        no_signature = property_.target == "interface"
+        if isinstance(member, Attribute) and "LegacyLenientThis" in member.extended_attributes:
+            no_signature = True
+        if isinstance(member, OperationGroup) and self.returns_promise(member):
+            no_signature = True
+        signature = "v8::Local<v8::Signature>()" if no_signature else "signature"
         if property_.name == "@@toStringTag":
             return []  # SetupInterfaceTemplate() installs it.
         if property_.name == "constructor":
             return []  # V8 adds it.
+        if property_.name == "@@unscopables":
+            if not on_objects:
+                raise UnhandledError(f"{self.where(property_.name)}: @@unscopables on a template")
+            names = ", ".join(_quote(name) for name in self.interface.unscopables)
+            return [
+                "{",
+                f"  static constexpr const char* kUnscopablePropertyNames[] = {{{names}}};",
+                "  InstallUnscopablePropertyNames(isolate, context, prototype_object, kUnscopablePropertyNames);",
+                "}",
+            ]
+        self._check_member(property_)
         if isinstance(member, Attribute):
-            where = f"attribute {self.where(member.name)}"
-            _check_written(where, member.extended_attributes)
             getter = self.attribute_getter(member)
             setter = self.attribute_setter(member) if property_.setter else "nullptr"
             attributes = self._attributes(property_)
             side_effect = "v8::SideEffectType::kHasNoSideEffect"
+            install = "InstallAttributeOnObject" if on_objects else "InstallAttribute"
+            first = "isolate, context" if on_objects else "isolate"
             return [
-                f"InstallAttribute(isolate, {target}, signature, {_quote(member.name)}, kInterfaceName, {getter}, "
+                f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
                 f"{setter}, {attributes}, {side_effect});"
             ]
         if isinstance(member, Constant):
-            where = f"constant {self.where(member.name)}"
-            _check_written(where, member.extended_attributes)
+            if on_objects:
+                raise UnhandledError(
+                    f"{self._member_where(property_)}: the C++ writer installs no constant per context"
+                )
             if isinstance(member.value, bool) or not isinstance(member.value, int):
-                raise UnhandledError(f"{where}: the C++ writer handles integer constants only")
+                raise UnhandledError(f"{self._member_where(property_)}: the C++ writer handles integer constants only")
             return [f"InstallConstant(isolate, {target}, {_quote(member.name)}, {member.value});"]
         if isinstance(member, OperationGroup):
-            where = f"operation {self.where(member.name)}"
-            _check_written(where, member.extended_attributes)
             callback = self.operation(member)
+            install = "InstallOperationOnObject" if on_objects else "InstallOperation"
+            first = "isolate, context" if on_objects else "isolate"
             return [
-                f"InstallOperation(isolate, {target}, signature, {_quote(property_.name)}, kInterfaceName, {callback}, "
+                f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, {callback}, "
                 f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
             ]
         raise UnhandledError(f"{self.where(property_.name)}: the C++ writer does not install this kind of property")
@@ -326,49 +630,88 @@ class _InterfaceWriter:
             return "v8::None"
         return f"static_cast<v8::PropertyAttribute>({' | '.join(flags)})"
 
-    def install_function(self) -> list[str]:
+    def _install_properties(self, properties: list[Property], on_objects: bool) -> list[str]:
+        """Installs the properties in order, each under the test of its condition, with those of one test together."""
+        lines: list[str] = []
+        current: str | None = None
+        for property_ in properties:
+            test = "true"
+            if property_.member is not None:
+                found = condition_test(property_.condition, self.where(property_.name))
+                if found is None:
+                    continue
+                test = found
+            if property_.target == "instance" and on_objects and "Global" not in self.interface.extended_attributes:
+                raise UnhandledError(
+                    f"{self.where(property_.name)}: the C++ writer installs instance members per context only on a "
+                    "global object"
+                )
+            if test != current:
+                if current is not None and current != "true":
+                    lines.append("}")
+                if test != "true":
+                    lines.append(f"if ({test}) {{")
+                current = test
+            statements = self._install(property_, on_objects)
+            if property_.target == "instance" and on_objects:
+                statements = ["if (!instance_object.IsEmpty()) {", *_indent(statements), "}"]
+            lines += _indent(statements) if current != "true" else statements
+        if current is not None and current != "true":
+            lines.append("}")
+        return lines
+
+    def install_function(self, plan: list[Property]) -> list[str]:
         interface = self.interface
-        _check_written(f"interface {interface.name}", interface.extended_attributes)
-        for unhandled in ("collection", "stringifier", "special_operations", "legacy_factory_functions"):
-            if getattr(interface, unhandled):
-                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {unhandled}")
-        plan = plan_interface(interface)
         parent = "nullptr" if interface.parent is None else f"&V8{interface.parent}::kWrapperTypeInfo"
         lines = [
             "void InstallInterfaceTemplate(v8::Isolate* isolate, v8::Local<v8::FunctionTemplate> interface_template) {",
-            "  [[maybe_unused]] const RuntimeFeatureSet& features = PerIsolateData::From(isolate)->features();",
+            "  [[maybe_unused]] PerIsolateData* const data = PerIsolateData::From(isolate);",
+            "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
             "  [[maybe_unused]] const v8::Local<v8::ObjectTemplate> instance_template =",
             "      interface_template->InstanceTemplate();",
             "  [[maybe_unused]] const v8::Local<v8::ObjectTemplate> prototype_template =",
             "      interface_template->PrototypeTemplate();",
-            "  const v8::Local<v8::Signature> signature = v8::Signature::New(isolate, interface_template);",
+            "  [[maybe_unused]] const v8::Local<v8::Signature> signature =",
+            "      v8::Signature::New(isolate, interface_template);",
             f"  SetUpInterfaceTemplate(isolate, interface_template, {parent}, kInterfaceName);",
         ]
         if interface.name == "DOMException":
             lines.append("  InheritFromErrorPrototype(isolate, interface_template);")
+        if "Global" in interface.extended_attributes:
+            # Web IDL's [[SetPrototypeOf]] of a global object and of the prototypes on its chain.
+            lines += ["  instance_template->SetImmutableProto();", "  prototype_template->SetImmutableProto();"]
+        elif self.in_global_prototype_chain:
+            lines.append("  prototype_template->SetImmutableProto();")
         constructor = self.constructor()
-        length = interface.constructor_group.length if interface.constructor_group else 0
-        lines.append(f"  InstallConstructor(interface_template, {constructor}, {length});")
-        current: Condition | None = None
-        for property_ in plan:
-            if property_.phase is Phase.CONTEXT:
-                raise UnhandledError(
-                    f"{self.where(property_.name)}: the C++ writer does not install properties for each context"
-                )
-            member = property_.member
-            if member is not None:
-                _check_condition(self.where(property_.name), property_.condition)
-            condition = property_.condition if property_.condition.features else None
-            if condition != current:
-                if current is not None:
-                    lines.append("  }")
-                if condition is not None:
-                    lines.append(f"  if ({_features_test(condition)}) {{")
-                current = condition
-            indent = "    " if current is not None else "  "
-            lines += [indent + line for line in self._install(property_)]
-        if current is not None:
-            lines.append("  }")
+        if interface.constructor_group is None:
+            lines.append(f"  InstallIllegalConstructor(interface_template, {constructor});")
+        else:
+            lines.append(
+                f"  InstallConstructor(interface_template, {constructor}, {interface.constructor_group.length});"
+            )
+        template_properties = [property_ for property_ in plan if property_.phase is Phase.TEMPLATE]
+        lines += _indent(self._install_properties(template_properties, on_objects=False))
+        lines.append("}")
+        return lines
+
+    def context_function(self, plan: list[Property]) -> list[str]:
+        """The function that installs what each context decides, on the objects that the context made."""
+        lines = [
+            "void InstallContextDependentProperties(v8::Local<v8::Context> context,",
+            "                                       v8::Local<v8::Object> interface_object,",
+            "                                       v8::Local<v8::Object> prototype_object,",
+            "                                       v8::Local<v8::Object> instance_object) {",
+            "  [[maybe_unused]] v8::Isolate* const isolate = v8::Isolate::GetCurrent();",
+            "  [[maybe_unused]] PerIsolateData* const data = PerIsolateData::From(isolate);",
+            "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
+            "  [[maybe_unused]] const v8::Local<v8::Signature> signature = v8::Signature::New(",
+            f"      isolate, data->InterfaceTemplate(isolate, &{self.v8_class}::kWrapperTypeInfo));",
+        ]
+        if "LegacyNoInterfaceObject" in self.interface.extended_attributes:
+            # V8 defines `constructor` on every prototype that a template makes.
+            lines.append("  DeleteConstructorProperty(isolate, context, prototype_object);")
+        context_properties = [property_ for property_ in plan if property_.phase is Phase.CONTEXT]
+        lines += _indent(self._install_properties(context_properties, on_objects=True))
         lines.append("}")
         return lines
 
@@ -405,7 +748,16 @@ class _InterfaceWriter:
                 "",
             ]
         )
-        install = self.install_function()
+        _check_written(f"interface {interface.name}", interface.extended_attributes)
+        for unhandled in ("collection", "stringifier", "legacy_factory_functions"):
+            if getattr(interface, unhandled):
+                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {unhandled}")
+        for special in interface.special_operations:
+            if self.implemented.has_behaviour(special):
+                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {special}")
+        plan = plan_interface(interface)
+        install = self.install_function(plan)
+        context = self.context_function(plan)
         includes = {
             f"mitto/bindings/{base}.h",
             "mitto/bindings/dictionaries.h",
@@ -423,6 +775,8 @@ class _InterfaceWriter:
         includes |= {f"mitto/dom/{file_name(name)}.h" for name in self.types.used_interfaces}
         if interface.parent is not None:
             includes.add(header_of(interface.parent))
+        if self.interface_object_parent is not None:
+            includes.add(header_of(self.interface_object_parent))
         source = [
             _BANNER,
             f'#include "mitto/bindings/{base}.h"',
@@ -436,6 +790,7 @@ class _InterfaceWriter:
         source += [f'#include "{path}"' for path in sorted(includes - {f"mitto/bindings/{base}.h"})]
         source += [
             '#include "v8/include/v8-container.h"',
+            '#include "v8/include/v8-context.h"',
             '#include "v8/include/v8-exception.h"',
             '#include "v8/include/v8-function-callback.h"',
             '#include "v8/include/v8-isolate.h"',
@@ -452,7 +807,7 @@ class _InterfaceWriter:
         ]
         for callback in self.callbacks:
             source += [callback, ""]
-        source += [*install, "", "}  // namespace", ""]
+        source += [*install, "", *context, "", "}  // namespace", ""]
         source += [
             f"const WrapperTypeInfo {self.v8_class}::kWrapperTypeInfo = {{",
             f"    {{{interface.tag}}},",
@@ -461,6 +816,8 @@ class _InterfaceWriter:
             f"    static_cast<v8::CppHeapPointerTag>({interface.tag}),",
             f"    static_cast<v8::CppHeapPointerTag>({interface.max_subclass_tag}),",
             "    &InstallInterfaceTemplate,",
+            f"    {'nullptr' if self.interface_object_parent is None else f'&V8{self.interface_object_parent}::kWrapperTypeInfo'},",
+            "    &InstallContextDependentProperties,",
             "};",
             "",
             f"{self.cls}* {self.v8_class}::ToWrappable(v8::Isolate* isolate, v8::Local<v8::Value> value) {{",
@@ -480,6 +837,75 @@ def _dictionary_chain(name: str, dictionaries: dict[str, Dictionary]) -> list[Di
         chain.insert(0, dictionaries[current])
         current = dictionaries[current].parent
     return chain
+
+
+def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str], list[str]]:
+    """The declaration of a union and its FromV8(), which converts a value as Web IDL converts it to a union.
+
+    Web IDL tries the union's members in a fixed order: a dictionary for undefined and null, then an object of each
+    interface, then a dictionary for any other object, then a boolean for a boolean, and then, for what is left, a
+    string, or else a boolean.
+    """
+    alternatives = ", ".join(types.union_alternative(member) for member in union.members)
+    signature = f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result)"
+    header = [
+        f"// {union.syntax}",
+        f"using {name} = std::variant<{alternatives}>;",
+        "",
+        "// Converts `value` to the union, as Web IDL converts a value to a union. Returns",
+        "// false if that threw.",
+        f"{signature};",
+        "",
+    ]
+    dictionary = next((member for member in union.members if member.kind is TypeKind.DICTIONARY), None)
+    interfaces = [member for member in union.members if member.kind is TypeKind.INTERFACE]
+    has_boolean = any(member.kind is TypeKind.BOOLEAN for member in union.members)
+    has_string = any(member.kind is TypeKind.STRING for member in union.members)
+    convert_dictionary = [
+        f"  {dictionary.name if dictionary else ''} dictionary;",
+        "  if (!FromV8(isolate, value, exception_state, &dictionary)) {",
+        "    return false;",
+        "  }",
+        "  *result = std::move(dictionary);",
+        "  return true;",
+    ]
+    source = [f"{signature} {{"]
+    if dictionary is not None:
+        source += ["  if (value->IsNullOrUndefined()) {", *_indent(convert_dictionary), "  }"]
+    for interface in interfaces:
+        source += [
+            f"  if (mitto::{interface.name}* const object = V8{interface.name}::ToWrappable(isolate, value)) {{",
+            "    *result = object;",
+            "    return true;",
+            "  }",
+        ]
+    if dictionary is not None:
+        source += ["  if (value->IsObject()) {", *_indent(convert_dictionary), "  }"]
+    if has_boolean:
+        source += [
+            "  if (value->IsBoolean()) {",
+            "    *result = value->BooleanValue(isolate);",
+            "    return true;",
+            "  }",
+        ]
+    if has_string:
+        source += [
+            "  std::u16string string;",
+            "  if (!FromV8String(isolate, value, &string)) {",
+            "    return false;",
+            "  }",
+            "  *result = std::move(string);",
+            "  return true;",
+        ]
+    elif has_boolean:
+        source += ["  *result = value->BooleanValue(isolate);", "  return true;"]
+    else:
+        source += [
+            f'  exception_state.ThrowTypeError(ExceptionMessages::ValueNotOfType("{union.syntax}"));',
+            "  return false;",
+        ]
+    source += ["}", ""]
+    return header, source
 
 
 def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[str, str]:
@@ -502,6 +928,14 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         ordered.append(name)
         pending += [n for n in types.used_dictionaries if n not in bodies and n not in pending]
 
+    union_interfaces = sorted(
+        {
+            member.name
+            for union in types.used_unions.values()
+            for member in union.members
+            if member.kind is TypeKind.INTERFACE
+        }
+    )
     header = [
         _BANNER,
         "#ifndef MITTO_BINDINGS_DICTIONARIES_H_",
@@ -514,6 +948,10 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         '#include "v8/include/v8-local-handle.h"',
         '#include "v8/include/v8-forward.h"',
         "",
+    ]
+    if union_interfaces:
+        header += ["namespace mitto {", *[f"class {name};" for name in union_interfaces], "}  // namespace mitto", ""]
+    header += [
         "namespace mitto::bindings {",
         "",
         "class ExceptionState;",
@@ -523,10 +961,13 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         _BANNER,
         '#include "mitto/bindings/dictionaries.h"',
         "",
+        "#include <utility>",
+        "",
         '#include "mitto/bindings/exception_context.h"',
         '#include "mitto/bindings/exception_messages.h"',
         '#include "mitto/bindings/exception_state.h"',
         '#include "mitto/bindings/v8_conversions.h"',
+        *[f'#include "{header_of(name)}"' for name in union_interfaces],
         '#include "v8/include/v8-context.h"',
         '#include "v8/include/v8-isolate.h"',
         '#include "v8/include/v8-object.h"',
@@ -540,33 +981,9 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         header += struct
         source += functions
     for name, union in types.used_unions.items():
-        dictionary = next(member for member in union.members if member.kind is TypeKind.DICTIONARY)
-        header += [
-            f"// {union.syntax}",
-            f"using {name} = std::variant<{dictionary.name}, bool>;",
-            "",
-            "// Converts `value` to the union, as Web IDL converts a value to a union. Returns",
-            "// false if that threw.",
-            f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result);",
-            "",
-        ]
-        # Web IDL's conversion to a union: undefined, null and objects go to the dictionary, and since the union has no
-        # other type for them, anything else to boolean.
-        source += [
-            f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result) {{",
-            "  if (value->IsNullOrUndefined() || value->IsObject()) {",
-            f"    {dictionary.name} dictionary;",
-            "    if (!FromV8(isolate, value, exception_state, &dictionary)) {",
-            "      return false;",
-            "    }",
-            "    *result = std::move(dictionary);",
-            "    return true;",
-            "  }",
-            "  *result = value->BooleanValue(isolate);",
-            "  return true;",
-            "}",
-            "",
-        ]
+        union_header, union_source = _write_union(name, union, types)
+        header += union_header
+        source += union_source
     header += ["}  // namespace mitto::bindings", "", "#endif  // MITTO_BINDINGS_DICTIONARIES_H_", ""]
     source += ["}  // namespace mitto::bindings", ""]
     return "\n".join(header), "\n".join(source)
@@ -594,13 +1011,16 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
     for member in dictionary.own_members:
         member_where = f"dictionary member {dictionary.name}.{member.name}"
         _check_written(member_where, member.extended_attributes)
-        _check_condition(member_where, member.condition)
+        if member.condition.other:
+            raise UnhandledError(
+                f"{member_where}: the C++ writer does not handle the condition {member.condition.describe()}"
+            )
         if member.condition.features:
             raise UnhandledError(f"{member_where}: the C++ writer does not handle members behind a feature")
         if member.is_required:
             raise UnhandledError(f"{member_where}: the C++ writer does not handle required members")
         field = member_name(member.name)
-        has_class = member.idl_type.kind is not TypeKind.INTERFACE or types.has_class(member.idl_type.name)
+        has_class = types.can_hold_a_value(member.idl_type)
         if has_class:
             cpp_type = types.value_type(member.idl_type, member_where)
             if member.default is None:
@@ -680,7 +1100,8 @@ def _write_features(features: list[Feature]) -> tuple[str, str]:
         "",
         "struct RuntimeFeatureInfo {",
         "  const char* name;",
-        "  // Whether the Engine Release has it on for stable on Windows.",
+        "  // Whether a Page has it on by default: whether the Engine Release has it on",
+        "  // for stable on Windows, on a machine without a touch screen.",
         "  bool stable;",
         "  base::span<const RuntimeFeature> depends_on;",
         "  base::span<const RuntimeFeature> implied_by;",
@@ -737,22 +1158,40 @@ def _write_features(features: list[Feature]) -> tuple[str, str]:
 
 
 def _write_interface_objects(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> tuple[str, str]:
-    """The function that puts the interface objects on a Page's global object, in the order of Window's."""
+    """The function that puts the interface objects on a Page's global object, in the order of Window's, and then
+    installs on each interface's objects what the context decides."""
     window = definitions.interfaces[PAGE_GLOBAL_NAME]
     lines: list[str] = []
+    installed: list[tuple[str, str]] = []
     for name in window.exposed_constructs:
         if name not in implemented:
             continue
         interface = definitions.interfaces[name]
-        _check_condition(f"interface {name}", interface.condition)
+        test = condition_test(interface.condition, f"interface {name}")
+        if test is None:
+            continue
+        installed.append((name, test))
         call = f'InstallInterfaceObject(context, "{name}", V8{name}::kWrapperTypeInfo);'
-        if interface.condition.features:
-            lines += [f"  if ({_features_test(interface.condition)}) {{", f"    {call}", "  }"]
+        if test != "true":
+            lines += [f"  if ({test}) {{", f"    {call}", "  }"]
         else:
             lines.append(f"  {call}")
-    missing = set(implemented) - set(window.exposed_constructs)
-    if missing:
-        raise UnhandledError(f"interfaces not exposed on {PAGE_GLOBAL_NAME}: {', '.join(sorted(missing))}")
+    not_exposed = set(implemented) - set(window.exposed_constructs)
+    hidden = {
+        name for name in not_exposed if "LegacyNoInterfaceObject" in definitions.interfaces[name].extended_attributes
+    }
+    if not_exposed - hidden:
+        raise UnhandledError(f"interfaces not exposed on {PAGE_GLOBAL_NAME}: {', '.join(sorted(not_exposed - hidden))}")
+    installed += [(name, "true") for name in sorted(hidden)]
+    lines.append("  // What the context decides, once each interface object exists.")
+    for name, test in installed:
+        # Properties defined through the global proxy go on the global object behind it.
+        instance = "context->Global()" if "Global" in definitions.interfaces[name].extended_attributes else "{}"
+        call = f"InstallContextDependentPropertiesOf(context, V8{name}::kWrapperTypeInfo, {instance});"
+        if test != "true":
+            lines += [f"  if ({test}) {{", f"    {call}", "  }"]
+        else:
+            lines.append(f"  {call}")
     header = [
         _BANNER,
         "#ifndef MITTO_BINDINGS_INTERFACE_OBJECTS_H_",
@@ -764,7 +1203,8 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "",
         "// Puts the interface object of each interface that the Runtime implements",
         "// and the Page's features expose on the global object of `context`, in the",
-        "// order of Chrome's Window.",
+        "// order of Chrome's Window, and installs what the context decides on those",
+        "// interfaces' objects and on the global object.",
         "void InstallInterfaceObjects(v8::Local<v8::Context> context);",
         "",
         "}  // namespace mitto::bindings",
@@ -784,12 +1224,14 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         *[f'#include "{path}"' for path in includes],
         '#include "v8/include/v8-context.h"',
         '#include "v8/include/v8-isolate.h"',
+        '#include "v8/include/v8-object.h"',
         "",
         "namespace mitto::bindings {",
         "",
         "void InstallInterfaceObjects(v8::Local<v8::Context> context) {",
-        "  [[maybe_unused]] const RuntimeFeatureSet& features =",
-        "      PerIsolateData::From(v8::Isolate::GetCurrent())->features();",
+        "  [[maybe_unused]] PerIsolateData* const data =",
+        "      PerIsolateData::From(v8::Isolate::GetCurrent());",
+        "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
         *lines,
         "}",
         "",
@@ -797,6 +1239,42 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "",
     ]
     return "\n".join(header), "\n".join(source)
+
+
+def _global_prototype_chains(definitions: Definitions) -> set[str]:
+    """The interfaces whose prototypes are on a global object's chain: the ancestors of each [Global] interface."""
+    ancestors: set[str] = set()
+    for interface in definitions.interfaces.values():
+        if "Global" not in interface.extended_attributes:
+            continue
+        parent = interface.parent
+        while parent is not None:
+            ancestors.add(parent)
+            parent = definitions.interfaces[parent].parent
+    return ancestors
+
+
+def _interface_object_parent(name: str, definitions: Definitions) -> str | None:
+    """The nearest ancestor that has an interface object, whose interface object is the prototype of this one's."""
+    parent = definitions.interfaces[name].parent
+    while parent is not None and "LegacyNoInterfaceObject" in definitions.interfaces[parent].extended_attributes:
+        parent = definitions.interfaces[parent].parent
+    return parent
+
+
+def _check_named_members(name: str, interface: Interface, implemented: ImplementedInterface) -> None:
+    attributes = {attribute.name for attribute in interface.attributes}
+    members = attributes | {group.name for group in interface.operation_groups}
+    members |= set(interface.special_operations)
+    for missing in implemented.missing:
+        if missing not in members:
+            raise UnhandledError(f"{name} has no member {missing}")
+    for member in implemented.implemented or ():
+        if member.startswith("get "):
+            if member.removeprefix("get ") not in attributes:
+                raise UnhandledError(f"{name} has no attribute {member.removeprefix('get ')}")
+        elif member not in members:
+            raise UnhandledError(f"{name} has no member {member}")
 
 
 def write_bindings(
@@ -814,15 +1292,14 @@ def write_bindings(
         parent = definitions.interfaces[name].parent
         if parent is not None and parent not in by_name:
             raise UnhandledError(f"{name} has a C++ class but its parent {parent} has none")
-        members = {m.name for m in definitions.interfaces[name].attributes}
-        members |= {group.name for group in definitions.interfaces[name].operation_groups}
-        for missing in interface.missing:
-            if missing not in members:
-                raise UnhandledError(f"{name} has no member {missing}")
+        _check_named_members(name, definitions.interfaces[name], interface)
     types = TypeMapper(frozenset(by_name), frozenset(definitions.dictionaries))
+    chains = _global_prototype_chains(definitions)
     files: dict[str, str] = {}
     for name, interface in sorted(by_name.items()):
-        writer = _InterfaceWriter(definitions.interfaces[name], interface, types)
+        writer = _InterfaceWriter(
+            definitions.interfaces[name], interface, types, name in chains, _interface_object_parent(name, definitions)
+        )
         header, source = writer.write()
         base = f"v8_{file_name(name)}"
         files[f"{base}.h"] = header

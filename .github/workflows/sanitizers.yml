@@ -9,6 +9,7 @@ on:
       - tests/runtime/**
       - tests/test_core_test_program.py
       - tests/test_page_bindings.py
+      - tests/test_page_document.py
       - tests/test_page_program.py
       - tools/workspace/**
   push:
@@ -19,6 +20,7 @@ on:
       - tests/runtime/**
       - tests/test_core_test_program.py
       - tests/test_page_bindings.py
+      - tests/test_page_document.py
       - tests/test_page_program.py
       - tools/workspace/**
   # A build that has not changed comes from the cache, so that a scheduled run
@@ -52,10 +54,10 @@ jobs:
           # The Runtime's Page program, which builds without the library.
           - config: runtime-asan
             tests: page
-            files: mitto_page libsanitizer_shared_hooks.so
+            files: mitto_page html_tree_builder_test libsanitizer_shared_hooks.so
           - config: runtime-ubsan
             tests: page
-            files: mitto_page
+            files: mitto_page html_tree_builder_test
     env:
       UV_LOCKED: "1"
     steps:
@@ -124,9 +126,16 @@ jobs:
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run the Page program's tests
         if: matrix.tests == 'page'
-        run: uv run pytest tests/test_page_program.py tests/test_page_bindings.py -rs
+        run: uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py -rs
         env:
           MITTO_PAGE_PROGRAM: ${{ runner.temp }}/native-core/mitto_page
+          ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+          UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+      - name: Run html5lib's tree construction tests
+        if: matrix.tests == 'page'
+        run: |
+          "$RUNNER_TEMP/native-core/html_tree_builder_test" native/test/html5lib_tree native/test/html5lib_tree_failures.txt
+        env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers, client hints, HTML and what a Page sends

@@ -1,6 +1,7 @@
 #include "mitto/bindings/idl_member_installer.h"
 
 #include <string>
+#include <tuple>
 
 #include "base/check.h"
 #include "base/check_op.h"
@@ -12,6 +13,7 @@
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
+#include "v8/include/v8-promise.h"
 
 namespace mitto::bindings {
 
@@ -76,6 +78,13 @@ void InstallConstructor(v8::Local<v8::FunctionTemplate> interface_template,
   interface_template->SetExceptionContext(v8::ExceptionContext::kConstructor);
 }
 
+void InstallIllegalConstructor(
+    v8::Local<v8::FunctionTemplate> interface_template,
+    v8::FunctionCallback callback) {
+  interface_template->SetCallHandler(callback);
+  interface_template->SetLength(0);
+}
+
 void InstallAttribute(v8::Isolate* isolate,
                       v8::Local<v8::Template> target,
                       v8::Local<v8::Signature> signature,
@@ -115,6 +124,85 @@ void InstallOperation(v8::Isolate* isolate,
       attributes);
 }
 
+void InstallAttributeOnObject(v8::Isolate* isolate,
+                              v8::Local<v8::Context> context,
+                              v8::Local<v8::Object> target,
+                              v8::Local<v8::Signature> signature,
+                              const char* name,
+                              const char* interface_name,
+                              v8::FunctionCallback getter,
+                              v8::FunctionCallback setter,
+                              v8::PropertyAttribute attributes,
+                              v8::SideEffectType getter_side_effect) {
+  const v8::Local<v8::Function> getter_function =
+      MemberFunction(isolate, getter, signature, base::StrCat({"get ", name}),
+                     interface_name, 0, getter_side_effect,
+                     v8::ExceptionContext::kAttributeGet)
+          ->GetFunction(context)
+          .ToLocalChecked();
+  v8::Local<v8::Function> setter_function;
+  if (setter) {
+    setter_function =
+        MemberFunction(isolate, setter, signature, base::StrCat({"set ", name}),
+                       interface_name, 1, v8::SideEffectType::kHasSideEffect,
+                       v8::ExceptionContext::kAttributeSet)
+            ->GetFunction(context)
+            .ToLocalChecked();
+  }
+  target->SetAccessorProperty(ToV8StringFromUtf8(isolate, name),
+                              getter_function, setter_function, attributes);
+}
+
+void InstallOperationOnObject(v8::Isolate* isolate,
+                              v8::Local<v8::Context> context,
+                              v8::Local<v8::Object> target,
+                              v8::Local<v8::Signature> signature,
+                              const char* name,
+                              const char* interface_name,
+                              v8::FunctionCallback callback,
+                              int length,
+                              v8::PropertyAttribute attributes,
+                              v8::SideEffectType side_effect) {
+  const v8::Local<v8::Function> function =
+      MemberFunction(isolate, callback, signature, name, interface_name, length,
+                     side_effect, v8::ExceptionContext::kOperation)
+          ->GetFunction(context)
+          .ToLocalChecked();
+  CHECK(target
+            ->DefineOwnProperty(context, ToV8StringFromUtf8(isolate, name),
+                                function, attributes)
+            .FromJust());
+}
+
+void InstallUnscopablePropertyNames(
+    v8::Isolate* isolate,
+    v8::Local<v8::Context> context,
+    v8::Local<v8::Object> prototype_object,
+    base::span<const char* const> property_names) {
+  const v8::Local<v8::Object> unscopables =
+      v8::Object::New(isolate, v8::Null(isolate), nullptr, nullptr, 0);
+  for (const char* const name : property_names) {
+    CHECK(unscopables
+              ->CreateDataProperty(context, ToV8StringFromUtf8(isolate, name),
+                                   v8::True(isolate))
+              .FromJust());
+  }
+  CHECK(prototype_object
+            ->DefineOwnProperty(
+                context, v8::Symbol::GetUnscopables(isolate), unscopables,
+                static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum))
+            .FromJust());
+}
+
+void DeleteConstructorProperty(v8::Isolate* isolate,
+                               v8::Local<v8::Context> context,
+                               v8::Local<v8::Object> prototype_object) {
+  CHECK(prototype_object
+            ->Delete(context,
+                     v8::String::NewFromUtf8Literal(isolate, "constructor"))
+            .FromJust());
+}
+
 void InstallConstant(v8::Isolate* isolate,
                      v8::Local<v8::Template> target,
                      const char* name,
@@ -142,12 +230,27 @@ v8::Local<v8::Function> InterfaceObject(v8::Local<v8::Context> context,
   // As Blink's V8ObjectConstructor::CreateInterfaceObject() does: the template
   // links the prototypes, and the interface object of an interface that
   // inherits gets its parent's for its own prototype here.
-  if (info.parent) {
+  if (info.interface_object_parent) {
     CHECK(interface_object
-              ->SetPrototype(context, InterfaceObject(context, *info.parent))
+              ->SetPrototype(
+                  context,
+                  InterfaceObject(context, *info.interface_object_parent))
               .FromJust());
   }
   return interface_object;
+}
+
+void RejectWithTypeError(const v8::FunctionCallbackInfo<v8::Value>& info,
+                         std::string_view message) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Promise::Resolver> resolver;
+  if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
+    return;
+  }
+  std::ignore = resolver->Reject(
+      context, v8::Exception::TypeError(ToV8StringFromUtf8(isolate, message)));
+  info.GetReturnValue().Set(resolver->GetPromise());
 }
 
 void InstallInterfaceObject(v8::Local<v8::Context> context,
@@ -160,6 +263,22 @@ void InstallInterfaceObject(v8::Local<v8::Context> context,
             ->DefineOwnProperty(context, ToV8StringFromUtf8(isolate, name),
                                 interface_object, v8::DontEnum)
             .FromJust());
+}
+
+void InstallContextDependentPropertiesOf(
+    v8::Local<v8::Context> context,
+    const WrapperTypeInfo& info,
+    v8::Local<v8::Object> instance_object) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::Local<v8::Function> interface_object =
+      InterfaceObject(context, info);
+  const v8::Local<v8::Object> prototype_object =
+      interface_object
+          ->Get(context, v8::String::NewFromUtf8Literal(isolate, "prototype"))
+          .ToLocalChecked()
+          .As<v8::Object>();
+  info.install_context_dependent_properties(context, interface_object,
+                                            prototype_object, instance_object);
 }
 
 }  // namespace mitto::bindings

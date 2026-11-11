@@ -7,8 +7,12 @@
 #ifndef MITTO_BINDINGS_V8_CONVERSIONS_H_
 #define MITTO_BINDINGS_V8_CONVERSIONS_H_
 
+#include <stdint.h>
+
+#include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include "base/containers/span.h"
@@ -31,8 +35,60 @@ bool FromV8String(v8::Isolate* isolate,
                   v8::Local<v8::Value> value,
                   std::u16string* result);
 
+// The same for a nullable DOMString, which null and undefined convert to
+// nullopt.
+bool FromV8NullableString(v8::Isolate* isolate,
+                          v8::Local<v8::Value> value,
+                          std::optional<std::u16string>* result);
+
+// The same for [LegacyNullToEmptyString] DOMString, which null converts to the
+// empty string.
+bool FromV8StringNullToEmpty(v8::Isolate* isolate,
+                             v8::Local<v8::Value> value,
+                             std::u16string* result);
+
+// Converts `value` to a USVString: a DOMString whose lone surrogates become
+// U+FFFD.
+bool FromV8USVString(v8::Isolate* isolate,
+                     v8::Local<v8::Value> value,
+                     std::u16string* result);
+bool FromV8NullableUSVString(v8::Isolate* isolate,
+                             v8::Local<v8::Value> value,
+                             std::optional<std::u16string>* result);
+
+// Converts `value` to one of Web IDL's integer types of 32 bits or fewer, as
+// ConvertToInt() does without [EnforceRange] or [Clamp]: ToNumber(), then the
+// integer modulo 2 to the type's bits, which is what ToInt32() or ToUint32()
+// and then the type's low bits give. Returns false if that threw.
+template <typename T>
+bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
+  requires(std::is_integral_v<T> && sizeof(T) <= 4)
+{
+  if constexpr (std::is_signed_v<T>) {
+    int32_t number;
+    if (!value->Int32Value(isolate->GetCurrentContext()).To(&number)) {
+      return false;
+    }
+    *result = static_cast<T>(number);
+  } else {
+    uint32_t number;
+    if (!value->Uint32Value(isolate->GetCurrentContext()).To(&number)) {
+      return false;
+    }
+    *result = static_cast<T>(number);
+  }
+  return true;
+}
+
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);
+// The string, or null.
+v8::Local<v8::Value> ToV8NullableString(
+    v8::Isolate* isolate,
+    const std::optional<std::u16string>& text);
+// An array of the strings.
+v8::Local<v8::Value> ToV8StringArray(v8::Isolate* isolate,
+                                     const std::vector<std::u16string>& texts);
 v8::Local<v8::String> ToV8StringFromUtf8(v8::Isolate* isolate,
                                          std::string_view text);
 

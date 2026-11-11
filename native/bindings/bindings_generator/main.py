@@ -22,6 +22,15 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--runtime-enabled-features", type=Path, required=True, help="runtime_enabled_features.json5")
     parser.add_argument("--interface", action="append", default=[], help="an interface that has a C++ class")
     parser.add_argument("--missing", action="append", default=[], help="INTERFACE.MEMBER whose behaviour is missing")
+    parser.add_argument(
+        "--only-implemented",
+        action="append",
+        default=[],
+        help="an interface whose members are Known Gaps unless --implemented names them",
+    )
+    parser.add_argument(
+        "--implemented", action="append", default=[], help="INTERFACE.MEMBER whose behaviour the class has"
+    )
     parser.add_argument("--output-dir", type=Path, required=True, help="where the C++ goes")
     parser.add_argument("--output", action="append", default=[], help="a file that GN expects in the output directory")
     parser.add_argument("--listing", type=Path, required=True, help="where the listing of every interface goes")
@@ -51,16 +60,27 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
         definitions = read_database(database)
         features = read_features(runtime_enabled_features["data"])
         _check_feature_names(definitions, {feature.name for feature in features})
-        missing: dict[str, list[str]] = {}
-        for item in arguments.missing:
-            interface, _, member = item.partition(".")
-            missing.setdefault(interface, []).append(member)
-        implemented = [
-            ImplementedInterface(name=name, header=_class_header(name), missing=tuple(missing.pop(name, [])))
-            for name in arguments.interface
-        ]
+        missing = _members_by_interface(arguments.missing)
+        listed = _members_by_interface(arguments.implemented)
+        only_implemented = set(arguments.only_implemented)
+        implemented: list[ImplementedInterface] = []
+        for name in arguments.interface:
+            members = listed.pop(name, [])
+            if name in only_implemented:
+                if name in missing:
+                    raise UnhandledError(f"{name} names both its missing members and its implemented ones")
+                implemented.append(
+                    ImplementedInterface(name=name, header=_class_header(name), implemented=tuple(members))
+                )
+            else:
+                implemented.append(
+                    ImplementedInterface(name=name, header=_class_header(name), missing=tuple(missing.pop(name, [])))
+                )
         if missing:
             raise UnhandledError(f"--missing names interfaces without a C++ class: {', '.join(sorted(missing))}")
+        if listed or only_implemented - set(arguments.interface):
+            unknown = set(listed) | (only_implemented - set(arguments.interface))
+            raise UnhandledError(f"--implemented names interfaces without a C++ class: {', '.join(sorted(unknown))}")
         files = write_bindings(definitions, features, implemented)
     except UnhandledError as error:
         print(f"generate_bindings.py: {error}", file=sys.stderr)
@@ -77,6 +97,15 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
     for name, content in files.items():
         (arguments.output_dir / name).write_text(content, encoding="utf-8")
     return 0
+
+
+def _members_by_interface(items: list[str]) -> dict[str, list[str]]:
+    """Groups INTERFACE.MEMBER items by interface."""
+    members: dict[str, list[str]] = {}
+    for item in items:
+        interface, _, member = item.partition(".")
+        members.setdefault(interface, []).append(member)
+    return members
 
 
 def _class_header(name: str) -> str:

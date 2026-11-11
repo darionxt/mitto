@@ -18,6 +18,14 @@ namespace mitto::bindings {
 struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
   using InstallInterfaceTemplateFunction =
       void (*)(v8::Isolate*, v8::Local<v8::FunctionTemplate>);
+  // Installs what a context decides on that context's interface object,
+  // prototype and, for a global interface, the global object, which is empty
+  // for any other.
+  using InstallContextDependentPropertiesFunction =
+      void (*)(v8::Local<v8::Context> context,
+               v8::Local<v8::Object> interface_object,
+               v8::Local<v8::Object> prototype_object,
+               v8::Local<v8::Object> instance_object);
 
   const char* interface_name;
   // The interface it inherits from, or null.
@@ -31,6 +39,16 @@ struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
   // Installs the interface's members on its template, which inherits from its
   // parent's.
   InstallInterfaceTemplateFunction install_interface_template;
+  // The interface whose interface object is the prototype of this one's: its
+  // parent, or the parent's, past those with no interface object, as
+  // WindowProperties has none.
+  // RAW_PTR_EXCLUSION: #global-scope, as `parent`.
+  RAW_PTR_EXCLUSION const WrapperTypeInfo* interface_object_parent;
+  // Installs, once a context has made the interface's objects, the members
+  // that the context decides, such as those of a secure context, after those
+  // of the template, as Blink's InstallContextDependentProperties() does.
+  InstallContextDependentPropertiesFunction
+      install_context_dependent_properties;
 };
 
 }  // namespace mitto::bindings

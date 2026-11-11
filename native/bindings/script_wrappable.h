@@ -43,6 +43,12 @@ class ScriptWrappable : public v8::Object::Wrappable {
   void AssociateWithWrapper(v8::Isolate* isolate,
                             v8::Local<v8::Object> wrapper);
 
+  // Makes a context's global proxy this object's wrapper, and has both the
+  // proxy and the global object behind it wrap this object, as Blink's
+  // V8DOMWrapper::SetNativeInfoForGlobal() does for a window.
+  void AssociateWithGlobalProxy(v8::Isolate* isolate,
+                                v8::Local<v8::Object> global_proxy);
+
  protected:
   ScriptWrappable() = default;
 

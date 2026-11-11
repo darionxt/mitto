@@ -158,6 +158,18 @@ action_with_pydeps("generate_bindings") {
         ]
       }
     }
+    if (defined(interface.implemented)) {
+      args += [
+        "--only-implemented",
+        interface.name,
+      ]
+      foreach(member, interface.implemented) {
+        args += [
+          "--implemented",
+          "${interface.name}.$member",
+        ]
+      }
+    }
   }
   deps = [ ":web_idl_database" ]
 }

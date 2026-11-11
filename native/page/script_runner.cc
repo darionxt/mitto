@@ -97,11 +97,7 @@ std::optional<std::string> ScriptRunner::Start(const PageStart& start,
   reporter_ = std::make_unique<PageReporter>(isolate_, send_);
 
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Local<v8::Context> context = v8::Context::New(isolate_);
-  {
-    const v8::Context::Scope context_scope(context);
-    InstallPageInterfaces(context);
-  }
+  const v8::Local<v8::Context> context = NewPageContext(isolate_);
   context_.Reset(isolate_, context);
   // Once the context has its interfaces, as Blink tells its inspector.
   reporter_->ContextCreated(context);

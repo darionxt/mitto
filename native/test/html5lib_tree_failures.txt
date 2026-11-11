@@ -1,0 +1,13 @@
+# The html5lib tree construction tests in html5lib_tree that the tree builder
+# fails without skipping a rule, each under the reason why.
+# html_tree_builder_test checks that each test here fails without skipping a
+# rule, and that every other test passes or skips one.
+#
+# A line names one test: its file and its index in the file from 0. What
+# follows # is the start of its markup.
+
+# The HTML Standard has since added processing instructions, which Blink parses
+# with its feature HTMLProcessingInstruction, on for stable in the Engine
+# Release. The tokenizer then makes nothing of <? at the end of the input,
+# where these tests, which predate them, expect a bogus comment.
+tests1.dat:39  # <?

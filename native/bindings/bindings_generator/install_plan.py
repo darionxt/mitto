@@ -11,13 +11,22 @@ own properties in Chrome's order.
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
 # Upstream: third_party/blink/renderer/platform/bindings/idl_member_installer.cc
 # Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+# Upstream: third_party/blink/renderer/bindings/modules/v8/v8_context_snapshot_impl.cc
 
 import dataclasses
 import enum
 
 from bindings_generator.model import ALWAYS, Attribute, Condition, Constant, Interface, OperationGroup
 
-__all__ = ["Phase", "Property", "plan_interface"]
+__all__ = ["CONTEXT_SNAPSHOT_INTERFACES", "Phase", "Property", "plan_interface"]
+
+# The interfaces whose objects Chrome's renderer takes from its V8 context snapshot for a window's main world, which
+# holds only their members that are always there. A context made from it installs their members behind a
+# runtime-enabled feature on its objects, after those that the context decides (V8ContextSnapshotImpl's
+# InstallContextIndependentProps(), which LocalWindowProxy::InstallConditionalFeatures() calls).
+CONTEXT_SNAPSHOT_INTERFACES = frozenset(
+    {"Window", "WindowProperties", "HTMLDocument", "Document", "Node", "EventTarget"}
+)
 
 
 class Phase(enum.Enum):
@@ -258,8 +267,10 @@ def plan_interface(interface: Interface) -> list[Property]:
     unconditional = [entry for entry in entries if entry.condition.is_always]
     independent = [e for e in entries if not e.condition.is_always and not e.condition.context_dependent]
     dependent = [entry for entry in entries if entry.condition.context_dependent]
+    from_snapshot = interface.name in CONTEXT_SNAPSHOT_INTERFACES
     properties += _install_function(unconditional, Phase.TEMPLATE)
-    properties += _install_function(independent, Phase.TEMPLATE)
+    if not from_snapshot:
+        properties += _install_function(independent, Phase.TEMPLATE)
 
     if interface.kind == "interface":
         properties.append(
@@ -281,6 +292,8 @@ def plan_interface(interface: Interface) -> list[Property]:
             symbol = "@@asyncIterator" if collection.kind == "async iterable" else "@@iterator"
             properties.append(_symbol(symbol, Phase.CONTEXT))
     properties += _install_function(dependent, Phase.CONTEXT)
+    if from_snapshot:
+        properties += _install_function(independent, Phase.CONTEXT)
     if "LegacyNoInterfaceObject" in interface.extended_attributes:
         properties = [p for p in properties if not (p.name == "constructor" and p.target == "prototype")]
     return properties

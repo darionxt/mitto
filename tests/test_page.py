@@ -88,8 +88,14 @@ def test_a_page_keeps_the_url_it_was_opened_for_and_has_a_process_of_its_own(pag
     assert not process_is_gone(page.process_id)
 
 
-def test_a_page_has_no_document_or_timers_until_the_runtime_has_them(page: Page) -> None:
-    assert page.evaluate("[typeof document, typeof window, typeof setTimeout, typeof fetch]") == ["undefined"] * 4
+def test_a_page_has_the_document_of_about_blank_and_no_timers_until_the_runtime_has_them(page: Page) -> None:
+    # A Page's window is its global object, with about:blank's document until it loads one. Its timers and fetch() are
+    # Known Gaps, which throw.
+    script = "[window === globalThis, document.documentElement.outerHTML, typeof setTimeout, typeof fetch]"
+
+    assert page.evaluate(script) == [True, "<html><head></head><body></body></html>", "function", "function"]
+    with pytest.raises(ScriptError, match=r"^Uncaught TypeError: Failed to execute 'setTimeout' on 'Window': "):
+        page.evaluate("setTimeout(() => {})")
 
 
 @pytest.mark.parametrize(
