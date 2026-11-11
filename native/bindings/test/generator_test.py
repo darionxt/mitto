@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import generate_bindings  # noqa: E402, which the line above makes importable.
+import generate_bindings
 
 
 def main() -> int:
@@ -24,7 +24,6 @@ def main() -> int:
     sys.path[:0] = generate_bindings.import_paths(arguments.source_root)
 
     import web_idl  # pyright: ignore[reportMissingImports]
-
     from bindings_generator.errors import UnhandledError
     from bindings_generator.web_idl_reader import read_database
 
@@ -33,7 +32,9 @@ def main() -> int:
         read_database(database)
     except UnhandledError as error:
         if str(error) != arguments.expect:
-            print(f"generator_test.py: the generator refused it with {error!r}, not {arguments.expect!r}", file=sys.stderr)
+            print(
+                f"generator_test.py: the generator refused it with {error!r}, not {arguments.expect!r}", file=sys.stderr
+            )
             return 1
         arguments.stamp.write_text(f"{error}\n", encoding="utf-8")
         return 0

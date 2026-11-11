@@ -20,12 +20,14 @@
 [CmdletBinding()]
 param(
     [string]$Chrome = (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe'),
-    [string]$Out = $PSScriptRoot,
+    [string]$Out = '',
     [int]$TimeoutSeconds = 120
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell has no $PSScriptRoot yet where the parameters get their defaults.
+if (-not $Out) { $Out = $PSScriptRoot }
 
 # Names of their own, so that this runs beside tools/baselines/record.ps1, whose tasks are mitto-baselines-*.
 $TaskPrefix = 'mitto-runtime-record'

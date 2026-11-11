@@ -4,7 +4,6 @@
 #include <tuple>
 
 #include "base/compiler_specific.h"
-
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -33,9 +32,8 @@ void ApplyContextToException(v8::Isolate* isolate,
                              std::string_view property_name) {
   const PerIsolateData::DOMExceptionHooks& hooks =
       PerIsolateData::From(isolate)->dom_exception_hooks();
-  if (hooks.add_context &&
-      hooks.add_context(isolate, exception, context_type, class_name,
-                        property_name)) {
+  if (hooks.add_context && hooks.add_context(isolate, exception, context_type,
+                                             class_name, property_name)) {
     return;
   }
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -79,10 +77,9 @@ void OnExceptionPropagation(v8::ExceptionPropagationMessage message) {
   // message.
   for (const PerIsolateData::DictionaryContext& dictionary :
        PerIsolateData::From(isolate)->dictionary_contexts_innermost_first()) {
-    ApplyContextToException(isolate, exception,
-                            v8::ExceptionContext::kAttributeGet,
-                            dictionary.dictionary_name,
-                            dictionary.property_name);
+    ApplyContextToException(
+        isolate, exception, v8::ExceptionContext::kAttributeGet,
+        dictionary.dictionary_name, dictionary.property_name);
   }
   ApplyContextToException(isolate, exception, context_type, class_name,
                           property_name);

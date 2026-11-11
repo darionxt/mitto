@@ -70,9 +70,10 @@ def read_database(database: Any) -> Definitions:
         UnhandledError: if anything in the database is a construct, a type or an extended attribute that the generator
             does not handle.
     """
-    kinds: Any = type(database._impl).Kind  # noqa: SLF001, the database has no public list of its kinds.
-    for kind in kinds.values():
-        if kind not in _KINDS_READ | _KINDS_MERGED and database._impl.find_by_kind(kind):  # noqa: SLF001
+    # The database has no public list of its kinds.
+    body: Any = database._impl
+    for kind in body.Kind.values():
+        if kind not in _KINDS_READ | _KINDS_MERGED and body.find_by_kind(kind):
             raise UnhandledError(f"the database holds a kind of definition the generator does not handle: {kind}")
 
     interfaces: dict[str, Interface] = {}
@@ -123,7 +124,9 @@ def _read_type(idl_type: Any, where: str) -> IdlType:
         return dataclasses.replace(inner_type, nullable=nullable or inner_type.nullable, extended_attributes=merged)
 
     members: tuple[IdlType, ...] = ()
-    name = inner.type_name_without_extended_attributes if hasattr(inner, "type_name_without_extended_attributes") else ""
+    name = (
+        inner.type_name_without_extended_attributes if hasattr(inner, "type_name_without_extended_attributes") else ""
+    )
     if inner.is_any:
         kind, name = TypeKind.ANY, "any"
     elif inner.is_undefined:
@@ -377,7 +380,9 @@ def _read_collection(definition: Any, exposures: _Exposures) -> CollectionLike |
     ]
     iterator_operation: str | None = None
     if kind == "async iterable":
-        iterator_operation = next(group.identifier for group in declaration.operation_groups if group[0].is_async_iterator)
+        iterator_operation = next(
+            group.identifier for group in declaration.operation_groups if group[0].is_async_iterator
+        )
     elif kind != "iterable" or declaration.key_type is not None:
         iterator_operation = next(group.identifier for group in declaration.operation_groups if group[0].is_iterator)
     return CollectionLike(
@@ -426,7 +431,11 @@ def _read_interface(definition: Any) -> Interface:
     inherited: Any = getattr(definition, "inherited", None)
     unscopables: list[str] = []
     if kind == "interface":
-        own = [m.identifier for m in [*definition.attributes, *definition.operations] if "Unscopable" in m.extended_attributes]
+        own = [
+            m.identifier
+            for m in [*definition.attributes, *definition.operations]
+            if "Unscopable" in m.extended_attributes
+        ]
         if own:
             for ancestor in definition.inclusive_inherited_interfaces:
                 members = [*ancestor.attributes, *ancestor.operations]

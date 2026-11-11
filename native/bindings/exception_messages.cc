@@ -70,8 +70,8 @@ std::string ExceptionMessages::FailedToGet(std::string_view property,
 std::string ExceptionMessages::FailedToSet(std::string_view property,
                                            std::string_view type,
                                            std::string_view detail) {
-  return base::StrCat({"Failed to set the '", property, "' property on '",
-                       type, "': ", detail});
+  return base::StrCat({"Failed to set the '", property, "' property on '", type,
+                       "': ", detail});
 }
 
 // static

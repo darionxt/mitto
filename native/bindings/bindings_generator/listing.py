@@ -49,7 +49,9 @@ def write_listing(interfaces: list[Interface]) -> str:
         heading = f"{interface.kind} {interface.name}"
         if interface.parent:
             heading += f" : {interface.parent}"
-        exposure = ", ".join(name if feature is None else f"{name} with {feature}" for name, feature in interface.exposure)
+        exposure = ", ".join(
+            name if feature is None else f"{name} with {feature}" for name, feature in interface.exposure
+        )
         if exposure:
             heading += f", exposed on {exposure}"
         if "LegacyNoInterfaceObject" in interface.extended_attributes:

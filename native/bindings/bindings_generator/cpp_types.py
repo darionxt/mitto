@@ -80,11 +80,15 @@ class TypeMapper:
         self.used_unions: dict[str, IdlType] = {}
         self.used_interfaces: set[str] = set()
 
+    def has_class(self, interface: str) -> bool:
+        """Whether the interface has a C++ class."""
+        return interface in self._implemented
+
     def _refuse(self, idl_type: IdlType, where: str, use: str) -> UnhandledError:
         return UnhandledError(f"{where}: the C++ writer does not handle {use} of type {idl_type.syntax}")
 
     def _check_annotations(self, idl_type: IdlType, where: str) -> None:
-        for key in idl_type.extended_attributes.keys():
+        for key, _ in idl_type.extended_attributes.entries:
             raise UnhandledError(f"{where}: the C++ writer does not handle [{key}] on the type {idl_type.syntax}")
 
     def _use_dictionary(self, name: str) -> None:
@@ -169,7 +173,9 @@ class TypeMapper:
 
     def _register_union(self, idl_type: IdlType, where: str) -> None:
         kinds = sorted(member.kind.value for member in idl_type.members)
-        if kinds != ["boolean", "dictionary"] or any(m.nullable or m.extended_attributes.entries for m in idl_type.members):
+        if kinds != ["boolean", "dictionary"] or any(
+            m.nullable or m.extended_attributes.entries for m in idl_type.members
+        ):
             raise self._refuse(idl_type, where, "a union")
         for member in idl_type.members:
             if member.kind is TypeKind.DICTIONARY:
@@ -188,7 +194,12 @@ class TypeMapper:
         if kind is TypeKind.BOOLEAN:
             return [f"const bool {target} = {value}->BooleanValue(isolate);"]
         if kind is TypeKind.STRING:
-            return [f"std::u16string {target};", f"if (!FromV8String(isolate, {value}, &{target})) {{", f"  {site.fail}", "}"]
+            return [
+                f"std::u16string {target};",
+                f"if (!FromV8String(isolate, {value}, &{target})) {{",
+                f"  {site.fail}",
+                "}",
+            ]
         if kind is TypeKind.ANY:
             return [f"const v8::Local<v8::Value> {target} = {value};"]
         if kind is TypeKind.INTERFACE:
@@ -203,7 +214,11 @@ class TypeMapper:
                 "}",
             ]
         if kind is TypeKind.CALLBACK_INTERFACE:
-            lines = [f"v8::Local<v8::Object> {target};", f"if ({value}->IsObject()) {{", f"  {target} = {value}.As<v8::Object>();"]
+            lines = [
+                f"v8::Local<v8::Object> {target};",
+                f"if ({value}->IsObject()) {{",
+                f"  {target} = {value}.As<v8::Object>();",
+            ]
             if idl_type.nullable:
                 lines.append(f"}} else if (!{value}->IsNullOrUndefined()) {{")
             else:
@@ -230,7 +245,9 @@ class TypeMapper:
             return f"{idl_type.name}()"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
-        raise UnhandledError(f"{where}: the C++ writer does not handle the default value {literal} of {idl_type.syntax}")
+        raise UnhandledError(
+            f"{where}: the C++ writer does not handle the default value {literal} of {idl_type.syntax}"
+        )
 
 
 def header_of(interface: str) -> str:

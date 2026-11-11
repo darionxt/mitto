@@ -90,10 +90,10 @@ void InstallAttribute(v8::Isolate* isolate,
       0, getter_side_effect, v8::ExceptionContext::kAttributeGet);
   v8::Local<v8::FunctionTemplate> setter_function;
   if (setter) {
-    setter_function = MemberFunction(
-        isolate, setter, signature, base::StrCat({"set ", name}),
-        interface_name, 1, v8::SideEffectType::kHasSideEffect,
-        v8::ExceptionContext::kAttributeSet);
+    setter_function =
+        MemberFunction(isolate, setter, signature, base::StrCat({"set ", name}),
+                       interface_name, 1, v8::SideEffectType::kHasSideEffect,
+                       v8::ExceptionContext::kAttributeSet);
   }
   target->SetAccessorProperty(ToV8StringFromUtf8(isolate, name),
                               getter_function, setter_function, attributes);
@@ -108,11 +108,11 @@ void InstallOperation(v8::Isolate* isolate,
                       int length,
                       v8::PropertyAttribute attributes,
                       v8::SideEffectType side_effect) {
-  target->Set(ToV8StringFromUtf8(isolate, name),
-              MemberFunction(isolate, callback, signature, name, interface_name,
-                             length, side_effect,
-                             v8::ExceptionContext::kOperation),
-              attributes);
+  target->Set(
+      ToV8StringFromUtf8(isolate, name),
+      MemberFunction(isolate, callback, signature, name, interface_name, length,
+                     side_effect, v8::ExceptionContext::kOperation),
+      attributes);
 }
 
 void InstallConstant(v8::Isolate* isolate,
@@ -123,11 +123,12 @@ void InstallConstant(v8::Isolate* isolate,
   if (value < 0) {
     integer = v8::Integer::New(isolate, base::checked_cast<int32_t>(value));
   } else {
-    integer = v8::Integer::NewFromUnsigned(
-        isolate, base::checked_cast<uint32_t>(value));
+    integer = v8::Integer::NewFromUnsigned(isolate,
+                                           base::checked_cast<uint32_t>(value));
   }
-  target->Set(ToV8StringFromUtf8(isolate, name), integer,
-              static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete));
+  target->Set(
+      ToV8StringFromUtf8(isolate, name), integer,
+      static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontDelete));
 }
 
 void InstallInterfaceObject(v8::Local<v8::Context> context,

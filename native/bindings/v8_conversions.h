@@ -31,7 +31,8 @@ bool FromV8String(v8::Isolate* isolate,
                   v8::Local<v8::Value> value,
                   std::u16string* result);
 
-v8::Local<v8::String> ToV8String(v8::Isolate* isolate, std::u16string_view text);
+v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
+                                 std::u16string_view text);
 v8::Local<v8::String> ToV8StringFromUtf8(v8::Isolate* isolate,
                                          std::string_view text);
 

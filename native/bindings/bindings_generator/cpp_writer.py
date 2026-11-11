@@ -19,7 +19,7 @@ import dataclasses
 from collections.abc import Iterable
 
 from bindings_generator.cpp_names import file_name, function_name, member_name
-from bindings_generator.cpp_types import Site, TypeMapper, header_of, union_name
+from bindings_generator.cpp_types import Site, TypeMapper, header_of
 from bindings_generator.errors import UnhandledError
 from bindings_generator.extended_attributes import KNOWN, Role
 from bindings_generator.install_plan import Phase, Property, plan_interface
@@ -43,7 +43,15 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # Transferable only matter to structured cloning, which nothing in a Page can reach yet: it has neither postMessage()
 # nor structuredClone().
 WRITTEN = frozenset(
-    {"CachedAttribute", "Exposed", "LegacyUnforgeable", "RaisesException", "RuntimeEnabled", "Serializable", "Transferable"}
+    {
+        "CachedAttribute",
+        "Exposed",
+        "LegacyUnforgeable",
+        "RaisesException",
+        "RuntimeEnabled",
+        "Serializable",
+        "Transferable",
+    }
 )
 
 _BANNER = "// Written by the bindings generator in native/bindings from Blink's Web IDL\n// database. Do not edit.\n"
@@ -65,13 +73,8 @@ class ImplementedInterface:
     missing: tuple[str, ...] = ()
 
 
-@dataclasses.dataclass
-class _Output:
-    files: dict[str, str] = dataclasses.field(default_factory=dict)
-
-
 def _check_written(where: str, extended: ExtendedAttributes) -> None:
-    for key in extended.keys():
+    for key, _ in extended.entries:
         role = KNOWN[key][0]
         if role is not Role.NONE and key not in WRITTEN:
             raise UnhandledError(f"{where}: the C++ writer does not handle the extended attribute [{key}]")
@@ -160,7 +163,10 @@ class _InterfaceWriter:
         return lines, passed
 
     def _add_callback(self, name: str, body: list[str]) -> str:
-        lines = [f"void {name}(const v8::FunctionCallbackInfo<v8::Value>& info) {{", "  v8::Isolate* const isolate = info.GetIsolate();"]
+        lines = [
+            f"void {name}(const v8::FunctionCallbackInfo<v8::Value>& info) {{",
+            "  v8::Isolate* const isolate = info.GetIsolate();",
+        ]
         lines += ["  " + line if line else "" for line in body]
         lines.append("}")
         self.callbacks.append("\n".join(lines))
@@ -445,7 +451,7 @@ class _InterfaceWriter:
         source += [
             f"const WrapperTypeInfo {self.v8_class}::kWrapperTypeInfo = {{",
             f"    {{{interface.tag}}},",
-            f"    kInterfaceName,",
+            "    kInterfaceName,",
             f"    {'nullptr' if interface.parent is None else f'&V8{interface.parent}::kWrapperTypeInfo'},",
             f"    static_cast<v8::CppHeapPointerTag>({interface.tag}),",
             f"    static_cast<v8::CppHeapPointerTag>({interface.max_subclass_tag}),",
@@ -534,7 +540,7 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
             f"// {union.syntax}",
             f"using {name} = std::variant<{dictionary.name}, bool>;",
             "",
-            f"// Converts `value` to the union, as Web IDL converts a value to a union. Returns",
+            "// Converts `value` to the union, as Web IDL converts a value to a union. Returns",
             "// false if that threw.",
             f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result);",
             "",
@@ -589,16 +595,20 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
         if member.is_required:
             raise UnhandledError(f"{member_where}: the C++ writer does not handle required members")
         field = member_name(member.name)
-        has_class = member.idl_type.kind is not TypeKind.INTERFACE or member.idl_type.name in types._implemented  # noqa: SLF001
+        has_class = member.idl_type.kind is not TypeKind.INTERFACE or types.has_class(member.idl_type.name)
         if has_class:
             cpp_type = types.value_type(member.idl_type, member_where)
             if member.default is None:
                 struct.append(f"  std::optional<{cpp_type}> {field};")
             elif member.idl_type.kind is TypeKind.ANY:
                 struct.append(f"  {cpp_type} {field};  // Null by default.")
-                defaults.append(f"  dictionary->{field} = {types.default_value(member.idl_type, member.default, member_where)};")
+                defaults.append(
+                    f"  dictionary->{field} = {types.default_value(member.idl_type, member.default, member_where)};"
+                )
             else:
-                struct.append(f"  {cpp_type} {field} = {types.default_value(member.idl_type, member.default, member_where)};")
+                struct.append(
+                    f"  {cpp_type} {field} = {types.default_value(member.idl_type, member.default, member_where)};"
+                )
         fill += [
             "  {",
             f'    scope.SetCurrentPropertyName("{member.name}");',
@@ -714,7 +724,11 @@ def _write_features(features: list[Feature]) -> tuple[str, str]:
         "}  // namespace mitto::bindings",
         "",
     ]
-    return "\n".join(header), "\n".join(source).replace('#include "mitto/bindings/runtime_features.h"\n', '#include "mitto/bindings/runtime_features.h"\n\n#include <iterator>\n', 1)
+    return "\n".join(header), "\n".join(source).replace(
+        '#include "mitto/bindings/runtime_features.h"\n',
+        '#include "mitto/bindings/runtime_features.h"\n\n#include <iterator>\n',
+        1,
+    )
 
 
 def _write_interface_objects(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> tuple[str, str]:

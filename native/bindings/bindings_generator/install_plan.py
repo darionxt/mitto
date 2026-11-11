@@ -180,10 +180,16 @@ def _entries(interface: Interface) -> list[_Entry]:
 def _install_function(entries: list[_Entry], phase: Phase) -> list[Property]:
     """The properties that one of bind_gen's install functions installs, in its order: see make_install_properties()."""
     result: list[Property] = []
-    for group, nadc in (("attribute", False), ("attribute", True), ("constant", False), ("operation", False), (
-        "operation",
-        True,
-    )):
+    for group, nadc in (
+        ("attribute", False),
+        ("attribute", True),
+        ("constant", False),
+        ("operation", False),
+        (
+            "operation",
+            True,
+        ),
+    ):
         selected = [entry for entry in entries if entry.group == group and entry.no_alloc_direct_call == nadc]
         by_condition: dict[Condition, list[_Entry]] = {}
         for entry in selected:
@@ -198,7 +204,13 @@ def _install_function(entries: list[_Entry], phase: Phase) -> list[Property]:
 
 def _symbol(name: str, phase: Phase, enumerable: bool = False, value: str | None = None) -> Property:
     return Property(
-        name=name, target="prototype", kind="value", enumerable=enumerable, configurable=True, writable=False, value=value,
+        name=name,
+        target="prototype",
+        kind="value",
+        enumerable=enumerable,
+        configurable=True,
+        writable=False,
+        value=value,
         phase=phase,
     )
 
@@ -219,13 +231,27 @@ def plan_interface(interface: Interface) -> list[Property]:
         if collection is not None and collection.kind == "iterable" and collection.iterator_operation is None:
             for name in ("entries", "keys", "values", "forEach"):
                 properties.append(
-                    Property(name=name, target="prototype", kind="method", enumerable=True, configurable=True,
-                             writable=True, phase=Phase.TEMPLATE)
+                    Property(
+                        name=name,
+                        target="prototype",
+                        kind="method",
+                        enumerable=True,
+                        configurable=True,
+                        writable=True,
+                        phase=Phase.TEMPLATE,
+                    )
                 )
     elif interface.kind == "namespace":
         properties.append(
-            Property(name="@@toStringTag", target="interface", kind="value", enumerable=False, configurable=True,
-                     writable=False, value=interface.name)
+            Property(
+                name="@@toStringTag",
+                target="interface",
+                kind="value",
+                enumerable=False,
+                configurable=True,
+                writable=False,
+                value=interface.name,
+            )
         )
 
     entries = _entries(interface)
@@ -237,8 +263,15 @@ def plan_interface(interface: Interface) -> list[Property]:
 
     if interface.kind == "interface":
         properties.append(
-            Property(name="constructor", target="prototype", kind="value", enumerable=False, configurable=True,
-                     writable=True, phase=Phase.TEMPLATE)
+            Property(
+                name="constructor",
+                target="prototype",
+                kind="value",
+                enumerable=False,
+                configurable=True,
+                writable=True,
+                phase=Phase.TEMPLATE,
+            )
         )
         # The context's part, which _make_install_prototype_object() starts with.
         if interface.unscopables:

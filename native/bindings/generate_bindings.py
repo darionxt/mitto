@@ -34,7 +34,6 @@ def run() -> int:
 
     import json5  # pyright: ignore[reportMissingImports]
     import web_idl  # pyright: ignore[reportMissingImports]
-
     from bindings_generator import main
 
     database_path = arguments[arguments.index("--database") + 1]

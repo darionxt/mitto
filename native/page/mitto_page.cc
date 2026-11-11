@@ -184,8 +184,7 @@ int main(int argc, char** argv) {
   {
     const v8::Isolate::Scope isolate_scope(isolate);
     const std::unique_ptr<mitto::bindings::PerIsolateData> data =
-        mitto::bindings::PerIsolateData::Create(isolate,
-                                                std::move(*features));
+        mitto::bindings::PerIsolateData::Create(isolate, std::move(*features));
     finished = RunScript(isolate, argument);
   }
   isolate->Dispose();

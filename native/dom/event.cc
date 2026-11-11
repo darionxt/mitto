@@ -12,8 +12,8 @@ namespace mitto {
 namespace {
 
 // Chrome coarsens time stamps to 100 microseconds for a context that is not
-// cross-origin isolated (third_party/blink/renderer/core/timing/time_clamper.h).
-// It also adds jitter there, which the Runtime does not yet.
+// cross-origin isolated, in Blink's TimeClamper, which also adds jitter. The
+// Runtime does not add jitter yet.
 constexpr double kResolutionMilliseconds = 0.1;
 
 }  // namespace

@@ -23,7 +23,8 @@ std::unique_ptr<PerIsolateData> PerIsolateData::Create(
     v8::Isolate* isolate,
     RuntimeFeatureSet features) {
   CHECK(!isolate->GetData(kDataSlot));
-  auto data = base::WrapUnique(new PerIsolateData(isolate, std::move(features)));
+  auto data =
+      base::WrapUnique(new PerIsolateData(isolate, std::move(features)));
   isolate->SetData(kDataSlot, data.get());
   SetUpExceptionContext(isolate);
   return data;
@@ -56,8 +57,8 @@ v8::Local<v8::FunctionTemplate> PerIsolateData::InterfaceTemplate(
       v8::FunctionTemplate::New(isolate);
   // Kept before the members go in, so that an interface whose members name it,
   // such as a method that takes one of its own objects, finds it.
-  templates_.emplace(info, v8::Eternal<v8::FunctionTemplate>(
-                               isolate, interface_template));
+  templates_.emplace(
+      info, v8::Eternal<v8::FunctionTemplate>(isolate, interface_template));
   info->install_interface_template(isolate, interface_template);
   return interface_template;
 }

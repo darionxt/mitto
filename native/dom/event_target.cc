@@ -37,7 +37,8 @@ FlatOptions Flatten(
     flat.capture = *capture;
     return flat;
   }
-  const auto& dictionary = std::get<bindings::AddEventListenerOptions>(*options);
+  const auto& dictionary =
+      std::get<bindings::AddEventListenerOptions>(*options);
   flat.capture = dictionary.capture;
   // Without `passive`, a listener is not passive. The DOM standard makes some
   // listeners of a window, a document or a body passive by default, which no
@@ -74,7 +75,8 @@ void CallListener(v8::Isolate* isolate,
   } else {
     v8::Local<v8::Value> handle_event;
     if (!callback
-             ->Get(context, v8::String::NewFromUtf8Literal(isolate, "handleEvent"))
+             ->Get(context,
+                   v8::String::NewFromUtf8Literal(isolate, "handleEvent"))
              .ToLocal(&handle_event)) {
       bindings::ReportException(isolate, try_catch.Exception());
       return;
@@ -174,9 +176,10 @@ void EventTarget::RemoveEventListener(
 
 void EventTarget::RemoveEntry(EventListenerEntry* entry) {
   entry->set_removed();
-  std::erase_if(listeners_, [entry](const cppgc::Member<EventListenerEntry>& m) {
-    return m.Get() == entry;
-  });
+  std::erase_if(listeners_,
+                [entry](const cppgc::Member<EventListenerEntry>& m) {
+                  return m.Get() == entry;
+                });
 }
 
 bool EventTarget::DispatchEventForBindings(
@@ -211,8 +214,8 @@ void EventTarget::FireEventListeners(Event* event) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   // A copy, so that listeners that a listener adds wait for the next event,
   // and Persistent, so that the collector keeps them while scripts run.
-  std::vector<cppgc::Persistent<EventListenerEntry>> entries(
-      listeners_.begin(), listeners_.end());
+  std::vector<cppgc::Persistent<EventListenerEntry>> entries(listeners_.begin(),
+                                                             listeners_.end());
   const v8::Local<v8::Value> current_target = ToV8(isolate);
   const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
   for (const cppgc::Persistent<EventListenerEntry>& entry : entries) {
