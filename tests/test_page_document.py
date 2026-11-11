@@ -178,6 +178,33 @@ def test_a_member_whose_behaviour_is_missing_throws(program: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("selector", "found"),
+    [
+        pytest.param("body > /**/ p", "a", id="between-tokens"),
+        pytest.param("/* first */p/* last */", "a", id="around"),
+        pytest.param("p/**/.x/**/#b", "b", id="inside-a-compound"),
+        pytest.param("p /* unclosed", "a", id="unclosed"),
+        pytest.param("[class/**/=/**/x]", "b", id="in-an-attribute-selector"),
+    ],
+)
+def test_selectors_may_hold_comments(program: Path, selector: str, found: str) -> None:
+    # CSS's tokenizer drops comments between tokens.
+    script = f"document.querySelector({selector!r}).id"
+
+    assert _evaluate(program, script, "<p id=a><p id=b class=x>") == found
+
+
+@pytest.mark.parametrize("selector", ["div/**/p", "p >/**/", "#/**/a", "[a~/**/=b]"])
+def test_a_comment_is_not_whitespace_in_a_selector(program: Path, selector: str) -> None:
+    # A comment makes no token, so names on each side of it are not a descendant combinator.
+    result = _run(program, f"document.querySelector({selector!r})")
+
+    assert result.stderr == (
+        f"Uncaught SyntaxError: Failed to execute 'querySelector' on 'Document': '{selector}' is not a valid selector.\n"
+    )
+
+
 def test_a_selector_that_needs_more_than_simple_selectors_is_a_known_gap(program: Path) -> None:
     result = _run(program, "document.querySelector('p:first-child')")
 

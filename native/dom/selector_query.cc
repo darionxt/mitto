@@ -99,12 +99,31 @@ class Parser {
   char16_t Peek(size_t offset = 0) const {
     return position_ + offset < text_.size() ? text_[position_ + offset] : 0;
   }
+  // CSS's tokenizer consumes comments between tokens and makes no token of
+  // them, so a comment is not whitespace: "div/**/p" is two names with
+  // nothing between them.
+  void SkipComments() {
+    while (Peek() == '/' && Peek(1) == '*') {
+      position_ += 2;
+      while (!AtEnd() && !(Peek() == '*' && Peek(1) == '/')) {
+        ++position_;
+      }
+      // A comment that the input ends in is closed there.
+      position_ = std::min(position_ + 2, text_.size());
+    }
+  }
+
+  // Skips whitespace and comments, and returns whether there was whitespace.
   bool SkipWhitespace() {
-    const size_t start = position_;
-    while (!AtEnd() && IsWhitespace(Peek())) {
+    bool whitespace = false;
+    while (true) {
+      SkipComments();
+      if (AtEnd() || !IsWhitespace(Peek())) {
+        return whitespace;
+      }
+      whitespace = true;
       ++position_;
     }
-    return position_ != start;
   }
 
   // Whether a backslash at `offset` starts a valid escape: one not followed by
@@ -250,6 +269,7 @@ class Parser {
 
   Result ParseCompound(SelectorQuery::Compound& compound) {
     std::u16string name;
+    SkipComments();
     if (Peek() == '*') {
       ++position_;
       compound.simples.push_back({SelectorQuery::Simple::Kind::kUniversal});
@@ -261,7 +281,11 @@ class Parser {
       // A namespace prefix, which needs @namespace rules.
       return Result::kUnsupported;
     }
-    while (!AtEnd()) {
+    while (true) {
+      SkipComments();
+      if (AtEnd()) {
+        break;
+      }
       const char16_t c = Peek();
       if (c == '#') {
         ++position_;
