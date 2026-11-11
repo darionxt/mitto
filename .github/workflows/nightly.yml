@@ -1,8 +1,8 @@
 name: Nightly
 
 # main reuses its build directories, so a mistake in an incremental build would not show there. This run builds what
-# main holds from nothing on every Host, with CI's and the sanitizers' jobs and tests, once main has moved since the last
-# run that finished.
+# main holds from nothing on every Host, with CI's and the sanitizers' jobs and tests, once main has moved since the
+# last run that finished.
 on:
   # GitHub may start a scheduled run hours late. A failure reaches the owner in two ways: the job at the end opens an
   # issue, and GitHub mails the person who last changed this schedule, if their notification settings ask for it.

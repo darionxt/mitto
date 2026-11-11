@@ -42,8 +42,8 @@ jobs:
   native:
     name: Native core, ${{ matrix.config }}
     runs-on: ubuntu-latest
-    # From nothing, as in the nightly run, the Runtime takes 63 to 85 minutes to build, and the library under a sanitizer
-    # 17 to 26.
+    # From nothing, as in the nightly run, the Runtime takes 63 to 85 minutes to build, and the library under a
+    # sanitizer 17 to 26.
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -107,9 +107,9 @@ jobs:
           done
           # Without this a report names no source lines, and the toolchain is not cached.
           cp "$build_dir/../../third_party/llvm-build/Release+Asserts/bin/llvm-symbolizer" "$RUNNER_TEMP/native-core"
-      # Before the tests, so that a test that fails does not waste the build. Only main saves: these builds take 460 MB
-      # for each commit, and a pull request that runs again rebuilds them from main's build directories in a minute or
-      # two.
+      # Before the tests, so that a test that fails does not waste the build. Only main saves: these builds take
+      # 460 MB for each commit, and a pull request that runs again rebuilds them from main's build directories in under
+      # a minute.
       - if: steps.cached-build.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && !inputs.from-nothing
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
