@@ -1,6 +1,6 @@
 # Blink's Web IDL database: the interfaces, dictionaries and other definitions
 # of every Web IDL file that Blink exposes to pages, in one file that says
-# nothing yet about how bindings are written. The bindings generator will read
+# nothing yet about how bindings are written. The bindings generator below reads
 # it.
 #
 # These targets run Blink's own scripts on Blink's own lists of files, as
@@ -14,6 +14,7 @@
 # Upstream: third_party/blink/renderer/bindings/BUILD.gn
 
 import("//build/config/python.gni")
+import("//mitto/bindings/interfaces.gni")
 import("//third_party/blink/renderer/bindings/idl_in_core.gni")
 import("//third_party/blink/renderer/bindings/idl_in_modules.gni")
 
@@ -78,5 +79,104 @@ action_with_pydeps("web_idl_database") {
   deps = [
     ":web_idl_in_core",
     ":web_idl_in_modules",
+  ]
+}
+
+# The bindings: what the generator writes from the database for the interfaces
+# that have a C++ class, and the code they run on. docs/runtime.md says how the
+# generator works.
+
+
+_generated_dir = "$root_gen_dir/mitto/bindings"
+_generated_runtime = [
+  "runtime_features.cc",
+  "runtime_features.h",
+]
+_generated_dom = [
+  "dictionaries.cc",
+  "dictionaries.h",
+  "interface_objects.cc",
+  "interface_objects.h",
+]
+foreach(interface, mitto_bindings_interfaces) {
+  _generated_dom += [
+    "v8_${interface.file}.cc",
+    "v8_${interface.file}.h",
+  ]
+}
+
+# Reads the whole database, and stops the build if anything in it is a
+# construct, a type or an extended attribute that the generator does not
+# handle. It writes the C++ for the interfaces above, and a listing of every
+# interface and member it planned, which the release routine compares between
+# two Engine Releases.
+action_with_pydeps("generate_bindings") {
+  script = "generate_bindings.py"
+  database = get_target_outputs(":web_idl_database")
+  runtime_enabled_features =
+      "//third_party/blink/renderer/platform/runtime_enabled_features.json5"
+  inputs = database + [ runtime_enabled_features ]
+  outputs = [ "$_generated_dir/web_idl_listing.txt" ]
+  args = [
+    "--source-root=" + rebase_path("//", root_build_dir),
+    "--database",
+    rebase_path(database[0], root_build_dir),
+    "--runtime-enabled-features",
+    rebase_path(runtime_enabled_features, root_build_dir),
+    "--output-dir",
+    rebase_path(_generated_dir, root_build_dir),
+    "--listing",
+    rebase_path(outputs[0], root_build_dir),
+  ]
+  foreach(file, _generated_runtime + _generated_dom) {
+    outputs += [ "$_generated_dir/$file" ]
+    args += [
+      "--output",
+      file,
+    ]
+  }
+  foreach(interface, mitto_bindings_interfaces) {
+    args += [
+      "--interface",
+      interface.name,
+    ]
+    if (defined(interface.missing)) {
+      foreach(member, interface.missing) {
+        args += [
+          "--missing",
+          "${interface.name}.$member",
+        ]
+      }
+    }
+  }
+  deps = [ ":web_idl_database" ]
+}
+
+# The code that the generated bindings run on, which knows no interface.
+source_set("bindings") {
+  sources = [
+    "exception_messages.cc",
+    "exception_messages.h",
+    "exception_state.cc",
+    "exception_state.h",
+    "idl_member_installer.cc",
+    "idl_member_installer.h",
+    "per_isolate_data.cc",
+    "per_isolate_data.h",
+    "runtime_feature_set.cc",
+    "runtime_feature_set.h",
+    "script_wrappable.cc",
+    "script_wrappable.h",
+    "v8_conversions.cc",
+    "v8_conversions.h",
+    "wrapper_type_info.h",
+  ]
+  foreach(file, _generated_runtime) {
+    sources += [ "$_generated_dir/$file" ]
+  }
+  public_deps = [
+    ":generate_bindings",
+    "//base",
+    "//v8",
   ]
 }

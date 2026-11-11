@@ -1,0 +1,39 @@
+# The Page's DOM: the C++ classes of the interfaces that the Runtime implements,
+# built with the bindings that the generator writes for them, which call them.
+
+import("//mitto/bindings/interfaces.gni")
+
+source_set("dom") {
+  sources = [
+    "dom_exception.cc",
+    "dom_exception.h",
+    "event.cc",
+    "event.h",
+    "event_target.cc",
+    "event_target.h",
+    "page_interfaces.cc",
+    "page_interfaces.h",
+    "pop_state_event.cc",
+    "pop_state_event.h",
+  ]
+
+  # What //mitto/bindings:generate_bindings writes for these classes.
+  _generated_dir = "$root_gen_dir/mitto/bindings"
+  sources += [
+    "$_generated_dir/dictionaries.cc",
+    "$_generated_dir/dictionaries.h",
+    "$_generated_dir/interface_objects.cc",
+    "$_generated_dir/interface_objects.h",
+  ]
+  foreach(interface, mitto_bindings_interfaces) {
+    sources += [
+      "$_generated_dir/v8_${interface.file}.cc",
+      "$_generated_dir/v8_${interface.file}.h",
+    ]
+  }
+  public_deps = [ "//mitto/bindings" ]
+  deps = [
+    "//base",
+    "//v8",
+  ]
+}

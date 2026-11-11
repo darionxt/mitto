@@ -1,0 +1,29 @@
+# The interfaces that have a C++ class in the Runtime: mitto::<name>, declared
+# in native/dom/<file>.h. The bindings generator writes bindings for these, and
+# only these are exposed to a page until every interface has bindings (roadmap,
+# M7). docs/runtime.md says how to add one.
+#
+# `missing` names the members whose behaviour the Runtime does not have yet,
+# Known Gaps. Their bindings are installed as Chrome installs them, and throw
+# when a page calls them.
+mitto_bindings_interfaces = [
+  {
+    name = "DOMException"
+    file = "dom_exception"
+  },
+  {
+    name = "Event"
+    file = "event"
+  },
+  {
+    name = "EventTarget"
+    file = "event_target"
+
+    # It returns an Observable, which has no class yet.
+    missing = [ "when" ]
+  },
+  {
+    name = "PopStateEvent"
+    file = "pop_state_event"
+  },
+]

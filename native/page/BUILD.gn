@@ -58,6 +58,7 @@ executable("mitto_page") {
     ":icu_data",
     ":v8_snapshot",
     "//base",
+    "//mitto/dom",
     "//third_party/icu",
     "//v8",
   ]
