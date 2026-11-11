@@ -308,6 +308,47 @@ def test_a_windows_program_has_no_tag(tmp_path: Path) -> None:
         wheel.platform_tag(library)
 
 
+def test_the_linux_tag_is_the_highest_glibc_version_the_library_or_a_program_needs(tmp_path: Path) -> None:
+    library = write(tmp_path, elf_library({"libc.so.6": ["GLIBC_2.25"]}))
+    program = tmp_path / "program"
+    program.write_bytes(elf_library({"libc.so.6": ["GLIBC_2.2.5", "GLIBC_2.27"]}))
+
+    assert wheel.platform_tag(library, program) == "manylinux_2_27_x86_64"
+    assert wheel.platform_tag(program, library) == "manylinux_2_27_x86_64"
+
+
+def test_the_macos_tag_is_the_highest_version_the_library_or_a_program_needs(tmp_path: Path) -> None:
+    library = write(tmp_path, mach_o_library(minimum=(13, 0, 0)))
+    program = tmp_path / "program"
+    program.write_bytes(mach_o_library(minimum=(14, 0, 0)))
+
+    assert wheel.platform_tag(library, program) == "macosx_14_0_arm64"
+
+
+def test_a_windows_program_beside_the_dll_keeps_the_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+    program = tmp_path / "program.exe"
+    program.write_bytes(pe_page_program())
+
+    assert wheel.platform_tag(library, program) == "win_amd64"
+
+
+def test_a_dll_in_place_of_a_program_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+
+    with pytest.raises(wheel.WheelError, match="a DLL, not a program"):
+        wheel.platform_tag(library, library)
+
+
+def test_a_program_for_another_host_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, elf_library({"libc.so.6": ["GLIBC_2.25"]}))
+    program = tmp_path / "program"
+    program.write_bytes(mach_o_library())
+
+    with pytest.raises(wheel.WheelError, match="not both for one Host"):
+        wheel.platform_tag(library, program)
+
+
 def test_a_file_that_is_not_a_library_has_no_tag(tmp_path: Path) -> None:
     library = write(tmp_path, b"#!/bin/sh\n")
 
@@ -550,7 +591,7 @@ def page_program_stub_wheel(stub_build: Path, tmp_path_factory: pytest.TempPathF
 
 
 def unpack(built: Path, directory: Path, binary: str = _native.LIBRARY_NAME) -> tuple[Path, Path]:
-    """Unpack a library or program of a wheel and its symbols archive, and return the binary and the file of its symbols."""
+    """Unpack a binary of a wheel and its symbols archive, and return the binary and the file of its symbols."""
     with zipfile.ZipFile(built) as archive:
         unpacked = Path(archive.extract(f"mitto/{binary}", directory))
     with tarfile.open(wheel.symbols_archive_of(built)) as archive:
@@ -563,7 +604,7 @@ def unpack(built: Path, directory: Path, binary: str = _native.LIBRARY_NAME) -> 
 
 
 def check_symbols(built: Path, function: str, directory: Path, binary: str = _native.LIBRARY_NAME) -> None:
-    """Check that the symbols archive of a wheel belongs to one of its binaries and names a function that it does not."""
+    """Check that the symbols archive of a wheel belongs to one of its binaries and names a function it does not."""
     library, symbols = unpack(built, directory, binary)
     if sys.platform == "win32":
         _, name = debug_help_lookup(library, symbols.parent, function)
@@ -803,17 +844,21 @@ def test_the_installed_package_holds_the_library_of_the_wheel(built_wheel: Path)
     assert _native.load_library().mitto_abi_version() == _native.ABI_VERSION
 
 
-def test_the_wheel_is_tagged_for_what_its_library_needs(built_wheel: Path, tmp_path: Path) -> None:
+def test_the_wheel_is_tagged_for_what_its_binaries_need(built_wheel: Path, tmp_path: Path) -> None:
     platform = built_wheel.name.removesuffix(".whl").rsplit("-", 1)[1]
+    binaries = [_native.LIBRARY_NAME, *(Path(name).name for name in page_programs_in(built_wheel))]
     if sys.platform == "win32":
-        library, _ = unpack(built_wheel, tmp_path)
-        assert (PeFile(library).machine, platform) == (IMAGE_FILE_MACHINE_AMD64, "win_amd64")
+        machines = {PeFile(unpack(built_wheel, tmp_path, binary)[0]).machine for binary in binaries}
+        assert (machines, platform) == ({IMAGE_FILE_MACHINE_AMD64}, "win_amd64")
     elif sys.platform == "darwin":
-        library, _ = unpack(built_wheel, tmp_path)
-        match = re.search(r"minos (\d+)\.(\d+)", run(["otool", "-l", library]))
-        assert match is not None
-        assert platform == f"macosx_{match[1]}_{match[2]}_arm64"
+        versions: list[tuple[int, int]] = []
+        for binary in binaries:
+            match = re.search(r"minos (\d+)\.(\d+)", run(["otool", "-l", unpack(built_wheel, tmp_path, binary)[0]]))
+            assert match is not None
+            versions.append((int(match[1]), int(match[2])))
+        assert platform == "macosx_{}_{}_arm64".format(*max(versions))
     else:
+        # auditwheel reads every ELF file in the wheel.
         report = json.loads(run([sys.executable, "-m", "auditwheel", "show", "--json", built_wheel]))
         assert report["overall_tag"] == platform
 

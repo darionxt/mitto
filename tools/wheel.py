@@ -8,7 +8,8 @@ library in MITTO_WHEEL_LIBRARY and build as usual:
 The hook strips a copy of the library and keeps what it removed in an archive next to the wheel, named after it. A
 Windows DLL holds no debug information to strip: it names a PDB next to it, which goes into the archive instead. The
 wheel's tag is py3-none-PLATFORM, with the platform taken from the library itself: the macOS version it needs, the
-highest glibc version it needs, as auditwheel names it, or the CPU of a DLL. A wheel without a library would install
+highest glibc version it needs, as auditwheel names it, or the CPU of a DLL. A Page program in the wheel, below, can
+raise that version. A wheel without a library would install
 anywhere and fail on its first request, so the hook refuses to build one. An editable install needs none, because it
 takes the library from MITTO_NATIVE_LIBRARY.
 
@@ -117,26 +118,53 @@ _LIBRARY_NAMES = _Names(MACOS_LIBRARY, LINUX_LIBRARY, WINDOWS_LIBRARY)
 _PAGE_PROGRAM_NAMES = _Names(PAGE_PROGRAM, PAGE_PROGRAM, WINDOWS_PAGE_PROGRAM)
 
 
-def platform_tag(library: Path) -> str:
-    """Returns the platform part of the wheel tag that a library needs, such as macosx_13_0_arm64.
+class _Platform(NamedTuple):
+    """What a binary needs of its Host: the system and the CPU, and the version of the system if a tag names one."""
+
+    system: str
+    version: tuple[int, ...]
+    cpu: str
+
+    @property
+    def tag(self) -> str:
+        return "_".join([self.system, *map(str, self.version), self.cpu])
+
+
+def platform_tag(library: Path, *programs: Path) -> str:
+    """Returns the platform part of the wheel tag that a library and the programs beside it need.
+
+    Such as macosx_13_0_arm64. A wheel installs only where every binary in it runs, so the tag names the highest version
+    of the system that any of them needs.
 
     Raises:
-        WheelError: If the file is not a library of a Host, or what it needs has no tag.
+        WheelError: If a file is not a library or a program of a Host, the files are for different Hosts, or what they
+            need has no tag.
     """
-    data = library.read_bytes()
+    needed = _platform_of(library, dll=True)
+    highest = needed
+    for program in programs:
+        platform = _platform_of(program, dll=False)
+        if (platform.system, platform.cpu) != (needed.system, needed.cpu):
+            raise WheelError(f"{program} is for {platform.tag} and {library} for {needed.tag}, not both for one Host")
+        highest = max(highest, platform, key=lambda each: each.version)
+    return highest.tag
+
+
+def _platform_of(binary: Path, dll: bool) -> _Platform:
+    data = binary.read_bytes()
     if data.startswith(MACH_O_MAGIC):
-        return _macos_tag(library, data)
+        return _macos_platform(binary, data)
     if data.startswith(ELF_MAGIC):
-        return _manylinux_tag(library, data)
+        return _manylinux_platform(binary, data)
     if data.startswith(PE_MAGIC):
-        return _windows_tag(library, data)
-    raise WheelError(f"{library} is neither a Mach-O, an ELF nor a PE file")
+        return _windows_platform(binary, data, dll)
+    raise WheelError(f"{binary} is neither a Mach-O, an ELF nor a PE file")
 
 
-def _macos_tag(library: Path, data: bytes) -> str:
+def _macos_platform(binary: Path, data: bytes) -> _Platform:
     (cpu_type,) = struct.unpack_from("<I", data, 4)
     if cpu_type not in MACH_O_ARCHITECTURES:
-        raise WheelError(f"{library} is for CPU type {cpu_type:#x}, not for arm64")
+        raise WheelError(f"{binary} is for CPU type {cpu_type:#x}, not for arm64")
     (command_count,) = struct.unpack_from("<I", data, 16)
     command = MACH_O_HEADER_SIZE
     for _ in range(command_count):
@@ -144,49 +172,52 @@ def _macos_tag(library: Path, data: bytes) -> str:
         if kind == LC_BUILD_VERSION:
             platform, minimum = struct.unpack_from("<2I", data, command + 8)
             if platform != PLATFORM_MACOS:
-                raise WheelError(f"{library} is for Apple platform {platform}, not for macOS")
+                raise WheelError(f"{binary} is for Apple platform {platform}, not for macOS")
             major, minor, patch = minimum >> 16, (minimum >> 8) & 0xFF, minimum & 0xFF
             # From macOS 11 on, pip only matches tags of a major version, such as macosx_13_0.
             if minor or patch:
-                raise WheelError(f"{library} needs macOS {major}.{minor}.{patch}, and a tag can only say {major}.0")
-            return f"macosx_{major}_0_{MACH_O_ARCHITECTURES[cpu_type]}"
+                raise WheelError(f"{binary} needs macOS {major}.{minor}.{patch}, and a tag can only say {major}.0")
+            return _Platform("macosx", (major, 0), MACH_O_ARCHITECTURES[cpu_type])
         command += command_size
-    raise WheelError(f"{library} does not say which macOS version it needs")
+    raise WheelError(f"{binary} does not say which macOS version it needs")
 
 
-def _manylinux_tag(library: Path, data: bytes) -> str:
+def _manylinux_platform(binary: Path, data: bytes) -> _Platform:
     if data[4:6] != ELF_64_LITTLE_ENDIAN:
-        raise WheelError(f"{library} is not a 64-bit little-endian ELF file")
+        raise WheelError(f"{binary} is not a 64-bit little-endian ELF file")
     (machine,) = struct.unpack_from("<H", data, 18)
     if machine not in ELF_ARCHITECTURES:
-        raise WheelError(f"{library} is for ELF machine {machine}, not for x86_64")
+        raise WheelError(f"{binary} is for ELF machine {machine}, not for x86_64")
     versions: list[tuple[int, int]] = []
     for name in _needed_versions(data):
         if not name.startswith("GLIBC_"):
             continue
         match = GLIBC_VERSION.fullmatch(name)
         if match is None:
-            raise WheelError(f"{library} needs {name} from glibc, which no manylinux tag allows")
+            raise WheelError(f"{binary} needs {name} from glibc, which no manylinux tag allows")
         versions.append((int(match[1]), int(match[2])))
     if not versions:
-        raise WheelError(f"{library} needs no version of glibc")
+        raise WheelError(f"{binary} needs no version of glibc")
     needed = max(versions)
     policy = next((version for version in MANYLINUX_GLIBC_VERSIONS if version >= needed), None)
     if policy is None:
-        raise WheelError(f"{library} needs glibc {needed[0]}.{needed[1]}, which no manylinux policy covers")
-    return f"manylinux_{policy[0]}_{policy[1]}_{ELF_ARCHITECTURES[machine]}"
+        raise WheelError(f"{binary} needs glibc {needed[0]}.{needed[1]}, which no manylinux policy covers")
+    return _Platform("manylinux", policy, ELF_ARCHITECTURES[machine])
 
 
-def _windows_tag(library: Path, data: bytes) -> str:
+def _windows_platform(binary: Path, data: bytes, dll: bool) -> _Platform:
     (pe_offset,) = struct.unpack_from("<I", data, PE_OFFSET_FIELD)
     if data[pe_offset : pe_offset + len(PE_SIGNATURE)] != PE_SIGNATURE:
-        raise WheelError(f"{library} has an MS-DOS header but no PE signature")
+        raise WheelError(f"{binary} has an MS-DOS header but no PE signature")
     machine, characteristics = struct.unpack_from("<H16xH", data, pe_offset + 4)
     if machine not in PE_ARCHITECTURES:
-        raise WheelError(f"{library} is for PE machine {machine:#x}, not for x64")
-    if not characteristics & IMAGE_FILE_DLL:
-        raise WheelError(f"{library} is a program, not a DLL")
-    return f"win_{PE_ARCHITECTURES[machine]}"
+        raise WheelError(f"{binary} is for PE machine {machine:#x}, not for x64")
+    if dll and not characteristics & IMAGE_FILE_DLL:
+        raise WheelError(f"{binary} is a program, not a DLL")
+    if not dll and characteristics & IMAGE_FILE_DLL:
+        raise WheelError(f"{binary} is a DLL, not a program")
+    # Windows has no version in a tag.
+    return _Platform("win", (), PE_ARCHITECTURES[machine])
 
 
 def _needed_versions(data: bytes) -> set[str]:
@@ -234,7 +265,7 @@ def strip_page_program(program: Path, directory: Path) -> tuple[Path, Path]:
         The stripped program, named mitto_page or mitto_page.exe, and what stripping removed from it.
 
     Raises:
-        WheelError: If the file is not a program of a Host, or a tool fails, or the program's PDB is missing or another's.
+        WheelError: If the file is not a program of a Host, or a tool fails, or its PDB is missing or another's.
     """
     return _strip(program, directory, _PAGE_PROGRAM_NAMES)
 
@@ -419,12 +450,12 @@ class NativeLibraryHook(BuildHookInterface[BuilderConfig]):
         self._directory = Path(tempfile.mkdtemp(prefix="mitto-wheel-"))
         try:
             stripped, symbols = strip_library(library, self._directory)
-            tag = f"py3-none-{platform_tag(stripped)}"
             binaries, self._symbols = [stripped], [symbols]
             if program is not None:
                 stripped_program, program_symbols = strip_page_program(program, self._directory)
                 binaries.append(stripped_program)
                 self._symbols.append(program_symbols)
+            tag = f"py3-none-{platform_tag(*binaries)}"
         except BaseException:
             shutil.rmtree(self._directory)
             raise

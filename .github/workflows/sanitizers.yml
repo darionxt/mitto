@@ -29,7 +29,8 @@ jobs:
   native:
     name: Native core, ${{ matrix.config }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The Runtime takes about 65 minutes to build from nothing, and the library under a sanitizer 18 to 26.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
