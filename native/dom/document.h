@@ -1,7 +1,7 @@
 // The DOM's Document: the root of a tree, its doctype and element, and the
 // factory of its nodes.
 //
-// A Page's window has one, about:blank's until a document loads (#183), and a
+// A Page's window has one, about:blank's until its Session loads one, and a
 // page can make more, which have no window. A document is an HTML document or
 // not, as `new Document()` makes one, which decides how its elements' names
 // read and which namespace createElement() puts an element in.
@@ -14,13 +14,16 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 
+#include "base/memory/raw_ptr.h"
 #include "mitto/dom/node.h"
 #include "v8/include/cppgc/member.h"
 
 namespace mitto {
 
 class Comment;
+class CookieJar;
 class DocumentType;
 class Element;
 class HTMLElement;
@@ -37,6 +40,13 @@ class Document : public Node {
     kLimitedQuirks,
   };
 
+  // The HTML Standard's current document readiness, which readyState gives.
+  enum class Readiness {
+    kLoading,
+    kInteractive,
+    kComplete,
+  };
+
   // new Document(): an XML document, which is not an HTML document.
   static Document* Create();
   // An HTML document at about:blank, an HTMLDocument.
@@ -49,7 +59,7 @@ class Document : public Node {
   void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
-  std::u16string UrlForBinding() const { return u"about:blank"; }
+  std::u16string UrlForBinding() const { return url_; }
   std::u16string CompatMode() const;
   std::u16string CharacterSet() const { return u"UTF-8"; }
   std::u16string ContentType() const;
@@ -61,8 +71,12 @@ class Document : public Node {
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
   // A document of no browsing context has no location. The window's has one,
-  // which the Runtime lacks until a Page loads documents (#183).
+  // which the Runtime lacks yet: a Known Gap.
   bindings::ScriptWrappable* Location() const { return nullptr; }
+  std::u16string Cookie(bindings::ExceptionState& exception_state) const;
+  void SetCookie(const std::u16string& value,
+                 bindings::ExceptionState& exception_state);
+  std::u16string ReadyState() const;
   Comment* CreateComment(const std::u16string& data);
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);
@@ -86,6 +100,16 @@ class Document : public Node {
   }
   // The window whose document this is, which defaultView gives.
   void SetWindow(Window* window) { window_ = window; }
+  // The URL of the document, serialized, which URL and documentURI give.
+  void SetUrl(std::u16string url) { url_ = std::move(url); }
+  // Where document.cookie reaches the cookies of the document's Session. A
+  // document that has a window and no jar has an opaque origin, as about:blank
+  // has in a new tab, and its cookie attribute throws.
+  void SetCookieJar(CookieJar* cookie_jar) { cookie_jar_ = cookie_jar; }
+  Readiness GetReadiness() const { return readiness_; }
+  // Sets the readiness, and fires readystatechange at the document for
+  // interactive and complete, as Blink's Document::SetReadyState() does.
+  void SetReadiness(Readiness readiness);
   // An element of the class that its namespace and name call for, as Blink's
   // factories make it: for the HTML namespace, the HTML Standard's interface
   // for the name, or HTMLElement while the Runtime lacks that interface.
@@ -97,8 +121,15 @@ class Document : public Node {
   Node* CloneWithoutChildren(Document& document) const override;
 
  private:
+  void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
+
   const bool is_html_;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
+  std::u16string url_ = u"about:blank";
+  // A document that no parser is loading is complete, as Blink's starts.
+  Readiness readiness_ = Readiness::kComplete;
+  // The Page program's, which outlives every document.
+  raw_ptr<CookieJar> cookie_jar_ = nullptr;
   cppgc::Member<Window> window_;
 };
 

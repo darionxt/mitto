@@ -32,6 +32,8 @@ enum class CredentialsMode {
 // network::ResourceRequest. See mitto_request_start().
 struct FetchParams {
   FetchParams();
+  FetchParams(const FetchParams&);
+  FetchParams& operator=(const FetchParams&);
   FetchParams(FetchParams&&);
   FetchParams& operator=(FetchParams&&);
   ~FetchParams();
@@ -52,6 +54,8 @@ struct FetchParams {
 // What a request is started with, besides its URL and headers.
 struct RequestOptions {
   RequestOptions();
+  RequestOptions(const RequestOptions&);
+  RequestOptions& operator=(const RequestOptions&);
   RequestOptions(RequestOptions&&);
   RequestOptions& operator=(RequestOptions&&);
   ~RequestOptions();

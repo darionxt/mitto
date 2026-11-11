@@ -221,8 +221,12 @@ bool EventTarget::DispatchEventForBindings(
 }
 
 bool EventTarget::DispatchEvent(Event* event) {
+  return DispatchEventWithTarget(event, this);
+}
+
+bool EventTarget::DispatchEventWithTarget(Event* event, EventTarget* target) {
   // Blink's EventTarget::DispatchEventInternal().
-  event->SetTarget(this);
+  event->SetTarget(target);
   event->SetCurrentTarget(this);
   event->SetPhase(Event::Phase::kAtTarget);
   const bool canceled = FireEventListeners(event);

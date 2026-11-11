@@ -1,8 +1,9 @@
 """A Page, whose scripts run in a process of their own on the Engine Release's V8, on the Session that opened it.
 
-Private until the Runtime ships: Session._open_page() opens one, and AsyncSession._open_page() an AsyncPage. Until the
-Runtime loads documents, a Page holds none: it keeps the URL that it was opened for, fetches nothing, and runs scripts in a
-context that has V8's built-ins, its console and the interfaces that the bindings have so far. docs/runtime.md says more.
+Private until the Runtime ships: Session._open_page() opens one, and AsyncSession._open_page() an AsyncPage. Opening one
+navigates it to its URL through its Session, and returns once the document and its classic scripts have loaded. Its scripts
+run in that document's context, which has V8's built-ins, its console and the interfaces that the bindings have so far.
+docs/runtime.md says more.
 
 What a Page's process sends waits in the native core, as a request's events do. Page takes it with the GIL released, as
 the requests of Session do, and AsyncPage when the Session's event fd, or its waiting thread on Windows, names the Page.
@@ -25,6 +26,8 @@ from mitto._native import (
     PageEnded,
     PageErrorCode,
     PageEvaluated,
+    PageLoaded,
+    PageNavigated,
     UncaughtError,
 )
 from mitto._timeout import to_seconds
@@ -36,6 +39,7 @@ __all__ = [
     "ConsoleMessage",
     "Page",
     "PageRecord",
+    "loaded_url",
     "outcome_of",
     "take_waiting_events",
 ]
@@ -81,6 +85,8 @@ class PageRecord:
         console_messages: What the Page's scripts wrote to the console, the oldest first, as LastReports keeps them.
         uncaught_errors: What a console says of each error that no script caught, likewise.
         ended: How the Page ended, once its event has come.
+        navigated: How the navigation that opened the Page went, once its event has come.
+        loaded: Whether the window's load event has been dispatched.
     """
 
     def __init__(self) -> None:
@@ -89,6 +95,8 @@ class PageRecord:
         self.console_messages: LastReports[ConsoleMessage] = LastReports(lambda message: message.text)
         self.uncaught_errors: LastReports[str] = LastReports(str)
         self.ended: PageEnded | None = None
+        self.navigated: PageNavigated | None = None
+        self.loaded = False
 
     def expect(self, call: int) -> None:
         """Keep the result of `call` when it arrives, until take() or forget() asks for it."""
@@ -121,8 +129,19 @@ class PageRecord:
                 self.uncaught_errors.append(text)
             case PageEnded():
                 self.ended = event
+            case PageNavigated():
+                self.navigated = event
+            case PageLoaded():
+                self.loaded = True
             case PageEvaluated():
                 pass
+
+    def load_outcome(self) -> PageNavigated | PageEnded | None:
+        """Return how loading the Page's document went, once it has: its navigation, which failed or whose document has
+        fired its load event, or how the Page ended first."""
+        if self.navigated is not None and (self.navigated.net_error != 0 or self.loaded):
+            return self.navigated
+        return self.ended
 
 
 def take_waiting_events(native: NativePage, record: PageRecord, limit: int = EVENTS_PER_TURN) -> bool:
@@ -140,6 +159,22 @@ def take_waiting_events(native: NativePage, record: PageRecord, limit: int = EVE
             return False
         record.add(event)
     return True
+
+
+def loaded_url(native: NativePage, url: str, outcome: PageNavigated | PageEnded) -> str:
+    """Return the URL of the document that opening a Page for `url` loaded, after any redirects.
+
+    Raises:
+        RequestError: If the navigation failed, of the type that `session.get(url)` raises for that failure.
+        PageEndedError: If the Page ended first.
+    """
+    match outcome:
+        case PageEnded(message=message):
+            raise PageEndedError(message)
+        case PageNavigated(net_error=0, url=document_url):
+            return document_url
+        case PageNavigated(net_error=net_error):
+            raise native.request_error(url, net_error)
 
 
 def outcome_of(evaluated: PageEvaluated) -> Any:
@@ -192,7 +227,7 @@ class Page:
 
     @property
     def url(self) -> str:
-        """The URL that the Page was opened for, which it fetches nothing from until the Runtime loads documents."""
+        """The URL of the Page's document, after the redirects of the navigation that opened it, or about:blank."""
         return self._url
 
     @property
@@ -255,13 +290,34 @@ class Page:
             call = self._native.evaluate(expression)
             self._record.expect(call)
             try:
-                evaluated = self._wait_for(call, deadline)
+                evaluated = self._wait_until(lambda: self._record.take(call), deadline)
             finally:
                 self._record.forget(call)
         if evaluated is None:
             assert seconds is not None
             raise PageTimeoutError(seconds)
         return outcome_of(evaluated)
+
+    def wait_for_load(self, seconds: float | None) -> None:
+        """Block until the document that opening the Page navigated to has loaded, and take its URL as the Page's.
+
+        Args:
+            seconds: How long to wait, or None for as long as it takes.
+
+        Raises:
+            ValueError: If this Page has been closed.
+            RequestError: If the navigation failed, as session.get(url) raises for that failure.
+            PageEndedError: If the Page ended first.
+            PageTimeoutError: If `seconds` passed first.
+        """
+        deadline = None if seconds is None else time.monotonic() + seconds
+        with self._lock:
+            self._require_open()
+            outcome = self._wait_until(self._record.load_outcome, deadline)
+        if outcome is None:
+            assert seconds is not None
+            raise PageTimeoutError(seconds)
+        self._url = loaded_url(self._native, self._url, outcome)
 
     def close(self) -> None:
         """Close the Page: end its process, and wait for it to go, which takes up to 2 seconds before a kill.
@@ -282,13 +338,13 @@ class Page:
         if self._closed:
             raise ValueError("this Page has been closed")
 
-    def _wait_for(self, call: int, deadline: float | None) -> PageEvaluated | None:
-        """Return the result of `call` once it has arrived, or None at `deadline`. Holds the lock, but while it waits.
+    def _wait_until[T](self, outcome: Callable[[], T | None], deadline: float | None) -> T | None:
+        """Return what `outcome` gives once it gives something, or None at `deadline`. Holds the lock, but while it waits.
 
         Raises:
             ValueError: If this Page has been closed meanwhile.
         """
-        while (evaluated := self._record.take(call)) is None:
+        while (result := outcome()) is None:
             self._require_open()
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
@@ -298,7 +354,7 @@ class Page:
                 self._event_taken.wait(remaining)
             else:
                 self._take_events(remaining)
-        return evaluated
+        return result
 
     def _take_events(self, timeout: float | None) -> None:
         """Wait in the native core for the Page's next event, without the lock, and sort what has arrived."""

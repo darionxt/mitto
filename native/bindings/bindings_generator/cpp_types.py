@@ -190,6 +190,9 @@ class TypeMapper:
             return "float" if idl_type.name.endswith("float") else "double"
         if kind is TypeKind.STRING and idl_type.name in ("DOMString", "USVString"):
             return "std::optional<std::u16string>" if idl_type.nullable else "std::u16string"
+        if kind is TypeKind.ENUMERATION:
+            # The value as a page sees it, one of the enumeration's strings, where Blink returns its V8 enum class.
+            return "std::u16string"
         if kind is TypeKind.ANY:
             return "v8::Local<v8::Value>"
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
@@ -222,6 +225,8 @@ class TypeMapper:
         if kind is TypeKind.STRING:
             if idl_type.nullable:
                 return f"ToV8NullableString(isolate, {expression})"
+            return f"ToV8String(isolate, {expression})"
+        if kind is TypeKind.ENUMERATION:
             return f"ToV8String(isolate, {expression})"
         if kind is TypeKind.ANY:
             return expression

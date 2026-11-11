@@ -28,7 +28,8 @@ from mitto._page import KEPT_REPORTS, Page, PageRecord, outcome_of
 from mitto._timeout import to_seconds
 from tests.page_processes import process_is_gone, wait_until_gone
 
-_URL = "https://example.com/a/page"
+# A Page that navigates nowhere, so that these tests need no server. tests/test_page_loading.py loads documents.
+_URL = "about:blank"
 # Long enough for a Page process to answer on a busy runner, and short enough to keep the tests quick.
 _SHORT_TIMEOUT = 0.3
 _MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
@@ -81,16 +82,16 @@ def test_scripts_share_one_context(page: Page) -> None:
     assert page.evaluate("times(7)") == 42
 
 
-def test_a_page_keeps_the_url_it_was_opened_for_and_has_a_process_of_its_own(page: Page) -> None:
+def test_a_page_at_about_blank_keeps_that_url_and_has_a_process_of_its_own(page: Page) -> None:
     assert page.url == _URL
     assert page.process_id > 0
     assert page.process_id != os.getpid()
     assert not process_is_gone(page.process_id)
 
 
-def test_a_page_has_the_document_of_about_blank_and_no_timers_until_the_runtime_has_them(page: Page) -> None:
-    # A Page's window is its global object, with about:blank's document until it loads one. Its timers and fetch() are
-    # Known Gaps, which throw.
+def test_a_page_at_about_blank_has_its_document_and_no_timers_until_the_runtime_has_them(page: Page) -> None:
+    # A Page's window is its global object, with about:blank's document when it navigates nowhere. Its timers and fetch()
+    # are Known Gaps, which throw.
     script = "[window === globalThis, document.documentElement.outerHTML, typeof setTimeout, typeof fetch]"
 
     assert page.evaluate(script) == [True, "<html><head></head><body></body></html>", "function", "function"]

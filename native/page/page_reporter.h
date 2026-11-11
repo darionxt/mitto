@@ -54,6 +54,8 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
 
   // Has the console of `context` report here.
   void ContextCreated(v8::Local<v8::Context> context);
+  // Says that `context` has gone, as Blink does when a frame's document goes.
+  void ContextDestroyed(v8::Local<v8::Context> context);
 
   // Reports each promise that is still rejected with no handler, as Blink does
   // once a task and its microtasks have run.

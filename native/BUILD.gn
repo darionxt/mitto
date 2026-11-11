@@ -90,6 +90,7 @@ shared_library("mitto_core") {
     "ready_requests.h",
     "request_channel.cc",
     "request_channel.h",
+    "request_client.h",
     "request_options.cc",
     "request_options.h",
     "sec_header_helpers.cc",

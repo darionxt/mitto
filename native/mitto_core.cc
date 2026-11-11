@@ -63,6 +63,7 @@
 #include "mitto/page_messages.h"
 #include "mitto/ready_requests.h"
 #include "mitto/request_channel.h"
+#include "mitto/request_client.h"
 #include "mitto/request_options.h"
 #include "mitto/session_settings.h"
 #include "mitto/socks5_auth_socket_factory.h"
@@ -137,12 +138,20 @@ class RequestJob;
 // The handle the C API hands out for a Session. It is created, used and
 // destroyed only on the network thread, except for `ready_requests`. Other
 // threads just hold the pointer.
-struct MittoSession {
+struct MittoSession final : public mitto::PageNetwork {
   MittoSession();
-  ~MittoSession();
+  ~MittoSession() override;
 
   // Ends each running request, with its last event.
   void CancelJobs();
+
+  // mitto::PageNetwork:
+  base::WeakPtr<mitto::RunningRequest> StartPageRequest(
+      mitto::RequestClient& client,
+      GURL url,
+      net::HttpRequestHeaders headers,
+      mitto::RequestOptions options) override;
+  net::CookieStore& cookie_store() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -241,33 +250,81 @@ std::string HeaderLines(const net::HttpResponseHeaders& headers) {
 
 }  // namespace
 
+// What a request of the C API's tells the thread that holds its handle:
+// through its channel, listing the handle in the Session's ReadyRequests.
+class CallerClient final : public RequestClient {
+ public:
+  CallerClient(scoped_refptr<RequestChannel> channel,
+               ReadyRequests& ready,
+               uintptr_t handle)
+      : channel_(std::move(channel)), ready_(ready), handle_(handle) {}
+
+  CallerClient(const CallerClient&) = delete;
+  CallerClient& operator=(const CallerClient&) = delete;
+
+  ~CallerClient() override = default;
+
+  // RequestClient:
+  void OnResponseEvent(RequestEvent event) override {
+    channel_->Push(std::move(event));
+    ready_->Add(handle_, MITTO_READY_REQUEST);
+  }
+  net::IOBuffer* read_buffer() override { return channel_->read_buffer(); }
+  int read_size() const override { return RequestChannel::kReadBufferSize; }
+  void OnBodyRead(size_t size) override {
+    channel_->BodyArrived(size);
+    ready_->Add(handle_, MITTO_READY_REQUEST);
+  }
+  void OnBodyWanted() override { ready_->Add(handle_, MITTO_READY_REQUEST); }
+  void OnFinished(int net_error) override {
+    channel_->Finish(net_error);
+    ready_->Add(handle_, MITTO_READY_REQUEST);
+  }
+
+ private:
+  const scoped_refptr<RequestChannel> channel_;
+  const raw_ref<ReadyRequests> ready_;
+  // Names the request in the Session's ReadyRequests.
+  const uintptr_t handle_;
+};
+
 // One request on the network thread. It is made on the thread that starts the
 // request, and after that lives only on the network thread, where its Session
-// owns it until the request ends. It never waits for the thread that holds the
-// request's handle, and what it has to say goes through the channel.
+// owns it until the request ends. It never waits for whoever asked for it, and
+// what it has to say goes to its RequestClient.
 class RequestJob final : public net::URLRequest::Delegate,
-                         public BodyStream::Delegate {
+                         public BodyStream::Delegate,
+                         public RunningRequest {
  public:
-  // `handle` names the request in the Session's ReadyRequests.
-  RequestJob(MittoSession& session,
-             uintptr_t handle,
-             scoped_refptr<RequestChannel> channel,
-             GURL url,
-             net::HttpRequestHeaders headers,
-             RequestOptions options,
-             std::optional<std::vector<char>> body)
-      : session_(session),
-        handle_(handle),
-        channel_(std::move(channel)),
-        url_(std::move(url)),
-        request_headers_(std::move(headers)),
-        options_(std::move(options)),
-        body_(std::move(body)) {
-    if (options_.fetch) {
-      fetch_rules_.emplace(*std::move(options_.fetch), url_,
-                           session_->client_hints_store,
-                           base::OptionalToPtr(session_->network_quality));
-    }
+  // A request of the C API's, whose handle `handle` names in the Session's
+  // ReadyRequests. A stream body comes through `channel`.
+  static std::unique_ptr<RequestJob> ForCaller(
+      MittoSession& session,
+      uintptr_t handle,
+      scoped_refptr<RequestChannel> channel,
+      GURL url,
+      net::HttpRequestHeaders headers,
+      RequestOptions options,
+      std::optional<std::vector<char>> body) {
+    auto client =
+        std::make_unique<CallerClient>(channel, session.ready_requests, handle);
+    RequestClient* const client_pointer = client.get();
+    return base::WrapUnique(
+        new RequestJob(session, client_pointer, std::move(client),
+                       std::move(channel), std::move(url), std::move(headers),
+                       std::move(options), std::move(body)));
+  }
+
+  // A request of a Page's, which tells `client` how it goes until it finishes
+  // or the client abandons it.
+  static std::unique_ptr<RequestJob> ForPage(MittoSession& session,
+                                             RequestClient& client,
+                                             GURL url,
+                                             net::HttpRequestHeaders headers,
+                                             RequestOptions options) {
+    return base::WrapUnique(new RequestJob(session, &client, nullptr, nullptr,
+                                           std::move(url), std::move(headers),
+                                           std::move(options), std::nullopt));
   }
 
   RequestJob(const RequestJob&) = delete;
@@ -293,7 +350,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     }
     if (options_.stream_body) {
       auto body_stream = std::make_unique<BodyStream>(
-          channel_, options_.stream_body_size, *this);
+          stream_channel_, options_.stream_body_size, *this);
       body_stream_ = body_stream->GetWeakPtr();
       request_->set_upload(std::move(body_stream));
     }
@@ -307,15 +364,17 @@ class RequestJob final : public net::URLRequest::Delegate,
     request_->Start();
   }
 
-  // Reads the next part of the body, as the caller has asked. The result goes to
-  // OnReadCompleted(), and no more is read until the caller asks again.
-  void ReadBody() {
+  // RunningRequest:
+  //
+  // Reads the next part of the body, as the client has asked. The result goes
+  // to OnReadCompleted(), and no more is read until the client asks again.
+  void ReadBody() override {
     if (!response_started_) {
       read_wanted_ = true;
       return;
     }
     const int result =
-        request_->Read(channel_->read_buffer(), RequestChannel::kReadBufferSize);
+        request_->Read(client_->read_buffer(), client_->read_size());
     if (result == net::ERR_IO_PENDING) {
       StartReadTimer();
       return;
@@ -332,12 +391,15 @@ class RequestJob final : public net::URLRequest::Delegate,
     }
   }
 
+  void Abandon() override {
+    client_ = nullptr;
+    Finish(net::ERR_ABORTED);
+  }
+
   void Cancel() { Finish(net::ERR_ABORTED); }
 
   // BodyStream::Delegate:
-  void OnBodyWanted() override {
-    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
-  }
+  void OnBodyWanted() override { client_->OnBodyWanted(); }
 
   // A wait for the caller is not a wait for the server. //net reads no response
   // until it has the whole body, so nothing else needs this timer in that time.
@@ -457,11 +519,33 @@ class RequestJob final : public net::URLRequest::Delegate,
       Finish(bytes_read);
       return;
     }
-    channel_->BodyArrived(static_cast<size_t>(bytes_read));
-    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
+    client_->OnBodyRead(static_cast<size_t>(bytes_read));
   }
 
  private:
+  RequestJob(MittoSession& session,
+             RequestClient* client,
+             std::unique_ptr<RequestClient> owned_client,
+             scoped_refptr<RequestChannel> stream_channel,
+             GURL url,
+             net::HttpRequestHeaders headers,
+             RequestOptions options,
+             std::optional<std::vector<char>> body)
+      : session_(session),
+        owned_client_(std::move(owned_client)),
+        client_(client),
+        stream_channel_(std::move(stream_channel)),
+        url_(std::move(url)),
+        request_headers_(std::move(headers)),
+        options_(std::move(options)),
+        body_(std::move(body)) {
+    if (options_.fetch) {
+      fetch_rules_.emplace(*std::move(options_.fetch), url_,
+                           session_->client_hints_store,
+                           base::OptionalToPtr(session_->network_quality));
+    }
+  }
+
   // Returns a request that has what every request of this job has, and is not
   // set up any further.
   std::unique_ptr<net::URLRequest> CreateRequest(
@@ -532,8 +616,7 @@ class RequestJob final : public net::URLRequest::Delegate,
         request_->response_info().connection_info);
     event.url = request_->url().spec();
     event.headers = HeaderLines(*request_->response_headers());
-    channel_->Push(std::move(event));
-    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
+    client_->OnResponseEvent(std::move(event));
   }
 
   // Goes on from a redirect that OnReceivedRedirect() deferred. This may delete
@@ -622,14 +705,19 @@ class RequestJob final : public net::URLRequest::Delegate,
   void Finish(int result) {
     // Deleting the request from its delegate's callback is allowed.
     request_.reset();
-    channel_->Finish(result);
-    session_->ready_requests.Add(handle_, MITTO_READY_REQUEST);
+    // A client that abandoned the request has gone.
+    if (client_) {
+      client_->OnFinished(result);
+    }
     session_->jobs.erase(session_->jobs.find(this));
   }
 
   const raw_ref<MittoSession> session_;
-  const uintptr_t handle_;
-  const scoped_refptr<RequestChannel> channel_;
+  // The client of a request of the C API's, which goes with the job.
+  const std::unique_ptr<RequestClient> owned_client_;
+  raw_ptr<RequestClient> client_;
+  // Where a stream body comes from, if the request has one.
+  const scoped_refptr<RequestChannel> stream_channel_;
   const GURL url_;
   const net::HttpRequestHeaders request_headers_;
   RequestOptions options_;
@@ -666,6 +754,24 @@ void MittoSession::CancelJobs() {
   while (!jobs.empty()) {
     (*jobs.begin())->Cancel();
   }
+}
+
+base::WeakPtr<mitto::RunningRequest> MittoSession::StartPageRequest(
+    mitto::RequestClient& client,
+    GURL url,
+    net::HttpRequestHeaders headers,
+    mitto::RequestOptions options) {
+  std::unique_ptr<mitto::RequestJob> job = mitto::RequestJob::ForPage(
+      *this, client, std::move(url), std::move(headers), std::move(options));
+  mitto::RequestJob* const started_job = job.get();
+  const base::WeakPtr<mitto::RequestJob> weak_job = job->GetWeakPtr();
+  jobs.insert(std::move(job));
+  started_job->Start();
+  return weak_job;
+}
+
+net::CookieStore& MittoSession::cookie_store() {
+  return *context->cookie_store();
 }
 
 namespace mitto {
@@ -1000,18 +1106,21 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   bool AddPage(MittoSession& session,
                std::unique_ptr<PageHost> host,
                PageChannelEnd ours,
-               PageStart start) {
+               PageOptions options) {
     bool added = false;
     RunAndWait(base::BindOnce(
         [](MittoSession* session, std::unique_ptr<PageHost> host,
-           PageChannelEnd ours, PageStart start, bool* added) {
-          if (host->Start(std::move(ours), start)) {
-            session->pages.insert(std::move(host));
+           PageChannelEnd ours, PageOptions options, bool* added) {
+          PageHost* const started_host = host.get();
+          session->pages.insert(std::move(host));
+          if (started_host->Start(std::move(ours), std::move(options))) {
             *added = true;
+          } else {
+            session->pages.erase(session->pages.find(started_host));
           }
         },
         base::Unretained(&session), std::move(host), std::move(ours),
-        std::move(start), base::Unretained(&added)));
+        std::move(options), base::Unretained(&added)));
     return added;
   }
 
@@ -1439,7 +1548,7 @@ int32_t mitto_request_start(MittoSession* session,
   if (parsed_options->stream_body) {
     handle->channel->OpenBody(parsed_options->stream_body_size);
   }
-  auto job = std::make_unique<mitto::RequestJob>(
+  std::unique_ptr<mitto::RequestJob> job = mitto::RequestJob::ForCaller(
       *session, reinterpret_cast<uintptr_t>(handle.get()), handle->channel,
       GURL(url), std::move(*request_headers), std::move(*parsed_options),
       std::move(request_body));
@@ -1567,9 +1676,9 @@ int32_t mitto_page_open(MittoSession* session,
     return net::ERR_INVALID_ARGUMENT;
   }
   // SAFETY: The C API says `options` holds `options_size` bytes.
-  std::optional<mitto::PageStart> start = mitto::ParsePageOptions(
+  std::optional<mitto::PageOptions> parsed_options = mitto::ParsePageOptions(
       UNSAFE_BUFFERS(std::string_view(options, options_size)));
-  if (!start) {
+  if (!parsed_options) {
     return net::ERR_INVALID_ARGUMENT;
   }
   const base::FilePath program = mitto::PageProgramPath();
@@ -1594,10 +1703,10 @@ int32_t mitto_page_open(MittoSession* session,
   handle->session = session;
   auto host = std::make_unique<mitto::PageHost>(
       handle->events, process, session->ready_requests,
-      reinterpret_cast<uintptr_t>(handle.get()));
+      reinterpret_cast<uintptr_t>(handle.get()), *session);
   handle->host = host->GetWeakPtr();
   if (!core.AddPage(*session, std::move(host), std::move(ours),
-                    *std::move(start))) {
+                    *std::move(parsed_options))) {
     process->Kill();
     process->WaitForExit(mitto::kPageExitGrace);
     return net::ERR_FAILED;
@@ -1687,6 +1796,12 @@ int32_t mitto_page_next_event(MittoPage* page,
     event->message_size = next.message.size();
   }
   event->level = next.level;
+  if (next.type == MITTO_PAGE_EVENT_NAVIGATED) {
+    event->status = next.status;
+    event->net_error = next.net_error;
+    event->url = mitto::CopyToNewBuffer(next.url);
+    event->url_size = next.url.size();
+  }
   return net::OK;
 }
 
@@ -1696,6 +1811,7 @@ void mitto_page_event_free(MittoPageEvent* event) {
   }
   free(event->json);
   free(event->message);
+  free(event->url);
   *event = {};
 }
 

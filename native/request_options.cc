@@ -180,11 +180,15 @@ std::optional<FetchParams> ParseFetchParams(const base::Value& value) {
 }  // namespace
 
 FetchParams::FetchParams() = default;
+FetchParams::FetchParams(const FetchParams&) = default;
+FetchParams& FetchParams::operator=(const FetchParams&) = default;
 FetchParams::FetchParams(FetchParams&&) = default;
 FetchParams& FetchParams::operator=(FetchParams&&) = default;
 FetchParams::~FetchParams() = default;
 
 RequestOptions::RequestOptions() = default;
+RequestOptions::RequestOptions(const RequestOptions&) = default;
+RequestOptions& RequestOptions::operator=(const RequestOptions&) = default;
 RequestOptions::RequestOptions(RequestOptions&&) = default;
 RequestOptions& RequestOptions::operator=(RequestOptions&&) = default;
 RequestOptions::~RequestOptions() = default;
