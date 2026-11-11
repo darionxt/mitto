@@ -28,8 +28,8 @@ jobs:
       build: ${{ steps.compare.outputs.build }}
       since: ${{ steps.compare.outputs.since }}
     steps:
-      # A scheduled run skips a commit that the last run to finish checked, whether it passed or failed, so a failure
-      # is reported once. A cancelled run, such as one whose macOS job got no runner, checked nothing.
+      # A scheduled run skips the commit that the last run with builds checked, whether they passed or failed, so a
+      # failure is reported once. A cancelled run, such as one whose macOS job got no runner, checked nothing.
       - id: compare
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,19 +42,25 @@ jobs:
             sleep 10
           done
           runs="$(awk '$2 == "completed" && ($3 == "success" || $3 == "failure" || $3 == "timed_out") { print $1, $3, $4 }' <<< "$runs")"
-          checked="$(head -n 1 <<< "$runs" | cut -d " " -f 3)"
-          # The last run that passed with its builds, since a run that skipped them passes too.
+          checked=""
           since=""
           while read -r id conclusion sha; do
-            [ "$conclusion" = "success" ] || continue
-            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '.jobs[] | select((.name | startswith("CI / ")) and .conclusion == "success") | .id' | grep -q .; then
-              since="$sha"
-              break
+            [ -n "$id" ] || continue
+            jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=100" --jq '.jobs[] | "\(.conclusion) \(.name)"')"
+            # A run checked its commit when one of its builds ran to the end. One whose first job failed, or that
+            # skipped its builds, did not.
+            if [ -z "$checked" ] && grep -qE '^(success|failure|timed_out) (CI|Sanitizers) / ' <<< "$jobs"; then
+              checked="$sha"
             fi
+            # The last run that passed with its builds, since a run that skipped them passes too.
+            if [ -z "$since" ] && [ "$conclusion" = "success" ] && grep -q '^success CI / ' <<< "$jobs"; then
+              since="$sha"
+            fi
+            [ -z "$checked" ] || [ -z "$since" ] || break
           done <<< "$runs"
           echo "since=$since" >> "$GITHUB_OUTPUT"
           if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] && [ "$checked" = "$GITHUB_SHA" ]; then
-            echo "The last run to finish checked $GITHUB_SHA, so this one builds nothing." >> "$GITHUB_STEP_SUMMARY"
+            echo "The last run with builds checked $GITHUB_SHA, so this one builds nothing." >> "$GITHUB_STEP_SUMMARY"
             echo "build=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
