@@ -4,6 +4,7 @@ EXPORTS
   mitto_event_free
   mitto_net_error_name
   mitto_page_close
+  mitto_page_end_waits
   mitto_page_evaluate
   mitto_page_event_free
   mitto_page_next_event

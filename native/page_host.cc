@@ -33,6 +33,21 @@ constexpr std::string_view kDefaultLocale = "en-US";
 // only the Page knows, because only it holds ICU's whole data.
 constexpr size_t kMaxNameSize = 64;
 
+// The levels of the messages and of the C API are the same numbers.
+static_assert(static_cast<int>(ConsoleLevel::kDebug) ==
+              MITTO_PAGE_CONSOLE_DEBUG);
+static_assert(static_cast<int>(ConsoleLevel::kLog) == MITTO_PAGE_CONSOLE_LOG);
+static_assert(static_cast<int>(ConsoleLevel::kInfo) == MITTO_PAGE_CONSOLE_INFO);
+static_assert(static_cast<int>(ConsoleLevel::kWarning) ==
+              MITTO_PAGE_CONSOLE_WARNING);
+static_assert(static_cast<int>(ConsoleLevel::kError) ==
+              MITTO_PAGE_CONSOLE_ERROR);
+
+bool IsReport(const PageEvent& event) {
+  return event.type == MITTO_PAGE_EVENT_CONSOLE ||
+         event.type == MITTO_PAGE_EVENT_UNCAUGHT_ERROR;
+}
+
 bool IsName(std::string_view name) {
   return !name.empty() && name.size() <= kMaxNameSize &&
          std::ranges::all_of(name, [](char c) {
@@ -85,7 +100,7 @@ int PageEvents::NextEvent(std::optional<base::TimeDelta> timeout,
   base::AutoLock lock(lock_);
   if (timeout) {
     const base::TimeTicks deadline = base::TimeTicks::Now() + *timeout;
-    while (events_.empty()) {
+    while (events_.empty() && !waits_ended_) {
       const base::TimeDelta left = deadline - base::TimeTicks::Now();
       if (!left.is_positive()) {
         return net::ERR_IO_PENDING;
@@ -93,19 +108,62 @@ int PageEvents::NextEvent(std::optional<base::TimeDelta> timeout,
       event_waiting_.TimedWait(left);
     }
   } else {
-    while (events_.empty()) {
+    while (events_.empty() && !waits_ended_) {
       event_waiting_.Wait();
     }
   }
+  if (events_.empty()) {
+    return net::ERR_IO_PENDING;
+  }
   event = std::move(events_.front());
   events_.pop_front();
+  if (IsReport(event)) {
+    --waiting_reports_;
+    waiting_report_bytes_ -= event.message.size();
+  }
   return net::OK;
+}
+
+void PageEvents::EndWaits() {
+  base::AutoLock lock(lock_);
+  waits_ended_ = true;
+  event_waiting_.Broadcast();
 }
 
 void PageEvents::Push(PageEvent event) {
   base::AutoLock lock(lock_);
   events_.push_back(std::move(event));
   event_waiting_.Signal();
+}
+
+int PageEvents::PushReport(PageEvent event) {
+  base::AutoLock lock(lock_);
+  const int pushed = dropped_reports_ > 0 ? 2 : 1;
+  if (waiting_reports_ + pushed > kMaxWaitingReports ||
+      event.message.size() > kMaxWaitingReportBytes - waiting_report_bytes_) {
+    ++dropped_reports_;
+    return 0;
+  }
+  if (dropped_reports_ > 0) {
+    PageEvent note;
+    note.type = MITTO_PAGE_EVENT_CONSOLE;
+    note.level = MITTO_PAGE_CONSOLE_WARNING;
+    note.message = base::StrCat(
+        {"the library dropped ", base::NumberToString(dropped_reports_),
+         " console messages and uncaught errors of this Page, because too "
+         "many waited untaken"});
+    AddReport(std::move(note));
+    dropped_reports_ = 0;
+  }
+  AddReport(std::move(event));
+  event_waiting_.Signal();
+  return pushed;
+}
+
+void PageEvents::AddReport(PageEvent event) {
+  ++waiting_reports_;
+  waiting_report_bytes_ += event.message.size();
+  events_.push_back(std::move(event));
 }
 
 void PageEvents::PushEnded(int32_t error, std::string message) {
@@ -227,6 +285,22 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       Push(std::move(event));
       return;
     }
+    case PageMessage::kConsole: {
+      PageEvent event;
+      event.type = MITTO_PAGE_EVENT_CONSOLE;
+      event.level = static_cast<int32_t>(frame->console.level);
+      event.message = std::move(frame->console.text);
+      PushReport(std::move(event));
+      return;
+    }
+    case PageMessage::kUncaughtError: {
+      PageEvent event;
+      event.type = MITTO_PAGE_EVENT_UNCAUGHT_ERROR;
+      event.error = MITTO_PAGE_ERROR_SCRIPT;
+      event.message = std::move(frame->uncaught_error);
+      PushReport(std::move(event));
+      return;
+    }
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
       // ReadFrameFromPage() refuses these.
@@ -300,6 +374,14 @@ void PageHost::End(int32_t error, std::string message) {
 void PageHost::Push(PageEvent event) {
   events_->Push(std::move(event));
   ready_->Add(handle_, MITTO_READY_PAGE);
+}
+
+void PageHost::PushReport(PageEvent event) {
+  // The list names a Page once for each of its events.
+  for (int pushed = events_->PushReport(std::move(event)); pushed > 0;
+       --pushed) {
+    ready_->Add(handle_, MITTO_READY_PAGE);
+  }
 }
 
 }  // namespace mitto

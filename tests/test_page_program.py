@@ -122,7 +122,9 @@ _REFUSED = 2
 _START = 3
 _EVALUATE = 4
 _EVALUATED = 5
-_PROTOCOL_VERSION = 1
+_CONSOLE = 6
+_UNCAUGHT_ERROR = 7
+_PROTOCOL_VERSION = 2
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 _DEFAULT_START = {"time_zone": "UTC", "locale": "en-US"}
@@ -132,6 +134,8 @@ class _Session:
     """Stands in for the library at the other end of a Page program's channel."""
 
     def __init__(self, program: Path) -> None:
+        # The console messages and uncaught errors that came before a result, as (type, payload).
+        self.reports: list[tuple[int, bytes]] = []
         ours, theirs = socket.socketpair()
         self.socket = ours
         self.socket.settimeout(_TIMEOUT_SECONDS)
@@ -158,11 +162,21 @@ class _Session:
     def evaluate(self, script: str, call: int = 1) -> tuple[bool, str]:
         """Return whether the script failed, and its result as JSON or why it failed."""
         self.send(_EVALUATE, struct.pack("<Q", call) + script.encode())
-        message_type, payload = self.receive()
+        answered, failed, text = self.evaluated()
+        assert answered == call
+        return failed, text
+
+    def evaluated(self) -> tuple[int, bool, str]:
+        """Return the next result's call, whether it failed, and its result as JSON or why it failed.
+
+        The console messages and uncaught errors before it go to `reports`.
+        """
+        while (message := self.receive())[0] in {_CONSOLE, _UNCAUGHT_ERROR}:
+            self.reports.append(message)
+        message_type, payload = message
         assert message_type == _EVALUATED, payload
         answered, outcome = struct.unpack("<QB", payload[:9])
-        assert answered == call
-        return outcome == 1, payload[9:].decode()
+        return answered, outcome == 1, payload[9:].decode()
 
     def refusal(self) -> str:
         """Return why the Page refused what it got, and check that it ended for it."""
@@ -246,6 +260,90 @@ def test_a_script_that_fails_says_why_and_the_page_goes_on(session: _Session, sc
     assert session.evaluate("2 + 2", call=2) == (False, "4")
 
 
+@pytest.mark.parametrize(
+    ("script", "outcome"),
+    [
+        pytest.param("Promise.resolve({a: 1})", (False, '{"a":1}'), id="fulfilled"),
+        pytest.param("(async () => { await null; await null; return 'x'; })()", (False, '"x"'), id="async-function"),
+        pytest.param(
+            "Promise.reject(new RangeError('no'))", (True, "Uncaught (in promise) RangeError: no"), id="rejected"
+        ),
+        pytest.param(
+            "Promise.resolve(10n)", (True, "Uncaught TypeError: Do not know how to serialize a BigInt"), id="bigint"
+        ),
+        pytest.param("({then(resolve) { resolve(1); }})", (False, "{}"), id="thenable-is-no-promise"),
+    ],
+)
+def test_a_promise_gives_what_it_settles_with(session: _Session, script: str, outcome: tuple[bool, str]) -> None:
+    session.start()
+
+    assert session.evaluate(script) == outcome
+    assert session.reports == []
+
+
+def test_a_promise_that_a_later_script_settles_gives_its_result_then(session: _Session) -> None:
+    session.start()
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"new Promise(resolve => globalThis.settle = resolve)")
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"settle([1, 2]); 'settled'")
+    session.send(_EVALUATE, struct.pack("<Q", 3) + b"new Promise((_, reject) => globalThis.fail = reject)")
+    session.send(_EVALUATE, struct.pack("<Q", 4) + b"fail(new Error('later')); 4")
+
+    assert [session.evaluated() for _ in range(4)] == [
+        (1, False, "[1,2]"),
+        (2, False, '"settled"'),
+        (3, True, "Uncaught (in promise) Error: later"),
+        (4, False, "4"),
+    ]
+    assert session.reports == []
+
+
+def test_a_page_sends_what_its_scripts_write_to_the_console_before_their_result(session: _Session) -> None:
+    session.start()
+    script = """
+        console.debug('d'); console.log('a', 1, [2, 3], {}); console.info('i'); console.warn('w');
+        console.error('e', '\u00e9'); console.assert(false, 'f'); console.trace('t'); 0
+    """
+
+    assert session.evaluate(script) == (False, "0")
+    assert session.reports == [
+        (_CONSOLE, b"\x01d"),
+        (_CONSOLE, b"\x02a 1 2,3 [object Object]"),
+        (_CONSOLE, b"\x03i"),
+        (_CONSOLE, b"\x04w"),
+        (_CONSOLE, b"\x05e \xc3\xa9"),
+        (_CONSOLE, b"\x05f"),
+        (_CONSOLE, b"\x03t"),
+    ]
+
+
+def test_the_console_of_a_page_is_v8s_own_with_what_its_inspector_adds(session: _Session) -> None:
+    session.start()
+
+    assert session.evaluate("[typeof console.log, String(console.log), typeof console.createTask]") == (
+        False,
+        '["function","function log() { [native code] }","function"]',
+    )
+
+
+def test_a_page_reports_a_promise_rejected_with_no_handler_once_its_script_has_run(session: _Session) -> None:
+    session.start()
+    script = """
+        Promise.reject(new Error('lost'));
+        const handled = Promise.reject(new Error('handled'));
+        handled.catch(() => {});
+        Promise.resolve().then(() => { throw new TypeError('in a microtask'); });
+        Promise.reject(Symbol('no string'));
+        'done'
+    """
+
+    assert session.evaluate(script) == (False, '"done"')
+    assert session.reports == [
+        (_UNCAUGHT_ERROR, b"Uncaught (in promise) Error: lost"),
+        (_UNCAUGHT_ERROR, b"Uncaught (in promise) exception"),
+        (_UNCAUGHT_ERROR, b"Uncaught (in promise) TypeError: in a microtask"),
+    ]
+
+
 def test_scripts_share_one_context(session: _Session) -> None:
     session.start()
 
@@ -277,7 +375,9 @@ def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> No
     assert session.receive()[0] == _HELLO
     session.send(_HELLO, struct.pack("<I", 99))
 
-    assert session.refusal() == "the library speaks version 99 of the messages, and the Page speaks 1"
+    assert (
+        session.refusal() == f"the library speaks version 99 of the messages, and the Page speaks {_PROTOCOL_VERSION}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -285,6 +385,8 @@ def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> No
     [
         pytest.param(77, b"", "message type 77 is unknown", id="unknown"),
         pytest.param(_EVALUATED, struct.pack("<QB", 1, 0), "message type 5 only goes to a Session", id="wrong-way"),
+        pytest.param(_CONSOLE, b"\x02log", "message type 6 only goes to a Session", id="console-wrong-way"),
+        pytest.param(_UNCAUGHT_ERROR, b"no", "message type 7 only goes to a Session", id="uncaught-wrong-way"),
         pytest.param(_HELLO, struct.pack("<I", _PROTOCOL_VERSION), "a second hello", id="second-hello"),
         pytest.param(_START, b"[]", "a start that is not a JSON object", id="start-not-object"),
         pytest.param(_EVALUATE, b"\x01", "a script of 1 bytes", id="short-script"),

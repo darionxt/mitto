@@ -39,6 +39,13 @@ std::optional<PageStart> ParsePageOptions(std::string_view json);
 // scripts are doing.
 inline constexpr base::TimeDelta kPageExitGrace = base::Seconds(2);
 
+// How many console messages and uncaught errors of a Page wait untaken at most,
+// and how many bytes of their text, so that a Page that writes without end
+// cannot fill the memory of the process that holds the library. V8's inspector
+// keeps as many console messages for DevTools.
+inline constexpr size_t kMaxWaitingReports = 1000;
+inline constexpr size_t kMaxWaitingReportBytes = 32 * 1024 * 1024;
+
 // One event of a Page. Each MITTO_PAGE_EVENT type uses the fields that
 // MittoPageEvent says it does.
 struct PageEvent {
@@ -52,6 +59,7 @@ struct PageEvent {
   uint64_t call = 0;
   std::string json;
   std::string message;
+  int32_t level = 0;
 };
 
 // Carries a Page's events from the network thread to whichever thread holds the
@@ -71,12 +79,23 @@ class PageEvents : public base::RefCountedThreadSafe<PageEvents> {
   //
   // Takes the next event into `event` and returns net::OK. Waits for one for up
   // to `timeout`, or for as long as it takes if that is nullopt. Returns
-  // net::ERR_IO_PENDING if none arrived in that time.
+  // net::ERR_IO_PENDING if none arrived in that time, and at once after
+  // EndWaits().
   int NextEvent(std::optional<base::TimeDelta> timeout, PageEvent& event);
+
+  // Called on any thread. Ends each wait of NextEvent(), and makes each later
+  // one return at once.
+  void EndWaits();
 
   // The rest is called on the network thread.
 
   void Push(PageEvent event);
+
+  // Pushes a console message or an uncaught error, unless kMaxWaitingReports of
+  // them, or kMaxWaitingReportBytes of their text, wait untaken. Then it drops
+  // it, and the next one that has room comes after a console warning that says
+  // how many were dropped. Returns how many events it pushed.
+  int PushReport(PageEvent event);
 
   // Pushes the MITTO_PAGE_EVENT_ENDED event, and remembers why, for the calls
   // that come later.
@@ -90,6 +109,8 @@ class PageEvents : public base::RefCountedThreadSafe<PageEvents> {
 
   ~PageEvents();
 
+  void AddReport(PageEvent event) EXCLUSIVE_LOCKS_REQUIRED(lock_);
+
   base::Lock lock_;
   base::ConditionVariable event_waiting_{&lock_};
   base::circular_deque<PageEvent> events_ GUARDED_BY(lock_);
@@ -97,6 +118,12 @@ class PageEvents : public base::RefCountedThreadSafe<PageEvents> {
   // Why the Page ended, once it has.
   int32_t ended_error_ GUARDED_BY(lock_) = 0;
   std::string ended_message_ GUARDED_BY(lock_);
+  bool waits_ended_ GUARDED_BY(lock_) = false;
+  // The console messages and uncaught errors among `events_`, and their text.
+  size_t waiting_reports_ GUARDED_BY(lock_) = 0;
+  size_t waiting_report_bytes_ GUARDED_BY(lock_) = 0;
+  // How many were dropped since the last one that had room.
+  uint64_t dropped_reports_ GUARDED_BY(lock_) = 0;
 };
 
 // One Page, on the network thread, where its Session owns it until the Page
@@ -148,6 +175,7 @@ class PageHost final : public PageChannel::Delegate {
   void End(int32_t error, std::string message);
 
   void Push(PageEvent event);
+  void PushReport(PageEvent event);
 
   const scoped_refptr<PageEvents> events_;
   const scoped_refptr<PageProcess> process_;

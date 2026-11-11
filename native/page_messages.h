@@ -23,7 +23,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 1;
+inline constexpr uint32_t kPageProtocolVersion = 2;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -38,6 +38,9 @@ inline constexpr size_t kMaxScriptSize = kMaxPayloadSize - 8;
 
 // The longest result or reason that one kEvaluated carries.
 inline constexpr size_t kMaxEvaluatedTextSize = kMaxPayloadSize - 9;
+
+// The longest text that one kConsole carries.
+inline constexpr size_t kMaxConsoleTextSize = kMaxPayloadSize - 1;
 
 // The argument that starts the Page program for a Session:
 // "--session=CHANNEL,PARENT", where CHANNEL is the descriptor of its end of the
@@ -71,6 +74,32 @@ enum class PageMessage : uint32_t {
   // a result and 1 if it failed, and then the result as JSON, or why it
   // failed, in UTF-8.
   kEvaluated = 5,
+  // To the Session: a byte that holds a ConsoleLevel, and then the text of a
+  // message that a script wrote to the console, in UTF-8.
+  kConsole = 6,
+  // To the Session: an error that no script caught, such as a promise rejected
+  // with no handler, in UTF-8.
+  kUncaughtError = 7,
+};
+
+// The level of a console message, as the console method that wrote it says.
+enum class ConsoleLevel : uint8_t {
+  kDebug = 1,
+  kLog = 2,
+  kInfo = 3,
+  kWarning = 4,
+  kError = 5,
+};
+
+// A message that a script wrote to the console.
+struct PageConsoleMessage {
+  PageConsoleMessage();
+  PageConsoleMessage(PageConsoleMessage&&);
+  PageConsoleMessage& operator=(PageConsoleMessage&&);
+  ~PageConsoleMessage();
+
+  ConsoleLevel level = ConsoleLevel::kLog;
+  std::string text;
 };
 
 // What a Page starts with, which it would otherwise read from the machine.
@@ -114,6 +143,10 @@ struct FrameFromPage {
   std::string reason;
   // kEvaluated.
   PageEvaluated evaluated;
+  // kConsole.
+  PageConsoleMessage console;
+  // kUncaughtError.
+  std::string uncaught_error;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -146,6 +179,10 @@ std::string EncodeStart(const PageStart& start);
 std::string EncodeEvaluate(uint64_t call, std::string_view script);
 // `evaluated.text` is at most kMaxEvaluatedTextSize bytes.
 std::string EncodeEvaluated(const PageEvaluated& evaluated);
+// `message.text` is at most kMaxConsoleTextSize bytes.
+std::string EncodeConsole(const PageConsoleMessage& message);
+// `text` is at most kMaxPayloadSize bytes.
+std::string EncodeUncaughtError(std::string_view text);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

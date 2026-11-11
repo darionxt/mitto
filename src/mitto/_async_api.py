@@ -1,9 +1,10 @@
 """The asyncio API: a Session driven from an event loop, on the request building and the native stepping that Session has.
 
-One file descriptor per Session tells the loop when any of its requests has an event waiting, so 1000 requests need no
-thread each. Windows' event loops cannot watch one, so there one thread per Session waits for the same news in the native
-core and hands it to the loop. Nothing on the loop waits in the native core. What can block goes to a thread of the loop's:
-opening and closing a Session, the file of its cookies, a caller's file or iterable, and joining a large body.
+One file descriptor per Session tells the loop when any of its requests or Pages has an event waiting, so 1000 requests
+need no thread each. Windows' event loops cannot watch one, so there one thread per Session waits for the same news in the
+native core and hands it to the loop. Nothing on the loop waits in the native core. What can block goes to a thread of the
+loop's: opening and closing a Session, the file of its cookies, a caller's file or iterable, joining a large body, and
+closing a Page, which waits for its process to end.
 """
 
 import asyncio
@@ -19,29 +20,35 @@ from types import TracebackType
 from typing import Any, Self, Unpack, cast
 
 from mitto import _native
+from mitto._arguments import require_type
 from mitto._body import ReadableFile, StreamBody, async_stream_chunks
 from mitto._cookies import AsyncCookies
-from mitto._errors import request_error
+from mitto._errors import PageTimeoutError, request_error
 from mitto._machine import Machine
 from mitto._native import (
     WRITE_SIZE,
     BodyAvailable,
     BodyWanted,
+    ConsoleMessage,
     Finished,
     NativeEvent,
+    NativePage,
     NativeRequest,
+    PageEvaluated,
     PrivateSettings,
     RedirectFollowed,
     ResponseStarted,
+    encode_url,
     finished_response,
 )
+from mitto._page import KEPT_REPORTS, PageRecord, outcome_of, take_waiting_events
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import AsyncRequestOptions, BuiltRequest, RequestOptions
 from mitto._response import AsyncResponseStream, Response, join_chunks, to_async_response_stream, to_response
 from mitto._session_state import SessionState
-from mitto._timeout import Timeout
+from mitto._timeout import Timeout, to_seconds
 
-__all__ = ["AsyncSession"]
+__all__ = ["AsyncPage", "AsyncSession"]
 
 # What a request on a closed Session ends with, as in Session.
 _ERR_INVALID_ARGUMENT = -4
@@ -102,7 +109,7 @@ def _do_nothing() -> None:
 
 
 class _Events:
-    """Wakes each request that waits for an event, when its Session names it.
+    """Wakes each request or Page that waits for an event, when its Session names it.
 
     The loop hears of events from the Session's event fd, or else from a thread that waits for them in the native core.
     """
@@ -124,10 +131,24 @@ class _Events:
         return self._watcher.stop()
 
     def wake_all(self) -> None:
-        """Wake every request that waits, to find the last event that closing the native Session has given each."""
+        """Wake every request and Page that waits, to find the last event that closing the native Session has given each."""
         for waiters in self._waiting.values():
             _wake(waiters)
         self._waiting.clear()
+
+    def wake(self, identity: int) -> None:
+        """Wake whatever waits for the request or Page of `identity`, as when it closes."""
+        _wake(self._waiting.pop(identity, ()))
+
+    async def ready(self, identity: int) -> None:
+        """Return once the Session names the request or Page of `identity` as having an event, or something wakes it.
+
+        Its event may be missing then, or taken already.
+        """
+        waiter = self._loop.create_future()
+        # What goes away with a cancelled task leaves here when the end of its request or Page names it.
+        self._waiting.setdefault(identity, []).append(waiter)
+        await waiter
 
     async def next_of(self, request: NativeRequest) -> NativeEvent:
         """Return the next event of `request`, once the loop has had a turn.
@@ -142,16 +163,13 @@ class _Events:
             await asyncio.sleep(0)
             return event
         while event is None:
-            waiter = self._loop.create_future()
-            # What goes away with a cancelled task leaves here when the end of its request names it.
-            self._waiting.setdefault(request.identity, []).append(waiter)
-            await waiter
+            await self.ready(request.identity)
             event = request.next_event(0)
         return event
 
     def _on_ready(self) -> None:
-        # Until the list is empty, which is what lets a thread that waits return again. An entry may name a request that has
-        # gone, or one that has taken its event already, which next_of() allows for.
+        # Until the list is empty, which is what lets a thread that waits return again. An entry may name a request or Page
+        # that has gone, or one that has taken its event already, which next_of() and AsyncPage allow for.
         while (identity := self._native.next_ready()) is not None:
             _wake(self._waiting.pop(identity, ()))
 
@@ -249,6 +267,124 @@ class _Driver:
             self._body = None
         elif written is not None:
             self._unsent_body = self._unsent_body[written:]
+
+
+class AsyncPage:
+    """A Page on an AsyncSession: what Page has, with each call awaited. Close it with an async with statement or close().
+
+    It stays on the event loop of its AsyncSession. The Session's event fd, or its waiting thread on Windows, tells it when
+    its events arrive, and closing it waits for its process to end on a thread of its own. Private until the Runtime ships.
+    """
+
+    def __init__(self, native: NativePage, url: str, events: _Events, loop: asyncio.AbstractEventLoop) -> None:
+        self._native = native
+        self._url = url
+        self._events = events
+        self._loop = loop
+        self._record = PageRecord()
+        self._closing: asyncio.Future[None] | None = None
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        await self.close()
+
+    @property
+    def url(self) -> str:
+        """The URL that the Page was opened for, as Page.url says."""
+        return self._url
+
+    @property
+    def process_id(self) -> int:
+        """The ID of the Page's process, which stays the same after the process has ended."""
+        return self._native.process_id
+
+    @property
+    def console_messages(self) -> list[ConsoleMessage]:
+        """What the Page's scripts have written to the console, as Page.console_messages says."""
+        self._take_waiting_events()
+        return list(self._record.console_messages)
+
+    @property
+    def uncaught_errors(self) -> list[str]:
+        """What a console says of each error that no script caught, as Page.uncaught_errors says."""
+        self._take_waiting_events()
+        return list(self._record.uncaught_errors)
+
+    async def evaluate(self, expression: str, *, timeout: float | None = None) -> Any:
+        """Run a script in the Page, and return its result once it has arrived, as Page.evaluate() does.
+
+        Cancelling the task stops the wait, and the script goes on, as a timeout leaves it.
+
+        Raises:
+            TypeError: As Page.evaluate() does.
+            ValueError: As Page.evaluate() does.
+            ScriptError: As Page.evaluate() does.
+            PageEndedError: As Page.evaluate() does.
+            PageTimeoutError: As Page.evaluate() does.
+            RuntimeError: If this runs on another event loop than its AsyncSession's.
+        """
+        require_type("expression", expression, str, "text")
+        seconds = to_seconds(timeout)
+        self._require_open()
+        call = self._native.evaluate(expression)
+        self._record.expect(call)
+        try:
+            async with asyncio.timeout(seconds):
+                evaluated = await self._wait_for(call)
+        except TimeoutError:
+            assert seconds is not None
+            raise PageTimeoutError(seconds) from None
+        finally:
+            self._record.forget(call)
+        return outcome_of(evaluated)
+
+    async def close(self) -> None:
+        """Close the Page, as Page.close() does, off the event loop for the wait, which goes on if the caller is cancelled.
+
+        A task that waits for a result raises a ValueError, and so does each later call. A second call waits for the first.
+
+        Raises:
+            RuntimeError: If this runs on another event loop than its AsyncSession's.
+        """
+        self._require_its_loop()
+        if self._closing is None:
+            self._events.wake(self._native.identity)
+            self._closing = _on_a_thread_of_its_own(self._native.close)
+        await asyncio.shield(self._closing)
+
+    def _require_its_loop(self) -> None:
+        if asyncio.get_running_loop() is not self._loop:
+            raise RuntimeError("an AsyncPage stays on the event loop of its AsyncSession")
+
+    def _require_open(self) -> None:
+        self._require_its_loop()
+        if self._closing is not None:
+            raise ValueError("this Page has been closed")
+
+    async def _wait_for(self, call: int) -> PageEvaluated:
+        """Return the result of `call` once it has arrived.
+
+        Raises:
+            ValueError: If this Page has been closed meanwhile.
+        """
+        while True:
+            self._require_open()
+            more = take_waiting_events(self._native, self._record)
+            if (evaluated := self._record.take(call)) is not None:
+                return evaluated
+            if more:
+                # So that a Page that writes without end cannot hold up everything else on the loop.
+                await asyncio.sleep(0)
+            else:
+                await self._events.ready(self._native.identity)
+
+    def _take_waiting_events(self) -> None:
+        if self._closing is None:
+            take_waiting_events(self._native, self._record, KEPT_REPORTS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +678,28 @@ class AsyncSession:
     async def options(self, url: str, **options: Unpack[AsyncRequestOptions]) -> Response:
         """Send an OPTIONS request, as request() does."""
         return await self.request("OPTIONS", url, **options)
+
+    async def _open_page(self, url: str) -> AsyncPage:
+        """Open a Page for `url`, as Session._open_page() does, on the event loop of this AsyncSession.
+
+        It opens this AsyncSession, if nothing has yet. Starting the Page's process blocks the loop for the few
+        milliseconds that it takes. Private until the Runtime ships.
+
+        Raises:
+            TypeError: As Session._open_page() does.
+            ValueError: As Session._open_page() does, also if this AsyncSession has been closed.
+            NativeLibraryError: As Session._open_page() does.
+            OSError: As Session._open_page() does.
+            RuntimeError: If this AsyncSession opened on another event loop.
+        """
+        require_type("url", url, str, "text")
+        encode_url(url)
+        if self._closing is None:
+            await self.open()
+        if self._closing is not None or self._opening is None:
+            raise ValueError("this AsyncSession has been closed")
+        opened = self._opening.result()
+        return AsyncPage(opened.state.native.open_page(), url, opened.events, asyncio.get_running_loop())
 
     def _opened(self, what: str) -> _Opened:
         """Return what opening made.

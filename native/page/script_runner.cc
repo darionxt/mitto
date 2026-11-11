@@ -1,5 +1,6 @@
 #include "mitto/page/script_runner.h"
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -16,10 +17,14 @@
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "v8/include/libplatform/libplatform.h"
+#include "v8/include/v8-container.h"
 #include "v8/include/v8-exception.h"
+#include "v8/include/v8-external.h"
+#include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-json.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-platform.h"
 #include "v8/include/v8-primitive.h"
 #include "v8/include/v8-script.h"
@@ -32,18 +37,19 @@ namespace {
 // as for undefined, a function or a symbol. No JSON reads so.
 constexpr std::string_view kNothingWritten = "undefined";
 
-// Returns `value` as String() would write it, in UTF-8, or nullopt if that
-// throws.
-std::optional<std::string> ToUtf8(v8::Isolate* isolate,
-                                  v8::Local<v8::Context> context,
-                                  v8::Local<v8::Value> value) {
-  v8::Local<v8::String> string;
-  if (!value->ToString(context).ToLocal(&string)) {
-    return std::nullopt;
+constexpr std::string_view kUncaught = "Uncaught ";
+// As Chrome's console says of a promise rejected with no handler.
+constexpr std::string_view kUncaughtInPromise = "Uncaught (in promise) ";
+
+// Returns why a call failed, from what `try_catch` caught.
+std::string Failure(v8::Isolate* isolate,
+                    v8::Local<v8::Context> context,
+                    const v8::TryCatch& try_catch) {
+  if (!try_catch.HasCaught()) {
+    return base::StrCat({kUncaught, "exception"});
   }
-  const v8::String::Utf8Value text(isolate, string);
-  // SAFETY: Utf8Value holds length() bytes at *text.
-  return std::string(UNSAFE_BUFFERS(std::string_view(*text, text.length())));
+  return DescribeUncaught(isolate, context, try_catch.Exception(), kUncaught,
+                          kMaxEvaluatedTextSize);
 }
 
 }  // namespace
@@ -60,7 +66,9 @@ ScriptRunner::ScriptRunner(v8::Platform& platform, v8::Isolate* isolate)
 
 ScriptRunner::~ScriptRunner() = default;
 
-std::optional<std::string> ScriptRunner::Start(const PageStart& start) {
+std::optional<std::string> ScriptRunner::Start(const PageStart& start,
+                                               SendFrame send) {
+  send_ = std::move(send);
   // As Blink sets the time zone that its browser process reads.
   // Upstream: third_party/blink/renderer/core/timezone/timezone_controller.cc
   std::unique_ptr<icu::TimeZone> time_zone(icu::TimeZone::createTimeZone(
@@ -83,64 +91,156 @@ std::optional<std::string> ScriptRunner::Start(const PageStart& start) {
   isolate_->DateTimeConfigurationChangeNotification(
       v8::Isolate::TimeZoneDetection::kSkip);
   isolate_->LocaleConfigurationChangeNotification();
+  reporter_ = std::make_unique<PageReporter>(isolate_, send_);
 
   const v8::HandleScope handle_scope(isolate_);
   context_.Reset(isolate_, v8::Context::New(isolate_));
+  reporter_->ContextCreated(context_.Get(isolate_));
   return std::nullopt;
 }
 
-PageEvaluated ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
-  PageEvaluated evaluated;
-  evaluated.call = call;
+void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
   // Start() failed, and the Page is about to end.
   if (context_.IsEmpty()) {
-    evaluated.failed = true;
-    evaluated.text = "the Page did not start";
-    return evaluated;
+    send_.Run(EncodeEvaluated(FailureOf(call, "the Page did not start")));
+    return;
   }
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Local<v8::Context> context = context_.Get(isolate_);
+  // Sent once the errors that the script leaves uncaught have been, so that
+  // the Session has heard of them by the time it has the result.
+  std::optional<PageEvaluated> evaluated;
   {
-    const v8::HandleScope handle_scope(isolate_);
-    const v8::Local<v8::Context> context = context_.Get(isolate_);
     const v8::Context::Scope context_scope(context);
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::String> source;
     v8::Local<v8::Script> compiled;
     v8::Local<v8::Value> result;
-    v8::Local<v8::String> json;
-    if (v8::String::NewFromUtf8(isolate_, script.data(),
-                                v8::NewStringType::kNormal,
-                                base::checked_cast<int>(script.size()))
-            .ToLocal(&source) &&
-        v8::Script::Compile(context, source).ToLocal(&compiled) &&
-        compiled->Run(context).ToLocal(&result) &&
-        v8::JSON::Stringify(context, result).ToLocal(&json)) {
-      const v8::String::Utf8Value text(isolate_, json);
-      // SAFETY: Utf8Value holds length() bytes at *text.
-      evaluated.text =
-          UNSAFE_BUFFERS(std::string(*text, static_cast<size_t>(text.length())));
-      if (evaluated.text == kNothingWritten) {
-        evaluated.text.clear();
-      }
-      if (evaluated.text.size() > kMaxEvaluatedTextSize) {
-        evaluated.failed = true;
-        evaluated.text = base::StrCat(
-            {"the result is ", base::NumberToString(evaluated.text.size()),
-             " bytes of JSON, more than the channel carries"});
-      }
+    if (!v8::String::NewFromUtf8(isolate_, script.data(),
+                                 v8::NewStringType::kNormal,
+                                 base::checked_cast<int>(script.size()))
+             .ToLocal(&source) ||
+        !v8::Script::Compile(context, source).ToLocal(&compiled) ||
+        !compiled->Run(context).ToLocal(&result)) {
+      evaluated = FailureOf(call, Failure(isolate_, context, try_catch));
+    } else if (result->IsPromise()) {
+      // The microtasks of the script have run, so what they settle has
+      // settled.
+      evaluated = SettledResultOf(call, context, result.As<v8::Promise>());
     } else {
-      evaluated.failed = true;
-      const std::optional<std::string> exception =
-          try_catch.HasCaught()
-              ? ToUtf8(isolate_, context, try_catch.Exception())
-              : std::nullopt;
-      // What was thrown can be as long as any string.
-      base::TruncateUTF8ToByteSize(
-          "Uncaught " + exception.value_or("exception"), kMaxEvaluatedTextSize,
-          &evaluated.text);
+      evaluated = ResultOf(call, context, result);
     }
   }
   RunPendingTasks();
+  // As Blink does after each task.
+  isolate_->PerformMicrotaskCheckpoint();
+  reporter_->ReportUnhandledRejections(context);
+  if (evaluated) {
+    send_.Run(EncodeEvaluated(*evaluated));
+  }
+}
+
+PageEvaluated ScriptRunner::ResultOf(uint64_t call,
+                                     v8::Local<v8::Context> context,
+                                     v8::Local<v8::Value> value) {
+  const v8::TryCatch try_catch(isolate_);
+  v8::Local<v8::String> json;
+  if (!v8::JSON::Stringify(context, value).ToLocal(&json)) {
+    return FailureOf(call, Failure(isolate_, context, try_catch));
+  }
+  PageEvaluated evaluated;
+  evaluated.call = call;
+  const v8::String::Utf8Value text(isolate_, json);
+  // SAFETY: Utf8Value holds length() bytes at *text.
+  evaluated.text =
+      UNSAFE_BUFFERS(std::string(*text, static_cast<size_t>(text.length())));
+  if (evaluated.text == kNothingWritten) {
+    evaluated.text.clear();
+  }
+  if (evaluated.text.size() > kMaxEvaluatedTextSize) {
+    evaluated.failed = true;
+    evaluated.text = base::StrCat(
+        {"the result is ", base::NumberToString(evaluated.text.size()),
+         " bytes of JSON, more than the channel carries"});
+  }
   return evaluated;
+}
+
+PageEvaluated ScriptRunner::FailureOf(uint64_t call, std::string text) {
+  PageEvaluated evaluated;
+  evaluated.call = call;
+  evaluated.failed = true;
+  evaluated.text = std::move(text);
+  return evaluated;
+}
+
+std::optional<PageEvaluated> ScriptRunner::SettledResultOf(
+    uint64_t call,
+    v8::Local<v8::Context> context,
+    v8::Local<v8::Promise> promise) {
+  switch (promise->State()) {
+    case v8::Promise::kFulfilled:
+      return ResultOf(call, context, promise->Result());
+    case v8::Promise::kRejected:
+      // The call takes it, so that it is no uncaught error too.
+      promise->MarkAsHandled();
+      return FailureOf(
+          call, DescribeUncaught(isolate_, context, promise->Result(),
+                                 kUncaughtInPromise, kMaxEvaluatedTextSize));
+    case v8::Promise::kPending:
+      break;
+  }
+  // As V8's inspector waits for a promise that DevTools evaluates.
+  std::array<v8::Local<v8::Value>, 2> items = {
+      v8::External::New(isolate_, this, v8::kExternalPointerTypeTagDefault),
+      v8::BigInt::NewFromUnsigned(isolate_, call)};
+  const v8::Local<v8::Array> data =
+      v8::Array::New(isolate_, items.data(), items.size());
+  const v8::TryCatch try_catch(isolate_);
+  v8::Local<v8::Function> on_fulfilled;
+  v8::Local<v8::Function> on_rejected;
+  // A script can make Then() throw, through the constructor of the promise.
+  if (!v8::Function::New(context, &ScriptRunner::OnFulfilled, data)
+           .ToLocal(&on_fulfilled) ||
+      !v8::Function::New(context, &ScriptRunner::OnRejected, data)
+           .ToLocal(&on_rejected) ||
+      promise->Then(context, on_fulfilled, on_rejected).IsEmpty()) {
+    return FailureOf(call, Failure(isolate_, context, try_catch));
+  }
+  return std::nullopt;
+}
+
+// static
+ScriptRunner& ScriptRunner::FromCallback(
+    const v8::FunctionCallbackInfo<v8::Value>& info,
+    uint64_t& call) {
+  const v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+  const v8::Local<v8::Array> data = info.Data().As<v8::Array>();
+  call = data->Get(context, 1).ToLocalChecked().As<v8::BigInt>()->Uint64Value();
+  return *static_cast<ScriptRunner*>(
+      data->Get(context, 0)
+          .ToLocalChecked()
+          .As<v8::External>()
+          ->Value(v8::kExternalPointerTypeTagDefault));
+}
+
+// static
+void ScriptRunner::OnFulfilled(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  uint64_t call = 0;
+  ScriptRunner& runner = FromCallback(info, call);
+  runner.send_.Run(EncodeEvaluated(
+      runner.ResultOf(call, info.GetIsolate()->GetCurrentContext(), info[0])));
+}
+
+// static
+void ScriptRunner::OnRejected(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  uint64_t call = 0;
+  ScriptRunner& runner = FromCallback(info, call);
+  v8::Isolate* const isolate = info.GetIsolate();
+  runner.send_.Run(EncodeEvaluated(runner.FailureOf(
+      call, DescribeUncaught(isolate, isolate->GetCurrentContext(), info[0],
+                             kUncaughtInPromise, kMaxEvaluatedTextSize))));
 }
 
 void ScriptRunner::RunPendingTasks() {

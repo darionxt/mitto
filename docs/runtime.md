@@ -1,6 +1,6 @@
 # The Runtime
 
-The **Runtime** runs a **Page**'s scripts in a process of its own, on the **Engine Release**'s V8, while the Page's **Session** stays in the caller's process with its network, cookies and cache ([ADR-0009](adr/0009-a-process-for-each-page.md)). Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). [building.md](building.md#build-the-runtime) says how the Page program is built. Until the release that ships the Runtime, the Page API is private, and a wheel that a release makes holds no Page program.
+The **Runtime** runs a **Page**'s scripts in a process of its own, on the **Engine Release**'s V8, while the Page's **Session** stays in the caller's process with its network, cookies and cache ([ADR-0009](adr/0009-a-process-for-each-page.md)). Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md). [building.md](building.md#build-the-runtime) says how the Page program is built. Until the release that ships the Runtime, the Page API is private, and a wheel that a release makes holds no Page program. [From Python](#from-python) says how the private API works.
 
 ## A Page and its process
 
@@ -36,6 +36,10 @@ The program runs V8 on its main thread, and reads the channel on a thread of its
 
 Each script runs in one context, so each sees what the ones before it left there. Its result is what `JSON.stringify()` writes for it, nothing for a value that it writes nothing for, such as `undefined` or a function, and what was thrown, as `Uncaught TypeError: ...`, for a script that throws or a result that cannot be written as JSON, such as a BigInt. When V8 runs out of memory, the program ends with exit code 3, which the library reports as running out of memory.
 
+When the result is a promise, the result of the call is what the promise settles with, as when DevTools evaluates a script and waits for its promise: what it was fulfilled with, or `Uncaught (in promise) ...` and why it was rejected. The microtasks that the script queued have run by then, so a promise that they settle has settled. One that is still pending gets a handler, the call stays in progress, and the scripts after it run meanwhile. So a later script can settle it, and results come in any order. Only a promise is waited for, and not another object with a `then` method. Nothing in a Page has timers or an event loop yet, which M6's event loop brings, so a promise that only a timer would settle stays pending until the Page ends, and a caller's timeout ends the wait.
+
+The console is V8's own, as in Chrome, where V8 installs `console` and Blink hears of each call through V8's inspector. So the program starts an inspector, as Blink does for each isolate, and the inspector hands it each message, with its arguments written as V8 writes them for Chrome's log, separated by spaces, and the level of the method that wrote it. The inspector also gives `console` what it gives in Chrome, such as `console.createTask()`. The program reports a promise rejected with no handler as Blink does, once the script and the microtasks that it queued have run, as `Uncaught (in promise) ...`, unless a handler has come since, also the one that a call adds to the promise it waits for. Errors in timers and event listeners come later, with those. A script's console messages and the errors that it leaves uncaught reach the Session before its result.
+
 Given a script on its command line instead of `--session=`, the program runs it and prints the result, which [building.md](building.md#build-the-runtime) describes.
 
 ## The channel
@@ -48,7 +52,7 @@ Each message travels as a frame: the size of its payload and its type, each a 32
 
 ## The messages
 
-Version 1 of the messages:
+Version 2 of the messages:
 
 | Type | Name | Way | Payload |
 | --- | --- | --- | --- |
@@ -56,7 +60,9 @@ Version 1 of the messages:
 | 2 | Refused | Each way | Why the sender refuses what it got, in UTF-8. The sender closes the channel after it |
 | 3 | Start | To the Page, once, after the hello | A JSON object with `time_zone` and `locale`, and no other key |
 | 4 | Evaluate | To the Page | The number of the call, a 64-bit number, and the script in UTF-8 |
-| 5 | Evaluated | To the Session | The number of the call, a byte that is 0 for a result and 1 for a failure, and then the result as JSON, or why it failed, in UTF-8 |
+| 5 | Evaluated | To the Session | The number of the call, a byte that is 0 for a result and 1 for a failure, and then the result as JSON, or why it failed, in UTF-8. Results come in any order, since a call whose result is a pending promise waits for it |
+| 6 | Console | To the Session | A byte for the level, 1 to 5 for debug, log, info, warning and error, and then the message, in UTF-8 |
+| 7 | Uncaught error | To the Session | What a console says of an error that no script caught, such as `Uncaught (in promise) Error: no`, in UTF-8 |
 
 The library sends its hello, the start and any script at once, without waiting for the Page's hello, because the Page reads them in order. Bodies and the credit that limits them come with the Page's requests, in later versions.
 
@@ -64,7 +70,7 @@ Both programs come from one tree and ship together, so the version on both sides
 
 - a hello of another version, and any message before the hello;
 - a type that it does not know, or one that only goes the other way;
-- a payload that is not what its type says, such as text that is not UTF-8;
+- a payload that is not what its type says, such as text that is not UTF-8 or a console message of an unknown level;
 - a frame larger than the channel carries;
 - for the library, a result of a call that is not in progress. For the Page, a second start, a script before the start, or a time zone or locale that ICU does not know.
 
@@ -83,9 +89,12 @@ the Page refused a message from the library: the time zone "Mars/Olympus_Mons" i
 
 - `mitto_page_open()` opens a Page on a Session, with versioned JSON options. An unknown key is refused.
 - `mitto_page_evaluate()` sends a script and stores the number of its call. Each call gets one `MITTO_PAGE_EVENT_EVALUATED` event, with the result as JSON or an error.
-- `mitto_page_next_event()` takes the next event, blocking for as long as the caller says, and `mitto_page_event_free()` releases it.
+- `mitto_page_next_event()` takes the next event, blocking for as long as the caller says, and `mitto_page_event_free()` releases it. Beside `MITTO_PAGE_EVENT_EVALUATED` and `MITTO_PAGE_EVENT_ENDED`, a Page has a `MITTO_PAGE_EVENT_CONSOLE` event for each console message, with its level, and a `MITTO_PAGE_EVENT_UNCAUGHT_ERROR` event for each error that no script caught.
+- `mitto_page_end_waits()` ends each wait of `mitto_page_next_event()` on another thread, and makes each later one return at once if no event waits, so that the thread that closes a Page can stop another that waits, as `mitto_session_end_waits()` does for a Session.
 - `mitto_page_process_id()` gives the ID of the Page's process.
 - `mitto_page_close()` closes the Page.
+
+At most 1000 console messages and uncaught errors of a Page wait untaken, and at most 32 MiB of their text, so that a Page that writes without end cannot fill the memory of the process that holds the library. V8's inspector keeps as many console messages for DevTools. The library drops the ones past that, and the next one that has room comes after a console warning that says how many it dropped. Results and the end of the Page are never dropped.
 
 A Page's events list its handle in the Session's list of what is ready, beside its requests' events. So the file descriptor that an asyncio caller watches on macOS and Linux, and `mitto_session_wait_for_event()` on Windows, wake for both. `mitto_session_next_ready()` names the handle and says whether it is a request's or a Page's.
 
@@ -100,6 +109,27 @@ Each way of ending reaps the process, so none is left behind:
 
 On macOS and Linux the library reaps its Page processes with `waitpid()` on the process's ID. A caller that waits for any child, or ignores `SIGCHLD`, can take a Page's exit status first. The library then says that the process ended and that something else in the process took its exit status.
 
+## From Python
+
+Until the release that ships the Runtime, Python's Page is private: `Session._open_page(url)` returns a Page that a `with` statement closes, and `await AsyncSession._open_page(url)` an AsyncPage that an `async with` statement closes. Neither is in `mitto.__all__` or in [api.md](api.md), and the release that ships the Runtime names them `open_page()`. On a Session whose library has no Page program beside it, as in a wheel that a release made, opening a Page raises a `NativeLibraryError` that says that the Runtime is not in this build. Starting the Page's process blocks for the few milliseconds that it takes, also on the event loop of an AsyncSession.
+
+Until the Runtime loads documents, a Page fetches nothing: `url` is the URL that it was opened for, and its scripts run in a context that has V8's built-ins and console and nothing of a browser, no `document`, `window`, `setTimeout()` or `fetch()`. Once M6's HTML parser and fetching load a document from it, `url` becomes the document's URL.
+
+- `evaluate(expression, timeout=None)` runs a script and returns its result as Python's `json` reads what `JSON.stringify()` writes, with `None` for what it writes nothing for. It waits for a promise to settle, as the Page program does. `timeout` is a number of seconds, as a request's total time is.
+- `console_messages` holds what the scripts wrote to the console, each with its `level` and `text`, and `uncaught_errors` what a console says of each error that no script caught, the last 1000 of each, for tests and debugging.
+- `process_id` is the ID of the Page's process.
+- `close()` ends the process and waits for it to go, which takes up to 2 seconds before a kill. An AsyncPage waits for that on a thread of its own.
+
+A call fails with an error of `mitto._errors`, sorted by what a caller does next, as a request's are. Each is a `MittoError`, and private too:
+
+| Error | What happened | What a caller does next |
+| --- | --- | --- |
+| `ScriptError` | The script threw, the promise that it gave was rejected, or its result cannot be read as JSON, such as a BigInt. The message is what a console says, such as `Uncaught TypeError: x is not a function` | Fix the script. The Page goes on |
+| `PageEndedError` | The Page has ended: its process crashed, ran out of memory or was killed, broke the rules of the messages, or did not know its time zone or locale, or the Session closed. Each later call raises it again | Open another Page |
+| `PageTimeoutError` | The timeout passed before the result arrived. It is a `TimeoutError` too | Wait longer, or close the Page: a script that never ends keeps it busy |
+
+A Page that has been closed raises a `ValueError`, as a closed Session does. A Page waits for its events the way the Session's requests do. Page blocks in the native core with the GIL released, and several threads may use one Page: one of them at a time waits in the native core, and hands each the result that it waits for. Closing a Page while another thread waits ends that wait first, with `mitto_page_end_waits()`. An AsyncPage wakes when the Session's event descriptor, or its waiting thread on Windows, names the Page, and takes its events without waiting. A call takes at most 100 events before it looks for its result again, so that a Page that writes without end cannot keep it from its result or its timeout, or an AsyncPage hold up the loop. Closing the Session ends its Pages, whose calls then raise `PageEndedError`, and each still needs closing.
+
 ## Tests
 
 | Test | What it checks | Where it runs |
@@ -107,8 +137,9 @@ On macOS and Linux the library reaps its Page processes with `waitpid()` on the 
 | [`tests/test_page_process.py`](../tests/test_page_process.py) | Through the C test program: a Page runs `1 + 1`, gets `2`, closes, and its process is gone. A killed Page fails its calls, and a request on the same Session then succeeds. Killing the process that holds the library ends the Page process. Destroying the Session ends the Page. A library with no Page program refuses to open one | CI's native job on every Host, with the Page program from the installed wheel |
 | The same file | The Page process ends with its parent while a fork of the parent holds the parent's end of the channel. Fake Page programs that speak another version or an unknown message, answer a call that is not in progress, send too large a frame, refuse, or exit | The native job on macOS and Linux. Windows has no `fork()`, and the fake Page programs are scripts |
 | The same file | The Page process holds no file or socket beyond its channel and what it was started with | The native job on Linux |
-| [`tests/test_native.py`](../tests/test_native.py) | The C API's arguments and options, results as JSON, failures, and the time zone and locale of the options | The native job on every Host, and the Python jobs for what needs no library |
-| [`tests/test_page_program.py`](../tests/test_page_program.py) | The Page program at the other end of a socket that the test holds: each message, each refusal, and the end of a script that never ends when the channel closes | The native job on macOS and Linux, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
+| [`tests/test_native.py`](../tests/test_native.py) | The C API's arguments and options, results as JSON, failures, the time zone and locale of the options, a promise that a later call settles, console messages and uncaught errors before the result, the end of a wait, and the limit on what waits untaken | The native job on every Host, and the Python jobs for what needs no library |
+| [`tests/test_page_program.py`](../tests/test_page_program.py) | The Page program at the other end of a socket that the test holds: each message, each refusal, promises, the console and its levels, promises rejected with no handler, and the end of a script that never ends when the channel closes | The native job on macOS and Linux, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
+| [`tests/test_page.py`](../tests/test_page.py) | Python's Page through the blocking and the asyncio API: results, promises, each error, a timeout, a killed process, closing from another thread, the Session's close, the console and uncaught errors, and a build without the Runtime | The native job on every Host, with the Page program from the installed wheel, and the Python jobs for what needs no library |
 | `page_messages_fuzzer` | How the library reads what a Page sends | The sanitizer workflow's fuzz job |
 
 To run the tests of Pages against a local build, name the C test program and the Page program, which the tests copy beside the library:
@@ -119,4 +150,4 @@ export MITTO_PAGE_PROGRAM="$MITTO_WORKSPACE/chromium-<tag>/src/out/runtime/mitto
 uv run pytest tests/test_page_process.py tests/test_page_program.py
 ```
 
-The tests in `tests/test_native.py` that open a Page need the Page program beside the library that `MITTO_NATIVE_LIBRARY` names, as in a wheel, and skip without it.
+The tests in `tests/test_native.py` and `tests/test_page.py` that open a Page need the Page program beside the library that `MITTO_NATIVE_LIBRARY` names, as in a wheel, and skip without it.

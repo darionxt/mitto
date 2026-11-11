@@ -1681,9 +1681,11 @@ int32_t mitto_page_next_event(MittoPage* page,
     event->json = mitto::CopyToNewBuffer(next.json);
     event->json_size = next.json.size();
   }
-  if (next.error != MITTO_PAGE_ERROR_NONE) {
+  if (next.error != MITTO_PAGE_ERROR_NONE ||
+      next.type == MITTO_PAGE_EVENT_CONSOLE) {
     event->message = mitto::CopyToNewBuffer(next.message);
   }
+  event->level = next.level;
   return net::OK;
 }
 
@@ -1694,6 +1696,12 @@ void mitto_page_event_free(MittoPageEvent* event) {
   free(event->json);
   free(event->message);
   *event = {};
+}
+
+void mitto_page_end_waits(MittoPage* page) {
+  if (page) {
+    page->events->EndWaits();
+  }
 }
 
 void mitto_page_close(MittoPage* page) {

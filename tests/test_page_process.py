@@ -6,7 +6,6 @@ program and MITTO_PAGE_PROGRAM names a Page program built from the same tree: in
 of the native job's build and the Page program in the wheel that it installs.
 """
 
-import ctypes
 import http.server
 import os
 import re
@@ -16,7 +15,6 @@ import subprocess
 import sys
 import textwrap
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -25,12 +23,11 @@ import pytest
 
 from mitto import _native
 from tests.local_server import LocalHTTPServer
+from tests.page_processes import process_is_gone, wait_until_gone
 
 _CORE_TEST_ENV_VAR = "MITTO_CORE_TEST"
 _PAGE_PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 60
-# How long a Page process may outlive the process that holds the library.
-_GONE_TIMEOUT_SECONDS = 10
 _SETTINGS = '{"version": 1}'
 _PAGE_PROGRAM_NAME = "mitto_page.exe" if sys.platform == "win32" else "mitto_page"
 _BODY = b"a body"
@@ -90,35 +87,6 @@ def _run(program: Path, scenario: str, url: str = "http://127.0.0.1:1/") -> str:
     return result.stdout
 
 
-def _process_is_gone(process_id: int) -> bool:
-    if sys.platform == "win32":
-        synchronize = 0x00100000
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        handle = kernel32.OpenProcess(synchronize, False, process_id)
-        if not handle:
-            return True
-        try:
-            # WAIT_OBJECT_0: it has ended, and only a handle keeps it.
-            return kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0) == 0
-        finally:
-            kernel32.CloseHandle(ctypes.c_void_p(handle))
-    try:
-        os.kill(process_id, 0)
-    except ProcessLookupError:
-        return True
-    return False
-
-
-def _wait_until_gone(process_id: int) -> float:
-    """Wait for the process to go, and return how long that took."""
-    start = time.perf_counter()
-    while not _process_is_gone(process_id):
-        assert time.perf_counter() - start < _GONE_TIMEOUT_SECONDS, f"process {process_id} is still there"
-        time.sleep(0.01)
-    return time.perf_counter() - start
-
-
 def _read_until(holder: subprocess.Popen[str], prefix: str) -> str:
     assert holder.stdout is not None
     while line := holder.stdout.readline():
@@ -169,12 +137,12 @@ def test_the_page_process_ends_when_the_process_that_holds_the_library_is_killed
     holder = _hold(program)
     try:
         page_process = int(_read_until(holder, "page process "))
-        assert not _process_is_gone(page_process)
+        assert not process_is_gone(page_process)
     finally:
         holder.kill()
         holder.wait(_TIMEOUT_SECONDS)
 
-    _wait_until_gone(page_process)
+    wait_until_gone(page_process)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows has no fork()")
@@ -191,7 +159,7 @@ def test_the_page_process_ends_with_its_parent_while_a_fork_holds_the_channel(pr
         holder.kill()
         holder.wait(_TIMEOUT_SECONDS)
     try:
-        _wait_until_gone(page_process)
+        wait_until_gone(page_process)
     finally:
         if fork:
             os.kill(fork, signal.SIGKILL)
@@ -246,7 +214,9 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
     return copy
 
 
-_HELLO = "send(1, struct.pack('<I', 1))"
+# The version of the messages of native/page_messages.h.
+_PROTOCOL_VERSION = 2
+_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
@@ -257,7 +227,7 @@ _HELLO = "send(1, struct.pack('<I', 1))"
             "another-version",
             "send(1, struct.pack('<I', 99))",
             "the library refused a message from the Page: the Page speaks version 99 of the messages, and the library"
-            " speaks 1",
+            f" speaks {_PROTOCOL_VERSION}",
             id="another-version",
         ),
         pytest.param(

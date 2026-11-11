@@ -13,6 +13,8 @@ from types import TracebackType
 from typing import Any, Self
 
 import mitto
+from mitto._async_api import AsyncPage
+from mitto._native import ConsoleMessage
 
 __all__ = ["SessionOnAsyncio"]
 
@@ -95,6 +97,44 @@ class _BlockingStream:
         return self._run(self._stream.read())
 
 
+class _BlockingPage:
+    """What AsyncPage has, called on the event loop: what mitto._page.Page has."""
+
+    def __init__(self, page: AsyncPage, run: _Run) -> None:
+        self._page = page
+        self._run = run
+        self.url = page.url
+        self.process_id = page.process_id
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        self.close()
+
+    @property
+    def console_messages(self) -> list[ConsoleMessage]:
+        async def read() -> list[ConsoleMessage]:
+            return self._page.console_messages
+
+        return self._run(read())
+
+    @property
+    def uncaught_errors(self) -> list[str]:
+        async def read() -> list[str]:
+            return self._page.uncaught_errors
+
+        return self._run(read())
+
+    def evaluate(self, expression: str, **options: Any) -> Any:
+        return self._run(self._page.evaluate(expression, **options))
+
+    def close(self) -> None:
+        self._run(self._page.close())
+
+
 class SessionOnAsyncio:
     """The methods of mitto.Session, on a mitto.AsyncSession on an event loop of this object's own."""
 
@@ -170,3 +210,6 @@ class SessionOnAsyncio:
 
     def options(self, url: str, **options: Any) -> mitto.Response:
         return self._run(self._session.options(url, **options))
+
+    def _open_page(self, url: str) -> _BlockingPage:
+        return _BlockingPage(self._run(self._session._open_page(url)), self._run)  # pyright: ignore[reportPrivateUsage]

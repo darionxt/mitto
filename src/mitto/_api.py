@@ -10,6 +10,7 @@ from typing import Self, Unpack
 from mitto._arguments import require_type
 from mitto._machine import Machine
 from mitto._native import PrivateSettings, encode_url, iter_body, wait_for_response
+from mitto._page import Page
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import RequestOptions
 from mitto._response import Response, ResponseStream, to_response, to_response_stream
@@ -215,6 +216,23 @@ class Session:
     def options(self, url: str, **options: Unpack[RequestOptions]) -> Response:
         """Send an OPTIONS request, as request() does."""
         return self.request("OPTIONS", url, **options)
+
+    def _open_page(self, url: str) -> Page:
+        """Open a Page for `url` on this Session, whose scripts run in a process of its own. Private until the Runtime ships.
+
+        Until the Runtime loads documents, the Page fetches nothing: it keeps `url` as its URL and runs scripts in a
+        context that has nothing of a document yet. Starting its process takes a few milliseconds, which this blocks for.
+        Closing the Session ends the Page, which still needs closing.
+
+        Raises:
+            TypeError: If `url` is not text.
+            ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, or this Session has been closed.
+            NativeLibraryError: If the native library cannot be used, or this build of mitto has no Runtime.
+            OSError: If the Page's process cannot start.
+        """
+        require_type("url", url, str, "text")
+        encode_url(url)
+        return Page(self._native.open_page(), url)
 
 
 @functools.cache

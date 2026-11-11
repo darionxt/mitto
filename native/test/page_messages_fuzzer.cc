@@ -65,6 +65,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->evaluated.text));
           CHECK_EQ(frame->evaluated.text.size() + 9, payload.size());
           break;
+        case mitto::PageMessage::kConsole:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->console.text));
+          CHECK_EQ(frame->console.text.size() + 1, payload.size());
+          break;
+        case mitto::PageMessage::kUncaughtError:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->uncaught_error));
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
           // Only a Session sends these.

@@ -45,7 +45,12 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kEvaluated);
+         type <= static_cast<uint32_t>(PageMessage::kUncaughtError);
+}
+
+bool IsConsoleLevel(uint8_t level) {
+  return level >= static_cast<uint8_t>(ConsoleLevel::kDebug) &&
+         level <= static_cast<uint8_t>(ConsoleLevel::kError);
 }
 
 // Text in a message can hold any character that a script can, U+FFFF too.
@@ -125,6 +130,12 @@ PageEvaluated::PageEvaluated(PageEvaluated&&) = default;
 PageEvaluated& PageEvaluated::operator=(PageEvaluated&&) = default;
 PageEvaluated::~PageEvaluated() = default;
 
+PageConsoleMessage::PageConsoleMessage() = default;
+PageConsoleMessage::PageConsoleMessage(PageConsoleMessage&&) = default;
+PageConsoleMessage& PageConsoleMessage::operator=(PageConsoleMessage&&) =
+    default;
+PageConsoleMessage::~PageConsoleMessage() = default;
+
 FrameFromPage::FrameFromPage() = default;
 FrameFromPage::FrameFromPage(FrameFromPage&&) = default;
 FrameFromPage& FrameFromPage::operator=(FrameFromPage&&) = default;
@@ -165,6 +176,17 @@ std::string EncodeEvaluated(const PageEvaluated& evaluated) {
       PageMessage::kEvaluated,
       base::StrCat({EncodeUint64(evaluated.call), std::string_view(&outcome, 1),
                     evaluated.text}));
+}
+
+std::string EncodeConsole(const PageConsoleMessage& message) {
+  CHECK_LE(message.text.size(), kMaxConsoleTextSize);
+  const char level = static_cast<char>(message.level);
+  return EncodeFrame(PageMessage::kConsole,
+                     base::StrCat({std::string_view(&level, 1), message.text}));
+}
+
+std::string EncodeUncaughtError(std::string_view text) {
+  return EncodeFrame(PageMessage::kUncaughtError, text);
 }
 
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(
@@ -211,6 +233,29 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.evaluated.text = payload.substr(9);
       return frame;
     }
+    case PageMessage::kConsole: {
+      if (payload.empty()) {
+        return base::unexpected(WrongSize("console message", payload.size()));
+      }
+      const std::string_view bytes = payload;
+      const uint8_t level = static_cast<uint8_t>(bytes[0]);
+      if (!IsConsoleLevel(level)) {
+        return base::unexpected(base::StrCat(
+            {"a console message of level ", base::NumberToString(level)}));
+      }
+      if (!IsText(bytes.substr(1))) {
+        return base::unexpected("a console message that is not UTF-8");
+      }
+      frame.console.level = static_cast<ConsoleLevel>(level);
+      frame.console.text = payload.substr(1);
+      return frame;
+    }
+    case PageMessage::kUncaughtError:
+      if (!IsText(payload)) {
+        return base::unexpected("an uncaught error that is not UTF-8");
+      }
+      frame.uncaught_error = std::move(payload);
+      return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
       return base::unexpected(WrongWay(type, "a Page"));
@@ -265,6 +310,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       return frame;
     }
     case PageMessage::kEvaluated:
+    case PageMessage::kConsole:
+    case PageMessage::kUncaughtError:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

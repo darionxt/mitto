@@ -55,6 +55,8 @@ embedded_data("v8_snapshot") {
 executable("mitto_page") {
   sources = [
     "mitto_page.cc",
+    "page_reporter.cc",
+    "page_reporter.h",
     "script_runner.cc",
     "script_runner.h",
     "session_channel.cc",
