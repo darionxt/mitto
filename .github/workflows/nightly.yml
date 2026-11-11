@@ -84,6 +84,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          MOVED: ${{ needs.moved.result }}
           SINCE: ${{ needs.moved.outputs.since }}
           TITLE: Nightly build from nothing failed
         run: |
@@ -96,7 +97,7 @@ jobs:
           "
           if [ -n "$SINCE" ]; then
             body+="What it found lies in what merged since ${SINCE:0:7}, the last commit that passed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/${SINCE:0:7}...${GITHUB_SHA:0:7}"
-          else
+          elif [ "$MOVED" = "success" ]; then
             body+="No run on $GITHUB_REF_NAME had passed before this one."
           fi
           open="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title --jq 'map(select(.title == env.TITLE)) | .[0].number // empty')"
