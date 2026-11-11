@@ -12,7 +12,8 @@ from pathlib import Path
 _SOURCE_ROOT_FLAG = "--source-root="
 
 
-def _import_paths(source_root: Path) -> list[str]:
+def import_paths(source_root: Path) -> list[str]:
+    """The directories to import the generator and Blink's scripts from, in a tree whose root is `source_root`."""
     return [
         str(Path(__file__).resolve().parent),
         str(source_root / "third_party/blink/renderer/bindings/scripts"),
@@ -28,7 +29,7 @@ def run() -> int:
     if len(roots) != 1:
         print(f"usage: generate_bindings.py {_SOURCE_ROOT_FLAG}DIR ...", file=sys.stderr)
         return 2
-    sys.path[:0] = _import_paths(Path(roots[0].removeprefix(_SOURCE_ROOT_FLAG)))
+    sys.path[:0] = import_paths(Path(roots[0].removeprefix(_SOURCE_ROOT_FLAG)))
     arguments.remove(roots[0])
 
     import json5  # pyright: ignore[reportMissingImports]

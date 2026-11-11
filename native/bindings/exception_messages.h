@@ -37,7 +37,7 @@ class ExceptionMessages {
                                  std::string_view type,
                                  std::string_view detail);
 
-  static std::string ConstructorNotCallableAsFunction(std::string_view type);
+  static std::string ConstructorCalledAsFunction();
   static std::string ArgumentNotOfType(int argument_index,
                                        std::string_view expected_type);
   static std::string NotEnoughArguments(unsigned expected, unsigned provided);

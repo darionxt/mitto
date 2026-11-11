@@ -1,11 +1,12 @@
-// Throws an error in the context of one binding call, so that its message says
-// which call failed, as Chrome's do: "Failed to execute 'x' on 'Y': ...".
+// Throws an error from a binding call, and remembers that it did.
 //
-// An exception that V8 throws on its own, such as when a getter that a
-// conversion calls throws, goes to the page as it is, with no context, as in
-// Chrome.
+// The message is the error itself, such as "1 argument required, but only 0
+// present.". As in Chrome, the call's context, such as "Failed to execute 'x'
+// on 'Y': ", goes in front of it when it leaves the call (exception_context.h),
+// as it does for an error that V8 throws during the call.
 //
 // Upstream: third_party/blink/renderer/platform/bindings/exception_state.h
+// Upstream: third_party/blink/renderer/platform/bindings/exception_state.cc
 
 #ifndef MITTO_BINDINGS_EXCEPTION_STATE_H_
 #define MITTO_BINDINGS_EXCEPTION_STATE_H_
@@ -13,18 +14,13 @@
 #include <string_view>
 
 #include "base/memory/raw_ptr.h"
-#include "v8/include/v8-exception.h"
 #include "v8/include/v8-forward.h"
 
 namespace mitto::bindings {
 
 class ExceptionState {
  public:
-  // `property_name` is null for a constructor.
-  ExceptionState(v8::Isolate* isolate,
-                 v8::ExceptionContext context,
-                 const char* interface_name,
-                 const char* property_name);
+  explicit ExceptionState(v8::Isolate* isolate);
   ExceptionState(const ExceptionState&) = delete;
   ExceptionState& operator=(const ExceptionState&) = delete;
   ~ExceptionState();
@@ -37,16 +33,11 @@ class ExceptionState {
   bool HadException() const { return had_exception_; }
 
  private:
-  std::string WithContext(std::string_view message) const;
-
   const raw_ptr<v8::Isolate> isolate_;
-  const v8::ExceptionContext context_;
-  const char* const interface_name_;
-  const char* const property_name_;
   bool had_exception_ = false;
 };
 
-// Throws a TypeError with `message`, with no context.
+// Throws a TypeError with `message`.
 void ThrowTypeError(v8::Isolate* isolate, std::string_view message);
 
 }  // namespace mitto::bindings

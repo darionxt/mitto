@@ -55,11 +55,9 @@ class Site:
         """The expression of the message for a value that is not of the type."""
         if self.argument_index is not None:
             return f"ExceptionMessages::ArgumentNotOfType({self.argument_index}, {_quote(type_name)})"
-        if self.dictionary is not None and self.member is not None:
-            return (
-                f"ExceptionMessages::FailedToGet({_quote(self.member)}, {_quote(self.dictionary)}, "
-                f"ExceptionMessages::FailedToConvertJSValue({_quote(type_name)}))"
-            )
+        if self.dictionary is not None:
+            # The member's context goes in front when the error leaves the call (exception_context.h).
+            return f"ExceptionMessages::FailedToConvertJSValue({_quote(type_name)})"
         return f"ExceptionMessages::ValueNotOfType({_quote(type_name)})"
 
 

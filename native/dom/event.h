@@ -1,8 +1,7 @@
 // The DOM's Event, which an EventTarget dispatches to its listeners.
 //
-// It follows the DOM standard's event and Blink's Event, for what dispatch on a
-// single target needs: no event path beyond the target yet, so no capturing or
-// bubbling through a tree.
+// It follows Blink's Event, for what dispatch on a single target needs: no
+// event path beyond the target yet, so no capturing or bubbling through a tree.
 //
 // Upstream: third_party/blink/renderer/core/dom/events/event.h
 // Upstream: third_party/blink/renderer/core/dom/events/event.cc
@@ -66,7 +65,7 @@ class Event : public bindings::ScriptWrappable {
   void SetCancelBubble(bool value);
 
   // What EventTarget's dispatch reads and sets.
-  bool IsBeingDispatched() const { return dispatching_; }
+  bool IsBeingDispatched() const { return phase_ != Phase::kNone; }
   bool PropagationStopped() const { return stop_propagation_; }
   bool ImmediatePropagationStopped() const {
     return stop_immediate_propagation_;
@@ -75,11 +74,9 @@ class Event : public bindings::ScriptWrappable {
   void SetInPassiveListener(bool in_passive_listener) {
     in_passive_listener_ = in_passive_listener;
   }
-  // Starts dispatch at `target`, and ends it with null.
-  void BeginDispatch(EventTarget* target);
-  void EndDispatch();
-  void SetPhase(Phase phase) { phase_ = phase; }
+  void SetTarget(EventTarget* target);
   void SetCurrentTarget(EventTarget* target);
+  void SetPhase(Phase phase) { phase_ = phase; }
 
  private:
   std::u16string type_;
@@ -91,7 +88,6 @@ class Event : public bindings::ScriptWrappable {
   bool stop_immediate_propagation_ = false;
   bool canceled_ = false;
   bool in_passive_listener_ = false;
-  bool dispatching_ = false;
   Phase phase_ = Phase::kNone;
   const base::TimeTicks created_;
   cppgc::Member<EventTarget> target_;

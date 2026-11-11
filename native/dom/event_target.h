@@ -1,9 +1,10 @@
 // The DOM's EventTarget: an object that keeps listeners and dispatches events
 // to them.
 //
-// It follows the DOM standard's EventTarget and Blink's, for dispatch on a
-// single target: the event's path is the target alone, so its capturing
-// listeners run, and then the others, at the target.
+// It follows Blink's EventTarget, for dispatch on a single target: the event's
+// path is the target alone, where every listener of the event's type runs, in
+// the order they were added, capturing or not, as Blink runs them on a target
+// that is not a node.
 //
 // Upstream: third_party/blink/renderer/core/dom/events/event_target.h
 // Upstream: third_party/blink/renderer/core/dom/events/event_target.cc
@@ -92,9 +93,7 @@ class EventTarget : public bindings::ScriptWrappable {
   bool DispatchEvent(Event* event);
 
  private:
-  enum class ListenerPhase { kCapturing, kBubbling };
-
-  void InvokeListeners(Event* event, ListenerPhase phase);
+  void FireEventListeners(Event* event);
   void RemoveEntry(EventListenerEntry* entry);
 
   std::vector<cppgc::Member<EventListenerEntry>> listeners_;

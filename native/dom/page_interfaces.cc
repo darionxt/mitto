@@ -10,7 +10,7 @@ namespace mitto {
 
 void InstallPageInterfaces(v8::Local<v8::Context> context) {
   bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-      ->SetDOMExceptionFactory(&DOMException::CreateForBindings);
+      ->SetDOMExceptionHooks(DOMException::BindingsHooks());
   bindings::InstallInterfaceObjects(context);
 }
 

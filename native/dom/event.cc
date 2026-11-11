@@ -51,7 +51,7 @@ EventTarget* Event::CurrentTarget() const {
 
 std::vector<EventTarget*> Event::ComposedPath() const {
   // While it is dispatched, the path is its one target.
-  if (!dispatching_ || !current_target_) {
+  if (!current_target_) {
     return {};
   }
   return {current_target_.Get()};
@@ -79,14 +79,13 @@ double Event::TimeStamp() const {
 void Event::InitEvent(const std::u16string& type,
                       bool bubbles,
                       bool cancelable) {
-  if (dispatching_) {
+  if (IsBeingDispatched()) {
     return;
   }
   stop_propagation_ = false;
   stop_immediate_propagation_ = false;
   canceled_ = false;
   trusted_ = false;
-  target_ = nullptr;
   type_ = type;
   bubbles_ = bubbles;
   cancelable_ = cancelable;
@@ -104,17 +103,8 @@ void Event::SetCancelBubble(bool value) {
   }
 }
 
-void Event::BeginDispatch(EventTarget* target) {
-  dispatching_ = true;
+void Event::SetTarget(EventTarget* target) {
   target_ = target;
-}
-
-void Event::EndDispatch() {
-  dispatching_ = false;
-  phase_ = Phase::kNone;
-  current_target_ = nullptr;
-  stop_propagation_ = false;
-  stop_immediate_propagation_ = false;
 }
 
 void Event::SetCurrentTarget(EventTarget* target) {

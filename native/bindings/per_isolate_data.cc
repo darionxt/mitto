@@ -6,6 +6,7 @@
 
 #include "base/check.h"
 #include "base/memory/ptr_util.h"
+#include "mitto/bindings/exception_context.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto::bindings {
@@ -24,6 +25,7 @@ std::unique_ptr<PerIsolateData> PerIsolateData::Create(
   CHECK(!isolate->GetData(kDataSlot));
   auto data = base::WrapUnique(new PerIsolateData(isolate, std::move(features)));
   isolate->SetData(kDataSlot, data.get());
+  SetUpExceptionContext(isolate);
   return data;
 }
 
@@ -58,6 +60,25 @@ v8::Local<v8::FunctionTemplate> PerIsolateData::InterfaceTemplate(
                                isolate, interface_template));
   info->install_interface_template(isolate, interface_template);
   return interface_template;
+}
+
+void PerIsolateData::PushDictionaryContext(std::string_view dictionary_name) {
+  dictionary_contexts_.push_back({std::string(dictionary_name), std::string()});
+}
+
+void PerIsolateData::SetDictionaryPropertyName(std::string_view property_name) {
+  CHECK(!dictionary_contexts_.empty());
+  dictionary_contexts_.back().property_name = property_name;
+}
+
+void PerIsolateData::PopDictionaryContext() {
+  CHECK(!dictionary_contexts_.empty());
+  dictionary_contexts_.pop_back();
+}
+
+std::vector<PerIsolateData::DictionaryContext>
+PerIsolateData::dictionary_contexts_innermost_first() const {
+  return {dictionary_contexts_.rbegin(), dictionary_contexts_.rend()};
 }
 
 bool PerIsolateData::HasInstance(v8::Isolate* isolate,

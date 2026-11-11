@@ -112,9 +112,9 @@ class _InterfaceWriter:
             "}",
         ]
 
-    def _exception_state(self, context: str, member: str | None) -> str:
-        name = "nullptr" if member is None else _quote(member)
-        return f"ExceptionState exception_state(isolate, v8::ExceptionContext::{context}, kInterfaceName, {name});"
+    @staticmethod
+    def _exception_state() -> str:
+        return "ExceptionState exception_state(isolate);"
 
     def _arguments(self, arguments: tuple[Argument, ...], where: str) -> tuple[list[str], list[str]]:
         """The statements that convert the arguments, and the expressions that pass them."""
@@ -166,12 +166,12 @@ class _InterfaceWriter:
         self.callbacks.append("\n".join(lines))
         return name
 
-    def _missing(self, name: str, context: str, member: str) -> str:
+    def _missing(self, name: str) -> str:
         return self._add_callback(
             name,
             [
                 *self._receiver(),
-                self._exception_state(context, member),
+                self._exception_state(),
                 "exception_state.ThrowTypeError(ExceptionMessages::NotImplemented());",
             ],
         )
@@ -180,7 +180,7 @@ class _InterfaceWriter:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeGetCallback"
         if attribute.name in self.implemented.missing:
-            return self._missing(name, "kAttributeGet", attribute.name)
+            return self._missing(name)
         cpp_name = function_name(attribute.extended_attributes.value_of("ImplementedAs") or attribute.name)
         return_type = self.types.return_type(attribute.idl_type, where)
         if "RaisesException" not in attribute.extended_attributes:
@@ -192,7 +192,7 @@ class _InterfaceWriter:
             name,
             [
                 *self._receiver(),
-                self._exception_state("kAttributeGet", attribute.name),
+                self._exception_state(),
                 f"{return_type} result = impl->{cpp_name}(exception_state);",
                 "if (exception_state.HadException()) {",
                 "  return;",
@@ -205,12 +205,12 @@ class _InterfaceWriter:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeSetCallback"
         if attribute.name in self.implemented.missing:
-            return self._missing(name, "kAttributeSet", attribute.name)
+            return self._missing(name)
         if attribute.is_readonly:
             raise UnhandledError(f"{where}: the C++ writer does not handle setters of read-only attributes")
         cpp_name = function_name(attribute.extended_attributes.value_of("ImplementedAs") or attribute.name)
         site = Site(fail="return;")
-        body = [*self._receiver(), self._exception_state("kAttributeSet", attribute.name)]
+        body = [*self._receiver(), self._exception_state()]
         body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
         body.append(f"impl->Set{cpp_name}(value);")
         return self._add_callback(name, body)
@@ -219,13 +219,13 @@ class _InterfaceWriter:
         where = f"operation {self.where(group.name)}"
         name = f"{function_name(group.name)}OperationCallback"
         if group.name in self.implemented.missing:
-            return self._missing(name, "kOperation", group.name)
+            return self._missing(name)
         operation = group.only_overload(where)
         if operation.is_static:
             raise UnhandledError(f"{where}: the C++ writer does not handle static operations")
         _check_written(where, operation.extended_attributes)
         cpp_name = function_name(operation.extended_attributes.value_of("ImplementedAs") or operation.name)
-        body = [*self._receiver(), self._exception_state("kOperation", group.name)]
+        body = [*self._receiver(), self._exception_state()]
         conversions, passed = self._arguments(operation.arguments, where)
         body += conversions
         raises = "RaisesException" in operation.extended_attributes
@@ -247,7 +247,7 @@ class _InterfaceWriter:
         name = "ConstructorCallback"
         body = [
             "if (!info.IsConstructCall()) {",
-            "  ThrowTypeError(isolate, ExceptionMessages::ConstructorNotCallableAsFunction(kInterfaceName));",
+            "  ThrowTypeError(isolate, ExceptionMessages::ConstructorCalledAsFunction());",
             "  return;",
             "}",
         ]
@@ -257,7 +257,7 @@ class _InterfaceWriter:
         where = f"constructor of {self.interface.name}"
         operation = group.only_overload(where)
         _check_written(where, operation.extended_attributes)
-        body.append(self._exception_state("kConstructor", None))
+        body.append(self._exception_state())
         conversions, passed = self._arguments(operation.arguments, where)
         body += conversions
         if "RaisesException" in operation.extended_attributes:
@@ -512,6 +512,7 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         _BANNER,
         '#include "mitto/bindings/dictionaries.h"',
         "",
+        '#include "mitto/bindings/exception_context.h"',
         '#include "mitto/bindings/exception_messages.h"',
         '#include "mitto/bindings/exception_state.h"',
         '#include "mitto/bindings/v8_conversions.h"',
@@ -576,6 +577,8 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
             "    return false;",
             "  }",
         ]
+    if dictionary.own_members:
+        fill.append(f'  DictionaryConversionScope scope(isolate, "{dictionary.name}");')
     defaults: list[str] = []
     for member in dictionary.own_members:
         member_where = f"dictionary member {dictionary.name}.{member.name}"
@@ -598,6 +601,7 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
                 struct.append(f"  {cpp_type} {field} = {types.default_value(member.idl_type, member.default, member_where)};")
         fill += [
             "  {",
+            f'    scope.SetCurrentPropertyName("{member.name}");',
             "    v8::Local<v8::Value> value;",
             f'    if (!object->Get(context, v8::String::NewFromUtf8Literal(isolate, "{member.name}")).ToLocal(&value)) {{',
             "      return false;",

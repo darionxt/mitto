@@ -1,5 +1,6 @@
 // What the bindings keep for a Page's isolate: its features, its time origin,
-// the template of each interface, made once, and how to make a DOMException.
+// the template of each interface, made once, the dictionaries being converted
+// and how to make a DOMException.
 //
 // Upstream: third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h
 
@@ -8,12 +9,15 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/wrapper_type_info.h"
+#include "v8/include/v8-exception.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-template.h"
@@ -22,11 +26,27 @@ namespace mitto::bindings {
 
 class PerIsolateData {
  public:
-  // Makes a DOMException with `name` and `message`, as the DOM's class for it
-  // does, which the bindings themselves cannot see.
-  using DOMExceptionFactory = v8::Local<v8::Value> (*)(v8::Isolate* isolate,
-                                                       std::string_view name,
-                                                       std::string_view message);
+  // What the bindings need of DOMException, whose class is the DOM's, which
+  // the bindings themselves cannot see.
+  struct DOMExceptionHooks {
+    // Makes a DOMException with `name` and `message`.
+    v8::Local<v8::Value> (*create)(v8::Isolate* isolate,
+                                   std::string_view name,
+                                   std::string_view message) = nullptr;
+    // Puts the context of a call in front of the message of `exception`, and
+    // returns true, if it is a DOMException.
+    bool (*add_context)(v8::Isolate* isolate,
+                        v8::Local<v8::Value> exception,
+                        v8::ExceptionContext context_type,
+                        std::string_view class_name,
+                        std::string_view property_name) = nullptr;
+  };
+
+  // A dictionary being converted, and the member it reads.
+  struct DictionaryContext {
+    std::string dictionary_name;
+    std::string property_name;
+  };
 
   // Gives `isolate` its data, with the features of its Page. The data lasts as
   // long as the returned object, which must outlive every use of the bindings
@@ -55,12 +75,18 @@ class PerIsolateData {
                    const WrapperTypeInfo& info,
                    v8::Local<v8::Value> value) const;
 
-  void SetDOMExceptionFactory(DOMExceptionFactory factory) {
-    dom_exception_factory_ = factory;
+  void SetDOMExceptionHooks(DOMExceptionHooks hooks) {
+    dom_exception_hooks_ = hooks;
   }
-  DOMExceptionFactory dom_exception_factory() const {
-    return dom_exception_factory_;
+  const DOMExceptionHooks& dom_exception_hooks() const {
+    return dom_exception_hooks_;
   }
+
+  // What DictionaryConversionScope keeps.
+  void PushDictionaryContext(std::string_view dictionary_name);
+  void SetDictionaryPropertyName(std::string_view property_name);
+  void PopDictionaryContext();
+  std::vector<DictionaryContext> dictionary_contexts_innermost_first() const;
 
  private:
   PerIsolateData(v8::Isolate* isolate, RuntimeFeatureSet features);
@@ -70,7 +96,8 @@ class PerIsolateData {
   const base::TimeTicks time_origin_;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::FunctionTemplate>>
       templates_;
-  DOMExceptionFactory dom_exception_factory_ = nullptr;
+  DOMExceptionHooks dom_exception_hooks_;
+  std::vector<DictionaryContext> dictionary_contexts_;
 };
 
 }  // namespace mitto::bindings

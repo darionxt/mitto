@@ -279,6 +279,7 @@ if (mitto_enable_runtime) {
   # V8's build, would clash there with //mitto:icu_data.
   group("runtime") {
     deps = [
+      "bindings:generator_test",
       "bindings:web_idl_database",
       "page:mitto_page",
     ]

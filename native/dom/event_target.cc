@@ -4,6 +4,9 @@
 
 #include "base/check.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_event_target.h"
 #include "mitto/dom/event.h"
@@ -189,19 +192,22 @@ bool EventTarget::DispatchEventForBindings(
 }
 
 bool EventTarget::DispatchEvent(Event* event) {
-  event->BeginDispatch(this);
+  // Blink's EventTarget::DispatchEventInternal().
+  event->SetTarget(this);
   event->SetCurrentTarget(this);
   event->SetPhase(Event::Phase::kAtTarget);
-  InvokeListeners(event, ListenerPhase::kCapturing);
-  InvokeListeners(event, ListenerPhase::kBubbling);
-  event->EndDispatch();
+  FireEventListeners(event);
+  if (bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+          ->features()
+          .IsEnabled(
+              bindings::RuntimeFeature::kClearCurrentTargetAfterDispatch)) {
+    event->SetCurrentTarget(nullptr);
+  }
+  event->SetPhase(Event::Phase::kNone);
   return !event->DefaultPrevented();
 }
 
-void EventTarget::InvokeListeners(Event* event, ListenerPhase phase) {
-  if (event->PropagationStopped()) {
-    return;
-  }
+void EventTarget::FireEventListeners(Event* event) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   // A copy, so that listeners that a listener adds wait for the next event,
   // and Persistent, so that the collector keeps them while scripts run.
@@ -213,8 +219,8 @@ void EventTarget::InvokeListeners(Event* event, ListenerPhase phase) {
     if (entry->removed() || entry->type() != event->Type()) {
       continue;
     }
-    if (entry->capture() != (phase == ListenerPhase::kCapturing)) {
-      continue;
+    if (event->ImmediatePropagationStopped()) {
+      break;
     }
     if (entry->once()) {
       RemoveEntry(entry.Get());
@@ -223,9 +229,6 @@ void EventTarget::InvokeListeners(Event* event, ListenerPhase phase) {
     CallListener(isolate, entry->callback(isolate), current_target,
                  event_wrapper);
     event->SetInPassiveListener(false);
-    if (event->ImmediatePropagationStopped()) {
-      return;
-    }
   }
 }
 

@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/v8_dom_exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
@@ -56,11 +57,30 @@ DOMException::DOMException(const std::u16string& message,
     : message_(message), name_(name) {}
 
 // static
-v8::Local<v8::Value> DOMException::CreateForBindings(v8::Isolate* isolate,
-                                                     std::string_view name,
-                                                     std::string_view message) {
-  return Create(base::UTF8ToUTF16(message), base::UTF8ToUTF16(name))
-      ->ToV8(isolate);
+bindings::PerIsolateData::DOMExceptionHooks DOMException::BindingsHooks() {
+  bindings::PerIsolateData::DOMExceptionHooks hooks;
+  hooks.create = [](v8::Isolate* isolate, std::string_view name,
+                    std::string_view message) -> v8::Local<v8::Value> {
+    return Create(base::UTF8ToUTF16(message), base::UTF8ToUTF16(name))
+        ->ToV8(isolate);
+  };
+  // Blink's DOMException::AddContextToMessages().
+  hooks.add_context = [](v8::Isolate* isolate, v8::Local<v8::Value> exception,
+                         v8::ExceptionContext context_type,
+                         std::string_view class_name,
+                         std::string_view property_name) {
+    DOMException* const dom_exception =
+        bindings::V8DOMException::ToWrappable(isolate, exception);
+    if (!dom_exception) {
+      return false;
+    }
+    dom_exception->message_ =
+        base::UTF8ToUTF16(bindings::ExceptionMessages::AddContextToMessage(
+            context_type, class_name, property_name,
+            base::UTF16ToUTF8(dom_exception->message_)));
+    return true;
+  };
+  return hooks;
 }
 
 const bindings::WrapperTypeInfo* DOMException::GetWrapperTypeInfo() const {

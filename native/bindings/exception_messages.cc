@@ -75,11 +75,9 @@ std::string ExceptionMessages::FailedToSet(std::string_view property,
 }
 
 // static
-std::string ExceptionMessages::ConstructorNotCallableAsFunction(
-    std::string_view type) {
-  return FailedToConstruct(type,
-                           "Please use the 'new' operator, this DOM object "
-                           "constructor cannot be called as a function.");
+std::string ExceptionMessages::ConstructorCalledAsFunction() {
+  return "Please use the 'new' operator, this DOM object constructor cannot be "
+         "called as a function.";
 }
 
 // static

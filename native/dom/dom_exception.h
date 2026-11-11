@@ -12,9 +12,8 @@
 #include <string>
 #include <string_view>
 
+#include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
-#include "v8/include/v8-local-handle.h"
-#include "v8/include/v8-value.h"
 
 namespace mitto {
 
@@ -25,10 +24,9 @@ class DOMException final : public bindings::ScriptWrappable {
 
   DOMException(const std::u16string& message, const std::u16string& name);
 
-  // Makes the wrapper of a new DOMException, for the bindings to throw.
-  static v8::Local<v8::Value> CreateForBindings(v8::Isolate* isolate,
-                                                std::string_view name,
-                                                std::string_view message);
+  // What the bindings need of a DOMException: see
+  // bindings::PerIsolateData::DOMExceptionHooks.
+  static bindings::PerIsolateData::DOMExceptionHooks BindingsHooks();
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
@@ -38,7 +36,7 @@ class DOMException final : public bindings::ScriptWrappable {
   std::u16string Message() const { return message_; }
 
  private:
-  const std::u16string message_;
+  std::u16string message_;
   const std::u16string name_;
 };
 
