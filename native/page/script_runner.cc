@@ -10,12 +10,14 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "mitto/dom/page_interfaces.h"
 #include "third_party/icu/source/common/unicode/locid.h"
 #include "third_party/icu/source/common/unicode/stringpiece.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "v8/include/libplatform/libplatform.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-json.h"
@@ -85,7 +87,12 @@ std::optional<std::string> ScriptRunner::Start(const PageStart& start) {
   isolate_->LocaleConfigurationChangeNotification();
 
   const v8::HandleScope handle_scope(isolate_);
-  context_.Reset(isolate_, v8::Context::New(isolate_));
+  const v8::Local<v8::Context> context = v8::Context::New(isolate_);
+  {
+    const v8::Context::Scope context_scope(context);
+    InstallPageInterfaces(context);
+  }
+  context_.Reset(isolate_, context);
   return std::nullopt;
 }
 

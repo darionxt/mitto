@@ -15,7 +15,7 @@ A run raises the minor version: 0.1.0, 0.2.0 and so on. Between two runs, a chan
 | 1. [Find the builds](#1-find-the-builds) | Any machine | Nobody |
 | 2. [Check out the new Engine Release](#2-check-out-the-new-engine-release) | The workspace's macOS, Linux and Windows machines | Nobody |
 | 3. [Make the source export](#3-make-the-source-export) | The workspace's macOS, Linux and Windows machines | The owner, before it is published |
-| 4. [Record Baselines](#4-record-baselines), with the Platform Runtime component | A Windows machine | Nobody |
+| 4. [Record Baselines](#4-record-baselines), with the Platform Runtime component and what the Runtime's tests compare | A Windows machine | Nobody |
 | 5. [Check for Merkle Tree Certificates](#5-check-for-merkle-tree-certificates) | The workspace, the Windows machine and any machine | The owner, if a seed turns them on |
 | 6. [Write the Persona data](#6-write-the-persona-data) | Any machine | Nobody |
 | 7. [Refresh the table of Machines](#7-refresh-the-table-of-machines) | Any machine | Review of the run's pull request |
@@ -59,6 +59,15 @@ Each Chrome Release is recorded at its newest pinnable build, because that is th
    ```
 
    If the tree has moved them, such as to a newer html5lib or to a `third_party/html5lib-tests` of its own, take them from there and update `ORIGIN.md`, and copy their `README.md`, `LICENSE` and `AUTHORS.rst` along. Read the diff of the tests and what the program prints. A test that fails now, or one in [the list of failures](../native/test/html5lib_tokenizer_failures.txt) that passes, is a new test or a change to an old one. Fix the tokenizer, or put the test in the list under the reason it fails, and say which in the run's pull request.
+
+   The build of the Runtime runs [the bindings generator](runtime.md#the-bindings) over the new release's whole Web IDL database. If it stops on a kind of definition, a type or an extended attribute that it does not handle, read how the new release's `bind_gen` handles it and what it changes for a page, and teach the generator, in `extended_attributes.py` or the module that the message names. Then, on the macOS or the Linux machine, show in the run's pull request the interfaces and members that the generator adds or drops between the two Engine Releases, for review. Build its listing again in the old release's Runtime build directory, which step 3 of the run before made, so that the same generator plans both, and compare the two:
+
+   ```bash
+   autoninja -C ../../chromium-OLD_BUILD/src/out/runtime mitto/bindings:generate_bindings
+   diff ../../chromium-OLD_BUILD/src/out/runtime/gen/mitto/bindings/web_idl_listing.txt out/runtime/gen/mitto/bindings/web_idl_listing.txt
+   ```
+
+   That builds the old database and the listing only, not V8. The diff names each interface and member with the features and conditions it is behind, so it shows what a page of the new release gains or loses, and what a feature now turns on. An interface that the Runtime implements and that changed is one whose class may have to follow, and whose record [step 4](#4-record-baselines) makes again.
 4. [Compare](building.md#compare-two-releases) the build of each older Chrome Release in the new Supported Window with the new one. A change in the network code that sets up a connection is one that Persona data may have to undo for the older Chrome Releases ([what differs between Chrome Releases](persona.md#what-differs-between-chrome-releases)). It is a decision for the milestone's plan.
 5. On the macOS or the Linux machine, [compare the files that mitto ports](building.md#the-files-mitto-ports), from the build that `tools/workspace/chromium_tag` named before this run, as `git show main:tools/workspace/chromium_tag` prints it, to the new one:
 
@@ -82,6 +91,8 @@ From the same build on the macOS or the Linux machine, check [ICU's data](buildi
 ### 4. Record Baselines
 
 On the Windows machine, [record Baselines](baselines.md) of every Chrome Release in the new Supported Window: the Engine Release [installed](baselines.md#install-chrome), and the older ones [unpacked](baselines.md#an-older-chrome-release), each at the build that the update server gives. [Check and commit](baselines.md#check-and-commit) them, update [where each Chrome Release comes from](baselines.md#where-each-chrome-release-comes-from), and write down what the recording found under its Chrome Release on that page.
+
+Then, with the new Engine Release installed, record again what the Runtime's tests compare with Chrome: run [`tests/runtime/chrome/record.ps1`](../tests/runtime/chrome/record.ps1) as [runtime.md](runtime.md#what-the-tests-compare-with-chrome) says, commit the `<build>.json` it writes into `tests/runtime/chrome`, and delete the old Engine Release's. On the macOS or the Linux machine, run `tests/test_page_bindings.py` against the new release's Page program, with `MITTO_PAGE_PROGRAM` naming it. A difference is a change in Chrome that the Runtime must follow, in a class or in the generator, or a Known Gap to write down in [`native/bindings/interfaces.gni`](../native/bindings/interfaces.gni). Say which in the run's pull request.
 
 Then check for the Platform Runtime component, which [no Chrome has shown so far](capture.md#what-this-does-not-cover-1). Start Chrome of each Chrome Release from a new user data directory with [the first five flags](baselines.md#what-it-does), leave it for 15 minutes, and open `chrome://components`. Write down whether it lists Platform Runtime, and whether the user data directory has a `PlatformRuntime` directory. If one does, the component reaches Chrome, and by Chrome's source its library can change the lines Chrome adds for [Google's domains](capture.md#what-chrome-adds-for-googles-domains). That is a decision for the milestone's plan.
 

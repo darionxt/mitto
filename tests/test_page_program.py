@@ -75,6 +75,12 @@ def test_its_compilers_give_a_page_webassembly(program: Path) -> None:
     assert _evaluate(program, "typeof WebAssembly") == "object"
 
 
+def test_v8_can_deoptimize_what_it_optimized(program: Path) -> None:
+    # A loop that V8 optimizes and then deoptimizes. Its deoptimizer rewrites return addresses, for which Windows'
+    # hardware-enforced shadow stacks end a program linked as compatible with them (native/page/BUILD.gn).
+    assert _evaluate(program, "for (let i = 0; i < 200000; i++) new Array(64).fill(i); 'done'") == "done"
+
+
 def test_intl_has_icus_whole_data(program: Path) -> None:
     # With only the few items that the library holds, Intl would know the root locale alone.
     script = """

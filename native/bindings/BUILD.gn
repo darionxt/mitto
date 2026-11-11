@@ -1,6 +1,6 @@
 # Blink's Web IDL database: the interfaces, dictionaries and other definitions
 # of every Web IDL file that Blink exposes to pages, in one file that says
-# nothing yet about how bindings are written. The bindings generator will read
+# nothing yet about how bindings are written. The bindings generator below reads
 # it.
 #
 # These targets run Blink's own scripts on Blink's own lists of files, as
@@ -14,6 +14,7 @@
 # Upstream: third_party/blink/renderer/bindings/BUILD.gn
 
 import("//build/config/python.gni")
+import("//mitto/bindings/interfaces.gni")
 import("//third_party/blink/renderer/bindings/idl_in_core.gni")
 import("//third_party/blink/renderer/bindings/idl_in_modules.gni")
 
@@ -56,27 +57,169 @@ collect_idl_files("web_idl_in_modules") {
   output = "$target_gen_dir/web_idl_in_modules.pickle"
 }
 
-action_with_pydeps("web_idl_database") {
-  script =
-      "//third_party/blink/renderer/bindings/scripts/build_web_idl_database.py"
-  components = get_target_outputs(":web_idl_in_core") +
-               get_target_outputs(":web_idl_in_modules")
+# Builds a database from the IDL files that collect_idl_files() collected, as
+# the targets in `components` name them.
+template("build_web_idl_database") {
+  action_with_pydeps(target_name) {
+    script =
+        "//third_party/blink/renderer/bindings/scripts/build_web_idl_database.py"
+    components = []
+    foreach(component, invoker.components) {
+      components += get_target_outputs(component)
+    }
 
-  # Which features are on for stable, and the like, which the database records
-  # for each definition.
-  runtime_enabled_features =
-      "//third_party/blink/renderer/platform/runtime_enabled_features.json5"
-  inputs = components + [ runtime_enabled_features ]
-  outputs = [ "$target_gen_dir/web_idl_database.pickle" ]
-  args = [
-           "--output",
-           rebase_path(outputs[0], root_build_dir),
-           "--runtime_enabled_features",
-           rebase_path(runtime_enabled_features, root_build_dir),
-           "--",
-         ] + rebase_path(components, root_build_dir)
-  deps = [
+    # Which features are on for stable, and the like, which the database
+    # records for each definition.
+    runtime_enabled_features =
+        "//third_party/blink/renderer/platform/runtime_enabled_features.json5"
+    inputs = components + [ runtime_enabled_features ]
+    outputs = [ invoker.output ]
+    args = [
+             "--output",
+             rebase_path(outputs[0], root_build_dir),
+             "--runtime_enabled_features",
+             rebase_path(runtime_enabled_features, root_build_dir),
+             "--",
+           ] + rebase_path(components, root_build_dir)
+    deps = invoker.components
+  }
+}
+
+build_web_idl_database("web_idl_database") {
+  components = [
     ":web_idl_in_core",
     ":web_idl_in_modules",
   ]
+  output = "$target_gen_dir/web_idl_database.pickle"
+}
+
+# The bindings: what the generator writes from the database for the interfaces
+# that have a C++ class, and the code they run on. docs/runtime.md says how the
+# generator works.
+
+_generated_dir = "$root_gen_dir/mitto/bindings"
+_generated_runtime = [
+  "runtime_features.cc",
+  "runtime_features.h",
+]
+_generated_dom = [
+  "dictionaries.cc",
+  "dictionaries.h",
+  "interface_objects.cc",
+  "interface_objects.h",
+]
+foreach(interface, mitto_bindings_interfaces) {
+  _generated_dom += [
+    "v8_${interface.file}.cc",
+    "v8_${interface.file}.h",
+  ]
+}
+
+# Reads the whole database, and stops the build if anything in it is a
+# construct, a type or an extended attribute that the generator does not
+# handle. It writes the C++ for the interfaces above, and a listing of every
+# interface and member it planned, which the release routine compares between
+# two Engine Releases.
+action_with_pydeps("generate_bindings") {
+  script = "generate_bindings.py"
+  database = get_target_outputs(":web_idl_database")
+  runtime_enabled_features =
+      "//third_party/blink/renderer/platform/runtime_enabled_features.json5"
+  inputs = database + [ runtime_enabled_features ]
+  outputs = [ "$_generated_dir/web_idl_listing.txt" ]
+  args = [
+    "--source-root=" + rebase_path("//", root_build_dir),
+    "--database",
+    rebase_path(database[0], root_build_dir),
+    "--runtime-enabled-features",
+    rebase_path(runtime_enabled_features, root_build_dir),
+    "--output-dir",
+    rebase_path(_generated_dir, root_build_dir),
+    "--listing",
+    rebase_path(outputs[0], root_build_dir),
+  ]
+  foreach(file, _generated_runtime + _generated_dom) {
+    outputs += [ "$_generated_dir/$file" ]
+    args += [
+      "--output",
+      file,
+    ]
+  }
+  foreach(interface, mitto_bindings_interfaces) {
+    args += [
+      "--interface",
+      interface.name,
+    ]
+    if (defined(interface.missing)) {
+      foreach(member, interface.missing) {
+        args += [
+          "--missing",
+          "${interface.name}.$member",
+        ]
+      }
+    }
+  }
+  deps = [ ":web_idl_database" ]
+}
+
+# The code that the generated bindings run on, which knows no interface.
+source_set("bindings") {
+  sources = [
+    "exception_context.cc",
+    "exception_context.h",
+    "exception_messages.cc",
+    "exception_messages.h",
+    "exception_state.cc",
+    "exception_state.h",
+    "idl_member_installer.cc",
+    "idl_member_installer.h",
+    "per_isolate_data.cc",
+    "per_isolate_data.h",
+    "runtime_feature_set.cc",
+    "runtime_feature_set.h",
+    "script_wrappable.cc",
+    "script_wrappable.h",
+    "v8_conversions.cc",
+    "v8_conversions.h",
+    "wrapper_type_info.h",
+  ]
+  foreach(file, _generated_runtime) {
+    sources += [ "$_generated_dir/$file" ]
+  }
+  public_deps = [
+    ":generate_bindings",
+    "//base",
+    "//v8",
+  ]
+}
+
+# The generator's test: a database of test/unknown_extended_attribute.idl, whose
+# extended attribute no Engine Release has, which the generator must refuse
+# with a message that names it.
+collect_idl_files("generator_test_idl") {
+  component = "core"
+  inputs = [ "test/unknown_extended_attribute.idl" ]
+  output = "$target_gen_dir/generator_test_idl.pickle"
+}
+
+build_web_idl_database("generator_test_database") {
+  components = [ ":generator_test_idl" ]
+  output = "$target_gen_dir/generator_test_database.pickle"
+}
+
+action_with_pydeps("generator_test") {
+  script = "test/generator_test.py"
+  database = get_target_outputs(":generator_test_database")
+  inputs = database
+  outputs = [ "$target_gen_dir/generator_test.stamp" ]
+  args = [
+    "--source-root=" + rebase_path("//", root_build_dir),
+    "--database",
+    rebase_path(database[0], root_build_dir),
+    "--expect",
+    "interface Thing: the generator does not handle the extended attribute [Unheard]",
+    "--stamp",
+    rebase_path(outputs[0], root_build_dir),
+  ]
+  deps = [ ":generator_test_database" ]
 }

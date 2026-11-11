@@ -1,0 +1,8 @@
+// A Web IDL file for the bindings generator's test, whose extended attribute
+// [Unheard] no Engine Release has. The generator must refuse it, naming it.
+
+[Global=Window, Exposed=Window] interface Window {};
+
+[Exposed=Window, Unheard] interface Thing {
+  attribute boolean on;
+};

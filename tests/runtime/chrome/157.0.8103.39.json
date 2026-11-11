@@ -1,0 +1,1489 @@
+{
+  "chrome": "157.0.8103.39",
+  "probe": {
+    "interfaces": {
+      "DOMException": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "DOMException",
+            "length": 0
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "DOMException"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ],
+          [
+            "INDEX_SIZE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "DOMSTRING_SIZE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 2
+            }
+          ],
+          [
+            "HIERARCHY_REQUEST_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 3
+            }
+          ],
+          [
+            "WRONG_DOCUMENT_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 4
+            }
+          ],
+          [
+            "INVALID_CHARACTER_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 5
+            }
+          ],
+          [
+            "NO_DATA_ALLOWED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 6
+            }
+          ],
+          [
+            "NO_MODIFICATION_ALLOWED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 7
+            }
+          ],
+          [
+            "NOT_FOUND_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 8
+            }
+          ],
+          [
+            "NOT_SUPPORTED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 9
+            }
+          ],
+          [
+            "INUSE_ATTRIBUTE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 10
+            }
+          ],
+          [
+            "INVALID_STATE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 11
+            }
+          ],
+          [
+            "SYNTAX_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 12
+            }
+          ],
+          [
+            "INVALID_MODIFICATION_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 13
+            }
+          ],
+          [
+            "NAMESPACE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 14
+            }
+          ],
+          [
+            "INVALID_ACCESS_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 15
+            }
+          ],
+          [
+            "VALIDATION_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 16
+            }
+          ],
+          [
+            "TYPE_MISMATCH_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 17
+            }
+          ],
+          [
+            "SECURITY_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 18
+            }
+          ],
+          [
+            "NETWORK_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 19
+            }
+          ],
+          [
+            "ABORT_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 20
+            }
+          ],
+          [
+            "URL_MISMATCH_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 21
+            }
+          ],
+          [
+            "QUOTA_EXCEEDED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 22
+            }
+          ],
+          [
+            "TIMEOUT_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 23
+            }
+          ],
+          [
+            "INVALID_NODE_TYPE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 24
+            }
+          ],
+          [
+            "DATA_CLONE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 25
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "code",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get code",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get name",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "message",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get message",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "INDEX_SIZE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "DOMSTRING_SIZE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 2
+            }
+          ],
+          [
+            "HIERARCHY_REQUEST_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 3
+            }
+          ],
+          [
+            "WRONG_DOCUMENT_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 4
+            }
+          ],
+          [
+            "INVALID_CHARACTER_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 5
+            }
+          ],
+          [
+            "NO_DATA_ALLOWED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 6
+            }
+          ],
+          [
+            "NO_MODIFICATION_ALLOWED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 7
+            }
+          ],
+          [
+            "NOT_FOUND_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 8
+            }
+          ],
+          [
+            "NOT_SUPPORTED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 9
+            }
+          ],
+          [
+            "INUSE_ATTRIBUTE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 10
+            }
+          ],
+          [
+            "INVALID_STATE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 11
+            }
+          ],
+          [
+            "SYNTAX_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 12
+            }
+          ],
+          [
+            "INVALID_MODIFICATION_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 13
+            }
+          ],
+          [
+            "NAMESPACE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 14
+            }
+          ],
+          [
+            "INVALID_ACCESS_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 15
+            }
+          ],
+          [
+            "VALIDATION_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 16
+            }
+          ],
+          [
+            "TYPE_MISMATCH_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 17
+            }
+          ],
+          [
+            "SECURITY_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 18
+            }
+          ],
+          [
+            "NETWORK_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 19
+            }
+          ],
+          [
+            "ABORT_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 20
+            }
+          ],
+          [
+            "URL_MISMATCH_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 21
+            }
+          ],
+          [
+            "QUOTA_EXCEEDED_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 22
+            }
+          ],
+          [
+            "TIMEOUT_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 23
+            }
+          ],
+          [
+            "INVALID_NODE_TYPE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 24
+            }
+          ],
+          [
+            "DATA_CLONE_ERR",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 25
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "DOMException",
+                "length": 0
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Error",
+        "interfaceObjectParent": "Function",
+        "toStringTag": "DOMException",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'DOMException': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "value": "{}"
+        },
+        "wrongReceiver": [
+          [
+            "get code",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get name",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get message",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
+      "Event": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "Event",
+            "length": 1
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "Event"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ],
+          [
+            "NONE",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "CAPTURING_PHASE",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "AT_TARGET",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 2
+            }
+          ],
+          [
+            "BUBBLING_PHASE",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 3
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "type",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get type",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "target",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get target",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "currentTarget",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get currentTarget",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "eventPhase",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get eventPhase",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "bubbles",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get bubbles",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "cancelable",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get cancelable",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "defaultPrevented",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get defaultPrevented",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "composed",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get composed",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "timeStamp",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get timeStamp",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "srcElement",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get srcElement",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "returnValue",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get returnValue",
+                "length": 0
+              },
+              "set": {
+                "name": "set returnValue",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "cancelBubble",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get cancelBubble",
+                "length": 0
+              },
+              "set": {
+                "name": "set cancelBubble",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "NONE",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "CAPTURING_PHASE",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "AT_TARGET",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 2
+            }
+          ],
+          [
+            "BUBBLING_PHASE",
+            {
+              "enumerable": true,
+              "configurable": false,
+              "writable": false,
+              "value": 3
+            }
+          ],
+          [
+            "composedPath",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "composedPath",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "initEvent",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "initEvent",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "preventDefault",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "preventDefault",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "stopImmediatePropagation",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "stopImmediatePropagation",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "stopPropagation",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "stopPropagation",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "Event",
+                "length": 1
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
+        "toStringTag": "Event",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'Event': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "threw": "TypeError: Failed to construct 'Event': 1 argument required, but only 0 present."
+        },
+        "wrongReceiver": [
+          [
+            "get type",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get target",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get currentTarget",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get eventPhase",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get bubbles",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get cancelable",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get defaultPrevented",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get composed",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get timeStamp",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get srcElement",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get returnValue",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "set returnValue",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get cancelBubble",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "set cancelBubble",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "composedPath",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "initEvent",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "preventDefault",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "stopImmediatePropagation",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "stopPropagation",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
+      "EventTarget": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "EventTarget",
+            "length": 0
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "EventTarget"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "addEventListener",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "addEventListener",
+                "length": 2
+              }
+            }
+          ],
+          [
+            "dispatchEvent",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "dispatchEvent",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "removeEventListener",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "removeEventListener",
+                "length": 2
+              }
+            }
+          ],
+          [
+            "when",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "when",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "EventTarget",
+                "length": 0
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
+        "toStringTag": "EventTarget",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'EventTarget': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "value": "{}"
+        },
+        "wrongReceiver": [
+          [
+            "addEventListener",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "dispatchEvent",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "removeEventListener",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "when",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
+      "PopStateEvent": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "PopStateEvent",
+            "length": 1
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "PopStateEvent"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "state",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get state",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "hasUAVisualTransition",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get hasUAVisualTransition",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "PopStateEvent",
+                "length": 1
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Event",
+        "interfaceObjectParent": "Event",
+        "toStringTag": "PopStateEvent",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'PopStateEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "threw": "TypeError: Failed to construct 'PopStateEvent': 1 argument required, but only 0 present."
+        },
+        "wrongReceiver": [
+          [
+            "get state",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get hasUAVisualTransition",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      }
+    },
+    "instances": {
+      "DOMException": [],
+      "Event": [
+        [
+          "isTrusted",
+          {
+            "enumerable": true,
+            "configurable": false,
+            "get": {
+              "name": "get isTrusted",
+              "length": 0
+            },
+            "set": null
+          }
+        ]
+      ],
+      "EventTarget": [],
+      "PopStateEvent": [
+        [
+          "isTrusted",
+          {
+            "enumerable": true,
+            "configurable": false,
+            "get": {
+              "name": "get isTrusted",
+              "length": 0
+            },
+            "set": null
+          }
+        ]
+      ]
+    },
+    "cases": [
+      [
+        "addEventListener with a number",
+        {
+          "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': parameter 2 is not of type 'Object'."
+        }
+      ],
+      [
+        "addEventListener with one argument",
+        {
+          "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': 2 arguments required, but only 1 present."
+        }
+      ],
+      [
+        "addEventListener with a signal that is not an AbortSignal",
+        {
+          "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': Failed to read the 'signal' property from 'AddEventListenerOptions': Failed to convert value to 'AbortSignal'."
+        }
+      ],
+      [
+        "addEventListener with null",
+        {
+          "value": "undefined"
+        }
+      ],
+      [
+        "removeEventListener with a string",
+        {
+          "threw": "TypeError: Failed to execute 'removeEventListener' on 'EventTarget': parameter 2 is not of type 'Object'."
+        }
+      ],
+      [
+        "dispatchEvent with an object",
+        {
+          "threw": "TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'."
+        }
+      ],
+      [
+        "dispatchEvent with null",
+        {
+          "threw": "TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'."
+        }
+      ],
+      [
+        "dispatchEvent without an argument",
+        {
+          "threw": "TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present."
+        }
+      ],
+      [
+        "dispatchEvent while the event is dispatched",
+        {
+          "value": "[\"InvalidStateError\",\"Failed to execute 'dispatchEvent' on 'EventTarget': The event is already being dispatched.\",11,true,true]"
+        }
+      ],
+      [
+        "the own properties of a DOMException that is thrown and one that is made",
+        {
+          "value": "[[[\"stack\",{\"enumerable\":false,\"configurable\":true,\"get\":{\"name\":\"\",\"length\":0},\"set\":{\"name\":\"\",\"length\":1}}]],\"string\",[]]"
+        }
+      ],
+      [
+        "Event with a number for its dictionary",
+        {
+          "threw": "TypeError: Failed to construct 'Event': The provided value is not of type 'EventInit'."
+        }
+      ],
+      [
+        "Event with a symbol for its type",
+        {
+          "threw": "TypeError: Failed to construct 'Event': Cannot convert a Symbol value to a string"
+        }
+      ],
+      [
+        "Event with a dictionary whose getter throws",
+        {
+          "threw": "RangeError: from the page"
+        }
+      ],
+      [
+        "addEventListener with a symbol for its type",
+        {
+          "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': Cannot convert a Symbol value to a string"
+        }
+      ],
+      [
+        "Event with a dictionary",
+        {
+          "value": "[\"x\",true,false,true,false,0]"
+        }
+      ],
+      [
+        "Event's flags before dispatch",
+        {
+          "value": "[true,false,null,null,0]"
+        }
+      ],
+      [
+        "dispatch to listeners",
+        {
+          "value": "[[\"bubbling\",2,true,true,true,true],[\"capturing\",2,1,true],[false,true,0,null,true]]"
+        }
+      ],
+      [
+        "dispatchEvent of a canceled event",
+        {
+          "value": "[true,false,false,true]"
+        }
+      ],
+      [
+        "a listener added twice runs once",
+        {
+          "value": "1"
+        }
+      ],
+      [
+        "once",
+        {
+          "value": "1"
+        }
+      ],
+      [
+        "removeEventListener",
+        {
+          "value": "1"
+        }
+      ],
+      [
+        "handleEvent",
+        {
+          "value": "1"
+        }
+      ],
+      [
+        "stopImmediatePropagation",
+        {
+          "value": "[[1],true]"
+        }
+      ],
+      [
+        "stopPropagation in a capturing listener",
+        {
+          "value": "[\"bubbling\",\"capturing\"]"
+        }
+      ],
+      [
+        "preventDefault in a passive listener",
+        {
+          "value": "[true,false]"
+        }
+      ],
+      [
+        "initEvent",
+        {
+          "value": "[\"y\",true,true]"
+        }
+      ],
+      [
+        "returnValue and cancelBubble",
+        {
+          "value": "[true,false,true]"
+        }
+      ],
+      [
+        "DOMException's defaults",
+        {
+          "value": "[\"Error\",\"\",0,\"Error\"]"
+        }
+      ],
+      [
+        "DOMException with a name",
+        {
+          "value": "[\"SyntaxError\",\"m\",12,true]"
+        }
+      ],
+      [
+        "PopStateEvent with a state",
+        {
+          "value": "[true,true,true,true,false]"
+        }
+      ]
+    ]
+  }
+}
