@@ -53,11 +53,18 @@ embedded_data("v8_snapshot") {
 }
 
 executable("mitto_page") {
-  sources = [ "mitto_page.cc" ]
+  sources = [
+    "mitto_page.cc",
+    "script_runner.cc",
+    "script_runner.h",
+    "session_channel.cc",
+    "session_channel.h",
+  ]
   deps = [
     ":icu_data",
     ":v8_snapshot",
     "//base",
+    "//mitto:page_channel",
     "//third_party/icu",
     "//v8",
   ]

@@ -809,14 +809,14 @@ def test_the_event_fd_says_when_a_stream_is_wanted(server: StreamServer) -> None
         with _start_stream(session, server.url("/"), len(WHOLE)) as request:
             readable, _, _ = select.select([fd], [], [], EVENT_SECONDS)
             assert readable == [fd]
-            assert session.next_ready_request() == request.identity
+            assert session.next_ready() == request.identity
             assert isinstance(request.next_event(0), BodyWanted)
-            assert session.next_ready_request() is None
+            assert session.next_ready() is None
 
             assert request.write_body(WHOLE) == len(WHOLE)
             readable, _, _ = select.select([fd], [], [], EVENT_SECONDS)
             assert readable == [fd]
-            assert session.next_ready_request() == request.identity
+            assert session.next_ready() == request.identity
             assert isinstance(request.next_event(0), BodyWanted)
             request.end_body()
             assert isinstance(_native.wait_for_response(request)[0], _native.ResponseStarted)

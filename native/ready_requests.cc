@@ -41,7 +41,7 @@ std::optional<int> ReadyRequests::GetFileDescriptor() {
       return std::nullopt;
     }
     // Wait() may have started the list already.
-    if (!requests_.empty()) {
+    if (!handles_.empty()) {
       WriteByte(write_end_);
     }
   }
@@ -62,7 +62,7 @@ int ReadyRequests::Wait(std::optional<base::TimeDelta> timeout) {
       result = net::ERR_ABORTED;
       break;
     }
-    if (!requests_.empty() && !returned_for_list_) {
+    if (!handles_.empty() && !returned_for_list_) {
       returned_for_list_ = true;
       break;
     }
@@ -99,15 +99,15 @@ void ReadyRequests::EndWaitsAndWaitForThem() {
   }
 }
 
-std::optional<uintptr_t> ReadyRequests::Take() {
+std::optional<ReadyHandle> ReadyRequests::Take() {
   base::AutoLock lock(lock_);
-  if (requests_.empty()) {
+  if (handles_.empty()) {
     return std::nullopt;
   }
-  const uintptr_t request = requests_.front();
-  requests_.pop_front();
-  if (requests_.empty()) {
-    // The next request listed is news to Wait() again.
+  const ReadyHandle handle = handles_.front();
+  handles_.pop_front();
+  if (handles_.empty()) {
+    // The next handle listed is news to Wait() again.
     returned_for_list_ = false;
 #if BUILDFLAG(IS_POSIX)
     if (read_end_.is_valid()) {
@@ -115,16 +115,16 @@ std::optional<uintptr_t> ReadyRequests::Take() {
     }
 #endif
   }
-  return request;
+  return handle;
 }
 
-void ReadyRequests::Add(uintptr_t request) {
+void ReadyRequests::Add(uintptr_t address, int32_t kind) {
   base::AutoLock lock(lock_);
   if (!listing_) {
     return;
   }
-  requests_.push_back(request);
-  if (requests_.size() == 1) {
+  handles_.push_back({.kind = kind, .address = address});
+  if (handles_.size() == 1) {
 #if BUILDFLAG(IS_POSIX)
     if (write_end_.is_valid()) {
       WriteByte(write_end_);

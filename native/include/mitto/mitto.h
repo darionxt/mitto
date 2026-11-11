@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 7
+#define MITTO_ABI_VERSION 8
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -30,6 +30,11 @@
 // key changes neither this nor MITTO_ABI_VERSION. Increase this one when an
 // existing key changes its meaning.
 #define MITTO_COOKIES_VERSION 1
+
+// The version of the options that mitto_page_open() reads. Adding an option
+// changes neither this nor MITTO_ABI_VERSION. Increase this one when an existing
+// option changes its meaning.
+#define MITTO_PAGE_OPTIONS_VERSION 1
 
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
@@ -59,6 +64,35 @@
 // //net has taken all that mitto_request_write_body() gave it, and it is time to
 // write more or to call mitto_request_end_body().
 #define MITTO_EVENT_BODY_WANTED 5
+
+// What mitto_session_next_ready() names: a request or a Page.
+#define MITTO_READY_REQUEST 1
+#define MITTO_READY_PAGE 2
+
+// The types of event that a Page goes through. Each MittoPageEvent field says
+// which of them use it.
+//
+// A script that mitto_page_evaluate() sent has its result, or has failed.
+#define MITTO_PAGE_EVENT_EVALUATED 1
+// The Page has ended, after each call in progress has failed with the same
+// error. Each later call fails with it too.
+#define MITTO_PAGE_EVENT_ENDED 2
+
+// Why a call to a Page failed, or why the Page ended.
+//
+// Nothing went wrong.
+#define MITTO_PAGE_ERROR_NONE 0
+// The script threw, or its result cannot be written as JSON, such as a BigInt
+// or an object that holds itself. The Page goes on.
+#define MITTO_PAGE_ERROR_SCRIPT 1
+// The Page process ended: it crashed, ran out of memory or was killed.
+#define MITTO_PAGE_ERROR_PROCESS_ENDED 2
+// The library refused a message from the Page process, or the Page process one
+// from the library, such as one of another version of their messages, and the
+// process ended.
+#define MITTO_PAGE_ERROR_REFUSED 3
+// The Page's Session was destroyed.
+#define MITTO_PAGE_ERROR_SESSION_DESTROYED 4
 
 // The library defines MITTO_IMPLEMENTATION while it builds.
 #if defined(_WIN32) && defined(MITTO_IMPLEMENTATION)
@@ -123,6 +157,34 @@ typedef struct MittoEvent {
   char* headers;
   size_t headers_size;
 } MittoEvent;
+
+// A Page, from mitto_page_open() until mitto_page_close(). Its scripts run in a
+// process of its own, and its requests are its Session's.
+typedef struct MittoPage MittoPage;
+
+// One event of a Page. mitto_page_next_event() allocates the buffers and the
+// caller releases them with mitto_page_event_free(). A buffer that this event
+// does not use is null. Each other one ends with a NUL byte that its size does
+// not count.
+typedef struct MittoPageEvent {
+  // One of the MITTO_PAGE_EVENT values.
+  int32_t type;
+  // One of the MITTO_PAGE_ERROR values: why the call failed, or why the Page
+  // ended.
+  int32_t error;
+  // EVALUATED: the call that mitto_page_evaluate() stored.
+  uint64_t call;
+  // EVALUATED with no error: the result as JSON, as JSON.stringify() writes it,
+  // in UTF-8. Empty if it writes nothing, as for undefined, a function or a
+  // symbol. The Page process writes it, so a caller reads it as it would read
+  // JSON from a server.
+  char* json;
+  size_t json_size;
+  // Any event with an error: what went wrong, in UTF-8, such as "Uncaught
+  // TypeError: x is not a function" or "the Page process was ended by signal
+  // 9".
+  char* message;
+} MittoPageEvent;
 
 // Returns the ABI version of the loaded library. Callers compare it with the
 // version they were written for before making any other call.
@@ -250,7 +312,9 @@ MITTO_EXPORT int32_t mitto_session_create(const char* settings,
 // until that is done, so that another Session can open the same cache.
 // May be called from any thread. Each request still running on it ends, with a
 // last event that holds -3 (ERR_ABORTED), and its handle stays valid until it is
-// released. No request may start and no other call may be made on the Session
+// released. Each of its Pages ends, with a MITTO_PAGE_EVENT_ENDED event that
+// holds MITTO_PAGE_ERROR_SESSION_DESTROYED, this waits for its process to end,
+// and its handle stays valid until it is closed. No request may start and no other call may be made on the Session
 // once this has been called. The file descriptor from mitto_session_event_fd()
 // closes. A call to mitto_session_wait_for_event() that waits returns, as
 // mitto_session_end_waits() makes it, and this waits for it to return before it
@@ -375,7 +439,7 @@ MITTO_EXPORT int32_t mitto_session_delete_cookies(MittoSession* session,
 MITTO_EXPORT void mitto_cookies_free(char* cookies);
 
 // Stores a file descriptor that is readable while any of the Session's requests
-// has an event that has not been named by mitto_session_next_ready_request().
+// or Pages has an event that has not been named by mitto_session_next_ready().
 // May be called from any thread, and each call stores the same one, which the
 // Session owns: wait on it, but do not read from it or close it.
 //
@@ -390,29 +454,33 @@ MITTO_EXPORT void mitto_cookies_free(char* cookies);
 // mitto_session_wait_for_event() instead.
 MITTO_EXPORT int32_t mitto_session_event_fd(MittoSession* session, int32_t* fd);
 
-// Stores the request behind the next waiting event, and takes that entry off the
-// list that keeps the file descriptor readable and that
-// mitto_session_wait_for_event() waits for. A request with several events
-// waiting is named once for each. May be called from any thread.
+// Stores the handle behind the next waiting event, a request's or a Page's,
+// and takes that entry off the list that keeps the file descriptor readable and
+// that mitto_session_wait_for_event() waits for. `kind` receives
+// MITTO_READY_REQUEST for a MittoRequest*, whose event
+// mitto_request_next_event() takes, or MITTO_READY_PAGE for a MittoPage*, whose
+// event mitto_page_next_event() takes. A handle with several events waiting is
+// named once for each. May be called from any thread.
 //
-// The caller uses this only to find the request among the handles it holds, and
-// then gets the event with mitto_request_next_event(). The handle may have been
-// released, or even reused by a newer request, which then has no event yet. So
-// do not use a stored pointer that is not among the handles held, and expect
-// mitto_request_next_event() to find nothing at times.
+// The caller uses this only to find the request or Page among the handles it
+// holds, and then takes the event. The handle may have been released or
+// closed, or even reused by a newer one, which then has no event yet. So do not
+// use a stored pointer that is not among the handles held, and expect the next
+// event to be missing at times.
 //
-// Returns 0 on success, and -1 (ERR_IO_PENDING) with null stored if no event is
-// waiting.
-MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
-                                                      MittoRequest** request);
+// Returns 0 on success, and -1 (ERR_IO_PENDING) with 0 and null stored if no
+// event is waiting.
+MITTO_EXPORT int32_t mitto_session_next_ready(MittoSession* session,
+                                              int32_t* kind,
+                                              void** handle);
 
-// Blocks until mitto_session_next_ready_request() would name a request, for a
+// Blocks until mitto_session_next_ready() would name a request or Page, for a
 // caller that waits on a thread of its own for an event loop that cannot watch
 // the file descriptor, as on Windows. May be called from any thread.
 //
-// It returns once each time the list goes from empty to naming a request: after
-// a return, it waits until mitto_session_next_ready_request() has emptied the
-// list and another event has arrived. So a thread that hands each return to an
+// It returns once each time the list goes from empty to naming a handle: after
+// a return, it waits until mitto_session_next_ready() has emptied the list and
+// another event has arrived. So a thread that hands each return to an
 // event loop sleeps while the loop has not caught up, however many events wait.
 // Only events that arrive after the first call to this or to
 // mitto_session_event_fd() count, so a caller makes one before it starts
@@ -421,7 +489,7 @@ MITTO_EXPORT int32_t mitto_session_next_ready_request(MittoSession* session,
 // Blocks for up to `timeout_ms` milliseconds if that is positive, not at all if
 // it is 0, and for as long as it takes if it is negative.
 //
-// Returns 0 when a request waits to be named, -1 (ERR_IO_PENDING) if none came
+// Returns 0 when a handle waits to be named, -1 (ERR_IO_PENDING) if none came
 // in time, -3 (ERR_ABORTED) at once after mitto_session_end_waits(), and -4
 // (ERR_INVALID_ARGUMENT) for a null `session`.
 MITTO_EXPORT int32_t mitto_session_wait_for_event(MittoSession* session,
@@ -653,6 +721,97 @@ MITTO_EXPORT void mitto_request_release(MittoRequest* request);
 // Releases the buffers of an event filled by mitto_request_next_event() and
 // zeroes it. Does nothing if `event` is null or already zeroed.
 MITTO_EXPORT void mitto_event_free(MittoEvent* event);
+
+// Opens a Page on `session`: starts the Page program, from the directory that
+// the library was loaded from, in a process of its own, and returns without
+// waiting for it to start. May be called from any thread.
+//
+// `options` is a buffer of `options_size` bytes that holds one UTF-8 JSON object
+// and needs no trailing NUL byte:
+//
+//   {"version": 1, "time_zone": "America/New_York", "locale": "en-US"}
+//
+// - "version" is required and must be MITTO_PAGE_OPTIONS_VERSION.
+// - "time_zone" is the IANA name of the time zone that the Page's Date and Intl
+//   report. The default is "UTC".
+// - "locale" is the BCP 47 tag of the locale that the Page's Intl falls back to.
+//   The default is "en-US".
+// The Page process checks both, because only it holds ICU's whole data. If it
+// does not know one, it refuses it, and the Page ends with
+// MITTO_PAGE_ERROR_REFUSED.
+//
+// An unknown key or an invalid value is refused, so a mistake cannot go
+// unnoticed.
+//
+// The Page process holds its end of the channel to the library, and the
+// standard output and error of this process, and opens no file or socket of its
+// own. It ends when mitto_page_close() closes the Page, when its Session is
+// destroyed, and when this process ends without either. If it ends before
+// that, because it crashed, ran out of memory or was killed, its calls in
+// progress and each later one fail with MITTO_PAGE_ERROR_PROCESS_ENDED, and the
+// Session's other Pages and requests go on.
+//
+// Returns 0 on success and stores the Page, which the caller later passes to
+// mitto_page_close(). On failure, returns a negative Chromium net error code and
+// stores null: -4 (ERR_INVALID_ARGUMENT) for invalid options, -6
+// (ERR_FILE_NOT_FOUND) if there is no Page program beside the library, as in a
+// wheel that a release made, -12 (ERR_INSUFFICIENT_RESOURCES) if the process has
+// no room for the channel, and -2 (ERR_FAILED) if the program cannot start.
+MITTO_EXPORT int32_t mitto_page_open(MittoSession* session,
+                                     const char* options,
+                                     size_t options_size,
+                                     MittoPage** page);
+
+// Stores the ID of the Page's process, which stays the same after the process
+// has ended. May be called from any thread.
+//
+// Returns 0 on success. On failure, returns -4 (ERR_INVALID_ARGUMENT) and
+// stores 0.
+MITTO_EXPORT int32_t mitto_page_process_id(MittoPage* page,
+                                           int64_t* process_id);
+
+// Sends `script`, `script_size` bytes of UTF-8 that need no trailing NUL byte,
+// to the Page, which runs it as a classic script in its context, and returns
+// without waiting for it. May be called from any thread. Scripts run in the
+// order they are sent, in the same context, so each sees what the ones before
+// it left there.
+//
+// The result comes as a MITTO_PAGE_EVENT_EVALUATED event with the number that
+// this stores in `call`. Each call gets one such event, also when it fails.
+//
+// Returns 0 on success. On failure, returns -4 (ERR_INVALID_ARGUMENT) for an
+// invalid argument, such as a script that is not UTF-8, or -142
+// (ERR_MSG_TOO_BIG) for a script of more than 16 MiB less 8 bytes, and stores 0.
+MITTO_EXPORT int32_t mitto_page_evaluate(MittoPage* page,
+                                         const char* script,
+                                         size_t script_size,
+                                         uint64_t* call);
+
+// Takes the Page's next event into `event`, which the caller then passes to
+// mitto_page_event_free(). May be called from any thread.
+//
+// Events wait in a queue inside the library, for as long as the caller takes.
+// This call blocks only the calling thread: for up to `timeout_ms` milliseconds
+// if that is positive, not at all if it is 0, and for as long as it takes if it
+// is negative.
+//
+// Returns 0 on success, -1 (ERR_IO_PENDING) if no event arrived in time, and -4
+// (ERR_INVALID_ARGUMENT) for an invalid argument. In these cases it leaves
+// `event` zeroed, so it needs no freeing.
+MITTO_EXPORT int32_t mitto_page_next_event(MittoPage* page,
+                                           int64_t timeout_ms,
+                                           MittoPageEvent* event);
+
+// Releases the buffers of an event filled by mitto_page_next_event() and zeroes
+// it. Does nothing if `event` is null or already zeroed.
+MITTO_EXPORT void mitto_page_event_free(MittoPageEvent* event);
+
+// Closes the Page and releases its handle, along with any events that have not
+// been taken. It closes the channel, waits for the Page process to end, for up
+// to 2 seconds before it kills it, and returns once the process has gone. May
+// be called from any thread, also after the Session has been destroyed, but not
+// while another call is using the handle. Does nothing if `page` is null.
+MITTO_EXPORT void mitto_page_close(MittoPage* page);
 
 #ifdef __cplusplus
 }  // extern "C"

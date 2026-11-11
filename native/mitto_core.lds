@@ -4,6 +4,12 @@
     mitto_cookies_free;
     mitto_event_free;
     mitto_net_error_name;
+    mitto_page_close;
+    mitto_page_evaluate;
+    mitto_page_event_free;
+    mitto_page_next_event;
+    mitto_page_open;
+    mitto_page_process_id;
     mitto_request_cancel;
     mitto_request_end_body;
     mitto_request_next_event;
@@ -17,7 +23,7 @@
     mitto_session_end_waits;
     mitto_session_event_fd;
     mitto_session_list_cookies;
-    mitto_session_next_ready_request;
+    mitto_session_next_ready;
     mitto_session_set_cookies;
     mitto_session_wait_for_event;
   local:
