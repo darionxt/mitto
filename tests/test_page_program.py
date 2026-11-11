@@ -1,8 +1,9 @@
 """Tests of the Page program, mitto_page, which runs the script on its command line on V8 and prints what it returns.
 
-CI's builds leave the Runtime out until the source export carries it, so these run only where MITTO_PAGE_PROGRAM names
-a program built with tools/workspace/runtime_args.gn. What a page sees is compared with Chrome elsewhere: these check
-what holds of any Chrome, such as compilers that give a page WebAssembly, and ICU's whole data behind Intl.
+These run where MITTO_PAGE_PROGRAM names a program built with tools/workspace/runtime_args.gn: in CI, the one installed
+from the wheel that the native job builds, and the Sanitizers workflow's builds of it with ASan and UBSan. What a page
+sees is compared with Chrome elsewhere: these check what holds of any Chrome, such as compilers that give a page
+WebAssembly, and ICU's whole data behind Intl.
 """
 
 import os

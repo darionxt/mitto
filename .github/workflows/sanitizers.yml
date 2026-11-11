@@ -7,6 +7,7 @@ on:
       - .github/workflows/sanitizers.yml
       - native/**
       - tests/test_core_test_program.py
+      - tests/test_page_program.py
       - tools/workspace/**
   push:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - .github/workflows/sanitizers.yml
       - native/**
       - tests/test_core_test_program.py
+      - tests/test_page_program.py
       - tools/workspace/**
   # A build that has not changed comes from the cache, so that a scheduled run
   # costs little more than the fuzzing, which finds something new each time.
@@ -27,18 +29,29 @@ jobs:
   native:
     name: Native core, ${{ matrix.config }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The Runtime takes about 65 minutes to build from nothing, and the library under a sanitizer 18 to 26.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         include:
           # What the job runs, and the libraries that each of those loads.
           - config: asan
+            tests: library
             files: mitto_core_test libmitto_core.so html_tokenizer_test libsanitizer_shared_hooks.so
           - config: ubsan
+            tests: library
             files: mitto_core_test libmitto_core.so html_tokenizer_test
           - config: fuzz
+            tests: fuzz
             files: client_hints_fuzzer cookies_fuzzer request_options_fuzzer session_settings_fuzzer socks5_auth_fuzzer html_tokenizer_fuzzer libsanitizer_shared_hooks.so
+          # The Runtime's Page program, which builds without the library.
+          - config: runtime-asan
+            tests: page
+            files: mitto_page libsanitizer_shared_hooks.so
+          - config: runtime-ubsan
+            tests: page
+            files: mitto_page
     env:
       UV_LOCKED: "1"
     steps:
@@ -92,21 +105,28 @@ jobs:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/${{ matrix.config }}
           key: ${{ steps.cached-objects.outputs.cache-primary-key }}
       - name: Run the C test program against a local server
-        if: matrix.config != 'fuzz'
+        if: matrix.tests == 'library'
         run: uv run pytest tests/test_core_test_program.py -rs
         env:
           MITTO_CORE_TEST: ${{ runner.temp }}/native-core/mitto_core_test
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run html5lib's tokenizer tests
-        if: matrix.config != 'fuzz'
+        if: matrix.tests == 'library'
         run: |
           "$RUNNER_TEMP/native-core/html_tokenizer_test" native/test/html5lib_tokenizer native/test/html5lib_tokenizer_failures.txt
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+      - name: Run the Page program's tests
+        if: matrix.tests == 'page'
+        run: uv run pytest tests/test_page_program.py -rs
+        env:
+          MITTO_PAGE_PROGRAM: ${{ runner.temp }}/native-core/mitto_page
+          ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
+          UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers, client hints and HTML
-        if: matrix.config == 'fuzz'
+        if: matrix.tests == 'fuzz'
         run: |
           mkdir "$RUNNER_TEMP/crashes"
           for target in session_settings request_options cookies socks5_auth client_hints html_tokenizer; do
@@ -122,7 +142,7 @@ jobs:
           # A pull request only checks that new code does not fail quickly. The daily run looks harder.
           FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 60 || 300 }}
       # A run is random, so the input that crashed it is the only way to repeat it.
-      - if: failure() && matrix.config == 'fuzz'
+      - if: failure() && matrix.tests == 'fuzz'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzzer-crashes

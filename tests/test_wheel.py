@@ -5,7 +5,8 @@ compile a stub with cc, and are skipped when there is no C compiler and on Windo
 Those that take the built_wheel fixture check a wheel of the real native core, named in MITTO_WHEEL, and the package
 installed from it. The test of its notices also needs
 what the library links, which `python -m tools.workspace.notices host` prints from the library's build, in
-MITTO_HOST_NOTICES.
+MITTO_HOST_NOTICES. A wheel of the real native core holds the Page program only where MITTO_PAGE_PROGRAM names the one
+installed from it, as in CI. The release workflow names none, so its wheels must hold none.
 """
 
 import ctypes
@@ -13,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -38,6 +40,11 @@ WHEEL_ENV_VAR = "MITTO_WHEEL"
 # Names this Host's part of the notices, from the build of the wheel's library.
 HOST_NOTICES_ENV_VAR = "MITTO_HOST_NOTICES"
 
+# Names the Page program that the tests of tests/test_page_program.py run.
+PAGE_PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
+
+RELEASE_WORKFLOW = REPOSITORY / ".github" / "workflows" / "release.yml"
+
 # A function of the native core that the C API does not export.
 HIDDEN_FUNCTION = "mitto::ParseSessionSettings"
 
@@ -51,6 +58,19 @@ uint32_t mitto_abi_version(void) { return (uint32_t)mitto_stub_hidden(1); }
 """
 STUB_HIDDEN_FUNCTION = "mitto_stub_hidden"
 STUB_MACOS_VERSION = "13.0"
+
+STUB_PROGRAM = """
+#include <stdio.h>
+#include <unistd.h>
+
+__attribute__((visibility("hidden"))) int mitto_stub_page_hidden(int value) { return value * 7 + getpid() % 2; }
+
+int main(void) {
+  printf("%d\\n", mitto_stub_page_hidden(6) - getpid() % 2);
+  return 0;
+}
+"""
+STUB_PROGRAM_HIDDEN_FUNCTION = "mitto_stub_page_hidden"
 
 CPU_TYPE_ARM64 = 0x0100000C
 CPU_TYPE_X86_64 = 0x01000007
@@ -69,6 +89,8 @@ PDB_BLOCK_SIZE = 512
 PDB_VERSION = 20000404
 PDB_GUID = bytes(range(16))
 PDB_NAME = "mitto_core.dll.pdb"
+PAGE_PROGRAM_PDB_GUID = bytes(range(16, 32))
+PAGE_PROGRAM_PDB_NAME = "mitto_page.exe.pdb"
 
 
 def mach_o_library(
@@ -150,6 +172,11 @@ def pe_library(
     ).ljust(32, b"\0")
     headers = dos_header + b"PE\0\0" + file_header + optional_header + section_header
     return headers.ljust(PE_SECTION_OFFSET, b"\0") + section
+
+
+def pe_page_program() -> bytes:
+    """Return a made-up Page program for Windows, which names a PDB of its own."""
+    return pe_library(dll=False, pdb=PAGE_PROGRAM_PDB_NAME, guid=PAGE_PROGRAM_PDB_GUID)
 
 
 def pdb_file(guid: bytes = PDB_GUID, age: int = 1) -> bytes:
@@ -281,6 +308,47 @@ def test_a_windows_program_has_no_tag(tmp_path: Path) -> None:
         wheel.platform_tag(library)
 
 
+def test_the_linux_tag_is_the_highest_glibc_version_the_library_or_a_program_needs(tmp_path: Path) -> None:
+    library = write(tmp_path, elf_library({"libc.so.6": ["GLIBC_2.25"]}))
+    program = tmp_path / "program"
+    program.write_bytes(elf_library({"libc.so.6": ["GLIBC_2.2.5", "GLIBC_2.27"]}))
+
+    assert wheel.platform_tag(library, program) == "manylinux_2_27_x86_64"
+    assert wheel.platform_tag(program, library) == "manylinux_2_27_x86_64"
+
+
+def test_the_macos_tag_is_the_highest_version_the_library_or_a_program_needs(tmp_path: Path) -> None:
+    library = write(tmp_path, mach_o_library(minimum=(13, 0, 0)))
+    program = tmp_path / "program"
+    program.write_bytes(mach_o_library(minimum=(14, 0, 0)))
+
+    assert wheel.platform_tag(library, program) == "macosx_14_0_arm64"
+
+
+def test_a_windows_program_beside_the_dll_keeps_the_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+    program = tmp_path / "program.exe"
+    program.write_bytes(pe_page_program())
+
+    assert wheel.platform_tag(library, program) == "win_amd64"
+
+
+def test_a_dll_in_place_of_a_program_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, pe_library())
+
+    with pytest.raises(wheel.WheelError, match="a DLL, not a program"):
+        wheel.platform_tag(library, library)
+
+
+def test_a_program_for_another_host_has_no_tag(tmp_path: Path) -> None:
+    library = write(tmp_path, elf_library({"libc.so.6": ["GLIBC_2.25"]}))
+    program = tmp_path / "program"
+    program.write_bytes(mach_o_library())
+
+    with pytest.raises(wheel.WheelError, match="not both for one Host"):
+        wheel.platform_tag(library, program)
+
+
 def test_a_file_that_is_not_a_library_has_no_tag(tmp_path: Path) -> None:
     library = write(tmp_path, b"#!/bin/sh\n")
 
@@ -328,6 +396,29 @@ def test_a_dll_that_names_no_pdb_is_refused(tmp_path: Path) -> None:
         wheel.strip_library(library, tmp_path)
 
 
+def test_the_page_program_for_windows_goes_into_the_wheel_as_it_is_and_its_pdb_into_the_symbols(tmp_path: Path) -> None:
+    built = tmp_path / "out"
+    built.mkdir()
+    program = built / "program.exe"
+    program.write_bytes(pe_page_program())
+    (built / PAGE_PROGRAM_PDB_NAME).write_bytes(pdb_file(PAGE_PROGRAM_PDB_GUID))
+    copies = tmp_path / "copies"
+    copies.mkdir()
+
+    copy, symbols = wheel.strip_page_program(program, copies)
+
+    assert copy == copies / wheel.WINDOWS_PAGE_PROGRAM
+    assert copy.read_bytes() == program.read_bytes()
+    assert symbols == built / PAGE_PROGRAM_PDB_NAME
+
+
+def test_a_page_program_that_is_no_program_is_refused(tmp_path: Path) -> None:
+    program = write(tmp_path, b"#!/bin/sh\n")
+
+    with pytest.raises(wheel.WheelError, match="neither a Mach-O, an ELF nor a PE file"):
+        wheel.strip_page_program(program, tmp_path)
+
+
 def test_a_file_that_is_not_a_pdb_is_refused(tmp_path: Path) -> None:
     library = write(tmp_path, pe_library())
     (tmp_path / PDB_NAME).write_bytes(b"not a PDB")
@@ -336,11 +427,16 @@ def test_a_file_that_is_not_a_pdb_is_refused(tmp_path: Path) -> None:
         wheel.strip_library(library, tmp_path)
 
 
-def build_wheel(directory: Path, library: Path | None = None) -> subprocess.CompletedProcess[str]:
-    """Build this repository's wheel with hatchling, and the library in the hook's variable if one is given."""
-    env = {name: value for name, value in os.environ.items() if name != wheel.LIBRARY_ENV_VAR}
-    if library is not None:
-        env[wheel.LIBRARY_ENV_VAR] = str(library)
+def build_wheel(
+    directory: Path, library: Path | None = None, page_program: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Build this repository's wheel with hatchling, with the library and the Page program in the hook's variables.
+
+    Without a Page program it builds the wheel as the release workflow does.
+    """
+    named = {wheel.LIBRARY_ENV_VAR: library, wheel.PAGE_PROGRAM_ENV_VAR: page_program}
+    env = {name: value for name, value in os.environ.items() if name not in named}
+    env |= {name: str(path) for name, path in named.items() if path is not None}
     command = [sys.executable, "-m", "hatchling", "build", "--target", "wheel", "--directory", directory]
     return subprocess.run(command, cwd=REPOSITORY, env=env, capture_output=True, text=True, check=False)
 
@@ -361,17 +457,79 @@ def test_a_wheel_from_a_missing_library_is_refused(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.whl"))
 
 
+def test_a_wheel_from_a_missing_page_program_is_refused(pe_build: Path, tmp_path: Path) -> None:
+    result = build_wheel(tmp_path, pe_build / wheel.WINDOWS_LIBRARY, tmp_path / "missing")
+
+    assert result.returncode != 0
+    assert f"{wheel.PAGE_PROGRAM_ENV_VAR} names {tmp_path / 'missing'}, which is not a file" in result.stderr
+    assert not list(tmp_path.glob("*.whl"))
+
+
 @pytest.fixture(scope="module")
-def dll_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build a wheel from a made-up DLL and its PDB, which any Host can do, as hatchling never loads the library."""
-    directory = tmp_path_factory.mktemp("dll")
+def pe_build(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Return a made-up build of the DLL and of the Page program beside it, each with its PDB."""
+    directory = tmp_path_factory.mktemp("pe-build")
     (directory / wheel.WINDOWS_LIBRARY).write_bytes(pe_library())
     (directory / PDB_NAME).write_bytes(pdb_file())
+    (directory / wheel.WINDOWS_PAGE_PROGRAM).write_bytes(pe_page_program())
+    (directory / PAGE_PROGRAM_PDB_NAME).write_bytes(pdb_file(PAGE_PROGRAM_PDB_GUID))
+    return directory
 
-    result = build_wheel(directory / "dist", directory / wheel.WINDOWS_LIBRARY)
+
+@pytest.fixture(scope="module")
+def dll_wheel(pe_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a wheel from a made-up DLL, as the release workflow does, which any Host can do.
+
+    hatchling never loads the library, and the Page program beside it stays out, because nothing names it.
+    """
+    directory = tmp_path_factory.mktemp("dll")
+
+    result = build_wheel(directory, pe_build / wheel.WINDOWS_LIBRARY)
     assert result.returncode == 0, result.stderr
-    (built,) = (directory / "dist").glob("*.whl")
+    (built,) = directory.glob("*.whl")
     return built
+
+
+@pytest.fixture(scope="module")
+def page_program_dll_wheel(pe_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a wheel from a made-up DLL and Page program, as CI does for its tests."""
+    directory = tmp_path_factory.mktemp("dll-page-program")
+
+    result = build_wheel(directory, pe_build / wheel.WINDOWS_LIBRARY, pe_build / wheel.WINDOWS_PAGE_PROGRAM)
+    assert result.returncode == 0, result.stderr
+    (built,) = directory.glob("*.whl")
+    return built
+
+
+def page_programs_in(built: Path) -> list[str]:
+    """Return the names under which a wheel holds a Page program."""
+    with zipfile.ZipFile(built) as archive:
+        return [name for name in archive.namelist() if name.startswith(f"{wheel.PACKAGE}/{wheel.PAGE_PROGRAM}")]
+
+
+def test_a_wheel_built_as_the_release_workflow_builds_it_holds_no_page_program(dll_wheel: Path) -> None:
+    with tarfile.open(wheel.symbols_archive_of(dll_wheel)) as archive:
+        symbols = archive.getnames()
+
+    assert page_programs_in(dll_wheel) == []
+    assert symbols == [PDB_NAME]
+
+
+def test_the_release_workflow_names_no_page_program() -> None:
+    assert wheel.PAGE_PROGRAM_ENV_VAR not in RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+
+def test_a_wheel_holds_the_page_program_it_is_given_and_the_programs_pdb(page_program_dll_wheel: Path) -> None:
+    with zipfile.ZipFile(page_program_dll_wheel) as archive:
+        library = archive.read(f"mitto/{wheel.WINDOWS_LIBRARY}")
+        program = archive.read(f"mitto/{wheel.WINDOWS_PAGE_PROGRAM}")
+    with tarfile.open(wheel.symbols_archive_of(page_program_dll_wheel)) as archive:
+        symbols = archive.getnames()
+
+    assert page_program_dll_wheel.name.endswith("-py3-none-win_amd64.whl")
+    assert page_programs_in(page_program_dll_wheel) == [f"mitto/{wheel.WINDOWS_PAGE_PROGRAM}"]
+    assert (library, program) == (pe_library(), pe_page_program())
+    assert symbols == [PDB_NAME, PAGE_PROGRAM_PDB_NAME]
 
 
 def test_a_wheel_of_a_dll_is_for_windows_and_its_symbols_are_the_pdb(dll_wheel: Path, tmp_path: Path) -> None:
@@ -392,42 +550,62 @@ def test_a_wheel_of_a_dll_is_for_windows_and_its_symbols_are_the_pdb(dll_wheel: 
 
 
 @pytest.fixture(scope="module")
-def stub_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build a wheel from a stub of the native core, with its object file kept for the debug information."""
+def stub_build(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Compile a stub of the native core and of the Page program, with their object files kept for debug information."""
     if sys.platform == "win32":
         pytest.skip("a DLL from cc has no PDB, so a made-up DLL stands in for the stub on Windows")
     compiler = shutil.which("cc")
     if compiler is None:
         pytest.skip("no C compiler")
     directory = tmp_path_factory.mktemp("stub")
-    source = directory / "stub.c"
-    source.write_text(STUB)
+    (directory / "stub.c").write_text(STUB)
+    (directory / "stub_program.c").write_text(STUB_PROGRAM)
     flags: list[str] = [f"-mmacosx-version-min={STUB_MACOS_VERSION}"] if sys.platform == "darwin" else []
-    run([compiler, "-c", "-g", "-fPIC", *flags, "-o", directory / "stub.o", source])
+    run([compiler, "-c", "-g", "-fPIC", *flags, "-o", directory / "stub.o", directory / "stub.c"])
     run([compiler, "-shared", *flags, "-o", directory / _native.LIBRARY_NAME, directory / "stub.o"])
+    run([compiler, "-c", "-g", *flags, "-o", directory / "stub_program.o", directory / "stub_program.c"])
+    run([compiler, *flags, "-o", directory / wheel.PAGE_PROGRAM, directory / "stub_program.o"])
+    return directory
 
-    result = build_wheel(directory / "dist", directory / _native.LIBRARY_NAME)
+
+@pytest.fixture(scope="module")
+def stub_wheel(stub_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a wheel from the stub of the native core."""
+    directory = tmp_path_factory.mktemp("stub-wheel")
+
+    result = build_wheel(directory, stub_build / _native.LIBRARY_NAME)
     assert result.returncode == 0, result.stderr
-    (built,) = (directory / "dist").glob("*.whl")
+    (built,) = directory.glob("*.whl")
     return built
 
 
-def unpack(built: Path, directory: Path) -> tuple[Path, Path]:
-    """Unpack the library of a wheel and its symbols archive, and return the library and the file of its symbols."""
+@pytest.fixture(scope="module")
+def page_program_stub_wheel(stub_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a wheel from the stubs of the native core and of the Page program."""
+    directory = tmp_path_factory.mktemp("stub-page-program-wheel")
+
+    result = build_wheel(directory, stub_build / _native.LIBRARY_NAME, stub_build / wheel.PAGE_PROGRAM)
+    assert result.returncode == 0, result.stderr
+    (built,) = directory.glob("*.whl")
+    return built
+
+
+def unpack(built: Path, directory: Path, binary: str = _native.LIBRARY_NAME) -> tuple[Path, Path]:
+    """Unpack a binary of a wheel and its symbols archive, and return the binary and the file of its symbols."""
     with zipfile.ZipFile(built) as archive:
-        library = Path(archive.extract(f"mitto/{_native.LIBRARY_NAME}", directory))
+        unpacked = Path(archive.extract(f"mitto/{binary}", directory))
     with tarfile.open(wheel.symbols_archive_of(built)) as archive:
         archive.extractall(directory, filter="data")
     if sys.platform == "darwin":
-        return library, directory / f"{_native.LIBRARY_NAME}.dSYM/Contents/Resources/DWARF/{_native.LIBRARY_NAME}"
+        return unpacked, directory / f"{binary}.dSYM/Contents/Resources/DWARF/{binary}"
     if sys.platform == "win32":
-        return library, directory / f"{_native.LIBRARY_NAME}.pdb"
-    return library, directory / f"{_native.LIBRARY_NAME}.debug"
+        return unpacked, directory / f"{binary}.pdb"
+    return unpacked, directory / f"{binary}.debug"
 
 
-def check_symbols(built: Path, function: str, directory: Path) -> None:
-    """Check that the symbols archive of a wheel belongs to its library and names a function that the library does not."""
-    library, symbols = unpack(built, directory)
+def check_symbols(built: Path, function: str, directory: Path, binary: str = _native.LIBRARY_NAME) -> None:
+    """Check that the symbols archive of a wheel belongs to one of its binaries and names a function it does not."""
+    library, symbols = unpack(built, directory, binary)
     if sys.platform == "win32":
         _, name = debug_help_lookup(library, symbols.parent, function)
         assert function not in PeFile(library).exported_names()
@@ -624,6 +802,28 @@ def test_the_symbols_of_the_stub_name_a_function_the_library_does_not(stub_wheel
     check_symbols(stub_wheel, STUB_HIDDEN_FUNCTION, tmp_path)
 
 
+def test_the_stub_wheel_holds_no_page_program(stub_wheel: Path) -> None:
+    assert page_programs_in(stub_wheel) == []
+
+
+def test_the_stripped_page_program_is_executable_and_runs(page_program_stub_wheel: Path, tmp_path: Path) -> None:
+    with zipfile.ZipFile(page_program_stub_wheel) as archive:
+        mode = archive.getinfo(f"mitto/{wheel.PAGE_PROGRAM}").external_attr >> 16
+    program, _ = unpack(page_program_stub_wheel, tmp_path, wheel.PAGE_PROGRAM)
+    # zipfile does not set the mode it unpacks, as an installer does.
+    program.chmod(stat.S_IMODE(mode))
+
+    assert stat.S_IMODE(mode) == 0o755
+    assert run([program]) == "42\n"
+
+
+def test_the_symbols_of_the_page_program_name_a_function_it_does_not(
+    page_program_stub_wheel: Path, tmp_path: Path
+) -> None:
+    check_symbols(page_program_stub_wheel, STUB_PROGRAM_HIDDEN_FUNCTION, tmp_path, wheel.PAGE_PROGRAM)
+    check_symbols(page_program_stub_wheel, STUB_HIDDEN_FUNCTION, tmp_path / "library")
+
+
 @pytest.fixture(scope="module")
 def built_wheel() -> Path:
     """Return the wheel of the real native core that MITTO_WHEEL names, or skip if there is none."""
@@ -644,23 +844,39 @@ def test_the_installed_package_holds_the_library_of_the_wheel(built_wheel: Path)
     assert _native.load_library().mitto_abi_version() == _native.ABI_VERSION
 
 
-def test_the_wheel_is_tagged_for_what_its_library_needs(built_wheel: Path, tmp_path: Path) -> None:
+def test_the_wheel_is_tagged_for_what_its_binaries_need(built_wheel: Path, tmp_path: Path) -> None:
     platform = built_wheel.name.removesuffix(".whl").rsplit("-", 1)[1]
+    binaries = [_native.LIBRARY_NAME, *(Path(name).name for name in page_programs_in(built_wheel))]
     if sys.platform == "win32":
-        library, _ = unpack(built_wheel, tmp_path)
-        assert (PeFile(library).machine, platform) == (IMAGE_FILE_MACHINE_AMD64, "win_amd64")
+        machines = {PeFile(unpack(built_wheel, tmp_path, binary)[0]).machine for binary in binaries}
+        assert (machines, platform) == ({IMAGE_FILE_MACHINE_AMD64}, "win_amd64")
     elif sys.platform == "darwin":
-        library, _ = unpack(built_wheel, tmp_path)
-        match = re.search(r"minos (\d+)\.(\d+)", run(["otool", "-l", library]))
-        assert match is not None
-        assert platform == f"macosx_{match[1]}_{match[2]}_arm64"
+        versions: list[tuple[int, int]] = []
+        for binary in binaries:
+            match = re.search(r"minos (\d+)\.(\d+)", run(["otool", "-l", unpack(built_wheel, tmp_path, binary)[0]]))
+            assert match is not None
+            versions.append((int(match[1]), int(match[2])))
+        assert platform == "macosx_{}_{}_arm64".format(*max(versions))
     else:
+        # auditwheel reads every ELF file in the wheel.
         report = json.loads(run([sys.executable, "-m", "auditwheel", "show", "--json", built_wheel]))
         assert report["overall_tag"] == platform
 
 
 def test_the_symbols_of_the_wheel_name_a_function_the_library_does_not(built_wheel: Path, tmp_path: Path) -> None:
     check_symbols(built_wheel, HIDDEN_FUNCTION, tmp_path)
+
+
+def test_the_wheel_holds_a_page_program_only_if_the_tests_run_the_installed_one(built_wheel: Path) -> None:
+    # CI names the Page program installed from its wheel. The release workflow names none, so its wheels hold none.
+    named = os.environ.get(PAGE_PROGRAM_ENV_VAR)
+    package = Path(_native.__file__).parent
+    installed = [package / Path(name).name for name in page_programs_in(built_wheel)]
+
+    if named and Path(named).resolve().parent == package.resolve():
+        assert [path.resolve() for path in installed] == [Path(named).resolve()]
+    else:
+        assert installed == []
 
 
 def test_the_wheel_holds_the_notice_of_every_project_its_library_links(built_wheel: Path) -> None:
