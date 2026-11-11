@@ -116,7 +116,7 @@ Until the release that ships the Runtime, Python's Page is private: `Session._op
 Until the Runtime loads documents, a Page fetches nothing: `url` is the URL that it was opened for, and its scripts run in a context that has V8's built-ins and console and nothing of a browser, no `document`, `window`, `setTimeout()` or `fetch()`. Once M6's HTML parser and fetching load a document from it, `url` becomes the document's URL.
 
 - `evaluate(expression, timeout=None)` runs a script and returns its result as Python's `json` reads what `JSON.stringify()` writes, with `None` for what it writes nothing for. It waits for a promise to settle, as the Page program does. `timeout` is a number of seconds, as a request's total time is.
-- `console_messages` holds what the scripts wrote to the console, each with its `level` and `text`, and `uncaught_errors` what a console says of each error that no script caught, the last 1000 of each, for tests and debugging.
+- `console_messages` holds what the scripts wrote to the console, each with its `level` and `text`, and `uncaught_errors` what a console says of each error that no script caught, for tests and debugging. Each keeps the last 1000, and fewer when their text is longer than 32 Mi characters, so that a Page that writes long messages cannot fill the caller's memory.
 - `process_id` is the ID of the Page's process.
 - `close()` ends the process and waits for it to go, which takes up to 2 seconds before a kill. An AsyncPage waits for that on a thread of its own.
 

@@ -12,6 +12,7 @@ import json
 import threading
 import time
 from collections import deque
+from collections.abc import Callable, Iterator
 from types import TracebackType
 from typing import Any, Self
 
@@ -31,6 +32,7 @@ from mitto._timeout import to_seconds
 __all__ = [
     "EVENTS_PER_TURN",
     "KEPT_REPORTS",
+    "KEPT_REPORT_TEXT",
     "ConsoleMessage",
     "Page",
     "PageRecord",
@@ -38,19 +40,45 @@ __all__ = [
     "take_waiting_events",
 ]
 
-# How many console messages, and how many uncaught errors, a Page keeps: the last ones.
+# How many console messages, and how many uncaught errors, a Page keeps: the last ones, and at most this many characters of
+# their text, so that a Page that writes long messages cannot fill the caller's memory. The native core lets as many wait.
 KEPT_REPORTS = 1000
+KEPT_REPORT_TEXT = 32 * 1024 * 1024
 
 # How many events a call takes at most before it looks for its result again, so that a Page that writes to the console
 # without end cannot keep a call from its result or its timeout.
 EVENTS_PER_TURN = 100
 
 
+class LastReports[T]:
+    """The last reports of one kind that a Page sent: at most KEPT_REPORTS of them, and KEPT_REPORT_TEXT characters of text.
+
+    The oldest go first, and the newest stays, however long it is.
+    """
+
+    def __init__(self, text_of: Callable[[T], str]) -> None:
+        self._text_of = text_of
+        self._reports: deque[T] = deque()
+        self._text = 0
+
+    def __iter__(self) -> Iterator[T]:
+        return iter(self._reports)
+
+    def __len__(self) -> int:
+        return len(self._reports)
+
+    def append(self, report: T) -> None:
+        self._reports.append(report)
+        self._text += len(self._text_of(report))
+        while len(self._reports) > 1 and (len(self._reports) > KEPT_REPORTS or self._text > KEPT_REPORT_TEXT):
+            self._text -= len(self._text_of(self._reports.popleft()))
+
+
 class PageRecord:
     """What a Page's events have said, sorted for the calls that wait for their results. It neither waits nor locks.
 
     Attributes:
-        console_messages: What the Page's scripts wrote to the console, the oldest first, up to the last KEPT_REPORTS.
+        console_messages: What the Page's scripts wrote to the console, the oldest first, as LastReports keeps them.
         uncaught_errors: What a console says of each error that no script caught, likewise.
         ended: How the Page ended, once its event has come.
     """
@@ -58,8 +86,8 @@ class PageRecord:
     def __init__(self) -> None:
         # The calls that a caller waits for, with their results once they have arrived.
         self._results: dict[int, PageEvaluated | None] = {}
-        self.console_messages: deque[ConsoleMessage] = deque(maxlen=KEPT_REPORTS)
-        self.uncaught_errors: deque[str] = deque(maxlen=KEPT_REPORTS)
+        self.console_messages: LastReports[ConsoleMessage] = LastReports(lambda message: message.text)
+        self.uncaught_errors: LastReports[str] = LastReports(str)
         self.ended: PageEnded | None = None
 
     def expect(self, call: int) -> None:
@@ -174,14 +202,17 @@ class Page:
 
     @property
     def console_messages(self) -> list[ConsoleMessage]:
-        """What the Page's scripts have written to the console, the oldest first, up to the last 1000, for debugging."""
+        """What the Page's scripts have written to the console, the oldest first, for debugging.
+
+        The last 1000 at most, and fewer if their text is longer than 32 Mi characters.
+        """
         with self._lock:
             self._take_waiting_events()
             return list(self._record.console_messages)
 
     @property
     def uncaught_errors(self) -> list[str]:
-        """What a console says of each error that no script caught, the oldest first, up to the last 1000.
+        """What a console says of each error that no script caught, the oldest first, as console_messages keeps them.
 
         Such as "Uncaught (in promise) Error: no", for a promise rejected with no handler once a script and the
         microtasks that it queued have run.

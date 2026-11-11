@@ -21,9 +21,9 @@ from typing import Any, cast
 import pytest
 
 import mitto
-from mitto import _native
+from mitto import _native, _page
 from mitto._errors import PageEndedError, PageError, PageTimeoutError, ScriptError
-from mitto._native import ConsoleMessage, PageEnded, PageErrorCode, PageEvaluated
+from mitto._native import ConsoleMessage, PageEnded, PageErrorCode, PageEvaluated, UncaughtError
 from mitto._page import KEPT_REPORTS, Page, PageRecord, outcome_of
 from mitto._timeout import to_seconds
 from tests.page_processes import process_is_gone, wait_until_gone
@@ -422,9 +422,24 @@ def test_a_page_record_keeps_the_last_reports() -> None:
     record = PageRecord()
     for number in range(KEPT_REPORTS + 1):
         record.add(ConsoleMessage("log", str(number)))
+        record.add(UncaughtError(str(number)))
 
     assert len(record.console_messages) == KEPT_REPORTS
-    assert record.console_messages[0] == ConsoleMessage("log", "1")
+    assert next(iter(record.console_messages)) == ConsoleMessage("log", "1")
+    assert len(record.uncaught_errors) == KEPT_REPORTS
+    assert next(iter(record.uncaught_errors)) == "1"
+
+
+def test_a_page_record_keeps_the_last_reports_within_a_limit_on_their_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_page, "KEPT_REPORT_TEXT", 10)
+    record = PageRecord()
+
+    for text in ("aaaa", "bbbb", "cccc"):
+        record.add(ConsoleMessage("log", text))
+    assert [message.text for message in record.console_messages] == ["bbbb", "cccc"]
+
+    record.add(ConsoleMessage("log", "a" * 11))
+    assert [message.text for message in record.console_messages] == ["a" * 11]
 
 
 @pytest.mark.parametrize(
