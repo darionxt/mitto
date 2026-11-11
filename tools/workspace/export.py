@@ -184,7 +184,11 @@ FUZZ = BuildConfig("fuzz", UNSHRUNK + "is_asan = true\nuse_libfuzzer = true\ngen
 # The Page program, with V8, and Blink's Web IDL database. It builds no library:
 # see runtime_args.gn.
 RUNTIME = BuildConfig("runtime", args_file=RUNTIME_ARGS_GN, target="runtime", program="mitto_page")
-CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ, RUNTIME)
+# The same under a sanitizer, on Linux. Each has a directory of its own, because
+# a Runtime build directory builds no library.
+RUNTIME_ASAN = dataclasses.replace(RUNTIME, name="runtime-asan", args=ASAN.args)
+RUNTIME_UBSAN = dataclasses.replace(RUNTIME, name="runtime-ubsan", args=UBSAN.args)
+CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ, RUNTIME, RUNTIME_ASAN, RUNTIME_UBSAN)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1340,7 +1344,10 @@ def build_from_export(
     kind = "library" if config.program is None else "program"
     traced = traced_fingerprint(metadata, host, config)
     if traced is None:
-        note(f"this export holds no fingerprint of a traced {kind}, as one updated from a patch build's diff does not")
+        note(
+            f"this export holds no fingerprint of a traced {config.name} {kind}, as one updated from a patch build's"
+            " diff does not, nor one made before that build was traced"
+        )
     elif fingerprint_of(output) == traced:
         note(f"the {kind} is the same as the one the slice of this export built")
     else:

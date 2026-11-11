@@ -12,6 +12,10 @@ highest glibc version it needs, as auditwheel names it, or the CPU of a DLL. A w
 anywhere and fail on its first request, so the hook refuses to build one. An editable install needs none, because it
 takes the library from MITTO_NATIVE_LIBRARY.
 
+CI's tests also name the Runtime's Page program in MITTO_WHEEL_PAGE_PROGRAM. The hook then puts a stripped copy of it
+next to the library, and what stripping removed into the same archive. Without the variable the wheel holds no Page
+program, and the release workflow sets none, so that no release ships it before the Runtime does.
+
 Hatchling loads this file by its path, outside the project's environment, so it imports nothing but the standard library
 and hatchling. See docs/building.md.
 """
@@ -24,13 +28,15 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, NamedTuple
 
 from hatchling.builders.config import BuilderConfig
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 LIBRARY_ENV_VAR = "MITTO_WHEEL_LIBRARY"
+PAGE_PROGRAM_ENV_VAR = "MITTO_WHEEL_PAGE_PROGRAM"
 
 # Where the loader looks for the library in the installed package.
 PACKAGE = "mitto"
@@ -40,6 +46,8 @@ SYMBOLS_SUFFIX = ".symbols.tar.xz"
 MACOS_LIBRARY = "libmitto_core.dylib"
 LINUX_LIBRARY = "libmitto_core.so"
 WINDOWS_LIBRARY = "mitto_core.dll"
+PAGE_PROGRAM = "mitto_page"
+WINDOWS_PAGE_PROGRAM = "mitto_page.exe"
 
 MACH_O_MAGIC = b"\xcf\xfa\xed\xfe"
 MACH_O_HEADER_SIZE = 32
@@ -95,6 +103,18 @@ MANYLINUX_GLIBC_VERSIONS = (
 
 class WheelError(Exception):
     """Stops the build with a message for the person running it."""
+
+
+class _Names(NamedTuple):
+    """What a binary is called in the wheel, by the format of the file: Mach-O, ELF or PE."""
+
+    mach_o: str
+    elf: str
+    pe: str
+
+
+_LIBRARY_NAMES = _Names(MACOS_LIBRARY, LINUX_LIBRARY, WINDOWS_LIBRARY)
+_PAGE_PROGRAM_NAMES = _Names(PAGE_PROGRAM, PAGE_PROGRAM, WINDOWS_PAGE_PROGRAM)
 
 
 def platform_tag(library: Path) -> str:
@@ -204,23 +224,38 @@ def strip_library(library: Path, directory: Path) -> tuple[Path, Path]:
     Raises:
         WheelError: If the file is not a library of a Host, or a tool fails, or a DLL's PDB is missing or another's.
     """
-    with library.open("rb") as file:
+    return _strip(library, directory, _LIBRARY_NAMES)
+
+
+def strip_page_program(program: Path, directory: Path) -> tuple[Path, Path]:
+    """Copies the Page program into a directory and strips the copy, as strip_library does a library.
+
+    Returns:
+        The stripped program, named mitto_page or mitto_page.exe, and what stripping removed from it.
+
+    Raises:
+        WheelError: If the file is not a program of a Host, or a tool fails, or the program's PDB is missing or another's.
+    """
+    return _strip(program, directory, _PAGE_PROGRAM_NAMES)
+
+
+def _strip(binary: Path, directory: Path, names: _Names) -> tuple[Path, Path]:
+    with binary.open("rb") as file:
         magic = file.read(len(ELF_MAGIC))
     if magic == MACH_O_MAGIC:
-        return _strip_mach_o(library, directory)
+        return _strip_mach_o(binary, directory / names.mach_o)
     if magic == ELF_MAGIC:
-        return _strip_elf(library, directory)
+        return _strip_elf(binary, directory / names.elf)
     if magic.startswith(PE_MAGIC):
-        return _copy_dll(library, directory)
-    raise WheelError(f"{library} is neither a Mach-O, an ELF nor a PE file")
+        return _copy_pe(binary, directory / names.pe)
+    raise WheelError(f"{binary} is neither a Mach-O, an ELF nor a PE file")
 
 
-def _strip_mach_o(library: Path, directory: Path) -> tuple[Path, Path]:
-    stripped = directory / MACOS_LIBRARY
-    symbols = directory / f"{MACOS_LIBRARY}.dSYM"
-    shutil.copy(library, stripped)
-    # The library only points to the build's object files, which hold its debug information. Without them, such as for
-    # a library from a cache, dsymutil warns about each one, and the symbols keep function names but not line numbers.
+def _strip_mach_o(binary: Path, stripped: Path) -> tuple[Path, Path]:
+    symbols = stripped.with_name(f"{stripped.name}.dSYM")
+    shutil.copy(binary, stripped)
+    # A binary only points to the build's object files, which hold its debug information. Without them, such as for a
+    # binary from a cache, dsymutil warns about each one, and the symbols keep function names but not line numbers.
     if warnings := _run("dsymutil", stripped, "-o", symbols).splitlines():
         print(f"wheel: dsymutil warned {len(warnings)} times, first: {warnings[0]}", file=sys.stderr)
     _run("strip", "-x", stripped)
@@ -229,27 +264,25 @@ def _strip_mach_o(library: Path, directory: Path) -> tuple[Path, Path]:
     return stripped, symbols
 
 
-def _strip_elf(library: Path, directory: Path) -> tuple[Path, Path]:
-    stripped = directory / LINUX_LIBRARY
-    symbols = directory / f"{LINUX_LIBRARY}.debug"
-    shutil.copy(library, stripped)
+def _strip_elf(binary: Path, stripped: Path) -> tuple[Path, Path]:
+    symbols = stripped.with_name(f"{stripped.name}.debug")
+    shutil.copy(binary, stripped)
     _run("objcopy", "--only-keep-debug", stripped, symbols)
     _run("strip", "--strip-all", stripped)
-    # The link holds the file's name and checksum, so that a debugger finds it next to the library and knows it.
+    # The link holds the file's name and checksum, so that a debugger finds it next to the binary and knows it.
     _run("objcopy", f"--add-gnu-debuglink={symbols}", stripped)
     return stripped, symbols
 
 
-def _copy_dll(library: Path, directory: Path) -> tuple[Path, Path]:
-    copy = directory / WINDOWS_LIBRARY
-    shutil.copy(library, copy)
+def _copy_pe(binary: Path, copy: Path) -> tuple[Path, Path]:
+    shutil.copy(binary, copy)
     name, identity = codeview_record(copy)
     # The linker names the PDB by its path, or by its file name alone, as Chromium's build asks with /pdbaltpath.
-    symbols = library.parent / PureWindowsPath(name).name
+    symbols = binary.parent / PureWindowsPath(name).name
     if not symbols.is_file():
-        raise WheelError(f"{library} names its PDB {name}, and {symbols} is missing")
+        raise WheelError(f"{binary} names its PDB {name}, and {symbols} is missing")
     if pdb_identity(symbols) != identity:
-        raise WheelError(f"{symbols} is not the PDB of {library}, but one of another build")
+        raise WheelError(f"{symbols} is not the PDB of {binary}, but one of another build")
     return copy, symbols
 
 
@@ -339,7 +372,9 @@ def symbols_archive_of(wheel: Path) -> Path:
     return wheel.with_name(wheel.name.removesuffix(".whl") + SYMBOLS_SUFFIX)
 
 
-def write_symbols_archive(symbols: Path, archive: Path) -> None:
+def write_symbols_archive(symbols: Sequence[Path], archive: Path) -> None:
+    """Writes the files or bundles that stripping removed into one archive, each under its own name."""
+
     def without_owner(info: tarfile.TarInfo) -> tarfile.TarInfo:
         info.uid = info.gid = 0
         info.uname = info.gname = ""
@@ -347,31 +382,54 @@ def write_symbols_archive(symbols: Path, archive: Path) -> None:
 
     # A higher preset takes ten times as long for a tenth less.
     with tarfile.open(archive, "w:xz", preset=1) as tar:
-        tar.add(symbols, symbols.name, filter=without_owner)
+        for path in symbols:
+            tar.add(path, path.name, filter=without_owner)
+
+
+def _file_named_in(variable: str) -> Path | None:
+    """Returns the file that an environment variable names, or None if it is unset or empty.
+
+    Raises:
+        WheelError: If the variable names something that is not a file.
+    """
+    value = os.environ.get(variable)
+    if not value:
+        return None
+    path = Path(value).resolve()
+    if not path.is_file():
+        raise WheelError(f"{variable} names {path}, which is not a file")
+    return path
 
 
 class NativeLibraryHook(BuildHookInterface[BuilderConfig]):
-    """Puts the stripped native library into the wheel, tags the wheel for it and writes the symbols archive."""
+    """Puts the stripped native library into the wheel, tags the wheel for it and writes the symbols archive.
+
+    It also puts in the stripped Page program, if MITTO_WHEEL_PAGE_PROGRAM names one.
+    """
 
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         if version == "editable":
             return
-        value = os.environ.get(LIBRARY_ENV_VAR)
-        if not value:
+        library = _file_named_in(LIBRARY_ENV_VAR)
+        if library is None:
             raise WheelError(f"set {LIBRARY_ENV_VAR} to the native library; a wheel without it cannot make a request")
-        library = Path(value).resolve()
-        if not library.is_file():
-            raise WheelError(f"{LIBRARY_ENV_VAR} names {library}, which is not a file")
+        program = _file_named_in(PAGE_PROGRAM_ENV_VAR)
         self._directory = Path(tempfile.mkdtemp(prefix="mitto-wheel-"))
         try:
-            stripped, self._symbols = strip_library(library, self._directory)
+            stripped, symbols = strip_library(library, self._directory)
             tag = f"py3-none-{platform_tag(stripped)}"
+            binaries, self._symbols = [stripped], [symbols]
+            if program is not None:
+                stripped_program, program_symbols = strip_page_program(program, self._directory)
+                binaries.append(stripped_program)
+                self._symbols.append(program_symbols)
         except BaseException:
             shutil.rmtree(self._directory)
             raise
-        build_data["force_include"][str(stripped)] = f"{PACKAGE}/{stripped.name}"
+        for binary in binaries:
+            build_data["force_include"][str(binary)] = f"{PACKAGE}/{binary.name}"
         build_data["pure_python"] = False
         build_data["tag"] = tag
 

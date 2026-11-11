@@ -48,18 +48,24 @@ jobs:
         include:
           - runner: ubuntu-latest
             library: libmitto_core.so
+            page-program: mitto_page
             html-tokenizer-test: html_tokenizer_test
             environment-python: bin/python
           # The one hosted macOS image with the macOS SDK that Chromium's bots use.
           - runner: xcode-27
             library: libmitto_core.dylib
+            page-program: mitto_page
+            # V8's compile jobs need more memory than ninja's default number of them leaves each on this runner.
+            runtime-jobs: 3
             html-tokenizer-test: html_tokenizer_test
             environment-python: bin/python
           # Visual Studio 2026, which Chromium 157 asks for.
           - runner: windows-2025-vs2026
             library: mitto_core.dll
-            # The DLL's debug information, which the wheel's symbols archive holds.
+            # The debug information of the DLL and of the program, which the wheel's symbols archive holds.
             symbols: mitto_core.dll.pdb
+            page-program: mitto_page.exe
+            page-program-symbols: mitto_page.exe.pdb
             html-tokenizer-test: html_tokenizer_test.exe
             environment-python: Scripts/python.exe
     env:
@@ -81,6 +87,12 @@ jobs:
         with:
           path: ${{ runner.temp }}/native-core
           key: native-core-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
+      # The Runtime's Page program, from the same files as the library.
+      - id: cached-runtime
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/runtime
+          key: runtime-${{ matrix.runner }}-${{ hashFiles('native/**', 'tools/workspace/**') }}
       - id: tag
         run: echo "tag=$(cat tools/workspace/chromium_tag)" >> "$GITHUB_OUTPUT"
       # What the export compiles to changes only with tools/workspace, so a pull request
@@ -93,8 +105,16 @@ jobs:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
           key: native-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
           lookup-only: ${{ github.event_name != 'pull_request' }}
+      # The same for the Runtime's build directory.
+      - id: cached-runtime-objects
+        if: steps.cached-runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/runtime
+          key: runtime-objects-${{ matrix.runner }}-${{ hashFiles('tools/workspace/**') }}
+          lookup-only: ${{ github.event_name != 'pull_request' }}
       # A build on Windows needs the Windows SDK that the Engine Release asks for, which the image may lack.
-      - if: runner.os == 'Windows' && steps.cached-library.outputs.cache-hit != 'true'
+      - if: runner.os == 'Windows' && (steps.cached-library.outputs.cache-hit != 'true' || steps.cached-runtime.outputs.cache-hit != 'true')
         uses: ./.github/actions/install-windows-sdk
       - name: Build the native core
         if: steps.cached-library.outputs.cache-hit != 'true'
@@ -123,15 +143,42 @@ jobs:
         with:
           path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/mitto
           key: ${{ steps.cached-objects.outputs.cache-primary-key }}
+      # In a build directory of its own beside the library's, which shares the export and the toolchain.
+      - name: Build the Runtime
+        if: steps.cached-runtime.outputs.cache-hit != 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          JOBS: ${{ matrix.runtime-jobs }}
+          PAGE_PROGRAM: ${{ matrix.page-program }}
+          PAGE_PROGRAM_SYMBOLS: ${{ matrix.page-program-symbols }}
+        run: |
+          uv run tools/workspace/export.py build "$RUNNER_TEMP/export" --config runtime ${JOBS:+--jobs "$JOBS"}
+          build_dir="$RUNNER_TEMP/export/chromium-$TAG/src/out/runtime"
+          mkdir "$RUNNER_TEMP/runtime"
+          for file in $PAGE_PROGRAM $PAGE_PROGRAM_SYMBOLS; do
+            cp "$build_dir/$file" "$RUNNER_TEMP/runtime"
+          done
+      - if: steps.cached-runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/runtime
+          key: ${{ steps.cached-runtime.outputs.cache-primary-key }}
+      - if: steps.cached-runtime.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && steps.cached-runtime-objects.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/export/chromium-${{ steps.tag.outputs.tag }}/src/out/runtime
+          key: ${{ steps.cached-runtime-objects.outputs.cache-primary-key }}
       # The Runtime's HTML tokenizer, which the library does not link.
       - name: Run html5lib's tokenizer tests
         env:
           HTML_TOKENIZER_TEST: ${{ matrix.html-tokenizer-test }}
         run: |
           "$RUNNER_TEMP/native-core/$HTML_TOKENIZER_TEST" native/test/html5lib_tokenizer native/test/html5lib_tokenizer_failures.txt
+      # With the Page program, for the tests below. A release leaves it out.
       - name: Build the wheel
         env:
           MITTO_WHEEL_LIBRARY: ${{ runner.temp }}/native-core/${{ matrix.library }}
+          MITTO_WHEEL_PAGE_PROGRAM: ${{ runner.temp }}/runtime/${{ matrix.page-program }}
         run: uv build --wheel --out-dir "$RUNNER_TEMP/dist"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -155,11 +202,14 @@ jobs:
         run: |
           uv sync --no-install-project
           uv pip install --python "$ENVIRONMENT_PYTHON" "$RUNNER_TEMP"/dist/*.whl
+      # The tests of the Page program run the one in the installed package.
       - name: Test the installed wheel
         env:
           MITTO_HOST_NOTICES: ${{ runner.temp }}/native-core/host-notices.txt
           ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
+          PAGE_PROGRAM: ${{ matrix.page-program }}
         run: |
           MITTO_WHEEL="$(ls "$RUNNER_TEMP"/dist/*.whl)"
-          export MITTO_WHEEL
+          MITTO_PAGE_PROGRAM="$("$ENVIRONMENT_PYTHON" -c 'import importlib.util, os, sys; print(os.path.join(importlib.util.find_spec("mitto").submodule_search_locations[0], sys.argv[1]))' "$PAGE_PROGRAM")"
+          export MITTO_WHEEL MITTO_PAGE_PROGRAM
           "$ENVIRONMENT_PYTHON" -m pytest -rs
