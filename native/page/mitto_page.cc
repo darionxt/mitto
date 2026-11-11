@@ -3,10 +3,15 @@
 // Session over the channel that the argument names: see session_channel.h and
 // docs/runtime.md. Given a script instead, it starts V8, runs the script in a
 // new context and prints what the script returns, as String() would write it.
+// The context's document is about:blank's, or with --html= the one that the
+// HTML parser builds from MARKUP. SCRIPT "-" reads the script from standard
+// input, for one longer than a command line holds. Both are in UTF-8.
 //
 // Usage: mitto_page [--enable-blink-features=NAMES]
 //                   [--disable-blink-features=NAMES]
-//                   SCRIPT | --session=CHANNEL,PARENT
+//                   [--html=MARKUP] SCRIPT
+//        mitto_page [--enable-blink-features=NAMES]
+//                   [--disable-blink-features=NAMES] --session=CHANNEL,PARENT
 //        mitto_page --version
 //
 // Each context has the interfaces that the Runtime implements, as the Page's
@@ -25,12 +30,16 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/files/file_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/types/expected.h"
+#include "build/build_config.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/dom/page_interfaces.h"
@@ -53,6 +62,14 @@
 #include "v8/include/v8-snapshot.h"
 #include "v8/include/v8-value.h"
 
+#if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
+#include <fcntl.h>
+#include <io.h>
+#include <shellapi.h>
+#endif
+
 // The program holds ICU's whole data file and V8's startup snapshot, which
 // page/BUILD.gn writes into it, so that it opens no file to start.
 extern "C" {
@@ -68,10 +85,51 @@ constexpr int kWrongArguments = 2;
 
 constexpr std::string_view kUsage =
     "usage: mitto_page [--enable-blink-features=NAMES] "
-    "[--disable-blink-features=NAMES] SCRIPT | --session=CHANNEL,PARENT | "
-    "--version";
+    "[--disable-blink-features=NAMES] [--html=MARKUP] SCRIPT | "
+    "--session=CHANNEL,PARENT | --version";
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
+constexpr std::string_view kHtml = "--html=";
+constexpr std::string_view kStandardInput = "-";
+
+// The program's arguments, in UTF-8. Windows gives main() its arguments in the
+// system's ANSI code page, which loses each character that it cannot write,
+// so there they come from the command line in UTF-16, as base::CommandLine
+// takes them.
+std::vector<std::string> ArgumentsInUtf8(int argc, char** argv) {
+#if BUILDFLAG(IS_WIN)
+  int count = 0;
+  wchar_t** const wide = ::CommandLineToArgvW(::GetCommandLineW(), &count);
+  CHECK(wide);
+  // SAFETY: CommandLineToArgvW() gives `count` arguments.
+  const base::span<wchar_t*> wide_arguments =
+      UNSAFE_BUFFERS(base::span(wide, base::checked_cast<size_t>(count)));
+  std::vector<std::string> arguments;
+  for (const wchar_t* const argument : wide_arguments) {
+    arguments.push_back(base::WideToUTF8(argument));
+  }
+  ::LocalFree(wide);
+  return arguments;
+#else
+  // SAFETY: main() gets `argc` arguments in `argv`.
+  const base::span<char*> arguments =
+      UNSAFE_BUFFERS(base::span(argv, base::checked_cast<size_t>(argc)));
+  return std::vector<std::string>(arguments.begin(), arguments.end());
+#endif
+}
+
+// What standard input holds, byte for byte, or nullopt if it cannot be read.
+std::optional<std::string> ReadStandardInput() {
+#if BUILDFLAG(IS_WIN)
+  // Not as text, which would end at a Ctrl-Z and turn CR LF into LF.
+  _setmode(_fileno(stdin), _O_BINARY);
+#endif
+  std::string text;
+  if (!base::ReadStreamToString(stdin, &text)) {
+    return std::nullopt;
+  }
+  return text;
+}
 
 void WriteLine(FILE* stream, std::string_view text) {
   // SAFETY: fwrite() reads text.size() bytes from text.data(), which `text`
@@ -94,14 +152,16 @@ std::optional<std::string> ToUtf8(v8::Isolate* isolate,
   return std::string(UNSAFE_BUFFERS(std::string_view(*text, text.length())));
 }
 
-// Runs `source` in a new context, and writes what it returns to standard
-// output, or what it throws to standard error. Returns whether it finished
-// without throwing.
-bool RunScript(v8::Isolate* isolate, std::string_view source) {
+// Runs `source` in a new context whose document `html` builds, and writes what
+// it returns to standard output, or what it throws to standard error. Returns
+// whether it finished without throwing.
+bool RunScript(v8::Isolate* isolate,
+               std::string_view html,
+               std::string_view source) {
   const v8::HandleScope handle_scope(isolate);
-  const v8::Local<v8::Context> context = v8::Context::New(isolate);
+  const v8::Local<v8::Context> context =
+      mitto::NewPageContext(isolate, base::UTF8ToUTF16(html));
   const v8::Context::Scope context_scope(context);
-  mitto::InstallPageInterfaces(context);
   const v8::TryCatch try_catch(isolate);
   v8::Local<v8::String> source_string;
   v8::Local<v8::Script> script;
@@ -128,10 +188,8 @@ bool RunScript(v8::Isolate* isolate, std::string_view source) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  // SAFETY: main() gets `argc` arguments in `argv`.
-  const base::span<char*> arguments =
-      UNSAFE_BUFFERS(base::span(argv, base::checked_cast<size_t>(argc)));
-  if (arguments.size() == 2 && std::string_view(arguments[1]) == "--version") {
+  const std::vector<std::string> arguments = ArgumentsInUtf8(argc, argv);
+  if (arguments.size() == 2 && arguments[1] == "--version") {
     WriteLine(stdout, v8::V8::GetVersion());
     return 0;
   }
@@ -142,12 +200,15 @@ int main(int argc, char** argv) {
   // Chrome's options: a second one of the same name replaces the first.
   std::string_view enable;
   std::string_view disable;
+  std::optional<std::string_view> html;
   for (const std::string_view option :
-       arguments.subspan(1u).first(arguments.size() - 2)) {
+       base::span(arguments).subspan(1u).first(arguments.size() - 2)) {
     if (option.starts_with(kEnableFeatures)) {
       enable = option.substr(kEnableFeatures.size());
     } else if (option.starts_with(kDisableFeatures)) {
       disable = option.substr(kDisableFeatures.size());
+    } else if (option.starts_with(kHtml)) {
+      html = option.substr(kHtml.size());
     } else {
       WriteLine(stderr, kUsage);
       return kWrongArguments;
@@ -160,7 +221,7 @@ int main(int argc, char** argv) {
                           features.error());
     return kWrongArguments;
   }
-  const std::string_view argument = arguments.back();
+  std::string_view argument = arguments.back();
   std::optional<mitto::SessionArgument> session;
   if (argument.starts_with(mitto::kSessionArgumentPrefix)) {
     session = mitto::ParseSessionArgument(argument);
@@ -168,6 +229,21 @@ int main(int argc, char** argv) {
       WriteLine(stderr, "--session= names no channel and process");
       return kWrongArguments;
     }
+    if (html) {
+      // A Session's Page gets its document from the Session.
+      WriteLine(stderr, kUsage);
+      return kWrongArguments;
+    }
+  }
+  std::optional<std::string> script_from_input;
+  if (argument == kStandardInput) {
+    script_from_input = ReadStandardInput();
+    if (!script_from_input) {
+      WriteLine(stderr,
+                "mitto_page: cannot read the script from standard input");
+      return kWrongArguments;
+    }
+    argument = *script_from_input;
   }
 
   // ICU reads its data from memory, as in Chrome's renderers, which map the
@@ -204,7 +280,7 @@ int main(int argc, char** argv) {
     if (session) {
       mitto::ServeSession(*platform, isolate, *std::move(session));
     } else {
-      finished = RunScript(isolate, argument);
+      finished = RunScript(isolate, html.value_or(""), argument);
     }
   }
   isolate->Dispose();

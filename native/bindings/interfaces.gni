@@ -3,13 +3,125 @@
 # only these are exposed to a page until every interface has bindings (roadmap,
 # M7). docs/runtime.md says how to add one.
 #
-# `missing` names the members whose behaviour the Runtime does not have yet,
-# Known Gaps. Their bindings are installed as Chrome installs them, and throw
-# when a page calls them.
+# A member whose behaviour the Runtime does not have yet is a Known Gap. Its
+# binding is installed as Chrome installs it, and throws when a page calls it.
+# An entry names its Known Gaps one of two ways:
+#
+# - `missing` names them, and the class has every other member.
+# - `implemented` names the members the class has, and every other member is a
+#   Known Gap. "get x" names the getter of attribute x alone. The generator
+#   writes a reflected attribute of a string or a boolean itself, so it needs
+#   no name. An indexed or named property operation that is a Known Gap is not
+#   installed at all.
 mitto_bindings_interfaces = [
+  {
+    name = "CharacterData"
+    file = "character_data"
+    implemented = [
+      "data",
+      "length",
+      "previousElementSibling",
+      "nextElementSibling",
+      "after",
+      "appendData",
+      "before",
+      "deleteData",
+      "insertData",
+      "remove",
+      "replaceData",
+      "replaceWith",
+      "substringData",
+    ]
+  },
+  {
+    name = "Comment"
+    file = "comment"
+    implemented = []
+  },
   {
     name = "DOMException"
     file = "dom_exception"
+  },
+  {
+    name = "Document"
+    file = "document"
+    implemented = [
+      "URL",
+      "documentURI",
+      "get location",
+      "compatMode",
+      "characterSet",
+      "charset",
+      "inputEncoding",
+      "contentType",
+      "doctype",
+      "documentElement",
+      "title",
+      "get body",
+      "head",
+      "defaultView",
+      "firstElementChild",
+      "lastElementChild",
+      "childElementCount",
+      "append",
+      "createComment",
+      "createElement",
+      "createTextNode",
+      "getElementById",
+      "prepend",
+      "querySelector",
+      "replaceChildren",
+    ]
+  },
+  {
+    name = "DocumentType"
+    file = "document_type"
+    implemented = [
+      "name",
+      "publicId",
+      "systemId",
+      "after",
+      "before",
+      "remove",
+      "replaceWith",
+    ]
+  },
+  {
+    name = "Element"
+    file = "element"
+    implemented = [
+      "namespaceURI",
+      "prefix",
+      "localName",
+      "tagName",
+      "innerHTML",
+      "outerHTML",
+      "firstElementChild",
+      "lastElementChild",
+      "childElementCount",
+      "previousElementSibling",
+      "nextElementSibling",
+      "after",
+      "append",
+      "before",
+      "closest",
+      "getAttribute",
+      "getAttributeNames",
+      "hasAttribute",
+      "hasAttributes",
+      "insertAdjacentElement",
+      "insertAdjacentText",
+      "matches",
+      "prepend",
+      "querySelector",
+      "remove",
+      "removeAttribute",
+      "replaceChildren",
+      "replaceWith",
+      "setAttribute",
+      "toggleAttribute",
+      "webkitMatchesSelector",
+    ]
   },
   {
     name = "Event"
@@ -23,7 +135,161 @@ mitto_bindings_interfaces = [
     missing = [ "when" ]
   },
   {
+    name = "HTMLBRElement"
+    file = "html_br_element"
+    implemented = []
+  },
+  {
+    name = "HTMLBodyElement"
+    file = "html_body_element"
+    implemented = []
+  },
+  {
+    name = "HTMLDivElement"
+    file = "html_div_element"
+    implemented = []
+  },
+  {
+    name = "HTMLDocument"
+    file = "html_document"
+
+    # Document's, which each instance has of its own.
+    implemented = [ "get location" ]
+  },
+  {
+    name = "HTMLElement"
+    file = "html_element"
+    implemented = []
+  },
+  {
+    name = "HTMLHeadElement"
+    file = "html_head_element"
+    implemented = []
+  },
+  {
+    name = "HTMLHeadingElement"
+    file = "html_heading_element"
+    implemented = []
+  },
+  {
+    name = "HTMLHtmlElement"
+    file = "html_html_element"
+    implemented = []
+  },
+  {
+    name = "HTMLLIElement"
+    file = "html_li_element"
+    implemented = []
+  },
+  {
+    name = "HTMLLinkElement"
+    file = "html_link_element"
+    implemented = []
+  },
+  {
+    name = "HTMLMetaElement"
+    file = "html_meta_element"
+    implemented = []
+  },
+  {
+    name = "HTMLOListElement"
+    file = "html_olist_element"
+    implemented = []
+  },
+  {
+    name = "HTMLParagraphElement"
+    file = "html_paragraph_element"
+    implemented = []
+  },
+  {
+    name = "HTMLPreElement"
+    file = "html_pre_element"
+    implemented = []
+  },
+  {
+    name = "HTMLScriptElement"
+    file = "html_script_element"
+    implemented = [ "text" ]
+  },
+  {
+    name = "HTMLSpanElement"
+    file = "html_span_element"
+    implemented = []
+  },
+  {
+    name = "HTMLStyleElement"
+    file = "html_style_element"
+    implemented = []
+  },
+  {
+    name = "HTMLTitleElement"
+    file = "html_title_element"
+    implemented = [ "text" ]
+  },
+  {
+    name = "HTMLUListElement"
+    file = "html_ulist_element"
+    implemented = []
+  },
+  {
+    name = "HTMLUnknownElement"
+    file = "html_unknown_element"
+    implemented = []
+  },
+  {
+    name = "Node"
+    file = "node"
+    implemented = [
+      "nodeType",
+      "nodeName",
+      "isConnected",
+      "ownerDocument",
+      "parentNode",
+      "parentElement",
+      "firstChild",
+      "lastChild",
+      "previousSibling",
+      "nextSibling",
+      "nodeValue",
+      "textContent",
+      "appendChild",
+      "cloneNode",
+      "compareDocumentPosition",
+      "contains",
+      "getRootNode",
+      "hasChildNodes",
+      "insertBefore",
+      "isEqualNode",
+      "isSameNode",
+      "normalize",
+      "removeChild",
+      "replaceChild",
+    ]
+  },
+  {
     name = "PopStateEvent"
     file = "pop_state_event"
+  },
+  {
+    name = "Text"
+    file = "text"
+    implemented = [
+      "splitText",
+      "wholeText",
+    ]
+  },
+  {
+    name = "Window"
+    file = "window"
+    implemented = [
+      "window",
+      "self",
+      "document",
+    ]
+  },
+  {
+    name = "WindowProperties"
+    file = "window_properties"
+    implemented = []
   },
 ]

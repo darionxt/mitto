@@ -12,6 +12,7 @@ import pytest
 from bindings_generator import extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import TypeMapper
+from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
 from bindings_generator.listing import write_listing
@@ -84,6 +85,10 @@ def _names(plan: list[Property]) -> list[str]:
         ("DOMException", "dom_exception", "DOMException", "dom_exception"),
         ("hasUAVisualTransition", "has_ua_visual_transition", "HasUAVisualTransition", "has_ua_visual_transition"),
         ("composedPath", "composed_path", "ComposedPath", "composed_path"),
+        # Blink's tokens, which its patterns alone would split.
+        ("HTMLOListElement", "html_olist_element", "HTMLOListElement", "html_olist_element"),
+        ("HTMLBRElement", "html_br_element", "HTMLBRElement", "html_br_element"),
+        ("innerHTML", "inner_html", "InnerHTML", "inner_html"),
     ],
 )
 def test_it_names_cpp_after_web_idl(name: str, file: str, function: str, member: str) -> None:
@@ -222,8 +227,8 @@ def test_it_refuses_a_feature_it_cannot_read(entry: dict[str, object], message: 
 def test_the_cpp_writer_refuses_a_type_it_cannot_convert_and_names_it() -> None:
     types = TypeMapper(frozenset({"Event"}), frozenset())
 
-    with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type long$"):
-        types.argument_type(IdlType(TypeKind.INTEGER, "long"), "argument x of Thing.f")
+    with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type long long$"):
+        types.argument_type(IdlType(TypeKind.INTEGER, "long long"), "argument x of Thing.f")
     with pytest.raises(UnhandledError, match=r"of type Observable$"):
         types.return_type(IdlType(TypeKind.INTERFACE, "Observable"), "operation EventTarget.when return type")
 
@@ -237,3 +242,96 @@ def test_the_pydeps_name_every_module_of_the_generator(pydeps: str) -> None:
     modules = {module.resolve() for module in (BINDINGS / "bindings_generator").glob("*.py")}
 
     assert modules | {(BINDINGS / "generate_bindings.py").resolve()} <= named
+
+
+def test_interfaces_from_the_context_snapshot_install_their_featured_members_last() -> None:
+    # Chrome's renderer takes Document's objects from its V8 context snapshot, and installs what is behind a feature
+    # on them after what the context decides.
+    in_the_context = Condition(other=("SecureContext",), context_dependent=True)
+    members = {
+        "attributes": (
+            _attribute("plain"),
+            _attribute("featured", condition=Condition(features=("F",))),
+            _attribute("secure", condition=in_the_context),
+        )
+    }
+    plan = plan_interface(_interface(name="Document", **members))
+    other = plan_interface(_interface(**members))
+
+    assert _names(plan)[1:] == [
+        "prototype.plain",
+        "prototype.constructor",
+        "prototype.secure",
+        "prototype.featured",
+    ]
+    assert _names(other)[1:] == ["prototype.plain", "prototype.featured", "prototype.constructor", "prototype.secure"]
+    assert next(p for p in plan if p.name == "featured").phase is Phase.CONTEXT
+
+
+def test_a_union_loses_the_interfaces_that_have_no_class() -> None:
+    types = TypeMapper(frozenset({"Node"}), frozenset())
+    trusted = IdlType(TypeKind.INTERFACE, "TrustedScript")
+    string = IdlType(TypeKind.STRING, "DOMString")
+    node = IdlType(TypeKind.INTERFACE, "Node")
+
+    assert types.reduce(IdlType(TypeKind.UNION, "x", nullable=True, members=(string, trusted))) == dataclasses.replace(
+        string, nullable=True
+    )
+    assert types.reduce(IdlType(TypeKind.UNION, "x", members=(node, string, trusted))).members == (node, string)
+    assert not types.can_hold_a_value(IdlType(TypeKind.UNION, "x", members=(trusted,)))
+    assert types.argument_type(IdlType(TypeKind.UNION, "x", members=(node, string, trusted)), "a") == (
+        "const NodeOrDOMString&"
+    )
+
+
+@pytest.mark.parametrize(
+    ("keys", "type_name", "expected"),
+    [
+        ((("Reflect", ()),), "DOMString", "accesskey"),
+        ((("Reflect", ("http_equiv",)),), "DOMString", "http-equiv"),
+        ((("Reflect", ()),), "boolean", "accesskey"),
+        ((("Reflect", ()), ("URL", ())), "DOMString", None),
+        ((("Reflect", ()), ("ReflectOnly", ("a",))), "DOMString", None),
+        ((), "DOMString", None),
+    ],
+)
+def test_the_writer_reflects_strings_and_booleans_itself(
+    keys: tuple[tuple[str, tuple[str, ...]], ...], type_name: str, expected: str | None
+) -> None:
+    kind = TypeKind.BOOLEAN if type_name == "boolean" else TypeKind.STRING
+    attribute = Attribute("accessKey", IdlType(kind, type_name), False, False, ExtendedAttributes(keys), ALWAYS)
+
+    assert reflected_attribute(attribute) == expected
+
+
+@pytest.mark.parametrize(
+    ("condition", "test"),
+    [
+        (ALWAYS, "true"),
+        (Condition(features=("F",)), "features.IsEnabled(RuntimeFeature::kF)"),
+        (Condition(other=("SecureContext",)), "data->secure_context()"),
+        (Condition(other=("RuntimeEnabled=G in the context",)), "features.IsEnabled(RuntimeFeature::kG)"),
+        (Condition(other=("Exposed=Window,Worker",)), "true"),
+        (Condition(other=("Exposed=Worker",)), None),
+        (Condition(other=("ContextEnabled=X",)), None),
+        (Condition(other=("CrossOriginIsolated",)), None),
+    ],
+)
+def test_a_page_installs_what_its_conditions_allow(condition: Condition, test: str | None) -> None:
+    # A Page is a secure top-level window with no origin trials and nothing a context enables.
+    assert condition_test(condition, "Thing.x") == test
+
+
+def test_an_interface_names_what_its_class_has() -> None:
+    implemented = ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("a", "get b"))
+    missing = ImplementedInterface("Thing", "mitto/dom/thing.h", missing=("c",))
+
+    assert [implemented.has_behaviour("a"), implemented.has_behaviour("b", "get")] == [True, True]
+    assert [implemented.has_behaviour("b"), implemented.has_behaviour("c")] == [False, False]
+    assert [missing.has_behaviour("a"), missing.has_behaviour("c")] == [True, False]
+
+
+def test_touch_event_detection_starts_as_on_a_desktop_without_a_touch_screen() -> None:
+    [feature] = read_features([{"name": "TouchEventFeatureDetection", "status": "stable"}])
+
+    assert not feature.stable

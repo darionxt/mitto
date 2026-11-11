@@ -23,7 +23,40 @@ _ENGINE_BUILD = (_REPOSITORY / "tools" / "workspace" / "chromium_tag").read_text
 
 # The interfaces that the probe records, those that the Runtime implements. A member whose behaviour the Runtime does
 # not have yet, a Known Gap that native/bindings/interfaces.gni lists, has Chrome's shape all the same.
-_INTERFACES = ["DOMException", "Event", "EventTarget", "PopStateEvent"]
+_INTERFACES = [
+    "CharacterData",
+    "Comment",
+    "DOMException",
+    "Document",
+    "DocumentType",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HTMLBRElement",
+    "HTMLBodyElement",
+    "HTMLDivElement",
+    "HTMLDocument",
+    "HTMLElement",
+    "HTMLHeadElement",
+    "HTMLHeadingElement",
+    "HTMLHtmlElement",
+    "HTMLLIElement",
+    "HTMLLinkElement",
+    "HTMLMetaElement",
+    "HTMLOListElement",
+    "HTMLParagraphElement",
+    "HTMLPreElement",
+    "HTMLScriptElement",
+    "HTMLSpanElement",
+    "HTMLStyleElement",
+    "HTMLTitleElement",
+    "HTMLUListElement",
+    "HTMLUnknownElement",
+    "Node",
+    "PopStateEvent",
+    "Text",
+    "Window",
+]
 
 
 @pytest.fixture(scope="module")
@@ -35,9 +68,14 @@ def program() -> Path:
     return Path(path)
 
 
-def _run(program: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _run(program: Path, *arguments: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [program, *arguments], capture_output=True, encoding="utf-8", timeout=_TIMEOUT_SECONDS, check=False
+        [program, *arguments],
+        input=stdin,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
     )
 
 
@@ -57,8 +95,11 @@ def chrome() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def page(program: Path) -> dict[str, Any]:
-    """What the Page program records with the same probe."""
-    return json.loads(_evaluate(program, (_RECORDINGS / "probe.js").read_text(encoding="utf-8")))
+    """What the Page program records with the same probe, which it reads from standard input: the probe is longer than
+    a command line holds on Windows."""
+    result = _run(program, "-", stdin=(_RECORDINGS / "probe.js").read_text(encoding="utf-8"))
+    assert (result.returncode, result.stderr) == (0, "")
+    return json.loads(result.stdout)
 
 
 def test_there_is_a_recording_of_the_engine_release() -> None:
@@ -85,8 +126,10 @@ def test_an_interface_is_as_chrome_has_it(chrome: dict[str, Any], page: dict[str
     assert page["interfaces"][name][part] == chrome["interfaces"][name][part]
 
 
-@pytest.mark.parametrize("name", _INTERFACES)
+@pytest.mark.parametrize("name", sorted(set(_INTERFACES) - {"CharacterData", "DocumentType", "Node", "Window"}))
 def test_an_instance_has_chromes_own_properties(chrome: dict[str, Any], page: dict[str, Any], name: str) -> None:
+    # CharacterData and Node have no instances of their own, a page makes no doctype without a parser of documents,
+    # and Window's instance holds every interface object, which the Page lacks until M7.
     assert page["instances"][name] == chrome["instances"][name]
 
 

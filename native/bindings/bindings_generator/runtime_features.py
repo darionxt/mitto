@@ -13,13 +13,15 @@ here from runtime_enabled_features.json5 as Blink's build and Chrome's startup w
   on turns it on (RuntimeEnabledFeatures::FooEnabled() in the template).
 
 What Chrome's own code turns on beside the file, field trials and switches are not counted here, and M7's Baselines
-say where they differ.
+say where they differ. The one exception is a feature that Chrome sets from the machine, such as whether it has a touch
+screen: a Page starts with the value of a desktop without one, until the Machine decides it (M7).
 """
 
 # Upstream: third_party/blink/renderer/build/scripts/make_runtime_features.py
 # Upstream: third_party/blink/renderer/build/scripts/templates/runtime_enabled_features.h.tmpl
 # Upstream: third_party/blink/renderer/build/scripts/templates/runtime_enabled_features.cc.tmpl
 # Upstream: third_party/blink/renderer/build/scripts/templates/features_generated.cc.tmpl
+# Upstream: third_party/blink/renderer/core/exported/web_view_impl.cc
 
 import dataclasses
 from collections.abc import Mapping, Sequence
@@ -31,6 +33,11 @@ __all__ = ["Feature", "read_features"]
 
 # The platform whose status counts: every Persona is Windows Chrome.
 PLATFORM = "Win"
+
+# The features that Chrome sets from the machine when a renderer starts, whatever their status, and the value a Page
+# starts with: that of a desktop without a touch screen. WebViewImpl::ApplyWebPreferences() sets touch event feature
+# detection from whether the machine has a touch screen.
+MACHINE_DECIDED = {"TouchEventFeatureDetection": False}
 
 # The keys of a feature that the generator reads or knows to leave aside, with why.
 _KEYS = {
@@ -96,6 +103,7 @@ def read_features(entries: Sequence[Mapping[str, Any]]) -> list[Feature]:
         copies_default = entry.get("copied_from_base_feature_if", "enabled_or_overridden") == "enabled_or_overridden"
         if base_feature != "none" and copies_default and entry.get("base_feature_status", "") == "enabled":
             stable = True
+        stable = MACHINE_DECIDED.get(name, stable)
         features.append(
             Feature(
                 name=name,

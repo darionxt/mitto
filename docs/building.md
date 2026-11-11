@@ -166,9 +166,10 @@ third_party\ninja\ninja.exe -C out\runtime runtime
 
 A compile job of V8 needs far more memory than one of the library, and ninja runs as many jobs as the machine has cores, plus two. On a Mac with 16 GB, a build at that default took about 14 GiB with the system's compression of memory, and left the other programs on the machine with almost nothing, so build V8 there with about 5 jobs, such as `autoninja -j5 -C out/runtime runtime`, or on a larger machine.
 
-This builds three things:
+This builds four things:
 
-- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version. Each context has the interfaces that the Runtime implements, such as `Event` and `EventTarget`, with Chrome's members and messages. `--enable-blink-features=` and `--disable-blink-features=`, before the script, turn runtime-enabled features on and off by name, as in Chrome ([runtime.md](runtime.md#runtime-enabled-features)).
+- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context and prints what the script returns, as `String()` writes it. A script that throws makes it print what was thrown to standard error and exit with 1. `--version` prints V8's version. Each context has a `Window` for its global object and the interfaces that the Runtime implements, such as `Document`, `Element` and `EventTarget`, with Chrome's members and messages, and a `document`: about:blank's, or with `--html=MARKUP` before the script, the one that the HTML parser builds from that markup ([runtime.md](runtime.md#the-document)). A script of `-` makes it read the script from standard input, for one longer than a command line holds: Windows' takes 32,767 characters. Scripts and markup are UTF-8, also on Windows, where the program reads its command line in UTF-16. `--enable-blink-features=` and `--disable-blink-features=`, before the script, turn runtime-enabled features on and off by name, as in Chrome ([runtime.md](runtime.md#runtime-enabled-features)).
+- `html_tree_builder_test`, which runs html5lib's tree construction tests against the HTML parser's tree builder in [`native/dom`](../native/dom): see [The tree builder's tests](#the-tree-builders-tests).
 - The Web IDL database, `out/runtime/gen/mitto/bindings/web_idl_database.pickle`: see [below](#the-web-idl-database).
 - The bindings, which the bindings generator writes from the database into `out/runtime/gen/mitto/bindings`, with a listing of every interface and member it plans, `web_idl_listing.txt`, and the generator's own test, which checks that it refuses an extended attribute it does not know ([runtime.md](runtime.md#the-bindings)). The generator reads the whole database on every build, so a construct it does not handle stops the build with a message that names it.
 
@@ -177,11 +178,25 @@ $ out/runtime/mitto_page --version
 15.7.112.23
 $ out/runtime/mitto_page 'typeof WebAssembly'
 object
+$ out/runtime/mitto_page --html='<title>A</title><p class=x>Hello' 'document.querySelector(".x").outerHTML'
+<p class="x">Hello</p>
 ```
 
-[`tests/test_page_program.py`](../tests/test_page_program.py) and [`tests/test_page_bindings.py`](../tests/test_page_bindings.py) run the program that `MITTO_PAGE_PROGRAM` names, and skip without it. CI runs them on every Host, against the program in the wheel that it installs ([In CI](#in-ci)), and on Linux against builds of the program with AddressSanitizer and UndefinedBehaviorSanitizer ([Sanitizer builds](#sanitizer-builds-and-the-fuzz-target)).
+[`tests/test_page_program.py`](../tests/test_page_program.py), [`tests/test_page_bindings.py`](../tests/test_page_bindings.py) and [`tests/test_page_document.py`](../tests/test_page_document.py) run the program that `MITTO_PAGE_PROGRAM` names, and skip without it. CI runs them on every Host, against the program in the wheel that it installs ([In CI](#in-ci)), and on Linux against builds of the program with AddressSanitizer and UndefinedBehaviorSanitizer ([Sanitizer builds](#sanitizer-builds-and-the-fuzz-target)).
 
 The build needs one thing from the checkout that the native core does not: the profiles by which Chrome's releases lay out V8's builtins, about 20 MB, which [`tools/workspace/bootstrap.py`](../tools/workspace/bootstrap.py) fetches with V8's own `v8/tools/builtins-pgo/download_profiles.py`, as a hook of Chromium's `DEPS` does when `checkout_pgo_profiles` is set. That setting would also fetch Chrome's own profiles for its compiler, which nothing here reads.
+
+### The tree builder's tests
+
+The HTML parser's tree builder follows the HTML Standard's tree construction for simple documents, and records each rule it skips for a document that needs more ([runtime.md](runtime.md#the-tree-builder)). [`native/test/html5lib_tree`](../native/test/html5lib_tree) holds html5lib's tree construction tests, from the same copy of html5lib as the tokenizer's, and [its `ORIGIN.md`](../native/test/html5lib_tree/ORIGIN.md) says where from. Run them from `$MITTO_WORKSPACE/chromium-<tag>/src`, where `mitto` is the repository's `native/`:
+
+```bash
+out/runtime/html_tree_builder_test mitto/test/html5lib_tree mitto/test/html5lib_tree_failures.txt
+```
+
+A test passes when it builds the tree it expects. One that builds another tree is fine only if the tree builder recorded a rule it skipped, and [`native/test/html5lib_tree_failures.txt`](../native/test/html5lib_tree_failures.txt) lists, under the reason for each, the tests that build another tree without skipping a rule. The program fails if a test it lists passes or skips a rule, or if one it does not list fails, and prints what it expected and what it got, and at the end how many tests skipped each rule. For Chromium 157.0.8103.39, 1,020 of the 1,615 tests that a Page can run pass, 594 skip a rule, and one is listed. `--print-failures` prints every test that fails in the form of the list, and `--print-skipped` each test that skipped a rule, with the rules. It runs the parser on V8's C++ heap, as the Page program does, and links the same data.
+
+The native job of CI runs it on every Host, and the `runtime-asan` and `runtime-ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
 ### V8's settings
 
@@ -412,7 +427,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
 | `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
-| `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
+| `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program, the tree builder's test and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 
 Each of them stops at the first report.
@@ -423,7 +438,7 @@ The fuzz targets have a build of their own because Chromium's fuzzing builds def
 
 ```bash
 export MITTO_PAGE_PROGRAM=/absolute/path/to/new/directory/chromium-<tag>/src/out/runtime-asan/mitto_page
-ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py
+ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py
 ```
 
 To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:

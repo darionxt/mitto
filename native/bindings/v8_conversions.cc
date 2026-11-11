@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <utility>
+
 #include "base/compiler_specific.h"
 #include "base/numerics/safe_conversions.h"
 #include "v8/include/v8-context.h"
@@ -25,6 +27,86 @@ bool FromV8String(v8::Isolate* isolate,
   string->WriteV2(isolate, 0, length,
                   reinterpret_cast<uint16_t*>(result->data()));
   return true;
+}
+
+bool FromV8NullableString(v8::Isolate* isolate,
+                          v8::Local<v8::Value> value,
+                          std::optional<std::u16string>* result) {
+  if (value->IsNullOrUndefined()) {
+    result->reset();
+    return true;
+  }
+  std::u16string string;
+  if (!FromV8String(isolate, value, &string)) {
+    return false;
+  }
+  *result = std::move(string);
+  return true;
+}
+
+bool FromV8StringNullToEmpty(v8::Isolate* isolate,
+                             v8::Local<v8::Value> value,
+                             std::u16string* result) {
+  if (value->IsNull()) {
+    result->clear();
+    return true;
+  }
+  return FromV8String(isolate, value, result);
+}
+
+bool FromV8USVString(v8::Isolate* isolate,
+                     v8::Local<v8::Value> value,
+                     std::u16string* result) {
+  if (!FromV8String(isolate, value, result)) {
+    return false;
+  }
+  // Web IDL's "convert a JavaScript value to a USVString": each lone surrogate
+  // becomes U+FFFD.
+  std::u16string& text = *result;
+  for (size_t i = 0; i < text.size(); ++i) {
+    const char16_t unit = text[i];
+    if (unit >= 0xD800 && unit <= 0xDBFF && i + 1 < text.size() &&
+        text[i + 1] >= 0xDC00 && text[i + 1] <= 0xDFFF) {
+      ++i;
+    } else if (unit >= 0xD800 && unit <= 0xDFFF) {
+      text[i] = 0xFFFD;
+    }
+  }
+  return true;
+}
+
+bool FromV8NullableUSVString(v8::Isolate* isolate,
+                             v8::Local<v8::Value> value,
+                             std::optional<std::u16string>* result) {
+  if (value->IsNullOrUndefined()) {
+    result->reset();
+    return true;
+  }
+  std::u16string string;
+  if (!FromV8USVString(isolate, value, &string)) {
+    return false;
+  }
+  *result = std::move(string);
+  return true;
+}
+
+v8::Local<v8::Value> ToV8NullableString(
+    v8::Isolate* isolate,
+    const std::optional<std::u16string>& text) {
+  if (!text) {
+    return v8::Null(isolate);
+  }
+  return ToV8String(isolate, *text);
+}
+
+v8::Local<v8::Value> ToV8StringArray(v8::Isolate* isolate,
+                                     const std::vector<std::u16string>& texts) {
+  std::vector<v8::Local<v8::Value>> strings;
+  strings.reserve(texts.size());
+  for (const std::u16string& text : texts) {
+    strings.push_back(ToV8String(isolate, text));
+  }
+  return v8::Array::New(isolate, strings.data(), strings.size());
 }
 
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
