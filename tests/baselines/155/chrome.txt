@@ -1,27 +1,33 @@
 Which Chrome recorded the Baselines in this directory. See docs/baselines.md.
 
-Recorded: 2026-11-07
+Recorded: 2026-11-12
 Product: Google Chrome
 Chrome: 155.0.8059.85
-Flags: --user-data-dir=<new directory> --no-first-run --no-default-browser-check --lang=en-US --variations-override-country=us --ignore-certificate-errors-spki-list=<hash> --remote-debugging-port=0
-Flags of a recording on top of those, without their values:
-  http1.json: 
-  http2.json: 
-  http3.json: --origin-to-force-quic-on
-  cases/http1.json: --host-resolver-rules --no-proxy-server
-  cases/http2.json: --host-resolver-rules --no-proxy-server
-  cases/http3.json: --host-resolver-rules --no-proxy-server --origin-to-force-quic-on
-  cases/plain_http.json: --host-resolver-rules --no-proxy-server
-  cases/proxy_http1.json: --proxy-server
-  cases/proxy_http2.json: --proxy-server
-  cases/client_hints_http1.json: --host-resolver-rules --no-proxy-server
-  cases/client_hints_http2.json: --host-resolver-rules --no-proxy-server
-  cases/client_hints_http3.json: --host-resolver-rules --no-proxy-server --origin-to-force-quic-on
-  cases/client_hints_plain_http.json: --host-resolver-rules --no-proxy-server
-Variations seed: SMChYyMDI2MTEwNi0wMTAxMTAuNDkyMDAwEgsIABADGJsBIAAoARoOCggxNzkzOTg0NBICCAI=#L+RHg1zfG4I=
+Flags: --user-data-dir=<new directory> --no-first-run --no-default-browser-check --lang=en-US --variations-override-country=us --ignore-certificate-errors-spki-list=<hash>
+Flags of a recording on top of those, without their values but the debugging port's:
+  script/page.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=9207
+  http1.json: --remote-debugging-port=0
+  http2.json: --remote-debugging-port=0
+  http3.json: --origin-to-force-quic-on --remote-debugging-port=0
+  cases/http1.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=0
+  cases/http2.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=0
+  cases/http3.json: --host-resolver-rules --no-proxy-server --origin-to-force-quic-on --remote-debugging-port=0
+  cases/plain_http.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=0
+  cases/proxy_http1.json: --proxy-server --remote-debugging-port=0
+  cases/proxy_http2.json: --proxy-server --remote-debugging-port=0
+  cases/client_hints_http1.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=0
+  cases/client_hints_http2.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=0
+  cases/client_hints_http3.json: --host-resolver-rules --no-proxy-server --origin-to-force-quic-on --remote-debugging-port=0
+  cases/client_hints_plain_http.json: --host-resolver-rules --no-proxy-server --remote-debugging-port=0
+Variations seed: SMChYyMDI2MTExMi0wMTAwMzcuOTE5MDAwEgsIABADGJsBIAAoAQ==#Yhq+NZ+iXh4=
 Version: 155.0.8059.85 (Official Build) (64-bit)
-System: Windows 11 Version 26H2 (Build 26300.9711)
+System: Windows 11 Version 26H2 (Build 26300.9974)
 User agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36
+
+script/page.json: the groups of the studies that change what a page sees, in the Chrome that recorded it
+  FencedFramesDeprecation: none
+  UniversalOptOutSettings: none
+  V8Turbolev: Default
 
 http1.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
 --force-fieldtrials:
@@ -35,13 +41,12 @@ http1.json: the network-related part of chrome://version/?show-variations-cmd in
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -49,25 +54,21 @@ http1.json: the network-related part of chrome://version/?show-variations-cmd in
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -93,13 +94,12 @@ http2.json: the network-related part of chrome://version/?show-variations-cmd in
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/Control_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -121,18 +121,15 @@ http2.json: the network-related part of chrome://version/?show-variations-cmd in
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
   WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
 --disable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   ContextualTasksCookiePrefetch<ContextualTasksDesktop
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
   EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
 On in Chrome's own code, unless overridden:
   PartitionConnectionsByNetworkIsolationKey: not overridden
@@ -150,13 +147,12 @@ http3.json: the network-related part of chrome://version/?show-variations-cmd in
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/Control_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -178,18 +174,15 @@ http3.json: the network-related part of chrome://version/?show-variations-cmd in
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
   WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
 --disable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   ContextualTasksCookiePrefetch<ContextualTasksDesktop
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
   EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
 On in Chrome's own code, unless overridden:
   PartitionConnectionsByNetworkIsolationKey: not overridden
@@ -207,13 +200,12 @@ cases/http1.json: the network-related part of chrome://version/?show-variations-
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -221,25 +213,21 @@ cases/http1.json: the network-related part of chrome://version/?show-variations-
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -265,13 +253,12 @@ cases/http2.json: the network-related part of chrome://version/?show-variations-
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -279,25 +266,21 @@ cases/http2.json: the network-related part of chrome://version/?show-variations-
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -313,7 +296,7 @@ On in Chrome's own code, unless overridden:
 
 cases/http3.json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it
 --force-fieldtrials:
-  CacheGurlSchemeIsHttpOrHttpsResult/Enabled_20260814
+  CacheGurlSchemeIsHttpOrHttpsResult/Default
   CdmServicePriorityElevation/ProcessAndThreadPriorityLaunch
   ContextualTasksDesktop/Launched
   EnforceP2PSocketPortRestrictionsKillSwitch/Disabled_EmergencyKillSwitch
@@ -323,13 +306,12 @@ cases/http3.json: the network-related part of chrome://version/?show-variations-
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/EnabledWithSWFallback_20261019
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -337,28 +319,21 @@ cases/http3.json: the network-related part of chrome://version/?show-variations-
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
-  ReduceMojoURLLoaderFactoryCloning.EnabledWithSWFallback_20261019:UseLazyURLLoaderFactoryForServiceWorkerFallback/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
-  CacheGurlSchemeIsHttpOrHttpsResult<CacheGurlSchemeIsHttpOrHttpsResult
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
-  ReduceMojoURLLoaderFactoryCloning<ReduceMojoURLLoaderFactoryCloning
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -384,13 +359,12 @@ cases/plain_http.json: the network-related part of chrome://version/?show-variat
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/Control_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -412,18 +386,15 @@ cases/plain_http.json: the network-related part of chrome://version/?show-variat
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
   WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
 --disable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   ContextualTasksCookiePrefetch<ContextualTasksDesktop
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
   EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
 On in Chrome's own code, unless overridden:
   PartitionConnectionsByNetworkIsolationKey: not overridden
@@ -441,13 +412,12 @@ cases/proxy_http1.json: the network-related part of chrome://version/?show-varia
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -455,25 +425,21 @@ cases/proxy_http1.json: the network-related part of chrome://version/?show-varia
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -499,13 +465,12 @@ cases/proxy_http2.json: the network-related part of chrome://version/?show-varia
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -513,25 +478,21 @@ cases/proxy_http2.json: the network-related part of chrome://version/?show-varia
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -557,13 +518,12 @@ cases/client_hints_http1.json: the network-related part of chrome://version/?sho
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -571,25 +531,21 @@ cases/client_hints_http1.json: the network-related part of chrome://version/?sho
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -615,13 +571,12 @@ cases/client_hints_http2.json: the network-related part of chrome://version/?sho
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/Control_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -643,18 +598,15 @@ cases/client_hints_http2.json: the network-related part of chrome://version/?sho
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
   WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
 --disable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   ContextualTasksCookiePrefetch<ContextualTasksDesktop
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
   EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
 On in Chrome's own code, unless overridden:
   PartitionConnectionsByNetworkIsolationKey: not overridden
@@ -672,13 +624,12 @@ cases/client_hints_http3.json: the network-related part of chrome://version/?sho
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -686,25 +637,21 @@ cases/client_hints_http3.json: the network-related part of chrome://version/?sho
 --force-fieldtrial-params:
   ContextualTasksDesktop.Launched:allow-signed-out/true
   IncreaseHttp3Usage.EnabledWithConfigureMinimalQuicHints:quic_hints/google%2Ecom%2C443%2C443%2Cwww%2Egoogle%2Ecom%2C443%2C443
-  OptimisticDnsForTcp.OptimisticDns_AdjustIPv6_100ms_IPv6RTT_1_1_STABLE_30_20261019:IPv6FallbackMax/1500ms/IPv6FallbackMin/50ms/IPv6FallbackRTTMultiplier/1%2E1/fallback_time/100ms/use_stale_connectors/true
 --enable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   AomVpxUsePresentationThreadType<WebRTC-MediaTaskQueuePriorities
   CdmProcessPriorityElevation<CdmServicePriorityElevation
   CdmThreadPriorityElevation<CdmServicePriorityElevation
   ConfigureQuicHints<IncreaseHttp3Usage
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   HistogramDenylist<VariationsFeatureAccessLogging
   HttpCacheZstdCompression<HttpCacheZstdCompression
   HttpCacheZstdDecompression<HttpCacheZstdCompression
   HttpsFirstBalancedModeAutoEnable<HttpsFirstBalancedModeAutoEnableDesktop
   IgnoreQuicCryptoConfigMemoryPressure<IgnoreQuicCryptoConfigMemoryPressure
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   PageActionsPrioritySelector<PageActionsPrioritySelector
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
@@ -730,13 +677,12 @@ cases/client_hints_plain_http.json: the network-related part of chrome://version
   IgnoreQuicCryptoConfigMemoryPressure/EnabledLaunch
   IncreaseHttp3Usage/EnabledWithConfigureMinimalQuicHints
   KillSwitch_SearchNavigationPrefetch/Disabled_EmergencyKillSwitch
-  OptimisticDnsForTcp/Control_STABLE_30_20261019
   PageActionsPrioritySelector/Default
   PervasiveSharedDictionaries/Default
   PreconnectManagerDirectFastPath/Default
   PrioritizeResizeTaskRunnerOnStartupStudy/Default_20261020
-  ReduceMojoURLLoaderFactoryCloning/Default
   SafeBrowsingWaitForDnsForRealTimeLookup/Default
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite/Enabled_20261022
   StructuredHeadersInRust/EnabledLaunch
   VariationsFeatureAccessLogging/Default
   WebRTC-MediaTaskQueuePriorities/Enabled_Launch
@@ -758,18 +704,15 @@ cases/client_hints_plain_http.json: the network-related part of chrome://version
   PervasiveSharedDictionaries<PervasiveSharedDictionaries
   PrioritizeResizeTaskRunnerOnStartup<PrioritizeResizeTaskRunnerOnStartupStudy
   SafeBrowsingWaitForDnsForRealTimeLookup<SafeBrowsingWaitForDnsForRealTimeLookup
+  ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite<ServiceWorkerRaceNetworkRequestDeprecateTwoPhaseWrite
   StructuredHeadersInRust<StructuredHeadersInRust
   UseHighPriorityThreadGroup<WebRTC-MediaTaskQueuePriorities
   WebRTCBoostMediaIOThreads<WebRTC-MediaTaskQueuePriorities
   WebRtcUseMediaThreadTypes<WebRTC-MediaTaskQueuePriorities
 --disable-features:
-  AdjustIPv6FallbackTime<OptimisticDnsForTcp
   ContextualTasksCookiePrefetch<ContextualTasksDesktop
-  EnableIntermediateDnsResults<OptimisticDnsForTcp
   EnforceP2PSocketPortRestrictions<EnforceP2PSocketPortRestrictionsKillSwitch
   EnhancedSecurityEventFields<EnhancedSecurityEventFieldsWin24H2KillSwitch
-  IPv6FallbackBasedOnRTT<OptimisticDnsForTcp
-  OptimisticDnsForTcp<OptimisticDnsForTcp
   SearchNavigationPrefetch<KillSwitch_SearchNavigationPrefetch
 On in Chrome's own code, unless overridden:
   PartitionConnectionsByNetworkIsolationKey: not overridden

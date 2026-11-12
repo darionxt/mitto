@@ -213,7 +213,7 @@ What the release's `content/child/runtime_features.cc`, `gin/gin_features.cc`, `
 
 ### Chrome 155, 156 and 157
 
-Worked out on 2026-11-12, from 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39 and the seed `20261111-170049.393000-production`, which [#207](https://github.com/darionxt/mitto/issues/207) also walked. The network's Baselines of the three were recorded with `20261106-010110.492000`, and M7's Baselines of the Script Fingerprint are recorded later, when the script runs again:
+Worked out on 2026-11-12, from 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39 and the seed `20261111-170049.393000-production`, which [#207](https://github.com/darionxt/mitto/issues/207) also walked. Worked out again later that day with `20261112-010037.919000-production`, the seed that [the Baselines of the Script Fingerprint](baselines.md#its-baselines) were recorded with and that each `chrome.txt` names, it gave the same lists, and the Persona files name that seed:
 
 | Persona | Blink features turned on | Turned off | V8 flags |
 | --- | --- | --- | --- |
@@ -230,13 +230,13 @@ Worked out on 2026-11-12, from 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39 an
 
 A Page of an older Persona can turn off a feature, but it cannot take away what the Engine Release has with no feature, nor give back what only the older release had, nor move a member. On 2026-11-12:
 
-- **Members.** None is missing or extra. Every interface and member that 157 has and 155 or 156 lacks is behind a runtime-enabled feature, in the walks and in the diff of Blink's IDL files between the tags. The features that only the older release's file has and has on, 34 for 155 and 18 for 156, shipped for good: the Engine Release has their members with no feature, such as `CSSContainerRule.prototype.conditions`, or they change behaviour only.
-- **The order of members.** Turning a feature off cannot move a member, so a page of 155 or 156 lists these in 157's order, which is a Known Gap of those Personas, for [#206](https://github.com/darionxt/mitto/issues/206). 155 and 156 agree on each, so the moves came with 157:
+- **Members.** None is missing or extra. Every interface and member that 157 has and 155 or 156 lacks is behind a runtime-enabled feature, in the walks, in [the Baselines of the Script Fingerprint](baselines.md#what-differs-from-chrome-157-in-a-page) and in the diff of Blink's IDL files between the tags. The features that only the older release's file has and has on, 34 for 155 and 18 for 156, shipped for good: the Engine Release has their members with no feature, such as `CSSContainerRule.prototype.conditions`, or they change behaviour only.
+- **The order of members.** Turning a feature off cannot move a member, so a page of 155 or 156 lists these in 157's order, which is a Known Gap of those Personas, for [#206](https://github.com/darionxt/mitto/issues/206). Only four interface objects moved in 156, and the other moves came with 157:
   - On the global, the interface objects `ProgressEvent`, `Lock` and `LockManager` moved from 156 to 157, and `Clipboard`, `ClipboardItem`, `ServiceWorker` and `ServiceWorkerContainer` from 155 to 156. For the first five, Blink's IDL files moved the decision whether a context exposes them between the template and each context.
   - In prototypes, members that 155 and 156 install after `constructor`, with what each context decides, come before it in 157, with what the template holds ([runtime.md](runtime.md#how-the-generator-works)): `pseudoTarget` of `UIEvent`, `AnimationEvent` and `TransitionEvent`, `onerror` of `Worker` and `SharedWorker`, `closed` and `cancel` of `ReadableStreamDefaultReader` and `ReadableStreamBYOBReader`, `ink`, `mediaCapabilities`, `permissions` and `mediaSession` of `Navigator`, most of the members that modules add to `ServiceWorkerRegistration`, and `toJSON` of `PerformanceSoftNavigation`, `PerformancePaintTiming`, `PerformanceElementTiming`, `LargestContentfulPaint` and `InteractionContentfulPaint`. None of their features changed between the releases, and Blink's `bind_gen` did, so a Persona would need its release's own phase of each member, which no feature gives.
   - `vendor`, `vendorSub` and `productSub` of `Navigator` moved within the members that are always there, as 157 moved them into the `NavigatorID` mixin.
 
-  The walks leave out the prototypes of `Node`'s interfaces, so their order between releases is not known yet.
+  The walks leave out the prototypes of `Node`'s interfaces, and the Baselines of the Script Fingerprint, which have them, show that none of them moved ([baselines.md](baselines.md#what-differs-from-chrome-157-in-a-page)).
 - **Behaviour that no feature holds.** V8's and Blink's code beside the features is the Engine Release's for every Persona, as the network's is ([What no Baseline covers](#what-no-baseline-covers)). So is what the seed switches through a `base::Feature` that no runtime-enabled feature takes, such as `DeprecateUnload`, which takes `unload` from `document.featurePolicy.allowedFeatures()` in all three.
 
 ## What no Baseline covers
