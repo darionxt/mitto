@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from bindings_generator import extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
-from bindings_generator.cpp_types import TypeMapper
+from bindings_generator.cpp_types import Site, TypeMapper
 from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
@@ -76,6 +76,14 @@ def _interface(**members: object) -> Interface:
 
 def _names(plan: list[Property]) -> list[str]:
     return [f"{property_.target}.{property_.name}" for property_ in plan]
+
+
+def test_a_feature_that_chromes_content_layer_turns_on_is_stable() -> None:
+    # content/child/runtime_features.cc copies kLocalNetworkAccessChecks, on by default, into it, which the file of
+    # features does not say.
+    features = read_features([{"name": "LocalNetworkAccessPermissionPolicy", "base_feature": "none"}])
+
+    assert [feature.stable for feature in features] == [True]
 
 
 @pytest.mark.parametrize(
@@ -335,3 +343,47 @@ def test_touch_event_detection_starts_as_on_a_desktop_without_a_touch_screen() -
     [feature] = read_features([{"name": "TouchEventFeatureDetection", "status": "stable"}])
 
     assert not feature.stable
+
+
+def test_the_cpp_types_of_the_constructs_that_timers_and_fetch_use() -> None:
+    types = TypeMapper(frozenset({"Request"}), frozenset(), {"RequestMode": ("navigate", "cors")})
+    byte_string = IdlType(TypeKind.STRING, "ByteString")
+    pair = IdlType(TypeKind.SEQUENCE, "sequence<ByteString>", members=(byte_string,))
+    pairs = IdlType(TypeKind.SEQUENCE, "sequence<sequence<ByteString>>", members=(pair,))
+    record = IdlType(TypeKind.RECORD, "record<ByteString, ByteString>", members=(byte_string, byte_string))
+    headers_init = IdlType(TypeKind.UNION, "x", members=(pairs, record))
+
+    assert types.argument_type(byte_string, "a") == "const std::string&"
+    assert types.argument_type(IdlType(TypeKind.CALLBACK_FUNCTION, "Function"), "a") == "v8::Local<v8::Function>"
+    assert types.argument_type(IdlType(TypeKind.ENUMERATION, "RequestMode"), "a") == "const std::u16string&"
+    assert types.argument_type(pairs, "a") == "const std::vector<std::vector<std::string>>&"
+    assert types.argument_type(record, "a") == "const std::vector<std::pair<std::string, std::string>>&"
+    assert types.argument_type(headers_init, "a") == "const ByteStringSequenceSequenceOrByteStringByteStringRecord&"
+    assert types.return_type(IdlType(TypeKind.PROMISE, "Promise<any>"), "a") == "v8::Local<v8::Promise>"
+    assert types.return_type(dataclasses.replace(byte_string, nullable=True), "a") == "std::optional<std::string>"
+    assert types.default_value(IdlType(TypeKind.INTEGER, "long"), "0", "a") == "0"
+    assert types.default_value(byte_string, '""', "a") == '""'
+
+
+def test_an_enumeration_converts_only_to_its_strings() -> None:
+    types = TypeMapper(frozenset(), frozenset(), {"RequestMode": ("navigate", "cors")})
+    lines = types.from_v8(IdlType(TypeKind.ENUMERATION, "RequestMode"), "value", "mode", Site(fail="return;"), "a")
+
+    assert 'u"navigate", u"cors"' in lines[0]
+    assert "FromV8Enumeration(isolate, value, " in lines[2]
+    assert '"RequestMode"' in lines[2]
+    with pytest.raises(UnhandledError, match="the enumeration Other is not in the database"):
+        types.argument_type(IdlType(TypeKind.ENUMERATION, "Other"), "a")
+
+
+def test_a_callback_function_argument_throws_chromes_message_for_a_value_that_is_not_callable() -> None:
+    types = TypeMapper(frozenset(), frozenset())
+    lines = types.from_v8(
+        IdlType(TypeKind.CALLBACK_FUNCTION, "VoidFunction"),
+        "info[0]",
+        "callback",
+        Site(fail="return;", argument_index=0),
+        "a",
+    )
+
+    assert 'ExceptionMessages::ArgumentNotOfType(0, "Function")' in "\n".join(lines)

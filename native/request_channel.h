@@ -35,6 +35,10 @@ struct RequestEvent {
   std::string protocol;
   std::string url;
   std::string headers;
+  // The status line's reason phrase, and whether the request followed a
+  // redirect to get here, which a Page's Response tells its scripts.
+  std::string status_text;
+  bool redirected = false;
 };
 
 // Carries one request's events and body from the network thread to whichever

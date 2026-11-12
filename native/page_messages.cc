@@ -15,6 +15,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/values.h"
+#include "mitto/header_rules.h"
 
 namespace mitto {
 namespace {
@@ -45,7 +46,7 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kCookies);
+         type <= static_cast<uint32_t>(PageMessage::kCancel);
 }
 
 bool IsRequestKind(uint8_t kind) {
@@ -131,11 +132,52 @@ base::expected<PageStart, std::string> ReadStart(std::string_view payload) {
   return start;
 }
 
-base::expected<PageRequest, std::string> ReadRequest(std::string payload) {
-  if (payload.size() < 10) {
-    return base::unexpected(WrongSize("request", payload.size()));
+// Takes the next part of `bytes`, after its size as a 32-bit number, into
+// `part`. Returns false if `bytes` does not hold as much.
+bool TakeSized(std::string_view& bytes, std::string_view& part) {
+  if (bytes.size() < 4) {
+    return false;
   }
-  const std::string_view bytes = payload;
+  const uint32_t size = DecodeUint32(bytes.substr(0, 4));
+  if (size > bytes.size() - 4) {
+    return false;
+  }
+  part = bytes.substr(4, size);
+  bytes.remove_prefix(4 + size);
+  return true;
+}
+
+// Whether `lines` are header lines that a page's script may send: each
+// "name: value" and a line feed, with a token for a name, a value with no NUL
+// or CR, and no forbidden request header.
+std::optional<std::string> CheckHeaderLines(std::string_view lines) {
+  while (!lines.empty()) {
+    const size_t end = lines.find('\n');
+    if (end == std::string_view::npos) {
+      return "header lines that do not end in a line feed";
+    }
+    const std::string_view line = lines.substr(0, end);
+    lines.remove_prefix(end + 1);
+    const size_t colon = line.find(": ");
+    if (colon == std::string_view::npos) {
+      return "a header line without a name";
+    }
+    const std::string_view name = line.substr(0, colon);
+    const std::string_view value = line.substr(colon + 2);
+    if (!IsHttpToken(name) || !IsValidHeaderValue(value)) {
+      return "a header line that is not valid";
+    }
+    if (IsForbiddenRequestHeader(name, value)) {
+      return base::StrCat({"the forbidden request header ", name});
+    }
+  }
+  return std::nullopt;
+}
+
+base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
+  if (bytes.size() < 9) {
+    return base::unexpected(WrongSize("request", bytes.size()));
+  }
   PageRequest request;
   request.number = DecodeUint64(bytes.substr(0, 8));
   if (request.number == kNavigationRequest) {
@@ -147,10 +189,41 @@ base::expected<PageRequest, std::string> ReadRequest(std::string payload) {
         {"a request of the unknown kind ", base::NumberToString(kind)}));
   }
   request.kind = static_cast<PageRequestKind>(kind);
-  if (!IsText(bytes.substr(9))) {
+  bytes.remove_prefix(9);
+  std::string_view url;
+  std::string_view method;
+  std::string_view headers;
+  if (!TakeSized(bytes, url) || !TakeSized(bytes, method) ||
+      !TakeSized(bytes, headers) || bytes.empty() ||
+      static_cast<uint8_t>(bytes[0]) > 1 ||
+      (bytes[0] == 0 && bytes.size() != 1)) {
+    return base::unexpected("a request that does not hold what it says");
+  }
+  if (!IsText(url)) {
     return base::unexpected("a request whose URL is not UTF-8");
   }
-  request.url = payload.substr(9);
+  request.url = std::string(url);
+  if (!IsHttpToken(method) || IsForbiddenMethod(method)) {
+    return base::unexpected("a request with a method that a page cannot send");
+  }
+  request.method = std::string(method);
+  if (std::optional<std::string> why = CheckHeaderLines(headers)) {
+    return base::unexpected(base::StrCat({"a request with ", *why}));
+  }
+  request.headers = std::string(headers);
+  if (bytes[0] == 1) {
+    request.body = std::string(bytes.substr(1));
+  }
+  const bool without_body = base::EqualsCaseInsensitiveASCII(method, "GET") ||
+                            base::EqualsCaseInsensitiveASCII(method, "HEAD");
+  if (request.body && without_body) {
+    return base::unexpected("a request with a body and the method GET or HEAD");
+  }
+  if (request.kind == PageRequestKind::kScript &&
+      (request.method != "GET" || !request.headers.empty() || request.body)) {
+    return base::unexpected(
+        "a script request with a method, header lines or a body");
+  }
   return request;
 }
 
@@ -169,23 +242,30 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 }
 
 base::expected<PageResponseStarted, std::string> ReadResponseStarted(
-    std::string payload) {
-  const std::string_view bytes = payload;
-  if (bytes.size() < 16) {
+    std::string_view bytes) {
+  if (bytes.size() < 21) {
     return base::unexpected(WrongSize("response", bytes.size()));
   }
   PageResponseStarted response;
   response.number = DecodeUint64(bytes.substr(0, 8));
   response.status = DecodeInt32(bytes.substr(8, 4));
-  const uint32_t url_size = DecodeUint32(bytes.substr(12, 4));
-  if (response.status < 0 || url_size > bytes.size() - 16) {
+  const uint8_t redirected = static_cast<uint8_t>(bytes[12]);
+  response.navigation_start =
+      static_cast<int64_t>(DecodeUint64(bytes.substr(13, 8)));
+  bytes.remove_prefix(21);
+  std::string_view url;
+  std::string_view status_text;
+  if (response.status < 0 || redirected > 1 || !TakeSized(bytes, url) ||
+      !TakeSized(bytes, status_text)) {
     return base::unexpected("a response that does not hold what it says");
   }
-  if (!IsText(bytes.substr(16, url_size))) {
+  if (!IsText(url)) {
     return base::unexpected("a response whose URL is not UTF-8");
   }
-  response.url = payload.substr(16, url_size);
-  response.headers = payload.substr(16 + url_size);
+  response.redirected = redirected == 1;
+  response.url = std::string(url);
+  response.status_text = std::string(status_text);
+  response.headers = std::string(bytes);
   return response;
 }
 
@@ -305,9 +385,21 @@ std::string EncodeUncaughtError(std::string_view text) {
 
 std::string EncodeRequest(const PageRequest& request) {
   const char kind = static_cast<char>(request.kind);
-  return EncodeFrame(PageMessage::kRequest,
-                     base::StrCat({EncodeUint64(request.number),
-                                   std::string_view(&kind, 1), request.url}));
+  const char has_body = request.body ? 1 : 0;
+  return EncodeFrame(
+      PageMessage::kRequest,
+      base::StrCat({EncodeUint64(request.number), std::string_view(&kind, 1),
+                    EncodeUint32(static_cast<uint32_t>(request.url.size())),
+                    request.url,
+                    EncodeUint32(static_cast<uint32_t>(request.method.size())),
+                    request.method,
+                    EncodeUint32(static_cast<uint32_t>(request.headers.size())),
+                    request.headers, std::string_view(&has_body, 1),
+                    request.body.value_or("")}));
+}
+
+std::string EncodeCancel(uint64_t number) {
+  return EncodeFrame(PageMessage::kCancel, EncodeUint64(number));
 }
 
 std::string EncodeCredit(const PageCredit& credit) {
@@ -329,11 +421,17 @@ std::string EncodeLoaded() {
 }
 
 std::string EncodeResponseStarted(const PageResponseStarted& response) {
+  const char redirected = response.redirected ? 1 : 0;
   return EncodeFrame(
       PageMessage::kResponseStarted,
-      base::StrCat({EncodeUint64(response.number), EncodeInt32(response.status),
-                    EncodeUint32(static_cast<uint32_t>(response.url.size())),
-                    response.url, response.headers}));
+      base::StrCat(
+          {EncodeUint64(response.number), EncodeInt32(response.status),
+           std::string_view(&redirected, 1),
+           EncodeUint64(static_cast<uint64_t>(response.navigation_start)),
+           EncodeUint32(static_cast<uint32_t>(response.url.size())),
+           response.url,
+           EncodeUint32(static_cast<uint32_t>(response.status_text.size())),
+           response.status_text, response.headers}));
 }
 
 std::string EncodeResponseBody(uint64_t number, std::string_view bytes) {
@@ -421,8 +519,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.uncaught_error = std::move(payload);
       return frame;
     case PageMessage::kRequest: {
-      base::expected<PageRequest, std::string> request =
-          ReadRequest(std::move(payload));
+      base::expected<PageRequest, std::string> request = ReadRequest(payload);
       if (!request.has_value()) {
         return base::unexpected(std::move(request).error());
       }
@@ -454,6 +551,12 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       if (!payload.empty()) {
         return base::unexpected(WrongSize("load", payload.size()));
       }
+      return frame;
+    case PageMessage::kCancel:
+      if (payload.size() != 8) {
+        return base::unexpected(WrongSize("cancel", payload.size()));
+      }
+      frame.cancelled = DecodeUint64(payload);
       return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
@@ -514,7 +617,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     }
     case PageMessage::kResponseStarted: {
       base::expected<PageResponseStarted, std::string> response =
-          ReadResponseStarted(std::move(payload));
+          ReadResponseStarted(payload);
       if (!response.has_value()) {
         return base::unexpected(std::move(response).error());
       }
@@ -554,6 +657,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kGetCookies:
     case PageMessage::kSetCookie:
     case PageMessage::kLoaded:
+    case PageMessage::kCancel:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

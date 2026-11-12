@@ -1208,7 +1208,7 @@ class Session:
             url: Where the Page navigates once it opens, through this Session, whose PageNavigated and PageLoaded events
                 say how that went, or None to stay at about:blank.
             requests: What a request of each Request Kind sends, by the kind's value: "navigation", needed with `url`,
-                and "script" and "fetch", for the Page's own requests.
+                and "script" and "fetch", for the Page's own requests, and "fetch_with_body" for a fetch() with a body.
 
         Raises:
             ValueError: If this Session has been closed, or the native core refuses `time_zone` or `locale`. One that ICU

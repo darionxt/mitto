@@ -25,7 +25,7 @@ import dataclasses
 from collections.abc import Iterable
 
 from bindings_generator.cpp_names import file_name, function_name, member_name
-from bindings_generator.cpp_types import Site, TypeMapper, header_of
+from bindings_generator.cpp_types import Site, TypeMapper, header_of, union_name
 from bindings_generator.errors import UnhandledError
 from bindings_generator.extended_attributes import KNOWN, Role
 from bindings_generator.install_plan import Phase, Property, plan_interface
@@ -53,6 +53,7 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
 # - NewObject: the class returns a new object, which Blink only checks.
 # - NoAllocDirectCall: the install plan puts the member where Blink does; V8's fast call itself only saves time.
+# - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
 # - PutForwards: only an attribute's setter forwards, and the writer refuses that setter's behaviour, so an attribute
 #   with it can have its getter alone.
 # - Serializable and Transferable: only structured cloning reads them, which nothing in a Page can reach yet: it has
@@ -79,6 +80,7 @@ WRITTEN = frozenset(
         "Reflect",
         "Replaceable",
         "RuntimeEnabled",
+        "SameObject",
         "SecureContext",
         "Serializable",
         "Transferable",
@@ -450,6 +452,29 @@ class _InterfaceWriter:
             )
         ]
 
+    def _overloads_by_type(self, overloads: list[Operation], where: str) -> tuple[int, Operation, Operation] | None:
+        """For two overloads that take the same arguments but one, which is a callback function in one and a string in
+        the other, as setTimeout() has: that argument's index and the two overloads, the callback function's first."""
+        if len(overloads) != 2:
+            return None
+        first, second = overloads
+        if len(first.arguments) != len(second.arguments):
+            return None
+        differing = [
+            index
+            for index, (a, b) in enumerate(zip(first.arguments, second.arguments, strict=True))
+            if self.types.reduce(a.idl_type).syntax != self.types.reduce(b.idl_type).syntax
+        ]
+        if len(differing) != 1:
+            return None
+        index = differing[0]
+        kinds = {self.types.reduce(overload.arguments[index].idl_type).kind for overload in overloads}
+        if kinds != {TypeKind.CALLBACK_FUNCTION, TypeKind.STRING}:
+            return None
+        if self.types.reduce(first.arguments[index].idl_type).kind is TypeKind.CALLBACK_FUNCTION:
+            return index, first, second
+        return index, second, first
+
     def _call(self, operation: Operation, where: str, check_length: bool) -> list[str]:
         """The statements that convert an operation's arguments, call the class and set the result."""
         _check_written(where, operation.extended_attributes)
@@ -478,15 +503,43 @@ class _InterfaceWriter:
             if self.returns_promise(group):
                 return self._missing_promise(name, group.name, has_receiver=not group.is_static)
             return self._missing(name, has_receiver=not group.is_static)
+        body: list[str] = []
         if self.returns_promise(group):
-            raise UnhandledError(f"{where}: the C++ writer does not handle operations that return a promise")
-        body = [] if group.is_static else self._receiver()
+            if len(group.overloads) != 1:
+                raise UnhandledError(f"{where}: the C++ writer does not handle overloads that return a promise")
+            # Web IDL: an error before the operation returns rejects the promise it returns.
+            body.append("ExceptionToRejectPromiseScope reject_promise_scope(info);")
+            if not group.is_static:
+                body += self._promise_receiver()
+        elif not group.is_static:
+            body += self._receiver()
         body.append(self._exception_state())
         overloads = self._reachable_overloads(group)
         if not overloads:
             raise UnhandledError(f"{where}: no overload of {group.name}() can be called")
         if len(overloads) == 1:
             body += self._call(overloads[0], where, check_length=True)
+            return self._add_callback(name, body)
+        by_type = self._overloads_by_type(overloads, where)
+        if by_type is not None:
+            index, function_overload, other_overload = by_type
+            required = min(
+                sum(1 for argument in overload.arguments if not argument.is_optional and not argument.is_variadic)
+                for overload in overloads
+            )
+            if required:
+                body += [
+                    f"if (info.Length() < {required}) {{",
+                    f"  exception_state.ThrowTypeError(ExceptionMessages::NotEnoughArguments({required}, info.Length()));",
+                    "  return;",
+                    "}",
+                ]
+            # Web IDL's overload resolution at the distinguishing argument: a callable value chooses the callback
+            # function, and anything else the string, which every value converts to.
+            body += [f"if (info[{index}]->IsFunction()) {{"]
+            body += _indent(self._call(function_overload, where, check_length=False))
+            body += ["  return;", "}"]
+            body += self._call(other_overload, where, check_length=False)
             return self._add_callback(name, body)
         # Web IDL's overload resolution, for overloads that differ in how many arguments they take: the one that takes
         # the most of those given.
@@ -577,6 +630,24 @@ class _InterfaceWriter:
             return []  # SetupInterfaceTemplate() installs it.
         if property_.name == "constructor":
             return []  # V8 adds it.
+        if property_.name == "@@iterator":
+            collection = self.interface.collection
+            if not on_objects or collection is None or collection.iterator_operation is None:
+                raise UnhandledError(
+                    f"{self.where(property_.name)}: the C++ writer installs @@iterator of iterables only"
+                )
+            # Blink's _make_install_prototype_object(): the same function as the operation it is, such as entries().
+            return [
+                "{",
+                "  v8::Local<v8::Value> iterator_function;",
+                "  if (prototype_object",
+                f'          ->Get(context, v8::String::NewFromUtf8Literal(isolate, "{collection.iterator_operation}"))',
+                "          .ToLocal(&iterator_function)) {",
+                "    std::ignore = prototype_object->DefineOwnProperty(context, v8::Symbol::GetIterator(isolate),",
+                "                                                      iterator_function, v8::DontEnum);",
+                "  }",
+                "}",
+            ]
         if property_.name == "@@unscopables":
             if not on_objects:
                 raise UnhandledError(f"{self.where(property_.name)}: @@unscopables on a template")
@@ -749,9 +820,17 @@ class _InterfaceWriter:
             ]
         )
         _check_written(f"interface {interface.name}", interface.extended_attributes)
-        for unhandled in ("collection", "stringifier", "legacy_factory_functions"):
+        for unhandled in ("stringifier", "legacy_factory_functions"):
             if getattr(interface, unhandled):
                 raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {unhandled}")
+        if interface.collection is not None:
+            collection_members = [attribute.name for attribute in interface.collection.attributes]
+            collection_members += [group.name for group in interface.collection.operation_groups]
+            if any(self.implemented.has_behaviour(member) for member in collection_members):
+                raise UnhandledError(
+                    f"interface {interface.name}: the C++ writer does not handle the behaviour of its "
+                    f"{interface.collection.kind}"
+                )
         for special in interface.special_operations:
             if self.implemented.has_behaviour(special):
                 raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {special}")
@@ -839,6 +918,12 @@ def _dictionary_chain(name: str, dictionaries: dict[str, Dictionary]) -> list[Di
     return chain
 
 
+def _union_name_in_idl(union: IdlType) -> str:
+    """The union as bind_gen's UnionNameInIDL() writes it for its errors: its members' names, sorted."""
+    names = " or ".join(sorted(member.syntax for member in union.members))
+    return f"({names}){'?' if union.nullable else ''}"
+
+
 def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str], list[str]]:
     """The declaration of a union and its FromV8(), which converts a value as Web IDL converts it to a union.
 
@@ -859,8 +944,10 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     ]
     dictionary = next((member for member in union.members if member.kind is TypeKind.DICTIONARY), None)
     interfaces = [member for member in union.members if member.kind is TypeKind.INTERFACE]
+    sequence = next((member for member in union.members if member.kind is TypeKind.SEQUENCE), None)
+    record = next((member for member in union.members if member.kind is TypeKind.RECORD), None)
     has_boolean = any(member.kind is TypeKind.BOOLEAN for member in union.members)
-    has_string = any(member.kind is TypeKind.STRING for member in union.members)
+    string = next((member for member in union.members if member.kind is TypeKind.STRING), None)
     convert_dictionary = [
         f"  {dictionary.name if dictionary else ''} dictionary;",
         "  if (!FromV8(isolate, value, exception_state, &dictionary)) {",
@@ -879,6 +966,37 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             "    return true;",
             "  }",
         ]
+    if sequence is not None or record is not None:
+        # Web IDL: an object with an @@iterator converts to the sequence, and any other object to the record.
+        source.append("  if (value->IsObject()) {")
+        if sequence is not None:
+            element_type = types.value_type(sequence.members[0], f"union {union.syntax}")
+            inner = types.from_v8(
+                sequence.members[0], "item", "element", Site(fail="return false;"), f"union {union.syntax}"
+            )
+            source += [
+                "    v8::Local<v8::Function> method;",
+                "    if (!GetIteratorMethod(isolate, value.As<v8::Object>(), &method)) {",
+                "      return false;",
+                "    }",
+                "    if (!method.IsEmpty()) {",
+                f"      std::vector<{element_type}> items;",
+                "      if (!IterateSequenceWithMethod(isolate, value.As<v8::Object>(), method,",
+                "                                     [&](v8::Local<v8::Value> item) {",
+                *["            " + line for line in inner],
+                "            items.push_back(std::move(element));",
+                "            return true;",
+                "          })) {",
+                "        return false;",
+                "      }",
+                "      *result = std::move(items);",
+                "      return true;",
+                "    }",
+            ]
+        if record is not None:
+            converted = types.from_v8(record, "value", "entries", Site(fail="return false;"), f"union {union.syntax}")
+            source += [*_indent(converted, "    "), "    *result = std::move(entries);", "    return true;"]
+        source.append("  }")
     if dictionary is not None:
         source += ["  if (value->IsObject()) {", *_indent(convert_dictionary), "  }"]
     if has_boolean:
@@ -888,10 +1006,14 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             "    return true;",
             "  }",
         ]
-    if has_string:
+    if string is not None:
+        cpp_string, convert = {
+            "ByteString": ("std::string", "FromV8ByteString"),
+            "USVString": ("std::u16string", "FromV8USVString"),
+        }.get(string.name, ("std::u16string", "FromV8String"))
         source += [
-            "  std::u16string string;",
-            "  if (!FromV8String(isolate, value, &string)) {",
+            f"  {cpp_string} string;",
+            f"  if (!{convert}(isolate, value, &string)) {{",
             "    return false;",
             "  }",
             "  *result = std::move(string);",
@@ -901,7 +1023,7 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
         source += ["  *result = value->BooleanValue(isolate);", "  return true;"]
     else:
         source += [
-            f'  exception_state.ThrowTypeError(ExceptionMessages::ValueNotOfType("{union.syntax}"));',
+            f'  exception_state.ThrowTypeError(ExceptionMessages::ValueNotOfType("{_union_name_in_idl(union)}"));',
             "  return false;",
         ]
     source += ["}", ""]
@@ -943,8 +1065,11 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         "",
         "#include <optional>",
         "#include <string>",
+        "#include <utility>",
         "#include <variant>",
+        "#include <vector>",
         "",
+        '#include "v8/include/v8-function.h"',
         '#include "v8/include/v8-local-handle.h"',
         '#include "v8/include/v8-forward.h"',
         "",
@@ -966,6 +1091,9 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         '#include "mitto/bindings/exception_context.h"',
         '#include "mitto/bindings/exception_messages.h"',
         '#include "mitto/bindings/exception_state.h"',
+        '#include "mitto/bindings/per_isolate_data.h"',
+        '#include "mitto/bindings/runtime_feature_set.h"',
+        '#include "mitto/bindings/runtime_features.h"',
         '#include "mitto/bindings/v8_conversions.h"',
         *[f'#include "{header_of(name)}"' for name in union_interfaces],
         '#include "v8/include/v8-context.h"',
@@ -976,17 +1104,58 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         "namespace mitto::bindings {",
         "",
     ]
-    for name in ordered:
-        struct, functions = bodies[name]
-        header += struct
-        source += functions
-    for name, union in types.used_unions.items():
-        union_header, union_source = _write_union(name, union, types)
-        header += union_header
-        source += union_source
+    union_bodies = {name: _write_union(name, union, types) for name, union in types.used_unions.items()}
+    # A struct or a union needs the complete types of the dictionaries and unions it holds before it.
+    for name in _declaration_order(ordered, definitions, types):
+        part_header, part_source = bodies[name] if name in bodies else union_bodies[name]
+        header += part_header
+        source += part_source
     header += ["}  // namespace mitto::bindings", "", "#endif  // MITTO_BINDINGS_DICTIONARIES_H_", ""]
     source += ["}  // namespace mitto::bindings", ""]
     return "\n".join(header), "\n".join(source)
+
+
+def _held_types(idl_type: IdlType, types: TypeMapper) -> list[str]:
+    """The dictionaries and unions whose complete types a value of the type needs."""
+    reduced = types.reduce(idl_type)
+    if reduced.kind is TypeKind.DICTIONARY:
+        return [reduced.name]
+    if reduced.kind is TypeKind.UNION:
+        return [union_name(reduced)]
+    if reduced.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
+        return [name for member in reduced.members for name in _held_types(member, types)]
+    return []
+
+
+def _declaration_order(dictionaries: list[str], definitions: Definitions, types: TypeMapper) -> list[str]:
+    """The dictionaries and unions in an order where each comes after those it holds and its parent."""
+    needs: dict[str, list[str]] = {}
+    for name in dictionaries:
+        dictionary = definitions.dictionaries[name]
+        held = [dictionary.parent] if dictionary.parent else []
+        for member in dictionary.own_members:
+            if types.can_hold_a_value(member.idl_type):
+                held += _held_types(member.idl_type, types)
+        needs[name] = held
+    for name, union in types.used_unions.items():
+        needs[name] = [held for member in union.members for held in _held_types(member, types)]
+    order: list[str] = []
+    visiting: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in order or name not in needs:
+            return
+        if name in visiting:
+            raise UnhandledError(f"{name} holds itself, which a C++ struct cannot")
+        visiting.add(name)
+        for held in needs[name]:
+            visit(held)
+        visiting.discard(name)
+        order.append(name)
+
+    for name in [*dictionaries, *types.used_unions]:
+        visit(name)
+    return order
 
 
 def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[str], list[str]]:
@@ -1008,17 +1177,14 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
     if dictionary.own_members:
         fill.append(f'  DictionaryConversionScope scope(isolate, "{dictionary.name}");')
     defaults: list[str] = []
+    uses_features = False
     for member in dictionary.own_members:
         member_where = f"dictionary member {dictionary.name}.{member.name}"
         _check_written(member_where, member.extended_attributes)
-        if member.condition.other:
-            raise UnhandledError(
-                f"{member_where}: the C++ writer does not handle the condition {member.condition.describe()}"
-            )
-        if member.condition.features:
-            raise UnhandledError(f"{member_where}: the C++ writer does not handle members behind a feature")
-        if member.is_required:
-            raise UnhandledError(f"{member_where}: the C++ writer does not handle required members")
+        # A member behind a condition is read only where the Page has it, as Blink's conversion checks each feature.
+        test = condition_test(member.condition, member_where)
+        if test is None:
+            continue
         field = member_name(member.name)
         has_class = types.can_hold_a_value(member.idl_type)
         if has_class:
@@ -1034,22 +1200,38 @@ def _write_dictionary(dictionary: Dictionary, types: TypeMapper) -> tuple[list[s
                 struct.append(
                     f"  {cpp_type} {field} = {types.default_value(member.idl_type, member.default, member_where)};"
                 )
-        fill += [
-            "  {",
-            f'    scope.SetCurrentPropertyName("{member.name}");',
-            "    v8::Local<v8::Value> value;",
-            f'    if (!object->Get(context, v8::String::NewFromUtf8Literal(isolate, "{member.name}")).ToLocal(&value)) {{',
-            "      return false;",
-            "    }",
-            "    if (!value->IsUndefined()) {",
+        member_fill = [
+            "{",
+            f'  scope.SetCurrentPropertyName("{member.name}");',
+            "  v8::Local<v8::Value> value;",
+            f'  if (!object->Get(context, v8::String::NewFromUtf8Literal(isolate, "{member.name}")).ToLocal(&value)) {{',
+            "    return false;",
+            "  }",
         ]
+        if member.is_required:
+            member_fill += [
+                "  if (value->IsUndefined()) {",
+                '    exception_state.ThrowTypeError("Required member is undefined.");',
+                "    return false;",
+                "  }",
+            ]
+        member_fill.append("  if (!value->IsUndefined()) {")
         site = Site(fail="return false;", dictionary=dictionary.name, member=member.name)
         converted = types.from_v8(member.idl_type, "value", "converted", site, member_where)
-        fill += ["      " + line for line in converted]
+        member_fill += ["    " + line for line in converted]
         if has_class:
-            fill.append(f"      dictionary->{field} = std::move(converted);")
-        fill += ["    }", "  }"]
+            member_fill.append(f"    dictionary->{field} = std::move(converted);")
+        member_fill += ["  }", "}"]
+        if test != "true":
+            member_fill = [f"if ({test}) {{", *_indent(member_fill), "}"]
+            uses_features = True
+        fill += _indent(member_fill)
     struct += ["};", ""]
+    if uses_features:
+        fill[2:2] = [
+            "  [[maybe_unused]] PerIsolateData* const data = PerIsolateData::From(isolate);",
+            "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
+        ]
     fill += ["  return true;", "}", ""]
     public = [
         f"// Converts `value` to {dictionary.name}. Returns false if that threw.",
@@ -1293,7 +1475,7 @@ def write_bindings(
         if parent is not None and parent not in by_name:
             raise UnhandledError(f"{name} has a C++ class but its parent {parent} has none")
         _check_named_members(name, definitions.interfaces[name], interface)
-    types = TypeMapper(frozenset(by_name), frozenset(definitions.dictionaries))
+    types = TypeMapper(frozenset(by_name), frozenset(definitions.dictionaries), definitions.enumerations)
     chains = _global_prototype_chains(definitions)
     files: dict[str, str] = {}
     for name, interface in sorted(by_name.items()):

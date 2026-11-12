@@ -57,6 +57,12 @@ class PageRequests {
   // document as its Initiator. `client` hears how it goes, and has to live
   // until its end.
   uint64_t Start(PageRequestKind kind, std::string url, Client& client);
+  // The same for `request`, whose number this sets.
+  uint64_t Start(PageRequest request, Client& client);
+
+  // Tells the Session that request `number` is no longer wanted. Its client
+  // hears nothing more of it.
+  void Cancel(uint64_t number);
 
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);

@@ -776,7 +776,8 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
 //                      "options": {"version": 1, "fetch": {...}, ...}},
 //       "script": {...},
-//       "fetch": {...}
+//       "fetch": {...},
+//       "fetch_with_body": {...}
 //     }
 //   }
 //
@@ -801,7 +802,14 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   without "initiator", "fixed_headers", "referrer", a stream body or
 //   timers. "navigation" is required with "url". The Page's own requests use
 //   "script" and "fetch", with the Page's document as their Initiator, and fail
-//   with ERR_NOT_IMPLEMENTED for a kind that is not here.
+//   with ERR_NOT_IMPLEMENTED for a kind that is not here. A fetch() with a body
+//   uses "fetch_with_body", whose Content-Type line is where its Persona puts
+//   it: the script's own Content-Type takes its place, or it goes if the script
+//   gives none. A script's other lines take the places of the template's lines
+//   of their names, and the rest follow, as a caller's headers do. A
+//   cross-origin fetch() reaches the Page only if its response passes the CORS
+//   check for a request without credentials, and one that would need a CORS
+//   preflight fails with ERR_NOT_IMPLEMENTED.
 //
 // The Page's requests and cookies are the Session's: its scripts' requests go
 // through the Session's connections and cookies, as a request of their kind

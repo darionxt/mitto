@@ -43,6 +43,16 @@ source_set("icu_data") {
 
 # The channel between a Page and its Session, and the messages it carries,
 # which the library and the Page program share. It needs only //base.
+# The Fetch Standard's rules for header lines, which a Page's DOM and the
+# library both check.
+source_set("header_rules") {
+  sources = [
+    "header_rules.cc",
+    "header_rules.h",
+  ]
+  deps = [ "//base" ]
+}
+
 source_set("page_channel") {
   sources = [
     "page_channel.h",
@@ -54,6 +64,7 @@ source_set("page_channel") {
   } else {
     sources += [ "page_channel_posix.cc" ]
   }
+  public_deps = [ ":header_rules" ]
   deps = [ "//base" ]
 }
 

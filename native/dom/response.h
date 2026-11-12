@@ -1,0 +1,129 @@
+// The Fetch Standard's Response, whose body arrives as the Session reads it:
+// text(), json() and arrayBuffer() wait for all of it, and give the Session
+// credit for more only once one of them reads, so that a body that no script
+// reads slows the server down, as a full Mojo data pipe does in Chrome. Its
+// stream, clone(), blob(), formData() and bytes() are Known Gaps.
+//
+// Upstream: third_party/blink/renderer/core/fetch/response.h
+// Upstream: third_party/blink/renderer/core/fetch/response.cc
+// Upstream: third_party/blink/renderer/core/fetch/body.cc
+
+#ifndef MITTO_DOM_RESPONSE_H_
+#define MITTO_DOM_RESPONSE_H_
+
+#include <stdint.h>
+
+#include <optional>
+#include <string>
+
+#include "base/memory/raw_ptr.h"
+#include "mitto/bindings/dictionaries.h"
+#include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/script_wrappable.h"
+#include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/prefinalizer.h"
+#include "v8/include/cppgc/visitor.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-promise.h"
+#include "v8/include/v8-traced-handle.h"
+
+namespace mitto {
+
+class FetchLoader;
+class Headers;
+
+class Response final : public bindings::ScriptWrappable {
+  CPPGC_USING_PRE_FINALIZER(Response, Dispose);
+
+ public:
+  // The response's type, as Response.type gives it.
+  enum class ResponseType {
+    kBasic,
+    kCors,
+    kDefault,
+  };
+
+  // `new Response(body, init)`.
+  static Response* Create(const std::optional<v8::Local<v8::Value>>& body,
+                          const bindings::ResponseInit& init,
+                          bindings::ExceptionState& exception_state);
+  // `Response.json(data, init)`.
+  static Response* StaticJson(v8::Local<v8::Value> data,
+                              const bindings::ResponseInit& init,
+                              bindings::ExceptionState& exception_state);
+  // One that fetch() got, whose body `loader` brings, or none for a null body.
+  static Response* CreateFetched(ResponseType type,
+                                 int32_t status,
+                                 std::string status_text,
+                                 std::u16string url,
+                                 bool redirected,
+                                 Headers* headers,
+                                 FetchLoader* loader);
+
+  Response();
+  ~Response() override;
+
+  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
+
+  // The members of the interface.
+  std::u16string Type() const;
+  std::u16string Url() const { return url_; }
+  bool Redirected() const { return redirected_; }
+  uint16_t Status() const { return static_cast<uint16_t>(status_); }
+  bool Ok() const { return status_ >= 200 && status_ <= 299; }
+  std::string StatusText() const { return status_text_; }
+  mitto::Headers* Headers() const { return headers_.Get(); }
+  bool BodyUsed() const { return body_used_; }
+  v8::Local<v8::Promise> ArrayBuffer(bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> Json(bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> Text(bindings::ExceptionState& exception_state);
+
+  // What its FetchLoader tells it.
+  void AppendBody(std::string_view bytes);
+  // The body ended: 0 when all of it came, and otherwise a net error.
+  void EndBody(int net_error);
+  // Whether a script waits for the body, so that what arrives is taken.
+  bool HasReader() const { return !reader_.IsEmpty(); }
+
+ private:
+  enum class BodyState {
+    kNull,
+    kLoading,
+    kComplete,
+    kFailed,
+  };
+  enum class ReadAs {
+    kArrayBuffer,
+    kJson,
+    kText,
+  };
+
+  // Starts reading the body for a script, and returns its promise.
+  v8::Local<v8::Promise> Read(ReadAs read_as,
+                              bindings::ExceptionState& exception_state);
+  // Settles `resolver` with the whole body, as `read_as` reads it.
+  void Settle(v8::Local<v8::Promise::Resolver> resolver, ReadAs read_as);
+  void Dispose();
+
+  ResponseType type_ = ResponseType::kDefault;
+  int32_t status_ = 200;
+  std::string status_text_;
+  std::u16string url_;
+  bool redirected_ = false;
+  cppgc::Member<mitto::Headers> headers_;
+  BodyState body_state_ = BodyState::kNull;
+  std::string body_;
+  bool body_used_ = false;
+  // The promise of the read that waits for the rest of the body.
+  v8::TracedReference<v8::Promise::Resolver> reader_;
+  ReadAs reader_read_as_ = ReadAs::kText;
+  // What brings the body while it loads.
+  raw_ptr<FetchLoader> loader_ = nullptr;
+
+  friend class FetchLoader;
+};
+
+}  // namespace mitto
+
+#endif  // MITTO_DOM_RESPONSE_H_

@@ -43,8 +43,8 @@ std::string DescribeUncaught(v8::Isolate* isolate,
 class PageReporter final : public v8_inspector::V8InspectorClient {
  public:
   // Starts an inspector on `isolate`, as Blink does for each isolate, and has
-  // V8 tell this of each promise that is rejected with no handler. One at a
-  // time.
+  // V8 tell this of each promise that is rejected with no handler, and of each
+  // error that nothing caught. One at a time.
   PageReporter(v8::Isolate* isolate, SendFrame send);
 
   PageReporter(const PageReporter&) = delete;
@@ -57,9 +57,29 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   // Says that `context` has gone, as Blink does when a frame's document goes.
   void ContextDestroyed(v8::Local<v8::Context> context);
 
-  // Reports each promise that is still rejected with no handler, as Blink does
-  // once a task and its microtasks have run.
-  void ReportUnhandledRejections(v8::Local<v8::Context> context);
+  // A promise rejected with no handler, and why.
+  struct Rejection {
+    Rejection();
+    Rejection(Rejection&&);
+    Rejection& operator=(Rejection&&);
+    ~Rejection();
+
+    v8::Global<v8::Promise> promise;
+    v8::Global<v8::Value> reason;
+  };
+
+  // Takes the promises rejected with no handler since the last time, which
+  // Blink takes once a microtask checkpoint ends.
+  std::vector<Rejection> TakeUnhandledRejections();
+
+  // Reports each of `rejections` that still has no handler, as Blink does from
+  // the task that it queues for them.
+  void ReportUnhandledRejections(v8::Local<v8::Context> context,
+                                 std::vector<Rejection> rejections);
+
+  // Reports `exception`, which a script threw and nothing caught, as a
+  // console does: "Uncaught TypeError: ...".
+  void ReportException(v8::Local<v8::Value> exception);
 
   // v8_inspector::V8InspectorClient:
   void consoleAPIMessage(int context_group_id,
@@ -71,23 +91,19 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
                          v8_inspector::V8StackTrace* stack_trace) override;
 
  private:
-  struct Rejection {
-    Rejection();
-    Rejection(Rejection&&);
-    Rejection& operator=(Rejection&&);
-    ~Rejection();
-
-    v8::Global<v8::Promise> promise;
-    v8::Global<v8::Value> reason;
-  };
-
   static void OnPromiseReject(v8::PromiseRejectMessage message);
+  // V8's message listener, which hears of what a microtask or a script with
+  // no handler around it threw.
+  static void OnMessage(v8::Local<v8::Message> message,
+                        v8::Local<v8::Value> exception);
 
   const raw_ptr<v8::Isolate> isolate_;
   const SendFrame send_;
   std::unique_ptr<v8_inspector::V8Inspector> inspector_;
   // The promises rejected with no handler since the last report.
   std::vector<Rejection> rejections_;
+  // The newest context, for an error reported where none is entered.
+  v8::Global<v8::Context> context_;
 };
 
 }  // namespace mitto

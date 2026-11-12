@@ -13,8 +13,10 @@ here from runtime_enabled_features.json5 as Blink's build and Chrome's startup w
   on turns it on (RuntimeEnabledFeatures::FooEnabled() in the template).
 
 What Chrome's own code turns on beside the file, field trials and switches are not counted here, and M7's Baselines
-say where they differ. The one exception is a feature that Chrome sets from the machine, such as whether it has a touch
-screen: a Page starts with the value of a desktop without one, until the Machine decides it (M7).
+say where they differ. The exceptions are a feature that Chrome sets from the machine, such as whether it has a touch
+screen: a Page starts with the value of a desktop without one, until the Machine decides it (M7); and those that
+Chrome's content layer sets from a base::Feature of another name that is on by default, as far as the interfaces that
+the Runtime implements show them.
 """
 
 # Upstream: third_party/blink/renderer/build/scripts/make_runtime_features.py
@@ -22,6 +24,7 @@ screen: a Page starts with the value of a desktop without one, until the Machine
 # Upstream: third_party/blink/renderer/build/scripts/templates/runtime_enabled_features.cc.tmpl
 # Upstream: third_party/blink/renderer/build/scripts/templates/features_generated.cc.tmpl
 # Upstream: third_party/blink/renderer/core/exported/web_view_impl.cc
+# Upstream: content/child/runtime_features.cc
 
 import dataclasses
 from collections.abc import Mapping, Sequence
@@ -38,6 +41,13 @@ PLATFORM = "Win"
 # starts with: that of a desktop without a touch screen. WebViewImpl::ApplyWebPreferences() sets touch event feature
 # detection from whether the machine has a touch screen.
 MACHINE_DECIDED = {"TouchEventFeatureDetection": False}
+
+# The features that Chrome's content layer turns on when a renderer starts, from a base::Feature of another name that is
+# on by default, which runtime_enabled_features.json5 does not say: SetRuntimeFeaturesFromChromiumFeatures() copies
+# network::features::kLocalNetworkAccessChecks, on by default in services/network/public/cpp/features.cc, into
+# LocalNetworkAccessPermissionPolicy, which puts targetAddressSpace on Request. Each release's listing shows where a new
+# one appears on an interface that the Runtime implements.
+CONTENT_ENABLED = frozenset({"LocalNetworkAccessPermissionPolicy"})
 
 # The keys of a feature that the generator reads or knows to leave aside, with why.
 _KEYS = {
@@ -103,7 +113,7 @@ def read_features(entries: Sequence[Mapping[str, Any]]) -> list[Feature]:
         copies_default = entry.get("copied_from_base_feature_if", "enabled_or_overridden") == "enabled_or_overridden"
         if base_feature != "none" and copies_default and entry.get("base_feature_status", "") == "enabled":
             stable = True
-        stable = MACHINE_DECIDED.get(name, stable)
+        stable = MACHINE_DECIDED.get(name, stable or name in CONTENT_ENABLED)
         features.append(
             Feature(
                 name=name,

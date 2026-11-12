@@ -45,11 +45,19 @@ class _PageServer:
     def __init__(self) -> None:
         self.routes: dict[str, _Route] = {}
         self.requests: list[tuple[str, list[tuple[str, str]]]] = []
+        self.bodies: dict[str, list[bytes]] = {}
         self.requested = threading.Condition()
         server = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+
+            def do_POST(self) -> None:
+                size = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(size)
+                with server.requested:
+                    server.bodies.setdefault(self.path, []).append(body)
+                self.do_GET()
 
             def do_GET(self) -> None:
                 with server.requested:
@@ -83,6 +91,10 @@ class _PageServer:
 
     def script(self, path: str, source: str, status: int = 200) -> None:
         self.routes[path] = _Route(source.encode(), status, [("Content-Type", _JAVASCRIPT)])
+
+    def json(self, path: str, text: str, headers: list[tuple[str, str]] | None = None) -> str:
+        self.routes[path] = _Route(text.encode(), headers=[("Content-Type", "application/json"), *(headers or [])])
+        return self.url(path)
 
     def headers_of(self, path: str) -> list[list[tuple[str, str]]]:
         """Return the header lines of each request for `path`, in the order they came."""
@@ -432,3 +444,277 @@ def test_a_page_at_about_blank_has_no_cookies_to_read(session: mitto.Session) ->
             page.evaluate("try { document.cookie; 'read' } catch (e) { e.name + ': ' + e.message }")
             == "SecurityError: Failed to read the 'cookie' property from 'Document': Access is denied for this document."
         )
+
+
+def test_a_page_waits_on_timers_then_fetches_json_with_the_sessions_cookies_into_its_document(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # The Runtime skeleton's whole path: a script waits on two timers, fetches JSON from where its document came from,
+    # with the Session's cookies, and writes it into the document.
+    server.routes["/login"] = _Route(b"ok", headers=[("Content-Type", "text/plain"), ("Set-Cookie", "who=mitto")])
+    data_url = server.json("/data.json", '{"greeting": "hello", "items": [1, 2]}')
+    url = server.page(
+        "/",
+        "<p id=out>waiting</p><script>"
+        "window.done = new Promise(resolve => setTimeout(resolve, 20))"
+        ".then(() => new Promise(resolve => setTimeout(resolve, 10)))"
+        ".then(() => fetch('/data.json'))"
+        ".then(response => response.json())"
+        ".then(data => { document.getElementById('out').textContent = data.greeting + ' ' + data.items.join('+'); "
+        "return document.body.innerHTML; });"
+        "</script>",
+    )
+    session.get(server.url("/login"))
+
+    with _open_page(session, url) as page:
+        assert page.evaluate("done", timeout=_TIMEOUT_SECONDS) == '<p id="out">hello 1+2</p>' + page.evaluate(
+            "document.querySelector('script').outerHTML"
+        )
+    session.get(data_url, kind="fetch", initiator=url)
+
+    # What the server saw of the page's fetch is what the Session sends for a fetch of that page's, line for line.
+    fetches = server.headers_of("/data.json")
+    assert len(fetches) == 2
+    assert fetches[0] == fetches[1]
+    assert ("Cookie", "who=mitto") in fetches[0]
+    assert ("Sec-Fetch-Mode", "cors") in fetches[0]
+    assert ("Sec-Fetch-Dest", "empty") in fetches[0]
+    assert ("Referer", url) in fetches[0]
+
+
+def test_a_fetch_with_a_body_and_header_lines_sends_what_a_sessions_fetch_with_them_sends(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    server.routes["/echo"] = _Route(b"posted", headers=[("Content-Type", "text/plain")])
+    url = server.page("/", "<p>post</p>")
+
+    with _open_page(session, url) as page:
+        script = (
+            "fetch('/echo', {method: 'post', body: 'hi there', headers: {'X-Test': '1', 'Cookie': 'forged=1'}})"
+            ".then(response => response.text())"
+        )
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == "posted"
+    session.post(server.url("/echo"), data="hi there", kind="fetch", initiator=url, headers={"X-Test": "1"})
+
+    # The method written in upper case, the forbidden Cookie line dropped, and the body's Content-Type where the
+    # Persona puts it.
+    posts = server.headers_of("/echo")
+    assert len(posts) == 2
+    assert posts[0] == posts[1]
+    assert ("Content-Type", "text/plain;charset=UTF-8") in posts[0]
+    assert not any(name == "Cookie" for name, _ in posts[0])
+    assert server.bodies["/echo"] == [b"hi there", b"hi there"]
+
+
+def test_a_response_gives_its_status_headers_and_body_as_text_json_and_bytes(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    server.routes["/item"] = _Route(
+        b'\xef\xbb\xbf{"a": 1}',
+        201,
+        [("Content-Type", "application/json"), ("X-Extra", "yes"), ("Set-Cookie", "kept=1")],
+    )
+    url = server.page("/", "<p>response</p>")
+
+    with _open_page(session, url) as page:
+        script = (
+            "Promise.all([fetch('/item'), fetch('/item'), fetch('/item')]).then(async ([a, b, c]) => {"
+            "  const first = [a.status, a.ok, a.statusText, a.type, a.url === location.href.replace(/\\/$/, '') + '/item',"
+            "                 a.redirected, a.headers.get('x-extra'), a.headers.get('set-cookie'), a.bodyUsed];"
+            "  const json = await a.json();"
+            "  return [first, json, a.bodyUsed, await b.text(), Array.from(new Uint8Array(await c.arrayBuffer())).length];"
+            "})"
+        )
+        status_text = "Created"
+        assert page.evaluate("1") == 1
+        result = page.evaluate(script.replace("location.href", f"'{url}'"), timeout=_TIMEOUT_SECONDS)
+    # The byte order mark goes for text and JSON, and stays in the bytes; Set-Cookie never reaches a script.
+    assert result == [
+        [201, True, status_text, "basic", True, False, "yes", None, False],
+        {"a": 1},
+        True,
+        '{"a": 1}',
+        11,
+    ]
+    assert {cookie.name for cookie in session.cookies} == {"kept"}
+
+
+def test_a_body_that_is_read_twice_or_is_not_json_rejects_as_in_chrome(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    server.json("/bad", "not json")
+    url = server.page("/", "<p>bad</p>")
+
+    with _open_page(session, url) as page:
+        with pytest.raises(mitto.MittoError, match=r"^Uncaught \(in promise\) SyntaxError: "):
+            page.evaluate("fetch('/bad').then(response => response.json())", timeout=_TIMEOUT_SECONDS)
+        message = page.evaluate(
+            "fetch('/bad').then(async response => { await response.text();"
+            " try { await response.text(); } catch (error) { return String(error); } })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    assert message == "TypeError: Failed to execute 'text' on 'Response': body stream already read"
+
+
+def test_a_fetch_that_cannot_reach_its_server_rejects_with_failed_to_fetch(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    url = server.page("/", "<p>refused</p>")
+
+    with (
+        _open_page(session, url) as page,
+        pytest.raises(mitto.MittoError, match=r"^Uncaught \(in promise\) TypeError: Failed to fetch$"),
+    ):
+        page.evaluate(f"fetch('{_refused_url()}')", timeout=_TIMEOUT_SECONDS)
+
+
+def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # A Page gives its Session credit for a body only as a script reads it, so a large body that nothing reads stops
+    # the server, as a full Mojo data pipe does in Chrome.
+    size = 16 * 1024 * 1024
+    written = threading.Event()
+
+    def write(handler: http.server.BaseHTTPRequestHandler) -> None:
+        handler.wfile.write(b"x" * size)
+        written.set()
+
+    server.routes["/large"] = _Route(headers=[("Content-Type", "text/plain")], write=write)
+    url = server.page("/", "<p>large</p>")
+
+    with _open_page(session, url) as page:
+        page.evaluate("window.pending = fetch('/large'); null")
+        assert server.wait_for("/large")
+        assert not written.wait(1.0)
+        assert page.evaluate("pending.then(response => response.text()).then(text => text.length)", timeout=60) == size
+        assert written.wait(_TIMEOUT_SECONDS)
+
+
+def test_a_cross_origin_fetch_reaches_the_page_only_through_the_cors_check(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    with _PageServer() as other:
+        other.routes["/open"] = _Route(
+            b"open",
+            headers=[
+                ("Content-Type", "text/plain"),
+                ("Access-Control-Allow-Origin", "*"),
+                ("Access-Control-Expose-Headers", "X-Shown"),
+                ("X-Shown", "1"),
+                ("X-Hidden", "1"),
+            ],
+        )
+        other.routes["/closed"] = _Route(b"closed", headers=[("Content-Type", "text/plain")])
+        url = server.page("/", "<p>cors</p>")
+
+        with _open_page(session, url) as page:
+            opened = page.evaluate(
+                f"fetch('{other.url('/open')}').then(async response => "
+                "[response.type, await response.text(), response.headers.get('x-shown'), response.headers.get('x-hidden'),"
+                " response.headers.get('content-type')])",
+                timeout=_TIMEOUT_SECONDS,
+            )
+            closed = page.evaluate(
+                f"fetch('{other.url('/closed')}').then(() => 'read', error => String(error))", timeout=_TIMEOUT_SECONDS
+            )
+            # One that needs a CORS preflight is a Known Gap, and goes nowhere.
+            preflighted = page.evaluate(
+                f"fetch('{other.url('/open')}', {{headers: {{'X-Custom': '1'}}}}).then(() => 'read', error => String(error))",
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+        assert opened == ["cors", "open", "1", None, "text/plain"]
+        assert closed == "TypeError: Failed to fetch"
+        assert preflighted == "TypeError: Failed to fetch"
+        assert len(other.headers_of("/open")) == 1
+        # A cross-origin fetch carries the page's origin, and no cookies, since it asks for none.
+        origin = url.removesuffix("/")
+        assert ("Origin", origin) in other.headers_of("/open")[0]
+
+
+def test_request_response_and_headers_behave_as_in_chrome(session: mitto.Session, server: _PageServer) -> None:
+    url = server.page("/", "<p>objects</p>")
+
+    with _open_page(session, url) as page:
+        script = (
+            "(async () => {"
+            "  const headers = new Headers([['Accept', 'a'], ['accept', 'b']]);"
+            "  headers.append('X-One', ' padded ');"
+            "  const request = new Request('/r', {method: 'put', headers: {'Content-Type': 'text/x'}, body: 'b'});"
+            "  const made = new Response('made', {status: 202, statusText: 'Made', headers: {'X-M': '1'}});"
+            "  const json = Response.json({k: 'v'});"
+            "  const errors = [];"
+            "  for (const f of [() => headers.append('bad name', 'x'), () => new Request('/r', {method: 'CONNECT'}),"
+            "                   () => new Request('/r', {body: 'x'}), () => new Response('x', {status: 99}),"
+            "                   () => new Request('http://user:pass@example.com/')]) {"
+            "    try { f(); errors.push('none'); } catch (error) { errors.push(String(error)); }"
+            "  }"
+            "  return [headers.get('ACCEPT'), headers.get('x-one'), headers.has('x-two'), request.method,"
+            "          request.url.endsWith('/r'), request.headers.get('content-type'), made.status, made.statusText,"
+            "          made.type, await made.text(), json.headers.get('content-type'), await json.text(), errors];"
+            "})()"
+        )
+        result = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
+    assert result == [
+        "a, b",
+        "padded",
+        False,
+        "PUT",
+        True,
+        "text/x",
+        202,
+        "Made",
+        "default",
+        "made",
+        "application/json",
+        '{"k":"v"}',
+        [
+            "TypeError: Failed to execute 'append' on 'Headers': Invalid name",
+            "TypeError: Failed to construct 'Request': 'CONNECT' HTTP method is unsupported.",
+            "TypeError: Failed to construct 'Request': Request with GET/HEAD method cannot have body.",
+            "RangeError: Failed to construct 'Response': The status provided (99) is outside the range [200, 599].",
+            "TypeError: Failed to construct 'Request': Request cannot be constructed from a URL that includes "
+            "credentials: http://user:pass@example.com/",
+        ],
+    ]
+
+
+def test_the_microtasks_of_a_listener_that_the_page_calls_run_before_the_next_listener(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # The HTML Standard's clean up after running a callback: load comes from the Page, not from a script, so no script
+    # runs around its listeners, and each one's microtasks run once it returns.
+    url = server.page(
+        "/",
+        "<script>window.log = [];"
+        "addEventListener('load', () => { log.push('first'); Promise.resolve().then(() => log.push('its microtask')); });"
+        "addEventListener('load', () => log.push('second'));"
+        "</script>",
+    )
+
+    with _open_page(session, url) as page:
+        assert page.evaluate("log") == ["first", "its microtask", "second"]
+
+
+def test_a_fetch_that_a_redirect_takes_to_another_origin_passes_the_cors_check_there(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    with _PageServer() as other:
+        other.routes["/open"] = _Route(
+            b"open", headers=[("Content-Type", "text/plain"), ("Access-Control-Allow-Origin", "*")]
+        )
+        other.routes["/closed"] = _Route(b"closed", headers=[("Content-Type", "text/plain")])
+        server.routes["/to-open"] = _Route(status=302, headers=[("Location", other.url("/open"))])
+        server.routes["/to-closed"] = _Route(status=302, headers=[("Location", other.url("/closed"))])
+        url = server.page("/", "<p>redirects</p>")
+
+        with _open_page(session, url) as page:
+            result = page.evaluate(
+                "Promise.all(['/to-open', '/to-closed'].map(path => fetch(path).then("
+                "  async response => [response.type, response.redirected, await response.text()],"
+                "  error => String(error))))",
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+    assert result == [["cors", True, "open"], "TypeError: Failed to fetch"]

@@ -91,14 +91,18 @@ PageReporter::PageReporter(v8::Isolate* isolate, SendFrame send)
   CHECK(!g_reporter);
   g_reporter = this;
   isolate_->SetPromiseRejectCallback(&PageReporter::OnPromiseReject);
+  isolate_->AddMessageListenerWithErrorLevel(&PageReporter::OnMessage,
+                                             v8::Isolate::kMessageError);
 }
 
 PageReporter::~PageReporter() {
+  isolate_->RemoveMessageListeners(&PageReporter::OnMessage);
   isolate_->SetPromiseRejectCallback(nullptr);
   g_reporter = nullptr;
 }
 
 void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
+  context_.Reset(isolate_, context);
   inspector_->contextCreated(v8_inspector::V8ContextInfo(
       context, kContextGroupId, v8_inspector::StringView()));
 }
@@ -109,22 +113,42 @@ void PageReporter::ContextDestroyed(v8::Local<v8::Context> context) {
   rejections_.clear();
 }
 
-void PageReporter::ReportUnhandledRejections(v8::Local<v8::Context> context) {
-  const v8::HandleScope handle_scope(isolate_);
-  const v8::Context::Scope context_scope(context);
-  // Writing one out runs its String(), which may reject more, for next time.
+std::vector<PageReporter::Rejection> PageReporter::TakeUnhandledRejections() {
   std::vector<Rejection> rejections;
   rejections.swap(rejections_);
+  return rejections;
+}
+
+void PageReporter::ReportUnhandledRejections(
+    v8::Local<v8::Context> context,
+    std::vector<Rejection> rejections) {
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Context::Scope context_scope(context);
   for (Rejection& rejection : rejections) {
     // A handler added since then, also by the caller that evaluated it, takes
     // it.
     if (rejection.promise.Get(isolate_)->HasHandler()) {
       continue;
     }
+    // Writing it out runs its String(), which may reject more, for next time.
     send_.Run(EncodeUncaughtError(
         DescribeUncaught(isolate_, context, rejection.reason.Get(isolate_),
                          "Uncaught (in promise) ", kMaxPayloadSize)));
   }
+}
+
+void PageReporter::ReportException(v8::Local<v8::Value> exception) {
+  const v8::HandleScope handle_scope(isolate_);
+  v8::Local<v8::Context> context = isolate_->GetCurrentContext();
+  if (context.IsEmpty()) {
+    if (context_.IsEmpty()) {
+      return;
+    }
+    context = context_.Get(isolate_);
+  }
+  const v8::Context::Scope context_scope(context);
+  send_.Run(EncodeUncaughtError(DescribeUncaught(
+      isolate_, context, exception, "Uncaught ", kMaxPayloadSize)));
 }
 
 void PageReporter::consoleAPIMessage(int context_group_id,
@@ -139,6 +163,14 @@ void PageReporter::consoleAPIMessage(int context_group_id,
   base::TruncateUTF8ToByteSize(ToUtf8(message), kMaxConsoleTextSize,
                                &console.text);
   send_.Run(EncodeConsole(console));
+}
+
+// static
+void PageReporter::OnMessage(v8::Local<v8::Message> message,
+                             v8::Local<v8::Value> exception) {
+  if (g_reporter) {
+    g_reporter->ReportException(exception);
+  }
 }
 
 // static

@@ -13,6 +13,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
@@ -315,7 +316,9 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   // context of its own, as Blink makes a new window for a tab's first
   // navigation, whose about:blank has an opaque origin.
   url_ = GURL(response.url);
-  document_ = &runner_->CommitDocument(url_);
+  // The Session's base::TimeTicks, which the Page's clock shares.
+  document_ = &runner_->CommitDocument(
+      url_, base::TimeTicks() + base::Microseconds(response.navigation_start));
   document_->SetReadiness(Document::Readiness::kLoading);
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
 }

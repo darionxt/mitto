@@ -150,7 +150,8 @@ struct MittoSession final : public mitto::PageNetwork {
       mitto::RequestClient& client,
       GURL url,
       net::HttpRequestHeaders headers,
-      mitto::RequestOptions options) override;
+      mitto::RequestOptions options,
+      std::optional<std::vector<char>> body) override;
   net::CookieStore& cookie_store() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
@@ -317,14 +318,16 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   // A request of a Page's, which tells `client` how it goes until it finishes
   // or the client abandons it.
-  static std::unique_ptr<RequestJob> ForPage(MittoSession& session,
-                                             RequestClient& client,
-                                             GURL url,
-                                             net::HttpRequestHeaders headers,
-                                             RequestOptions options) {
-    return base::WrapUnique(new RequestJob(session, &client, nullptr, nullptr,
-                                           std::move(url), std::move(headers),
-                                           std::move(options), std::nullopt));
+  static std::unique_ptr<RequestJob> ForPage(
+      MittoSession& session,
+      RequestClient& client,
+      GURL url,
+      net::HttpRequestHeaders headers,
+      RequestOptions options,
+      std::optional<std::vector<char>> body) {
+    return base::WrapUnique(new RequestJob(
+        session, &client, nullptr, nullptr, std::move(url), std::move(headers),
+        std::move(options), std::move(body)));
   }
 
   RequestJob(const RequestJob&) = delete;
@@ -616,6 +619,8 @@ class RequestJob final : public net::URLRequest::Delegate,
         request_->response_info().connection_info);
     event.url = request_->url().spec();
     event.headers = HeaderLines(*request_->response_headers());
+    event.status_text = request_->response_headers()->GetStatusText();
+    event.redirected = request_->url_chain().size() > 1;
     client_->OnResponseEvent(std::move(event));
   }
 
@@ -760,9 +765,11 @@ base::WeakPtr<mitto::RunningRequest> MittoSession::StartPageRequest(
     mitto::RequestClient& client,
     GURL url,
     net::HttpRequestHeaders headers,
-    mitto::RequestOptions options) {
+    mitto::RequestOptions options,
+    std::optional<std::vector<char>> body) {
   std::unique_ptr<mitto::RequestJob> job = mitto::RequestJob::ForPage(
-      *this, client, std::move(url), std::move(headers), std::move(options));
+      *this, client, std::move(url), std::move(headers), std::move(options),
+      std::move(body));
   mitto::RequestJob* const started_job = job.get();
   const base::WeakPtr<mitto::RequestJob> weak_job = job->GetWeakPtr();
   jobs.insert(std::move(job));

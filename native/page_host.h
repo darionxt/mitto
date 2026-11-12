@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/containers/circular_deque.h"
 #include "base/memory/raw_ref.h"
@@ -70,6 +71,9 @@ struct PageOptions {
   std::optional<PageRequestTemplate> navigation;
   std::optional<PageRequestTemplate> script;
   std::optional<PageRequestTemplate> fetch;
+  // A fetch with a body, whose lines hold the Content-Type where the Persona
+  // puts it, which the page's script gives, or which goes if it gives none.
+  std::optional<PageRequestTemplate> fetch_with_body;
 };
 
 // Returns what mitto_page_open() reads from `json`, or nullopt if it holds an
@@ -92,7 +96,8 @@ class PageNetwork {
       RequestClient& client,
       GURL url,
       net::HttpRequestHeaders headers,
-      RequestOptions options) = 0;
+      RequestOptions options,
+      std::optional<std::vector<char>> body) = 0;
 
   virtual net::CookieStore& cookie_store() = 0;
 
@@ -245,16 +250,22 @@ class PageHost final : public PageChannel::Delegate {
   void OnCredit(const PageCredit& credit);
   void OnGetCookies(uint64_t question);
   void OnSetCookie(const std::string& line);
+  void OnCancel(uint64_t number);
 
-  // Starts a request numbered `number` from `request_template`, whose client
-  // is a Request that `requests_` holds.
+  // Starts a request numbered `number`, whose client is a Request that
+  // `requests_` holds. The response of a fetch from another origin has to pass
+  // the CORS check before the Page sees any of it.
   void StartRequest(uint64_t number,
                     GURL url,
-                    const PageRequestTemplate& request_template,
-                    std::optional<GURL> initiator);
+                    net::HttpRequestHeaders headers,
+                    RequestOptions options,
+                    std::optional<std::vector<char>> body,
+                    bool is_fetch);
 
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, const RequestEvent& event);
+  // Whether the response of a fetch from another origin may reach the Page.
+  bool PassesCorsCheck(const Request& request, const RequestEvent& event) const;
   void OnBodyRead(Request& request, size_t size);
   // This deletes `request`.
   void OnRequestFinished(Request& request, int net_error);

@@ -239,6 +239,20 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "Headers"
+    file = "headers"
+
+    # Iterating over it is a Known Gap until the Runtime has iterators.
+    implemented = [
+      "append",
+      "delete",
+      "get",
+      "getSetCookie",
+      "has",
+      "set",
+    ]
+  },
+  {
     name = "Node"
     file = "node"
     implemented = [
@@ -269,8 +283,42 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Performance"
+    file = "performance"
+    implemented = [
+      "now",
+      "timeOrigin",
+    ]
+  },
+  {
     name = "PopStateEvent"
     file = "pop_state_event"
+  },
+  {
+    name = "Request"
+    file = "request"
+    implemented = [
+      "method",
+      "url",
+      "headers",
+    ]
+  },
+  {
+    name = "Response"
+    file = "response"
+    implemented = [
+      "type",
+      "url",
+      "redirected",
+      "status",
+      "ok",
+      "statusText",
+      "headers",
+      "bodyUsed",
+      "arrayBuffer",
+      "json",
+      "text",
+    ]
   },
   {
     name = "Text"
@@ -287,6 +335,13 @@ mitto_bindings_interfaces = [
       "window",
       "self",
       "document",
+      "performance",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "queueMicrotask",
+      "fetch",
     ]
   },
   {

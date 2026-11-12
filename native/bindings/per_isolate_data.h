@@ -11,8 +11,10 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "mitto/bindings/runtime_feature_set.h"
@@ -42,6 +44,11 @@ class PerIsolateData {
                         std::string_view property_name) = nullptr;
   };
 
+  // Reports an exception that a page's callback threw and nothing caught, as a
+  // console reports it.
+  using ExceptionReporter =
+      base::RepeatingCallback<void(v8::Local<v8::Value> exception)>;
+
   // A dictionary being converted, and the member it reads.
   struct DictionaryContext {
     std::string dictionary_name;
@@ -61,8 +68,21 @@ class PerIsolateData {
 
   const RuntimeFeatureSet& features() const { return features_; }
 
-  // When the Page started, which DOMHighResTimeStamp counts from.
+  // What DOMHighResTimeStamp counts from: when the Page started, or the start
+  // of the navigation that loaded its document.
   base::TimeTicks time_origin() const { return time_origin_; }
+  void set_time_origin(base::TimeTicks time_origin) {
+    time_origin_ = time_origin;
+  }
+
+  // Where ReportException() sends what it reports. Without one, it goes to
+  // standard error.
+  const ExceptionReporter& exception_reporter() const {
+    return exception_reporter_;
+  }
+  void SetExceptionReporter(ExceptionReporter reporter) {
+    exception_reporter_ = std::move(reporter);
+  }
 
   // Whether the Page's context is a secure context, which decides whether it
   // gets the members that Web IDL's [SecureContext] puts behind one. A Page's
@@ -102,7 +122,8 @@ class PerIsolateData {
 
   const raw_ptr<v8::Isolate> isolate_;
   const RuntimeFeatureSet features_;
-  const base::TimeTicks time_origin_;
+  base::TimeTicks time_origin_;
+  ExceptionReporter exception_reporter_;
   bool secure_context_ = true;
   std::map<const WrapperTypeInfo*, v8::Eternal<v8::FunctionTemplate>>
       templates_;

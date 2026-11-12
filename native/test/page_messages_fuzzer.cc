@@ -5,6 +5,8 @@
 // The first byte of the input says how the channel cuts up the rest, which is
 // the frames.
 
+#include "mitto/page_messages.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -18,7 +20,7 @@
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/types/expected.h"
-#include "mitto/page_messages.h"
+#include "mitto/header_rules.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // SAFETY: libFuzzer says `data` holds `size` bytes.
@@ -75,7 +77,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kRequest:
           CHECK_NE(frame->request.number, mitto::kNavigationRequest);
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
-          CHECK_EQ(frame->request.url.size() + 9, payload.size());
+          CHECK(mitto::IsHttpToken(frame->request.method));
+          CHECK(!mitto::IsForbiddenMethod(frame->request.method));
+          CHECK_EQ(frame->request.url.size() + frame->request.method.size() +
+                       frame->request.headers.size() +
+                       frame->request.body.value_or("").size() + 22,
+                   payload.size());
           break;
         case mitto::PageMessage::kCredit:
           CHECK_GT(frame->credit.bytes, 0u);
@@ -89,6 +96,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           break;
         case mitto::PageMessage::kLoaded:
           CHECK(payload.empty());
+          break;
+        case mitto::PageMessage::kCancel:
+          CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:

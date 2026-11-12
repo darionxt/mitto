@@ -3,6 +3,8 @@
 //
 // Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h
 // Upstream: third_party/blink/renderer/bindings/core/v8/to_v8_traits.h
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/script_iterator.cc
 
 #ifndef MITTO_BINDINGS_V8_CONVERSIONS_H_
 #define MITTO_BINDINGS_V8_CONVERSIONS_H_
@@ -16,12 +18,16 @@
 #include <vector>
 
 #include "base/containers/span.h"
+#include "base/functional/function_ref.h"
+#include "base/memory/raw_ref.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-container.h"
+#include "v8/include/v8-exception.h"
 #include "v8/include/v8-function-callback.h"
+#include "v8/include/v8-function.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-object.h"
 #include "v8/include/v8-primitive.h"
@@ -80,8 +86,76 @@ bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
   return true;
 }
 
+// Converts `value` to a double or float, by ToNumber(). For one that is not
+// unrestricted, `restricted`, throws a TypeError naming `type_name` for a value
+// that is not finite. Returns false if anything threw.
+bool FromV8Double(v8::Isolate* isolate,
+                  v8::Local<v8::Value> value,
+                  bool restricted,
+                  std::string_view type_name,
+                  double* result);
+
+// Converts `value` to a ByteString: a DOMString whose code units are all at
+// most 0xFF, each of which becomes a byte. Throws a TypeError for one that is
+// not, and returns false if anything threw.
+bool FromV8ByteString(v8::Isolate* isolate,
+                      v8::Local<v8::Value> value,
+                      std::string* result);
+
+// Converts `value` to one of `values`, the strings of the enumeration named
+// `type_name`, as a DOMString. Throws a TypeError for another string, and
+// returns false if anything threw.
+bool FromV8Enumeration(v8::Isolate* isolate,
+                       v8::Local<v8::Value> value,
+                       base::span<const std::u16string_view> values,
+                       std::string_view type_name,
+                       std::u16string* result);
+
+// Web IDL's conversion of `value` to a sequence: gets its @@iterator and calls
+// `each` with each item, until `each` returns false. Throws a TypeError if
+// `value` is not an object or has no @@iterator, and returns false if
+// anything threw.
+bool IterateSequence(v8::Isolate* isolate,
+                     v8::Local<v8::Value> value,
+                     ExceptionState& exception_state,
+                     base::FunctionRef<bool(v8::Local<v8::Value>)> each);
+
+// The same, with the @@iterator method that a union's conversion got.
+bool IterateSequenceWithMethod(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> object,
+    v8::Local<v8::Function> method,
+    base::FunctionRef<bool(v8::Local<v8::Value>)> each);
+
+// Gets the @@iterator of `object` into `method`, which stays empty if it is
+// undefined or null. Returns false if that threw, or threw a TypeError because
+// it is not callable.
+bool GetIteratorMethod(v8::Isolate* isolate,
+                       v8::Local<v8::Object> object,
+                       v8::Local<v8::Function>* method);
+
+// Web IDL's conversion of `value` to a record: calls `each` with the key and
+// the value of each own enumerable property, in the order of
+// [[OwnPropertyKeys]], until `each` returns false. Throws a TypeError naming
+// `type_name` if `value` is not an object, and returns false if anything threw.
+bool IterateRecord(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> value,
+    ExceptionState& exception_state,
+    std::string_view type_name,
+    base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each);
+
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);
+
+// A ByteString, whose bytes are each a code unit.
+v8::Local<v8::String> ToV8ByteString(v8::Isolate* isolate,
+                                     std::string_view bytes);
+v8::Local<v8::Value> ToV8NullableByteString(
+    v8::Isolate* isolate,
+    const std::optional<std::string>& bytes);
+v8::Local<v8::Value> ToV8ByteStringArray(v8::Isolate* isolate,
+                                         const std::vector<std::string>& texts);
 // The string, or null.
 v8::Local<v8::Value> ToV8NullableString(
     v8::Isolate* isolate,
@@ -136,8 +210,27 @@ T* ReceiverOf(const v8::FunctionCallbackInfo<v8::Value>& info,
 }
 
 // Reports an exception that a page's callback threw and nothing caught, as
-// Chrome reports it to the console: on standard error.
+// Chrome reports it to the console: through the isolate's exception reporter,
+// or on standard error if it has none.
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception);
+
+// What a binding call that returns a promise does with an error thrown before
+// it returns: the call gives a promise rejected with it, as Web IDL says,
+// instead of throwing.
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.h
+class ExceptionToRejectPromiseScope {
+ public:
+  explicit ExceptionToRejectPromiseScope(
+      const v8::FunctionCallbackInfo<v8::Value>& info);
+  ExceptionToRejectPromiseScope(const ExceptionToRejectPromiseScope&) = delete;
+  ExceptionToRejectPromiseScope& operator=(
+      const ExceptionToRejectPromiseScope&) = delete;
+  ~ExceptionToRejectPromiseScope();
+
+ private:
+  const raw_ref<const v8::FunctionCallbackInfo<v8::Value>> info_;
+  v8::TryCatch try_catch_;
+};
 
 }  // namespace mitto::bindings
 

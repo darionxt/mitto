@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -23,7 +24,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 3;
+inline constexpr uint32_t kPageProtocolVersion = 4;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -121,6 +122,10 @@ enum class PageMessage : uint32_t {
   // To the Page: the number of a kGetCookies, as a 64-bit number, and the
   // document's cookies as a Cookie header's line holds them.
   kCookies = 16,
+  // To the Session: the number of a request, as a 64-bit number, which the
+  // Page no longer wants. Its end follows, with net::ERR_ABORTED unless it
+  // has ended already.
+  kCancel = 17,
 };
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
@@ -179,6 +184,10 @@ struct PageEvaluated {
 
 // A request that a Page asks its Session for. Its Initiator is the Page's
 // document, as the Session loaded it, so the Page does not say it.
+//
+// Its payload is the number, as a 64-bit number, the Kind, as a byte, the URL,
+// the method and the header lines, each after its size as a 32-bit number,
+// and then a byte that is 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -189,6 +198,14 @@ struct PageRequest {
   PageRequestKind kind = PageRequestKind::kScript;
   // In UTF-8, as the Page resolved it. The Session checks that it is a URL.
   std::string url;
+  // A token that is not a forbidden method: GET, and no lines and no body, for
+  // a script.
+  std::string method = "GET";
+  // What the page's script set, in its order, each "name: value" and a line
+  // feed, with a token for a name and no forbidden request header among them.
+  std::string headers;
+  // None with GET or HEAD.
+  std::optional<std::string> body;
 };
 
 // How much more of a request's body a Page has taken.
@@ -207,8 +224,16 @@ struct PageResponseStarted {
 
   uint64_t number = 0;
   int32_t status = 0;
+  // Whether the request followed a redirect to get here.
+  bool redirected = false;
+  // For the navigation, when it started, as base::TimeTicks holds it, which
+  // every process of the machine shares: what the document's
+  // performance.timeOrigin counts from. 0 for the Page's own requests.
+  int64_t navigation_start = 0;
   // The URL of the response, in UTF-8.
   std::string url;
+  // The status line's reason phrase, in bytes.
+  std::string status_text;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;
@@ -258,6 +283,8 @@ struct FrameFromPage {
   uint64_t cookies_question = 0;
   // kSetCookie.
   std::string cookie_line;
+  // kCancel.
+  uint64_t cancelled = 0;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -303,8 +330,9 @@ std::string EncodeEvaluated(const PageEvaluated& evaluated);
 std::string EncodeConsole(const PageConsoleMessage& message);
 // `text` is at most kMaxPayloadSize bytes.
 std::string EncodeUncaughtError(std::string_view text);
-// `request.url` is at most kMaxPayloadSize - 9 bytes.
+// The request fits in a frame.
 std::string EncodeRequest(const PageRequest& request);
+std::string EncodeCancel(uint64_t number);
 std::string EncodeCredit(const PageCredit& credit);
 std::string EncodeGetCookies(uint64_t question);
 // `line` is at most kMaxPayloadSize bytes.
