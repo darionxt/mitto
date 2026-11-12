@@ -496,3 +496,44 @@ def test_the_probe_reaches_in_a_page_every_object_it_reaches_in_chrome(session: 
 
     assert (_paths(baseline) - _paths(record), _paths(record) - _paths(baseline)) == ({"crypto.subtle"}, set())
 
+
+def test_notification_and_performance_observer_give_their_static_values(program: Path) -> None:
+    script = """(() => {
+        let message = "";
+        try {
+            new PerformanceObserver();
+        } catch (error) {
+            message = error.message;
+        }
+        return [Notification.maxActions, PerformanceObserver.supportedEntryTypes,
+            PerformanceObserver.supportedEntryTypes === PerformanceObserver.supportedEntryTypes,
+            Object.isFrozen(PerformanceObserver.supportedEntryTypes), message,
+            Object.prototype.toString.call(new PerformanceObserver(() => {})),
+            new Notification("x") instanceof EventTarget];
+    })()"""
+
+    assert _evaluate(program, script) == [
+        2,
+        [
+            "element",
+            "event",
+            "first-input",
+            "interaction-contentful-paint",
+            "largest-contentful-paint",
+            "layout-shift",
+            "long-animation-frame",
+            "longtask",
+            "mark",
+            "measure",
+            "navigation",
+            "paint",
+            "resource",
+            "soft-navigation",
+            "visibility-state",
+        ],
+        True,
+        True,
+        "Failed to construct 'PerformanceObserver': 1 argument required, but only 0 present.",
+        "[object PerformanceObserver]",
+        True,
+    ]

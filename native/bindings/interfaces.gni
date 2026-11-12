@@ -556,6 +556,12 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Notification"
+    file = "notification"
+    made_by_known_gaps = true
+    implemented = [ "maxActions" ]
+  },
+  {
     name = "Performance"
     file = "performance"
     implemented = [
@@ -563,6 +569,12 @@ mitto_bindings_interfaces = [
       "timeOrigin",
       "memory",
     ]
+  },
+  {
+    name = "PerformanceObserver"
+    file = "performance_observer"
+    made_by_known_gaps = true
+    implemented = [ "supportedEntryTypes" ]
   },
   {
     name = "Plugin"
