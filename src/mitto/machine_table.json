@@ -162,7 +162,7 @@
       ]
     },
     "time_zone": {
-      "source": "The owner of mitto, where no public source has weights: one time zone for each locale",
+      "source": "The owner of mitto: one time zone for each locale, the largest of its country",
       "rows": [
         {"locale": "en-US", "time_zone": "America/New_York", "weight": 1000000}
       ]

@@ -116,8 +116,10 @@ _REDUCED_TRANSPARENCY = {"no-preference": 100}
 _CONTRAST_THEMES = {"none": 100}
 _INVERTED_COLORS = {"none": 100}
 _TOUCH_POINTS = {0: 100}
-# The time zone of each locale that a Persona has.
+# The time zone of each locale that a Persona has: one, so that Sessions that leave through one address claim one zone, as
+# the computers of a household or an office do, and the largest zone of the United States, where that is least seen.
 _TIME_ZONES = {"en-US": {"America/New_York": 100}}
+_OWNER_TIME_ZONES = "The owner of mitto: one time zone for each locale, the largest of its country"
 
 # Chrome on Windows gives a page the number of logical processors, and Firefox counts physical cores. The owner's rule: a
 # core runs two threads, but for the counts that Intel's processors with cores of two kinds mostly give, whose efficient
@@ -228,7 +230,7 @@ def table_data(statistics: Statistics = STATISTICS) -> dict[str, Any]:
             "reduced_transparency": {"source": _OWNER, "rows": _rows("reduced_transparency", _REDUCED_TRANSPARENCY)},
             "contrast_theme": {"source": _OWNER, "rows": _rows("contrast_theme", _CONTRAST_THEMES)},
             "inverted_colors": {"source": _OWNER, "rows": _rows("inverted_colors", _INVERTED_COLORS)},
-            "time_zone": {"source": f"{_OWNER}: one time zone for each locale", "rows": _time_zone_rows()},
+            "time_zone": {"source": _OWNER_TIME_ZONES, "rows": _time_zone_rows()},
             "processors": {
                 "source": (
                     f"{statistics.processor_cores.credit}, as logical processors by the owner's rule: two for each"

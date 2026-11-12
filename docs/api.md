@@ -71,7 +71,7 @@ A Session whose [`cookie_file`](#cookie_file) holds a Machine claims that one in
 
 #### `accept_language=`
 
-The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`, and one that is neither text nor `None` a `TypeError`.
+The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. It leaves Chrome's own language as it is, which a page's `Intl` falls back to: the Persona's `en-US`. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`, and one that is neither text nor `None` a `TypeError`.
 
 ```python
 with mitto.Session(accept_language="de-DE,de;q=0.9") as session:
@@ -299,7 +299,7 @@ Sizes and places on the desktop are in device-independent pixels, which are the 
 | `contrast_theme` | `ContrastTheme` | `"none"`, or Windows' contrast theme: `"aquatic"`, `"desert"`, `"dusk"` or `"night-sky"` on Windows 11, and `"high-contrast-1"`, `"high-contrast-2"`, `"high-contrast-black"` or `"high-contrast-white"` on Windows 10. Each turns on forced colours, and gives the colour scheme that [persona.md lists](persona.md#contrast-themes-and-colour-filters) |
 | `inverted_colors` | `InvertedColors` | `"none"`, or `"inverted"` with Windows' colour filter that inverts colours |
 | `platform_version` | `str` | What `sec-ch-ua-platform-version` says: the version of Windows' UniversalApiContract, such as `"19.0.0"` for Windows 11 from 24H2 and `"10.0.0"` for Windows 10 from 2004. [Which Windows](persona.md#which-windows) has each |
-| `time_zone` | `str` | The time zone, by the name that Chrome on Windows gives a page, such as `"America/New_York"`: the canonical name of a zone that Windows' time zone and region give, so `"Asia/Calcutta"` and not `"Asia/Kolkata"`, and `"UTC"` for UTC. [The time zones](persona.md#the-time-zone) says which |
+| `time_zone` | `str` | The time zone, by the name that Chrome on Windows gives a page, such as `"America/New_York"`: the canonical name of a zone that Windows' time zone and region give, so `"Asia/Calcutta"` and not `"Asia/Kolkata"`, and `"UTC"` for UTC. [The time zone](persona.md#the-time-zone) says which, and why a draw gives `"America/New_York"` |
 | `processors` | `int` | The number of logical processors, from 1 to 64. `navigator.hardwareConcurrency` says it |
 | `touch_points` | `int` | How many touch points the touch screen takes, from 1 to 256, or 0 for none. `navigator.maxTouchPoints` says it |
 | `seed` | `int \| None` | What `draw()` drew it from, or `None` for one that a caller made |
@@ -341,7 +341,7 @@ Machine.draw(
 
 Return a Machine drawn from [the table](persona.md#the-table) that ships with mitto, with each value given here and the rest drawn to fit them.
 
-The display, its scale, the work area, the window and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the display too, since its taskbar takes some of the height. A display that the table does not have can be given by its size, scale and viewport alone, as in mitto 0.2: it then gets the work area of a taskbar at its bottom, and a maximised window if the viewport fills that work area less Chrome's bars, or else a window around the viewport where Chrome puts its first. A contrast theme draws the Windows that has it and the colour scheme it gives. Each other value is drawn on its own. The time zone is drawn for the Persona's locale, which is `en-US` for every Persona.
+The display, its scale, the work area, the window and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the display too, since its taskbar takes some of the height. A display that the table does not have can be given by its size, scale and viewport alone, as in mitto 0.2: it then gets the work area of a taskbar at its bottom, and a maximised window if the viewport fills that work area less Chrome's bars, or else a window around the viewport where Chrome puts its first. A contrast theme draws the Windows that has it and the colour scheme it gives. Each other value is drawn on its own. The time zone is drawn for the Persona's locale, which is `en-US` for every Persona, and that gives `"America/New_York"`, so a Session whose requests leave through a proxy gives the zone of the proxy's exit as `time_zone`, since a server can compare the two.
 
 The same seed and the same table give the same Machine on every Host, and a value given in one group leaves what the seed draws for the others as it was, unless they have to fit together. Without a seed, one is drawn, which the Machine keeps. Another version of mitto can have another table, which draws another Machine from the same seed.
 
