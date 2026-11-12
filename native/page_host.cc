@@ -43,8 +43,7 @@ namespace mitto {
 namespace {
 
 constexpr std::string_view kVersionKey = "version";
-constexpr std::string_view kTimeZoneKey = "time_zone";
-constexpr std::string_view kLocaleKey = "locale";
+constexpr std::string_view kStartKey = "start";
 constexpr std::string_view kUrlKey = "url";
 constexpr std::string_view kRequestsKey = "requests";
 constexpr std::string_view kNavigationKey = "navigation";
@@ -53,14 +52,6 @@ constexpr std::string_view kFetchKey = "fetch";
 constexpr std::string_view kFetchWithBodyKey = "fetch_with_body";
 constexpr std::string_view kHeadersKey = "headers";
 constexpr std::string_view kOptionsKey = "options";
-
-// What a Page reports when the caller names nothing.
-constexpr std::string_view kDefaultTimeZone = "UTC";
-constexpr std::string_view kDefaultLocale = "en-US";
-
-// Names of time zones and tags of locales are short and ASCII. Which ones exist
-// only the Page knows, because only it holds ICU's whole data.
-constexpr size_t kMaxNameSize = 64;
 
 // The levels of the messages and of the C API are the same numbers.
 static_assert(static_cast<int>(ConsoleLevel::kDebug) ==
@@ -75,14 +66,6 @@ static_assert(static_cast<int>(ConsoleLevel::kError) ==
 bool IsReport(const PageEvent& event) {
   return event.type == MITTO_PAGE_EVENT_CONSOLE ||
          event.type == MITTO_PAGE_EVENT_UNCAUGHT_ERROR;
-}
-
-bool IsName(std::string_view name) {
-  return !name.empty() && name.size() <= kMaxNameSize &&
-         std::ranges::all_of(name, [](char c) {
-           return base::IsAsciiAlphaNumeric(c) || c == '_' || c == '-' ||
-                  c == '+' || c == '/';
-         });
 }
 
 // Returns the bytes that `text` names, one for each character, as the C API's
@@ -219,8 +202,7 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json) {
     return std::nullopt;
   }
   PageOptions options;
-  options.start.time_zone = kDefaultTimeZone;
-  options.start.locale = kDefaultLocale;
+  bool has_start = false;
   for (const auto [key, value] : *dict) {
     if (key == kVersionKey) {
       continue;
@@ -240,16 +222,20 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json) {
       }
       continue;
     }
-    std::string* const name = key == kTimeZoneKey ? &options.start.time_zone
-                              : key == kLocaleKey ? &options.start.locale
-                                                  : nullptr;
-    if (!name || !value.is_string() || !IsName(value.GetString())) {
+    if (key != kStartKey || !value.is_dict()) {
       return std::nullopt;
     }
-    *name = value.GetString();
+    // The Page checks the time zone and the locale, as only it holds ICU's
+    // whole data.
+    base::expected<PageStart, std::string> start = ReadStart(value.GetDict());
+    if (!start.has_value()) {
+      return std::nullopt;
+    }
+    options.start = *std::move(start);
+    has_start = true;
   }
   // A navigation sends what the Persona's says.
-  if (options.url && !options.navigation) {
+  if (!has_start || (options.url && !options.navigation)) {
     return std::nullopt;
   }
   return options;

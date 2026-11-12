@@ -14,7 +14,7 @@ from mitto._arguments import require_path, require_type
 from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
 from mitto._cookies import Cookies
 from mitto._machine import Machine, draw_noise_salts
-from mitto._native import MEMORY_CACHE, NativePage, NetworkQuality, PageRequestTemplate, PrivateSettings
+from mitto._native import MEMORY_CACHE, NativePage, NetworkQuality, PageRequestTemplate, PageStart, PrivateSettings
 from mitto._persona import RequestKind, load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
 from mitto._timeout import Timeout, to_timeout
@@ -109,20 +109,43 @@ class SessionState:
     def open_page(self, url: str) -> NativePage:
         """Open a Page that navigates to `url` through this Session, or nowhere for ABOUT_BLANK.
 
-        Its requests send what this Session's Persona says each Request Kind sends, as a request of that kind does, and run
-        no timers, as Chrome's have none, whatever this Session's default timeout says.
+        It starts with this Session's Machine, its time zone, processors, window and the rest of what a page reads, and the
+        locale of its Persona. Its requests send what this Session's Persona says each Request Kind sends, as a request of
+        that kind does, and run no timers, as Chrome's have none, whatever this Session's default timeout says.
 
         Raises:
             ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, or the native Session has closed.
             NativeLibraryError: If this build of mitto has no Runtime.
             OSError: If the Page's process cannot start.
         """
+        start = self._page_start()
         if url == ABOUT_BLANK:
-            return self.native.open_page()
+            return self.native.open_page(start)
         requests = {kind.value: self._page_request_template(kind) for kind in _PAGE_REQUEST_KINDS}
         # A fetch() with a body sends the lines that one has, with its Content-Type where the Persona puts it.
         requests[_FETCH_WITH_BODY] = self._page_request_template(RequestKind.FETCH, with_body=True)
-        return self.native.open_page(url=url, requests=requests)
+        return self.native.open_page(start, url=url, requests=requests)
+
+    def _page_start(self) -> PageStart:
+        """Return what a Page starts with: what this Session's Machine and Persona say of what a page reads."""
+        machine = self.machine
+        return PageStart(
+            time_zone=machine.time_zone,
+            locale=self._persona.locale,
+            processors=machine.processors,
+            touch_points=machine.touch_points,
+            work_area_x=machine.work_area_x,
+            work_area_y=machine.work_area_y,
+            work_area_width=machine.work_area_width,
+            work_area_height=machine.work_area_height,
+            window_state=machine.window_state,
+            window_x=machine.window_x,
+            window_y=machine.window_y,
+            window_width=machine.window_width,
+            window_height=machine.window_height,
+            contrast_theme=machine.contrast_theme,
+            inverted_colors=machine.inverted_colors,
+        )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:
         """Return what a Page's request of `kind` sends, as this Session's Persona says."""

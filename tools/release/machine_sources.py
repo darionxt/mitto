@@ -2,9 +2,13 @@
 
 StatCounter has a month on the second of the next and revises it for 45 days, so a refresh takes its newest month that
 it no longer revises, through the CSV link that its pages use for their download. The Firefox Public Data Report has a
-new week each week, at stable JSON addresses, so a refresh takes its newest week. See docs/releasing.md.
+new week each week, at stable JSON addresses, so a refresh takes its newest week. The time zones that Chrome on Windows
+can give come from the ICU that the Engine Release builds with, through Chromium's Gitiles servers. See
+docs/releasing.md.
 """
 
+import base64
+import binascii
 import csv
 import io
 import re
@@ -15,6 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from tools.release.gitiles import CHROMIUM_URL
 from tools.release.machines import (
     STATISTICS_PATH,
     TABLE_PATH,
@@ -25,12 +30,26 @@ from tools.release.machines import (
     read_statistics,
     table_data,
 )
+from tools.release.time_zones import TIME_ZONES_PATH, TimeZonesError, dumps_time_zones, windows_time_zones
 from tools.release.web import Fetch, WebError, fetch_from_the_network, json_answer
 
-__all__ = ["FIREFOX_DATA_URL", "STATCOUNTER_CHART_URL", "fetch_statistics", "refresh_table", "statcounter_month"]
+__all__ = [
+    "FIREFOX_DATA_URL",
+    "ICU_URL",
+    "STATCOUNTER_CHART_URL",
+    "fetch_statistics",
+    "fetch_time_zones",
+    "refresh_table",
+    "statcounter_month",
+]
 
 STATCOUNTER_CHART_URL = "https://gs.statcounter.com/chart.php"
 FIREFOX_DATA_URL = "https://data.firefox.com/datasets/desktop/hardware/default"
+ICU_URL = "https://chromium.googlesource.com/chromium/deps/icu"
+
+# Where Chromium's DEPS pins the ICU that it builds with, and where ICU keeps its table of Windows' time zones.
+_ICU_PIN = re.compile(r"/chromium/deps/icu\.git' \+ '@' \+ '([0-9a-f]{40})'")
+_WINDOWS_ZONES = "source/data/misc/windowsZones.txt"
 
 _REPOSITORY = Path(__file__).parents[2]
 
@@ -114,19 +133,46 @@ def fetch_statistics(today: date, fetch: Fetch = fetch_from_the_network) -> Stat
         css_displays=_statcounter(_CSS_DISPLAYS, month, fetch),
         pixel_displays=_firefox("resolution", "Display Resolution", fetch),
         memory=_firefox("ram", "Memory", fetch),
+        processor_cores=_firefox("cpuCores", "CPU Cores", fetch),
     )
+
+
+def fetch_time_zones(build: str, fetch: Fetch = fetch_from_the_network) -> str:
+    """Return the list of time zones that Chrome on Windows can give, as time_zones.json holds it, from the windowsZones
+    table of the ICU that a build of Chromium pins in its DEPS.
+
+    Raises:
+        WebError: A server did not answer, or its answer is not what this reads.
+    """
+    deps_url = f"{CHROMIUM_URL}/+/{build}/DEPS?format=TEXT"
+    pin = _ICU_PIN.search(_gitiles_file(fetch, deps_url))
+    if pin is None:
+        raise WebError(f"{deps_url} pins no ICU")
+    table_url = f"{ICU_URL}/+/{pin[1]}/{_WINDOWS_ZONES}?format=TEXT"
+    try:
+        zones = windows_time_zones(_gitiles_file(fetch, table_url))
+    except TimeZonesError as error:
+        raise WebError(f"{table_url} did not give ICU's table of Windows' time zones: {error}") from error
+    source = (
+        f"The first time zone of each region in the windowsZones table of ICU, from Unicode's CLDR, at {pin[1][:12]},"
+        f" which Chromium {build} builds with: https://github.com/unicode-org/cldr, under the Unicode License v3"
+    )
+    return dumps_time_zones(source, zones)
 
 
 def refresh_table(
     today: date,
+    build: str,
     fetch: Fetch = fetch_from_the_network,
     statistics_path: Path = STATISTICS_PATH,
     table_path: Path = TABLE_PATH,
+    time_zones_path: Path = TIME_ZONES_PATH,
 ) -> str:
-    """Fetch the statistics again, write them and the table made from them, and return what changed.
+    """Fetch the statistics again, write them and the table made from them, write the time zones of the Engine Release's
+    build of Chromium, and return what changed.
 
-    Neither file changes unless every source answered and the table can be made from what they said. The owner's weights
-    are not fetched, so they stay as the table had them.
+    No file changes unless every source answered and the table can be made from what they said. The owner's weights are
+    not fetched, so they stay as the table had them.
 
     Raises:
         WebError: A source did not answer, or its answer is not what this reads.
@@ -134,10 +180,13 @@ def refresh_table(
     """
     before = read_statistics(statistics_path)
     after = fetch_statistics(today, fetch)
+    time_zones = fetch_time_zones(build, fetch)
     table = dumps_table(table_data(after))
     table_changed = table_path.read_text(encoding="utf-8") != table
+    time_zones_changed = time_zones_path.read_text(encoding="utf-8") != time_zones
     statistics_path.write_text(dumps_statistics(after), encoding="utf-8", newline="\n")
     table_path.write_text(table, encoding="utf-8", newline="\n")
+    time_zones_path.write_text(time_zones, encoding="utf-8", newline="\n")
 
     lines = ["What each source says now:"]
     for old, new in zip(_sources(before), _sources(after), strict=True):
@@ -156,11 +205,29 @@ def refresh_table(
         lines.append(f"Wrote {_shown(statistics_path)}. The table made from it is the same as before.")
     else:
         lines.append("No source has anything new, so the table stays as it is.")
+    if time_zones_changed:
+        lines.append(f"Wrote {_shown(time_zones_path)}, the time zones of Chromium {build}. Read its diff too.")
+    else:
+        lines.append(f"The time zones of Chromium {build} are those of {_shown(time_zones_path)} already.")
     return "\n".join(lines)
 
 
 def _sources(statistics: Statistics) -> tuple[Source, ...]:
-    return (statistics.windows_versions, statistics.css_displays, statistics.pixel_displays, statistics.memory)
+    return (
+        statistics.windows_versions,
+        statistics.css_displays,
+        statistics.pixel_displays,
+        statistics.memory,
+        statistics.processor_cores,
+    )
+
+
+def _gitiles_file(fetch: Fetch, url: str) -> str:
+    """Return the text of a file that a Gitiles server gives in base64, as it does with format=TEXT."""
+    try:
+        return base64.b64decode(fetch(url), validate=False).decode("utf-8-sig")
+    except (binascii.Error, UnicodeDecodeError) as error:
+        raise WebError(f"{url} did not give a file: {error}") from error
 
 
 def _shown(path: Path) -> str:

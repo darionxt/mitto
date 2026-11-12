@@ -1136,7 +1136,32 @@ def test_request_start_refuses_a_null_header_name(
     assert not handle
 
 
-NO_PAGE_OPTIONS = f'{{"version": {_native.PAGE_OPTIONS_VERSION}}}'.encode()
+# What a Page starts with, as a Session's Machine and Persona say it.
+PAGE_START: dict[str, Any] = {
+    "time_zone": "America/New_York",
+    "locale": "en-US",
+    "processors": 8,
+    "touch_points": 0,
+    "work_area_x": 0,
+    "work_area_y": 0,
+    "work_area_width": 1920,
+    "work_area_height": 1032,
+    "window_state": "maximised",
+    "window_x": 0,
+    "window_y": 0,
+    "window_width": 1920,
+    "window_height": 1032,
+    "contrast_theme": "none",
+    "inverted_colors": "none",
+}
+
+
+def blank_page_options(**start: Any) -> bytes:
+    """Return the options of a Page that stays at about:blank, with each of `start` in place in what it starts with."""
+    return json.dumps({"version": _native.PAGE_OPTIONS_VERSION, "start": {**PAGE_START, **start}}).encode()
+
+
+BLANK_PAGE_OPTIONS = blank_page_options()
 ERR_MSG_TOO_BIG = -142
 # The longest script that one message to a Page carries.
 MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
@@ -1197,7 +1222,7 @@ def page_program(native_library: ctypes.CDLL) -> None:
 @pytest.fixture
 def page_handle(native_library: ctypes.CDLL, session_handle: Any, page_program: None) -> Iterator[Any]:
     """Open a Page on a real Session, or skip if no Page program lies beside the library."""
-    error, handle = open_page(native_library, session_handle, NO_PAGE_OPTIONS)
+    error, handle = open_page(native_library, session_handle, BLANK_PAGE_OPTIONS)
     assert error == 0
     yield handle
     native_library.mitto_page_close(handle)
@@ -1214,6 +1239,7 @@ def _page_options(**changes: Any) -> bytes:
     }
     options: dict[str, Any] = {
         "version": _native.PAGE_OPTIONS_VERSION,
+        "start": PAGE_START,
         "url": "http://127.0.0.1:1/",
         "requests": {"navigation": template, "script": template},
     }
@@ -1240,9 +1266,11 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
     [
         pytest.param(b"", id="empty"),
         pytest.param(b"{}", id="no-version"),
-        pytest.param(b'{"version": 2}', id="another-version"),
-        pytest.param(b'{"version": 1, "referrer": "https://example.com/"}', id="unknown-key"),
-        pytest.param(b'{"version": 1, "url": "https://example.com/"}', id="url-without-a-navigation"),
+        pytest.param(_page_options(version=1), id="another-version"),
+        pytest.param(_page_options(referrer="https://example.com/"), id="unknown-key"),
+        pytest.param(_page_options(requests=None), id="url-without-a-navigation"),
+        pytest.param(_page_options(start=None), id="no-start"),
+        pytest.param(_page_options(start=[]), id="start-not-an-object"),
         pytest.param(_page_options(url=7), id="url-not-a-string"),
         pytest.param(_page_options(requests=[]), id="requests-not-an-object"),
         pytest.param(_page_options(requests={"image": _template()}), id="unknown-kind"),
@@ -1261,11 +1289,39 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
             id="timer",
         ),
         pytest.param(_page_options(requests={"navigation": {"headers": []}}), id="no-options"),
-        pytest.param(b'{"version": 1, "time_zone": 9}', id="time-zone-not-a-string"),
-        pytest.param(b'{"version": 1, "time_zone": ""}', id="empty-time-zone"),
-        pytest.param(b'{"version": 1, "time_zone": "Europe/Paris\\u0000"}', id="time-zone-with-nul"),
-        pytest.param(b'{"version": 1, "locale": "de DE"}', id="locale-with-space"),
-        pytest.param(('{"version": 1, "locale": "' + "a" * 65 + '"}').encode(), id="locale-too-long"),
+        pytest.param(_page_options(time_zone="UTC"), id="time-zone-outside-the-start"),
+        pytest.param(blank_page_options(time_zone=9), id="time-zone-not-a-string"),
+        pytest.param(blank_page_options(time_zone=""), id="empty-time-zone"),
+        pytest.param(blank_page_options(time_zone="Europe/Paris\u0000"), id="time-zone-with-nul"),
+        pytest.param(blank_page_options(locale="de DE"), id="locale-with-space"),
+        pytest.param(blank_page_options(locale="a" * 65), id="locale-too-long"),
+        pytest.param(blank_page_options(screen_width=1920), id="unknown-key-in-the-start"),
+        pytest.param(
+            json.dumps({"version": _native.PAGE_OPTIONS_VERSION, "start": {**PAGE_START, "processors": None}}).encode(),
+            id="processors-null",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "version": _native.PAGE_OPTIONS_VERSION,
+                    "start": {name: value for name, value in PAGE_START.items() if name != "touch_points"},
+                }
+            ).encode(),
+            id="no-touch-points",
+        ),
+        pytest.param(blank_page_options(processors=0), id="no-processors"),
+        pytest.param(blank_page_options(processors=65), id="too-many-processors"),
+        pytest.param(blank_page_options(processors=8.5), id="processors-not-whole"),
+        pytest.param(blank_page_options(processors="8"), id="processors-a-string"),
+        pytest.param(blank_page_options(touch_points=-1), id="touch-points-below-0"),
+        pytest.param(blank_page_options(touch_points=257), id="too-many-touch-points"),
+        pytest.param(blank_page_options(work_area_x=-1), id="work-area-left-of-the-display"),
+        pytest.param(blank_page_options(work_area_height=0), id="work-area-of-no-height"),
+        pytest.param(blank_page_options(window_width=0), id="window-of-no-width"),
+        pytest.param(blank_page_options(window_x=2**31), id="window-place-beyond-32-bits"),
+        pytest.param(blank_page_options(window_state="first"), id="unknown-window-state"),
+        pytest.param(blank_page_options(contrast_theme="high-contrast"), id="unknown-contrast-theme"),
+        pytest.param(blank_page_options(inverted_colors="reduce"), id="unknown-inverted-colors"),
     ],
 )
 def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_handle: Any, options: bytes) -> None:
@@ -1273,6 +1329,29 @@ def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_
 
     assert error == ERR_INVALID_ARGUMENT
     assert not handle
+
+
+@pytest.mark.parametrize(
+    "start",
+    [
+        {},
+        {"window_state": "normal", "window_x": -8, "window_y": 10, "window_width": 945, "window_height": 1012},
+        {"work_area_x": 40, "work_area_width": 1880},
+        {"processors": 64, "touch_points": 256},
+        {"processors": 1, "touch_points": 10},
+        {"contrast_theme": "night-sky", "inverted_colors": "inverted"},
+        {"contrast_theme": "high-contrast-white"},
+        {"time_zone": "Etc/GMT+12", "locale": "zh-Hans-CN"},
+    ],
+    ids=str,
+)
+def test_page_open_takes_what_a_page_starts_with(
+    native_library: ctypes.CDLL, session_handle: Any, page_program: None, start: dict[str, Any]
+) -> None:
+    error, handle = open_page(native_library, session_handle, blank_page_options(**start))
+
+    assert error == 0
+    native_library.mitto_page_close(handle)
 
 
 def test_page_open_takes_a_url_and_what_each_kind_sends(
@@ -1299,11 +1378,11 @@ def test_page_open_takes_a_url_and_what_each_kind_sends(
 
 
 def test_page_open_refuses_null_arguments(native_library: ctypes.CDLL, session_handle: Any) -> None:
-    error, handle = open_page(native_library, None, NO_PAGE_OPTIONS)
+    error, handle = open_page(native_library, None, BLANK_PAGE_OPTIONS)
     assert (error, bool(handle)) == (ERR_INVALID_ARGUMENT, False)
     error, handle = open_page(native_library, session_handle, None)
     assert (error, bool(handle)) == (ERR_INVALID_ARGUMENT, False)
-    assert native_library.mitto_page_open(session_handle, NO_PAGE_OPTIONS, len(NO_PAGE_OPTIONS), None) == (
+    assert native_library.mitto_page_open(session_handle, BLANK_PAGE_OPTIONS, len(BLANK_PAGE_OPTIONS), None) == (
         ERR_INVALID_ARGUMENT
     )
 
@@ -1388,7 +1467,7 @@ def test_a_page_has_a_process(native_library: ctypes.CDLL, page_handle: Any) -> 
 def test_a_page_starts_with_the_time_zone_and_locale_of_its_options(
     native_library: ctypes.CDLL, session_handle: Any, page_handle: Any
 ) -> None:
-    options = b'{"version": 1, "time_zone": "America/Sao_Paulo", "locale": "pt-BR"}'
+    options = blank_page_options(time_zone="America/Sao_Paulo", locale="pt-BR")
     error, page = open_page(native_library, session_handle, options)
     assert error == 0
     try:
@@ -1548,7 +1627,7 @@ def wait_until_named(library: ctypes.CDLL, session: Any, count: int) -> None:
 def test_a_page_that_refuses_its_time_zone_ends_and_says_why(
     native_library: ctypes.CDLL, session_handle: Any, page_handle: Any
 ) -> None:
-    error, page = open_page(native_library, session_handle, b'{"version": 1, "time_zone": "Mars/Olympus_Mons"}')
+    error, page = open_page(native_library, session_handle, blank_page_options(time_zone="Mars/Olympus_Mons"))
     assert error == 0
     try:
         _, call = evaluate(native_library, page, b"1")

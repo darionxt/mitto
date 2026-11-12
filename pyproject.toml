@@ -4,9 +4,10 @@ version = "0.2.1"
 description = "A Python HTTP client whose traffic matches real Chrome, built on Chromium's network stack."
 readme = "README.md"
 requires-python = ">=3.12"
-# The code is under Apache-2.0, and the table that a Machine is drawn from under CC-BY-SA-3.0, as MACHINE_TABLE_NOTICE says.
-license = "Apache-2.0 AND CC-BY-SA-3.0"
-license-files = ["LICENSE", "MACHINE_TABLE_NOTICE", "THIRD_PARTY_NOTICES"]
+# The code is under Apache-2.0, the table that a Machine is drawn from under CC-BY-SA-3.0, as MACHINE_TABLE_NOTICE says,
+# and the list of time zones from ICU's data under Unicode-3.0, as TIME_ZONES_NOTICE says.
+license = "Apache-2.0 AND CC-BY-SA-3.0 AND Unicode-3.0"
+license-files = ["LICENSE", "MACHINE_TABLE_NOTICE", "TIME_ZONES_NOTICE", "THIRD_PARTY_NOTICES"]
 keywords = ["asyncio", "chrome", "chromium", "http", "http-client", "http2", "http3", "quic", "tls"]
 # The licence is the SPDX expression above, so no classifier repeats it.
 classifiers = [

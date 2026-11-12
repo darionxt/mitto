@@ -121,6 +121,14 @@ class Persona:
     user_agent: str
     _kinds: dict[RequestKind, _KindData]
 
+    @property
+    def locale(self) -> str:
+        """The BCP 47 tag of the locale that a page's Intl falls back to, such as "en-US".
+
+        It is Chrome's language, which --lang sets for the Baselines, and which gives Accept-Language its first language.
+        """
+        return self.accept_language.split(",", 1)[0].split(";", 1)[0].strip()
+
     def request_defaults(self, kind: RequestKind, *, with_body: bool = False) -> RequestDefaults:
         """Return what this Persona's Chrome sends by default for a request of `kind`.
 

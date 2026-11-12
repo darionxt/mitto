@@ -130,10 +130,27 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 4
+_PROTOCOL_VERSION = 5
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
-_DEFAULT_START = {"time_zone": "UTC", "locale": "en-US"}
+# What a Machine drawn from the table and an en-US Persona start a Page with.
+_DEFAULT_START: dict[str, object] = {
+    "time_zone": "America/New_York",
+    "locale": "en-US",
+    "processors": 8,
+    "touch_points": 0,
+    "work_area_x": 0,
+    "work_area_y": 0,
+    "work_area_width": 1920,
+    "work_area_height": 1032,
+    "window_state": "maximised",
+    "window_x": 0,
+    "window_y": 0,
+    "window_width": 1920,
+    "window_height": 1032,
+    "contrast_theme": "none",
+    "inverted_colors": "none",
+}
 
 
 class _Session:
@@ -160,7 +177,7 @@ class _Session:
         size, message_type = struct.unpack("<II", self._read(8))
         return message_type, self._read(size)
 
-    def start(self, start: dict[str, str] = _DEFAULT_START) -> None:
+    def start(self, start: dict[str, object] = _DEFAULT_START) -> None:
         assert self.receive() == (_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
         self.send(_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
         self.send(_START, json.dumps(start).encode())
@@ -370,7 +387,7 @@ def test_scripts_share_one_context(session: _Session) -> None:
 
 
 def test_a_page_reports_the_time_zone_and_locale_it_starts_with(session: _Session) -> None:
-    session.start({"time_zone": "Asia/Tokyo", "locale": "de-DE"})
+    session.start({**_DEFAULT_START, "time_zone": "Asia/Tokyo", "locale": "de-DE"})
     script = """
         [
           Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -384,9 +401,33 @@ def test_a_page_reports_the_time_zone_and_locale_it_starts_with(session: _Sessio
 
 
 def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) -> None:
-    session.start({"time_zone": "Mars/Olympus_Mons", "locale": "en-US"})
+    session.start({**_DEFAULT_START, "time_zone": "Mars/Olympus_Mons"})
 
     assert session.refusal() == 'the time zone "Mars/Olympus_Mons" is unknown'
+
+
+@pytest.mark.parametrize(
+    ("start", "why"),
+    [
+        ({**_DEFAULT_START, "screen_width": 1920}, 'a start with the unknown key "screen_width"'),
+        (
+            {name: value for name, value in _DEFAULT_START.items() if name != "locale"},
+            'a start whose "locale" is not a name',
+        ),
+        ({**_DEFAULT_START, "processors": 0}, 'a start whose "processors" is not a whole number from 1 to 64'),
+        ({**_DEFAULT_START, "touch_points": 1.5}, 'a start whose "touch_points" is not a whole number from 0 to 256'),
+        ({**_DEFAULT_START, "window_state": "first"}, 'a start whose "window_state" is not "maximised" or "normal"'),
+        ({**_DEFAULT_START, "contrast_theme": "black"}, 'a start whose "contrast_theme" is not a contrast theme'),
+        ({**_DEFAULT_START, "inverted_colors": True}, 'a start whose "inverted_colors" is not "none" or "inverted"'),
+    ],
+    ids=str,
+)
+def test_a_page_refuses_a_start_that_is_not_what_a_machine_gives(
+    session: _Session, start: dict[str, object], why: str
+) -> None:
+    session.start(start)
+
+    assert session.refusal() == why
 
 
 def test_a_page_refuses_another_version_of_the_messages(session: _Session) -> None:

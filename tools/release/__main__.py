@@ -15,6 +15,7 @@ from tools.release.patch_builds import build_changes, builds_after, patch_builds
 from tools.release.persona import PERSONAS_DIRECTORY, PersonaDataError, write_persona
 from tools.release.publish import PublishError, dry_run_version, release_notes, tag_version
 from tools.release.source_export import ExportError, pinned_export, read_export
+from tools.release.time_zones import TIME_ZONES_PATH
 from tools.release.version_history import stable_builds
 from tools.release.web import WebError, fetch_from_the_network, version_parts
 from tools.release.window import builds_report, next_window
@@ -53,7 +54,16 @@ def _machines(args: argparse.Namespace) -> int:
         print(f"Wrote {path} from the statistics in {args.statistics}.")
         return 0
     try:
-        print(refresh_table(date.today(), statistics_path=args.statistics, table_path=args.table))
+        build = ENGINE_BUILD_PATH.read_text(encoding="utf-8").strip()
+        print(
+            refresh_table(
+                date.today(),
+                build,
+                statistics_path=args.statistics,
+                table_path=args.table,
+                time_zones_path=args.time_zones,
+            )
+        )
     except (MachineTableError, WebError) as error:
         print(f"error: the table stays as it was, because {error}", file=sys.stderr)
         return 1
@@ -120,7 +130,11 @@ def main() -> int:
     persona.set_defaults(run=_persona)
 
     machines = commands.add_parser(
-        "machines", help="fetch the statistics again and write the table that a Session's Machine is drawn from"
+        "machines",
+        help=(
+            "fetch the statistics again and write the table that a Session's Machine is drawn from, and the time zones"
+            " that Chrome on Windows can give"
+        ),
     )
     machines.add_argument(
         "--saved", action="store_true", help="write the table from the statistics as they are, and fetch nothing"
@@ -129,6 +143,12 @@ def main() -> int:
         "--statistics", type=Path, default=STATISTICS_PATH, help="the statistics' file (default: %(default)s)"
     )
     machines.add_argument("--table", type=Path, default=TABLE_PATH, help="the table's file (default: %(default)s)")
+    machines.add_argument(
+        "--time-zones",
+        type=Path,
+        default=TIME_ZONES_PATH,
+        help="the file of time zones, which --saved leaves as it is (default: %(default)s)",
+    )
     machines.set_defaults(run=_machines)
 
     drop = commands.add_parser("drop", help="drop the oldest Chrome Release, once the new Engine Release has a Persona")

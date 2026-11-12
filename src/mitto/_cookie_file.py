@@ -3,7 +3,8 @@
 A file of version 2 holds the Machine beside the cookies. The native core reads only what it lists, the cookies alone in
 its own version 1, and refuses what it does not know, so this module splits a file into the Machine and what the native
 core reads, and joins what the native core lists with the Machine. A file of version 1 comes from mitto 0.1, which kept no
-Machine, since every one of its Sessions claimed the same.
+Machine, since every one of its Sessions claimed the same. A file of version 2 from mitto 0.2 holds a Machine without the
+fields that a page reads, which machine_from_saved() draws to fit it.
 """
 
 import dataclasses
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from mitto import _native
-from mitto._machine import Machine
+from mitto._machine import Machine, machine_from_saved
 from mitto._private_file import create_private_file
 
 __all__ = ["FILE_VERSION", "CookieFile", "read_cookie_file", "write_cookie_file"]
@@ -25,7 +26,6 @@ FILE_VERSION = 2
 _MITTO_0_1_VERSION = 1
 _MITTO_0_1_MACHINE = "mitto-0.1"
 
-_MACHINE_FIELDS = frozenset(machine_field.name for machine_field in dataclasses.fields(Machine))
 _KEYS = frozenset({"version", "machine", "cookies"})
 
 
@@ -117,18 +117,17 @@ def _split(contents: bytes) -> tuple[Machine, bytes]:
 def _machine_of(saved: object) -> Machine:
     """Return the Machine that a file holds, its seed included.
 
-    A later mitto that knows more fields can draw those that an older file lacks from its seed, to fit the rest. This one
-    knows no older file of version 2, so it needs every field.
+    A file from mitto 0.2 lacks the fields that it did not know, which are drawn from the Machine's seed to fit the rest,
+    so that it is the same Machine in every process.
 
     Raises:
         TypeError: As Machine does.
-        ValueError: If `saved` does not hold each field of a Machine and nothing else, or as Machine does.
+        ValueError: If `saved` does not hold each field of a Machine of mitto 0.2 or later and nothing else, or as Machine
+            does.
     """
-    if not isinstance(saved, dict) or cast(dict[str, object], saved).keys() != _MACHINE_FIELDS:
-        raise ValueError(
-            f"the machine of a file of cookies holds {', '.join(sorted(_MACHINE_FIELDS))} and nothing else"
-        )
-    return Machine(**cast(dict[str, Any], saved))
+    if not isinstance(saved, dict):
+        raise ValueError("the machine of a file of cookies is a JSON object")
+    return machine_from_saved(cast(dict[str, Any], saved))
 
 
 def _not_cookies(path: str | os.PathLike[str]) -> ValueError:

@@ -19,12 +19,16 @@
 #include "base/containers/span.h"
 #include "base/types/expected.h"
 
+namespace base {
+class DictValue;
+}  // namespace base
+
 namespace mitto {
 
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 4;
+inline constexpr uint32_t kPageProtocolVersion = 5;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -155,17 +159,48 @@ struct PageConsoleMessage {
   std::string text;
 };
 
-// What a Page starts with, which it would otherwise read from the machine.
+// Whether Chrome's window fills the work area.
+enum class WindowState : uint8_t {
+  kMaximised = 1,
+  kNormal = 2,
+};
+
+// What a Page starts with, which it would otherwise read from the machine:
+// what its Session's Machine and Persona say. Places and sizes on the desktop
+// are in device-independent pixels, from the display's top left corner.
 struct PageStart {
   PageStart();
   PageStart(const PageStart&);
   PageStart& operator=(const PageStart&);
   ~PageStart();
 
-  // The IANA name of the time zone that ICU, and so V8, reports.
+  // The IANA name of the time zone that ICU, and so V8, reports, as Chrome on
+  // Windows names it.
   std::string time_zone;
-  // The BCP 47 tag of ICU's default locale, which Intl falls back to.
+  // The BCP 47 tag of ICU's default locale, which Intl falls back to: the
+  // Persona's.
   std::string locale;
+  // The number of logical processors, which navigator.hardwareConcurrency
+  // gives.
+  int processors = 0;
+  // How many touch points the touch screen takes, or 0 without one, which
+  // navigator.maxTouchPoints gives.
+  int touch_points = 0;
+  // The display less the taskbar.
+  int work_area_x = 0;
+  int work_area_y = 0;
+  int work_area_width = 0;
+  int work_area_height = 0;
+  WindowState window_state = WindowState::kMaximised;
+  // Chrome's window, with its bars and borders.
+  int window_x = 0;
+  int window_y = 0;
+  int window_width = 0;
+  int window_height = 0;
+  // Windows' contrast theme, such as "aquatic", or "none".
+  std::string contrast_theme;
+  // Whether Windows' colour filter inverts colours.
+  bool inverted_colors = false;
 };
 
 // What a call to a Page gave back.
@@ -329,6 +364,10 @@ std::string EncodeFrame(PageMessage type, std::string_view payload);
 
 std::string EncodeHello();
 std::string EncodeStart(const PageStart& start);
+
+// Returns what a Page starts with, from the JSON object of a kStart, which the
+// "start" of mitto_page_open()'s options holds too, or why it is not that.
+base::expected<PageStart, std::string> ReadStart(const base::DictValue& dict);
 // `script` is at most kMaxScriptSize bytes.
 std::string EncodeEvaluate(uint64_t call, std::string_view script);
 // `evaluated.text` is at most kMaxEvaluatedTextSize bytes.

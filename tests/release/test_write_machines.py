@@ -19,12 +19,22 @@ from tools.release.machines import (
     display_shares,
     dumps_statistics,
     dumps_table,
+    logical_processors,
     read_statistics,
     table_data,
     write_table,
 )
+from tools.release.time_zones import TIME_ZONES_PATH, dumps_time_zones, windows_time_zones
 
 REPOSITORY = Path(__file__).parents[2]
+
+SOURCES = (
+    STATISTICS.windows_versions,
+    STATISTICS.css_displays,
+    STATISTICS.pixel_displays,
+    STATISTICS.memory,
+    STATISTICS.processor_cores,
+)
 
 
 def rows(data: dict[str, Any], group: str) -> list[dict[str, Any]]:
@@ -51,7 +61,13 @@ def test_the_statistics_are_byte_for_byte_what_they_write(tmp_path: Path) -> Non
 
 def test_the_statistics_have_one_line_for_each_share() -> None:
     text = STATISTICS_PATH.read_text(encoding="utf-8")
-    sources = [STATISTICS.windows_versions, STATISTICS.css_displays, STATISTICS.pixel_displays, STATISTICS.memory]
+    sources = [
+        STATISTICS.windows_versions,
+        STATISTICS.css_displays,
+        STATISTICS.pixel_displays,
+        STATISTICS.memory,
+        STATISTICS.processor_cores,
+    ]
 
     assert json.loads(text)["licence"] == "CC-BY-SA-3.0"
     assert all(
@@ -174,7 +190,7 @@ def test_each_windows_has_the_same_displays_and_windows_at_the_same_weights() ->
     displays = rows(table_data(), "display")
     by_windows = {
         windows: [
-            (row["window"], row["display_width"], row["display_height"], row["scale"], row["weight"])
+            (row["window_state"], row["display_width"], row["display_height"], row["scale"], row["weight"])
             for row in displays
             if row["windows"] == windows
         ]
@@ -186,19 +202,35 @@ def test_each_windows_has_the_same_displays_and_windows_at_the_same_weights() ->
     without_weights = [{name: value for name, value in row.items() if name != "weight"} for row in displays]
     assert {
         "windows": 11,
-        "window": "maximised",
         "display_width": 1920,
         "display_height": 1080,
         "scale": 1.25,
+        "work_area_x": 0,
+        "work_area_y": 0,
+        "work_area_width": 1536,
+        "work_area_height": 864 - 48,
+        "window_state": "maximised",
+        "window_x": 0,
+        "window_y": 0,
+        "window_width": 1536,
+        "window_height": 864 - 48,
         "viewport_width": 1536,
         "viewport_height": 864 - 48 - 86,
     } in without_weights
     assert {
         "windows": 10,
-        "window": "first",
         "display_width": 1920,
         "display_height": 1080,
         "scale": 1.25,
+        "work_area_x": 0,
+        "work_area_y": 0,
+        "work_area_width": 1536,
+        "work_area_height": 864 - 40,
+        "window_state": "normal",
+        "window_x": 10,
+        "window_y": 10,
+        "window_width": 1050,
+        "window_height": 864 - 40 - 20,
         "viewport_width": 1050 - 14,
         "viewport_height": 864 - 40 - 20 - 95,
     } in without_weights
@@ -221,6 +253,10 @@ def test_only_the_scales_at_which_chromes_bars_were_read_are_drawn() -> None:
         ("color_scheme", [{"color_scheme": "light", "weight": 700_000}, {"color_scheme": "dark", "weight": 300_000}]),
         ("reduced_motion", [{"reduced_motion": "no-preference", "weight": 1_000_000}]),
         ("reduced_transparency", [{"reduced_transparency": "no-preference", "weight": 1_000_000}]),
+        ("contrast_theme", [{"contrast_theme": "none", "weight": 1_000_000}]),
+        ("inverted_colors", [{"inverted_colors": "none", "weight": 1_000_000}]),
+        ("touch_points", [{"touch_points": 0, "weight": 1_000_000}]),
+        ("time_zone", [{"locale": "en-US", "time_zone": "America/New_York", "weight": 1_000_000}]),
     ],
 )
 def test_the_owners_weights_go_where_no_public_source_has_them(group: str, expected: list[dict[str, Any]]) -> None:
@@ -234,12 +270,68 @@ def test_the_table_credits_each_source_and_says_its_licence() -> None:
     data = table_data()
 
     assert data["licence"] == "CC-BY-SA-3.0"
-    for source in (STATISTICS.windows_versions, STATISTICS.css_displays, STATISTICS.pixel_displays, STATISTICS.memory):
+    for source in SOURCES:
         assert f"{source.credit}, {source.url}, under CC BY-SA 3.0" in data["credits"]
 
 
 def test_the_notice_that_goes_with_the_table_names_the_site_of_each_source() -> None:
     notice = (REPOSITORY / "MACHINE_TABLE_NOTICE").read_text(encoding="utf-8")
 
-    for source in (STATISTICS.windows_versions, STATISTICS.css_displays, STATISTICS.pixel_displays, STATISTICS.memory):
+    for source in SOURCES:
         assert f"https://{urllib.parse.urlsplit(source.url).netloc}/" in notice
+
+
+@pytest.mark.parametrize(
+    ("cores", "processors"), [(1, 2), (2, 4), (4, 8), (6, 12), (8, 16), (10, 16), (12, 24), (14, 20), (16, 32)]
+)
+def test_cores_count_as_logical_processors_by_the_owners_rule(cores: int, processors: int) -> None:
+    assert logical_processors(cores) == processors
+
+
+def test_more_cores_than_chrome_on_windows_counts_are_an_error() -> None:
+    with pytest.raises(MachineTableError, match="33 cores give more logical processors"):
+        logical_processors(33)
+
+
+def test_the_processors_add_up_the_cores_that_give_the_same_and_leave_out_other() -> None:
+    cores = Source("Firefox, CPU Cores", "https://example.test/", {"8": 40.0, "10": 40.0, "Other": 20.0})
+    data = table_data(dataclasses.replace(STATISTICS, processor_cores=cores))
+
+    assert rows(data, "processors") == [{"processors": 16, "weight": 1_000_000}]
+
+
+def test_a_number_of_cores_that_is_no_number_is_an_error() -> None:
+    cores = Source("Firefox, CPU Cores", "https://example.test/", {"four": 100.0})
+
+    with pytest.raises(MachineTableError, match="'four' is no number of processor cores"):
+        table_data(dataclasses.replace(STATISTICS, processor_cores=cores))
+
+
+def test_the_time_zones_are_the_first_of_each_region_of_icus_table() -> None:
+    table = """windowsZones:table(nofallback){
+    mapTimezones{
+        "Eastern Standard Time"{
+            001{"America/New_York"}
+            CA{"America/Toronto America/Iqaluit"}
+            US{
+                "America/New_York America/Detroit America/Indiana/Petersburg America/"
+                "Indiana/Vincennes"
+            }
+        }
+        "UTC"{
+            001{"Etc/UTC"}
+            ZZ{"Etc/UTC Etc/GMT"}
+        }
+    }
+}
+"""
+
+    assert windows_time_zones(table) == ["America/New_York", "America/Toronto", "UTC"]
+
+
+def test_the_time_zones_have_one_line_for_each_zone_and_their_licence() -> None:
+    listed = json.loads(TIME_ZONES_PATH.read_text(encoding="utf-8"))
+
+    assert TIME_ZONES_PATH.read_text(encoding="utf-8") == dumps_time_zones(listed["source"], listed["time_zones"])
+    assert listed["licence"] == "Unicode-3.0"
+    assert listed["time_zones"] == sorted(set(listed["time_zones"]))

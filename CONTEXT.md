@@ -27,7 +27,7 @@ The operating system and CPU architecture mitto itself runs on. It is independen
 _Avoid_: platform
 
 **Machine**:
-The computer a Session claims to run on: its memory, display, window, network, its user's settings and its Windows version. It is independent of the Host and of the Persona.
+The computer a Session claims to run on: its memory, processors, display, window, touch screen, network, time zone, its user's settings and its Windows version. It is independent of the Host and of the Persona.
 _Avoid_: device, hardware profile, environment, fingerprint
 
 ### Requests
