@@ -11,8 +11,9 @@
 # - `implemented` names the members the class has, and every other member is a
 #   Known Gap. "get x" names the getter of attribute x alone. The generator
 #   writes a reflected attribute of a string or a boolean itself, so it needs
-#   no name. An indexed or named property operation that is a Known Gap is not
-#   installed at all.
+#   no name. "indexed getter" and "named getter" name those operations. An
+#   indexed or named property operation that is a Known Gap is not installed
+#   at all.
 mitto_bindings_interfaces = [
   {
     name = "CharacterData"
@@ -253,6 +254,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "MimeType"
+    file = "mime_type"
+  },
+  {
+    name = "MimeTypeArray"
+    file = "mime_type_array"
+  },
+  {
     name = "Navigator"
     file = "navigator"
     implemented = [
@@ -274,6 +283,8 @@ mitto_bindings_interfaces = [
       "onLine",
       "webdriver",
       "pdfViewerEnabled",
+      "plugins",
+      "mimeTypes",
       "connection",
       "javaEnabled",
       "deviceMemory",
@@ -344,6 +355,17 @@ mitto_bindings_interfaces = [
       "now",
       "timeOrigin",
     ]
+  },
+  {
+    name = "Plugin"
+    file = "plugin"
+  },
+  {
+    name = "PluginArray"
+    file = "plugin_array"
+
+    # refresh(true) reloads the page in Chrome, which a Page cannot do yet.
+    missing = [ "refresh" ]
   },
   {
     name = "PopStateEvent"

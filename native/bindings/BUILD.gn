@@ -175,6 +175,8 @@ source_set("bindings") {
     "exception_state.h",
     "idl_member_installer.cc",
     "idl_member_installer.h",
+    "indexed_and_named_properties.cc",
+    "indexed_and_named_properties.h",
     "interface_table.cc",
     "interface_table.h",
     "known_gap.cc",

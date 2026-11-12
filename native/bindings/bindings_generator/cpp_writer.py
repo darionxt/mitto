@@ -41,6 +41,7 @@ from bindings_generator.model import (
     Interface,
     Operation,
     OperationGroup,
+    SpecialOperation,
     TypeKind,
 )
 from bindings_generator.runtime_features import Feature
@@ -79,6 +80,7 @@ WRITTEN = frozenset(
         "Global",
         "HTMLConstructor",
         "LegacyNoInterfaceObject",
+        "LegacyUnenumerableNamedProperties",
         "LegacyUnforgeable",
         "NewObject",
         "NoAllocDirectCall",
@@ -113,7 +115,9 @@ class ImplementedInterface:
             Their bindings are installed as Chrome's are, and throw when called.
         implemented: if not None, the only members whose behaviour the class has: every other member is a Known Gap,
             except a reflected attribute that the writer handles itself. "get x" names the getter of attribute x alone.
-            An indexed or named property operation that is a Known Gap is not installed at all.
+            An indexed or named property operation that is a Known Gap is not installed at all. One that the class has
+            needs more of it: length() for an indexed getter, NamedPropertyEnumerator() and NamedPropertyQuery() for a
+            named one, as Blink's classes have.
     """
 
     name: str
@@ -617,6 +621,135 @@ class _InterfaceWriter:
         body += ["impl->AssociateWithWrapper(isolate, info.This());", "info.GetReturnValue().Set(info.This());"]
         return self._add_callback(name, body)
 
+    # The indexed and named properties.
+
+    def _special_with_behaviour(self, kind: str) -> SpecialOperation | None:
+        special = self.interface.special_operation(kind)
+        if special is None or not self.implemented.has_behaviour(kind):
+            return None
+        return special
+
+    def _getter_call(self, special: SpecialOperation, key: str) -> tuple[IdlType, str]:
+        """The return type of an indexed or named property getter, and the C++ expression that calls the class's."""
+        where = f"{special.kind} of {self.interface.name}"
+        operation = special.operation
+        _check_written(where, operation.extended_attributes)
+        if "RaisesException" in operation.extended_attributes:
+            raise UnhandledError(f"{where}: the C++ writer does not handle a getter that raises an exception")
+        # Blink's classes name a getter without an identifier AnonymousIndexedGetter() or AnonymousNamedGetter().
+        method = self.method_name(operation) if operation.name else f"Anonymous{special.kind.title().replace(' ', '')}"
+        self.types.return_type(operation.return_type, f"{where} return type")
+        return operation.return_type, f"HolderOf(isolate, holder)->{method}({key})"
+
+    def indexed_and_named_properties(self) -> bool:
+        """Writes the functions of the interface's IndexedAndNamedProperties, kIndexedAndNamedProperties, which read
+        its class, and says whether it has one: when the class has an indexed or a named property getter."""
+        interface = self.interface
+        indexed = self._special_with_behaviour("indexed getter")
+        named = self._special_with_behaviour("named getter")
+        for kind in ("indexed setter", "named setter", "named deleter"):
+            if self._special_with_behaviour(kind):
+                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {kind}")
+        if indexed is None and named is None:
+            return False
+        if "Global" in interface.extended_attributes or interface.name == "WindowProperties":
+            raise UnhandledError(
+                f"interface {interface.name}: the C++ writer does not handle the named properties of a global object"
+            )
+        holder = [
+            f"// The interceptors are on the instance template, so `holder` is one of {interface.name}'s objects.",
+            f"{self.cls}* HolderOf(v8::Isolate* isolate, v8::Local<v8::Object> holder) {{",
+            f"  return ToWrappableOf<{self.cls}>(isolate, {self.v8_class}::kWrapperTypeInfo, holder);",
+            "}",
+        ]
+        self.callbacks.append("\n".join(holder))
+        fields = ["nullptr", "nullptr", "nullptr", "nullptr", "nullptr"]
+        flags: list[str] = []
+        if indexed is not None:
+            has_length = any(attribute.name == "length" for attribute in interface.attributes)
+            if not has_length or not self.implemented.has_behaviour("length", "get"):
+                raise UnhandledError(f"indexed getter of {interface.name}: the C++ writer needs the class's length")
+            return_type, call = self._getter_call(indexed, "index")
+            self.callbacks.append(
+                "\n".join(
+                    [
+                        "uint32_t IndexedPropertyLength(v8::Isolate* isolate, v8::Local<v8::Object> holder) {",
+                        "  return HolderOf(isolate, holder)->Length();",
+                        "}",
+                    ]
+                )
+            )
+            self.callbacks.append(
+                "\n".join(
+                    [
+                        "v8::Local<v8::Value> IndexedPropertyGetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
+                        "                                           uint32_t index) {",
+                        f"  return {self.types.to_v8(return_type, call)};",
+                        "}",
+                    ]
+                )
+            )
+            fields[0:2] = ["&IndexedPropertyLength", "&IndexedPropertyGetter"]
+            if indexed.operation.extended_attributes.value_of("Affects") == "Everything":
+                flags.append("kIndexedGetterHasSideEffects")
+        if named is not None:
+            where = f"named getter of {interface.name}"
+            if "NotEnumerable" in named.operation.extended_attributes:
+                raise UnhandledError(f"{where}: the C++ writer does not handle [NotEnumerable]")
+            return_type, call = self._getter_call(named, "name")
+            reduced = self.types.reduce(return_type)
+            # Blink's test of whether the class has the named property: what its getter gives says so.
+            if reduced.kind is TypeKind.INTERFACE or (reduced.kind is TypeKind.STRING and reduced.nullable):
+                not_found = "!result"
+            elif reduced.kind in (TypeKind.ANY, TypeKind.OBJECT):
+                not_found = "result.IsEmpty()"
+            else:
+                raise UnhandledError(f"{where}: the C++ writer cannot tell when {reduced.syntax} names no property")
+            self.callbacks.append(
+                "\n".join(
+                    [
+                        "v8::Local<v8::Value> NamedPropertyGetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
+                        "                                         const std::u16string& name) {",
+                        f"  const auto result = {call};",
+                        f"  if ({not_found}) {{",
+                        "    return v8::Local<v8::Value>();",
+                        "  }",
+                        f"  return {self.types.to_v8(return_type, 'result')};",
+                        "}",
+                    ]
+                )
+            )
+            self.callbacks.append(
+                "\n".join(
+                    [
+                        "std::vector<std::u16string> NamedPropertyNames(v8::Isolate* isolate, v8::Local<v8::Object> holder) {",
+                        "  return HolderOf(isolate, holder)->NamedPropertyEnumerator();",
+                        "}",
+                        "",
+                        "bool NamedPropertyQuery(v8::Isolate* isolate, v8::Local<v8::Object> holder, const std::u16string& name) {",
+                        "  return HolderOf(isolate, holder)->NamedPropertyQuery(name);",
+                        "}",
+                    ]
+                )
+            )
+            fields[2:5] = ["&NamedPropertyGetter", "&NamedPropertyNames", "&NamedPropertyQuery"]
+            if "LegacyUnenumerableNamedProperties" in interface.extended_attributes:
+                flags.append("kNamedPropertiesUnenumerable")
+            if named.operation.extended_attributes.value_of("Affects") == "Everything":
+                flags.append("kNamedGetterHasSideEffects")
+        flag_value = " | ".join(flags) if flags else "0"
+        self.callbacks.append(
+            "\n".join(
+                [
+                    "constexpr IndexedAndNamedProperties kIndexedAndNamedProperties = {",
+                    *(f"    {field}," for field in fields),
+                    f"    {flag_value},",
+                    "};",
+                ]
+            )
+        )
+        return True
+
     # The install functions.
 
     def _member_where(self, property_: Property) -> str:
@@ -655,6 +788,12 @@ class _InterfaceWriter:
             return []  # SetupInterfaceTemplate() installs it.
         if property_.name == "constructor":
             return []  # V8 adds it.
+        if property_.name == "@@iterator" and not on_objects and self.interface.special_operation("indexed getter"):
+            # Blink's install function: %Array.prototype.values%, which reads `length` and the indexed properties.
+            return [
+                "prototype_template->SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values,",
+                f"                                             {self._attributes(property_)});",
+            ]
         if property_.name == "@@iterator":
             collection = self.interface.collection
             if not on_objects or collection is None or collection.iterator_operation is None:
@@ -801,6 +940,8 @@ class _InterfaceWriter:
             )
         template_properties = [property_ for property_ in plan if property_.phase is Phase.TEMPLATE]
         lines += _indent(self._install_properties(template_properties, on_objects=False))
+        if self.indexed_and_named_properties():
+            lines.append("  InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);")
         lines.append("}")
         return lines
 
@@ -894,9 +1035,6 @@ class _InterfaceWriter:
                     f"interface {interface.name}: the C++ writer does not handle the behaviour of its "
                     f"{interface.collection.kind}"
                 )
-        for special in interface.special_operations:
-            if self.implemented.has_behaviour(special):
-                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {special}")
         plan = plan_interface(interface)
         install = self.install_function(plan)
         context = self.context_function(plan)
@@ -906,6 +1044,7 @@ class _InterfaceWriter:
             "mitto/bindings/exception_messages.h",
             "mitto/bindings/exception_state.h",
             "mitto/bindings/idl_member_installer.h",
+            "mitto/bindings/indexed_and_named_properties.h",
             "mitto/bindings/per_isolate_data.h",
             "mitto/bindings/runtime_feature_set.h",
             "mitto/bindings/runtime_features.h",
@@ -1489,7 +1628,7 @@ def _interface_object_parent(name: str, definitions: Definitions) -> str | None:
 def _check_named_members(name: str, interface: Interface, implemented: ImplementedInterface) -> None:
     attributes = {attribute.name for attribute in interface.attributes}
     members = attributes | {group.name for group in interface.operation_groups}
-    members |= set(interface.special_operations)
+    members |= {special.kind for special in interface.special_operations}
     for missing in implemented.missing:
         if missing not in members:
             raise UnhandledError(f"{name} has no member {missing}")
