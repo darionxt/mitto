@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from urllib.parse import unquote
 
 from tools.capture.cases import CASE_HOST
+from tools.capture.http1 import Http1Request
 from tools.capture.page import RequestHead, Response
 from tools.capture.probe import probe_script
-from tools.capture.recording import SCRIPT
+from tools.capture.recording import SCRIPT, Recording
 
 SCRIPT_DIRECTORY = "script"
 """Where a recording session writes the Script Fingerprint's files, apart from the wire's, and where its Baselines go
@@ -62,6 +63,15 @@ SCRIPT_RUNS = (TOP_LEVEL_PAGE,)
 """Every start of a Chrome that records a Script Fingerprint, in the order a recording session takes them."""
 
 SCRIPT_DONE_PATHS = frozenset(run.done_path for run in SCRIPT_RUNS)
+
+
+def posted_record(recording: Recording, run: ScriptRun) -> bytes | None:
+    """Return what a run's page posted to its done path, the probe's record, or None if it posted nothing there."""
+    for connection in recording.connections:
+        for request in connection.requests:
+            if request.target == run.done_path and isinstance(request, Http1Request):
+                return request.body
+    return None
 
 
 def _page() -> bytes:

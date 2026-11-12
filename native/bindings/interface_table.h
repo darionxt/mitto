@@ -68,8 +68,8 @@ inline constexpr uint16_t kMemberHasSetter = 1 << 0;
 // [LegacyLenientThis]: a receiver of another kind gets undefined, without V8's
 // signature check.
 inline constexpr uint16_t kMemberLenientThis = 1 << 1;
-// An operation that returns a promise, which a receiver of another kind
-// rejects, without V8's signature check.
+// An operation or attribute that returns a promise, which a receiver of another
+// kind rejects, without V8's signature check.
 inline constexpr uint16_t kMemberReturnsPromise = 1 << 2;
 // A static member, on the interface object, whose receiver is not checked.
 inline constexpr uint16_t kMemberStatic = 1 << 3;

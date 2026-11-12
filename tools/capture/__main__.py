@@ -7,12 +7,11 @@ from pathlib import Path
 
 from tools.capture.cases import RESUMPTION_RUNS, RUNS, Case, Run
 from tools.capture.devtools import PageClicker
-from tools.capture.http1 import Http1Request
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
 from tools.capture.probe import dumps_record, read_record
 from tools.capture.recording import Recording, raw_form
 from tools.capture.script_normal_form import dumps_script_raw_record, script_normal_form
-from tools.capture.script_page import SCRIPT_RUNS, ScriptRun
+from tools.capture.script_page import SCRIPT_RUNS, ScriptRun, posted_record
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
 _RUNS_FILE = "runs.json"
@@ -175,17 +174,12 @@ def _write_form(recording: Recording, run: Run, cases: tuple[Case, ...], path: P
 def _write_script(server: CaptureServer, run: ScriptRun, out: Path) -> bool:
     """Write the record that a run's page posted, raw and in its Normal Form. Returns whether the page posted one."""
     recording = server.recording(run.route, host=run.host)
-    posted = [
-        request.body
-        for connection in recording.connections
-        for request in connection.requests
-        if request.target == run.done_path and isinstance(request, Http1Request)
-    ]
-    if not posted:
+    posted = posted_record(recording, run)
+    if posted is None:
         print(f"{run.label}: the page posted no record", file=sys.stderr)
         return False
     try:
-        record = read_record(posted[0].decode("utf-8"))
+        record = read_record(posted.decode("utf-8"))
     except ValueError as error:
         print(f"{run.label}: the page posted no record of the probe: {error}", file=sys.stderr)
         return False

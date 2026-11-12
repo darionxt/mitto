@@ -6,7 +6,8 @@ on:
     paths:
       - .github/workflows/sanitizers.yml
       - native/**
-      - tests/runtime/**
+      - tests/data/page_cases.json
+      - tests/page_cases.js
       - tests/test_core_test_program.py
       - tests/test_page_bindings.py
       - tests/test_page_document.py
@@ -22,7 +23,8 @@ on:
     paths:
       - .github/workflows/sanitizers.yml
       - native/**
-      - tests/runtime/**
+      - tests/data/page_cases.json
+      - tests/page_cases.js
       - tests/test_core_test_program.py
       - tests/test_page_bindings.py
       - tests/test_page_document.py

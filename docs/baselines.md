@@ -378,7 +378,7 @@ Chrome 157's Normal Form has 2,150 objects, and those of Chrome 155 and 156 have
 
 - **The order of members.** The moves that [persona.md](persona.md#what-an-older-persona-cannot-turn-off) lists as Known Gaps of the older Personas, and no others. On the global, `ProgressEvent`, `Lock` and `LockManager` moved in 157, and `Clipboard`, `ClipboardItem`, `ServiceWorker` and `ServiceWorkerContainer` in 156. In prototypes, members of `UIEvent`, `AnimationEvent`, `TransitionEvent`, `Worker`, `SharedWorker`, both readers of `ReadableStream`, `Navigator`, `ServiceWorkerRegistration` and five kinds of performance entry moved in 157, and `navigator`'s getters and the checks follow. The probe also walks the prototypes of `Node`'s interfaces, which [#207](https://github.com/darionxt/mitto/issues/207)'s walks left out, and none of them moved between the three.
 
-So between the Chrome Releases of the Supported Window, an older Persona's `page_features` covers every member that differs, and what it cannot give is the order of those members. [#213](https://github.com/darionxt/mitto/issues/213)'s Parity Checks will show that order as Known Gaps of those Personas.
+So between the Chrome Releases of the Supported Window, an older Persona's `page_features` covers every member that differs, and what it cannot give is the order of those members. The [Parity Checks of the Script Fingerprint](parity.md#the-script-fingerprint) show that order as gaps of those Personas, of the kind `shape`.
 
 ## The seed of 2026-11-07
 

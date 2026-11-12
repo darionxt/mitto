@@ -1059,10 +1059,9 @@ v8::MaybeLocal<v8::Value> ConvertToIdl(v8::Isolate* isolate,
   return Convert(isolate, type, value, argument_index, exception_state);
 }
 
-const OverloadInfo* ConvertArguments(
+const OverloadInfo* ChooseOverload(
     const v8::FunctionCallbackInfo<v8::Value>& info,
     const OperationInfo& operation,
-    std::vector<v8::Local<v8::Value>>& converted,
     ExceptionState& exception_state) {
   v8::Isolate* const isolate = info.GetIsolate();
   const PerIsolateData& data = *PerIsolateData::From(isolate);
@@ -1125,10 +1124,31 @@ const OverloadInfo* ConvertArguments(
     }
     return nullptr;
   }
-  if (!ConvertOverload(info, *chosen, converted, exception_state)) {
+  return chosen;
+}
+
+bool ConvertOverloadArguments(const v8::FunctionCallbackInfo<v8::Value>& info,
+                              const OverloadInfo& overload,
+                              std::vector<v8::Local<v8::Value>>& converted,
+                              ExceptionState& exception_state) {
+  return ConvertOverload(info, overload, converted, exception_state);
+}
+
+const OverloadInfo* ConvertArguments(
+    const v8::FunctionCallbackInfo<v8::Value>& info,
+    const OperationInfo& operation,
+    std::vector<v8::Local<v8::Value>>& converted,
+    ExceptionState& exception_state) {
+  const OverloadInfo* const chosen =
+      ChooseOverload(info, operation, exception_state);
+  if (!chosen || !ConvertOverload(info, *chosen, converted, exception_state)) {
     return nullptr;
   }
   return chosen;
+}
+
+bool HasOverloads(const OperationInfo& operation) {
+  return operation.overloads.size() > 1;
 }
 
 }  // namespace mitto::bindings

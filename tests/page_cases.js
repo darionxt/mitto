@@ -1,52 +1,12 @@
-// What the Runtime's tests compare with Chrome: the global object's own
-// properties, with their attributes, names and lengths, in order; the own
-// properties of the interfaces that the Runtime implements, the same way; what
-// a call with the wrong receiver throws; and what some calls throw or do. It runs as it is in the Page program and, through
-// record.html, in Chrome, and its value is the record as JSON.
-//
-// It records interfaces, descriptors, lengths and messages only, which say
-// nothing of the machine that runs it.
+// What some calls throw or do in a page, and the own properties of an
+// instance of each class that the Runtime implements, which
+// tests/test_page_bindings.py runs in the Page program and compares with what
+// Chrome 157.0.8103.39 gave for the same script, in tests/data/page_cases.json.
+// Its value is the record as JSON. M6 recorded those outcomes in Chrome with
+// the whole of this script; the Parity Checks of the Script Fingerprint now
+// compare the shapes of the global object and of every interface.
 
 (() => {
-  const interfaces = [
-    "CharacterData",
-    "Comment",
-    "DOMException",
-    "Document",
-    "DocumentType",
-    "Element",
-    "Event",
-    "EventTarget",
-    "HTMLBRElement",
-    "HTMLBodyElement",
-    "HTMLDivElement",
-    "HTMLDocument",
-    "HTMLElement",
-    "HTMLHeadElement",
-    "HTMLHeadingElement",
-    "HTMLHtmlElement",
-    "HTMLLIElement",
-    "HTMLLinkElement",
-    "HTMLMetaElement",
-    "HTMLOListElement",
-    "HTMLParagraphElement",
-    "HTMLPreElement",
-    "HTMLScriptElement",
-    "HTMLSpanElement",
-    "HTMLStyleElement",
-    "HTMLTitleElement",
-    "HTMLUListElement",
-    "HTMLUnknownElement",
-    "Headers",
-    "Node",
-    "Performance",
-    "PopStateEvent",
-    "Request",
-    "Response",
-    "Text",
-    "Window",
-  ];
-
   const describeFunction = (f) => f && { name: f.name, length: f.length };
 
   const describe = (object, name) => {
@@ -88,28 +48,6 @@
     } catch (error) {
       return { threw: String(error) };
     }
-  };
-
-  // What each member throws when it is called on an object that is not one of
-  // the interface's.
-  const wrongReceiver = (prototype) => {
-    const result = [];
-    for (const name of Object.getOwnPropertyNames(prototype)) {
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
-      if (name === "constructor") {
-        continue;
-      }
-      if (typeof descriptor.value === "function") {
-        result.push([name, outcome(() => descriptor.value.call({}))]);
-      }
-      if (descriptor.get) {
-        result.push([`get ${name}`, outcome(() => descriptor.get.call({}))]);
-      }
-      if (descriptor.set) {
-        result.push([`set ${name}`, outcome(() => descriptor.set.call({}, undefined))]);
-      }
-    }
-    return result;
   };
 
   // What the DOM does, on elements and documents that the case makes, never on
@@ -605,30 +543,7 @@
     };
   };
 
-  // Read before anything else here touches the global object, whose lazy
-  // properties, such as the interface objects, become data properties when
-  // read: the descriptor of each reads it.
-  const record = { global: ownProperties(globalThis), interfaces: {}, instances: {}, cases: [] };
-  for (const name of interfaces) {
-    const object = globalThis[name];
-    if (typeof object !== "function") {
-      record.interfaces[name] = null;
-      continue;
-    }
-    const parent = Object.getPrototypeOf(object.prototype);
-    record.interfaces[name] = {
-      global: describe(globalThis, name),
-      interfaceObject: ownProperties(object),
-      prototype: ownProperties(object.prototype),
-      prototypeParent: parent === Object.prototype ? "Object" : parent.constructor.name,
-      interfaceObjectParent:
-        Object.getPrototypeOf(object) === Function.prototype ? "Function" : Object.getPrototypeOf(object).name,
-      toStringTag: object.prototype[Symbol.toStringTag],
-      callWithoutNew: outcome(() => object()),
-      constructWithoutArguments: outcome(() => new object()),
-      wrongReceiver: wrongReceiver(object.prototype),
-    };
-  }
+  const record = { instances: {}, cases: [] };
 
   // Elements come from a document of their own, which a page's own does not
   // change, and an HTML one from the page's document, as they are the same in

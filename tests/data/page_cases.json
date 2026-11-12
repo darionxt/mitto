@@ -1,0 +1,655 @@
+{
+ "chrome": "157.0.8103.39",
+ "instances": {
+  "Comment": [],
+  "DOMException": [],
+  "Document": [
+   [
+    "location",
+    {
+     "enumerable": true,
+     "configurable": false,
+     "get": {
+      "name": "get location",
+      "length": 0
+     },
+     "set": {
+      "name": "set location",
+      "length": 1
+     }
+    }
+   ]
+  ],
+  "Element": [],
+  "Event": [
+   [
+    "isTrusted",
+    {
+     "enumerable": true,
+     "configurable": false,
+     "get": {
+      "name": "get isTrusted",
+      "length": 0
+     },
+     "set": null
+    }
+   ]
+  ],
+  "EventTarget": [],
+  "HTMLBRElement": [],
+  "HTMLBodyElement": [],
+  "HTMLDivElement": [],
+  "HTMLDocument": [
+   [
+    "location",
+    {
+     "enumerable": true,
+     "configurable": false,
+     "get": {
+      "name": "get location",
+      "length": 0
+     },
+     "set": {
+      "name": "set location",
+      "length": 1
+     }
+    }
+   ]
+  ],
+  "HTMLElement": [],
+  "HTMLHeadElement": [],
+  "HTMLHeadingElement": [],
+  "HTMLHtmlElement": [],
+  "HTMLLIElement": [],
+  "HTMLLinkElement": [],
+  "HTMLMetaElement": [],
+  "HTMLOListElement": [],
+  "HTMLParagraphElement": [],
+  "HTMLPreElement": [],
+  "HTMLScriptElement": [],
+  "HTMLSpanElement": [],
+  "HTMLStyleElement": [],
+  "HTMLTitleElement": [],
+  "HTMLUListElement": [],
+  "HTMLUnknownElement": [],
+  "Headers": [],
+  "Performance": [],
+  "PopStateEvent": [
+   [
+    "isTrusted",
+    {
+     "enumerable": true,
+     "configurable": false,
+     "get": {
+      "name": "get isTrusted",
+      "length": 0
+     },
+     "set": null
+    }
+   ]
+  ],
+  "Request": [],
+  "Response": [],
+  "Text": []
+ },
+ "cases": [
+  [
+   "setTimeout without an argument",
+   {
+    "threw": "TypeError: Failed to execute 'setTimeout' on 'Window': 1 argument required, but only 0 present."
+   }
+  ],
+  [
+   "setTimeout with an empty string",
+   {
+    "value": "0"
+   }
+  ],
+  [
+   "clearTimeout of no timer",
+   {
+    "value": "undefined"
+   }
+  ],
+  [
+   "queueMicrotask with a number",
+   {
+    "threw": "TypeError: Failed to execute 'queueMicrotask' on 'Window': parameter 1 is not of type 'Function'."
+   }
+  ],
+  [
+   "queueMicrotask without an argument",
+   {
+    "threw": "TypeError: Failed to execute 'queueMicrotask' on 'Window': 1 argument required, but only 0 present."
+   }
+  ],
+  [
+   "performance.now and timeOrigin",
+   {
+    "value": "[\"number\",\"number\"]"
+   }
+  ],
+  [
+   "Headers with a number",
+   {
+    "threw": "TypeError: Failed to construct 'Headers': The provided value is not of type '(record<ByteString, ByteString> or sequence<sequence<ByteString>>)'."
+   }
+  ],
+  [
+   "Headers with a pair of one",
+   {
+    "threw": "TypeError: Failed to construct 'Headers': Invalid value"
+   }
+  ],
+  [
+   "Headers with a code point beyond Latin-1",
+   {
+    "threw": "TypeError: Failed to construct 'Headers': String contains non ISO-8859-1 code point."
+   }
+  ],
+  [
+   "Headers with a name that is not a token",
+   {
+    "threw": "TypeError: Failed to construct 'Headers': Invalid name"
+   }
+  ],
+  [
+   "Headers that append, set, delete and get",
+   {
+    "value": "[\"a, b\",null,\"2\",true,[]]"
+   }
+  ],
+  [
+   "Headers.get with a name that is not a token",
+   {
+    "threw": "TypeError: Failed to execute 'get' on 'Headers': Invalid name"
+   }
+  ],
+  [
+   "Request with CONNECT",
+   {
+    "threw": "TypeError: Failed to construct 'Request': 'CONNECT' HTTP method is unsupported."
+   }
+  ],
+  [
+   "Request with a method that is not a token",
+   {
+    "threw": "TypeError: Failed to construct 'Request': 'a b' is not a valid HTTP method."
+   }
+  ],
+  [
+   "Request with a body and GET",
+   {
+    "threw": "TypeError: Failed to construct 'Request': Request with GET/HEAD method cannot have body."
+   }
+  ],
+  [
+   "Request with credentials in its URL",
+   {
+    "threw": "TypeError: Failed to construct 'Request': Request cannot be constructed from a URL that includes credentials: https://user:pass@example.com/"
+   }
+  ],
+  [
+   "Request with mode navigate",
+   {
+    "threw": "TypeError: Failed to construct 'Request': Cannot construct a Request with a RequestInit whose mode member is set as 'navigate'."
+   }
+  ],
+  [
+   "Request with a mode that is not one",
+   {
+    "threw": "TypeError: Failed to construct 'Request': Failed to read the 'mode' property from 'RequestInit': The provided value 'x' is not a valid enum value of type RequestMode."
+   }
+  ],
+  [
+   "Request that is not a URL",
+   {
+    "threw": "TypeError: Failed to construct 'Request': Failed to parse URL from https://"
+   }
+  ],
+  [
+   "Request with its members",
+   {
+    "value": "[\"PUT\",\"https://example.com/a?b\",\"1\",\"text/plain;charset=UTF-8\"]"
+   }
+  ],
+  [
+   "Response with status 99",
+   {
+    "threw": "RangeError: Failed to construct 'Response': The status provided (99) is outside the range [200, 599]."
+   }
+  ],
+  [
+   "Response with a status text that is not one",
+   {
+    "threw": "TypeError: Failed to construct 'Response': Invalid statusText"
+   }
+  ],
+  [
+   "Response with a body and status 204",
+   {
+    "threw": "TypeError: Failed to construct 'Response': Response with null body status cannot have body"
+   }
+  ],
+  [
+   "Response with its members",
+   {
+    "value": "[202,true,\"Made\",\"default\",\"\",false,false,\"1\",\"text/plain;charset=UTF-8\"]"
+   }
+  ],
+  [
+   "Response.json of a function",
+   {
+    "threw": "TypeError: Failed to execute 'json' on 'Response': The data is not JSON serializable"
+   }
+  ],
+  [
+   "Response.json of an object",
+   {
+    "value": "application/json"
+   }
+  ],
+  [
+   "addEventListener with a number",
+   {
+    "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': parameter 2 is not of type 'Object'."
+   }
+  ],
+  [
+   "addEventListener with one argument",
+   {
+    "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': 2 arguments required, but only 1 present."
+   }
+  ],
+  [
+   "addEventListener with a signal that is not an AbortSignal",
+   {
+    "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': Failed to read the 'signal' property from 'AddEventListenerOptions': Failed to convert value to 'AbortSignal'."
+   }
+  ],
+  [
+   "addEventListener with null",
+   {
+    "value": "undefined"
+   }
+  ],
+  [
+   "removeEventListener with a string",
+   {
+    "threw": "TypeError: Failed to execute 'removeEventListener' on 'EventTarget': parameter 2 is not of type 'Object'."
+   }
+  ],
+  [
+   "dispatchEvent with an object",
+   {
+    "threw": "TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'."
+   }
+  ],
+  [
+   "dispatchEvent with null",
+   {
+    "threw": "TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'."
+   }
+  ],
+  [
+   "dispatchEvent without an argument",
+   {
+    "threw": "TypeError: Failed to execute 'dispatchEvent' on 'EventTarget': 1 argument required, but only 0 present."
+   }
+  ],
+  [
+   "dispatchEvent while the event is dispatched",
+   {
+    "value": "[\"InvalidStateError\",\"Failed to execute 'dispatchEvent' on 'EventTarget': The event is already being dispatched.\",11,true,true]"
+   }
+  ],
+  [
+   "the own properties of a DOMException that is thrown and one that is made",
+   {
+    "value": "[[[\"stack\",{\"enumerable\":false,\"configurable\":true,\"get\":{\"name\":\"\",\"length\":0},\"set\":{\"name\":\"\",\"length\":1}}]],\"string\",[]]"
+   }
+  ],
+  [
+   "Event with a number for its dictionary",
+   {
+    "threw": "TypeError: Failed to construct 'Event': The provided value is not of type 'EventInit'."
+   }
+  ],
+  [
+   "Event with a symbol for its type",
+   {
+    "threw": "TypeError: Failed to construct 'Event': Cannot convert a Symbol value to a string"
+   }
+  ],
+  [
+   "Event with a dictionary whose getter throws",
+   {
+    "threw": "RangeError: from the page"
+   }
+  ],
+  [
+   "addEventListener with a symbol for its type",
+   {
+    "threw": "TypeError: Failed to execute 'addEventListener' on 'EventTarget': Cannot convert a Symbol value to a string"
+   }
+  ],
+  [
+   "Event with a dictionary",
+   {
+    "value": "[\"x\",true,false,true,false,0]"
+   }
+  ],
+  [
+   "Event's flags before dispatch",
+   {
+    "value": "[true,false,null,null,0]"
+   }
+  ],
+  [
+   "dispatch to listeners",
+   {
+    "value": "[[\"bubbling\",2,true,true,true,true],[\"capturing\",2,1,true],[false,true,0,null,true]]"
+   }
+  ],
+  [
+   "dispatchEvent of a canceled event",
+   {
+    "value": "[true,false,false,true]"
+   }
+  ],
+  [
+   "a listener added twice runs once",
+   {
+    "value": "1"
+   }
+  ],
+  [
+   "once",
+   {
+    "value": "1"
+   }
+  ],
+  [
+   "removeEventListener",
+   {
+    "value": "1"
+   }
+  ],
+  [
+   "handleEvent",
+   {
+    "value": "1"
+   }
+  ],
+  [
+   "stopImmediatePropagation",
+   {
+    "value": "[[1],true]"
+   }
+  ],
+  [
+   "stopPropagation in a capturing listener",
+   {
+    "value": "[\"bubbling\",\"capturing\"]"
+   }
+  ],
+  [
+   "preventDefault in a passive listener",
+   {
+    "value": "[true,false]"
+   }
+  ],
+  [
+   "initEvent",
+   {
+    "value": "[\"y\",true,true]"
+   }
+  ],
+  [
+   "returnValue and cancelBubble",
+   {
+    "value": "[true,false,true]"
+   }
+  ],
+  [
+   "DOMException's defaults",
+   {
+    "value": "[\"Error\",\"\",0,\"Error\"]"
+   }
+  ],
+  [
+   "DOMException with a name",
+   {
+    "value": "[\"SyntaxError\",\"m\",12,true]"
+   }
+  ],
+  [
+   "PopStateEvent with a state",
+   {
+    "value": "[true,true,true,true,false]"
+   }
+  ],
+  [
+   "the tree of a document's markup in the html element",
+   {
+    "value": "[\"<!--  a  -->\",\"<head>\",\"  <title>\",\"    \\\" T  \\\"\",\"  <meta>\",\"    charset=\\\"utf-8\\\"\",\"<body>\",\"  \\\"x\\\"\",\"  <p>\",\"    \\\"One\\\"\",\"  <p>\",\"    \\\"Two\\\"\",\"  <!-- b -->\",\"  \\\"after\\\"\"]"
+   }
+  ],
+  [
+   "the tree of markup that leaves out head and body",
+   {
+    "value": "[\"<head>\",\"<body>\",\"  \\\"text\\\"\",\"  <div>\",\"    \\\"a\\\"\"]"
+   }
+  ],
+  [
+   "the tree of markup in a head",
+   {
+    "value": "[\"<title>\",\"  \\\"t\\\"\",\"\\\" \\\"\",\"<link>\",\"  rel=\\\"x\\\"\",\"\\\"y\\\"\"]"
+   }
+  ],
+  [
+   "implied end tags",
+   {
+    "value": "[\"<p>\",\"  \\\"a\\\"\",\"<div>\",\"  \\\"b\\\"\",\"<ul>\",\"  <li>\",\"    \\\"1\\\"\",\"  <li>\",\"    \\\"2\\\"\",\"<dl>\",\"  <dt>\",\"    \\\"t\\\"\",\"  <dd>\",\"    \\\"d\\\"\",\"  <dt>\",\"    \\\"u\\\"\",\"<h1>\",\"  \\\"h\\\"\",\"<h2>\",\"  \\\"i\\\"\",\"<p>\",\"  \\\"c\\\"\",\"<h3>\",\"  \\\"j\\\"\"]"
+   }
+  ],
+  [
+   "end tags that close what is open",
+   {
+    "value": "[\"<div>\",\"  <span>\",\"    \\\"a\\\"\",\"\\\"b\\\"\",\"<p>\",\"  \\\"c\\\"\",\"<p>\",\"<br>\",\"<br>\",\"\\\"d\\\"\"]"
+   }
+  ],
+  [
+   "void elements",
+   {
+    "value": "[\"<br>\",\"<img>\",\"  src=\\\"a\\\"\",\"<hr>\",\"<input>\",\"  type=\\\"text\\\"\",\"<wbr>\",\"<area>\",\"<embed>\",\"<source>\",\"\\\"x\\\"\",\"<img>\"]"
+   }
+  ],
+  [
+   "raw text and RCDATA",
+   {
+    "value": "[\"<style>\",\"  \\\"a<b>&amp;\\\"\",\"<textarea>\",\"  \\\"<b>&\\\"\",\"<title>\",\"  \\\"<x\\\"\",\"<xmp>\",\"  \\\"&lt;\\\"\"]"
+   }
+  ],
+  [
+   "scripts' text",
+   {
+    "value": "[\"<script>\",\"  \\\"if (a < b && c) { x = '</div>' }\\\"\",\"\\\"after\\\"\"]"
+   }
+  ],
+  [
+   "pre drops its first line feed",
+   {
+    "value": "[\"<pre>\",\"  \\\"\\nx\\\"\",\"<listing>\",\"  \\\"y\\\"\"]"
+   }
+  ],
+  [
+   "attributes as they come",
+   {
+    "value": "[\"<a>\",\"  b=\\\"\\\"\",\"  c=\\\"d e\\\"\",\"  data-a=\\\"1\\\"\",\"  href=\\\"x\\\"\",\"  \\\"t\\\"\"]"
+   }
+  ],
+  [
+   "character references",
+   {
+    "value": "[\"\\\"&<>\\\" ©AB∉¬it;&bogus;\\\"\"]"
+   }
+  ],
+  [
+   "innerHTML writes markup back",
+   {
+    "value": "<p class=\"a b\" data-x=\"&quot;&amp;&lt;&gt;\">One &amp; two &lt; three &gt; four&nbsp;</p><!--c--><br><script>a < b</script><style>&</style><span>x</span>"
+   }
+  ],
+  [
+   "outerHTML",
+   {
+    "value": "[\"<div><b>x</b></div>\",\"<b>x</b>\"]"
+   }
+  ],
+  [
+   "outerHTML's setter",
+   {
+    "value": "[\"<i>a</i><em>1</em>2<u>c</u>\",\"<p></p>\",[\"NoModificationAllowedError\",\"Failed to set the 'outerHTML' property on 'Element': This element's parent is a Document, which may not be modified.\"]]"
+   }
+  ],
+  [
+   "textContent",
+   {
+    "value": "[\"abc\",\"<p>x&lt;y&gt;</p>\",\"\",null,\"t\",null]"
+   }
+  ],
+  [
+   "nodeValue",
+   {
+    "value": "[null,\"<!--y--><b>z</b>\"]"
+   }
+  ],
+  [
+   "querySelector with simple selectors",
+   {
+    "threw": "SyntaxError: Failed to execute 'querySelector' on 'Element': '[type=text s]' is not a valid selector."
+   }
+  ],
+  [
+   "selectors that are not valid",
+   {
+    "value": "[[\"\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': The provided selector is empty.\"],[\"div[\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': 'div[' is not a valid selector.\"],[\"#1\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': '#1' is not a valid selector.\"],[\"..a\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': '..a' is not a valid selector.\"],[\">p\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': '>p' is not a valid selector.\"],[\"p >\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': 'p >' is not a valid selector.\"],[\"[a=]\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': '[a=]' is not a valid selector.\"],[\"a,\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': 'a,' is not a valid selector.\"],[\"[a=b x]\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': '[a=b x]' is not a valid selector.\"],[\"p!\",\"SyntaxError\",\"Failed to execute 'querySelector' on 'Element': 'p!' is not a valid selector.\"]]"
+   }
+  ],
+  [
+   "matches and closest",
+   {
+    "value": "[true,true,false,true,\"s\",\"b\",null,\"p\"]"
+   }
+  ],
+  [
+   "getElementById and a document's parts",
+   {
+    "value": "[true,null,null,true,\"Root\",\"Root\",null,null,\"CSS1Compat\",\"application/xml\",\"UTF-8\",\"UTF-8\",\"UTF-8\",\"about:blank\",\"about:blank\",null,null,null,\"\",null,null,true,\"#document\",9,null,1,\"[object Document]\"]"
+   }
+  ],
+  [
+   "createElement",
+   {
+    "value": "[[\"DIV\",\"DIV\",\"div\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLDivElement]\"],[\"Div\",\"DIV\",\"div\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLDivElement]\"],[\"x-custom\",\"X-CUSTOM\",\"x-custom\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLElement]\"],[\"unknown\",\"UNKNOWN\",\"unknown\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLUnknownElement]\"],[\"acronym\",\"ACRONYM\",\"acronym\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLElement]\"],[\"image\",\"IMAGE\",\"image\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLUnknownElement]\"],[\"keygen\",\"KEYGEN\",\"keygen\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLUnknownElement]\"],[\"listing\",\"LISTING\",\"listing\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLPreElement]\"],[\"h6\",\"H6\",\"h6\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLHeadingElement]\"],[\"bdi\",\"BDI\",\"bdi\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLElement]\"],[\"svg\",\"SVG\",\"svg\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLUnknownElement]\"],[\"math\",\"MATH\",\"math\",\"http://www.w3.org/1999/xhtml\",\"[object HTMLUnknownElement]\"]]"
+   }
+  ],
+  [
+   "createElement with names that are not valid",
+   {
+    "value": "[[\"\",\"InvalidCharacterError\",\"Failed to execute 'createElement' on 'Document': The tag name provided ('') is not a valid name.\"],[\"1a\",\"InvalidCharacterError\",\"Failed to execute 'createElement' on 'Document': The tag name provided ('1a') is not a valid name.\"],[\"a b\",\"InvalidCharacterError\",\"Failed to execute 'createElement' on 'Document': The tag name provided ('a b') is not a valid name.\"],[\"a>\",\"InvalidCharacterError\",\"Failed to execute 'createElement' on 'Document': The tag name provided ('a>') is not a valid name.\"],[\"-a\",\"InvalidCharacterError\",\"Failed to execute 'createElement' on 'Document': The tag name provided ('-a') is not a valid name.\"],[\"été\",\"été\"],[\":a\",\":a\"],[\"a\\u0000\",\"InvalidCharacterError\",\"Failed to execute 'createElement' on 'Document': The tag name provided ('a\\u0000') is not a valid name.\"]]"
+   }
+  ],
+  [
+   "attributes",
+   {
+    "value": "[[\"data-a\",\"b\"],[\"3\",null,true],true,[true,true,false,false,true,true,\"\"],\"<div data-a=\\\"3\\\" t=\\\"\\\" id=\\\"i\\\" class=\\\"c d\\\" slot=\\\"s\\\"></div>\",\"i\",[[\"\",\"InvalidCharacterError\",\"Failed to execute 'setAttribute' on 'Element': '' is not a valid attribute name.\"],[\"a b\",\"InvalidCharacterError\",\"Failed to execute 'setAttribute' on 'Element': 'a b' is not a valid attribute name.\"],[\"a=b\",\"InvalidCharacterError\",\"Failed to execute 'setAttribute' on 'Element': 'a=b' is not a valid attribute name.\"],[\"a/b\",\"InvalidCharacterError\",\"Failed to execute 'setAttribute' on 'Element': 'a/b' is not a valid attribute name.\"],[\"a>b\",\"InvalidCharacterError\",\"Failed to execute 'setAttribute' on 'Element': 'a>b' is not a valid attribute name.\"]]]"
+   }
+  ],
+  [
+   "reflected attributes",
+   {
+    "value": "[\"<meta name=\\\"n\\\" content=\\\"c\\\" http-equiv=\\\"h\\\">\",\"<script type=\\\"module\\\" defer=\\\"\\\">a < b</script>\",\"a < b\",\"<ol reversed=\\\"\\\"></ol>\",\"<html version=\\\"v\\\"></html>\",\"<title>x</title>\",\"x\"]"
+   }
+  ],
+  [
+   "tree mutations",
+   {
+    "value": "[true,true,true,true,true,true,\"<p id=\\\"b\\\">b</p>t\",[\"itself\",\"HierarchyRequestError\",\"Failed to execute 'appendChild' on 'Node': The new child element contains the parent.\"],[\"an ancestor\",\"HierarchyRequestError\",\"Failed to execute 'appendChild' on 'Node': The new child element contains the parent.\"],[\"into a text\",\"HierarchyRequestError\",\"Failed to execute 'appendChild' on 'Node': This node type does not support this method.\"],[\"remove from a text\",\"NotFoundError\",\"Failed to execute 'removeChild' on 'Node': This node type does not support this method.\"],[\"remove another's child\",\"NotFoundError\",\"Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.\"],[\"before another's child\",\"NotFoundError\",\"Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.\"],[\"replace another's child\",\"NotFoundError\",\"Failed to execute 'replaceChild' on 'Node': The node to be replaced is not a child of this node.\"],[\"a document\",\"HierarchyRequestError\",\"Failed to execute 'appendChild' on 'Node': Nodes of type '#document' may not be inserted inside nodes of type 'DIV'.\"],[\"a text into a document\",\"HierarchyRequestError\",\"Failed to execute 'appendChild' on 'Node': Nodes of type '#text' may not be inserted inside nodes of type '#document'.\"],[\"two elements into a document\",\"HierarchyRequestError\",\"Failed to execute 'appendChild' on 'Node': Only one element on document allowed.\"],[\"an element before nothing\",\"TypeError\",\"Failed to execute 'insertBefore' on 'Node': 2 arguments required, but only 1 present.\"],[\"null\",\"TypeError\",\"Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.\"],[\"an object\",\"TypeError\",\"Failed to execute 'appendChild' on 'Node': parameter 1 is not of type 'Node'.\"]]"
+   }
+  ],
+  [
+   "append, prepend, before, after, replaceWith and remove",
+   {
+    "value": "[\"pbf<b>2</b>r<i>1</i>safx<u></u>y\",\"only<i>1</i>\",\"\",0,null,[\"HierarchyRequestError\",\"Failed to execute 'append' on 'Element': The new child element contains the parent.\"]]"
+   }
+  ],
+  [
+   "element children and siblings",
+   {
+    "value": "[\"i\",\"u\",3,\"i\",\"u\",\"i\",\"u\",null,true,false]"
+   }
+  ],
+  [
+   "insertAdjacentElement and insertAdjacentText",
+   {
+    "value": "[\"<a></a><p><b></b>xt</p>u\",null,[\"SyntaxError\",\"Failed to execute 'insertAdjacentText' on 'Element': The value provided ('middle') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'.\"]]"
+   }
+  ],
+  [
+   "CharacterData",
+   {
+    "value": "[5,\"ell\",\"llo\",\"<<ello world\",\"c\",\"\",\"#comment\",[\"IndexSizeError\",\"Failed to execute 'substringData' on 'CharacterData': The offset 100 is greater than the node's length (12).\"],[\"IndexSizeError\",\"Failed to execute 'insertData' on 'CharacterData': The offset 100 is greater than the node's length (12).\"],[\"IndexSizeError\",\"Failed to execute 'deleteData' on 'CharacterData': The offset 100 is greater than the node's length (12).\"],[\"IndexSizeError\",\"Failed to execute 'replaceData' on 'CharacterData': The offset 100 is greater than the node's length (12).\"],\"\"]"
+   }
+  ],
+  [
+   "splitText, wholeText and normalize",
+   {
+    "value": "[\"ab\",\"cdef\",0,true,\"abcdef\",\"abcdefg\",true,null,[\"IndexSizeError\",\"Failed to execute 'splitText' on 'Text': The offset 100 is larger than the Text node's length.\"]]"
+   }
+  ],
+  [
+   "cloneNode and isEqualNode",
+   {
+    "value": "[\"<p a=\\\"1\\\"></p>\",\"<p a=\\\"1\\\">x<b>y</b><!--z--></p>\",true,false,false,true,false,null,\"#document\",true]"
+   }
+  ],
+  [
+   "compareDocumentPosition and contains",
+   {
+    "value": "[4,2,20,10,4,0,true,false,true,false]"
+   }
+  ],
+  [
+   "a node's place",
+   {
+    "value": "[true,true,false,true,\"p\",null,true,true,\"#text\",3,\"B\",1,8,9]"
+   }
+  ],
+  [
+   "the window",
+   {
+    "value": "[true,true,true,\"[object Window]\",true,true,[],true,true,\"[object HTMLDocument]\",\"[object Document]\",true,\"#document\",true,\"function\",false,false,true,[\"TypeError\"],[\"TypeError\"]]"
+   }
+  ],
+  [
+   "self can be replaced",
+   {
+    "threw": "ReferenceError: self is not defined"
+   }
+  ],
+  [
+   "a node's @@unscopables",
+   {
+    "value": "[[\"Element\",null,[\"after\",\"append\",\"before\",\"prepend\",\"remove\",\"replaceChildren\",\"replaceWith\",\"slot\"]],[\"Document\",null,[\"append\",\"fullscreen\",\"prepend\",\"replaceChildren\"]],[\"DocumentType\",null,[\"after\",\"before\",\"remove\",\"replaceWith\"]],[\"CharacterData\",null,[\"after\",\"before\",\"remove\",\"replaceWith\"]]]"
+   }
+  ],
+  [
+   "illegal constructors",
+   {
+    "value": "[[\"Node\",\"TypeError: Failed to construct 'Node': Illegal constructor\",\"TypeError: Illegal constructor\"],[\"Element\",\"TypeError: Failed to construct 'Element': Illegal constructor\",\"TypeError: Illegal constructor\"],[\"HTMLElement\",\"TypeError: Failed to construct 'HTMLElement': Illegal constructor\",\"TypeError: Failed to construct 'HTMLElement': Please use the 'new' operator, this DOM object constructor cannot be called as a function.\"],[\"HTMLDivElement\",\"TypeError: Failed to construct 'HTMLDivElement': Illegal constructor\",\"TypeError: Failed to construct 'HTMLDivElement': Please use the 'new' operator, this DOM object constructor cannot be called as a function.\"],[\"HTMLUnknownElement\",\"TypeError: Failed to construct 'HTMLUnknownElement': Illegal constructor\",\"TypeError: Illegal constructor\"],[\"CharacterData\",\"TypeError: Failed to construct 'CharacterData': Illegal constructor\",\"TypeError: Illegal constructor\"],[\"DocumentType\",\"TypeError: Failed to construct 'DocumentType': Illegal constructor\",\"TypeError: Illegal constructor\"]]"
+   }
+  ]
+ ]
+}

@@ -106,6 +106,30 @@ _AS_CHROME = {
         "return navigator.permissions.query()",
         "threw: TypeError: Failed to execute 'query' on 'Permissions': 1 argument required, but only 0 present.",
     ),
+    # These five as the Baselines of the Script Fingerprint hold them, from Windows Chrome 157.0.8103.39.
+    "a promise attribute's wrong receiver rejects": (
+        """const get = Object.getOwnPropertyDescriptor(FontFace.prototype, 'loaded').get;
+        let promise;
+        try { promise = get.call({}); } catch (error) { return 'threw at once: ' + error; }
+        return promise.then(() => 'fulfilled', (error) => 'rejected: ' + error);""",
+        "value: rejected: TypeError: Failed to read the 'loaded' property from 'FontFace': Illegal invocation",
+    ),
+    "another promise attribute's wrong receiver": (
+        "return Object.getOwnPropertyDescriptor(ReadableStreamDefaultReader.prototype, 'closed').get.call({})",
+        "threw: TypeError: Failed to read the 'closed' property from 'ReadableStreamDefaultReader': Illegal invocation",
+    ),
+    "an overloaded promise's number of arguments before its receiver": (
+        "return CookieStore.prototype.set.call({})",
+        "threw: TypeError: Failed to execute 'set' on 'CookieStore': 1 argument required, but only 0 present.",
+    ),
+    "an overloaded promise's number of arguments with one overload in the set": (
+        "return NavigatorLogin.prototype.setStatus.call({})",
+        "threw: TypeError: Failed to execute 'setStatus' on 'NavigatorLogin': 1 argument required, but only 0 present.",
+    ),
+    "an overloaded promise of Window's": (
+        "return createImageBitmap.call({})",
+        "threw: TypeError: Failed to execute 'createImageBitmap' on 'Window': 1 argument required, but only 0 present.",
+    ),
     "an object of EventTarget's behind an interface without a class": (
         """const signal = new AbortController().signal;
         let calls = 0;

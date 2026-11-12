@@ -639,6 +639,19 @@ void KnownGapAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
       !IsObjectOf(isolate, *member.owner, info.This())) {
     return;
   }
+  // An attribute whose type is a promise has no V8 signature check: bind_gen's
+  // make_check_receiver() throws in the call, and the promise return context
+  // rejects with that, so that "get closed" of a reader rejects on another
+  // kind of object, as in Chrome.
+  std::optional<ExceptionToRejectPromiseScope> reject_promise_scope;
+  if ((member.flags & kMemberReturnsPromise) &&
+      !(member.flags & kMemberStatic)) {
+    reject_promise_scope.emplace(info);
+    if (!IsObjectOf(isolate, *member.owner, info.This())) {
+      ThrowTypeError(isolate, "Illegal invocation");
+      return;
+    }
+  }
   if (member.flags & kMemberRefused) {
     ThrowNotImplemented(isolate);
     return;
@@ -714,9 +727,15 @@ void KnownGapAttributeSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
       value);
 }
 
-void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
+namespace {
+
+// An operation's steps after its receiver: its arguments, the report and its
+// return type's default. `chosen` is the overload that bind_gen's overload
+// dispatcher chose before the receiver was checked, or null for none yet.
+void OperationSteps(const v8::FunctionCallbackInfo<v8::Value>& info,
+                    const MemberInfo& member,
+                    const OverloadInfo* chosen) {
   v8::Isolate* const isolate = info.GetIsolate();
-  const MemberInfo& member = MemberOf(info);
   if (member.flags & kMemberRefused) {
     ThrowNotImplemented(isolate);
     return;
@@ -728,8 +747,16 @@ void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
     return;
   }
   std::vector<v8::Local<v8::Value>> arguments;
-  const OverloadInfo* const overload =
-      Arguments(info, *member.operation, arguments);
+  const OverloadInfo* overload = chosen;
+  if (!overload) {
+    overload = Arguments(info, *member.operation, arguments);
+  } else {
+    ExceptionState exception_state(isolate);
+    if (!ConvertOverloadArguments(info, *overload, arguments,
+                                  exception_state)) {
+      overload = nullptr;
+    }
+  }
   if (!overload) {
     return;
   }
@@ -745,20 +772,42 @@ void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
 }
 
+}  // namespace
+
+void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  OperationSteps(info, MemberOf(info), nullptr);
+}
+
 void KnownGapPromiseOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* const isolate = info.GetIsolate();
   const MemberInfo& member = MemberOf(info);
   // Web IDL: an error before the operation returns rejects the promise.
   ExceptionToRejectPromiseScope reject_promise_scope(info);
+  // An operation of several overloads goes through bind_gen's overload
+  // dispatcher first, which checks the number of arguments and tests the
+  // distinguishing argument, and only then calls the overload's function,
+  // which checks the receiver: so that createImageBitmap() on another kind of
+  // object rejects with "1 argument required, but only 0 present.", as in
+  // Chrome.
+  const OverloadInfo* chosen = nullptr;
+  if (!(member.flags & kMemberRefused) &&
+      !(member.flags & kMemberStringifierAttribute) &&
+      HasOverloads(*member.operation)) {
+    ExceptionState exception_state(isolate);
+    chosen = ChooseOverload(info, *member.operation, exception_state);
+    if (!chosen) {
+      return;
+    }
+  }
+  // A receiver of another kind, as bind_gen's make_check_receiver() checks it
+  // for an operation that returns a promise: thrown in the call, so that the
+  // call's context goes in front of the message, and then into the promise.
   if (!(member.flags & kMemberStatic) &&
       !IsObjectOf(isolate, *member.owner, info.This())) {
     ThrowTypeError(isolate, "Illegal invocation");
     return;
   }
-  // A receiver of another kind, as bind_gen's make_check_receiver() checks it
-  // for an operation that returns a promise: thrown in the call, so that the
-  // call's context goes in front of the message, and then into the promise.
-  KnownGapOperation(info);
+  OperationSteps(info, member, chosen);
 }
 
 void KnownGapConstructor(const v8::FunctionCallbackInfo<v8::Value>& info) {
