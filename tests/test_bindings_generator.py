@@ -19,6 +19,7 @@ from bindings_generator.listing import write_listing
 from bindings_generator.model import (
     ALWAYS,
     Attribute,
+    CollectionLike,
     Condition,
     Constant,
     ExposedConstruct,
@@ -495,3 +496,16 @@ def test_a_table_leaves_out_what_a_page_never_installs() -> None:
     ]
 
     assert '"isolated"' not in source
+
+
+def test_iterator_symbols_can_be_replaced_and_the_others_cannot() -> None:
+    # Blink installs @@iterator with v8::DontEnum alone, and @@toStringTag and @@unscopables read-only.
+    pair = CollectionLike("iterable", (), (_operation("entries"),), "entries")
+    indexed = _interface(special_operations=("indexed getter",))
+    iterable = _interface(collection=pair, unscopables=("x",))
+
+    def writable(interface: Interface) -> dict[str, bool | None]:
+        return {p.name: p.writable for p in plan_interface(interface) if p.name.startswith("@@")}
+
+    assert writable(indexed) == {"@@toStringTag": False, "@@iterator": True}
+    assert writable(iterable) == {"@@toStringTag": False, "@@unscopables": False, "@@iterator": True}

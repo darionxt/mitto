@@ -233,14 +233,16 @@ def _install_function(entries: list[_Entry], phase: Phase) -> list[Property]:
     return result
 
 
-def _symbol(name: str, phase: Phase, enumerable: bool = False, value: str | None = None) -> Property:
+def _symbol(name: str, phase: Phase, value: str | None = None, writable: bool = False) -> Property:
+    """A property of the prototype under a well-known symbol: @@toStringTag and @@unscopables are read-only, and Blink
+    installs @@iterator and @@asyncIterator with v8::DontEnum alone, so that a page can replace them."""
     return Property(
         name=name,
         target="prototype",
         kind="value",
-        enumerable=enumerable,
+        enumerable=False,
         configurable=True,
-        writable=False,
+        writable=writable,
         value=value,
         phase=phase,
     )
@@ -257,7 +259,7 @@ def plan_interface(interface: Interface) -> list[Property]:
         # SetupIDLInterfaceTemplate() gives the prototype its @@toStringTag before anything else.
         properties.append(_symbol("@@toStringTag", Phase.TEMPLATE, value=interface.name))
         if "indexed getter" in interface.special_operations and "Global" not in interface.extended_attributes:
-            properties.append(_symbol("@@iterator", Phase.TEMPLATE))
+            properties.append(_symbol("@@iterator", Phase.TEMPLATE, writable=True))
         collection = interface.collection
         if collection is not None and collection.kind == "iterable" and collection.iterator_operation is None:
             for name in ("entries", "keys", "values", "forEach"):
@@ -312,7 +314,7 @@ def plan_interface(interface: Interface) -> list[Property]:
         collection = interface.collection
         if collection is not None and collection.iterator_operation is not None:
             symbol = "@@asyncIterator" if collection.kind == "async iterable" else "@@iterator"
-            properties.append(_symbol(symbol, Phase.CONTEXT))
+            properties.append(_symbol(symbol, Phase.CONTEXT, writable=True))
     properties += _install_function(dependent, Phase.CONTEXT)
     if from_snapshot:
         properties += _install_function(independent, Phase.CONTEXT)
