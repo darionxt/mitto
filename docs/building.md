@@ -272,6 +272,15 @@ Measured for Chromium 157.0.8103.39, each from an empty build directory:
 
 Of the stripped program, ICU's data is 10.8 MB and V8's snapshot 0.37 MB. A wheel that carried the program would grow by about its compressed size, nearly three times what the wheel is today. On Linux the program needs only glibc and libgcc from the system, as `ldd` shows, like the library. On Windows, as for the library, the program holds no debug information to strip: it is in `mitto_page.exe.pdb` beside it, 301 MB. Sizes are in MB of 1,000,000 bytes.
 
+### What the Runtime costs
+
+What the Runtime adds once a release ships it ([roadmap](roadmap.md), M10), as measured in CI at the end of M6:
+
+- **The wheel** grows by the Page program, compressed, from 6.2, 5.6 and 6.7 MB to 23.5, 21.7 and 24.7 MB on Linux, macOS and Windows, and its symbols archive is then 34.5, 45.1 and 60.5 MB ([Build a wheel](#build-a-wheel)). The Linux wheel needs glibc 2.27 instead of 2.26.
+- **The release workflow** builds from nothing, and the Runtime's build took 57 to 107 minutes after the library's in CI ([In CI](#in-ci)). Its whole job would take about as long as CI's from nothing, 84 to 164 minutes, so the build job's timeout of 90 minutes has to grow, as CI's is 240.
+- **CI** builds it already. A native job from nothing takes 84 to 164 minutes, which the nightly run pays. One after a change in `native/` takes 11 to 18.5 minutes, and one with both builds cached 9.5 to 12.5, where a job with a cached library took 8 to 11 minutes before the Runtime.
+- **The Actions cache** holds about 5.8 GB of the 10 GB that GitHub keeps for one set of `main`'s caches, where it held 2.9 GB without the Runtime ([In CI](#in-ci)).
+
 ## Build from the source export
 
 A hosted runner has no room for a Chromium checkout, so the native core has a second way to build: from the **source export**, an archive of the files of Chromium that its build reads on each **Host**, with the patches already applied. It needs no workspace and no depot_tools.
@@ -392,7 +401,18 @@ The table above is from before the job built the Runtime. With it, on 2026-11-11
 | Peak disk use of the job | 7.4 GiB | 5.7 GiB | 7.9 GiB on `D:` |
 | Disk free when the job starts | 88 GiB | 36 GiB | 220 GiB on `D:` |
 
-So a job that builds from nothing, as [the nightly run](#what-main-a-pull-request-and-the-nightly-run-build) does, and as `main` and a pull request do after a change to `tools/workspace/`, takes 85 to 165 minutes: 94 to 112 in the run above, 113 to 165 in `main`'s runs of 2026-11-11, where the Windows job spent 42 minutes on the library and 107 on the Runtime, and 85 to 152 in a trial of the nightly run that day. The job's timeout is 240 minutes, and GitHub stops a job on a hosted runner after 6 hours. On Linux the job used at most 6.9 GiB of the runner's 16 GB of memory. On macOS the Runtime's build runs 3 steps at once, as many as the runner has cores: at ninja's default of 5, the build of the Runtime alone took 108 minutes on another runner of the same image, where the runner's 7 GB of memory never ran short enough to swap.
+`main` built both from nothing after each of its five merges that changed `native/` on 2026-11-11, from facda21 to a100cdc, before [the nightly run](#what-main-a-pull-request-and-the-nightly-run-build) took that over. Under the nightly run's rules, its runs after the next two merges, 1660f0e and 0c6421e, at the end of M6, rebuilt only `native/` in `main`'s build directories. These are CI runs 42994403483, 43020992027, 43031593471, 43036686282 and 43058985034, then 43121997349 and 43155827086:
+
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Build of the library from nothing | 16 to 23 minutes | 16 to 27 minutes | 24 to 42 minutes |
+| Build of the Runtime from nothing, after it | 59 to 83 minutes | 79 to 90 minutes | 57 to 107 minutes |
+| Tests | 8.5 to 9.3 minutes | 9.2 to 10.3 minutes | 9.4 to 11.6 minutes |
+| Whole job from nothing | 84 to 116 minutes | 106 to 124 minutes | 93 to 164 minutes |
+| After the merge of 1660f0e, from `main`'s build directories: the library, the Runtime and the whole job | 0.9, 1.0 and 12.3 minutes | 1.3, 0.8 and 13.5 minutes | 1.6, 1.4 and 17.7 minutes |
+| After the merge of 0c6421e, the same | 0.6, 0.6 and 10.8 minutes | 1.2, 1.0 and 14.3 minutes | 1.7, 1.7 and 18.5 minutes |
+
+So a job that builds from nothing, as the nightly run does, and as `main` and a pull request do after a change to `tools/workspace/`, takes 84 to 164 minutes: 94 to 112 in the run above, 84 to 164 in `main`'s runs of 2026-11-11, and 85 to 152 in a trial of the nightly run that day. The job's timeout is 240 minutes, and GitHub stops a job on a hosted runner after 6 hours. On Linux the job used at most 6.9 GiB of the runner's 16 GB of memory. On macOS the Runtime's build runs 3 steps at once, as many as the runner has cores: at ninja's default of 5, the build of the Runtime alone took 108 minutes on another runner of the same image, where the runner's 7 GB of memory never ran short enough to swap.
 
 On 2026-10-30 the Windows image had only the Windows SDK 10.0.26100, and Chromium 157's `build/vs_toolchain.py` asks for `10.0.28000.0`. So a Windows job that builds, and only such a job, first installs the SDK 10.0.28000.2270, unless the image already has that version. The installer comes from Microsoft's downloads page and is checked against its SHA-256. It installs only the feature for desktop C++ apps on x64, `OptionId.DesktopCPPx64`, which brings in 46 packages: the headers and libraries for x64 and x86 and the SDK's own tools, 1.2 GiB. The build needs nothing more. That took 1.7 to 2.8 minutes in three runs, downloads included, so the job installs the SDK each time rather than keeping its `10.0.28000.0` directories in the Actions cache, where they would take 1.2 GiB of the room that this repository's caches share, to save those two minutes at most. The version and the installer are pinned in [`.github/actions/install-windows-sdk/action.yml`](../.github/actions/install-windows-sdk/action.yml), which the [release workflow](#the-release-workflow) uses too, and change only when a new **Engine Release** asks for another SDK.
 
@@ -547,7 +567,17 @@ Measured for Chromium 157.0.8103.39, in MB of 1,000,000 bytes:
 
 The tag follows from Chromium's build. Chromium 157 sets `mac_deployment_target` to 13.0 in `build/config/mac/mac_sdk.gni`. Its Linux sysroot is Debian bullseye, and `build/linux/sysroot_scripts/reversion_glibc.py` rewrites the sysroot's glibc so that no symbol needs a version above 2.26. The library needs 2.25, for `getentropy` and `getrandom`, and auditwheel has no policy for 2.25, so the tag says 2.26. A Windows wheel's tag names only the CPU, as Windows has no version in a tag. [`tests/test_wheel.py`](../tests/test_wheel.py) keeps the tag equal to what the library needs: what `auditwheel show` says on Linux, the `minos` that `otool -l` shows on macOS, and the machine in the DLL's PE header on Windows.
 
-A wheel with the Page program is tagged for the highest version that any of its binaries needs. On Linux the Page program needs glibc 2.27, for `memfd_create()`, which V8 calls in `v8/src/base/platform/platform-posix.cc`, and which `reversion_glibc.py` leaves at 2.27 on purpose, in its `SYMBOL_ALLOWLIST`. So CI's Linux wheel is tagged `manylinux_2_27_x86_64`, and a release that ships the Runtime will need glibc 2.27 too, unless the Page program stops needing it. On macOS and Windows its tag is the library's. Measured for Chromium 157.0.8103.39, a wheel with the Page program, as CI builds it, is 22.2 MB on Linux, 20.8 MB on macOS and 23.7 MB on Windows, and its symbols archive 33.2 MB, 42.4 MB and 57.6 MB.
+A wheel with the Page program is tagged for the highest version that any of its binaries needs. On Linux the Page program needs glibc 2.27, for `memfd_create()`, which V8 calls in `v8/src/base/platform/platform-posix.cc`, and which `reversion_glibc.py` leaves at 2.27 on purpose, in its `SYMBOL_ALLOWLIST`. So CI's Linux wheel is tagged `manylinux_2_27_x86_64`, and a release that ships the Runtime will need glibc 2.27 too, unless the Page program stops needing it. On macOS and Windows its tag is the library's. Measured for Chromium 157.0.8103.39, a wheel with the Page program, as CI built it when its job first built the Runtime on 2026-11-11, was 22.2 MB on Linux, 20.8 MB on macOS and 23.7 MB on Windows, and its symbols archive 33.2 MB, 42.4 MB and 57.6 MB. At the end of M6, with the DOM, the loading of documents, timers and `fetch()`, CI's wheels of `main` at 0c6421e, from run 43155827086, measured:
+
+| | Linux x86_64 | macOS arm64 | Windows x64 |
+| --- | --- | --- | --- |
+| Wheel with the Page program, as CI builds it | 23.5 MB | 21.7 MB | 24.7 MB |
+| The same wheel without it, as the release workflow builds it | 6.2 MB | 5.6 MB | 6.7 MB |
+| `mitto_page`, installed | 45.1 MB | 42.8 MB | 47.2 MB |
+| `mitto_page`, compressed in the wheel | 17.3 MB | 16.0 MB | 18.0 MB |
+| Symbols archive of the wheel with the Page program | 34.5 MB | 45.1 MB | 60.5 MB |
+
+The wheel without the Page program is CI's wheel less the program's entry in the zip file. That leaves the program's line in `RECORD`, so the size is high by about 100 bytes at most.
 
 To check a wheel, install it into a new environment and run the tests there, with `MITTO_WHEEL` naming the wheel, `MITTO_HOST_NOTICES` naming what the [notices script](#third-party-notices) prints for the library's build, and `MITTO_NATIVE_LIBRARY` unset. Print the notices first, because `uv run` would install the project into the new environment:
 

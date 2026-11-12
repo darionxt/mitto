@@ -371,6 +371,7 @@ def test_the_errors_of_a_page_are_mitto_errors_sorted_by_what_a_caller_does_next
     for name in ("PageError", "ScriptError", "PageEndedError", "PageTimeoutError", "ConsoleMessage", "Page"):
         assert name not in mitto.__all__
     assert not hasattr(mitto.Session, "open_page")
+    assert not hasattr(mitto.AsyncSession, "open_page")
 
 
 def test_page_errors_survive_a_pickle() -> None:
