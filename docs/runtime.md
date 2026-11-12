@@ -402,6 +402,8 @@ An element of the HTML namespace gets the HTML Standard's interface for its name
 | `color`, `color-gamut`, `dynamic-range`, `monochrome`, `color-index` | 8 bits a channel, `srgb`, `standard`, 0 and 0: a Machine holds no wide-gamut or HDR display |
 | `display-mode`, `scripting`, `update`, `overflow-block`, `overflow-inline`, `grid`, the viewport segments, `device-posture`, `scan` and the media types | What every tab of Windows Chrome has: `browser`, `enabled`, `fast`, `scroll`, a bitmap display, one segment, `continuous`, no `tv`, and `screen` |
 
+A number is held between the largest floats either way when it is read, as Blink holds it, but a value that a unit or arithmetic takes past them is written as it is held. So, as in Chrome 157, `(width: calc(1e38in))` is written back as `(width: calc(9.6e+39px))`, which reads back as `(width: calc(3.40282e+38px))`.
+
 Blink's parser recurses once for each parenthesis of a condition, as this one does, and Chrome 157 takes some 20,000 of them. So the Page program has the stack of Chrome's renderers on its main thread, 8 MiB, which on Windows its link sets as `chrome.exe`'s does, where Windows would give it 1 MiB.
 
 A Machine does not change while a Page runs, so no `change` event is ever fired, as none would be in Chrome on that machine. `addListener()`, `removeListener()` and `addEventListener()` keep their listeners as any event target does, and a page can make its own `MediaQueryListEvent`. Blink keeps a list with change listeners alive while its document is, which only a `WeakRef` could tell apart.
@@ -499,7 +501,7 @@ A Page that has been closed raises a `ValueError`, as a closed Session does. A P
 | [`tests/test_page_media.py`](../tests/test_page_media.py) | `matchMedia()`: queries written back as Chrome 157 writes them, a `MediaQueryList` and its listeners, `MediaQueryListEvent`, features that parse as the runtime-enabled features say, and, on a Session, each media feature as the Session's Machine decides it | The native job on every Host, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
 | `media_query_test` | The cases of Blink's media query tests that need no layout, against the parser and the evaluator in `native/css` | The native job on every Host, and the sanitizer workflow's `asan` and `ubsan` jobs |
 | `page_messages_fuzzer` | How the library reads what a Page sends | The sanitizer workflow's fuzz job |
-| `media_query_fuzzer` | The CSS tokenizer, and the media query parser and evaluator, on any input: the tokens cover the input in order, and a list whose blocks all end parses back to itself | The same |
+| `media_query_fuzzer` | The CSS tokenizer, and the media query parser and evaluator, on any input: the tokens cover the input in order, and what the parser writes back of what it wrote back of a list whose blocks all end is the same again | The same |
 
 To run the tests of Pages against a local build, name the C test program and the Page program, which the tests copy beside the library:
 
