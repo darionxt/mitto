@@ -13,6 +13,7 @@
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/media_query_list.h"
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/request.h"
@@ -76,6 +77,11 @@ void Window::SetStart(const PageStart& start,
                       const PageConnection& connection) {
   start_ = start;
   connection_ = connection;
+}
+
+// As Blink's LocalDOMWindow::matchMedia().
+MediaQueryList* Window::MatchMedia(const std::u16string& query) {
+  return MediaQueryList::Create(this, query);
 }
 
 mitto::Performance* Window::Performance() {

@@ -78,6 +78,10 @@ source_set("dom") {
     "html_unknown_element.h",
     "markup_serializer.cc",
     "markup_serializer.h",
+    "media_query_list.cc",
+    "media_query_list.h",
+    "media_query_list_event.cc",
+    "media_query_list_event.h",
     "navigator.cc",
     "navigator.h",
     "navigator_ua_data.cc",
@@ -131,6 +135,7 @@ source_set("dom") {
   public_deps = [
     "//mitto:page_channel",
     "//mitto/bindings",
+    "//mitto/css:parser",
   ]
   deps = [
     "//base",
