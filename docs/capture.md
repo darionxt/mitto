@@ -1,6 +1,6 @@
 # The capture kit
 
-The capture kit records what a client sends to a server: the raw TLS ClientHello, the Initial packets of QUIC, the decrypted HTTP/3 and HTTP/2 frames or HTTP/1.1 requests, a `CONNECT` to its proxy, and a **normal form** of them that compares equal between recordings of the same client. The normal form is also the **Baseline** file format, and **Parity Checks** compare in it. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
+The capture kit records what a client sends to a server: the raw TLS ClientHello, the Initial packets of QUIC, the decrypted HTTP/3 and HTTP/2 frames or HTTP/1.1 requests, a `CONNECT` to its proxy, and a **normal form** of them that compares equal between recordings of the same client. The normal form is also the **Baseline** file format, and **Parity Checks** compare in it. It also records a page's **Script Fingerprint** in a real Chrome, and writes [its **Normal Form**](#the-script-fingerprint). Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
 
 The kit lives in `tools/capture`. It needs nothing but [uv](https://docs.astral.sh/uv/) and runs on Windows, macOS and Linux. It does not need the native core, and its dependencies are in the development-only `dev` group.
 
@@ -36,15 +36,17 @@ Open each address in a Chrome started that way. Chrome ignores `--ignore-certifi
 | `recordings/http1.json`, `recordings/http2.json`, `recordings/http3.json` | The normal form of the main **Request Kinds** over each protocol |
 | `recordings/cases/*.json` | The normal form of the other **Recording Cases** |
 | `recordings/*.raw.json`, `recordings/cases/*.raw.json` | The raw recording of each: every connection that came in by the same way, with the client's address, its ClientHello bytes, its Initial packets over QUIC, every frame and every request |
-| `recordings/runs.json` | The name, address and flags of each run, for a script |
+| `recordings/script/page.json` | The [Normal Form of the Script Fingerprint](#the-normal-form-of-a-script-fingerprint) of a top-level page |
+| `recordings/script/page.raw.json` | What that page posted, with its address and the address of each client that reached it. It holds the values of the machine that recorded it, so it stays on that machine |
+| `recordings/runs.json` | The name, address and flags of each run, and whether it records the wire or a Script Fingerprint, for a script |
 
 To check that a client records the same twice, record it into two directories and compare the files.
 
 `--tickets` has the server give out session tickets, and takes clients through [the runs that resume](#how-the-server-does-it) instead of the others.
 
-`--host` sets another name ending in `.localhost`. `--http1-port`, `--http2-port`, `--http3-port`, `--plain-http-port` and `--proxy-port` set other ports. The normal form does not depend on any of them. `--runs` names the runs to wait for, such as `--runs http1 http2 http3`.
+`--host` sets another name ending in `.localhost`. `--http1-port`, `--http2-port`, `--http3-port`, `--plain-http-port`, `--proxy-port` and `--script-port` set other ports. The normal form does not depend on any of them. `--runs` names the runs to wait for, such as `--runs http1 http2 http3`.
 
-`--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols.
+`--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols. It never attaches to the page of a Script Fingerprint, which needs no click.
 
 ## What the server does
 
@@ -52,6 +54,7 @@ To check that a client records the same twice, record it into two directories an
 - It also answers under three names that are [not local](#recording-cases), which a client has to be told to send to loopback. Its one certificate names them all, so a client may pool their connections over HTTP/2 and HTTP/3.
 - It serves HTTP/1.1 and HTTP/2 on separate TCP ports, and HTTP/3 on a UDP port. Each port offers one protocol through ALPN. On a TCP port, a client that does not take it is served HTTP/1.1, and the normal form shows that. Over QUIC, such a client gets no connection.
 - It serves plain HTTP/1.1 on another TCP port.
+- It serves the Script Fingerprint's pages on a TCP port of their own, over HTTP/1.1 with TLS, so that the record such a page posts, over a megabyte, stays out of the wire's raw recordings.
 - It is an HTTP proxy on another TCP port. It answers `CONNECT` to one of its names on its HTTP/1.1 or HTTP/2 port by serving that port's protocol in the tunnel, on the same socket, so a tunnel reaches nothing outside the server. It refuses anything else with a 403. What comes through it gets its own recording, whose connections also hold the `CONNECT` that opened them.
 - It gives out no session tickets unless it is told to with `--tickets`. Every connection is therefore a fresh one, with no `pre_shared_key`, including the later connections of one page load. Baselines come from a server like this, and [they need nothing else](#resumed-connections-and-alps).
 - Its private certificate is new on every start, so the hash changes too.
@@ -358,6 +361,63 @@ A Session therefore looks like a Chrome in the first seconds after a start. When
 The Chrome here ran for minutes, not days, and no component with a different set of IDs has reached it. That a component replaces the list while Chrome is running, without a new start, comes from the source.
 
 Merkle Tree Certificates would change the answer. With `VerifyMTCs` on, Chrome adds the IDs of its Merkle Tree CAs, and a second component, PKI Metadata Fastpush, adds landmark IDs that expire. The feature is off by default in 157 and upstream on 2026-11-06, the seeds of 2026-11-05 to 2026-11-07 have [no study that names it](baselines.md#merkle-tree-certificates), and `chrome://components` showed no such component. A Baseline would show it, because it adds IDs to the compiled-in list too.
+
+## The Script Fingerprint
+
+The kit also records the **Script Fingerprint** of a real Chrome: what [the probe](runtime.md#the-probe) gives in a page. [baselines.md](baselines.md#the-script-fingerprint) says how a recording session records it with the wire, and a Parity Check of a Page compares with its Normal Form.
+
+### Its Recording Case
+
+The first **Recording Case** is a top-level page, `/script/page` at `capture.test`, which [#207](https://github.com/darionxt/mitto/issues/207) chose: an HTTPS page at the case pages' name, which a page at `127.0.0.1` matches but for its origin, and which a plain `http://` page does not, since that is no secure context and has 250 fewer globals. Frames and workers come with M8. The run is `script/page`, the first in `runs.json`, and its start of Chrome has the flags of a case page: `--ignore-certificate-errors-spki-list`, `--host-resolver-rules` and `--no-proxy-server`. The first two make Chrome show its infobar of unsupported flags, which takes height from the viewport, and [the Normal Form](#the-normal-form-of-a-script-fingerprint) hides that with the window's sizes.
+
+The page holds the probe as a string. Once the load event is over, so that no event is being dispatched while the probe reads the window, it evaluates it as the Page program does, posts the record to `/script/record`, and says "Recorded". What it posts is the record's JSON text. The page sets nothing on the window, gives no element an id or a name, which would be properties of the window, and uses no regular expression, whose matches would change `RegExp`'s legacy statics, all of which the probe reads. Its markup is part of the case, since the probe reads `document.all`, the title and the like.
+
+Its start of Chrome must not have `--remote-debugging-port=0`, which turns on Blink's `AutomationControlled` and makes `navigator.webdriver` true. `record.ps1` gives it a fixed port, which changes nothing a page sees, and reads `chrome://version` through it only once the page has posted its record. Nothing attaches to the page itself.
+
+The route has a port of its own, `--script-port`, 8448 by default, over HTTP/1.1. The server's HTTP/2 sends no `WINDOW_UPDATE`, so a client can send it no more than 64 KiB. Over HTTP/1.1 it keeps a body of up to 16 MiB.
+
+### The Normal Form of a Script Fingerprint
+
+[`tools/capture/script_normal_form.py`](../tools/capture/script_normal_form.py) writes it. It is the probe's record with what the machine decides hidden as `<machine>`, what changes from run to run as `<run>` and the page's origin behind placeholders, written as `dumps_record()` writes a record, with each own property, getter's value, check and value of the probe's third step on a line of its own, so that two Normal Forms differ by lines. Chrome 157's takes 1.33 MB, within the 1.5 MB that a Baseline of the first Recording Case may take for each **Chrome Release**, which the owner chose on 2026-11-12. Two sessions of `record.ps1` with one Chrome give it byte for byte, and so does one with no debugging port at all ([baselines.md](baselines.md#the-script-fingerprint)).
+
+It keeps everything else, because that is what a Page has to match: which interfaces and members there are, their order, attributes, names, `length`s and source text, the prototype chains, what each check throws, `window.chrome` and `console.memory` as they are, the deprecation reports, and every value that the Persona decides, such as `navigator.userAgent`, `platform`, `languages`, the brands and the high entropy values but the platform version, `plugins`, `webdriver`, the permission states of a new user data directory and the permissions policy's lists.
+
+| Hidden as `<machine>` | Why |
+| --- | --- |
+| `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop`, `devicePixelRatio`; `width` and `height` of `visualViewport` and of `viewport.segments[0]`, with its `right` and `bottom` | The viewport, the window and the scale. The infobar of unsupported flags takes height from the viewport too |
+| `screen`'s sizes, `availLeft` and `availTop`, `colorDepth`, `pixelDepth`, `isExtended`, and `screen.orientation`'s `type` and `angle` | The display, the work area, whether it has HDR, whether there are more displays and how the display is turned |
+| `navigator`'s `hardwareConcurrency`, `deviceMemory`, `maxTouchPoints` and `cpuPerformance` | The processors, the memory and the touch screen. `cpuPerformance` follows the processor's model and its cores |
+| `navigator.connection`'s `effectiveType`, `rtt` and `downlink` | The network's estimate. `rtt` and `downlink` also carry the renderer's noise, which changes with each renderer, so they change from run to run too |
+| `jsHeapSizeLimit` of `console.memory` and `performance.memory` | V8's heap limit, which follows the memory. `performance.memory` gives it precise or rounded, as its cache holds it |
+| `platformVersion` of `getHighEntropyValues()` | Windows' version |
+| The keywords that match in `matchMedia()` for `orientation`, `pointer`, `any-pointer`, `hover`, `any-hover`, `color-gamut`, `dynamic-range`, `prefers-color-scheme`, `prefers-contrast`, `prefers-reduced-motion`, `prefers-reduced-transparency`, `forced-colors`, `inverted-colors`, `video-dynamic-range` and `display-state`, and the integers that match for `color` | The viewport's shape, the pointing devices, the display and the user's settings. Chrome 157 parses none of `inverted-colors`, `video-dynamic-range` and `display-state`, which then match nothing. Whether a Chrome Release parses one shows in the media text of each feature, which the Normal Form keeps |
+| Whether `width`, `height`, `aspect-ratio`, `device-width`, `device-height` and `device-aspect-ratio` in `matchMedia()` agree with the window and the screen | The window and the screen give whole device-independent pixels, and a media query takes them as they are, which at some scales is not whole |
+| `timeZone` of `Intl.DateTimeFormat`'s resolved options, `getTimezoneOffset()` over the year, and `Date`'s strings of a winter and a summer day | The time zone |
+
+| Hidden as `<run>` | Why |
+| --- | --- |
+| `performance.timeOrigin`, each value of `performance.timing`, `document.timeline.currentTime` and `document.lastModified` | Times. `lastModified` is the time the page loaded, since its response has no `Last-Modified` |
+| `key` and `id` of `navigation.currentEntry` | Random |
+| `usedJSHeapSize` and `totalJSHeapSize` of `performance.memory` | Precise in a renderer that is locked to a site, as each is on the desktop, at most every 50 ms, from a cache that `console.memory`'s rounded figures share (`WindowPerformance::memory()` and `HeapSizeCache` in Blink's `core/timing`). So what they give depends on how long the walk took after it read `console.memory` ([#210](https://github.com/darionxt/mitto/issues/210)) |
+
+The page's origin, name and port go behind `<origin>`, `<authority>` and `<host>` in every string, as on the wire, and `<port>` where a value is the port alone, as `location.port` is: `location`, `origin`, `document.URL`, `documentURI`, `baseURI` and `domain`, and `navigation.currentEntry.url`. A Page of a Parity Check loads the same page from a server on another port, which these hide. `console.memory`'s rounded figures, `RegExp`'s legacy statics and the error messages stay: [five sessions](baselines.md#the-script-fingerprint) gave the same, and the probe uses no regular expression ([runtime.md](runtime.md#the-probe)).
+
+A place that a record lacks stays as it is, so a Page that lacks a member or whose call threw has a Normal Form all the same, which a Parity Check compares.
+
+### The form of a hidden value of a Script Fingerprint
+
+`SCRIPT_FORMS` in [`tools/capture/machine_forms.py`](../tools/capture/machine_forms.py) holds the form of each value that the Normal Form hides as `<machine>`, by its place in the record: what Chrome on Windows can give a page there, with the Persona's `en-US` locale, such as a whole number from 1 for a size, a scale that Windows offers for `devicePixelRatio`, `24` or `30` for `colorDepth`, a time zone of [`time_zones.json`](../src/mitto/time_zones.json) for `timeZone`, and `Date`'s strings as `en-US` writes them. [`tests/test_machine.py`](../tests/test_machine.py) holds each value that a page reads of a Machine to these forms, for drawn Machines and for values that no draw gives, and names the places whose value a Page works out by Chrome's own code from its start message, such as `Date`'s strings, which the Parity Checks compare with real Chrome's instead.
+
+The same command as for the wire checks real Chrome's values, in each `script/*.raw.json` under each directory. It also looks for each value of the machine in the Normal Form beside the raw record, in every place, the hidden ones aside: each text of four characters or more that is no keyword of Chrome's, such as a time zone's name, each number of 100 or more, such as a size or a heap limit, among what the getters and the third step gave, where an interface's constants are not, and each list of three numbers or more, such as the offsets. It prints how many it looked for and where one showed, never which:
+
+```text
+recordings/a: pass, 600 values in 13 raw recordings, and 1 raw records of a Script Fingerprint
+  ...
+  script/page.raw.json: pass, 73 values
+    pass  globalThis.innerWidth: a whole number of device-independent pixels from 1, 1 values
+    ...
+    pass  none of 23 values of the machine shows in script/page.json
+```
 
 ## What Chrome adds for Google's domains
 
@@ -705,7 +765,7 @@ It would cost a DoH server and an ECH key in the kit, a step in `record.ps1` tha
 
 ## From Python
 
-A Parity Check can run the server itself. It picks free ports unless told otherwise, and it listens as long as the `with` block runs. The routes into it are `HTTP1`, `HTTP2`, `HTTP3`, `PLAIN_HTTP`, `PROXIED_HTTP1` and `PROXIED_HTTP2`, each with a recording of its own:
+A Parity Check can run the server itself. It picks free ports unless told otherwise, and it listens as long as the `with` block runs. The routes into it are `HTTP1`, `HTTP2`, `HTTP3`, `PLAIN_HTTP`, `PROXIED_HTTP1`, `PROXIED_HTTP2` and `SCRIPT`, the last for the Script Fingerprint's pages, each with a recording of its own:
 
 ```python
 from tools.capture import HTTP2, KIND_PATHS, CaptureServer, RequestKind, dumps_normal_form, normal_form
@@ -721,6 +781,8 @@ print(dumps_normal_form(form))
 
 To reach the server over HTTP/3, a client needs `server.spki_hash` trusted and `server.authority(HTTP3)` in its list of origins to force QUIC on. For a run, `server.origins_to_force_quic_on(run)` gives that list, with the names of the case pages.
 
+`SCRIPT_RUNS` in `tools/capture/script_page.py` lists the runs of a Script Fingerprint, and `server.start_url(run)` and `server.chrome_flags(run)` take them too. `script_normal_form(record, url)` gives the Normal Form of a record of the probe that ran in a page at `url`, or with `None` for a page with no origin of its own, such as `about:blank`, and `dumps_record()` writes it as a Baseline.
+
 `CaptureServer(tickets=True)` gives out tickets, and `RESUMPTION_RUNS` lists the runs that use them. `normal_form(recording, run.cases)` gives the resumed connections of such a run, and `normal_form(recording, run.fresh_cases)` the fresh ones. They cannot go in one normal form, because a normal form holds what its connections have in common.
 
 To reach a case page, a client needs `server.host_resolver_rules`, which a native Session takes as `host_resolver_rules` from `mitto._native`. `CASE_HOST` names the page, and `server.url(route, host=CASE_HOST, path=...)` and `server.recording(route, host=CASE_HOST)` go with it, so that the placeholders are the ones the Baselines have. `RUNS` lists every run, and `server.start_url(run)` and `server.chrome_flags(run)` say how to start one.
@@ -729,7 +791,7 @@ To reach a case page, a client needs `server.host_resolver_rules`, which a nativ
 
 `uv run pytest tests/capture` runs the kit's tests, including its fuzz targets on a fixed set of inputs. Files under `tests/capture/data` hold a real recording of Chrome, which the tests replay.
 
-To run the same check against a real Chrome, headless, from fresh user data directories, name its executable in `MITTO_CHROME`. It goes through every run twice and checks that each **Recording Case** is what it says it is. Without that, the test is skipped:
+To run the same check against a real Chrome, headless, from fresh user data directories, name its executable in `MITTO_CHROME`. It goes through every run twice and checks that each **Recording Case** is what it says it is, and that the page of a Script Fingerprint gives the same Normal Form twice, with no debugging port. Without that, the test is skipped:
 
 ```bash
 MITTO_CHROME="/path/to/chrome" uv run pytest tests/capture/test_chrome.py

@@ -4,9 +4,9 @@
 
 .DESCRIPTION
     Starts Chrome from a new user data directory and lets its variations seed arrive. Then it starts the capture server
-    and takes a new start of Chrome from that directory through each of the server's runs, so that field trials apply.
-    Chrome always runs on the desktop of whoever is logged in at the machine, windowed, also when this script runs over
-    SSH.
+    and takes a new start of Chrome from that directory through each of the server's runs, so that field trials apply:
+    first the page whose Script Fingerprint it records, then the wire's runs. Chrome always runs on the desktop of
+    whoever is logged in at the machine, windowed, also when this script runs over SSH.
 
     The output directory gets what the capture server writes, and chrome.txt, which says which Chrome recorded it.
 
@@ -24,8 +24,9 @@
 
 .PARAMETER NoDebuggingPort
     Starts Chrome without a debugging port, so that it holds nothing but the flags of the procedure. This script reads
-    chrome://version through that port, so chrome.txt then has no field trials or features. The case pages get their
-    clicks through it too, so this records the main Request Kinds only.
+    chrome://version through that port, so chrome.txt then has no field trials or features, and nothing checks the
+    groups of the studies that change what a page sees. The case pages get their clicks through it too, so this records
+    the Script Fingerprint and the main Request Kinds only.
 
 .PARAMETER NoVariationsSeed
     For a Chrome that fetches no variations seed, such as Chrome for Testing as it comes. The first start lasts as long
@@ -74,9 +75,19 @@ $NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|soc
 # them off. chrome://version only lists overrides, so with none, only these lines of chrome.txt name them.
 $OnInChromesCode = @('PartitionConnectionsByNetworkIsolationKey', 'SplitCacheByNetworkIsolationKey')
 
-$MainRuns = @('http1', 'http2', 'http3')
+$RunsWithoutClicks = @('script/page', 'http1', 'http2', 'http3')
 $RunsFile = 'runs.json'
 $CertificateFlag = '--ignore-certificate-errors-spki-list'
+# A recording start of the wire has a debugging port with no fixed number, through which the server clicks the case pages
+# and this script reads chrome://version. That port makes Chrome a browser under automation, whose navigator.webdriver is
+# true, so the start of a Script Fingerprint has a fixed port instead, which changes nothing a page sees, and which only
+# reads chrome://version once the page has posted its record (#207).
+$WireDebuggingPort = '--remote-debugging-port=0'
+$ScriptDebuggingPort = '--remote-debugging-port=9207'
+# The studies of the variations seed that split what a page sees by user data directory, which #207 found in the seed of
+# 2026-11-11 for Chrome 155, 156 and 157. A Baseline of the Script Fingerprint comes from a directory in none of their
+# groups but Default, as most installations are.
+$PageStudies = @('FencedFramesDeprecation', 'UniversalOptOutSettings', 'V8Turbolev')
 $TaskPrefix = 'mitto-baselines'
 $SeedTimeoutSeconds = 360
 $FirstStartWithoutSeedSeconds = 15
@@ -202,12 +213,19 @@ function Invoke-PageScript([string]$WebSocketUrl, [string]$Expression) {
     }
 }
 
-function Read-VersionPage {
-    # Chrome does not open chrome:// addresses from its command line, so the debugging port opens this one. The page's
-    # command line and paths hold the user's name, so this takes only the rest.
+function Get-DebuggingPort([string]$Flag) {
+    # Chrome writes the port it chose to DevToolsActivePort only for port 0. A fixed port is the flag's.
+    $port = ($Flag -split '=', 2)[1]
+    if ($port -ne '0') { return $port }
     $portFile = Join-Path $UserDataDir 'DevToolsActivePort'
     Wait-Until 'the debugging port' 30 { Test-Path $portFile }
-    $port = (Get-Content $portFile)[0]
+    return (Get-Content $portFile)[0]
+}
+
+function Read-VersionPage([string]$Flag) {
+    # Chrome does not open chrome:// addresses from its command line, so the debugging port opens this one. The page's
+    # command line and paths hold the user's name, so this takes only the rest.
+    $port = Get-DebuggingPort $Flag
     $target = Invoke-RestMethod -Method Put -Uri "http://127.0.0.1:$port/json/new?chrome://version/?show-variations-cmd" -TimeoutSec 15
     Start-Sleep -Seconds 1
     $script = @'
@@ -276,6 +294,29 @@ function Format-NetworkPart($Page) {
     return $lines
 }
 
+function Get-PageStudyGroups($Page) {
+    # A study that the seed does not hold for this Chrome Release, or that the directory is not in, has no group.
+    $fields = (Get-Switch $Page.command 'force-fieldtrials') -split '/'
+    $groups = [ordered]@{}
+    foreach ($study in $PageStudies) { $groups[$study] = 'none' }
+    for ($i = 0; $i + 1 -lt $fields.Count; $i += 2) {
+        $name = $fields[$i].TrimStart('*')
+        if ($groups.Contains($name)) { $groups[$name] = $fields[$i + 1] }
+    }
+    return $groups
+}
+
+function Assert-ScriptRecording([string]$Name) {
+    # The page must stay on this machine too, and its Chrome must have the en-US locale.
+    $raw = [IO.File]::ReadAllText((Join-Path $Out "$Name.raw.json")) | ConvertFrom-Json
+    $peers = @($raw.peers | Sort-Object -Unique)
+    $elsewhere = @($peers | Where-Object { $_ -notin '127.0.0.1', '::1' })
+    if ($peers.Count -eq 0 -or $elsewhere.Count -gt 0) { throw "$Name has peers other than loopback: $($peers -join ', ')" }
+    $text = [IO.File]::ReadAllText((Join-Path $Out "$Name.json"))
+    if (-not $text.Contains('["language", "en-US"]')) { throw "$Name was not recorded with the en-US locale." }
+    Write-Step "$Name peers: $($peers -join ', '); navigator.language is en-US"
+}
+
 function Assert-Recording([string]$Name) {
     # The capture traffic must stay on this machine, whatever proxy the network has.
     $raw = [IO.File]::ReadAllText((Join-Path $Out "$Name.raw.json")) | ConvertFrom-Json
@@ -317,8 +358,11 @@ $BaseFlags = @(
     '--lang=en-US'
     "--variations-override-country=$Country"
 ) + $ExtraFlags
-$RecordingFlags = @()
-if (-not $NoDebuggingPort) { $RecordingFlags += '--remote-debugging-port=0' }
+function Get-DebuggingFlags($Run) {
+    if ($NoDebuggingPort) { return @() }
+    if ($Run.fingerprint -eq 'script') { return @($ScriptDebuggingPort) }
+    return @($WireDebuggingPort)
+}
 $server = $null
 $pages = @{}
 try {
@@ -344,7 +388,7 @@ try {
     $serverArguments = @('run', 'python', '-m', 'tools.capture', '--out', "`"$Out`"")
     if ($Tickets) { $serverArguments += '--tickets' }
     if ($NoDebuggingPort) {
-        $serverArguments += @('--runs') + $MainRuns
+        $serverArguments += @('--runs') + $RunsWithoutClicks
     } else {
         $serverArguments += @('--click-in', "`"$UserDataDir`"")
     }
@@ -360,7 +404,7 @@ try {
 
     foreach ($run in $runs) {
         Write-Step "Recording $($run.label)"
-        $flags = @($run.flags | ForEach-Object { Format-Flag $_ }) + $RecordingFlags
+        $flags = @($run.flags | ForEach-Object { Format-Flag $_ }) + @(Get-DebuggingFlags $run)
         Remove-Item (Join-Path $UserDataDir 'DevToolsActivePort') -ErrorAction SilentlyContinue
         if ($SettleSeconds -gt 0) {
             # The second start only hands the address to the Chrome that is running.
@@ -375,7 +419,15 @@ try {
             }
             Test-Path $written
         }
-        if (-not $NoDebuggingPort) { $pages[$run.name] = Read-VersionPage }
+        if (-not $NoDebuggingPort) { $pages[$run.name] = Read-VersionPage (@(Get-DebuggingFlags $run)[0]) }
+        if ($isBaseline -and $run.fingerprint -eq 'script' -and $pages.ContainsKey($run.name)) {
+            # A group of these is a choice of the directory, which a new one draws again.
+            $groups = Get-PageStudyGroups $pages[$run.name]
+            $drawn = @($groups.Keys | Where-Object { $groups[$_] -notin 'Default', 'none' } | ForEach-Object { "$_/$($groups[$_])" })
+            if ($drawn.Count -gt 0) {
+                throw "This directory drew $($drawn -join ', '), which changes what a page sees. Record again from a new user data directory."
+            }
+        }
         Stop-Chrome
     }
 
@@ -383,10 +435,12 @@ try {
     if ($server.ExitCode -ne 0) { throw "The capture server failed: $(Get-Content $serverErrors -Raw)" }
     $server = $null
 
-    foreach ($run in $runs) { Assert-Recording $run.name }
+    foreach ($run in $runs) {
+        if ($run.fingerprint -eq 'script') { Assert-ScriptRecording $run.name } else { Assert-Recording $run.name }
+    }
     if ((Get-Item $Chrome).VersionInfo.ProductVersion -ne $installed) { throw 'Chrome changed version during the session.' }
 
-    $flags = @($BaseFlags | Select-Object -Skip 1) + "$CertificateFlag=<hash>" + $RecordingFlags
+    $flags = @($BaseFlags | Select-Object -Skip 1) + "$CertificateFlag=<hash>"
     $directory = if ($ExistingUserDataDir) { '<directory that has run before>' } else { '<new directory>' }
     $purpose = 'Which Chrome recorded the Baselines in this directory. See docs/baselines.md.'
     if (-not $isBaseline) { $purpose = 'Which Chrome recorded this comparison, which is not a Baseline. See docs/baselines.md.' }
@@ -397,11 +451,11 @@ try {
         "Product: $product"
         "Chrome: $installed"
         "Flags: --user-data-dir=$directory $($flags -join ' ')"
-        'Flags of a recording on top of those, without their values:'
+        'Flags of a recording on top of those, without their values but the debugging port''s:'
     )
     foreach ($run in $runs) {
         $names = @($run.flags | ForEach-Object { ($_ -split '=', 2)[0] } | Where-Object { $_ -ne $CertificateFlag })
-        $note += "  $($run.name).json: $($names -join ' ')"
+        $note += "  $($run.name).json: $((@($names) + @(Get-DebuggingFlags $run)) -join ' ')"
     }
     $note += "Variations seed: $(Get-SeedSerialNumber)"
     if ($pages.Count -gt 0) {
@@ -414,6 +468,12 @@ try {
         if (-not $page.version.StartsWith($installed)) { throw "chrome://version says $($page.version), not $installed." }
         if (-not $NoVariationsSeed -and -not $page.active) {
             throw "chrome://version lists no active variations for $($run.name), so the seed did not apply."
+        }
+        if ($run.fingerprint -eq 'script') {
+            $note += @('', "$($run.name).json: the groups of the studies that change what a page sees, in the Chrome that recorded it")
+            $groups = Get-PageStudyGroups $page
+            foreach ($study in $groups.Keys) { $note += "  ${study}: $($groups[$study])" }
+            continue
         }
         $note += @('', "$($run.name).json: the network-related part of chrome://version/?show-variations-cmd in the Chrome that recorded it")
         $note += Format-NetworkPart $page

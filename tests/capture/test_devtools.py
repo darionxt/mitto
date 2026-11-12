@@ -103,3 +103,23 @@ def test_leaves_alone_a_page_that_shows_no_web_address(tmp_path: Path) -> None:
         chrome.close()
 
     assert chrome.commands == []
+
+
+def test_never_attaches_to_a_page_of_a_script_fingerprint(tmp_path: Path) -> None:
+    chrome = FakeChrome()
+    port = chrome.port
+    chrome.targets = [
+        {
+            "type": "page",
+            "url": "https://capture.test:8448/script/page",
+            "webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/p",
+        }
+    ]
+    (tmp_path / "DevToolsActivePort").write_text(f"{port}\n", encoding="utf-8")
+    try:
+        with PageClicker(tmp_path):
+            time.sleep(0.3)
+    finally:
+        chrome.close()
+
+    assert chrome.commands == []
