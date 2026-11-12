@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
 #include "v8/include/cppgc/member.h"
@@ -99,6 +100,9 @@ class Document : public Node {
   bindings::ScriptWrappable* RootElement() const { return nullptr; }
   // The window's custom elements, and none for a document of no window.
   mitto::CustomElementRegistry* CustomElementRegistry() const;
+  // When the response says it last changed, or else now, in the local time of
+  // the Page's time zone.
+  std::u16string LastModified() const;
   // The document's collections, each the same object on every read, as Blink
   // caches them, plugins being embeds.
   HTMLCollection* Images();
@@ -138,6 +142,8 @@ class Document : public Node {
   void SetWindow(Window* window) { window_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
   void SetUrl(std::u16string url) { url_ = std::move(url); }
+  // The time of its response's Last-Modified, which lastModified gives.
+  void SetLastModified(base::Time time) { last_modified_ = time; }
   // Where document.cookie reaches the cookies of the document's Session. A
   // document that has a window and no jar has an opaque origin, as about:blank
   // has in a new tab, and its cookie attribute throws.
@@ -166,6 +172,7 @@ class Document : public Node {
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
   std::u16string url_ = u"about:blank";
+  std::optional<base::Time> last_modified_;
   // A document that no parser is loading is complete, as Blink's starts.
   Readiness readiness_ = Readiness::kComplete;
   // The Page program's, which outlives every document.

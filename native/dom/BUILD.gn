@@ -198,6 +198,7 @@ source_set("dom") {
     "//base",
     "//mitto:header_rules",
     "//mitto/html:tokenizer",
+    "//third_party/icu",
     "//url",
     "//v8",
   ]

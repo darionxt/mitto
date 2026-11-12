@@ -3,6 +3,7 @@
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
@@ -21,6 +22,7 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
+#include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -155,6 +157,24 @@ Element* Document::ScrollingElement() const {
 // gives it.
 Element* Document::ActiveElement() const {
   return Body();
+}
+
+// Blink's lastModified(): the response's Last-Modified, or else now, exploded
+// in local time, which for a Page is that of its time zone, ICU's default, in
+// the Gregorian calendar whatever the locale.
+std::u16string Document::LastModified() const {
+  const base::Time time = last_modified_.value_or(base::Time::Now());
+  UErrorCode status = U_ZERO_ERROR;
+  icu::GregorianCalendar calendar(status);
+  calendar.setTime(time.InMillisecondsFSinceUnixEpoch(), status);
+  const auto field = [&](UCalendarDateFields name) {
+    return calendar.get(name, status);
+  };
+  const std::string text = base::StringPrintf(
+      "%02d/%02d/%04d %02d:%02d:%02d", field(UCAL_MONTH) + 1, field(UCAL_DATE),
+      field(UCAL_YEAR), field(UCAL_HOUR_OF_DAY), field(UCAL_MINUTE),
+      field(UCAL_SECOND));
+  return U_SUCCESS(status) ? base::ASCIIToUTF16(text) : std::u16string();
 }
 
 mitto::CustomElementRegistry* Document::CustomElementRegistry() const {

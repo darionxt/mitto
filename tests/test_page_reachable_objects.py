@@ -11,6 +11,7 @@ reads.
 import http.server
 import json
 import os
+import re
 import subprocess
 import threading
 from collections.abc import Iterator
@@ -394,14 +395,25 @@ def test_a_known_gap_makes_objects_of_the_classes_that_allow_it(program: Path) -
     ]
 
 
+# A page whose script in the head reads what a page reads before its body is parsed.
+_HEAD_SCRIPT_MARKUP = """<!doctype html><html><head><script>
+window.inHead = [String(document.activeElement), document.body];
+</script></head><body></body></html>"""
+
+_LAST_MODIFIED = "Wed, 01 Jul 2026 08:09:10 GMT"
+
+
 class _CasePages(http.server.BaseHTTPRequestHandler):
-    """Answers each path with the case page's markup."""
+    """Answers /head with a page whose script runs in its head, /modified with the case page's markup and a
+    Last-Modified, and any other path with the case page's markup."""
 
     def do_GET(self) -> None:
-        body = _CASE_MARKUP.encode()
+        body = (_HEAD_SCRIPT_MARKUP if self.path == "/head" else _CASE_MARKUP).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if self.path == "/modified":
+            self.send_header("Last-Modified", _LAST_MODIFIED)
         self.end_headers()
         self.wfile.write(body)
 
@@ -477,6 +489,32 @@ def test_a_loaded_documents_window_location_and_navigation_give_its_url(session:
         False,
         1,
     ]
+
+
+def test_with_no_body_nothing_is_the_active_element(session: mitto.Session, page_url: str) -> None:
+    # Blink's TreeScope::activeElement() gives the body when nothing has focus, and so null before the parser has made
+    # one, as Chrome 157 gave in a script in the head.
+    with _open_page(session, page_url.split("/script")[0] + "/head") as page:
+        assert json.loads(page.evaluate("JSON.stringify(window.inHead)")) == ["null", None]
+
+
+def test_last_modified_is_the_responses_or_now_in_the_pages_time_zone(session: mitto.Session, page_url: str) -> None:
+    # Blink writes lastModified as MM/DD/YYYY hh:mm:ss in local time, which for a Page is its time zone's, as Date's.
+    origin = page_url.split("/script")[0]
+    local = """(() => {
+        const date = new Date("2026-07-01T08:09:10Z");
+        const two = (value) => String(value).padStart(2, "0");
+        return `${two(date.getMonth() + 1)}/${two(date.getDate())}/${date.getFullYear()} ` +
+            `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+    })()"""
+
+    with _open_page(session, origin + "/modified") as page:
+        modified, expected = json.loads(page.evaluate(f"JSON.stringify([document.lastModified, {local}])"))
+    with _open_page(session, page_url) as page:
+        now = json.loads(page.evaluate("JSON.stringify(document.lastModified)"))
+
+    assert modified == expected
+    assert re.fullmatch(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}", now)
 
 
 def _paths(record: dict[str, RecordValue]) -> set[str]:

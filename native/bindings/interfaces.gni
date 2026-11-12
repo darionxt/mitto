@@ -154,6 +154,7 @@ mitto_bindings_interfaces = [
       "webkitFullscreenElement",
       "rootElement",
       "customElementRegistry",
+      "lastModified",
       "images",
       "embeds",
       "plugins",
