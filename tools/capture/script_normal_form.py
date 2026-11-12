@@ -7,6 +7,7 @@ docs/capture.md, "The Normal Form of a Script Fingerprint", says what it hides, 
 """
 
 import json
+import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import cast
@@ -182,6 +183,9 @@ what it gives depends on how long the walk took after it read console.memory (#2
 def script_normal_form(record: dict[str, RecordValue], page_url: str | None) -> dict[str, RecordValue]:
     """Return the Normal Form of a probe's record, as a new record.
 
+    A getter that threw at one of those places stays as it is, since how it failed is the Runtime's and not the
+    machine's.
+
     Args:
         record: What the probe gave, as read_record() reads it.
         page_url: The address of the page that the probe ran in, whose origin, name and port go behind placeholders, or
@@ -339,7 +343,14 @@ def read_script_raw_record(text: str) -> ScriptRawRecord:
 def _hide(record: dict[str, RecordValue], places: Iterable[Place], placeholder: str) -> None:
     for place in places:
         for slot in _found(record, place):
-            slot.put(placeholder)
+            # A getter that threw is no value of the machine or of a run, and how it failed is for a Parity Check to see.
+            if not _is_failure(slot.get()):
+                slot.put(placeholder)
+
+
+def _is_failure(value: RecordValue) -> bool:
+    """Whether a value is the probe's ["throws", message]."""
+    return isinstance(value, list) and len(value) == 2 and value[0] == "throws"
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,6 +411,9 @@ def _objects(record: dict[str, RecordValue]) -> list[dict[str, RecordValue]]:
     return [entry for entry in objects if isinstance(entry, dict)]
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 @dataclass(frozen=True, slots=True)
 class _PageAddress:
     origin: str
@@ -412,15 +426,24 @@ class _PageAddress:
         parts = urlsplit(url)
         if not parts.scheme or not parts.hostname:
             raise ValueError(f"{url!r} has no origin")
-        port = None if parts.port is None else str(parts.port)
+        # A URL in a page leaves out its scheme's own port, as location.origin does.
+        default = parts.port is not None and _DEFAULT_PORTS.get(parts.scheme) == parts.port
+        port = None if parts.port is None or default else str(parts.port)
         authority = parts.hostname if port is None else f"{parts.hostname}:{port}"
         return cls(f"{parts.scheme}://{authority}", authority, parts.hostname, port)
 
     def placeholders(self, text: str) -> str:
+        """Put the page's origin, name and port in a text behind placeholders, but not a longer name that ends in its
+        name, such as that of another origin of its site, or a longer port."""
         if text == self.port:
             return PORT_PLACEHOLDER
-        text = text.replace(self.origin, ORIGIN_PLACEHOLDER).replace(self.authority, AUTHORITY_PLACEHOLDER)
-        return text.replace(self.host, HOST_PLACEHOLDER)
+        for part, placeholder in (
+            (self.origin, ORIGIN_PLACEHOLDER),
+            (self.authority, AUTHORITY_PLACEHOLDER),
+            (self.host, HOST_PLACEHOLDER),
+        ):
+            text = re.sub(rf"(?<![\w.-]){re.escape(part)}(?![\w-])", placeholder, text)
+        return text
 
 
 def _behind_placeholders(value: RecordValue, address: _PageAddress) -> RecordValue:

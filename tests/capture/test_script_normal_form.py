@@ -134,6 +134,24 @@ def test_the_heap_limit_of_performance_memory_is_the_machines_and_its_figures_ar
     }
 
 
+def test_a_getter_that_threw_at_a_place_of_the_machine_or_of_a_run_stays_as_it_is() -> None:
+    failure: RecordValue = ["throws", "TypeError: Not implemented."]
+    record = record_of(
+        {
+            Getter("navigator", "hardwareConcurrency"): failure,
+            Getter("navigator", "deviceMemory"): 8,
+            Getter("performance", "timeOrigin"): failure,
+        }
+    )
+
+    form = script_normal_form(record, _PAGE_URL)
+
+    assert getters_of(form, "navigator")["hardwareConcurrency"] == failure
+    assert getters_of(form, "navigator")["deviceMemory"] == "<machine>"
+    assert getters_of(form, "performance")["timeOrigin"] == failure
+    assert script_normal_form(record_of({Getter("navigator", "hardwareConcurrency"): 8}), _PAGE_URL) != form
+
+
 def test_a_place_that_a_record_lacks_or_that_threw_is_left_as_it_is() -> None:
     record = record_of({})
     values = record["values"]
@@ -216,6 +234,25 @@ def test_the_pages_origin_name_and_port_go_behind_placeholders() -> None:
     assert getters_of(form, "document")["domain"] == "<host>"
 
 
+def test_a_longer_name_or_port_is_not_the_pages() -> None:
+    record = record_of(
+        {
+            Getter("a", "same_site"): "https://same-site.capture.test:8448/x",
+            Getter("a", "other_port"): "https://capture.test:84480/x",
+            Getter("a", "longer_name"): "capture.tests",
+            Getter("a", "in_a_sentence"): "Failed to reach capture.test:8448.",
+        }
+    )
+
+    assert getters_of(script_normal_form(record, _PAGE_URL), "a") == {
+        "same_site": "https://same-site.capture.test:8448/x",
+        "other_port": "https://<host>:84480/x",
+        "longer_name": "capture.tests",
+        "in_a_sentence": "Failed to reach <authority>.",
+        "kept": "a value of Chrome's",
+    }
+
+
 def test_the_normal_form_does_not_depend_on_the_pages_port() -> None:
     first = script_normal_form(location_record("8448"), "https://capture.test:8448/script/page")
     second = script_normal_form(location_record("50123"), "https://capture.test:50123/script/page")
@@ -228,6 +265,25 @@ def test_a_page_at_its_schemes_own_port_has_no_port_to_hide() -> None:
 
     assert getters_of(form, "location")["host"] == "<authority>"
     assert getters_of(form, "location")["port"] == ""
+
+
+@pytest.mark.parametrize("url", ["https://capture.test:443/script/page", "http://capture.test:80/script/page"])
+def test_a_port_that_is_the_schemes_own_is_left_out_as_a_page_leaves_it_out(url: str) -> None:
+    scheme = url.partition(":")[0]
+    record = record_of(
+        {
+            Getter("location", "origin"): f"{scheme}://capture.test",
+            Getter("location", "href"): f"{scheme}://capture.test/script/page",
+            Getter("location", "port"): "",
+        }
+    )
+
+    assert getters_of(script_normal_form(record, url), "location") == {
+        "origin": "<origin>",
+        "href": "<origin>/script/page",
+        "port": "",
+        "kept": "a value of Chrome's",
+    }
 
 
 def test_a_page_with_no_origin_keeps_its_strings() -> None:
