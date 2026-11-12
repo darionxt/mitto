@@ -913,3 +913,20 @@ def test_a_read_only_maplike_with_behaviour_reads_the_classs_entries() -> None:
     assert "->Call(context, info[1], 3, arguments).IsEmpty()" in source
     assert "info.GetReturnValue().Set(v8::Undefined(isolate));" in source
     assert "info.GetReturnValue().Set(v8::False(isolate));" in source
+
+
+def test_a_promise_attribute_that_is_a_known_gap_has_no_signature() -> None:
+    # So that its getter rejects for a receiver of another kind, as Chrome's "get ready" of FontFaceSet does.
+    promise = IdlType(TypeKind.PROMISE, "Promise", members=(UNDEFINED,))
+    interface = _interface(
+        attributes=(
+            Attribute("ready", promise, True, False, ExtendedAttributes(), ALWAYS),
+            Attribute("on", BOOLEAN, True, False, ExtendedAttributes(), ALWAYS),
+        )
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=()))
+
+    lines = [line for line in source.splitlines() if "InstallAttribute(" in line]
+    assert "v8::Local<v8::Signature>()" in next(line for line in lines if '"ready"' in line)
+    assert 'signature, "on"' in next(line for line in lines if '"on"' in line)

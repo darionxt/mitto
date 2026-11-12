@@ -1014,6 +1014,10 @@ class _InterfaceWriter:
             data = ""
             if getter.startswith("&KnownGap") or setter.startswith("&KnownGap"):
                 data = f", {self._known_gap_data(property_)}"
+            if getter.startswith("&KnownGap") and self.types.reduce(member.idl_type).kind is TypeKind.PROMISE:
+                # As for an operation that returns a promise: no signature, so that the Known Gap's getter rejects for
+                # a receiver of another kind, as bind_gen's make_check_receiver() and its promise scope do.
+                signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
                 f"{setter}, {attributes}, {side_effect}{data});"
