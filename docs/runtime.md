@@ -23,7 +23,7 @@ On Linux, a Page process holds about 18 MB of memory before a page loads. Beside
 A Page process holds its end of the channel and its standard streams, and opens no file or socket of its own, so that Chromium's sandbox can hold it before the Runtime ships (roadmap, M10):
 
 - ICU's whole data file and V8's startup snapshot are inside the program ([building.md](building.md#icus-data-and-v8s-snapshot)).
-- What it would read of the machine and of its browser comes from the Session, in the start message below: everything of the Session's [Machine](persona.md#the-runtime) that a page reads, such as its time zone, processors, memory, display, work area, window and network, and what the browser tells a renderer of itself, the user agent and the values of the user agent client hints of its Persona, and the languages of its `Accept-Language`. So ICU never reads `TZ`, `/etc/localtime` or the zone files. The `start` option of `mitto_page_open()` gives them, which Python fills from the Session's Machine, Persona and settings, and the library adds what `navigator.connection` gives. The Page sets the time zone and the locale as Blink sets the time zone that its browser reads, and its `navigator`, `screen` and window give the rest ([The window](#the-window)).
+- What it would read of the machine and of its browser comes from the Session, in the start message below: everything of the Session's [Machine](persona.md#the-runtime) that a page reads, such as its time zone, processors, memory, display, work area, window and network, and what the browser tells a renderer of itself, the user agent and the values of the user agent client hints of its Persona, and the languages of its `Accept-Language`. So ICU never reads `TZ`, `/etc/localtime` or the zone files. The `start` option of `mitto_page_open()` gives them, which Python fills from the Session's Machine, Persona and settings, and the library adds what `navigator.connection` gives. The Page sets the time zone and the locale as Blink sets the time zone that its browser reads, and its `navigator`, `screen` and window give the rest ([The window](#the-window)). The start also gives the runtime-enabled features to turn on and off and V8's flags, which a renderer of Chrome gets on its command line.
 - V8's random numbers come from the system's random source through `//base`, which reads no file, as in Chrome's renderers.
 
 What it holds is checked on Linux, where a test reads `/proc/<pid>/fd` of a Page that has run a script. It finds standard input on `/dev/null`, standard output and error as the test program's, the socket at descriptor 3, and the epoll and eventfd of the program's I/O thread, which name no file.
@@ -32,7 +32,7 @@ Before its `main()`, the dynamic loader of Linux opens the shared libraries of g
 
 ## Inside the Page program
 
-The program runs V8 on its main thread, and reads the channel on a thread of its own. The I/O thread checks each message, hands scripts to the main thread in the order they came, and sends their results back. Because it reads while a script runs, the process ends as soon as the channel closes, even in the middle of a script that never ends.
+The program runs V8 on its main thread, and reads the channel on a thread of its own. A Session's Page starts V8 once its start message has come, since V8 takes its flags before it starts and each isolate's runtime-enabled features are fixed when it is made: it sets the flags of the start, after those of every Page of the Engine Release, starts V8 and makes the isolate with the features of the start. Given a script, the program starts V8 before it runs it, as before, with no flags. The I/O thread checks each message, hands scripts to the main thread in the order they came, and sends their results back. Because it reads while a script runs, the process ends as soon as the channel closes, even in the middle of a script that never ends.
 
 Each script runs in one context, so each sees what the ones before it left there. Its result is what `JSON.stringify()` writes for it, nothing for a value that it writes nothing for, such as `undefined` or a function, and what was thrown, as `Uncaught TypeError: ...`, for a script that throws or a result that cannot be written as JSON, such as a BigInt. When V8 runs out of memory, the program ends with exit code 3, which the library reports as running out of memory.
 
@@ -77,13 +77,13 @@ Each message travels as a frame: the size of its payload and its type, each a 32
 
 ## The messages
 
-Version 6 of the messages:
+Version 7 of the messages:
 
 | Type | Name | Way | Payload |
 | --- | --- | --- | --- |
 | 1 | Hello | Each way, first and once | The version of the messages that the sender speaks, a 32-bit number |
 | 2 | Refused | Each way | Why the sender refuses what it got, in UTF-8. The sender closes the channel after it |
-| 3 | Start | To the Page, once, after the hello | A JSON object with what the Page would otherwise read of the machine and the browser, each key of the `start` option of `mitto_page_open()`: `time_zone`, `locale`, `processors`, `touch_points`, `work_area_x`, `work_area_y`, `work_area_width`, `work_area_height`, `window_state`, `window_x`, `window_y`, `window_width`, `window_height`, `contrast_theme`, `inverted_colors`, `memory`, `screen_width`, `screen_height`, `scale`, `viewport_width`, `viewport_height`, `color_scheme`, `reduced_motion`, `reduced_transparency`, `effective_type` and `navigator`, an object of `user_agent`, `platform`, `languages` and `user_agent_data`, which `mitto.h` describes. Beside them, `connection`, which the library adds: the `rtt` in milliseconds and the `downlink` in Mbps that `navigator.connection` gives about:blank's document |
+| 3 | Start | To the Page, once, after the hello | A JSON object with what the Page would otherwise read of the machine and the browser, each key of the `start` option of `mitto_page_open()`: `time_zone`, `locale`, `processors`, `touch_points`, `work_area_x`, `work_area_y`, `work_area_width`, `work_area_height`, `window_state`, `window_x`, `window_y`, `window_width`, `window_height`, `contrast_theme`, `inverted_colors`, `memory`, `screen_width`, `screen_height`, `scale`, `viewport_width`, `viewport_height`, `color_scheme`, `reduced_motion`, `reduced_transparency`, `effective_type` and `navigator`, an object of `user_agent`, `platform`, `languages` and `user_agent_data`, which `mitto.h` describes. Beside them, `connection`, which the library adds: the `rtt` in milliseconds and the `downlink` in Mbps that `navigator.connection` gives about:blank's document. And `features`, what the Page turns on and off beside the Engine Release's runtime-enabled features and V8's defaults: `enable_blink_features` and `disable_blink_features`, lists of names of runtime-enabled features, and `v8_flags`, a list of V8's flags, each as gin writes one, such as `--no-foo` |
 | 4 | Evaluate | To the Page | The number of the call, a 64-bit number, and the script in UTF-8 |
 | 5 | Evaluated | To the Session | The number of the call, a byte that is 0 for a result and 1 for a failure, and then the result as JSON, or why it failed, in UTF-8. Results come in any order, since a call whose result is a pending promise waits for it |
 | 6 | Console | To the Session | A byte for the level, 1 to 5 for debug, log, info, warning and error, and then the message, in UTF-8 |
@@ -110,7 +110,7 @@ Both programs come from one tree and ship together, so the version on both sides
 - a payload that is not what its type says, such as text that is not UTF-8 or a console message of an unknown level;
 - a frame larger than the channel carries;
 - for the library, a result of a call that is not in progress, a request whose number is not larger than the one before, more than 2700 requests at once, as Chrome's network service allows a renderer process, credit for a request that the Page has not asked for, or for more of a body than the library sent, or a cancel of one that it has not asked for. Also a request whose method is not a token or is forbidden, such as `TRACE`, whose header lines are not valid or include a forbidden request header, such as `Cookie` or one that starts with `Sec-`, that has a body with `GET` or `HEAD`, or that asks for a script with any of these: Chrome's network service refuses such a request from a renderer too, and a Page that sends one is not the Runtime's;
-- for the Page, a second start, a script before the start, a start that lacks a key or has another, or a value that a Machine, a Persona or Chrome's network estimate cannot have, a time zone or locale that ICU does not know, a response whose `rtt` or `downlink` Chrome cannot give, a response or body of a request that is not in progress, more of a body than it has given credit for, or cookies for a question that no script waits for.
+- for the Page, a second start, a script before the start, a start that lacks a key or has another, or a value that a Machine, a Persona or Chrome's network estimate cannot have, a time zone or locale that ICU does not know, a name in its features that is not a runtime-enabled feature, a response whose `rtt` or `downlink` Chrome cannot give, a response or body of a request that is not in progress, more of a body than it has given credit for, or cookies for a question that no script waits for.
 
 The library reads what a Page sends as hostile input: a Page runs a site's scripts. It checks each frame field by field before it acts on it, and the fuzz target `page_messages_fuzzer` feeds any bytes to that code ([building.md](building.md#sanitizer-builds-and-the-fuzz-target)). When the library refuses, it also kills the Page process, rather than trusting it to end.
 
@@ -233,7 +233,9 @@ Blink puts many interfaces and members behind runtime-enabled features, which [`
 
 By default a Page has the Engine Release's set for stable on Windows, which the generator works out from that file as Blink's build and Chrome's startup work it out ([`runtime_features.py`](../native/bindings/bindings_generator/runtime_features.py)): a feature is on if its status for Windows is `stable`, or if the base feature that Chrome copies into it is on by default. When a page's binding asks, a feature that it depends on and that is off turns it off, and one that implies it and is on turns it on. What Chrome's own code turns on beside the file, and field trials, are not counted, and M7's Baselines show where that differs, but for the features that Chrome's content layer copies from a `base::Feature` of another name that is on by default, where a page shows them: `LocalNetworkAccessPermissionPolicy`, from `kLocalNetworkAccessChecks`, which gives `Request` its `targetAddressSpace`, and `PaymentRequest` and `PaymentApp`, from `kWebPayments` and `kServiceWorkerPaymentApps`, which expose `PaymentRequest` and `PaymentManager` with what goes with them.
 
-The Page program takes Chrome's options for the set, before the script or `--session=`: `--enable-blink-features=A,B` and `--disable-blink-features=C`, each a list of names separated by commas, which turn those features on and then off, so a feature that both name ends up off, as in Chrome. It refuses a name that is not a feature. A Page that the library starts gets the stable set, until the start message carries the same two lists for a Persona's own set (M7).
+A Page that the library starts turns on and then off the features that the `features` of its [start message](#the-messages) name, and sets its V8 flags, before V8 starts. Python sends empty lists until the Persona's own come with M7 ([#219](https://github.com/darionxt/mitto/issues/219)).
+
+Given a script, the Page program takes Chrome's options for the set instead, before the script: `--enable-blink-features=A,B` and `--disable-blink-features=C`, each a list of names separated by commas, which turn those features on and then off, so a feature that both name ends up off, as in Chrome. It refuses a name that is not a feature, and either option with `--session=`.
 
 ```text
 $ out/runtime/mitto_page "'hasUAVisualTransition' in PopStateEvent.prototype"
@@ -299,9 +301,9 @@ What a page reads of the browser and the machine is what its Session sends, work
 | `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` | The window's size and place |
 | `devicePixelRatio` | The display's scale |
 
-The event handler attributes of `Screen`, `ScreenOrientation` and `NetworkInformation` are Known Gaps, and none of these values changes while a Page runs, so no `change` event comes. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
+None of these values changes while a Page runs, so no `change` event comes, and the `onchange` handlers of `Screen`, `ScreenOrientation` and `NetworkInformation` are kept but never run. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
 
-`mitto::NewPageContext()` makes such a context, and the Page program makes one for about:blank and one for each document that its Session loads. The window's timers, `queueMicrotask()`, `performance` and `fetch()` have their behaviour, as [the event loop](#the-event-loop) and [fetch()](#fetch) say.
+`mitto::NewPageContext()` makes such a context, and the Page program makes one for about:blank and one for each document that its Session loads. The window's timers, `queueMicrotask()`, `performance`, `fetch()` and `matchMedia()` have their behaviour, as [the event loop](#the-event-loop), [fetch()](#fetch) and [Media queries](#media-queries) say.
 
 ### Loading a document
 
@@ -337,9 +339,10 @@ Known Gaps of `fetch()` in M6: `RequestInit`'s members beyond `method`, `headers
 | `Document`, `HTMLDocument` | `new Document()`, `documentElement`, `doctype`, `head`, `body`'s getter, `title`, `URL`, `compatMode`, `characterSet`, `contentType`, `defaultView`, `createElement()`, `createTextNode()`, `createComment()`, `getElementById()`, `querySelector()`, `ParentNode`'s members, `cookie` and `readyState`, as [Loading a document](#loading-a-document) says. `location` is null, a Known Gap |
 | `CharacterData`, `Text`, `Comment` | Their data and its methods, `new Text()`, `new Comment()`, `splitText()` and `wholeText` |
 | `DocumentType` | Its name and identifiers, and `ChildNode`'s members |
-| `Window` | `window`, `self`, `document`, `performance`, `setTimeout()`, `setInterval()`, `clearTimeout()`, `clearInterval()`, `queueMicrotask()`, `fetch()`, `navigator`, `clientInformation`, `screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` and `devicePixelRatio`, as [The window](#the-window) says |
+| `Window` | `window`, `self`, `document`, `performance`, `setTimeout()`, `setInterval()`, `clearTimeout()`, `clearInterval()`, `queueMicrotask()`, `fetch()`, `navigator`, `clientInformation`, `screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` and `devicePixelRatio`, as [The window](#the-window) says and `matchMedia()` |
 | `Navigator` | What [The window](#the-window) lists. Its other members, such as `plugins`, `clipboard` and `getGamepads()`, are Known Gaps |
-| `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member but the event handler attributes, as [The window](#the-window) says |
+| `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member, as [The window](#the-window) says |
+| `MediaQueryList`, `MediaQueryListEvent` | Every member, as [Media queries](#media-queries) says |
 | `Performance` | `now()` and `timeOrigin`, coarsened as Chrome's are. Its timelines, marks and measures are Known Gaps |
 | `Headers` | `new Headers()` from pairs or a record, `append()`, `set()`, `delete()`, `get()`, `has()` and `getSetCookie()`, with Chrome's checks and guards. Iterating over it is a Known Gap |
 | `Request` | `new Request()`, `method`, `url` and `headers` |
@@ -349,6 +352,35 @@ Known Gaps of `fetch()` in M6: `RequestInit`'s members beyond `method`, `headers
 An element of the HTML namespace gets the HTML Standard's interface for its name, `HTMLUnknownElement` for a name the standard does not know and `HTMLElement` for a valid custom element name, as Chrome makes them. A name whose interface the Runtime lacks yet, such as `a` or `img`, gets `HTMLElement`, a Known Gap. Collections, such as `childNodes`, `children` and `querySelectorAll()`, the methods that name a namespace, and event handler attributes are Known Gaps too.
 
 `querySelector()`, `matches()` and `closest()` take simple selectors: type, universal, ID, class and attribute selectors, with the flag `i`, compounds of them, the four combinators and lists. Names of HTML elements and their attributes match in any case in an HTML document, IDs and classes do in quirks mode, and so do the values of the attributes that the HTML Standard lists. A selector that is not valid throws Chrome's `SyntaxError`, and a valid one with a pseudo-class or a namespace prefix throws a Known Gap's `TypeError`. `innerHTML` and `outerHTML` write the HTML Standard's serialization, escaping in attributes and text what Chrome escapes.
+
+### Media queries
+
+`matchMedia()` parses its media query list with the CSS tokenizer and the media query parser in [`native/css`](../native/css), which follow CSS Syntax as Blink's `CSSTokenizer` runs it and Blink's `MediaQueryParser`, and which M9's CSS parser takes over. The fuzz target `media_query_fuzzer` feeds them any input. The `MediaQueryList` it gives writes the list back in `media` as Chrome writes it: lower case, Chrome's spacing, numbers with at most six significant digits, math functions simplified, `not all` for a query that does not parse, and a condition of a syntax that Blink does not know, Media Queries' `<general-enclosed>`, as it was given. Which media features parse follows the Page's runtime-enabled features, as in Blink: in the stable set of Chrome 157, `inverted-colors`, `prefers-reduced-data`, `video-dynamic-range`, `display-state` and `resizable` are experimental, so they do not parse, and a query of them is unknown and never matches, whatever the machine.
+
+`matches` is worked out on each read, as Blink's `MediaQueryEvaluator` works it out for a tab of Windows Chrome, from what the Page's start message carries of the Session's Machine and Persona and nothing else:
+
+| Media features | From |
+| --- | --- |
+| `width`, `height`, `aspect-ratio`, `orientation`, and the units `vw`, `vh`, `vmin` and the rest | The viewport |
+| `device-width`, `device-height`, `device-aspect-ratio` | The display, over the scale, as `screen.width` and `screen.height` are |
+| `resolution`, `-webkit-device-pixel-ratio` | The scale |
+| `prefers-color-scheme`, `prefers-reduced-motion`, `prefers-reduced-transparency` | The three settings |
+| `forced-colors`, `prefers-contrast` | The contrast theme: `active` and `more` with any theme a Machine can have, `none` and `no-preference` without one |
+| `any-pointer` | `fine`, and `coarse` too with a touch screen. `pointer` is always `fine`, and `hover` and `any-hover` always `hover`: a desktop always has a mouse, which Windows reports even for a touchpad |
+| `color`, `color-gamut`, `dynamic-range`, `monochrome`, `color-index` | 8 bits a channel, `srgb`, `standard`, 0 and 0: a Machine holds no wide-gamut or HDR display |
+| `display-mode`, `scripting`, `update`, `overflow-block`, `overflow-inline`, `grid`, the viewport segments, `device-posture`, `scan` and the media types | What every tab of Windows Chrome has: `browser`, `enabled`, `fast`, `scroll`, a bitmap display, one segment, `continuous`, no `tv`, and `screen` |
+
+Blink's parser recurses once for each parenthesis of a condition, as this one does, and Chrome 157 takes some 20,000 of them. So the Page program has the stack of Chrome's renderers on its main thread, 8 MiB, which on Windows its link sets as `chrome.exe`'s does, where Windows would give it 1 MiB.
+
+A Machine does not change while a Page runs, so no `change` event is ever fired, as none would be in Chrome on that machine. `addListener()`, `removeListener()` and `addEventListener()` keep their listeners as any event target does, and a page can make its own `MediaQueryListEvent`. Blink keeps a list with change listeners alive while its document is, which only a `WeakRef` could tell apart.
+
+Known Gaps of media queries:
+
+- The math functions other than `calc()`, `min()`, `max()` and `clamp()`, such as `round()` or `sin()`, and a product or quotient of two dimensions, which Blink's typed arithmetic takes. A value with one does not parse, so its media feature is unknown, where Chrome computes it: `(width: round(10px, 3px))` is written back as given and never matches, where Chrome writes `(width: calc(9px))`.
+- The units of the root element's font beyond `em` and `rem`: `ex`, `ch`, `ic`, `cap` and `lh` and their root forms take Blink's sizes for a document with no font data until the Runtime has fonts (roadmap, M9).
+- `(fallback: none)`, a feature of container queries that Blink parses in a media query too and whose evaluation then stops Chrome's renderer, is unknown.
+
+`media_query_test` runs the cases of Blink's `media_query_set_test.cc` and `media_query_evaluator_test.cc` that need no layout ([building.md](building.md#the-media-query-tests)), and `tests/test_page_media.py` checks what Chrome 157 writes back for a set of queries and that a Page answers each feature from its Machine.
 
 ### The tree builder
 
@@ -431,7 +463,10 @@ A Page that has been closed raises a `ValueError`, as a closed Session does. A P
 | [`tests/test_page_document.py`](../tests/test_page_document.py) | A script gets a document that the program builds from markup, finds and changes its elements, and the tree reads back as expected; about:blank's document; the doctype's quirks mode; the window as the global object; Known Gaps; nodes and wrappers through garbage collection | The native job on every Host, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
 | [`tests/test_page_probe.py`](../tests/test_page_probe.py) | [The probe](#the-probe) runs to its end in a Page through a Session and in the Page program, leaves nothing in the console, and gives the same record twice in a row but for the values that change from run to run; how a record is read, hidden and written | The native job on every Host, with the Page program from the installed wheel, the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer for the Page program alone, and the Python jobs for what needs no Page |
 | `html_tree_builder_test` | html5lib's tree construction tests: each builds its tree, or records a rule it skipped, or is in the list of failures | The same |
+| [`tests/test_page_media.py`](../tests/test_page_media.py) | `matchMedia()`: queries written back as Chrome 157 writes them, a `MediaQueryList` and its listeners, `MediaQueryListEvent`, features that parse as the runtime-enabled features say, and, on a Session, each media feature as the Session's Machine decides it | The native job on every Host, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
+| `media_query_test` | The cases of Blink's media query tests that need no layout, against the parser and the evaluator in `native/css` | The native job on every Host, and the sanitizer workflow's `asan` and `ubsan` jobs |
 | `page_messages_fuzzer` | How the library reads what a Page sends | The sanitizer workflow's fuzz job |
+| `media_query_fuzzer` | The CSS tokenizer, and the media query parser and evaluator, on any input: the tokens cover the input in order, and a list whose blocks all end parses back to itself | The same |
 
 To run the tests of Pages against a local build, name the C test program and the Page program, which the tests copy beside the library:
 
