@@ -54,11 +54,15 @@ embedded_data("v8_snapshot") {
 
 executable("mitto_page") {
   sources = [
+    "chrome_object.cc",
+    "chrome_object.h",
     "document_loader.cc",
     "document_loader.h",
     "mitto_page.cc",
     "page_fetcher.cc",
     "page_fetcher.h",
+    "page_isolate.cc",
+    "page_isolate.h",
     "page_platform.cc",
     "page_platform.h",
     "page_reporter.cc",
@@ -71,8 +75,12 @@ executable("mitto_page") {
     "session_channel.h",
     "session_cookie_jar.cc",
     "session_cookie_jar.h",
+    "v8_flags.cc",
+    "v8_flags.h",
     "wall_clock_clamper.cc",
     "wall_clock_clamper.h",
+    "wasm_response_extensions.cc",
+    "wasm_response_extensions.h",
   ]
   deps = [
     ":icu_data",

@@ -39,6 +39,12 @@ struct RequestEvent {
   // redirect to get here, which a Page's Response tells its scripts.
   std::string status_text;
   bool redirected = false;
+  // What the connection negotiated, which a Page's chrome.loadTimes() gives,
+  // as net::HttpResponseInfo has it: the ALPN protocol, "unknown" for none,
+  // whether ALPN chose one, and whether it went over HTTP/2 or QUIC.
+  std::string alpn_negotiated_protocol;
+  bool was_alpn_negotiated = false;
+  bool was_fetched_via_spdy = false;
   // For a redirect that is about to be followed: where it goes, and the
   // method of the next hop.
   std::string new_url;

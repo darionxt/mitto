@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
@@ -84,7 +85,19 @@ class Response final : public bindings::ScriptWrappable {
   // The body ended: 0 when all of it came, and otherwise a net error.
   void EndBody(int net_error);
   // Whether a script waits for the body, so that what arrives is taken.
-  bool HasReader() const { return !reader_.IsEmpty(); }
+  bool HasReader() const {
+    return !reader_.IsEmpty() || !whole_body_reader_.is_null();
+  }
+
+  // What the Runtime reads of it itself, as Blink's FetchDataLoader reads a
+  // body, such as WebAssembly.compileStreaming() does.
+  //
+  // Whether its body is null, as a 204's is.
+  bool HasNullBody() const { return body_state_ == BodyState::kNull; }
+  // Uses the body, as a read by a script does, and calls `done` with all of it
+  // once it has come, or with nullopt if it failed. A null body reads as
+  // empty. Its body must not be used.
+  void ReadAll(base::OnceCallback<void(std::optional<std::string> body)> done);
 
  private:
   enum class BodyState {
@@ -104,6 +117,8 @@ class Response final : public bindings::ScriptWrappable {
                               bindings::ExceptionState& exception_state);
   // Settles `resolver` with the whole body, as `read_as` reads it.
   void Settle(v8::Local<v8::Promise::Resolver> resolver, ReadAs read_as);
+  // The whole body, which this gives up, or nullopt if it failed.
+  std::optional<std::string> TakeBody();
   void Dispose();
 
   ResponseType type_ = ResponseType::kDefault;
@@ -118,6 +133,8 @@ class Response final : public bindings::ScriptWrappable {
   // The promise of the read that waits for the rest of the body.
   v8::TracedReference<v8::Promise::Resolver> reader_;
   ReadAs reader_read_as_ = ReadAs::kText;
+  // What ReadAll() calls back once the rest of the body has come.
+  base::OnceCallback<void(std::optional<std::string>)> whole_body_reader_;
   // What brings the body while it loads.
   raw_ptr<FetchLoader> loader_ = nullptr;
 

@@ -829,7 +829,8 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     "dusk", "night-sky", "high-contrast-1", "high-contrast-2",
 //     "high-contrast-black" or "high-contrast-white". "inverted_colors" is
 //     "inverted" with Windows' colour filter that inverts colours, or "none".
-//   - "memory" is what Chrome makes of the memory, 2, 4, 8, 16 or 32 GiB.
+//   - "memory" is what Chrome makes of the memory, 2, 4, 8, 16 or 32 GiB, from
+//     which the Page's V8 also works out its heap's limits.
 //   - "screen_width" and "screen_height" are the primary display, "scale" its
 //     scale, from 1 to 5, and "viewport_width" and "viewport_height" the
 //     window's page area. Each size is at least 1.

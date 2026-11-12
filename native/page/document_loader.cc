@@ -321,6 +321,15 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
   document_->SetReadiness(Document::Readiness::kLoading);
+  // What DocumentLoadTiming and the navigation's response keep, for
+  // window.chrome. The response's start is when the Page hears of it.
+  ChromeObjectData& chrome_object_data = runner_->chrome_object_data();
+  chrome_object_data.response_start = base::TimeTicks::Now();
+  chrome_object_data.connection_info = response.connection_info;
+  chrome_object_data.alpn_negotiated_protocol =
+      response.alpn_negotiated_protocol;
+  chrome_object_data.was_fetched_via_spdy = response.was_fetched_via_spdy;
+  chrome_object_data.was_alpn_negotiated = response.was_alpn_negotiated;
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
 }
 
@@ -469,6 +478,7 @@ void DocumentLoader::FireDOMContentLoaded() {
   // It reaches the document's listeners. Events that go through the tree and
   // on to the window are a Known Gap.
   document_->DispatchEvent(event);
+  runner_->chrome_object_data().dom_content_loaded_end = base::TimeTicks::Now();
   // Nothing else that a document loads holds its load event back yet.
   runner_->PostTask(
       base::BindOnce(&DocumentLoader::FireLoad, weak_factory_.GetWeakPtr()));
@@ -482,6 +492,7 @@ void DocumentLoader::FireLoad() {
   if (Window* const window = document_->DefaultView()) {
     window->DispatchEventWithTarget(event, document_.Get());
   }
+  runner_->chrome_object_data().load_end = base::TimeTicks::Now();
   send_.Run(EncodeLoaded());
 }
 

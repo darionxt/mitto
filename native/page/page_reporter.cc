@@ -11,6 +11,8 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/memory_info.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-primitive.h"
@@ -103,8 +105,11 @@ PageReporter::~PageReporter() {
 
 void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
   context_.Reset(isolate_, context);
-  inspector_->contextCreated(v8_inspector::V8ContextInfo(
-      context, kContextGroupId, v8_inspector::StringView()));
+  v8_inspector::V8ContextInfo info(context, kContextGroupId,
+                                   v8_inspector::StringView());
+  // A window's console has memory, as Blink's MainThreadDebugger says.
+  info.hasMemoryOnConsole = true;
+  inspector_->contextCreated(info);
 }
 
 void PageReporter::ContextDestroyed(v8::Local<v8::Context> context) {
@@ -149,6 +154,14 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception) {
   const v8::Context::Scope context_scope(context);
   send_.Run(EncodeUncaughtError(DescribeUncaught(
       isolate_, context, exception, "Uncaught ", kMaxPayloadSize)));
+}
+
+v8::MaybeLocal<v8::Value> PageReporter::memoryInfo(
+    v8::Isolate* isolate,
+    v8::Local<v8::Context> context) {
+  // MainThreadDebugger::memoryInfo(): console.memory is always bucketized.
+  return bindings::ToV8(isolate,
+                        MemoryInfo::Create(MemoryInfo::Precision::kBucketized));
 }
 
 void PageReporter::consoleAPIMessage(int context_group_id,

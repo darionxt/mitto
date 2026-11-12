@@ -82,6 +82,8 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   void ReportException(v8::Local<v8::Value> exception);
 
   // v8_inspector::V8InspectorClient:
+  v8::MaybeLocal<v8::Value> memoryInfo(v8::Isolate* isolate,
+                                       v8::Local<v8::Context> context) override;
   void consoleAPIMessage(int context_group_id,
                          v8::Isolate::MessageErrorLevel level,
                          const v8_inspector::StringView& message,
