@@ -475,3 +475,16 @@ def test_a_v8_flag_whose_parameters_most_installations_do_not_share_goes_to_revi
         "The seed turns V8Flag_sqrt_allocation_limits on for 60% of installations in Heap, but no parameters for more"
         " than half of them, so the Page sets no flag for it",
     )
+
+
+@pytest.mark.parametrize("reversed_studies", [False, True])
+def test_chromes_copy_order_decides_between_two_overrides_of_one_feature(reversed_studies: bool) -> None:
+    # Content's table copies BrowsingTopics into Plain first, and Plain's entry copies Plain after, whose state wins.
+    switches = [switch("Plain", False), switch("BrowsingTopics", True)]
+    if reversed_studies:
+        switches.reverse()
+
+    result = persona_features(OLDER_SOURCE, ENGINE_SOURCE, SEED, switches, baseline_seed=SEED)
+
+    assert "Plain" in result.page.disable_blink_features
+    assert [line.split(":")[0] for line in result.switched] == ["Plain on", "Plain off"]

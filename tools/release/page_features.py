@@ -132,8 +132,9 @@ class ReleaseSource:
     Attributes:
         build: The build, such as "157.0.8103.39".
         features: Its runtime-enabled features, in the order of its file, with their state for stable on Windows.
-        copied_from: The runtime-enabled features that take the state of each base::Feature that a field trial
-            overrides, by the base::Feature's name, in the order Chrome copies them: content's table first.
+        copies: Each copy of the state of a base::Feature that a field trial overrides into a runtime-enabled
+            feature, as (base::Feature, runtime-enabled feature), in the order Chrome makes them: content's tables
+            first, then each feature's entry, so that a later copy wins.
         v8_features: The stage of each of its V8's features, by the feature's flag, such as "js_iterator_join".
         v8_flags: The name of every flag of its V8.
         compared: The text of each of COMPARED_FILES, by path.
@@ -141,10 +142,15 @@ class ReleaseSource:
 
     build: str
     features: tuple[Feature, ...]
-    copied_from: Mapping[str, tuple[str, ...]]
+    copies: tuple[tuple[str, str], ...]
     v8_features: Mapping[str, str]
     v8_flags: frozenset[str]
     compared: Mapping[str, str]
+
+    @property
+    def copied(self) -> frozenset[str]:
+        """The base::Features whose state a runtime-enabled feature takes when a field trial overrides it."""
+        return frozenset(base for base, _ in self.copies)
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,7 +233,7 @@ def read_release(build: str, files: Mapping[str, str]) -> ReleaseSource:
     return ReleaseSource(
         build=build,
         features=features,
-        copied_from=_copied_from(entries, files[CONTENT_RUNTIME_FEATURES], {feature.name for feature in features}),
+        copies=_copies(entries, files[CONTENT_RUNTIME_FEATURES], {feature.name for feature in features}),
         v8_features=v8_features,
         v8_flags=frozenset(v8_defined | v8_features.keys()),
         compared={path: files[path] for path in COMPARED_FILES},
@@ -266,7 +272,7 @@ def persona_features(
         f"The seed's study {study.name} switches {', '.join(study.features)} by {', '.join(study.fields)}, which"
         " follows the machine, so the Persona leaves it aside"
         for study in undecided
-        if any(feature in release.copied_from or feature.startswith(_V8_FLAG_PREFIX) for feature in study.features)
+        if any(feature in release.copied or feature.startswith(_V8_FLAG_PREFIX) for feature in study.features)
     ]
     states, switched = _release_states(release, switches)
     enable, disable = _blink_switches(states, engine)
@@ -378,14 +384,20 @@ def _release_states(release: ReleaseSource, switches: Sequence[FeatureSwitch]) -
     """Return the state of each runtime-enabled feature of a release with what its seed switches, and lines that say what
     the seed switched."""
     states = {feature.name: feature.stable for feature in release.features}
-    switched: list[str] = []
+    # A base::Feature takes part in one field trial only: the first that switches it.
+    overrides: dict[str, FeatureSwitch] = {}
     for switch in switches:
-        for name in release.copied_from.get(switch.feature, ()):
-            states[name] = switch.enabled
-            state = "on" if switch.enabled else "off"
-            switched.append(
-                f"{name} {state}: {switch.feature} in {switch.study}/{switch.group}, {switch.share:.0%} of installations"
-            )
+        overrides.setdefault(switch.feature, switch)
+    switched: list[str] = []
+    for base, name in release.copies:
+        switch = overrides.get(base)
+        if switch is None:
+            continue
+        states[name] = switch.enabled
+        state = "on" if switch.enabled else "off"
+        switched.append(
+            f"{name} {state}: {switch.feature} in {switch.study}/{switch.group}, {switch.share:.0%} of installations"
+        )
     return states, switched
 
 
@@ -497,26 +509,27 @@ def _feature_entries(text: str, build: str) -> list[Mapping[str, Any]]:
     ]
 
 
-def _copied_from(entries: Iterable[Mapping[str, Any]], content: str, names: set[str]) -> dict[str, tuple[str, ...]]:
-    """Return the runtime-enabled features that take the state of each base::Feature that a field trial overrides.
+def _copies(entries: Iterable[Mapping[str, Any]], content: str, names: set[str]) -> tuple[tuple[str, str], ...]:
+    """Return each copy of the state of a base::Feature that a field trial overrides into a runtime-enabled feature, as
+    (base::Feature, runtime-enabled feature), in the order Chrome makes them.
 
     Chrome copies them in SetRuntimeFeaturesFromChromiumFeatures() first, from its tables, and then in
     UpdateStatusFromBaseFeatures(), from the base_feature of each feature's entry, which is the feature's own name unless
     the entry names another or "none". The table names a base::Feature by its constant, kName, whose name it takes to be
     the name of the feature.
     """
-    copied: dict[str, list[str]] = {}
+    copies: list[tuple[str, str]] = []
     for match in _CONTENT_ENTRY.finditer(content):
         name = match["enabler"] or match["name"]
         if match["option"] not in _CONTENT_OPTIONS:
             raise PageFeaturesError(f"{CONTENT_RUNTIME_FEATURES} copies {name} with {match['option']}, unknown here")
         if name in names:
-            copied.setdefault(match["base"], []).append(name)
+            copies.append((match["base"], name))
     for entry in entries:
         base = str(entry.get("base_feature", entry["name"]))
         if base != "none":
-            copied.setdefault(base, []).append(str(entry["name"]))
-    return {base: tuple(dict.fromkeys(features)) for base, features in copied.items()}
+            copies.append((base, str(entry["name"])))
+    return tuple(copies)
 
 
 def _v8_features(text: str, build: str) -> dict[str, str]:
