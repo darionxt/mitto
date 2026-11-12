@@ -807,9 +807,10 @@ static int Cookies(const char* url) {
 
 // What a Page starts with, as a Session's Machine and Persona say it.
 static const char kPageOptions[] =
-    "{\"version\": 2, \"start\": {\"time_zone\": \"America/New_York\", "
-    "\"locale\": \"en-US\", \"processors\": 8, \"touch_points\": 0, "
-    "\"work_area_x\": 0, \"work_area_y\": 0, \"work_area_width\": 1920, "
+    "{\"version\": 3, \"start\": {\"time_zone\": \"America/New_York\", "
+    "\"locale\": \"en-US\", \"processors\": 8, \"memory\": 8, "
+    "\"touch_points\": 0, \"work_area_x\": 0, \"work_area_y\": 0, "
+    "\"work_area_width\": 1920, "
     "\"work_area_height\": 1032, \"window_state\": \"maximised\", "
     "\"window_x\": 0, \"window_y\": 0, \"window_width\": 1920, "
     "\"window_height\": 1032, \"contrast_theme\": \"none\", "

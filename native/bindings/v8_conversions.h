@@ -166,6 +166,13 @@ v8::Local<v8::Value> ToV8StringArray(v8::Isolate* isolate,
 v8::Local<v8::String> ToV8StringFromUtf8(v8::Isolate* isolate,
                                          std::string_view text);
 
+// A long long or an unsigned long long, as Blink's ToV8Traits give them: an
+// integer where it fits 32 bits, and otherwise a number, since v8::Integer
+// holds no more.
+// Upstream: third_party/blink/renderer/bindings/core/v8/to_v8_traits.h
+v8::Local<v8::Value> ToV8Int64(v8::Isolate* isolate, int64_t value);
+v8::Local<v8::Value> ToV8Uint64(v8::Isolate* isolate, uint64_t value);
+
 // The wrapper of `object`, or null.
 v8::Local<v8::Value> ToV8(v8::Isolate* isolate, ScriptWrappable* object);
 

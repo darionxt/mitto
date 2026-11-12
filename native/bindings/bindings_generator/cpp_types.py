@@ -269,6 +269,11 @@ class TypeMapper:
         if kind is TypeKind.BOOLEAN:
             return f"v8::Boolean::New(isolate, {expression})"
         if kind is TypeKind.INTEGER:
+            # v8::Integer holds 32 bits, so the 64-bit types go through Blink's ToV8Traits.
+            if _INTEGERS[idl_type.name] == "uint64_t":
+                return f"ToV8Uint64(isolate, {expression})"
+            if _INTEGERS[idl_type.name] == "int64_t":
+                return f"ToV8Int64(isolate, {expression})"
             if _INTEGERS[idl_type.name].startswith("u"):
                 return f"v8::Integer::NewFromUnsigned(isolate, {expression})"
             return f"v8::Integer::New(isolate, {expression})"

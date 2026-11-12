@@ -34,7 +34,7 @@
 // The version of the options that mitto_page_open() reads. Adding an option
 // changes neither this nor MITTO_ABI_VERSION. Increase this one when an existing
 // option changes its meaning.
-#define MITTO_PAGE_OPTIONS_VERSION 2
+#define MITTO_PAGE_OPTIONS_VERSION 3
 
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
@@ -768,9 +768,9 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // and needs no trailing NUL byte:
 //
 //   {
-//     "version": 2,
+//     "version": 3,
 //     "start": {"time_zone": "America/New_York", "locale": "en-US",
-//               "processors": 8, "touch_points": 0,
+//               "processors": 8, "memory": 8, "touch_points": 0,
 //               "work_area_x": 0, "work_area_y": 0,
 //               "work_area_width": 1920, "work_area_height": 1032,
 //               "window_state": "maximised",
@@ -801,6 +801,9 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   - "processors" is the number of logical processors, from 1 to 64, and
 //     "touch_points" how many touch points the touch screen takes, from 0, for
 //     none, to 256.
+//   - "memory" is the memory in GiB, from 1 to 1024, from which the Page's V8
+//     works out its heap's limits, as Chrome's renderer does from the
+//     machine's.
 //   - "work_area_x", "work_area_y", "work_area_width" and "work_area_height" are
 //     the display less the taskbar. Its place is at least 0 and its size at
 //     least 1.

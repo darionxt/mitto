@@ -1,5 +1,6 @@
 #include "mitto/dom/response.h"
 
+#include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/strings/strcat.h"
@@ -203,6 +204,10 @@ void Response::EndBody(int net_error) {
     return;
   }
   body_state_ = net_error == 0 ? BodyState::kComplete : BodyState::kFailed;
+  if (!whole_body_reader_.is_null()) {
+    std::move(whole_body_reader_).Run(TakeBody());
+    return;
+  }
   if (reader_.IsEmpty()) {
     return;
   }
@@ -241,6 +246,33 @@ v8::Local<v8::Promise> Response::Read(
     Settle(resolver, read_as);
   }
   return resolver->GetPromise();
+}
+
+void Response::ReadAll(
+    base::OnceCallback<void(std::optional<std::string> body)> done) {
+  CHECK(!body_used_);
+  if (body_state_ == BodyState::kNull) {
+    std::move(done).Run(std::string());
+    return;
+  }
+  body_used_ = true;
+  if (body_state_ != BodyState::kLoading) {
+    std::move(done).Run(TakeBody());
+    return;
+  }
+  whole_body_reader_ = std::move(done);
+  if (loader_) {
+    loader_->ReaderStarted();
+  }
+}
+
+std::optional<std::string> Response::TakeBody() {
+  if (body_state_ == BodyState::kFailed) {
+    return std::nullopt;
+  }
+  std::string body;
+  body.swap(body_);
+  return body;
 }
 
 void Response::Settle(v8::Local<v8::Promise::Resolver> resolver,

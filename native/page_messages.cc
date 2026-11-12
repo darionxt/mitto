@@ -68,6 +68,7 @@ constexpr int kMost = std::numeric_limits<int>::max();
 constexpr int kLeast = std::numeric_limits<int>::min();
 constexpr auto kStartNumbers = std::to_array<StartNumber>({
     {"processors", &PageStart::processors, 1, 64},
+    {"memory", &PageStart::memory, 1, 1024},
     {"touch_points", &PageStart::touch_points, 0, 256},
     {"work_area_x", &PageStart::work_area_x, 0, kMost},
     {"work_area_y", &PageStart::work_area_y, 0, kMost},
@@ -162,6 +163,15 @@ bool IsName(std::string_view name) {
          std::ranges::all_of(name, [](char c) {
            return base::IsAsciiAlphaNumeric(c) || c == '_' || c == '-' ||
                   c == '+' || c == '/';
+         });
+}
+
+// A name of a protocol, as net names them: "h2", "http/1.1", "unknown".
+bool IsProtocolName(std::string_view name) {
+  return !name.empty() && name.size() <= kMaxNameSize &&
+         std::ranges::all_of(name, [](char c) {
+           return base::IsAsciiAlphaNumeric(c) || c == '/' || c == '.' ||
+                  c == '-' || c == '_' || c == '+';
          });
 }
 
@@ -305,7 +315,7 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageResponseStarted, std::string> ReadResponseStarted(
     std::string_view bytes) {
-  if (bytes.size() < 22) {
+  if (bytes.size() < 24) {
     return base::unexpected(WrongSize("response", bytes.size()));
   }
   PageResponseStarted response;
@@ -313,22 +323,36 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   response.status = DecodeInt32(bytes.substr(8, 4));
   const uint8_t redirected = static_cast<uint8_t>(bytes[12]);
   const uint8_t cors = static_cast<uint8_t>(bytes[13]);
+  const uint8_t spdy = static_cast<uint8_t>(bytes[14]);
+  const uint8_t alpn = static_cast<uint8_t>(bytes[15]);
   response.navigation_start =
-      static_cast<int64_t>(DecodeUint64(bytes.substr(14, 8)));
-  bytes.remove_prefix(22);
+      static_cast<int64_t>(DecodeUint64(bytes.substr(16, 8)));
+  bytes.remove_prefix(24);
   std::string_view url;
   std::string_view status_text;
-  if (response.status < 0 || redirected > 1 || cors > 1 ||
-      !TakeSized(bytes, url) || !TakeSized(bytes, status_text)) {
+  std::string_view connection_info;
+  std::string_view alpn_negotiated_protocol;
+  if (response.status < 0 || redirected > 1 || cors > 1 || spdy > 1 ||
+      alpn > 1 || !TakeSized(bytes, url) || !TakeSized(bytes, status_text) ||
+      !TakeSized(bytes, connection_info) ||
+      !TakeSized(bytes, alpn_negotiated_protocol)) {
     return base::unexpected("a response that does not hold what it says");
   }
   if (!IsText(url)) {
     return base::unexpected("a response whose URL is not UTF-8");
   }
+  if (!IsProtocolName(connection_info) ||
+      !IsProtocolName(alpn_negotiated_protocol)) {
+    return base::unexpected("a response whose protocol is not a name");
+  }
   response.redirected = redirected == 1;
   response.cors = cors == 1;
+  response.was_fetched_via_spdy = spdy == 1;
+  response.was_alpn_negotiated = alpn == 1;
   response.url = std::string(url);
   response.status_text = std::string(status_text);
+  response.connection_info = std::string(connection_info);
+  response.alpn_negotiated_protocol = std::string(alpn_negotiated_protocol);
   response.headers = std::string(bytes);
   return response;
 }
@@ -544,16 +568,24 @@ std::string EncodeLoaded() {
 std::string EncodeResponseStarted(const PageResponseStarted& response) {
   const char redirected = response.redirected ? 1 : 0;
   const char cors = response.cors ? 1 : 0;
+  const char spdy = response.was_fetched_via_spdy ? 1 : 0;
+  const char alpn = response.was_alpn_negotiated ? 1 : 0;
   return EncodeFrame(
       PageMessage::kResponseStarted,
       base::StrCat(
           {EncodeUint64(response.number), EncodeInt32(response.status),
            std::string_view(&redirected, 1), std::string_view(&cors, 1),
+           std::string_view(&spdy, 1), std::string_view(&alpn, 1),
            EncodeUint64(static_cast<uint64_t>(response.navigation_start)),
            EncodeUint32(static_cast<uint32_t>(response.url.size())),
            response.url,
            EncodeUint32(static_cast<uint32_t>(response.status_text.size())),
-           response.status_text, response.headers}));
+           response.status_text,
+           EncodeUint32(static_cast<uint32_t>(response.connection_info.size())),
+           response.connection_info,
+           EncodeUint32(
+               static_cast<uint32_t>(response.alpn_negotiated_protocol.size())),
+           response.alpn_negotiated_protocol, response.headers}));
 }
 
 std::string EncodeResponseBody(uint64_t number, std::string_view bytes) {

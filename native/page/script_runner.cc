@@ -20,10 +20,13 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
+#include "mitto/page/chrome_object.h"
 #include "mitto/page/document_loader.h"
 #include "mitto/page/page_fetcher.h"
+#include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "third_party/icu/source/common/unicode/locid.h"
@@ -158,13 +161,27 @@ std::optional<std::string> ScriptRunner::Start(
                           base::Unretained(reporter_.get())));
 
   const v8::HandleScope handle_scope(isolate_);
-  const v8::Local<v8::Context> context = NewPageContext(isolate_);
+  const v8::Local<v8::Context> context =
+      NewContext(bindings::PerIsolateData::From(isolate_)->time_origin());
   context_.Reset(isolate_, context);
   AttachWindow(context);
-  // Once the context has its interfaces, as Blink tells its inspector.
-  reporter_->ContextCreated(context);
   base::CurrentThread::Get()->AddTaskObserver(this);
   return std::nullopt;
+}
+
+v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin) {
+  chrome_object_data_.push_back(std::make_unique<ChromeObjectData>());
+  ChromeObjectData& chrome_object_data = *chrome_object_data_.back();
+  chrome_object_data.StartAt(time_origin);
+  return NewPageContext(
+      isolate_, u"",
+      [this, &chrome_object_data](v8::Local<v8::Context> context) {
+        // As LocalWindowProxy::Initialize(): V8Initializer's settings of the
+        // context, then the inspector, then the embedder.
+        InitializePageContext(context);
+        reporter_->ContextCreated(context);
+        InstallChromeObject(context, chrome_object_data);
+      });
 }
 
 void ScriptRunner::AttachWindow(v8::Local<v8::Context> context) {
@@ -313,16 +330,21 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
   timers_.reset();
   fetcher_.reset();
   reporter_->ContextDestroyed(context_.Get(isolate_));
+  chrome_object_data_.back()->detached = true;
   // What the new document's DOMHighResTimeStamp counts from, as Blink takes
   // it from the navigation's start.
   const base::TimeTicks now = base::TimeTicks::Now();
-  bindings::PerIsolateData::From(isolate_)->set_time_origin(
+  const base::TimeTicks time_origin =
       navigation_start.is_null() || navigation_start > now ? now
-                                                           : navigation_start);
+                                                           : navigation_start;
+  bindings::PerIsolateData::From(isolate_)->set_time_origin(time_origin);
   // A [SecureContext] member is installed when a context is made.
   bindings::PerIsolateData::From(isolate_)->set_secure_context(
       IsUrlPotentiallyTrustworthy(url));
-  const v8::Local<v8::Context> context = NewPageContext(isolate_);
+  // Chrome's site isolation locks a renderer to the site of a document at an
+  // HTTP or HTTPS URL.
+  MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
+  const v8::Local<v8::Context> context = NewContext(time_origin);
   context_.Reset(isolate_, context);
   AttachWindow(context);
   const v8::Context::Scope context_scope(context);
@@ -334,7 +356,6 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
     document->SetCookieJar(cookie_jar_);
   }
   Window::Current().SetDocument(document);
-  reporter_->ContextCreated(context);
   return *document;
 }
 

@@ -28,7 +28,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 5;
+inline constexpr uint32_t kPageProtocolVersion = 6;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -183,6 +183,9 @@ struct PageStart {
   // The number of logical processors, which navigator.hardwareConcurrency
   // gives.
   int processors = 0;
+  // The memory in GiB, from which V8 works out its heap's limits, as gin
+  // works them out from the machine's.
+  int memory = 0;
   // How many touch points the touch screen takes, or 0 without one, which
   // navigator.maxTouchPoints gives.
   int touch_points = 0;
@@ -272,10 +275,19 @@ struct PageResponseStarted {
   // every process of the machine shares: what the document's
   // performance.timeOrigin counts from. 0 for the Page's own requests.
   int64_t navigation_start = 0;
+  // Of the connection, as net::HttpResponseInfo has it: whether it went over
+  // HTTP/2 or QUIC, and whether ALPN chose a protocol.
+  bool was_fetched_via_spdy = false;
+  bool was_alpn_negotiated = false;
   // The URL of the response, in UTF-8.
   std::string url;
   // The status line's reason phrase, in bytes.
   std::string status_text;
+  // What net::HttpConnectionInfoToString() calls the connection's protocol,
+  // such as "h2", and the protocol that ALPN chose, "unknown" for none, each
+  // a name of at most 64 characters.
+  std::string connection_info;
+  std::string alpn_negotiated_protocol;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;

@@ -130,7 +130,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 5
+_PROTOCOL_VERSION = 6
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -138,6 +138,7 @@ _DEFAULT_START: dict[str, object] = {
     "time_zone": "America/New_York",
     "locale": "en-US",
     "processors": 8,
+    "memory": 8,
     "touch_points": 0,
     "work_area_x": 0,
     "work_area_y": 0,
@@ -415,6 +416,7 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
             'a start whose "locale" is not a name',
         ),
         ({**_DEFAULT_START, "processors": 0}, 'a start whose "processors" is not a whole number from 1 to 64'),
+        ({**_DEFAULT_START, "memory": 0}, 'a start whose "memory" is not a whole number from 1 to 1024'),
         ({**_DEFAULT_START, "touch_points": 1.5}, 'a start whose "touch_points" is not a whole number from 0 to 256'),
         ({**_DEFAULT_START, "window_state": "first"}, 'a start whose "window_state" is not "maximised" or "normal"'),
         ({**_DEFAULT_START, "contrast_theme": "black"}, 'a start whose "contrast_theme" is not a contrast theme'),
@@ -551,9 +553,11 @@ def _respond(
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
-        struct.pack("<QiBBq", number, status, int(redirected), int(cors), 0)
+        struct.pack("<QiBBBBq", number, status, int(redirected), int(cors), 0, 0, 0)
         + _sized(url.encode())
         + _sized(status_text.encode("latin-1"))
+        + _sized(b"http/1.1")
+        + _sized(b"unknown")
         + lines,
     )
 

@@ -19,6 +19,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/task/task_observer.h"
 #include "base/time/time.h"
+#include "mitto/page/chrome_object.h"
 #include "mitto/page/page_reporter.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
@@ -100,6 +101,9 @@ class ScriptRunner final : public base::TaskObserver {
   // and the old window's timers and fetches stop. The new window's
   // performance.timeOrigin is `navigation_start`.
   Document& CommitDocument(const GURL& url, base::TimeTicks navigation_start);
+  // What window.chrome of the current window reads, which its document's
+  // loading fills in.
+  ChromeObjectData& chrome_object_data() { return *chrome_object_data_.back(); }
   // Runs a classic script from `url` in the current context, inside a task,
   // reports what it throws as an uncaught error, and then runs the microtasks
   // it queued, as the HTML Standard cleans up after running a script.
@@ -118,6 +122,9 @@ class ScriptRunner final : public base::TaskObserver {
   void EndTask();
   // Reports those of `rejections` that still have no handler.
   void ReportRejections(std::vector<PageReporter::Rejection> rejections);
+  // Makes a window's context, whose time origin is `time_origin`, and what
+  // Chrome's renderer adds to it.
+  v8::Local<v8::Context> NewContext(base::TimeTicks time_origin);
   // Gives the current context's window its timers and what its fetch() goes
   // through.
   void AttachWindow(v8::Local<v8::Context> context);
@@ -158,6 +165,10 @@ class ScriptRunner final : public base::TaskObserver {
   // The current window's timers and what its fetch() goes through.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<PageFetcher> fetcher_;
+  // What window.chrome of each window that the Page has made reads, the
+  // current one's last. They live as long as the Page, for a callback of a
+  // window that has gone.
+  std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;
   // How many tasks that report rejections wait to run.
   int reports_queued_ = 0;
   v8::Global<v8::Context> context_;

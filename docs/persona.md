@@ -475,6 +475,7 @@ The **Runtime** will have to read the same machine, or a page could tell that it
 | A page reads | From the machine |
 | --- | --- |
 | `navigator.deviceMemory` | The same memory |
+| `jsHeapSizeLimit` of `performance.memory` and `console.memory` | The same memory, from which V8 works out its heap's limits, as the Page does from the Machine's ([building.md](building.md#what-chromes-renderer-sets-up-on-its-isolate)) |
 | `devicePixelRatio`, and `resolution` in `matchMedia()` | The scale, times the zoom |
 | `innerWidth`, `innerHeight`, and `width` and `height` in `matchMedia()` | The viewport |
 | `screen.width`, `screen.height` | The display, over the scale |

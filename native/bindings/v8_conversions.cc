@@ -132,6 +132,22 @@ v8::Local<v8::String> ToV8StringFromUtf8(v8::Isolate* isolate,
       .ToLocalChecked();
 }
 
+v8::Local<v8::Value> ToV8Int64(v8::Isolate* isolate, int64_t value) {
+  const int32_t value_in_32_bits = static_cast<int32_t>(value);
+  if (value_in_32_bits == value) {
+    return v8::Integer::New(isolate, value_in_32_bits);
+  }
+  return v8::Number::New(isolate, static_cast<double>(value));
+}
+
+v8::Local<v8::Value> ToV8Uint64(v8::Isolate* isolate, uint64_t value) {
+  const uint32_t value_in_32_bits = static_cast<uint32_t>(value);
+  if (value_in_32_bits == value) {
+    return v8::Integer::NewFromUnsigned(isolate, value_in_32_bits);
+  }
+  return v8::Number::New(isolate, static_cast<double>(value));
+}
+
 v8::Local<v8::Value> ToV8(v8::Isolate* isolate, ScriptWrappable* object) {
   if (!object) {
     return v8::Null(isolate);

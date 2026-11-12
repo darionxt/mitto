@@ -78,6 +78,8 @@ source_set("dom") {
     "html_unknown_element.h",
     "markup_serializer.cc",
     "markup_serializer.h",
+    "memory_info.cc",
+    "memory_info.h",
     "node.cc",
     "node.h",
     "page_interfaces.cc",

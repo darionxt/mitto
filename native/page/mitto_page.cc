@@ -10,16 +10,20 @@
 // input, for one longer than a command line holds. Both are in UTF-8.
 //
 // Usage: mitto_page [--enable-blink-features=NAMES]
-//                   [--disable-blink-features=NAMES]
+//                   [--disable-blink-features=NAMES] [--js-flags=FLAGS]
 //                   [--html=MARKUP] SCRIPT
 //        mitto_page [--enable-blink-features=NAMES]
-//                   [--disable-blink-features=NAMES] --session=CHANNEL,PARENT
+//                   [--disable-blink-features=NAMES] [--js-flags=FLAGS]
+//                   --session=CHANNEL,PARENT
 //        mitto_page --version
 //
 // Each context has the interfaces that the Runtime implements, as the Page's
 // runtime-enabled features expose them: the Engine Release's for stable on
 // Windows, with those that the options name, separated by commas, turned on or
-// off, as Chrome's options of the same names do.
+// off, as Chrome's options of the same names do, and window.chrome and the
+// rest of what Chrome's renderer adds. V8 has the flags of the Engine
+// Release's renderer, then those of FLAGS, separated by commas, as Chrome's
+// --js-flags gives them.
 //
 // Exits with 1 if the script throws or its promise is rejected or never
 // settles, and with 2 if the arguments are wrong. What a timer or a microtask
@@ -57,30 +61,30 @@
 #include "build/build_config.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
-#include "mitto/page/page_platform.h"
-#include "mitto/page/script_runner.h"
+#include "mitto/page/chrome_object.h"
+#include "mitto/page/page_isolate.h"
+#include "mitto/page/page_v8.h"
 #include "mitto/page/session_channel.h"
+#include "mitto/page/v8_flags.h"
 #include "mitto/page_messages.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
-#include "v8/include/libplatform/libplatform.h"
-#include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
-#include "v8/include/v8-cppgc.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-initialization.h"
+#include "v8/include/v8-inspector.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-persistent-handle.h"
-#include "v8/include/v8-platform.h"
 #include "v8/include/v8-primitive.h"
 #include "v8/include/v8-promise.h"
 #include "v8/include/v8-script.h"
-#include "v8/include/v8-snapshot.h"
 #include "v8/include/v8-value.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -91,12 +95,10 @@
 #include <shellapi.h>
 #endif
 
-// The program holds ICU's whole data file and V8's startup snapshot, which
-// page/BUILD.gn writes into it, so that it opens no file to start.
+// The program holds ICU's whole data file, which page/BUILD.gn writes into it,
+// so that it opens no file to start.
 extern "C" {
 extern const char mitto_icu_data[];
-extern const char mitto_v8_snapshot[];
-extern const uint64_t mitto_v8_snapshot_size;
 }
 
 namespace {
@@ -106,10 +108,11 @@ constexpr int kWrongArguments = 2;
 
 constexpr std::string_view kUsage =
     "usage: mitto_page [--enable-blink-features=NAMES] "
-    "[--disable-blink-features=NAMES] [--html=MARKUP] SCRIPT | "
-    "--session=CHANNEL,PARENT | --version";
+    "[--disable-blink-features=NAMES] [--js-flags=FLAGS] [--html=MARKUP] "
+    "SCRIPT | --session=CHANNEL,PARENT | --version";
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
+constexpr std::string_view kJsFlags = "--js-flags=";
 constexpr std::string_view kHtml = "--html=";
 constexpr std::string_view kStandardInput = "-";
 
@@ -184,6 +187,40 @@ void PrintUncaught(v8::Local<v8::Message> message,
   WriteLine(stderr, "Uncaught " + text.value_or("exception"));
 }
 
+// The command line's client of V8's inspector, which a Page's console has as
+// in Chrome: it gives console what the inspector adds, such as createTask()
+// and memory, and drops what the console writes, as the command line always
+// has.
+class CommandLineInspector final : public v8_inspector::V8InspectorClient {
+ public:
+  explicit CommandLineInspector(v8::Isolate* isolate)
+      : inspector_(v8_inspector::V8Inspector::create(isolate, this)) {}
+
+  CommandLineInspector(const CommandLineInspector&) = delete;
+  CommandLineInspector& operator=(const CommandLineInspector&) = delete;
+
+  ~CommandLineInspector() override = default;
+
+  void ContextCreated(v8::Local<v8::Context> context) {
+    v8_inspector::V8ContextInfo info(context, /*contextGroupId=*/1,
+                                     v8_inspector::StringView());
+    info.hasMemoryOnConsole = true;
+    inspector_->contextCreated(info);
+  }
+
+  // v8_inspector::V8InspectorClient:
+  v8::MaybeLocal<v8::Value> memoryInfo(
+      v8::Isolate* isolate,
+      v8::Local<v8::Context> context) override {
+    return mitto::bindings::ToV8(
+        isolate,
+        mitto::MemoryInfo::Create(mitto::MemoryInfo::Precision::kBucketized));
+  }
+
+ private:
+  std::unique_ptr<v8_inspector::V8Inspector> inspector_;
+};
+
 // The event loop of the command line: after each task, a microtask
 // checkpoint, as in a Page, and the end of the loop once no task is ready and
 // no timer is set.
@@ -225,8 +262,18 @@ bool RunScript(v8::Isolate* isolate,
                std::string_view html,
                std::string_view source) {
   const v8::HandleScope handle_scope(isolate);
-  const v8::Local<v8::Context> context =
-      mitto::NewPageContext(isolate, base::UTF8ToUTF16(html));
+  // Its about:blank's loading started when the context did.
+  mitto::ChromeObjectData chrome_data;
+  chrome_data.StartAt(
+      mitto::bindings::PerIsolateData::From(isolate)->time_origin());
+  CommandLineInspector inspector(isolate);
+  const v8::Local<v8::Context> context = mitto::NewPageContext(
+      isolate, base::UTF8ToUTF16(html),
+      [&inspector, &chrome_data](v8::Local<v8::Context> context) {
+        mitto::InitializePageContext(context);
+        inspector.ContextCreated(context);
+        mitto::InstallChromeObject(context, chrome_data);
+      });
   const v8::Context::Scope context_scope(context);
   mitto::DOMTimerCoordinator timers(isolate, context);
   mitto::Window::Current().SetTimers(&timers);
@@ -269,6 +316,7 @@ bool RunScript(v8::Isolate* isolate,
           isolate, source, &result, &exception, &threw));
   run_loop.Run();
   mitto::Window::Current().SetTimers(nullptr);
+  chrome_data.detached = true;
 
   const v8::TryCatch try_catch(isolate);
   if (threw) {
@@ -324,6 +372,7 @@ int main(int argc, char** argv) {
   // Chrome's options: a second one of the same name replaces the first.
   std::string_view enable;
   std::string_view disable;
+  std::string_view js_flags;
   std::optional<std::string_view> html;
   for (const std::string_view option :
        base::span(arguments).subspan(1u).first(arguments.size() - 2)) {
@@ -331,6 +380,8 @@ int main(int argc, char** argv) {
       enable = option.substr(kEnableFeatures.size());
     } else if (option.starts_with(kDisableFeatures)) {
       disable = option.substr(kDisableFeatures.size());
+    } else if (option.starts_with(kJsFlags)) {
+      js_flags = option.substr(kJsFlags.size());
     } else if (option.starts_with(kHtml)) {
       html = option.substr(kHtml.size());
     } else {
@@ -384,44 +435,22 @@ int main(int argc, char** argv) {
   // tasks for the main thread join, as Chrome's renderers have it.
   auto main_thread = std::make_unique<base::SingleThreadTaskExecutor>();
 
-  // Before anything of V8 asks for a random number, as in Chrome's renderers.
-  v8::V8::SetEntropySource(&mitto::GenerateEntropy);
-  v8::StartupData snapshot = {mitto_v8_snapshot,
-                              base::checked_cast<int>(mitto_v8_snapshot_size)};
-  v8::V8::SetSnapshotDataBlob(&snapshot);
-  const auto platform = std::make_unique<mitto::PagePlatform>(
-      v8::platform::NewDefaultPlatform(), main_thread->task_runner());
-  v8::V8::InitializePlatform(platform.get());
-  CHECK(v8::V8::Initialize());
-
-  v8::Isolate::CreateParams params;
-  params.array_buffer_allocator_shared =
-      std::shared_ptr<v8::ArrayBuffer::Allocator>(
-          v8::ArrayBuffer::Allocator::NewDefaultAllocator());
-  // The heap of the Runtime's C++ objects, which V8 collects with its own, as
-  // Blink's renderers have it. The isolate owns it.
-  params.cpp_heap =
-      v8::CppHeap::Create(platform.get(), v8::CppHeapCreateParams({}))
-          .release();
-  v8::Isolate* const isolate = v8::Isolate::New(params);
-  // Microtasks run when the outermost script that the Runtime runs returns,
-  // and after each task, as Blink has them.
-  isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
-  bool finished = false;
-  {
-    const v8::Isolate::Scope isolate_scope(isolate);
-    const std::unique_ptr<mitto::bindings::PerIsolateData> data =
-        mitto::bindings::PerIsolateData::Create(isolate, std::move(*features));
-    if (session) {
-      mitto::ServeSession(isolate, *std::move(session));
-    } else {
-      finished = RunScript(isolate, html.value_or(""), argument);
-    }
+  mitto::PageV8Options options;
+  options.extra_flags = mitto::SplitJsFlags(js_flags);
+  if (session) {
+    // V8 starts once the Session's start message says with what.
+    mitto::ServeSession(*std::move(session), main_thread->task_runner(),
+                        std::move(options), std::move(*features));
+    // It could not start.
+    return kScriptThrew;
   }
+  // The memory of a Machine of the most common kind (docs/persona.md).
+  options.memory_gib = 8;
+  std::unique_ptr<mitto::PageV8> page = mitto::PageV8::Start(
+      main_thread->task_runner(), options, std::move(*features));
+  const bool finished = RunScript(page->isolate(), html.value_or(""), argument);
   // V8's tasks that wait go while the isolate still lives.
   main_thread.reset();
-  isolate->Dispose();
-  v8::V8::Dispose();
-  v8::V8::DisposePlatform();
+  page.reset();
   return finished ? 0 : kScriptThrew;
 }

@@ -90,7 +90,7 @@ REQUEST_OPTIONS_VERSION = 1
 COOKIES_VERSION = 1
 
 # The MITTO_PAGE_OPTIONS_VERSION of the C header this module is written against.
-PAGE_OPTIONS_VERSION = 2
+PAGE_OPTIONS_VERSION = 3
 
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
@@ -893,6 +893,7 @@ class PageStart:
         time_zone: The IANA name of the time zone that the Page's Date and Intl report.
         locale: The BCP 47 tag of the locale that the Page's Intl falls back to.
         processors: The number of logical processors, from 1 to 64.
+        memory: The memory in GiB, from which the Page's V8 works out its heap's limits.
         touch_points: How many touch points the touch screen takes, from 0, for none, to 256.
         work_area_x: Where the work area, which is the display less the taskbar, starts from the left.
         work_area_y: Where the work area starts from the top.
@@ -910,6 +911,7 @@ class PageStart:
     time_zone: str
     locale: str
     processors: int
+    memory: int
     touch_points: int
     work_area_x: int
     work_area_y: int

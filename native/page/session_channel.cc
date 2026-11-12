@@ -68,10 +68,12 @@ class SessionLink final : public PageChannel::Delegate
 {
  public:
   SessionLink(scoped_refptr<base::SingleThreadTaskRunner> main_thread,
-              ScriptRunner& runner,
+              PageV8Options options,
+              bindings::RuntimeFeatureSet features,
               SessionCookieJar& cookie_jar)
       : main_thread_(std::move(main_thread)),
-        runner_(runner),
+        options_(std::move(options)),
+        features_(std::move(features)),
         cookie_jar_(cookie_jar) {}
 
   SessionLink(const SessionLink&) = delete;
@@ -230,6 +232,15 @@ class SessionLink final : public PageChannel::Delegate
                                                         std::move(why)));
         },
         io_thread, base::Unretained(this));
+    // V8 starts now, with the flags, the heap and the features of the
+    // Session's Page, which live until the process ends.
+    options_.memory_gib = start.memory;
+    v8::Isolate* const isolate =
+        PageV8::Start(main_thread_, options_, std::move(features_))
+            .release()
+            ->isolate();
+    isolate->SetOOMErrorHandler(&OnOutOfMemory);
+    runner_ = std::make_unique<ScriptRunner>(isolate);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
@@ -299,8 +310,12 @@ class SessionLink final : public PageChannel::Delegate
 #endif
 
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
-  // Lives on the main thread, until the process ends.
-  const raw_ref<ScriptRunner> runner_;
+  // What V8 starts with, on the main thread.
+  PageV8Options options_;
+  bindings::RuntimeFeatureSet features_;
+  // Made on the main thread when the start comes, and lives there until the
+  // process ends. Every other message to it comes after the start.
+  std::unique_ptr<ScriptRunner> runner_;
   // Lives until the process ends. The I/O thread hands it answers.
   const raw_ref<SessionCookieJar> cookie_jar_;
   std::unique_ptr<PageChannel> channel_;
@@ -341,10 +356,11 @@ std::optional<SessionArgument> ParseSessionArgument(std::string_view argument) {
   return session;
 }
 
-void ServeSession(v8::Isolate* isolate, SessionArgument session) {
-  isolate->SetOOMErrorHandler(&OnOutOfMemory);
+void ServeSession(SessionArgument session,
+                  scoped_refptr<base::SingleThreadTaskRunner> main_thread,
+                  PageV8Options options,
+                  bindings::RuntimeFeatureSet features) {
   SessionCookieJar cookie_jar;
-  ScriptRunner runner(isolate);
 
   // Reads the channel while a script runs, so that the Page process ends when
   // it closes, even in the middle of a script that never ends.
@@ -355,8 +371,8 @@ void ServeSession(v8::Isolate* isolate, SessionArgument session) {
   }
   // Never destroyed: the process ends while the I/O thread uses it.
   SessionLink* const link =
-      std::make_unique<SessionLink>(
-          base::SingleThreadTaskRunner::GetCurrentDefault(), runner, cookie_jar)
+      std::make_unique<SessionLink>(std::move(main_thread), std::move(options),
+                                    std::move(features), cookie_jar)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),

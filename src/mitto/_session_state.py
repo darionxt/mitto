@@ -133,6 +133,7 @@ class SessionState:
             time_zone=machine.time_zone,
             locale=self._persona.locale,
             processors=machine.processors,
+            memory=machine.memory,
             touch_points=machine.touch_points,
             work_area_x=machine.work_area_x,
             work_area_y=machine.work_area_y,

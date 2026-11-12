@@ -1340,13 +1340,20 @@ def _write_features(features: list[Feature]) -> tuple[str, str]:
 
 
 def _write_interface_objects(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> tuple[str, str]:
-    """The function that puts the interface objects on a Page's global object, in the order of Window's, and then
-    installs on each interface's objects what the context decides."""
+    """The function that puts the interface objects on a Page's global object, in the order of Window's, and the one
+    that then installs on each interface's objects what the context decides, between which Chrome's renderer adds its
+    own objects, such as window.chrome."""
     window = definitions.interfaces[PAGE_GLOBAL_NAME]
     lines: list[str] = []
+    decided: list[str] = []
     installed: list[tuple[str, str]] = []
+    # An interface with [LegacyNoInterfaceObject] has no interface object on the global object, though Blink's
+    # database lists it among the global's exposed constructs, as bind_gen skips it.
+    hidden = {
+        name for name in implemented if "LegacyNoInterfaceObject" in definitions.interfaces[name].extended_attributes
+    }
     for name in window.exposed_constructs:
-        if name not in implemented:
+        if name not in implemented or name in hidden:
             continue
         interface = definitions.interfaces[name]
         test = condition_test(interface.condition, f"interface {name}")
@@ -1359,21 +1366,17 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         else:
             lines.append(f"  {call}")
     not_exposed = set(implemented) - set(window.exposed_constructs)
-    hidden = {
-        name for name in not_exposed if "LegacyNoInterfaceObject" in definitions.interfaces[name].extended_attributes
-    }
     if not_exposed - hidden:
         raise UnhandledError(f"interfaces not exposed on {PAGE_GLOBAL_NAME}: {', '.join(sorted(not_exposed - hidden))}")
     installed += [(name, "true") for name in sorted(hidden)]
-    lines.append("  // What the context decides, once each interface object exists.")
     for name, test in installed:
         # Properties defined through the global proxy go on the global object behind it.
         instance = "context->Global()" if "Global" in definitions.interfaces[name].extended_attributes else "{}"
         call = f"InstallContextDependentPropertiesOf(context, V8{name}::kWrapperTypeInfo, {instance});"
         if test != "true":
-            lines += [f"  if ({test}) {{", f"    {call}", "  }"]
+            decided += [f"  if ({test}) {{", f"    {call}", "  }"]
         else:
-            lines.append(f"  {call}")
+            decided.append(f"  {call}")
     header = [
         _BANNER,
         "#ifndef MITTO_BINDINGS_INTERFACE_OBJECTS_H_",
@@ -1385,9 +1388,13 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "",
         "// Puts the interface object of each interface that the Runtime implements",
         "// and the Page's features expose on the global object of `context`, in the",
-        "// order of Chrome's Window, and installs what the context decides on those",
-        "// interfaces' objects and on the global object.",
+        "// order of Chrome's Window.",
         "void InstallInterfaceObjects(v8::Local<v8::Context> context);",
+        "",
+        "// Installs what the context decides on those interfaces' objects and on the",
+        "// global object, once each interface object exists, as Blink's",
+        "// LocalWindowProxy::InstallConditionalFeatures() does.",
+        "void InstallConditionalFeatures(v8::Local<v8::Context> context);",
         "",
         "}  // namespace mitto::bindings",
         "",
@@ -1415,6 +1422,13 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "      PerIsolateData::From(v8::Isolate::GetCurrent());",
         "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
         *lines,
+        "}",
+        "",
+        "void InstallConditionalFeatures(v8::Local<v8::Context> context) {",
+        "  [[maybe_unused]] PerIsolateData* const data =",
+        "      PerIsolateData::From(v8::Isolate::GetCurrent());",
+        "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
+        *decided,
         "}",
         "",
         "}  // namespace mitto::bindings",

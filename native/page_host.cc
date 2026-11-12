@@ -43,6 +43,9 @@ namespace mitto {
 namespace {
 
 constexpr std::string_view kVersionKey = "version";
+// What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
+// protocol that is not known.
+constexpr char kUnknownProtocol[] = "unknown";
 constexpr std::string_view kStartKey = "start";
 constexpr std::string_view kUrlKey = "url";
 constexpr std::string_view kRequestsKey = "requests";
@@ -672,8 +675,17 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
       response.navigation_start =
           (request.start() - base::TimeTicks()).InMicroseconds();
     }
+    response.was_fetched_via_spdy = event.was_fetched_via_spdy;
+    response.was_alpn_negotiated = event.was_alpn_negotiated;
     response.url = event.url;
     response.status_text = event.status_text;
+    // //net names every protocol, but a response that it never set them on,
+    // as from a cache entry without them, says so.
+    response.connection_info =
+        event.protocol.empty() ? kUnknownProtocol : event.protocol;
+    response.alpn_negotiated_protocol = event.alpn_negotiated_protocol.empty()
+                                            ? kUnknownProtocol
+                                            : event.alpn_negotiated_protocol;
     response.headers = HeadersForPage(event.headers);
     channel_->Send(EncodeResponseStarted(response));
   }

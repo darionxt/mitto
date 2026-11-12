@@ -1,6 +1,6 @@
 // The High Resolution Time standard's Performance, a window's `performance`,
-// with now() and timeOrigin, coarsened as Chrome coarsens them. Its timelines,
-// marks and measures are Known Gaps.
+// with now() and timeOrigin, coarsened as Chrome coarsens them, and Blink's
+// memory. Its timelines, marks and measures are Known Gaps.
 //
 // Upstream: third_party/blink/renderer/core/timing/performance.h
 // Upstream: third_party/blink/renderer/core/timing/performance.cc
@@ -13,6 +13,8 @@
 #include "mitto/dom/event_target.h"
 
 namespace mitto {
+
+class MemoryInfo;
 
 class Performance final : public EventTarget {
  public:
@@ -28,6 +30,9 @@ class Performance final : public EventTarget {
   // The members of the interface.
   double Now() const;
   double TimeOrigin() const;
+  // WindowPerformance::memory(): a new MemoryInfo for each call, precise while
+  // the process is locked to a site.
+  MemoryInfo* Memory() const;
 
   // Blink's MonotonicTimeToDOMHighResTimeStamp(): `time` in milliseconds since
   // `time_origin`, each coarsened before the difference, and 0 for a time
