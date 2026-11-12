@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Walk</title>
+<!--
+  A throwaway page for darionxt/mitto#207, never merged. Once the page has
+  loaded, it runs walk.js through an indirect eval, as record.html runs the
+  probe, and posts its value to result?run=NAME on the server that served it.
+  It defines no global and no element with an id, so the walk sees the page as
+  Chrome gives it.
+-->
+<p>Walking.</p>
+<script>
+  (async () => {
+    const run = new URLSearchParams(location.search).get("run") || "unnamed";
+    const post = (body) =>
+      fetch(`result?run=${encodeURIComponent(run)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+    const status = document.querySelector("p");
+    try {
+      if (document.readyState !== "complete") {
+        await new Promise((resolve) => addEventListener("load", resolve, { once: true }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const source = await (await fetch("walk.js", { cache: "no-store" })).text();
+      const result = await (0, eval)(source);
+      const body = JSON.stringify(result);
+      await post(body);
+      status.textContent = `Walked: ${body.length} characters.`;
+    } catch (error) {
+      await post(JSON.stringify({ error: String(error), stack: error && error.stack }));
+      status.textContent = `Failed: ${error}`;
+    }
+  })();
+</script>
