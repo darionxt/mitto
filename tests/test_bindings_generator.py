@@ -9,13 +9,13 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from bindings_generator import extended_attributes
+from bindings_generator import cpp_writer, extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import Site, TypeMapper
 from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute, write_bindings
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
-from bindings_generator.known_gaps import KnownGaps
+from bindings_generator.known_gaps import KnownGaps, default_tojson_attributes, has_default_tojson
 from bindings_generator.listing import write_listing
 from bindings_generator.model import (
     ALWAYS,
@@ -728,3 +728,64 @@ def test_a_getter_that_is_a_known_gap_has_no_interceptor() -> None:
 def test_the_writer_refuses_what_it_cannot_install_of_named_properties() -> None:
     with pytest.raises(UnhandledError, match="interface Thing: the C\\+\\+ writer does not handle its named setter"):
         _bindings_of(_collection("named getter", "named setter"), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+
+def test_each_iterable_gets_an_iterator_of_its_own() -> None:
+    # Blink's database merges an iterable's iterator into the interface, so the generator writes its table itself.
+    pair = CollectionLike("iterable", (), (_operation("entries"),), "entries", iterator="SyncIterator_Thing")
+    streamed = CollectionLike(
+        "async iterable", (), (_operation("values"),), "values", iterator="AsyncIterator_Stream", has_return=True
+    )
+    window = _window(ExposedConstruct("Thing", "interface", "Thing", ALWAYS))
+    interfaces = {
+        "Window": window,
+        "Thing": _interface(collection=pair),
+        "Stream": _interface(name="Stream", collection=streamed),
+    }
+    definitions = Definitions(interfaces, {}, {}, {}, frozenset())
+
+    iterators = cpp_writer._iterators(definitions, ["Thing", "Stream"])  # pyright: ignore[reportPrivateUsage]
+
+    thing, thing_name, thing_parent = iterators["SyncIterator_Thing"]
+    stream, stream_name, stream_parent = iterators["AsyncIterator_Stream"]
+    assert (thing.kind, thing_name, thing_parent) == ("sync iterator", "Thing Iterator", "v8::kIteratorPrototype")
+    assert [group.name for group in thing.operation_groups] == ["next"]
+    assert (stream_name, stream_parent) == ("Stream AsyncIterator", "v8::kAsyncIteratorPrototype")
+    assert [group.name for group in stream.operation_groups] == ["next", "return"]
+
+
+def test_the_default_tojson_steps_read_json_attributes_of_each_interface_that_declares_tojson() -> None:
+    to_json = Operation("toJSON", (), IdlType(TypeKind.OBJECT, "object"), False, ExtendedAttributes(), ALWAYS)
+    group = OperationGroup("toJSON", (to_json,), False, 0, ExtendedAttributes(), ALWAYS)
+
+    def attribute(name: str, idl_type: IdlType) -> Attribute:
+        return Attribute(name, idl_type, True, False, ExtendedAttributes(), ALWAYS)
+
+    long_type = IdlType(TypeKind.INTEGER, "long")
+    base = _interface(
+        name="Base",
+        attributes=(
+            attribute("a", long_type),
+            attribute("p", IdlType(TypeKind.PROMISE, "Promise", members=(long_type,))),
+        ),
+        operation_groups=(group,),
+    )
+    middle = _interface(name="Middle", parent="Base", attributes=(attribute("m", long_type),))
+    leaf = _interface(
+        name="Leaf",
+        parent="Middle",
+        attributes=(
+            attribute("b", IdlType(TypeKind.INTERFACE, "Base", nullable=True)),
+            attribute("n", IdlType(TypeKind.ANY, "any")),
+        ),
+        operation_groups=(group,),
+    )
+    interfaces = {interface.name: interface for interface in (base, middle, leaf)}
+
+    assert has_default_tojson(group)
+    assert [a.name for a in default_tojson_attributes(leaf, interfaces, {})] == ["a", "b"]
+    types = _types()
+    assert types.json_attributes(default_tojson_attributes(leaf, interfaces, {}), "Leaf.toJSON") == 0
+    _, source = types.write(set())
+    assert 'constexpr JsonAttributeInfo kJsonAttributes0[] = {{"a", nullptr}, {"b", nullptr}};' in source
+    assert "return kJsonAttributeLists[static_cast<size_t>(index)];" in source

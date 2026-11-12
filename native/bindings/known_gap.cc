@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -104,6 +105,7 @@ bool HasDefault(const IdlTypeInfo& type) {
     case IdlTypeKind::kPromise:
       return HasDefault(*type.members[0]);
     case IdlTypeKind::kIterator:
+      return type.interface && IsSafeObjectType(*type.interface);
     case IdlTypeKind::kSymbol:
     case IdlTypeKind::kCallbackFunction:
     case IdlTypeKind::kCallbackInterface:
@@ -324,14 +326,41 @@ v8::MaybeLocal<v8::Value> DefaultOf(v8::Isolate* isolate,
         }
       }
       NOTREACHED();
+    case IdlTypeKind::kIterator:
+      // An iterator over nothing.
+      return NewObjectOfInterface(context, *type.interface);
     case IdlTypeKind::kSymbol:
     case IdlTypeKind::kCallbackInterface:
     case IdlTypeKind::kCallbackFunction:
-    case IdlTypeKind::kIterator:
       // The generator refuses a Known Gap of these (known_gaps.py).
       NOTREACHED();
   }
   NOTREACHED();
+}
+
+// Web IDL's default toJSON steps: a new object with each attribute that they
+// collect, read through the receiver as a page would read it, so that an
+// interface that declares an attribute again, as DOMRect does x, gives its own
+// getter's value, as Chrome's classes do.
+void DefaultToJSON(const v8::FunctionCallbackInfo<v8::Value>& info,
+                   const MemberInfo& member) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const PerIsolateData& data = *PerIsolateData::From(isolate);
+  const v8::Local<v8::Object> result = v8::Object::New(isolate);
+  for (const JsonAttributeInfo& attribute :
+       DefaultToJSONAttributes(member.value)) {
+    if (attribute.condition && !attribute.condition(data)) {
+      continue;
+    }
+    const v8::Local<v8::String> key = ToV8StringFromUtf8(isolate, attribute.name);
+    v8::Local<v8::Value> value;
+    if (!info.This()->Get(context, key).ToLocal(&value) ||
+        result->CreateDataProperty(context, key, value).IsNothing()) {
+      return;
+    }
+  }
+  info.GetReturnValue().Set(result);
 }
 
 // What a getter gives on its receiver: what its setter stored there, or what
@@ -541,6 +570,48 @@ void Construct(const v8::FunctionCallbackInfo<v8::Value>& info,
 
 }  // namespace
 
+void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const MemberInfo& member = MemberOf(info);
+  const bool asynchronous = member.flags & kMemberReturnsPromise;
+  std::optional<ExceptionToRejectPromiseScope> reject_promise_scope;
+  if (asynchronous) {
+    reject_promise_scope.emplace(info);
+    // Without V8's signature check, as bind_gen's make_check_receiver() does
+    // for an operation that returns a promise.
+    if (!IsObjectOf(isolate, *member.owner, info.This())) {
+      ThrowTypeError(isolate, "Illegal invocation");
+      return;
+    }
+  }
+  // Web IDL's CreateIterResultObject(): value, then done.
+  const v8::Local<v8::Value> value =
+      (member.flags & kMemberIteratorReturn)
+          ? info[0]
+          : v8::Undefined(isolate).As<v8::Value>();
+  const v8::Local<v8::Object> result = v8::Object::New(isolate);
+  if (result
+          ->CreateDataProperty(
+              context, v8::String::NewFromUtf8Literal(isolate, "value"), value)
+          .IsNothing() ||
+      result
+          ->CreateDataProperty(context,
+                               v8::String::NewFromUtf8Literal(isolate, "done"),
+                               v8::True(isolate))
+          .IsNothing()) {
+    return;
+  }
+  if (!asynchronous) {
+    info.GetReturnValue().Set(result);
+    return;
+  }
+  v8::Local<v8::Value> promise;
+  if (ResolvedPromise(context, result).ToLocal(&promise)) {
+    info.GetReturnValue().Set(promise);
+  }
+}
+
 bool IsSafeObjectType(const WrapperTypeInfo& info) {
   // The generator gives a table to every interface whose objects a Known Gap
   // may make, and a class to the others.
@@ -650,6 +721,12 @@ void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
     ThrowNotImplemented(isolate);
     return;
   }
+  if (member.flags & kMemberStringifierAttribute) {
+    // Blink's toString() of a stringifier attribute is the attribute's getter.
+    ReportMember(isolate, member);
+    GetValue(info, member);
+    return;
+  }
   std::vector<v8::Local<v8::Value>> arguments;
   const OverloadInfo* const overload =
       Arguments(info, *member.operation, arguments);
@@ -657,6 +734,10 @@ void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
     return;
   }
   ReportMember(isolate, member);
+  if (member.flags & kMemberDefaultToJSON) {
+    DefaultToJSON(info, member);
+    return;
+  }
   v8::Local<v8::Value> value;
   if (DefaultOf(isolate, isolate->GetCurrentContext(), *overload->return_type)
           .ToLocal(&value)) {

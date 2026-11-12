@@ -42,6 +42,11 @@ void KnownGapPromiseOperation(const v8::FunctionCallbackInfo<v8::Value>& info);
 void KnownGapConstructor(const v8::FunctionCallbackInfo<v8::Value>& info);
 // A [LegacyFactoryFunction]'s, with its ExposedConstructInfo as its data.
 void KnownGapFactoryFunction(const v8::FunctionCallbackInfo<v8::Value>& info);
+// next() and return() of an iterator over nothing, which a Known Gap gives:
+// { value: undefined, done: true }, or for return() the value it gets, and for
+// an async iterator a promise resolved with it, as Blink's iterators give once
+// they are done.
+void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info);
 
 // Whether a Known Gap may make an object of the interface: one without a C++
 // class, which has a table.

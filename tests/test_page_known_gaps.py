@@ -185,6 +185,33 @@ def test_a_setter_stores_the_converted_value_for_its_getter(program: Path) -> No
     assert _evaluate(program, script) == "value: 7,number,spelling-error"
 
 
+def test_a_stringifier_gives_what_its_attributes_getter_gives(program: Path) -> None:
+    # Blink's toString() of a stringifier attribute is that attribute's getter, so after the same sets Chrome 157 gives
+    # the same string.
+    script = (
+        "const list = document.body.classList; list.value = 'a b'; "
+        "const url = new URL('https://a.test/'); url.href = 'https://b.test/x'; "
+        "return [String(list), list.toString(), `${url}`, url.toString()].join('|');"
+    )
+
+    assert _evaluate(program, script) == "value: a b|a b|https://b.test/x|https://b.test/x"
+
+
+def test_to_json_gives_what_the_default_tojson_steps_collect(program: Path) -> None:
+    # The one exception to the type's default, which the owner chose on 2026-11-12. Chrome 157 gives the same string
+    # for the same script.
+    script = (
+        "return [JSON.stringify(new DOMRect()), Object.keys(new DOMMatrix().toJSON()).join(), "
+        "Object.keys(new DOMPoint().toJSON()).join(), Object.getPrototypeOf(new DOMRect().toJSON()) === Object.prototype, "
+        "new DOMRect().toJSON() === new DOMRect().toJSON()].join('|');"
+    )
+
+    assert _evaluate(program, script) == (
+        'value: {"x":0,"y":0,"width":0,"height":0,"top":0,"right":0,"bottom":0,"left":0}|'
+        "a,b,c,d,e,f,m11,m12,m13,m14,m21,m22,m23,m24,m31,m32,m33,m34,m41,m42,m43,m44,is2D,isIdentity|x,y,z,w|true|false"
+    )
+
+
 def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
     script = "const h = new Highlight(); return String([h instanceof Highlight, Object.getPrototypeOf(h) === Highlight.prototype]);"
 
@@ -254,3 +281,40 @@ def test_a_replaceable_known_gap_of_a_class_takes_any_value(program: Path) -> No
     script = "window.statusbar = 42; return [window.statusbar, typeof Object.getOwnPropertyDescriptor(window, 'statusbar').value].join();"
 
     assert _evaluate(program, script) == "value: 42,number"
+
+
+# An iterable's iterator, over nothing, as Chrome 157 showed for the same scripts.
+_ITERATORS_AS_CHROME = {
+    "its prototype": (
+        """const describe = (o) => Reflect.ownKeys(o).map((key) => {
+            const d = Object.getOwnPropertyDescriptor(o, key);
+            const value = typeof d.value === 'function' ? 'f' + d.value.length : JSON.stringify(d.value);
+            return String(key) + ':' + value + (d.enumerable ? 'e' : '') + (d.configurable ? 'c' : '') + (d.writable ? 'w' : '');
+        }).join(' ');
+        return describe(Object.getPrototypeOf(new URLSearchParams().entries()));""",
+        'value: next:f0ecw Symbol(Symbol.toStringTag):"URLSearchParams Iterator"c',
+    ),
+    "%IteratorPrototype% above it": (
+        "const it = new URLSearchParams().entries(); "
+        "return Object.getPrototypeOf(Object.getPrototypeOf(it)) === "
+        "Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));",
+        "value: true",
+    ),
+    "done at once": ("return JSON.stringify(new URLSearchParams().entries().next());", 'value: {"done":true}'),
+    "next() of another object": (
+        "return Object.getPrototypeOf(new URLSearchParams().entries()).next.call({});",
+        "threw: TypeError: Illegal invocation",
+    ),
+    "a setlike's": (
+        "const set = Object.getPrototypeOf(new Set().values()); "
+        "return Object.getPrototypeOf(Object.getPrototypeOf(document.fonts.values())) === set;",
+        "value: true",
+    ),
+}
+
+
+@pytest.mark.parametrize(("script", "chrome"), list(_ITERATORS_AS_CHROME.values()), ids=list(_ITERATORS_AS_CHROME))
+def test_an_iterable_known_gap_gives_an_iterator_over_nothing_as_chrome_has_it(
+    program: Path, script: str, chrome: str
+) -> None:
+    assert _evaluate(program, script) == chrome

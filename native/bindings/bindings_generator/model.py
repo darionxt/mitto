@@ -231,6 +231,11 @@ class CollectionLike:
     """The operations that the interface does not define itself, in Blink's order."""
     iterator_operation: str | None
     """The operation that @@iterator or @@asyncIterator is, or None for a value iterator."""
+    iterator: str | None = None
+    """The identifier of the iterator that its operations give, such as "SyncIterator_Headers", or None for a value
+    iterator, whose operations are Array.prototype's."""
+    has_return: bool = False
+    """For an async iterable, whether its iterator has return(): [HasAsyncIteratorReturnAlgorithm]."""
 
 
 @dataclasses.dataclass(frozen=True)

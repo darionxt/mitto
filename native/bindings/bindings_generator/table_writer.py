@@ -19,12 +19,13 @@ from collections.abc import Callable
 from bindings_generator.cpp_types import header_of
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
-from bindings_generator.known_gaps import KnownGaps
+from bindings_generator.known_gaps import KnownGaps, default_tojson_attributes, has_default_tojson
 from bindings_generator.model import (
     ALWAYS,
     Attribute,
     Condition,
     Constant,
+    Dictionary,
     ExtendedAttributes,
     IdlType,
     Interface,
@@ -52,6 +53,8 @@ _ARRAY_INTRINSICS = {
 _TARGETS = {"interface": "kInterface", "prototype": "kPrototype", "instance": "kInstance"}
 
 _KINDS = {
+    "sync iterator": "WrapperTypeInfo::Kind::kIterator",
+    "async iterator": "WrapperTypeInfo::Kind::kIterator",
     "interface": "WrapperTypeInfo::Kind::kInterface",
     "callback interface": "WrapperTypeInfo::Kind::kCallbackInterface",
     "namespace": "WrapperTypeInfo::Kind::kNamespace",
@@ -73,6 +76,10 @@ class Construct:
     index: int
     interface_object_parent: str | None
     in_global_prototype_chain: bool
+    display_name: str | None = None
+    """The name a page sees, where it is not the identifier: "Headers Iterator" for SyncIterator_Headers."""
+    parent_intrinsic: str | None = None
+    """For an iterator, the intrinsic its prototype inherits from, such as "v8::kIteratorPrototype"."""
 
 
 def shard_name(shard: int) -> str:
@@ -105,6 +112,9 @@ class KnownGapContext:
     """Each [LegacyFactoryFunction], by its name."""
     marks: dict[tuple[str, str, str], str] = dataclasses.field(default_factory=dict[tuple[str, str, str], str])
     """What the listing says of each property that has no behaviour, by its interface, target and name."""
+    interfaces: dict[str, Interface] = dataclasses.field(default_factory=dict[str, Interface])
+    """Every interface, for the attributes that a toJSON() reads."""
+    dictionaries: dict[str, Dictionary] = dataclasses.field(default_factory=dict[str, Dictionary])
 
 
 def member_row(
@@ -147,10 +157,22 @@ def member_row(
         kind, value = "kIntrinsic", _ARRAY_INTRINSICS[property_.name]
     elif member is None and property_.name == "toString":
         # The stringifier, an operation of its own, which gives a string.
-        kind, number = "kOperation", str(context.gaps.number())
+        kind = "kOperation"
         operation = context.types.operation(_STRINGIFIER, where)
+        attribute = next((each for each in owner.attributes if each.name == owner.stringifier), None)
+        if attribute is None:
+            number = str(context.gaps.number())
+        else:
+            # Blink's toString() of a stringifier attribute is the attribute's getter, so it gives what the getter
+            # gives, the value that the setter stored among it.
+            flags.append("kMemberStringifierAttribute")
+            forward = _quote(attribute.name)
+            number = str(context.gaps.attribute_number(owner.name, attribute.name))
+            type_info = context.types.type(attribute.idl_type, f"attribute {owner.name}.{attribute.name}")
+            if context.gaps.refuses(owner, attribute):
+                flags.append("kMemberRefused")
     elif isinstance(member, Attribute):
-        number = str(context.gaps.number())
+        number = str(context.gaps.attribute_number(owner.name, member.name))
         type_info = context.types.type(member.idl_type, f"attribute {where}")
         if property_.setter:
             flags.append("kMemberHasSetter")
@@ -172,9 +194,20 @@ def member_row(
             flags.append("kMemberEventHandler")
         elif context.gaps.refuses(owner, member):
             flags.append("kMemberRefused")
+    elif isinstance(member, OperationGroup) and owner.kind in ("sync iterator", "async iterator"):
+        # An iterator over nothing: next() is done at once, and return() too.
+        kind = "kOperation"
+        flags.append("kMemberIteratorReturn" if member.name == "return" else "kMemberIteratorNext")
+        if owner.kind == "async iterator":
+            flags.append("kMemberReturnsPromise")
     elif isinstance(member, OperationGroup):
         kind, number = "kOperation", str(context.gaps.number())
         operation = context.types.operation(member, f"operation {where}")
+        if has_default_tojson(member):
+            # The default toJSON steps, as the owner chose on 2026-11-12: the attributes they read, by their index.
+            flags.append("kMemberDefaultToJSON")
+            attributes = default_tojson_attributes(owner, context.interfaces, context.dictionaries)
+            value = str(context.types.json_attributes(attributes, f"operation {where}"))
         if member.is_static:
             flags.append("kMemberStatic")
         if any(overload.return_type.kind is TypeKind.PROMISE for overload in member.overloads):
@@ -288,7 +321,8 @@ class _ShardWriter:
             flags.append("kInterfaceAllCollection")
         if "IsCodeLike" in interface.extended_attributes:
             flags.append("kInterfaceCodeLike")
-        if "LegacyNoInterfaceObject" in interface.extended_attributes:
+        if "LegacyNoInterfaceObject" in interface.extended_attributes or construct.parent_intrinsic:
+            # An iterator's prototype has no `constructor` either.
             flags.append("kInterfaceNoInterfaceObject")
         self.tables += [
             f"constexpr InterfaceTable k{name}Table = {{",
@@ -299,6 +333,7 @@ class _ShardWriter:
             f"    {constructor_operation},",
             f"    ConstructorKind::{constructor},",
             f"    ObjectBehind::{object_behind},",
+            f"    {construct.parent_intrinsic or '-1'},",
             f"    {length},",
             f"    {constructor_number},",
             f"    {' | '.join(flags) if flags else '0'},",
@@ -317,7 +352,7 @@ class _ShardWriter:
         return [
             f"const WrapperTypeInfo V8{interface.name}::kWrapperTypeInfo = {{",
             f"    {{{interface.tag}}},",
-            f"    {_quote(interface.name)},",
+            f"    {_quote(construct.display_name or interface.name)},",
             f"    {parent},",
             f"    static_cast<v8::CppHeapPointerTag>({interface.tag}),",
             f"    static_cast<v8::CppHeapPointerTag>({interface.max_subclass_tag}),",

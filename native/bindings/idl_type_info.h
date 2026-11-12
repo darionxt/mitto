@@ -81,7 +81,8 @@ struct IdlTypeInfo {
   IdlTypeKind kind;
   uint8_t flags;
   // For kInterface, the interface, or null for one that a Page has no
-  // bindings for, which no value can be an object of.
+  // bindings for, which no value can be an object of. For kIterator, the
+  // iterator.
   // RAW_PTR_EXCLUSION: #global-scope, as in WrapperTypeInfo, for each field.
   RAW_PTR_EXCLUSION const WrapperTypeInfo* interface;
   // For kDictionary, the dictionary.
@@ -132,6 +133,17 @@ struct OverloadInfo {
 struct OperationInfo {
   RAW_PTR_EXCLUSION base::span<const OverloadInfo> overloads;
 };
+
+// An attribute that the default toJSON steps of a Known Gap read.
+struct JsonAttributeInfo {
+  const char* name;
+  // Whether a Page has it, null for always.
+  bool (*condition)(const PerIsolateData& data);
+};
+
+// The attributes that a Known Gap's toJSON() with kMemberDefaultToJSON reads,
+// in order, by its MemberInfo::value. The generator writes it in idl_types.cc.
+base::span<const JsonAttributeInfo> DefaultToJSONAttributes(int64_t index);
 
 }  // namespace mitto::bindings
 

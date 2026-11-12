@@ -90,6 +90,17 @@ inline constexpr uint16_t kMemberEventHandler = 1 << 8;
 // A Known Gap whose default would be unsafe or impossible, which keeps
 // today's error (known_gaps.py in the generator says which).
 inline constexpr uint16_t kMemberRefused = 1 << 9;
+// An iterator's next() and an async iterator's return(), of an iterator over
+// nothing, which is done at once. They are not Known Gaps.
+inline constexpr uint16_t kMemberIteratorNext = 1 << 10;
+inline constexpr uint16_t kMemberIteratorReturn = 1 << 11;
+// toString() of a stringifier attribute, `forward`, of type `type`: it gives
+// what the attribute's getter gives, as Blink's does, and shares its number.
+inline constexpr uint16_t kMemberStringifierAttribute = 1 << 12;
+// A toJSON() that returns an object: it gives the object of Web IDL's default
+// toJSON steps, with the attributes that DefaultToJSONAttributes(value) names,
+// as the owner chose on 2026-11-12.
+inline constexpr uint16_t kMemberDefaultToJSON = 1 << 13;
 
 // One own property of a construct's interface object, prototype or instances.
 struct MemberInfo {
@@ -100,13 +111,15 @@ struct MemberInfo {
   RAW_PTR_EXCLUSION const WrapperTypeInfo* owner;
   ConditionFunction condition;
   // For kIteratorAlias, the operation whose function it is. With
-  // kMemberPutForwards, the attribute that the setter sets.
+  // kMemberPutForwards, the attribute that the setter sets. With
+  // kMemberStringifierAttribute, the attribute that toString() gives.
   const char* forward;
-  // For kAttribute, its type.
+  // For kAttribute, its type, which kMemberStringifierAttribute gives too.
   RAW_PTR_EXCLUSION const IdlTypeInfo* type;
   // For kOperation, its overloads.
   RAW_PTR_EXCLUSION const OperationInfo* operation;
-  // For kConstant, its value. For kIntrinsic, the v8::Intrinsic.
+  // For kConstant, its value. For kIntrinsic, the v8::Intrinsic. With
+  // kMemberDefaultToJSON, the index of the attributes it reads.
   int64_t value;
   uint16_t flags;
   // For a Known Gap, a number of its own among all of them, by which a
@@ -170,6 +183,9 @@ struct InterfaceTable {
   RAW_PTR_EXCLUSION const OperationInfo* constructor_operation;
   ConstructorKind constructor;
   ObjectBehind behind;
+  // For an iterator, the v8::Intrinsic its prototype inherits from, such as
+  // %IteratorPrototype%, and -1 for any other.
+  int16_t parent_intrinsic;
   int16_t constructor_length;
   // The constructor's number as a Known Gap.
   uint16_t constructor_number;
