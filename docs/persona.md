@@ -209,7 +209,7 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 In mitto 0.1, once a server asked for the hints that follow the machine, every Session of a Persona sent [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions landed on one point, which a server can count. A Session that saved its cookies and came back also came back as that one machine.
 
-So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Everything it plans is built: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table. [M7](roadmap.md#m7-script-parity) adds [what a page reads](#what-a-page-reads-beside-the-hints) and no hint sends: the time zone, the processors, the work area and the window's place, the touch points, and Windows' contrast themes and colour filters.
+So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Everything it plans is built: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table. [M7](roadmap.md#m7-script-parity) adds [what a page reads](#what-a-page-reads-beside-the-hints) and no hint sends: the time zone, the processors, the work area and the window's place, the touch points, and Windows' contrast themes and colour filters, and gives a page [the same machine](#the-runtime).
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -470,29 +470,46 @@ What checks the values instead:
 
 ### The Runtime
 
-The **Runtime** will have to read the same machine, or a page could tell that its scripts and its requests disagree. What a page can read, and what it needs:
+The **Runtime** reads the same machine, or a page could tell that its scripts and its requests disagree. So a page reads each value from the same Machine as the hints, worked out by the same code:
 
-| A page reads | From the machine |
+| A page reads | From the machine | How it agrees with the Session |
+| --- | --- | --- |
+| `navigator.deviceMemory` | The same memory | The Machine holds the value that `device-memory` sends |
+| `devicePixelRatio`, and `resolution` in `matchMedia()` | The scale, times the zoom | The value that `dpr` sends |
+| `innerWidth`, `innerHeight`, and `width` and `height` in `matchMedia()` | The viewport | The values that `viewport-width` and `sec-ch-viewport-height` send |
+| `screen.width`, `screen.height` | The display, over the scale | Enclosed, by the function of [`src/mitto/_window.py`](../src/mitto/_window.py) that gives the work area |
+| `screen.availLeft`, `screen.availTop`, `screen.availWidth`, `screen.availHeight` | The work area | As the Machine holds it |
+| `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` | The window's place and size | As the Machine holds it |
+| `screen.colorDepth`, `screen.pixelDepth` | The display's depth | `24` for every Machine, whose display is not HDR, as `display::Display` gives by default (`ui/display/display.cc`) |
+| `screen.orientation` | The display's shape | `portrait-primary` for a display at least as high as wide, and `landscape-primary` otherwise, at the angle 0, as `GetOrientationTypeForDesktop()` in `ui/display/display_util.cc` gives a display in its primary orientation. A Machine holds no rotation |
+| `prefers-color-scheme`, `prefers-reduced-motion` and `prefers-reduced-transparency` in `matchMedia()` | The three settings | The values that their hints send |
+| `prefers-contrast`, `forced-colors` and `inverted-colors` in `matchMedia()` | The contrast theme and the colour filter, which no hint sends | As the Machine holds them |
+| `navigator.connection` | The same estimate, with the renderer's noise for the page's host, in `third_party/blink/renderer/modules/netinfo/network_information.cc` | `effectiveType` is what `ect` sends. The native core works out `rtt` and `downlink` with the code that adds [the renderer's noise](#the-noise-on-rtt-and-downlink) to a subresource's hints, for the host of the document's URL and the salt of its site, so they are what a `fetch()` from the page to its own host sends. about:blank's host is empty, and gets noise too, as in Chrome |
+| `navigator.userAgentData.getHighEntropyValues()` | The platform version, and what the Persona holds | [What a page reads of the Persona](#what-a-page-reads-of-the-persona) |
+| `navigator.hardwareConcurrency` | The processors | As the Machine holds them |
+| `navigator.maxTouchPoints` | The touch points | As the Machine holds them |
+| `Date`, and `Intl`'s time zone | The time zone | As the Machine holds it |
+| `Intl`'s locale | The Persona's locale | The first language of the Persona's `Accept-Language` |
+| The GPU through WebGL | Nothing yet, until M10 | |
+
+A Page gets these values, the network's too, in [its start message](runtime.md#the-messages), and its `navigator`, `screen` and window give them ([runtime.md](runtime.md#the-window)). `matchMedia()` comes with [#218](https://github.com/darionxt/mitto/issues/218). The Parity Checks of [#213](https://github.com/darionxt/mitto/issues/213) hide each value of the machine as `<machine>`, with a check of its form, as they do on the wire.
+
+The shape of a Machine allows three things. It keeps what Chrome reads, such as the display, its scale and the work area, and not only the viewport, so that `screen` and the window agree with the hints. It keeps the estimate before noise, because a page and a request add different noise. And it takes new fields: a machine saved by one version of mitto loads in a later one that knows more, which draws what is missing from the machine's seed to fit what it has.
+
+#### What a page reads of the Persona
+
+Chrome's browser hands each renderer one `UserAgentMetadata`, from which it writes the user agent client hints, and from which `navigator.userAgentData` gives a page the same values (`third_party/blink/renderer/core/frame/navigator_ua.cc`). A Persona holds those hints as its Chrome sent them, so a Session reads its Persona's own lines back into that data, in [`src/mitto/_navigator.py`](../src/mitto/_navigator.py), and the Page gets it in its start message:
+
+| A page reads | From the Persona's line |
 | --- | --- |
-| `navigator.deviceMemory` | The same memory |
-| `devicePixelRatio`, and `resolution` in `matchMedia()` | The scale, times the zoom |
-| `innerWidth`, `innerHeight`, and `width` and `height` in `matchMedia()` | The viewport |
-| `screen.width`, `screen.height` | The display, over the scale |
-| `screen.availLeft`, `screen.availTop`, `screen.availWidth`, `screen.availHeight` | The work area |
-| `outerWidth`, `outerHeight`, `screenX`, `screenY` | The window's place and size |
-| `prefers-color-scheme`, `prefers-reduced-motion` and `prefers-reduced-transparency` in `matchMedia()` | The three settings |
-| `prefers-contrast`, `forced-colors` and `inverted-colors` in `matchMedia()` | The contrast theme and the colour filter, which no hint sends |
-| `navigator.connection` | The same estimate, with the renderer's noise for the page's host, in `third_party/blink/renderer/modules/netinfo/network_information.cc` |
-| `navigator.userAgentData.getHighEntropyValues()` | The platform version, and what the Persona holds |
-| `navigator.hardwareConcurrency` | The processors |
-| `navigator.maxTouchPoints` | The touch points |
-| `Date`, and `Intl`'s time zone | The time zone, which a Page sets today |
-| `Intl`'s locale | The Persona's locale, which a Page sets today |
-| The GPU through WebGL | Nothing yet, until M10 |
+| `navigator.userAgent`, and `navigator.appVersion`, which is it without `Mozilla/` | `user_agent`, the Session's `User-Agent` |
+| `brands`, `mobile` and `platform` of `navigator.userAgentData`, and of `getHighEntropyValues()` and `toJSON()` | `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` |
+| `architecture`, `bitness`, `model`, `uaFullVersion`, `fullVersionList`, `wow64` and `formFactors` of `getHighEntropyValues()` | `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-model`, `sec-ch-ua-full-version`, `sec-ch-ua-full-version-list`, `sec-ch-ua-wow64` and `sec-ch-ua-form-factors` |
+| `platformVersion` of `getHighEntropyValues()` | The Machine's platform version, which `sec-ch-ua-platform-version` sends |
+| `navigator.language`, `navigator.languages` | The Session's `Accept-Language`, the Persona's or what [`accept_language=`](api.md#accept_language) gives, without its weights. Chrome writes both from its language setting, so `en-US,en;q=0.9` gives `["en-US", "en"]`, as [#207](https://github.com/darionxt/mitto/issues/207) read it. An empty one gives the Persona's locale |
+| `navigator.platform` | `Win32`, which Chrome on Windows gives (`third_party/blink/renderer/core/execution_context/navigator_base.cc`), for a Persona of Windows |
 
-A Page gets these values, but the network's, in [its start message](runtime.md#the-messages), and sets the time zone and the locale. M7 gives a page the rest.
-
-So the shape has to allow three things. It keeps what Chrome reads, such as the display, its scale and the work area, and not only the viewport, so that `screen` and the window agree with the hints. It keeps the estimate before noise, because a page and a request add different noise. And it takes new fields: a machine saved by one version of mitto loads in a later one that knows more, which draws what is missing from the machine's seed to fit what it has.
+`tests/test_navigator.py` checks that these values write each Persona's lines back as they are, and `tests/test_page_navigator.py` that a Page of a Session gives what that Session sends, for several Machines and each Persona.
 
 ### What changes for callers
 

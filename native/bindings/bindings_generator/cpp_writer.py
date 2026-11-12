@@ -51,6 +51,9 @@ from bindings_generator.web_idl_reader import PAGE_GLOBAL_NAME, Definitions
 __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 
 # The extended attributes beyond those of role NONE that the writer follows on a member it writes behaviour for.
+# - ActiveScriptWrappable: a C++ object and its wrapper hold each other, so the wrapper and its listeners live as long as
+#   anything reaches the object, as the navigator does its connection, which is all that Blink's pending activity adds
+#   for the classes that have it.
 # - CEReactions: the Runtime has no custom elements, so there are no reactions to run around a call.
 # - CachedAccessor and CachedAttribute: a page sees the same value either way; caching only saves calls.
 # - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
@@ -65,6 +68,7 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # them: the install plan and its condition decide where it goes, and its callback only throws.
 WRITTEN = frozenset(
     {
+        "ActiveScriptWrappable",
         "CEReactions",
         "CachedAccessor",
         "CachedAttribute",
@@ -333,7 +337,8 @@ class _InterfaceWriter:
         self.callback_names.add(name)
         lines = [
             f"void {name}(const v8::FunctionCallbackInfo<v8::Value>& info) {{",
-            "  v8::Isolate* const isolate = info.GetIsolate();",
+            # A value that the class makes, such as a frozen array, needs no isolate to return.
+            "  [[maybe_unused]] v8::Isolate* const isolate = info.GetIsolate();",
         ]
         lines += _indent(body)
         lines.append("}")

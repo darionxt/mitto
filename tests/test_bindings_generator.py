@@ -369,6 +369,22 @@ def test_the_cpp_types_of_the_constructs_that_timers_and_fetch_use() -> None:
     assert types.default_value(byte_string, '""', "a") == '""'
 
 
+def test_the_cpp_types_of_what_navigator_returns() -> None:
+    types = TypeMapper(frozenset(), frozenset())
+    string = IdlType(TypeKind.STRING, "DOMString")
+    languages = IdlType(TypeKind.FROZEN_ARRAY, "FrozenArray<DOMString>", members=(string,))
+    hardware_concurrency = IdlType(TypeKind.INTEGER, "unsigned long long")
+
+    # The class makes a frozen array or an object, and returns it as it is.
+    assert types.return_type(languages, "a") == "v8::Local<v8::Value>"
+    assert types.to_v8(languages, "impl->Languages()") == "impl->Languages()"
+    assert types.return_type(IdlType(TypeKind.OBJECT, "object"), "a") == "v8::Local<v8::Object>"
+    # A 64-bit integer goes to a page as a Number, which a V8 Integer of 32 bits could not hold.
+    assert types.return_type(hardware_concurrency, "a") == "uint64_t"
+    assert types.to_v8(hardware_concurrency, "x") == "v8::Number::New(isolate, static_cast<double>(x))"
+    assert types.to_v8(IdlType(TypeKind.INTEGER, "unsigned long"), "x") == "v8::Integer::NewFromUnsigned(isolate, x)"
+
+
 def test_an_enumeration_converts_only_to_its_strings() -> None:
     types = TypeMapper(frozenset(), frozenset(), {"RequestMode": ("navigate", "cors")})
     lines = types.from_v8(IdlType(TypeKind.ENUMERATION, "RequestMode"), "value", "mode", Site(fail="return;"), "a")

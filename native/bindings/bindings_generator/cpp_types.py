@@ -37,6 +37,9 @@ _INTEGERS = {
 # narrower ones, the low bits, which is what Web IDL's ConvertToInt() gives without [EnforceRange] or [Clamp].
 _CONVERTED_INTEGERS = frozenset({"byte", "octet", "short", "unsigned short", "long", "unsigned long"})
 
+# The integer types that a page reads as a Number rather than a V8 Integer, which holds 32 bits.
+_64_BIT_INTEGERS = frozenset({"long long", "unsigned long long"})
+
 # The conversion annotations on a type that the writer follows.
 _ANNOTATIONS = frozenset({"LegacyNullToEmptyString"})
 
@@ -240,6 +243,13 @@ class TypeMapper:
         if kind is TypeKind.PROMISE:
             # The class settles it; an error before it returns rejects it.
             return "v8::Local<v8::Promise>"
+        if kind is TypeKind.FROZEN_ARRAY:
+            # The class makes the frozen array, as Blink's ToV8Traits<IDLArray> do, and keeps it where Blink keeps the
+            # one that a page reads again, such as for [CachedAttribute].
+            return "v8::Local<v8::Value>"
+        if kind is TypeKind.OBJECT:
+            # The class makes the object, as Blink's class makes a ScriptObject.
+            return "v8::Local<v8::Object>"
         if kind is TypeKind.ENUMERATION:
             # The value as a page sees it, one of the enumeration's strings, where Blink returns its V8 enum class.
             return "std::u16string"
@@ -269,6 +279,9 @@ class TypeMapper:
         if kind is TypeKind.BOOLEAN:
             return f"v8::Boolean::New(isolate, {expression})"
         if kind is TypeKind.INTEGER:
+            if idl_type.name in _64_BIT_INTEGERS:
+                # ToV8Traits<IDLLongLong> and ToV8Traits<IDLUnsignedLongLong> give a Number.
+                return f"v8::Number::New(isolate, static_cast<double>({expression}))"
             if _INTEGERS[idl_type.name].startswith("u"):
                 return f"v8::Integer::NewFromUnsigned(isolate, {expression})"
             return f"v8::Integer::New(isolate, {expression})"
@@ -282,7 +295,7 @@ class TypeMapper:
             if idl_type.nullable:
                 return f"ToV8NullableString(isolate, {expression})"
             return f"ToV8String(isolate, {expression})"
-        if kind is TypeKind.PROMISE:
+        if kind in (TypeKind.PROMISE, TypeKind.FROZEN_ARRAY, TypeKind.OBJECT):
             return expression
         if kind is TypeKind.ENUMERATION:
             return f"ToV8String(isolate, {expression})"

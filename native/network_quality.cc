@@ -170,25 +170,35 @@ std::string GetNavigationNetworkQualityHint(const NetworkQuality& quality,
       host, quality.downstream_throughput_kbps, quality.browser_salt));
 }
 
+RendererNetworkQuality GetRendererNetworkQuality(
+    const NetworkQuality& quality,
+    const net::SchemefulSite& page_site,
+    const GURL& url) {
+  const NetworkStateNotifier notifier(RendererSalt(quality, page_site));
+  // Blink takes the host of its KURL, which comes from the same canonical form
+  // as a GURL's. about:blank's is empty, and not null, so it has noise too.
+  const std::string host = url.GetHost();
+  // SetNetworkQuality() keeps the throughput in Mbps.
+  const double downlink_mbps =
+      static_cast<double>(quality.downstream_throughput_kbps) / 1000;
+  return {.rtt = notifier.RoundRtt(host, quality.http_rtt),
+          .downlink = notifier.RoundMbps(host, downlink_mbps)};
+}
+
 std::string GetSubresourceNetworkQualityHint(
     const NetworkQuality& quality,
     std::string_view name,
     const net::SchemefulSite& page_site,
     const GURL& url) {
-  const NetworkStateNotifier notifier(RendererSalt(quality, page_site));
-  // Blink takes the host of its KURL, which comes from the same canonical form
-  // as a GURL's.
-  const std::string host = url.GetHost();
+  const RendererNetworkQuality renderer =
+      GetRendererNetworkQuality(quality, page_site, url);
   if (base::EqualsCaseInsensitiveASCII(name, kRttHint)) {
-    return base::NumberToString(notifier.RoundRtt(host, quality.http_rtt));
+    return base::NumberToString(renderer.rtt);
   }
   CHECK(base::EqualsCaseInsensitiveASCII(name, kDownlinkHint));
-  // SetNetworkQuality() keeps the throughput in Mbps. String::Number() writes
-  // 6 significant digits, which for a multiple of 0.05 from 0 to 10 is the
-  // shortest decimal, as here.
-  const double downlink_mbps =
-      static_cast<double>(quality.downstream_throughput_kbps) / 1000;
-  return base::NumberToString(notifier.RoundMbps(host, downlink_mbps));
+  // String::Number() writes 6 significant digits, which for a multiple of 0.05
+  // from 0 to 10 is the shortest decimal, as here.
+  return base::NumberToString(renderer.downlink);
 }
 
 }  // namespace mitto

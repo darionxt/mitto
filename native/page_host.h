@@ -24,6 +24,7 @@
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
+#include "mitto/network_quality.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
@@ -100,6 +101,10 @@ class PageNetwork {
       std::optional<std::vector<char>> body) = 0;
 
   virtual net::CookieStore& cookie_store() = 0;
+
+  // The Session's network estimate and salts, or null for a Session that has
+  // none.
+  virtual const NetworkQuality* GetNetworkQuality() const = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -294,6 +299,10 @@ class PageHost final : public PageChannel::Delegate {
   // The partition of the document's cookies, as Chrome's
   // RestrictedCookieManager for a top-level frame has it.
   std::optional<net::CookiePartitionKey> DocumentPartitionKey() const;
+
+  // What navigator.connection gives a document at `url`: what the renderer
+  // process of its site gives for its host, as for a subresource to it.
+  PageConnection ConnectionOf(const GURL& url) const;
 
   // Abandons each request in progress.
   void AbandonRequests();
