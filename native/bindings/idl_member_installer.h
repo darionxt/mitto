@@ -27,6 +27,8 @@
 
 namespace mitto::bindings {
 
+struct OperationInfo;
+
 // Makes the template inherit from its parent's, names it and gives its
 // prototype @@toStringTag, as Blink's SetupIDLInterfaceTemplate() does.
 void SetUpInterfaceTemplate(v8::Isolate* isolate,
@@ -161,6 +163,11 @@ struct ExposedConstructInfo {
   Kind kind;
   // A factory function's length.
   int16_t length;
+  // A factory function's overloads, and its number as a Known Gap.
+  RAW_PTR_EXCLUSION const OperationInfo* operation;
+  uint16_t number;
+  // Whether the factory function keeps today's error, as a refused Known Gap.
+  bool refused;
 };
 
 // Puts the property on a global object's template, or on a context's global

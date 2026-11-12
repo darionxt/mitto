@@ -15,13 +15,17 @@ from bindings_generator.cpp_types import Site, TypeMapper
 from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
+from bindings_generator.known_gaps import KnownGaps
 from bindings_generator.listing import write_listing
 from bindings_generator.model import (
     ALWAYS,
+    Argument,
     Attribute,
     CollectionLike,
     Condition,
     Constant,
+    Dictionary,
+    DictionaryMember,
     ExposedConstruct,
     ExtendedAttributes,
     IdlType,
@@ -31,7 +35,8 @@ from bindings_generator.model import (
     TypeKind,
 )
 from bindings_generator.runtime_features import read_features
-from bindings_generator.table_writer import Construct, write_tables
+from bindings_generator.table_writer import Construct, KnownGapContext, write_tables
+from bindings_generator.type_tables import TypeTables
 
 BINDINGS = Path(__file__).resolve().parents[1] / "native" / "bindings"
 
@@ -482,6 +487,10 @@ def test_the_listing_names_what_each_exposed_construct_gives() -> None:
     assert "  Window instance.Image: factory function of HTMLImageElement, length 0, not enumerable" in lines
 
 
+def _context() -> KnownGapContext:
+    return KnownGapContext(_types(), _gaps(set(), {"Thing"}, {"Thing": None}))
+
+
 def test_a_table_holds_each_member_in_the_plans_order_with_its_condition() -> None:
     interface = _interface(
         attributes=(_attribute("on", readonly=False), _attribute("gated", condition=Condition(features=("F",)))),
@@ -490,7 +499,7 @@ def test_a_table_holds_each_member_in_the_plans_order_with_its_condition() -> No
     )
     construct = Construct(interface, 7, None, in_global_prototype_chain=False)
 
-    files = write_tables([construct], 2, lambda name: False, condition_test)
+    files = write_tables([construct], 2, lambda name: False, condition_test, _context())
 
     source = files["interfaces_without_class_0.cc"]
     rows = [line.strip() for line in source.splitlines() if line.startswith('    {"')]
@@ -507,7 +516,7 @@ def test_a_table_holds_each_member_in_the_plans_order_with_its_condition() -> No
 def test_a_table_leaves_out_what_a_page_never_installs() -> None:
     interface = _interface(attributes=(_attribute("isolated", condition=Condition(other=("IsolatedContext",))),))
 
-    source = write_tables([Construct(interface, 0, None, False)], 1, lambda name: False, condition_test)[
+    source = write_tables([Construct(interface, 0, None, False)], 1, lambda name: False, condition_test, _context())[
         "interfaces_without_class_0.cc"
     ]
 
@@ -525,3 +534,107 @@ def test_iterator_symbols_can_be_replaced_and_the_others_cannot() -> None:
 
     assert writable(indexed) == {"@@toStringTag": False, "@@iterator": True}
     assert writable(iterable) == {"@@toStringTag": False, "@@unscopables": False, "@@iterator": True}
+
+
+def _gaps(classes: set[str], bindings: set[str], parents: dict[str, str | None]) -> KnownGaps:
+    return KnownGaps(parents, classes.__contains__, bindings.__contains__)
+
+
+def test_a_known_gap_keeps_todays_error_where_its_default_would_be_unsafe() -> None:
+    # Node has a class, Attr inherits from it, AbortSignal's class behind is EventTarget's, Worklet is a worker's.
+    parents = {"Node": None, "Attr": "Node", "EventTarget": None, "AbortSignal": "EventTarget", "Plain": None}
+    gaps = _gaps({"Node", "EventTarget"}, {"Node", "Attr", "EventTarget", "AbortSignal", "Plain"}, parents)
+
+    def interface(name: str, nullable: bool = False) -> IdlType:
+        return IdlType(TypeKind.INTERFACE, name, nullable=nullable)
+
+    assert [gaps.default_is_safe(interface(name)) for name in ("Node", "Attr", "AbortSignal", "Plain")] == [
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert gaps.default_is_safe(interface("Node", nullable=True))
+    assert not gaps.default_is_safe(interface("Worklet"))
+    assert gaps.default_is_safe(IdlType(TypeKind.SEQUENCE, "sequence", members=(interface("Node"),)))
+    assert not gaps.default_is_safe(IdlType(TypeKind.PROMISE, "Promise", members=(interface("Attr"),)))
+    assert gaps.default_is_safe(IdlType(TypeKind.UNION, "x", members=(interface("Node"), interface("Plain"))))
+    assert gaps.refuses(_interface(name="Crypto"), _attribute("subtle"))
+    assert gaps.refuses(_interface(name="Attr"), None)
+    assert not gaps.refuses(_interface(name="AbortSignal"), None)
+
+
+def test_event_handler_attributes_are_not_known_gaps() -> None:
+    handler = IdlType(TypeKind.CALLBACK_FUNCTION, "EventHandlerNonNull", nullable=True)
+
+    assert KnownGaps.is_event_handler(Attribute("onabort", handler, False, False, ExtendedAttributes(), ALWAYS))
+    assert not KnownGaps.is_event_handler(_attribute("onabort"))
+
+
+def _types(dictionaries: dict[str, Dictionary] | None = None) -> TypeTables:
+    return TypeTables(
+        dictionaries or {},
+        {"Mode": ("a", "b")},
+        frozenset({"EventHandlerNonNull"}),
+        lambda name: f"&V8{name}::kWrapperTypeInfo" if name != "Unknown" else None,
+        condition_test,
+    )
+
+
+def test_each_distinct_type_gets_one_table_with_chromes_name_for_it() -> None:
+    types = _types()
+    long_type = IdlType(TypeKind.INTEGER, "long", extended_attributes=_extended("EnforceRange"))
+    union = IdlType(
+        TypeKind.UNION, "x", members=(IdlType(TypeKind.STRING, "DOMString"), IdlType(TypeKind.INTERFACE, "Blob"))
+    )
+
+    first = types.type(long_type, "a")
+
+    assert types.type(long_type, "b") == first
+    assert types.type(IdlType(TypeKind.INTEGER, "long"), "c") != first
+    types.type(union, "d")
+    types.type(IdlType(TypeKind.ENUMERATION, "Mode"), "e")
+    types.type(IdlType(TypeKind.CALLBACK_FUNCTION, "EventHandlerNonNull", nullable=True), "f")
+    types.type(IdlType(TypeKind.INTERFACE, "Unknown"), "g")
+    _, source = types.write(set())
+    assert '"long", IdlTypeKind::kLong, kIdlTypeEnforceRange, nullptr' in source
+    assert '"(Blob or DOMString)", IdlTypeKind::kUnion' in source
+    assert "constexpr const char* kValues" in source
+    assert '{"a", "b"}' in source
+    assert "kIdlTypeLegacyTreatNonObjectAsNull | kIdlTypeNullable" in source
+    assert '"Unknown", IdlTypeKind::kInterface, 0, nullptr' in source
+
+
+def test_a_dictionary_table_holds_its_members_with_their_defaults() -> None:
+    member = DictionaryMember("once", BOOLEAN, False, "false", ExtendedAttributes(), ALWAYS)
+    required = DictionaryMember("type", IdlType(TypeKind.STRING, "DOMString"), True, None, ExtendedAttributes(), ALWAYS)
+    types = _types({"Options": Dictionary("Options", None, (member, required), ExtendedAttributes())})
+
+    types.type(IdlType(TypeKind.DICTIONARY, "Options"), "a")
+
+    header, source = types.write(set())
+    assert "extern const DictionaryInfo kDictionary0;" in header
+    assert '{"once", &kIdlType' in source
+    assert ', nullptr, false, "false"},' in source
+    assert ", nullptr, true, nullptr}," in source
+
+
+def test_an_operation_table_holds_each_overload_with_its_arguments() -> None:
+    optional = Argument("x", BOOLEAN, True, False, None)
+    rest = Argument("rest", IdlType(TypeKind.ANY, "any"), False, True, None)
+    overloads = (
+        Operation("f", (optional,), UNDEFINED, False, ExtendedAttributes(), ALWAYS),
+        Operation("f", (rest,), BOOLEAN, False, ExtendedAttributes(), Condition(features=("F",))),
+    )
+    group = OperationGroup("f", overloads, False, 0, ExtendedAttributes(), ALWAYS)
+    types = _types()
+
+    reference = types.operation(group, "Thing.f")
+
+    _, source = types.write(set())
+    assert reference == "&kOperation0"
+    assert "constexpr ArgumentInfo kArguments0_0[] = {{&kIdlType0, kArgumentOptional}};" in source
+    assert "kArgumentVariadic" in source
+    assert "kOverloads0[] = {{kArguments0_0, &kIdlType1, nullptr}, {kArguments0_1, &kIdlType0, &Condition0}};" in (
+        source
+    )

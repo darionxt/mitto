@@ -109,6 +109,35 @@ v8::Local<v8::FunctionTemplate> PerIsolateData::FactoryFunctionTemplate(
   return function_template;
 }
 
+bool PerIsolateData::FirstReachOfKnownGap(uint16_t number) {
+  if (reported_known_gaps_.size() <= number) {
+    reported_known_gaps_.resize(number + 1u);
+  }
+  if (reported_known_gaps_[number]) {
+    return false;
+  }
+  reported_known_gaps_[number] = true;
+  return true;
+}
+
+void PerIsolateData::ReportKnownGap(uint16_t number, std::string_view name) {
+  if (FirstReachOfKnownGap(number) && known_gap_reporter_) {
+    known_gap_reporter_.Run(name);
+  }
+}
+
+v8::Local<v8::Private> PerIsolateData::KnownGapPrivate(v8::Isolate* isolate,
+                                                       uint16_t number) {
+  if (known_gap_privates_.size() <= number) {
+    known_gap_privates_.resize(number + 1u);
+  }
+  v8::Eternal<v8::Private>& eternal = known_gap_privates_[number];
+  if (eternal.IsEmpty()) {
+    eternal.Set(isolate, v8::Private::New(isolate));
+  }
+  return eternal.Get(isolate);
+}
+
 void PerIsolateData::PushDictionaryContext(std::string_view dictionary_name) {
   dictionary_contexts_.push_back({std::string(dictionary_name), std::string()});
 }

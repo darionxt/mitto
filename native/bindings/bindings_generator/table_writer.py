@@ -19,9 +19,23 @@ from collections.abc import Callable
 from bindings_generator.cpp_types import header_of
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
-from bindings_generator.model import Attribute, Condition, Constant, Interface, OperationGroup, TypeKind
+from bindings_generator.known_gaps import KnownGaps
+from bindings_generator.model import (
+    ALWAYS,
+    Attribute,
+    Condition,
+    Constant,
+    ExtendedAttributes,
+    IdlType,
+    Interface,
+    Operation,
+    OperationGroup,
+    TypeKind,
+)
+from bindings_generator.type_tables import HEADER as TYPES_HEADER
+from bindings_generator.type_tables import ConditionFunctions, TypeTables
 
-__all__ = ["HEADER", "Construct", "shard_name", "write_tables"]
+__all__ = ["HEADER", "Construct", "KnownGapContext", "member_row", "shard_name", "write_tables"]
 
 HEADER = "interfaces_without_class.h"
 
@@ -81,97 +95,149 @@ def _attributes(property_: Property) -> str:
     return " | ".join(flags) if flags else "v8::None"
 
 
+@dataclasses.dataclass(frozen=True)
+class KnownGapContext:
+    """What the rows of Known Gaps name: the tables of types and operations, and the rules of Known Gaps."""
+
+    types: TypeTables
+    gaps: KnownGaps
+    factory_functions: dict[str, OperationGroup] = dataclasses.field(default_factory=dict[str, OperationGroup])
+    """Each [LegacyFactoryFunction], by its name."""
+    marks: dict[tuple[str, str, str], str] = dataclasses.field(default_factory=dict[tuple[str, str, str], str])
+    """What the listing says of each property that has no behaviour, by its interface, target and name."""
+
+
+def member_row(
+    owner: Interface,
+    property_: Property,
+    context: KnownGapContext,
+    condition: str = "nullptr",
+) -> str | None:
+    """The MemberInfo of one property of an interface, or None for one that Chrome's plan holds and the table leaves to
+    V8 or to the template's set-up.
+
+    Args:
+        owner: the interface the property belongs to.
+        property_: the property, from the install plan.
+        context: the tables and rules of Known Gaps.
+        condition: the address of the function that says whether a Page installs it.
+    """
+    where = f"{owner.name}.{property_.name}"
+    if property_.name in ("@@toStringTag", "constructor"):
+        return None
+    member = property_.member
+    kind = "kAttribute"
+    flags: list[str] = []
+    value = "0"
+    forward = "nullptr"
+    type_info = "nullptr"
+    operation = "nullptr"
+    number = "0"
+    length = property_.length or 0
+    if property_.name == "@@unscopables":
+        kind = "kUnscopables"
+    elif property_.name in ("@@iterator", "@@asyncIterator") and property_.phase is Phase.CONTEXT:
+        collection = owner.collection
+        if collection is None or collection.iterator_operation is None:
+            raise UnhandledError(f"{where}: an iterator symbol without an iterator operation")
+        kind, forward = "kIteratorAlias", _quote(collection.iterator_operation)
+    elif property_.name == "@@iterator":
+        kind, value = "kIntrinsic", "v8::kArrayProto_values"
+    elif member is None and property_.name in _ARRAY_INTRINSICS and property_.kind == "method":
+        kind, value = "kIntrinsic", _ARRAY_INTRINSICS[property_.name]
+    elif member is None and property_.name == "toString":
+        # The stringifier, an operation of its own, which gives a string.
+        kind, number = "kOperation", str(context.gaps.number())
+        operation = context.types.operation(_STRINGIFIER, where)
+    elif isinstance(member, Attribute):
+        number = str(context.gaps.number())
+        type_info = context.types.type(member.idl_type, f"attribute {where}")
+        if property_.setter:
+            flags.append("kMemberHasSetter")
+        extended = member.extended_attributes
+        if "LegacyLenientThis" in extended:
+            flags.append("kMemberLenientThis")
+        if "Replaceable" in extended:
+            flags.append("kMemberReplaceable")
+        elif "LegacyLenientSetter" in extended:
+            flags.append("kMemberLenientSetter")
+        elif "PutForwards" in extended:
+            flags.append("kMemberPutForwards")
+            forward = _quote(extended.value_of("PutForwards") or "")
+        if member.is_static:
+            flags.append("kMemberStatic")
+        if "NewObject" in extended:
+            flags.append("kMemberNewObject")
+        if context.gaps.is_event_handler(member):
+            flags.append("kMemberEventHandler")
+        elif context.gaps.refuses(owner, member):
+            flags.append("kMemberRefused")
+    elif isinstance(member, OperationGroup):
+        kind, number = "kOperation", str(context.gaps.number())
+        operation = context.types.operation(member, f"operation {where}")
+        if member.is_static:
+            flags.append("kMemberStatic")
+        if any(overload.return_type.kind is TypeKind.PROMISE for overload in member.overloads):
+            flags.append("kMemberReturnsPromise")
+        if context.gaps.refuses(owner, member):
+            flags.append("kMemberRefused")
+    elif isinstance(member, Constant):
+        if isinstance(member.value, bool) or not isinstance(member.value, int):
+            raise UnhandledError(f"constant {where}: the generator handles integer constants only")
+        kind, value = "kConstant", str(member.value)
+    else:
+        raise UnhandledError(f"{where}: the table writer does not install this kind of property")
+    if kind in ("kAttribute", "kOperation"):
+        mark = "Known Gap"
+        if "kMemberEventHandler" in flags:
+            mark = "event handler"
+        elif "kMemberRefused" in flags:
+            mark = "Known Gap, refused"
+        context.marks[(owner.name, property_.target, property_.name)] = mark
+    return (
+        f"    {{{_quote(property_.name)}, &V8{owner.name}::kWrapperTypeInfo, {condition}, {forward}, {type_info}, "
+        f"{operation}, {value}, {' | '.join(flags) if flags else '0'}, {number}, MemberKind::{kind}, "
+        f"MemberTarget::{_TARGETS[property_.target]}, {_attributes(property_)}, {length}}},"
+    )
+
+
+# A stringifier as an operation: no arguments, and a string.
+_STRINGIFIER = OperationGroup(
+    name="toString",
+    overloads=(Operation("toString", (), IdlType(TypeKind.STRING, "DOMString"), False, ExtendedAttributes(), ALWAYS),),
+    is_static=False,
+    length=0,
+    extended_attributes=ExtendedAttributes(),
+    condition=ALWAYS,
+)
+
+
 class _ShardWriter:
     """Writes one file of tables, with the condition functions its members share."""
 
-    def __init__(self, condition_test: Callable[[Condition, str], str | None]) -> None:
-        self._condition_test = condition_test
-        self._conditions: dict[str, str] = {}
-        self.functions: list[str] = []
+    def __init__(self, condition_test: Callable[[Condition, str], str | None], context: KnownGapContext) -> None:
+        self._conditions = ConditionFunctions(condition_test)
+        self._context = context
         self.tables: list[str] = []
         self.parents: set[str] = set()
 
+    @property
+    def functions(self) -> list[str]:
+        return self._conditions.lines
+
     def condition(self, condition: Condition, where: str) -> str | None:
         """The condition function of a construct, "nullptr" for always, or None for never."""
-        test = self._condition_test(condition, where)
-        if test is None:
-            return None
-        if test == "true":
-            return "nullptr"
-        if test not in self._conditions:
-            name = f"&Condition{len(self._conditions)}"
-            self._conditions[test] = name
-            self.functions += [
-                f"bool Condition{len(self._conditions) - 1}(const PerIsolateData& isolate_data) {{",
-                "  [[maybe_unused]] const PerIsolateData* const data = &isolate_data;",
-                "  [[maybe_unused]] const RuntimeFeatureSet& features = isolate_data.features();",
-                f"  return {test};",
-                "}",
-                "",
-            ]
-        return self._conditions[test]
+        return self._conditions.reference(condition, where)
 
     def member(self, interface: Interface, property_: Property) -> str | None:
-        """The MemberInfo of one property, or None for one that Chrome's plan holds and the table leaves to V8, or to
-        the template's set-up, or that a Page never installs."""
-        where = f"{interface.name}.{property_.name}"
-        if property_.name in ("@@toStringTag", "constructor"):
-            return None
-        member = property_.member
-        kind = "kAttribute"
-        flags: list[str] = []
-        value = "0"
-        forward = "nullptr"
-        length = property_.length or 0
-        if property_.name == "@@unscopables":
-            kind = "kUnscopables"
-        elif property_.name in ("@@iterator", "@@asyncIterator") and property_.phase is Phase.CONTEXT:
-            collection = interface.collection
-            if collection is None or collection.iterator_operation is None:
-                raise UnhandledError(f"{where}: an iterator symbol without an iterator operation")
-            kind, forward = "kIteratorAlias", _quote(collection.iterator_operation)
-        elif property_.name == "@@iterator":
-            kind, value = "kIntrinsic", "v8::kArrayProto_values"
-        elif member is None and property_.name in _ARRAY_INTRINSICS and property_.kind == "method":
-            kind, value = "kIntrinsic", _ARRAY_INTRINSICS[property_.name]
-        elif member is None and property_.name == "toString":
-            # The stringifier, an operation of its own.
-            kind = "kOperation"
-        elif isinstance(member, Attribute):
-            if property_.setter:
-                flags.append("kMemberHasSetter")
-            extended = member.extended_attributes
-            if "LegacyLenientThis" in extended:
-                flags.append("kMemberLenientThis")
-            if "Replaceable" in extended:
-                flags.append("kMemberReplaceable")
-            elif "LegacyLenientSetter" in extended:
-                flags.append("kMemberLenientSetter")
-            if member.is_static:
-                flags.append("kMemberStatic")
-        elif isinstance(member, OperationGroup):
-            kind = "kOperation"
-            if member.is_static:
-                flags.append("kMemberStatic")
-            if any(overload.return_type.kind is TypeKind.PROMISE for overload in member.overloads):
-                flags.append("kMemberReturnsPromise")
-        elif isinstance(member, Constant):
-            if isinstance(member.value, bool) or not isinstance(member.value, int):
-                raise UnhandledError(f"constant {where}: the generator handles integer constants only")
-            kind, value = "kConstant", str(member.value)
-        else:
-            raise UnhandledError(f"{where}: the table writer does not install this kind of property")
+        """The MemberInfo of one property, or None for one that the table leaves out or that a Page never installs."""
         condition = "nullptr"
-        if member is not None:
-            found = self.condition(property_.condition, where)
+        if property_.member is not None:
+            found = self.condition(property_.condition, f"{interface.name}.{property_.name}")
             if found is None:
                 return None
             condition = found
-        return (
-            f"    {{{_quote(property_.name)}, &V8{interface.name}::kWrapperTypeInfo, {condition}, {forward}, {value}, "
-            f"MemberKind::{kind}, MemberTarget::{_TARGETS[property_.target]}, {_attributes(property_)}, "
-            f"{' | '.join(flags) if flags else '0'}, {length}}},"
-        )
+        return member_row(interface, property_, self._context, condition)
 
     def construct(self, construct: Construct) -> None:
         interface = construct.interface
@@ -195,6 +261,8 @@ class _ShardWriter:
             names = ", ".join(_quote(item) for item in interface.unscopables)
             self.tables += [f"constexpr const char* {unscopables}[] = {{{names}}};", ""]
         constructor, constructor_condition, length = "kNone", "nullptr", 0
+        constructor_operation, constructor_number = "nullptr", "0"
+        flags: list[str] = []
         group = interface.constructor_group
         if group is not None:
             found = self.condition(dataclasses.replace(group.condition, context_dependent=False), f"{name} constructor")
@@ -205,7 +273,13 @@ class _ShardWriter:
                 html = any("HTMLConstructor" in overload.extended_attributes for overload in group.overloads)
                 constructor = "kHTMLConstructor" if html else "kKnownGap"
                 constructor_condition, length = found, group.length
-        flags: list[str] = []
+                if not html:
+                    constructor_operation = self._context.types.operation(group, f"constructor of {name}")
+                    constructor_number = str(self._context.gaps.number())
+                    if self._context.gaps.refuses(interface, None):
+                        flags.append("kInterfaceConstructorRefused")
+        behind = self._context.gaps.class_behind(name)
+        object_behind = {None: "kNone", "EventTarget": "kEventTarget", "Event": "kEvent"}.get(behind, "kNone")
         if construct.in_global_prototype_chain:
             flags.append("kInterfaceInGlobalPrototypeChain")
         if name == "Location":
@@ -222,8 +296,11 @@ class _ShardWriter:
             f"    {arrays.get(Phase.CONTEXT, '{}')},",
             f"    {unscopables},",
             f"    {constructor_condition},",
+            f"    {constructor_operation},",
             f"    ConstructorKind::{constructor},",
+            f"    ObjectBehind::{object_behind},",
             f"    {length},",
+            f"    {constructor_number},",
             f"    {' | '.join(flags) if flags else '0'},",
             "};",
             "",
@@ -298,6 +375,7 @@ def write_tables(
     shards: int,
     has_class: Callable[[str], bool],
     condition_test: Callable[[Condition, str], str | None],
+    context: KnownGapContext,
 ) -> dict[str, str]:
     """Returns the header and the files of the tables, by their names in the output directory.
 
@@ -306,16 +384,18 @@ def write_tables(
         shards: how many files of tables to write.
         has_class: whether an interface has a C++ class, whose bindings' header names its WrapperTypeInfo.
         condition_test: the C++ test of a condition, as cpp_writer.condition_test() writes it.
+        context: the tables of types and operations, and the rules of Known Gaps, which the tables' rows name.
     """
     files = {HEADER: _header(constructs)}
     for shard, part in enumerate(_split(constructs, shards)):
-        writer = _ShardWriter(condition_test)
+        writer = _ShardWriter(condition_test, context)
         definitions: list[str] = []
         for construct in part:
             writer.construct(construct)
             definitions += writer.wrapper_type_info(construct)
         includes = {
             f"mitto/bindings/{HEADER}",
+            f"mitto/bindings/{TYPES_HEADER}",
             "mitto/bindings/interface_table.h",
             "mitto/bindings/per_isolate_data.h",
             "mitto/bindings/runtime_feature_set.h",

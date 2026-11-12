@@ -183,18 +183,20 @@ def test_the_window_is_the_global_object(program: Path) -> None:
 
 
 def test_the_windows_other_members_are_known_gaps(program: Path) -> None:
-    result = _run(program, "window.name")
+    # A Known Gap gives its type's default, and its getter what its setter stored (docs/runtime.md).
+    script = "[window.name === '', (window.name = 7, window.name)].join()"
 
-    assert result.returncode == _SCRIPT_THREW
-    assert result.stderr == "Uncaught TypeError: Failed to read the 'name' property from 'Window': Not implemented.\n"
+    assert _evaluate(program, script) == "true,7"
 
 
-def test_a_member_whose_behaviour_is_missing_throws(program: Path) -> None:
-    result = _run(program, "document.body.childNodes")
+def test_a_member_whose_behaviour_is_missing_gives_its_default(program: Path) -> None:
+    # An object of an interface without a class, with nothing behind it, the same one each time.
+    script = """
+        const nodes = document.body.childNodes;
+        [nodes instanceof NodeList, nodes === document.body.childNodes, nodes.length].join()
+    """
 
-    assert (
-        result.stderr == "Uncaught TypeError: Failed to read the 'childNodes' property from 'Node': Not implemented.\n"
-    )
+    assert _evaluate(program, script) == "true,true,0"
 
 
 @pytest.mark.parametrize(

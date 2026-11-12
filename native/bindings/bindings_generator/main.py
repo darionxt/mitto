@@ -84,7 +84,8 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
             raise UnhandledError(f"--implemented names interfaces without a C++ class: {', '.join(sorted(unknown))}")
         # GN names the files of the tables, as many as it wants of them.
         shards = sum(1 for output in arguments.output if re.fullmatch(r"interfaces_without_class_\d+\.cc", output))
-        files = write_bindings(definitions, features, implemented, max(shards, 1))
+        marks: dict[tuple[str, str, str], str] = {}
+        files = write_bindings(definitions, features, implemented, max(shards, 1), marks)
     except UnhandledError as error:
         print(f"generate_bindings.py: {error}", file=sys.stderr)
         return 1
@@ -96,7 +97,7 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
             file=sys.stderr,
         )
         return 1
-    _write_if_changed(arguments.listing, write_listing(list(definitions.interfaces.values())))
+    _write_if_changed(arguments.listing, write_listing(list(definitions.interfaces.values()), marks))
     for name, content in files.items():
         _write_if_changed(arguments.output_dir / name, content)
     return 0

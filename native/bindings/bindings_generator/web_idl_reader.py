@@ -62,6 +62,8 @@ class Definitions:
     callback_interfaces: dict[str, CallbackInterface]
     enumerations: dict[str, tuple[str, ...]]
     callback_functions: frozenset[str]
+    non_object_as_null_callbacks: frozenset[str] = frozenset()
+    """The callback functions with [LegacyTreatNonObjectAsNull], such as EventHandlerNonNull."""
 
 
 def read_database(database: Any) -> Definitions:
@@ -102,6 +104,11 @@ def read_database(database: Any) -> Definitions:
         callback_interfaces=callback_interfaces,
         enumerations=enumerations,
         callback_functions=frozenset(definition.identifier for definition in database.callback_functions),
+        non_object_as_null_callbacks=frozenset(
+            definition.identifier
+            for definition in database.callback_functions
+            if "LegacyTreatNonObjectAsNull" in definition.extended_attributes
+        ),
     )
 
 
@@ -117,7 +124,8 @@ def _check_extended_attributes(where: str, construct: Any) -> ExtendedAttributes
 
 def _read_type(idl_type: Any, where: str) -> IdlType:
     """Reads a type, with its typedefs resolved, and the types inside it."""
-    nullable = bool(idl_type.is_nullable)
+    # A typedef of a nullable type, such as EventHandler, holds its nullability inside it.
+    nullable = bool(idl_type.is_nullable or idl_type.unwrap(typedef=True, variadic=True).is_nullable)
     annotations = _check_extended_attributes(f"type {idl_type.syntactic_form} of {where}", idl_type)
     inner: Any = idl_type.unwrap(nullable=True, typedef=True, variadic=True)
     if inner is not idl_type:

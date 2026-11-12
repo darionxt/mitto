@@ -22,6 +22,8 @@ mitto_bindings_table_files = [
 mitto_bindings_generated_dom_files = [
                                        "dictionaries.cc",
                                        "dictionaries.h",
+                                       "idl_types.cc",
+                                       "idl_types.h",
                                        "interface_objects.cc",
                                        "interface_objects.h",
                                        "interfaces_without_class.h",
