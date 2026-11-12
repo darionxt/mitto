@@ -19,7 +19,6 @@ from mitto._native import (
     MEMORY_CACHE,
     NativePage,
     NetworkQuality,
-    PageFeatures,
     PageRequestTemplate,
     PageStart,
     PrivateSettings,
@@ -173,7 +172,7 @@ class SessionState:
             reduced_transparency=machine.reduced_transparency,
             effective_type=effective_connection_type(machine.round_trip_ms),
             navigator=page_navigator(self._persona, self._accept_language, machine),
-            features=PageFeatures(),
+            features=self._persona.page_features,
         )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:

@@ -41,9 +41,12 @@ from tools.capture.recording import (
     PROXIED_HTTP1,
     PROXIED_HTTP2,
     PROXY,
+    SCRIPT,
     ConnectionRecord,
     Recording,
 )
+from tools.capture.script_page import SCRIPT_DONE_PATHS, ScriptRun
+from tools.capture.script_page import respond as respond_on_script_route
 from tools.capture.wire import ParseError
 
 DEFAULT_HOST = "capture.localhost"
@@ -160,7 +163,7 @@ class _Endpoint:
         self.port = 0
         self.context: ssl.SSLContext | None = None
         self.connections: list[_LiveConnection | LiveQuicConnection] = []
-        self.done = {path: threading.Event() for path in DONE_PATHS}
+        self.done = {path: threading.Event() for path in DONE_PATHS | SCRIPT_DONE_PATHS}
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,7 +272,8 @@ class CaptureServer:
     """Serves the test pages and records what clients send, one recording per route into the server.
 
     HTTP/1.1, HTTP/2 and HTTP/3 have a port each. Plain HTTP has a port, and so does an HTTP proxy, through which HTTP/1.1
-    and HTTP/2 can be reached too. Use it as a context manager. Clients must connect by name, so that they send SNI.
+    and HTTP/2 can be reached too. The Script Fingerprint's pages have a port of their own, over HTTP/1.1. Use it as a
+    context manager. Clients must connect by name, so that they send SNI.
     Unless asked to, it gives out no session tickets, so every ClientHello is that of a fresh connection and has no
     pre_shared_key.
     """
@@ -283,6 +287,7 @@ class CaptureServer:
         http3_port: int = 0,
         plain_http_port: int = 0,
         proxy_port: int = 0,
+        script_port: int = 0,
         tickets: bool = False,
     ) -> None:
         """Prepare a server at host, which must end in .localhost or .test.
@@ -310,6 +315,7 @@ class CaptureServer:
             PROXY: _Endpoint(PROXY, proxy_port, "http"),
             PROXIED_HTTP1: _Endpoint(PROXIED_HTTP1, 0),
             PROXIED_HTTP2: _Endpoint(PROXIED_HTTP2, 0),
+            SCRIPT: _Endpoint(SCRIPT, script_port),
         }
         self._lock = threading.Lock()
         self._connection_ids = itertools.count(1)
@@ -386,11 +392,11 @@ class CaptureServer:
         """Wait until a page has finished loading on a route, which it says at done_path. Returns whether it has."""
         return self._endpoints[route].done[done_path].wait(timeout)
 
-    def start_url(self, run: Run) -> str:
+    def start_url(self, run: Run | ScriptRun) -> str:
         """The address a run starts at."""
         return self.url(run.route, host=run.host, path=run.start_path)
 
-    def chrome_flags(self, run: Run) -> list[str]:
+    def chrome_flags(self, run: Run | ScriptRun) -> list[str]:
         """The flags a Chrome needs for a run, on top of those for any Chrome."""
         flags = [f"--ignore-certificate-errors-spki-list={self.spki_hash}"]
         if run.route in {PROXIED_HTTP1, PROXIED_HTTP2}:
@@ -403,7 +409,7 @@ class CaptureServer:
             flags.append(f"--origin-to-force-quic-on={','.join(self.origins_to_force_quic_on(run))}")
         return flags
 
-    def origins_to_force_quic_on(self, run: Run) -> list[str]:
+    def origins_to_force_quic_on(self, run: Run | ScriptRun) -> list[str]:
         """The origins a client has to be told speak QUIC for a run, each written "host:port"."""
         if run.route != HTTP3:
             return []
@@ -455,6 +461,9 @@ class CaptureServer:
             tunnel = self._endpoints[proxied]
             tunnel.context = direct.context
             tunnel.port = direct.port
+        script = self._endpoints[SCRIPT]
+        script.context = _server_context(self._certificate, HTTP1, tickets=self._tickets)
+        self._listen(script)
         self._listen(self._endpoints[PLAIN_HTTP])
         self._listen(self._endpoints[PROXY])
         self._listen_quic(self._endpoints[HTTP3], self._certificate)
@@ -680,6 +689,8 @@ def _page_responder(endpoint: _Endpoint) -> Responder:
         done = endpoint.done.get(request.target)
         if done is not None:
             done.set()
+        if endpoint.route == SCRIPT:
+            return respond_on_script_route(request)
         return respond_on(endpoint.scheme, endpoint.port, request)
 
     return answer

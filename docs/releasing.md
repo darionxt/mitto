@@ -127,6 +127,29 @@ uv run python -m tools.release persona RELEASE
 
 This writes `src/mitto/personas/chrome_RELEASE_windows.json` from `tests/baselines/RELEASE`, [as persona.md describes](persona.md#write-one). For the new Engine Release, also name its Persona in [`src/mitto/_persona.py`](../src/mitto/_persona.py): a constant like the others, its entry in `__all__` and in `WINDOWS_PERSONAS`, and `ENGINE_RELEASE_PERSONA`. The tests that check what a Session presents by default name the Engine Release, and fail until they move with it. The README's line follows in [step 8](#8-drop-the-oldest-chrome-release).
 
+Then work out again what a Page of each Persona turns on and off beside the new Engine Release's runtime-enabled features and V8's defaults, from each Chrome Release's tag and today's variations seed of its milestone ([persona.md](persona.md#what-a-page-of-each-persona-turns-on-and-off)):
+
+```bash
+uv run python -m tools.release page-features
+```
+
+It takes the Engine Release's build from `tools/workspace/chromium_tag`, which [step 2](#2-check-out-the-new-engine-release) wrote, and each Persona's build from its file, reads their files from Chromium's Gitiles servers and the seeds from Google's variations server, and writes `page_features` into each Persona's file, the oldest's too until step 8 drops it. It prints, for each Persona, what its lists gain and lose, what the seed switches and what goes to review.
+
+Run it on the day that [step 4](#4-record-baselines) records the Baselines, once it has. The variations server only gives the seed of the moment, and a Persona's data and its Baselines have to come from one seed, as the Baselines and a real installation do. The script reads the version of the seed that each Chrome Release's Baselines were recorded with from the `Variations seed:` line of their `chrome.txt`, and the report says when it differs from the one it fetched. Then run it again, or record again, so that both have the same seed.
+
+Put the report into the run's pull request, and decide on each item under "To review":
+
+- **A seed other than the Baselines'.** As above.
+
+- **A feature on in an older Chrome Release that the Engine Release's file no longer has.** It shipped for good or it is gone. Look for its members in the listing's diff of step 2, and in the old release's IDL files. A member that a page of the older release sees and the Engine Release no longer has is a Known Gap of that Persona: write it, with why, under [what an older Persona cannot turn off](persona.md#what-an-older-persona-cannot-turn-off).
+- **A V8 feature that an older Chrome Release shipped and the Engine Release's V8 cannot turn on.** The same, if a page can see it.
+- **A state that the Engine Release's dependencies between features cannot give.** Turn on or off the feature that it depends on or that implies it, in the script, if that gives the older release's state, or write it down as a Known Gap.
+- **A file that sets runtime-enabled features or V8's flags and differs from the Engine Release's**: `content/child/runtime_features.cc`, `gin/gin_features.cc`, `gin/v8_initializer.cc` or `content/renderer/render_process_impl.cc`. Read the diff between the two tags. An entry that turns a feature on from the default of a `base::Feature`, a default that moved or a flag that one of them sets for every renderer, which a page can see, goes into the script.
+- **A `V8Flag_` feature that the seed turns on with parameters that no more than half of all installations share.** The Page sets no flag for it, since its groups disagree on the value. Whether a Page needs one is a decision for the milestone's plan.
+- **A study of the seed whose filter follows the machine**, such as Windows' version. Its features stay as they are by default, and whether the Machine should decide them is a decision for the milestone's plan.
+
+Write the counts of each Persona's lists, what the seed switches and the Known Gaps under a new record in persona.md, as for the Chrome Releases there.
+
 Then run `uv run pytest tests/test_persona.py tests/release`. If the script refuses, for example because a Content-Type is not the one it knows, Chrome has changed what a request sends. Change the script and [persona.md](persona.md) to say what it does now.
 
 ### 7. Refresh the table of Machines
@@ -257,7 +280,7 @@ It takes the newest pinnable build of the Engine Release that the command names,
    diff OLD/chromium-OLD_BUILD/src/out/runtime/gen/mitto/bindings/web_idl_listing.txt NEW/chromium-BUILD/src/out/runtime/gen/mitto/bindings/web_idl_listing.txt
    ```
 
-4. Record no Baselines and write no Persona data. The Runtime's record of step 3 is no Baseline: it follows the engine's build. Step 2 gives the checkout and the Baselines of the Engine Release the same build, and a patch run is the exception: until the next run, the Engine Release's Persona keeps the build of its Baselines, which `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name, while the engine runs the new build. CI's Parity Checks still compare the engine with those Baselines, so a gap there is network code that the patch build changed, and a decision for the owner.
+4. Record no Baselines and write no Persona data, but what a Page of each Persona turns on and off: its lists are against the engine's runtime-enabled features, which a patch build can change. Run `uv run python -m tools.release page-features` and review its report, as [step 6](#6-write-the-persona-data) of a run does. Its seed is the day's, so the report says that the Baselines have an older one, which the next run brings together. The Runtime's record of step 3 is no Baseline: it follows the engine's build. Step 2 gives the checkout and the Baselines of the Engine Release the same build, and a patch run is the exception: until the next run, the Engine Release's Persona keeps the build of its Baselines, which `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name, while the engine runs the new build. CI's Parity Checks still compare the engine with those Baselines, so a gap there is network code that the patch build changed, and a decision for the owner.
 5. Raise the patch in [the version](#10-the-version), with an entry in `CHANGELOG.md` that names each fix the build brings to exported files, with its severity and CVE from the command, and says that the Persona still names the build of its Baselines. Then [the tag](#11-the-tag) and [the publish](#12-the-publish), as in a run.
 
 ## What changes for callers

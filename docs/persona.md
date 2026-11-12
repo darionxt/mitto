@@ -29,6 +29,10 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `kinds.KIND.headers` | `name: value` lines in the order Chrome sends them, with the case HTTP/1.1 sends |
 | `kinds.KIND.body.lines` | The names in `headers` that only a request with a body has. A kind without `body` cannot have one, so a body with `script` or `image` is refused |
 | `kinds.KIND.body.content_types` | The value for `Content-Type`, by what the body is: `text`, `form`, `json` or `multipart`. `<boundary>` stands for the boundary of a multipart body |
+| `page_features.seed` | The version of the variations seed that the rest of `page_features` was worked out with, for review |
+| `page_features.enable_blink_features` | The runtime-enabled features that a **Page** of the Persona turns on beside the Engine Release's, as [below](#what-a-page-of-each-persona-turns-on-and-off) |
+| `page_features.disable_blink_features` | Those that it turns off |
+| `page_features.v8_flags` | V8's flags that it sets, after the Engine Release's |
 
 In `headers`, `<content-type>` stands for what the body says of itself or what a caller gives, and `<machine>` for the value that the Session's [Machine](#a-machine-of-its-own) gives a hint that follows the machine. `<origin>` is never sent, because the native core writes that line's value or removes the line. `Sec-Fetch-Mode` and `Sec-Fetch-Dest` say what the request is for, which the native core also needs on a later hop, and `Sec-Fetch-User` says that the user started it. `headers` also holds each [client hint](#client-hints) that a server can ask for, which the native core removes until one has.
 
@@ -171,6 +175,8 @@ uv run python -m tools.release persona RELEASE
 
 It takes away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with `<machine>` for [the hints that follow the machine](#what-they-say). The priority comes from the `priority` header over HTTP/2. The script also holds `credentials_mode` and the `Content-Type` of a body that no Recording Case sends, and refuses a Baseline whose `Content-Type` is not its own. [`tests/release`](../tests/release) checks that it writes each file in the repository byte for byte.
 
+`page_features`, [below](#what-a-page-of-each-persona-turns-on-and-off), comes from another script, and the file keeps it when this one writes the rest.
+
 [`tests/test_persona.py`](../tests/test_persona.py) compares the file, with the values of the Machine of mitto 0.1, with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
 
 ## What differs between Chrome Releases
@@ -192,6 +198,46 @@ If a later Chrome Release does differ, the difference has to reach the native co
 - `GetNewSSLConfig()`, `ConfigureHttp2Params()`, `ConfigureQuicParams()` and `ConfigureQuicHints()` in the native core are per Session, so a value there becomes a Session setting that comes from Persona data.
 - `native/feature_list.cc` is per process, so its features state one thing for every Persona. A Chrome Release that differs there needs the per-Session value that the feature feeds. For example, a different `google_connection_options` goes in `QuicParams::connection_options` with `TryQuicByDefault` off, or `ORIG` goes out twice, and a Chrome Release without `trust_anchors` needs an empty `SSLContextConfig::trust_anchor_ids` and not another state of `TLSTrustAnchorIDs`.
 - A difference that is neither is a decision for the milestone's plan, and does not stay on the known-gaps list.
+
+## What a Page of each Persona turns on and off
+
+The **Runtime** follows the same rule: one V8 and one set of bindings ship, the Engine Release's ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)). A Page has the Engine Release's runtime-enabled features for stable on Windows and V8's defaults ([runtime.md](runtime.md#runtime-enabled-features)), and its Persona's `page_features` says what to turn on and off beside them, so that a page of an older Chrome Release lacks what that release had not shipped yet, and has what it had that the Engine Release has off. The Page applies them from its [start message](runtime.md#the-messages), before V8 starts. The Engine Release's own Persona has them too, for what its variations seed switches.
+
+[`tools/release/page_features.py`](../tools/release/page_features.py) works them out, from each Chrome Release's tag in Chromium's public Git, with no checkout, and from the variations seed that Google's server gives its milestone on the day, with nothing of the machine in the question:
+
+- **Blink's features.** Each Chrome Release's set for stable on Windows, from its own `runtime_enabled_features.json5`, by the generator's rules ([`runtime_features.py`](../native/bindings/bindings_generator/runtime_features.py)). A feature that its file does not have is off. The Page turns off each feature of the Engine Release's set that the release had off or did not have yet, and turns on each that it had on and the Engine Release has off.
+- **The variations seed.** The Baselines are recorded with the seed ([#207](https://github.com/darionxt/mitto/issues/207)), so a Persona's Chrome runs with what its seed switches for most installations. A study counts when its filter takes Windows, the stable channel, the Persona's build and locale, the country of the Baselines and a desktop, as Chrome's `study_filtering.cc` takes them, and when its groups switch a `base::Feature` alike for more than half of all installations, with the share of a layer's slots that it holds. A study that splits installations, such as one whose group of 1% turns fenced frames off, leaves most of them in its default group, as a Baseline is recorded again when it draws another. Chrome copies the state of a `base::Feature` that a field trial overrides into the runtime-enabled feature that names it in its entry, and into those of the tables in `content/child/runtime_features.cc`. A study whose filter follows the machine, such as Windows' version, is left aside and named for review.
+- **V8's features.** Each JavaScript, WebAssembly or internal feature that the Engine Release's V8 ships and the release's did not, from `v8/src/flags/feature-flags.h` at the V8 that the release's `DEPS` pins, gets a `--no-` flag. One that the release shipped and the Engine Release's V8 has staged gets its flag, and one that it no longer has, or only as an experiment, goes to review. The flags of the seed's `V8Flag_` features follow, as gin sets them, and win.
+
+What the release's `content/child/runtime_features.cc`, `gin/gin_features.cc`, `gin/v8_initializer.cc` and `content/renderer/render_process_impl.cc` do differently from the Engine Release's, which set features and V8's flags in ways this does not work out, such as from the default of a `base::Feature`, goes to review too. So does a seed of another version than the one in the `chrome.txt` of the release's Baselines, since a Persona's data and its Baselines have to come from one seed. [releasing.md](releasing.md#6-write-the-persona-data) says when it runs: on the day the Baselines are recorded.
+
+### Chrome 155, 156 and 157
+
+Worked out on 2026-11-12, from 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39 and the seed `20261111-170049.393000-production`, which [#207](https://github.com/darionxt/mitto/issues/207) also walked. The network's Baselines of the three were recorded with `20261106-010110.492000`, and M7's Baselines of the Script Fingerprint are recorded later, when the script runs again:
+
+| Persona | Blink features turned on | Turned off | V8 flags |
+| --- | --- | --- | --- |
+| `chrome_155_windows` | 3 | 79 | 8 |
+| `chrome_156_windows` | 1 | 42 | 7 |
+| `chrome_157_windows` | 0 | 3 | 7 |
+
+- The seed turns off `AttributionReporting`, which takes `attributionSrc` from the elements and `setAttributionReporting()` from `XMLHttpRequest`, and `TopicsAPI`, with `document.browsingTopics()`, in all three, and Protected Audience, `Fledge` and `AdInterestGroupAPI`, with 13 members of `Navigator`, in 155 and 156. It also switches four features that no interface or member is behind: `XMLRustForNonXslt` off in all three, and in 155 `ConstructableStylesheetCache` and `GenerateXSLTWarningBanner` off and `AIPageContentTrackedElementsPassword` on.
+- V8 15.5, 15.6 and 15.7 ship the same JavaScript and WebAssembly features, and gin and content set V8's flags in the same way in all three, so no flag hides a JavaScript feature. V8's only difference is the internal `homomorphic_ic`, an inline cache shipped from 156, which 155's seed turns on. The V8 flags are the seed's: `V8SqrtAllocationLimits`, with its five factors, and `V8DateTimePatternGeneratorCacheEviction` in all three, and `V8HomomorphicIC` in 155. They change when V8 collects garbage, a cache of `Intl` and inline caches, so time and memory, and nothing a page can list.
+- `content/child/runtime_features.cc` differs: 156 copies `WebAuthenticationRemoteClientDataJson` from a `base::Feature`, and 157 copies `DeclarativeWebMCP` from `kWebMCP` when a field trial overrides it and turns on `WebAudioBypassOutputBuffering` on desktops. No interface or member is behind those two that 157 turns on, so the Personas need nothing for them.
+- Against #207's walks of seeded Chrome 155, 156 and 157, each Persona's features put the 1,547 interfaces and members behind a feature that the walks show where that Chrome has them, but for 65 that are wrong for every Persona alike: the Engine Release's own set lacks Payment Request and Web Share, which Chrome's content layer turns on from a `base::Feature` on by default, and has `AbstractRange`'s legacy members and `measureUserAgentSpecificMemory()`, which Chrome leaves out. The walks leave out the prototypes of `Node`'s interfaces.
+
+### What an older Persona cannot turn off
+
+A Page of an older Persona can turn off a feature, but it cannot take away what the Engine Release has with no feature, nor give back what only the older release had, nor move a member. On 2026-11-12:
+
+- **Members.** None is missing or extra. Every interface and member that 157 has and 155 or 156 lacks is behind a runtime-enabled feature, in the walks and in the diff of Blink's IDL files between the tags. The features that only the older release's file has and has on, 34 for 155 and 18 for 156, shipped for good: the Engine Release has their members with no feature, such as `CSSContainerRule.prototype.conditions`, or they change behaviour only.
+- **The order of members.** Turning a feature off cannot move a member, so a page of 155 or 156 lists these in 157's order, which is a Known Gap of those Personas, for [#206](https://github.com/darionxt/mitto/issues/206). 155 and 156 agree on each, so the moves came with 157:
+  - On the global, the interface objects `ProgressEvent`, `Lock` and `LockManager` moved from 156 to 157, and `Clipboard`, `ClipboardItem`, `ServiceWorker` and `ServiceWorkerContainer` from 155 to 156. For the first five, Blink's IDL files moved the decision whether a context exposes them between the template and each context.
+  - In prototypes, members that 155 and 156 install after `constructor`, with what each context decides, come before it in 157, with what the template holds ([runtime.md](runtime.md#how-the-generator-works)): `pseudoTarget` of `UIEvent`, `AnimationEvent` and `TransitionEvent`, `onerror` of `Worker` and `SharedWorker`, `closed` and `cancel` of `ReadableStreamDefaultReader` and `ReadableStreamBYOBReader`, `ink`, `mediaCapabilities`, `permissions` and `mediaSession` of `Navigator`, most of the members that modules add to `ServiceWorkerRegistration`, and `toJSON` of `PerformanceSoftNavigation`, `PerformancePaintTiming`, `PerformanceElementTiming`, `LargestContentfulPaint` and `InteractionContentfulPaint`. None of their features changed between the releases, and Blink's `bind_gen` did, so a Persona would need its release's own phase of each member, which no feature gives.
+  - `vendor`, `vendorSub` and `productSub` of `Navigator` moved within the members that are always there, as 157 moved them into the `NavigatorID` mixin.
+
+  The walks leave out the prototypes of `Node`'s interfaces, so their order between releases is not known yet.
+- **Behaviour that no feature holds.** V8's and Blink's code beside the features is the Engine Release's for every Persona, as the network's is ([What no Baseline covers](#what-no-baseline-covers)). So is what the seed switches through a `base::Feature` that no runtime-enabled feature takes, such as `DeprecateUnload`, which takes `unload` from `document.featurePolicy.allowedFeatures()` in all three.
 
 ## What no Baseline covers
 
@@ -495,7 +541,7 @@ The **Runtime** reads the same machine, or a page could tell that its scripts an
 | `Intl`'s locale | The Persona's locale | The first language of the Persona's `Accept-Language` |
 | The GPU through WebGL | Nothing yet, until M10 | |
 
-A Page gets these values, the network's too, in [its start message](runtime.md#the-messages), and its `navigator`, `screen` and window give them ([runtime.md](runtime.md#the-window)). `matchMedia()` comes with [#218](https://github.com/darionxt/mitto/issues/218). The Parity Checks of [#213](https://github.com/darionxt/mitto/issues/213) hide each value of the machine as `<machine>`, with a check of its form, as they do on the wire.
+A Page gets these values, the network's too, in [its start message](runtime.md#the-messages), and its `navigator`, `screen` and window give them ([runtime.md](runtime.md#the-window)). `matchMedia()` comes with [#218](https://github.com/darionxt/mitto/issues/218). [The Normal Form of a Script Fingerprint](capture.md#the-normal-form-of-a-script-fingerprint) hides each value of the machine as `<machine>`, with a check of its form in real Chrome's recordings and in what a Machine gives, as on the wire, and the Parity Checks of [#213](https://github.com/darionxt/mitto/issues/213) compare in it.
 
 The shape of a Machine allows three things. It keeps what Chrome reads, such as the display, its scale and the work area, and not only the viewport, so that `screen` and the window agree with the hints. It keeps the estimate before noise, because a page and a request add different noise. And it takes new fields: a machine saved by one version of mitto loads in a later one that knows more, which draws what is missing from the machine's seed to fit what it has.
 

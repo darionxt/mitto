@@ -1,8 +1,8 @@
-"""The probe, the script that records a page's Script Fingerprint, and what reads its record.
+"""The probe, the script that records a page's Script Fingerprint, and what reads and writes its record.
 
 The probe is `probe.js` next to this module. It runs unchanged in real Chrome, for a Baseline, and in a Page, for a
 Parity Check: an indirect eval of it gives a promise of its record as JSON's text. docs/runtime.md, "The probe", says
-what it records and what it leaves out.
+what it records and what it leaves out, and script_normal_form.py writes its Normal Form.
 """
 
 import json
@@ -15,29 +15,6 @@ type RecordValue = bool | int | float | str | list[RecordValue] | dict[str, Reco
 
 PROBE_PATH: Final = Path(__file__).with_name("probe.js")
 """Where the probe is."""
-
-RUN_TO_RUN_VALUES: Final[tuple[tuple[str, str | None], ...]] = (
-    ("performance", "timeOrigin"),
-    ("performance.timing", None),
-    ("document", "lastModified"),
-    ("document.timeline", "currentTime"),
-    ("navigation.currentEntry", "key"),
-    ("navigation.currentEntry", "id"),
-    ("navigator.connection", "rtt"),
-    ("navigator.connection", "downlink"),
-    ("performance.memory", None),
-)
-"""The getters whose values change from one run of a Chrome to the next: the path of the object that the probe reads
-each on, and the getter's name, or None for each getter of that object.
-
-#207 found all but the last over 11 runs of Chrome 157. document.lastModified is the time the page loaded, when its
-response has no Last-Modified; the navigation entry's key and id are random; and rtt and downlink carry the renderer's
-noise. performance.memory gives precise figures in a renderer that is locked to a site, as each is on the desktop, at most
-every 50 ms, from a cache that console.memory's rounded figures share (WindowPerformance::memory() and HeapSizeCache in
-Blink's core/timing). So what it gives depends on how long the walk took since it read console.memory."""
-
-RUN_TO_RUN: Final = "<run>"
-"""What without_run_to_run_values() writes in place of such a value."""
 
 
 def probe_script() -> str:
@@ -60,23 +37,9 @@ def read_record(text: str) -> dict[str, RecordValue]:
     return record
 
 
-def without_run_to_run_values(record: dict[str, RecordValue]) -> dict[str, RecordValue]:
-    """Return a copy of a record with each value in RUN_TO_RUN_VALUES as RUN_TO_RUN, so that two runs compare equal."""
-    copy = json.loads(json.dumps(record))
-    for entry in _objects(copy):
-        hidden = {name for path, name in RUN_TO_RUN_VALUES if path == entry.get("path")}
-        getters = entry.get("get")
-        if not hidden or not isinstance(getters, list):
-            continue
-        for item in getters:
-            if isinstance(item, list) and len(item) == 2 and (None in hidden or item[0] in hidden):
-                item[1] = RUN_TO_RUN
-    return copy
-
-
 def dumps_record(record: dict[str, RecordValue]) -> str:
-    """Write a record as JSON's text with each own property, getter's value and check on a line of its own, so that two
-    records of one Chrome Release, or of two, differ by lines.
+    """Write a record as JSON's text with each own property, getter's value, check and value of the third step on a
+    line of its own, so that two records of one Chrome Release, or of two, differ by lines.
 
     A record of Chrome 157 takes about 1.3 MB this way, within the 1.5 MB a Baseline may take for each Chrome Release
     (docs/runtime.md, "The probe").
@@ -90,6 +53,14 @@ def dumps_record(record: dict[str, RecordValue]) -> str:
             lines.append(f"{_text(key)}: [")
             lines.extend(_object_lines(_objects(record)))
             lines.append(f"]{comma}")
+        elif key == "values" and isinstance(value, dict) and value:
+            lines.append(f"{_text(key)}: {{")
+            names = list(value)
+            lines.extend(
+                f"{_text(name)}: {_text(value[name])}{',' if index < len(names) - 1 else ''}"
+                for index, name in enumerate(names)
+            )
+            lines.append(f"}}{comma}")
         else:
             lines.append(f"{_text(key)}: {_text(value)}{comma}")
     lines.append("}")
