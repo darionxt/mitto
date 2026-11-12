@@ -104,11 +104,12 @@ third_party\ninja\ninja.exe -C out\mitto mitto
 
 depot_tools' `ninja` command refuses a build directory where Siso has run, and this one does not.
 
-This builds three targets from [`native/`](../native), about 4,200 steps in all:
+This builds four targets from [`native/`](../native), about 4,200 steps in all:
 
 - `mitto_core`, the shared library `out/mitto/libmitto_core.dylib`, `libmitto_core.so` on Linux and `mitto_core.dll` on Windows. It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h), and on Windows also `GetHandleVerifier`, which `//base` marks `__declspec(dllexport)` in `base/win/scoped_handle_verifier.cc`. A linker cannot take that away, and it clashes with nothing, because Windows looks up an import in the DLL that the import names. `//base` only looks for it in the program that started the process.
 - `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result. Its scenarios of Pages need the Page program beside the library ([runtime.md](runtime.md#tests)).
 - `html_tokenizer_test`, which runs html5lib's tokenizer tests against the **Runtime**'s HTML tokenizer in [`native/html`](../native/html). The library does not link the tokenizer: a **Page** runs in a process of its own ([ADR-0009](adr/0009-a-process-for-each-page.md)). See [The HTML tokenizer's tests](#the-html-tokenizers-tests).
+- `media_query_test`, which runs the cases of Blink's own media query tests against the Runtime's CSS tokenizer, media query parser and evaluator in [`native/css`](../native/css), which the library does not link either. See [The media query tests](#the-media-query-tests).
 
 Run the test program, which needs a network connection:
 
@@ -141,6 +142,16 @@ out/mitto/html_tokenizer_test mitto/test/html5lib_tokenizer mitto/test/html5lib_
 It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
 
 The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
+
+### The media query tests
+
+`media_query_test` holds the case tables of Blink's `media_query_set_test.cc` and `media_query_evaluator_test.cc`, as the Engine Release has them, and sets up what a query reads as each Blink test sets up `MediaValuesCachedData`. It leaves out the tests that need a frame and its layout, the one of what a style sheet's cache depends on, and those of `@custom-media`, which need style sheets. It needs no files:
+
+```bash
+out/mitto/media_query_test
+```
+
+It prints each case that fails, with what it expected and what it got, and fails if any does. For Chromium 157.0.8103.39 all 712 cases pass. The release routine's [comparison of two releases](#compare-two-releases) shows when Blink changes those tests or the files that `native/css` ports, and their tables are copied again then. The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the sanitizer workflow run it too.
 
 ## Build the Runtime
 
@@ -448,7 +459,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
 | `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program, the tree builder's test and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 
@@ -460,7 +471,7 @@ The fuzz targets have a build of their own because Chromium's fuzzing builds def
 
 ```bash
 export MITTO_PAGE_PROGRAM=/absolute/path/to/new/directory/chromium-<tag>/src/out/runtime-asan/mitto_page
-ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py
+ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py tests/test_page_media.py
 ```
 
 To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:
@@ -472,7 +483,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML, `media_query_fuzzer` for what a page gives `matchMedia()` and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
 
 ```bash
 mkdir corpus

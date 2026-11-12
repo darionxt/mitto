@@ -1,0 +1,61 @@
+# The Runtime's CSS: CSS Syntax's tokenizer and Media Queries, which
+# matchMedia() parses and evaluates. Nothing here goes into the library, whose
+# exports and size stay as they are: a Page runs in a process of its own.
+
+import("//build/config/sanitizers/sanitizers.gni")
+
+source_set("parser") {
+  sources = [
+    "css_math_expression.cc",
+    "css_math_expression.h",
+    "css_serialization.cc",
+    "css_serialization.h",
+    "css_token.cc",
+    "css_token.h",
+    "css_token_stream.cc",
+    "css_token_stream.h",
+    "css_tokenizer.cc",
+    "css_tokenizer.h",
+    "media_query.cc",
+    "media_query.h",
+    "media_query_evaluator.cc",
+    "media_query_evaluator.h",
+    "media_query_parser.cc",
+    "media_query_parser.h",
+    "media_values.cc",
+    "media_values.h",
+  ]
+  deps = [ "//base" ]
+}
+
+# Runs the cases of Blink's media_query_set_test.cc and
+# media_query_evaluator_test.cc that need no layout.
+executable("media_query_test") {
+  sources = [ "//mitto/test/media_query_test.cc" ]
+  deps = [
+    ":parser",
+    "//base",
+  ]
+}
+
+# Only the fuzz build loads this, so that no other build reads //testing.
+if (use_libfuzzer) {
+  import("//testing/libfuzzer/fuzzer_test.gni")
+
+  fuzzer_test("media_query_fuzzer") {
+    sources = [ "//mitto/test/media_query_fuzzer.cc" ]
+    deps = [
+      ":parser",
+      "//base",
+    ]
+  }
+}
+
+group("css") {
+  testonly = use_libfuzzer
+  deps = [ ":media_query_test" ]
+  if (use_libfuzzer) {
+    deps += [ ":media_query_fuzzer" ]
+  }
+}
+

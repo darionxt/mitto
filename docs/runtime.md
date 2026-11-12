@@ -300,7 +300,7 @@ What a page reads of the browser and the machine is what its Session sends, work
 
 The event handler attributes of `Screen`, `ScreenOrientation` and `NetworkInformation` are Known Gaps, and none of these values changes while a Page runs, so no `change` event comes. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
 
-`mitto::NewPageContext()` makes such a context, and the Page program makes one for about:blank and one for each document that its Session loads. The window's timers, `queueMicrotask()`, `performance` and `fetch()` have their behaviour, as [the event loop](#the-event-loop) and [fetch()](#fetch) say.
+`mitto::NewPageContext()` makes such a context, and the Page program makes one for about:blank and one for each document that its Session loads. The window's timers, `queueMicrotask()`, `performance`, `fetch()` and `matchMedia()` have their behaviour, as [the event loop](#the-event-loop), [fetch()](#fetch) and [Media queries](#media-queries) say.
 
 ### Loading a document
 
@@ -336,9 +336,10 @@ Known Gaps of `fetch()` in M6: `RequestInit`'s members beyond `method`, `headers
 | `Document`, `HTMLDocument` | `new Document()`, `documentElement`, `doctype`, `head`, `body`'s getter, `title`, `URL`, `compatMode`, `characterSet`, `contentType`, `defaultView`, `createElement()`, `createTextNode()`, `createComment()`, `getElementById()`, `querySelector()`, `ParentNode`'s members, `cookie` and `readyState`, as [Loading a document](#loading-a-document) says. `location` is null, a Known Gap |
 | `CharacterData`, `Text`, `Comment` | Their data and its methods, `new Text()`, `new Comment()`, `splitText()` and `wholeText` |
 | `DocumentType` | Its name and identifiers, and `ChildNode`'s members |
-| `Window` | `window`, `self`, `document`, `performance`, `setTimeout()`, `setInterval()`, `clearTimeout()`, `clearInterval()`, `queueMicrotask()`, `fetch()`, `navigator`, `clientInformation`, `screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` and `devicePixelRatio`, as [The window](#the-window) says |
+| `Window` | `window`, `self`, `document`, `performance`, `setTimeout()`, `setInterval()`, `clearTimeout()`, `clearInterval()`, `queueMicrotask()`, `fetch()`, `navigator`, `clientInformation`, `screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` and `devicePixelRatio`, as [The window](#the-window) says and `matchMedia()` |
 | `Navigator` | What [The window](#the-window) lists. Its other members, such as `plugins`, `clipboard` and `getGamepads()`, are Known Gaps |
 | `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member but the event handler attributes, as [The window](#the-window) says |
+| `MediaQueryList`, `MediaQueryListEvent` | All but `onchange`, as [Media queries](#media-queries) says |
 | `Performance` | `now()` and `timeOrigin`, coarsened as Chrome's are. Its timelines, marks and measures are Known Gaps |
 | `Headers` | `new Headers()` from pairs or a record, `append()`, `set()`, `delete()`, `get()`, `has()` and `getSetCookie()`, with Chrome's checks and guards. Iterating over it is a Known Gap |
 | `Request` | `new Request()`, `method`, `url` and `headers` |
@@ -348,6 +349,36 @@ Known Gaps of `fetch()` in M6: `RequestInit`'s members beyond `method`, `headers
 An element of the HTML namespace gets the HTML Standard's interface for its name, `HTMLUnknownElement` for a name the standard does not know and `HTMLElement` for a valid custom element name, as Chrome makes them. A name whose interface the Runtime lacks yet, such as `a` or `img`, gets `HTMLElement`, a Known Gap. Collections, such as `childNodes`, `children` and `querySelectorAll()`, the methods that name a namespace, and event handler attributes are Known Gaps too.
 
 `querySelector()`, `matches()` and `closest()` take simple selectors: type, universal, ID, class and attribute selectors, with the flag `i`, compounds of them, the four combinators and lists. Names of HTML elements and their attributes match in any case in an HTML document, IDs and classes do in quirks mode, and so do the values of the attributes that the HTML Standard lists. A selector that is not valid throws Chrome's `SyntaxError`, and a valid one with a pseudo-class or a namespace prefix throws a Known Gap's `TypeError`. `innerHTML` and `outerHTML` write the HTML Standard's serialization, escaping in attributes and text what Chrome escapes.
+
+### Media queries
+
+`matchMedia()` parses its media query list with the CSS tokenizer and the media query parser in [`native/css`](../native/css), which follow CSS Syntax as Blink's `CSSTokenizer` runs it and Blink's `MediaQueryParser`, and which M9's CSS parser takes over. The fuzz target `media_query_fuzzer` feeds them any input. The `MediaQueryList` it gives writes the list back in `media` as Chrome writes it: lower case, Chrome's spacing, numbers with at most six significant digits, math functions simplified, `not all` for a query that does not parse, and a condition of a syntax that Blink does not know, Media Queries' `<general-enclosed>`, as it was given. Which media features parse follows the Page's runtime-enabled features, as in Blink: in the stable set of Chrome 157, `inverted-colors`, `prefers-reduced-data`, `video-dynamic-range`, `display-state` and `resizable` are experimental, so they do not parse, and a query of them is unknown and never matches, whatever the machine.
+
+`matches` is worked out on each read, as Blink's `MediaQueryEvaluator` works it out for a tab of Windows Chrome, from what the Page's start message carries of the Session's Machine and Persona and nothing else:
+
+| Media features | From |
+| --- | --- |
+| `width`, `height`, `aspect-ratio`, `orientation`, and the units `vw`, `vh`, `vmin` and the rest | The viewport |
+| `device-width`, `device-height`, `device-aspect-ratio` | The display, over the scale, as `screen.width` and `screen.height` are |
+| `resolution`, `-webkit-device-pixel-ratio` | The scale |
+| `prefers-color-scheme`, `prefers-reduced-motion`, `prefers-reduced-transparency` | The three settings |
+| `forced-colors`, `prefers-contrast` | The contrast theme: `active` and `more` with any theme a Machine can have, `none` and `no-preference` without one |
+| `any-pointer` | `fine`, and `coarse` too with a touch screen. `pointer` is always `fine`, and `hover` and `any-hover` always `hover`: a desktop always has a mouse, which Windows reports even for a touchpad |
+| `color`, `color-gamut`, `dynamic-range`, `monochrome`, `color-index` | 8 bits a channel, `srgb`, `standard`, 0 and 0: a Machine holds no wide-gamut or HDR display |
+| `display-mode`, `scripting`, `update`, `overflow-block`, `overflow-inline`, `grid`, the viewport segments, `device-posture`, `scan` and the media types | What every tab of Windows Chrome has: `browser`, `enabled`, `fast`, `scroll`, a bitmap display, one segment, `continuous`, no `tv`, and `screen` |
+
+Blink's parser recurses once for each parenthesis of a condition, as this one does, and Chrome 157 takes some 20,000 of them. So the Page program has the stack of Chrome's renderers on its main thread, 8 MiB, which on Windows its link sets as `chrome.exe`'s does, where Windows would give it 1 MiB.
+
+A Machine does not change while a Page runs, so no `change` event is ever fired, as none would be in Chrome on that machine. `addListener()`, `removeListener()` and `addEventListener()` keep their listeners as any event target does, and a page can make its own `MediaQueryListEvent`. Blink keeps a list with change listeners alive while its document is, which only a `WeakRef` could tell apart.
+
+Known Gaps of media queries:
+
+- `onchange`, until the bindings give event handler attributes their behaviour.
+- The math functions other than `calc()`, `min()`, `max()` and `clamp()`, such as `round()` or `sin()`, and a product or quotient of two dimensions, which Blink's typed arithmetic takes. A value with one does not parse, so its media feature is unknown, where Chrome computes it: `(width: round(10px, 3px))` is written back as given and never matches, where Chrome writes `(width: calc(9px))`.
+- The units of the root element's font beyond `em` and `rem`: `ex`, `ch`, `ic`, `cap` and `lh` and their root forms take Blink's sizes for a document with no font data until the Runtime has fonts (roadmap, M9).
+- `(fallback: none)`, a feature of container queries that Blink parses in a media query too and whose evaluation then stops Chrome's renderer, is unknown.
+
+`media_query_test` runs the cases of Blink's `media_query_set_test.cc` and `media_query_evaluator_test.cc` that need no layout ([building.md](building.md#the-media-query-tests)), and `tests/test_page_media.py` checks what Chrome 157 writes back for a set of queries and that a Page answers each feature from its Machine.
 
 ### The tree builder
 
@@ -430,7 +461,10 @@ A Page that has been closed raises a `ValueError`, as a closed Session does. A P
 | [`tests/test_page_document.py`](../tests/test_page_document.py) | A script gets a document that the program builds from markup, finds and changes its elements, and the tree reads back as expected; about:blank's document; the doctype's quirks mode; the window as the global object; Known Gaps; nodes and wrappers through garbage collection | The native job on every Host, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
 | [`tests/test_page_probe.py`](../tests/test_page_probe.py) | [The probe](#the-probe) runs to its end in a Page through a Session and in the Page program, leaves nothing in the console, and gives the same record twice in a row but for the values that change from run to run; how a record is read, hidden and written | The native job on every Host, with the Page program from the installed wheel, the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer for the Page program alone, and the Python jobs for what needs no Page |
 | `html_tree_builder_test` | html5lib's tree construction tests: each builds its tree, or records a rule it skipped, or is in the list of failures | The same |
+| [`tests/test_page_media.py`](../tests/test_page_media.py) | `matchMedia()`: queries written back as Chrome 157 writes them, a `MediaQueryList` and its listeners, `MediaQueryListEvent`, features that parse as the runtime-enabled features say, and, on a Session, each media feature as the Session's Machine decides it | The native job on every Host, and the Runtime's builds with AddressSanitizer and UndefinedBehaviorSanitizer |
+| `media_query_test` | The cases of Blink's media query tests that need no layout, against the parser and the evaluator in `native/css` | The native job on every Host, and the sanitizer workflow's `asan` and `ubsan` jobs |
 | `page_messages_fuzzer` | How the library reads what a Page sends | The sanitizer workflow's fuzz job |
+| `media_query_fuzzer` | The CSS tokenizer, and the media query parser and evaluator, on any input: the tokens cover the input in order, and a list whose blocks all end parses back to itself | The same |
 
 To run the tests of Pages against a local build, name the C test program and the Page program, which the tests copy beside the library:
 

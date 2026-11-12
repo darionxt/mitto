@@ -1,0 +1,1 @@
+a(100px < width <= 200px), (width >= 1e3px), (500px = height), (aspect-ratio > 16/9)
