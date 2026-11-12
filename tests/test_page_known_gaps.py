@@ -170,6 +170,13 @@ def test_a_known_gap_gives_its_types_default(program: Path, script: str, expecte
     assert _evaluate(program, script) == expected
 
 
+def test_a_nullable_union_takes_null(program: Path) -> None:
+    # (double or CSSNumericValue)? converts null to null, not through one of its members.
+    script = "const a = new Animation(); a.startTime = 5; const set = a.startTime; a.startTime = null; return [set, a.startTime].join();"
+
+    assert _evaluate(program, script) == "value: 5,"
+
+
 def test_a_setter_stores_the_converted_value_for_its_getter(program: Path) -> None:
     script = "const h = new Highlight(); h.priority = '7'; const first = h.priority; h.type = 'spelling-error'; " + (
         "return [first, typeof first, h.type].join();"
