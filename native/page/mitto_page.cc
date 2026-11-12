@@ -68,13 +68,17 @@
 #include "mitto/dom/window.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_isolate.h"
-#include "mitto/page/page_v8.h"
+#include "mitto/page/page_platform.h"
+#include "mitto/page/script_runner.h"
 #include "mitto/page/session_channel.h"
 #include "mitto/page/v8_flags.h"
 #include "mitto/page_messages.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
+#include "v8/include/libplatform/libplatform.h"
+#include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
+#include "v8/include/v8-cppgc.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-initialization.h"
 #include "v8/include/v8-inspector.h"
@@ -82,9 +86,11 @@
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-persistent-handle.h"
+#include "v8/include/v8-platform.h"
 #include "v8/include/v8-primitive.h"
 #include "v8/include/v8-promise.h"
 #include "v8/include/v8-script.h"
+#include "v8/include/v8-snapshot.h"
 #include "v8/include/v8-value.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -95,10 +101,12 @@
 #include <shellapi.h>
 #endif
 
-// The program holds ICU's whole data file, which page/BUILD.gn writes into it,
-// so that it opens no file to start.
+// The program holds ICU's whole data file and V8's startup snapshot, which
+// page/BUILD.gn writes into it, so that it opens no file to start.
 extern "C" {
 extern const char mitto_icu_data[];
+extern const char mitto_v8_snapshot[];
+extern const uint64_t mitto_v8_snapshot_size;
 }
 
 namespace {
@@ -113,6 +121,10 @@ constexpr std::string_view kUsage =
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
 constexpr std::string_view kJsFlags = "--js-flags=";
+// The memory in GiB that V8 works out its heap's limits from: a Machine's of
+// the most common kind (docs/persona.md). V8 starts before a Session's start
+// message comes, which carries the Machine's.
+constexpr int kMemoryGib = 8;
 constexpr std::string_view kHtml = "--html=";
 constexpr std::string_view kStandardInput = "-";
 
@@ -435,22 +447,50 @@ int main(int argc, char** argv) {
   // tasks for the main thread join, as Chrome's renderers have it.
   auto main_thread = std::make_unique<base::SingleThreadTaskExecutor>();
 
-  mitto::PageV8Options options;
-  options.extra_flags = mitto::SplitJsFlags(js_flags);
-  if (session) {
-    // V8 starts once the Session's start message says with what.
-    mitto::ServeSession(*std::move(session), main_thread->task_runner(),
-                        std::move(options), std::move(*features));
-    // It could not start.
-    return kScriptThrew;
+  // Before anything of V8 asks for a random number, as in Chrome's renderers.
+  v8::V8::SetEntropySource(&mitto::GenerateEntropy);
+  v8::StartupData snapshot = {mitto_v8_snapshot,
+                              base::checked_cast<int>(mitto_v8_snapshot_size)};
+  v8::V8::SetSnapshotDataBlob(&snapshot);
+  const auto platform = std::make_unique<mitto::PagePlatform>(
+      v8::platform::NewDefaultPlatform(), main_thread->task_runner());
+  // V8's flags as Chrome's renderer sets them, then those of --js-flags=,
+  // before V8's platform, as gin sets them.
+  mitto::SetEngineV8Flags(kMemoryGib);
+  mitto::SetV8Flags(mitto::SplitJsFlags(js_flags));
+  v8::V8::InitializePlatform(platform.get());
+  CHECK(v8::V8::Initialize());
+
+  v8::Isolate::CreateParams params;
+  params.array_buffer_allocator_shared =
+      std::shared_ptr<v8::ArrayBuffer::Allocator>(
+          v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+  // The heap of the Runtime's C++ objects, which V8 collects with its own, as
+  // Blink's renderers have it. The isolate owns it.
+  params.cpp_heap =
+      v8::CppHeap::Create(platform.get(), v8::CppHeapCreateParams({}))
+          .release();
+  mitto::ConfigurePageIsolate(params, kMemoryGib);
+  v8::Isolate* const isolate = v8::Isolate::New(params);
+  // Microtasks run when the outermost script that the Runtime runs returns,
+  // and after each task, as Blink has them.
+  isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
+  mitto::InitializePageIsolate(isolate);
+  bool finished = false;
+  {
+    const v8::Isolate::Scope isolate_scope(isolate);
+    const std::unique_ptr<mitto::bindings::PerIsolateData> data =
+        mitto::bindings::PerIsolateData::Create(isolate, std::move(*features));
+    if (session) {
+      mitto::ServeSession(isolate, *std::move(session));
+    } else {
+      finished = RunScript(isolate, html.value_or(""), argument);
+    }
   }
-  // The memory of a Machine of the most common kind (docs/persona.md).
-  options.memory_gib = 8;
-  std::unique_ptr<mitto::PageV8> page = mitto::PageV8::Start(
-      main_thread->task_runner(), options, std::move(*features));
-  const bool finished = RunScript(page->isolate(), html.value_or(""), argument);
   // V8's tasks that wait go while the isolate still lives.
   main_thread.reset();
-  page.reset();
+  isolate->Dispose();
+  v8::V8::Dispose();
+  v8::V8::DisposePlatform();
   return finished ? 0 : kScriptThrew;
 }

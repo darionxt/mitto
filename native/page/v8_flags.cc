@@ -28,21 +28,10 @@ constexpr auto kEngineReleaseV8Flags = std::to_array<std::string_view>({
     // only for a context that Blink's callback allows, a cross-origin isolated
     // one, which a Page never is.
     "--enable-sharedarraybuffer-per-context",
-    // gin/v8_initializer.cc, SetFeatureFlags(): each V8Flag_ feature that the
-    // variations seed turns on, in the order of its name, then its parameters.
-    // From seed 20261111-170049.393000-production, the groups that every
-    // Baseline records under: V8DateTimePatternGeneratorCacheEviction
-    // EnabledLaunch, V8SqrtAllocationLimits Enabled_80 and V8Turbolev Default.
-    "--intl_date_time_pattern_generator_cache_eviction",
-    "--maglev",
-    "--sqrt_allocation_limits",
-    "--sqrt_allocation_limits_factor=80",
-    "--sqrt_allocation_limits_max_growing_factor=4",
-    "--sqrt_allocation_limits_min_growing_factor=1.1",
-    "--sqrt_allocation_limits_minimal_factor=20",
-    "--sqrt_allocation_limits_slow_factor=80",
-    "--turbofan",
-    "--turbolev",
+    // gin/v8_initializer.cc sets nothing of its own: SetFeatureFlags() turns
+    // only the features that the command line or a field trial overrides into
+    // flags, and SetFlags() adds --use_strict for an isolate in strict mode,
+    // which a renderer's is not.
 });
 
 void SetV8Flag(std::string_view flag) {
@@ -59,6 +48,16 @@ std::vector<std::string_view> EngineReleaseV8Flags(int memory_gib) {
   flags.insert(flags.end(), kEngineReleaseV8Flags.begin(),
                kEngineReleaseV8Flags.end());
   return flags;
+}
+
+void SetEngineV8Flags(int memory_gib) {
+  SetV8Flags(EngineReleaseV8Flags(memory_gib));
+  // RenderProcessImpl(): features::kWebAssemblyTrapHandler is on for 64-bit
+  // desktops, and a guard region around WebAssembly's memory catches what
+  // would otherwise be bounds checks. V8's own signal handler catches the
+  // trap, as on Windows and macOS; on Linux Chrome's crash handler hands it to
+  // V8 first, which comes to the same.
+  v8::V8::EnableWebAssemblyTrapHandler(/*use_v8_signal_handler=*/true);
 }
 
 std::vector<std::string> SplitJsFlags(std::string_view js_flags) {

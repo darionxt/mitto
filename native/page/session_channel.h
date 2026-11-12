@@ -7,12 +7,12 @@
 #include <optional>
 #include <string_view>
 
-#include "base/memory/scoped_refptr.h"
 #include "base/process/process_handle.h"
-#include "base/task/single_thread_task_runner.h"
-#include "mitto/bindings/runtime_feature_set.h"
-#include "mitto/page/page_v8.h"
 #include "mitto/page_channel.h"
+
+namespace v8 {
+class Isolate;
+}  // namespace v8
 
 namespace mitto {
 
@@ -34,16 +34,11 @@ struct SessionArgument {
 std::optional<SessionArgument> ParseSessionArgument(std::string_view argument);
 
 // Serves the Session at the other end of the channel: reads its messages on a
-// thread of its own and runs its scripts on this thread, whose task runner is
-// `main_thread`, the Page's event loop. V8 starts on this thread once the
-// Session's start message has come, with `options` and the start's Machine
-// memory, and with `features`. The process ends when the channel closes, when
-// the process that holds the library ends, and when it refuses a message, so
-// this returns only if it cannot start.
-void ServeSession(SessionArgument session,
-                  scoped_refptr<base::SingleThreadTaskRunner> main_thread,
-                  PageV8Options options,
-                  bindings::RuntimeFeatureSet features);
+// thread of its own and runs its scripts in `isolate` on this thread, whose
+// task executor is the Page's event loop. The process ends when the channel
+// closes, when the process that holds the library ends, and when it refuses a
+// message, so this returns only if it cannot start.
+void ServeSession(v8::Isolate* isolate, SessionArgument session);
 
 }  // namespace mitto
 

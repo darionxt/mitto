@@ -32,7 +32,7 @@ Before its `main()`, the dynamic loader of Linux opens the shared libraries of g
 
 ## Inside the Page program
 
-The program runs V8 on its main thread, and reads the channel on a thread of its own. V8 starts once the start message has come, as Chrome's renderer starts it, with the flags of the Engine Release's renderer and the heap's limits that the Machine's memory gives ([building.md](building.md#v8s-flags)). The I/O thread checks each message, hands scripts to the main thread in the order they came, and sends their results back. Because it reads while a script runs, the process ends as soon as the channel closes, even in the middle of a script that never ends.
+The program runs V8 on its main thread, and reads the channel on a thread of its own. V8 starts as Chrome's renderer starts it, with the flags of the Engine Release's renderer ([building.md](building.md#v8s-flags)). It starts before the start message comes, so its heap's limits are those of 8 GiB, the memory of the most common Machine, whatever the Session's Machine has. The I/O thread checks each message, hands scripts to the main thread in the order they came, and sends their results back. Because it reads while a script runs, the process ends as soon as the channel closes, even in the middle of a script that never ends.
 
 Each script runs in one context, so each sees what the ones before it left there. Its result is what `JSON.stringify()` writes for it, nothing for a value that it writes nothing for, such as `undefined` or a function, and what was thrown, as `Uncaught TypeError: ...`, for a script that throws or a result that cannot be written as JSON, such as a BigInt. When V8 runs out of memory, the program ends with exit code 3, which the library reports as running out of memory.
 
