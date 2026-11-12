@@ -266,6 +266,8 @@ class CallerClient final : public RequestClient {
   ~CallerClient() override = default;
 
   // RequestClient:
+  // A caller's request has no CORS check: what it reads is the caller's own.
+  bool AllowsResponse(const RequestEvent& event) override { return true; }
   void OnResponseEvent(RequestEvent event) override {
     channel_->Push(std::move(event));
     ready_->Add(handle_, MITTO_READY_REQUEST);
@@ -508,6 +510,10 @@ class RequestJob final : public net::URLRequest::Delegate,
         return;
       }
     }
+    if (!client_->AllowsResponse(ResponseEvent(MITTO_EVENT_RESPONSE_STARTED))) {
+      Finish(net::ERR_FAILED);
+      return;
+    }
     PushResponseEvent(MITTO_EVENT_RESPONSE_STARTED);
 
     response_started_ = true;
@@ -611,6 +617,11 @@ class RequestJob final : public net::URLRequest::Delegate,
 
   // Pushes an event of `type` that describes the response so far.
   void PushResponseEvent(int32_t type) {
+    client_->OnResponseEvent(ResponseEvent(type));
+  }
+
+  // An event of `type` that describes the response so far.
+  RequestEvent ResponseEvent(int32_t type) const {
     RequestEvent event;
     event.type = type;
     event.status = request_->GetResponseCode();
@@ -621,7 +632,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.headers = HeaderLines(*request_->response_headers());
     event.status_text = request_->response_headers()->GetStatusText();
     event.redirected = request_->url_chain().size() > 1;
-    client_->OnResponseEvent(std::move(event));
+    return event;
   }
 
   // Goes on from a redirect that OnReceivedRedirect() deferred. This may delete
@@ -647,6 +658,11 @@ class RequestJob final : public net::URLRequest::Delegate,
     // to send again.
     if (body_stream_ && request_->GetResponseCode() != net::HTTP_SEE_OTHER) {
       Finish(net::ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED);
+      return;
+    }
+    if (!client_->AllowsResponse(
+            ResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED))) {
+      Finish(net::ERR_FAILED);
       return;
     }
     PushResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED);

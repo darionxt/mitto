@@ -243,26 +243,28 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageResponseStarted, std::string> ReadResponseStarted(
     std::string_view bytes) {
-  if (bytes.size() < 21) {
+  if (bytes.size() < 22) {
     return base::unexpected(WrongSize("response", bytes.size()));
   }
   PageResponseStarted response;
   response.number = DecodeUint64(bytes.substr(0, 8));
   response.status = DecodeInt32(bytes.substr(8, 4));
   const uint8_t redirected = static_cast<uint8_t>(bytes[12]);
+  const uint8_t cors = static_cast<uint8_t>(bytes[13]);
   response.navigation_start =
-      static_cast<int64_t>(DecodeUint64(bytes.substr(13, 8)));
-  bytes.remove_prefix(21);
+      static_cast<int64_t>(DecodeUint64(bytes.substr(14, 8)));
+  bytes.remove_prefix(22);
   std::string_view url;
   std::string_view status_text;
-  if (response.status < 0 || redirected > 1 || !TakeSized(bytes, url) ||
-      !TakeSized(bytes, status_text)) {
+  if (response.status < 0 || redirected > 1 || cors > 1 ||
+      !TakeSized(bytes, url) || !TakeSized(bytes, status_text)) {
     return base::unexpected("a response that does not hold what it says");
   }
   if (!IsText(url)) {
     return base::unexpected("a response whose URL is not UTF-8");
   }
   response.redirected = redirected == 1;
+  response.cors = cors == 1;
   response.url = std::string(url);
   response.status_text = std::string(status_text);
   response.headers = std::string(bytes);
@@ -422,11 +424,12 @@ std::string EncodeLoaded() {
 
 std::string EncodeResponseStarted(const PageResponseStarted& response) {
   const char redirected = response.redirected ? 1 : 0;
+  const char cors = response.cors ? 1 : 0;
   return EncodeFrame(
       PageMessage::kResponseStarted,
       base::StrCat(
           {EncodeUint64(response.number), EncodeInt32(response.status),
-           std::string_view(&redirected, 1),
+           std::string_view(&redirected, 1), std::string_view(&cors, 1),
            EncodeUint64(static_cast<uint64_t>(response.navigation_start)),
            EncodeUint32(static_cast<uint32_t>(response.url.size())),
            response.url,

@@ -14,7 +14,6 @@
 #include "mitto/dom/headers.h"
 #include "mitto/dom/response.h"
 #include "mitto/header_rules.h"
-#include "url/gurl.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
@@ -51,12 +50,10 @@ std::set<std::string> ExposedHeaderNames(const Headers& headers) {
 
 FetchLoader::FetchLoader(v8::Isolate* isolate,
                          v8::Local<v8::Context> context,
-                         v8::Local<v8::Promise::Resolver> resolver,
-                         url::Origin document_origin)
+                         v8::Local<v8::Promise::Resolver> resolver)
     : isolate_(isolate),
       context_(isolate, context),
-      resolver_(isolate, resolver),
-      document_origin_(std::move(document_origin)) {}
+      resolver_(isolate, resolver) {}
 
 FetchLoader::~FetchLoader() {
   if (Response* const response = response_.Get()) {
@@ -72,8 +69,7 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
   const v8::Context::Scope context_scope(context);
-  const GURL url(head.url);
-  const bool cors = !document_origin_.IsSameOriginWith(url);
+  const bool cors = head.cors;
   // What a script reads of the response's header lines: no Set-Cookie, and of
   // a cross-origin response only the safelisted names and the exposed ones,
   // as Blink's FetchResponseData filters them.

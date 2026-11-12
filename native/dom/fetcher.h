@@ -42,6 +42,9 @@ struct FetchResponseHead {
   // In UTF-8.
   std::string url;
   bool redirected = false;
+  // Whether its tainting is cors, as the Session worked it out: a hop went to
+  // another origin than the document's.
+  bool cors = false;
   // Each "name: value" and a line feed, without Set-Cookie.
   std::string headers;
 };

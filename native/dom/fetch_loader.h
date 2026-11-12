@@ -15,7 +15,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/fetcher.h"
-#include "url/origin.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-promise.h"
@@ -26,12 +25,10 @@ class Response;
 
 class FetchLoader final : public FetchClient {
  public:
-  // `resolver` is fetch()'s, in `context`. A response from another origin
-  // than `document_origin` is a CORS response.
+  // `resolver` is fetch()'s, in `context`.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
-              v8::Local<v8::Promise::Resolver> resolver,
-              url::Origin document_origin);
+              v8::Local<v8::Promise::Resolver> resolver);
 
   FetchLoader(const FetchLoader&) = delete;
   FetchLoader& operator=(const FetchLoader&) = delete;
@@ -58,7 +55,6 @@ class FetchLoader final : public FetchClient {
   const raw_ptr<v8::Isolate> isolate_;
   v8::Global<v8::Context> context_;
   v8::Global<v8::Promise::Resolver> resolver_;
-  const url::Origin document_origin_;
   raw_ptr<FetchController> controller_ = nullptr;
   // The Response, which a script may let go until it reads the body.
   cppgc::WeakPersistent<Response> response_;

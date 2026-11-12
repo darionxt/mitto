@@ -151,8 +151,7 @@ v8::Local<v8::Promise> Window::Fetch(
   data.headers = request->GetHeaders()->ToLines();
   data.body = request->body();
   fetcher_->Fetch(std::move(data),
-                  std::make_unique<FetchLoader>(isolate, context, resolver,
-                                                document_origin));
+                  std::make_unique<FetchLoader>(isolate, context, resolver));
   return resolver->GetPromise();
 }
 

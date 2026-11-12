@@ -376,7 +376,7 @@ class PageHost::Request final : public RequestClient {
   Request(PageHost& host, uint64_t number, GURL url, bool is_fetch)
       : host_(host),
         number_(number),
-        url_(std::move(url)),
+        last_url_(std::move(url)),
         is_fetch_(is_fetch),
         start_(base::TimeTicks::Now()),
         buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kBodyWindow)) {}
@@ -393,9 +393,26 @@ class PageHost::Request final : public RequestClient {
 
   uint64_t number() const { return number_; }
   bool is_navigation() const { return number_ == kNavigationRequest; }
-  // The URL that the Page asked for, before any redirect.
-  const GURL& url() const { return url_; }
   bool is_fetch() const { return is_fetch_; }
+  bool cors() const { return cors_; }
+  bool tainted() const { return tainted_; }
+
+  // Follows the request to its response at `url`, a redirect's or the last,
+  // and works out its response tainting and its tainted origin as the Fetch
+  // Standard does, for a Page's document at `document_origin`.
+  void Reach(const GURL& url, const url::Origin& document_origin) {
+    // A redirect from a URL of another origin than the document's to one of
+    // yet another origin taints the request's origin.
+    if (!url::IsSameOriginWith(url, last_url_) &&
+        !document_origin.IsSameOriginWith(last_url_)) {
+      tainted_ = true;
+    }
+    // Once any hop goes to another origin, the response is a CORS one.
+    if (!document_origin.IsSameOriginWith(url)) {
+      cors_ = true;
+    }
+    last_url_ = url;
+  }
   base::TimeTicks start() const { return start_; }
   bool started() const { return started_; }
   uint32_t credit() const { return credit_; }
@@ -421,6 +438,9 @@ class PageHost::Request final : public RequestClient {
   }
 
   // RequestClient:
+  bool AllowsResponse(const RequestEvent& event) override {
+    return host_->AllowsResponse(*this, event);
+  }
   void OnResponseEvent(RequestEvent event) override {
     // The job follows each redirect, and the Page sees only where it ends.
     if (event.type == MITTO_EVENT_RESPONSE_STARTED) {
@@ -442,8 +462,11 @@ class PageHost::Request final : public RequestClient {
  private:
   const raw_ref<PageHost> host_;
   const uint64_t number_;
-  const GURL url_;
+  // The URL of the hop the request is at.
+  GURL last_url_;
   const bool is_fetch_;
+  bool cors_ = false;
+  bool tainted_ = false;
   const base::TimeTicks start_;
   const scoped_refptr<net::IOBufferWithSize> buffer_;
   base::WeakPtr<RunningRequest> job_;
@@ -638,20 +661,6 @@ void PageHost::OnCredit(const PageCredit& credit) {
 }
 
 void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
-  // A fetch whose response comes from another origin than the document's,
-  // also after a redirect from its own, passes the CORS check first.
-  if (request.is_fetch() &&
-      !url::Origin::Create(document_url_).IsSameOriginWith(GURL(event.url)) &&
-      !PassesCorsCheck(request, event)) {
-    // Chrome's network service fails it before the renderer sees any of it.
-    const uint64_t number = request.number();
-    requests_.erase(number);
-    PageResponseEnded ended;
-    ended.number = number;
-    ended.net_error = net::ERR_FAILED;
-    channel_->Send(EncodeResponseEnded(ended));
-    return;
-  }
   request.set_started();
   if (request.is_navigation()) {
     document_url_ = GURL(event.url);
@@ -666,6 +675,7 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     response.number = request.number();
     response.status = event.status;
     response.redirected = event.redirected;
+    response.cors = request.cors();
     if (request.is_navigation()) {
       response.navigation_start =
           (request.start() - base::TimeTicks()).InMicroseconds();
@@ -678,22 +688,25 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
   request.ReadIfCredited();
 }
 
-bool PageHost::PassesCorsCheck(const Request& request,
-                               const RequestEvent& event) const {
+bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
+  if (!request.is_fetch()) {
+    return true;
+  }
   // Upstream: services/network/cors/cors_url_loader.cc
   // Upstream: services/network/public/cpp/cors/cors.cc
-  // The Fetch Standard's CORS check for a request without credentials, as
-  // each of a Page's cross-origin fetches is: Access-Control-Allow-Origin
-  // names its origin or is "*". A redirect from one origin that is not the
-  // document's to another made the request's origin tainted, which the server
-  // saw as "null".
+  // The Fetch Standard's CORS check, on each response of a fetch whose
+  // response tainting is cors, redirects included, before the redirect is
+  // followed or any of the response goes to the Page, as Chrome's network
+  // service does it. A Page's cross-origin fetches have no credentials, so
+  // Access-Control-Allow-Origin has to name the request's origin, which a
+  // tainted one serializes as "null", or be "*".
   const url::Origin document_origin = url::Origin::Create(document_url_);
-  const url::Origin asked = url::Origin::Create(request.url());
-  const bool tainted = event.redirected &&
-                       !document_origin.IsSameOriginWith(asked) &&
-                       !asked.IsSameOriginWith(GURL(event.url));
+  request.Reach(GURL(event.url), document_origin);
+  if (!request.cors()) {
+    return true;
+  }
   const std::string origin =
-      tainted ? std::string("null") : document_origin.Serialize();
+      request.tainted() ? std::string("null") : document_origin.Serialize();
   std::optional<std::string> allowed;
   for (const std::string_view line : base::SplitStringPieceUsingSubstr(
            event.headers, "\r\n", base::KEEP_WHITESPACE,

@@ -3,8 +3,15 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "mitto/page_messages.h"
 
 namespace mitto {
+namespace {
+
+// net::ERR_FAILED, which the Page program, with no //net, cannot name.
+constexpr int kFailed = -2;
+
+}  // namespace
 
 // One fetch, between the Page's requests and the DOM's client.
 class PageFetcher::Request final : public PageRequests::Client,
@@ -29,6 +36,7 @@ class PageFetcher::Request final : public PageRequests::Client,
     head.status_text = response.status_text;
     head.url = response.url;
     head.redirected = response.redirected;
+    head.cors = response.cors;
     head.headers = response.headers;
     client_->OnResponseStarted(head);
   }
@@ -70,6 +78,14 @@ void PageFetcher::Fetch(FetchRequestData data,
   auto request = std::make_unique<Request>(*this, std::move(client));
   Request& started = *request;
   started.client().OnStarted(started);
+  // A request has to fit in one frame, so a body that leaves it no room, of
+  // nearly 16 MiB, fails as a request that cannot be sent does: a Known Gap.
+  const size_t size = 22 + data.url.size() + data.method.size() +
+                      data.headers.size() + (data.body ? data.body->size() : 0);
+  if (size > kMaxPayloadSize) {
+    started.client().OnResponseEnded(kFailed);
+    return;
+  }
   PageRequest page_request;
   page_request.kind = PageRequestKind::kFetch;
   page_request.url = std::move(data.url);

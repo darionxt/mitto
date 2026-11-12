@@ -497,12 +497,13 @@ def _respond(
     *,
     status_text: str = "OK",
     redirected: bool = False,
+    cors: bool = False,
     headers: str = "",
 ) -> None:
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
-        struct.pack("<QiBq", number, status, int(redirected), 0)
+        struct.pack("<QiBBq", number, status, int(redirected), int(cors), 0)
         + _sized(url.encode())
         + _sized(status_text.encode("latin-1"))
         + lines,
@@ -669,6 +670,43 @@ def test_a_fetch_that_the_session_fails_rejects_and_a_failed_body_rejects_its_re
     assert session.receive()[0] == _CREDIT
     _end(session, 2, -100)
     assert session.evaluated() == (2, False, '"TypeError: Failed to fetch"')
+    assert session.close() == 0
+
+
+def test_a_fetch_whose_body_cannot_fit_in_a_frame_rejects_and_the_page_goes_on(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    script = (
+        b"fetch('/upload', {method: 'POST', body: new Uint8Array(16 * 1024 * 1024)})"
+        b".then(() => 'sent', error => String(error))"
+    )
+
+    assert session.evaluate(script.decode()) == (False, '"TypeError: Failed to fetch"')
+    assert session.evaluate("1 + 1", call=2) == (False, "2")
+    assert session.close() == 0
+
+
+def test_a_cors_response_shows_only_the_header_names_that_cors_lets_through(session: _Session) -> None:
+    # The Session says the response's tainting is cors, which a redirect back to the document's origin keeps.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1) + b"fetch('/back').then(r => [r.type, r.headers.get('x-hidden'), r.headers.get('x-shown'),"
+        b" r.headers.get('content-type')])",
+    )
+    assert session.receive()[0] == _REQUEST
+    _respond(
+        session,
+        1,
+        _DOCUMENT_URL,
+        "text/plain",
+        redirected=True,
+        cors=True,
+        headers="X-Hidden: 1\nX-Shown: 2\nAccess-Control-Expose-Headers: X-Shown\n",
+    )
+    _end(session, 1)
+    assert session.evaluated() == (1, False, '["cors",null,"2","text/plain"]')
     assert session.close() == 0
 
 

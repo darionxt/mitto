@@ -253,8 +253,8 @@ class PageHost final : public PageChannel::Delegate {
   void OnCancel(uint64_t number);
 
   // Starts a request numbered `number`, whose client is a Request that
-  // `requests_` holds. The response of a fetch from another origin has to pass
-  // the CORS check before the Page sees any of it.
+  // `requests_` holds. Each response of a fetch from another origin, redirects
+  // included, has to pass the CORS check before the request goes on.
   void StartRequest(uint64_t number,
                     GURL url,
                     net::HttpRequestHeaders headers,
@@ -264,8 +264,9 @@ class PageHost final : public PageChannel::Delegate {
 
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, const RequestEvent& event);
-  // Whether the response of a fetch from another origin may reach the Page.
-  bool PassesCorsCheck(const Request& request, const RequestEvent& event) const;
+  // Whether a response or redirect of `request` may go on: not one of a fetch
+  // whose response tainting is cors that fails the CORS check.
+  bool AllowsResponse(Request& request, const RequestEvent& event);
   void OnBodyRead(Request& request, size_t size);
   // This deletes `request`.
   void OnRequestFinished(Request& request, int net_error);

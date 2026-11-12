@@ -226,6 +226,10 @@ struct PageResponseStarted {
   int32_t status = 0;
   // Whether the request followed a redirect to get here.
   bool redirected = false;
+  // Whether the response's tainting is cors: a hop of the request went to
+  // another origin than the document's, so the page's scripts read only the
+  // header names that CORS lets them.
+  bool cors = false;
   // For the navigation, when it started, as base::TimeTicks holds it, which
   // every process of the machine shares: what the document's
   // performance.timeOrigin counts from. 0 for the Page's own requests.

@@ -718,3 +718,30 @@ def test_a_fetch_that_a_redirect_takes_to_another_origin_passes_the_cors_check_t
             )
 
     assert result == [["cors", True, "open"], "TypeError: Failed to fetch"]
+
+
+def test_each_hop_of_a_cross_origin_fetch_passes_the_cors_check_before_it_is_followed(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # A redirect that fails the check is not followed. One back to the document's origin keeps the response a CORS one,
+    # whose origin the redirect from another origin tainted, so it needs Access-Control-Allow-Origin too.
+    with _PageServer() as other:
+        allow = [("Access-Control-Allow-Origin", "*")]
+        server.routes["/allowed"] = _Route(b"allowed", headers=[("Content-Type", "text/plain"), *allow])
+        server.routes["/plain"] = _Route(b"plain", headers=[("Content-Type", "text/plain")])
+        other.routes["/closed-hop"] = _Route(status=302, headers=[("Location", server.url("/allowed"))])
+        other.routes["/to-allowed"] = _Route(status=302, headers=[("Location", server.url("/allowed")), *allow])
+        other.routes["/to-plain"] = _Route(status=302, headers=[("Location", server.url("/plain")), *allow])
+        url = server.page("/", "<p>hops</p>")
+
+        with _open_page(session, url) as page:
+            result = page.evaluate(
+                f"Promise.all(['{other.url('/closed-hop')}', '{other.url('/to-allowed')}', '{other.url('/to-plain')}']"
+                ".map(target => fetch(target).then(async response => [response.type, await response.text()],"
+                " error => String(error))))",
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+    assert result == ["TypeError: Failed to fetch", ["cors", "allowed"], "TypeError: Failed to fetch"]
+    # The redirect that failed the check was not followed.
+    assert len(server.headers_of("/allowed")) == 1
