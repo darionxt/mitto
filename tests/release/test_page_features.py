@@ -461,3 +461,17 @@ def test_the_content_layers_table_is_compared_with_the_engine_releases() -> None
     review = persona_features(changed, ENGINE_SOURCE, SEED, (), baseline_seed=SEED).review
 
     assert f"{CONTENT_RUNTIME_FEATURES} differs from the Engine Release's" in "\n".join(review)
+
+
+def test_a_v8_flag_whose_parameters_most_installations_do_not_share_goes_to_review() -> None:
+    switch = FeatureSwitch(
+        "V8Flag_sqrt_allocation_limits", True, "Heap", "A+B", 0.6, {"sqrt_allocation_limits_factor": "80"}, 0.3
+    )
+
+    result = persona_features(ENGINE_SOURCE, ENGINE_SOURCE, SEED, [switch], baseline_seed=SEED)
+
+    assert result.page.v8_flags == ()
+    assert result.review == (
+        "The seed turns V8Flag_sqrt_allocation_limits on for 60% of installations in Heap, but no parameters for more"
+        " than half of them, so the Page sets no flag for it",
+    )

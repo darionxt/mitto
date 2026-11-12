@@ -93,7 +93,9 @@ def test_a_study_with_one_group_for_everyone_switches_its_features() -> None:
     data = seed(study("Deprecation", group("Disabled", 100, disable=("Fledge",)), filter=windows_stable()))
 
     assert switches_of(data) == [
-        FeatureSwitch(feature="Fledge", enabled=False, study="Deprecation", group="Disabled", share=1.0)
+        FeatureSwitch(
+            feature="Fledge", enabled=False, study="Deprecation", group="Disabled", share=1.0, params_share=1.0
+        )
     ]
 
 
@@ -297,3 +299,33 @@ def test_an_answer_that_is_not_a_seed_is_a_web_error() -> None:
 )
 def test_a_serial_number_names_the_version_of_its_seed(serial_number: str, version: str | None) -> None:
     assert serial_version(serial_number) == version
+
+
+def test_groups_that_turn_a_feature_on_with_other_parameters_say_how_many_share_them() -> None:
+    data = seed(
+        study(
+            "Heap",
+            group("Small", 30, enable=("V8Flag_max_old_space_size",), V8FlagParam="128"),
+            group("Large", 30, enable=("V8Flag_max_old_space_size",), V8FlagParam="4096"),
+            group("Default", 40),
+            filter=windows_stable(),
+        )
+    )
+
+    [switch] = switches_of(data)
+    assert (switch.share, switch.params_share, switch.params_agreed) == (0.6, 0.3, False)
+
+
+def test_groups_that_agree_on_the_parameters_count_together() -> None:
+    data = seed(
+        study(
+            "Limits",
+            group("A", 30, enable=("V8Flag_limits",), factor="80"),
+            group("B", 30, enable=("V8Flag_limits",), factor="80"),
+            group("Default", 40),
+            filter=windows_stable(),
+        )
+    )
+
+    [switch] = switches_of(data)
+    assert (dict(switch.params), switch.params_share, switch.params_agreed) == ({"factor": "80"}, 0.6, True)

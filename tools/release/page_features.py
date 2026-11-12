@@ -460,7 +460,16 @@ def _v8_flags(
                 f"V8 of Chrome {release.build} ships {flag}, which the Engine Release's V8 has"
                 f" {engine.v8_features.get(flag, 'not')} and cannot turn on: a Known Gap if a page can see it"
             )
-    for flag in v8_flags(list(switches)):
+    agreed: list[FeatureSwitch] = []
+    for switch in switches:
+        if switch.feature.startswith(_V8_FLAG_PREFIX) and switch.enabled and not switch.params_agreed:
+            review.append(
+                f"The seed turns {switch.feature} on for {switch.share:.0%} of installations in {switch.study}, but no"
+                " parameters for more than half of them, so the Page sets no flag for it"
+            )
+        else:
+            agreed.append(switch)
+    for flag in v8_flags(agreed):
         # gin writes --NAME, --NAME=VALUE or --no-NAME, and V8 reads - and _ in a name alike.
         key = flag.removeprefix("--").split("=", 1)[0].removeprefix("no-").replace("-", "_")
         if key not in engine.v8_flags:

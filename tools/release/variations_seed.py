@@ -238,7 +238,10 @@ class FeatureSwitch:
         study: The study that switches it.
         group: The group that most installations draw, or the groups that switch it alike, joined with "+".
         share: The share of installations that have it switched so, from 0 to 1.
-        params: The group's parameters, for a feature that is on.
+        params: For a feature that is on, the parameters that the most installations of those groups have.
+        params_share: The share of installations that have it switched so with exactly those parameters, which is
+            share when its groups agree on them, or else less, down to half of all installations or below when no
+            parameters are what most installations have.
     """
 
     feature: str
@@ -247,6 +250,12 @@ class FeatureSwitch:
     group: str
     share: float
     params: Mapping[str, str] = field(default_factory=dict[str, str])
+    params_share: float | None = None
+
+    @property
+    def params_agreed(self) -> bool:
+        """Whether more than half of all installations have this feature switched so with exactly these parameters."""
+        return (self.share if self.params_share is None else self.params_share) > 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -438,7 +447,12 @@ def _study_switches(study: Study, share: float) -> list[FeatureSwitch]:
         feature_share = share * sum(experiment.weight for experiment in experiments) / total
         if feature_share <= 0.5:
             continue
-        largest = max(experiments, key=lambda experiment: experiment.weight)
+        # Groups that turn the feature on may give it other parameters, so those of the most installations count.
+        weights: dict[tuple[tuple[str, str], ...], int] = {}
+        for experiment in experiments:
+            config = tuple(sorted(experiment.params.items())) if enabled else ()
+            weights[config] = weights.get(config, 0) + experiment.weight
+        params, weight = max(weights.items(), key=lambda item: item[1])
         switches.append(
             FeatureSwitch(
                 feature=feature,
@@ -446,7 +460,8 @@ def _study_switches(study: Study, share: float) -> list[FeatureSwitch]:
                 study=study.name,
                 group="+".join(experiment.name for experiment in experiments),
                 share=feature_share,
-                params=dict(largest.params) if enabled else {},
+                params=dict(params),
+                params_share=share * weight / total,
             )
         )
     return switches

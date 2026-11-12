@@ -145,6 +145,7 @@ Put the report into the run's pull request, and decide on each item under "To re
 - **A V8 feature that an older Chrome Release shipped and the Engine Release's V8 cannot turn on.** The same, if a page can see it.
 - **A state that the Engine Release's dependencies between features cannot give.** Turn on or off the feature that it depends on or that implies it, in the script, if that gives the older release's state, or write it down as a Known Gap.
 - **A file that sets runtime-enabled features or V8's flags and differs from the Engine Release's**: `content/child/runtime_features.cc`, `gin/gin_features.cc`, `gin/v8_initializer.cc` or `content/renderer/render_process_impl.cc`. Read the diff between the two tags. An entry that turns a feature on from the default of a `base::Feature`, a default that moved or a flag that one of them sets for every renderer, which a page can see, goes into the script.
+- **A `V8Flag_` feature that the seed turns on with parameters that no more than half of all installations share.** The Page sets no flag for it, since its groups disagree on the value. Whether a Page needs one is a decision for the milestone's plan.
 - **A study of the seed whose filter follows the machine**, such as Windows' version. Its features stay as they are by default, and whether the Machine should decide them is a decision for the milestone's plan.
 
 Write the counts of each Persona's lists, what the seed switches and the Known Gaps under a new record in persona.md, as for the Chrome Releases there.
