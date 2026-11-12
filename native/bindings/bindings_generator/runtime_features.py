@@ -15,8 +15,8 @@ here from runtime_enabled_features.json5 as Blink's build and Chrome's startup w
 What Chrome's own code turns on beside the file, field trials and switches are not counted here, and M7's Baselines
 say where they differ. The exceptions are a feature that Chrome sets from the machine, such as whether it has a touch
 screen: a Page starts with the value of a desktop without one, until the Machine decides it (M7); and those that
-Chrome's content layer sets from a base::Feature of another name that is on by default, as far as the interfaces that
-the Runtime implements show them.
+Chrome's content layer or Chrome itself sets when a renderer starts, which the Parity Checks of the Script Fingerprint
+show.
 """
 
 # Upstream: third_party/blink/renderer/build/scripts/make_runtime_features.py
@@ -26,6 +26,9 @@ the Runtime implements show them.
 # Upstream: third_party/blink/renderer/core/exported/web_view_impl.cc
 # Upstream: content/child/runtime_features.cc
 # Upstream: content/browser/web_contents/web_contents_impl.cc
+# Upstream: chrome/renderer/chrome_content_renderer_client.cc
+# Upstream: chrome/browser/chrome_content_browser_client.cc
+# Upstream: services/device/public/cpp/device_features.cc
 
 import dataclasses
 from collections.abc import Mapping, Sequence
@@ -43,17 +46,38 @@ PLATFORM = "Win"
 # detection from whether the machine has a touch screen.
 MACHINE_DECIDED = {"TouchEventFeatureDetection": False}
 
-# The features that Chrome's content layer turns on when a renderer starts, from a base::Feature of another name that is
-# on by default, which runtime_enabled_features.json5 does not say:
+# The features that Chrome's content layer, or Chrome itself, turns on when a renderer starts, which
+# runtime_enabled_features.json5 does not say:
 # - SetRuntimeFeaturesFromChromiumFeatures() copies network::features::kLocalNetworkAccessChecks, on by default in
 #   services/network/public/cpp/features.cc, into LocalNetworkAccessPermissionPolicy, which puts targetAddressSpace on
-#   Request, and features::kServiceWorkerPaymentApps, on by default in content/public/common/content_features.cc, into
-#   PaymentApp, which exposes PaymentManager.
+#   Request, features::kServiceWorkerPaymentApps, on by default in content/public/common/content_features.cc, into
+#   PaymentApp, which exposes PaymentManager, and device::features::kSerialPortConnected, on by default but on Android in
+#   services/device/public/cpp/device_features.cc, into SerialPortConnected, which puts connected on SerialPort.
 # - WebContentsImpl::ComputeWebPreferences() sets payment_request_enabled from features::kWebPayments, on by default in
 #   content/public/common/content_features.cc, and WebViewImpl::ApplyWebPreferences() copies it into PaymentRequest,
 #   which exposes PaymentRequest and the interfaces that go with it.
-# Each release's listing shows where a new one appears, and a comparison of a Page's global object with Chrome's.
-CONTENT_ENABLED = frozenset({"LocalNetworkAccessPermissionPolicy", "PaymentApp", "PaymentRequest"})
+# - ChromeContentBrowserClient::OverrideWebPreferences() sets translate_service_available from
+#   TranslateService::IsAvailable(), true with Chrome's default preferences, and WebViewImpl::ApplyWebPreferences()
+#   copies it into TranslateService, on which HrefTranslate depends, which puts hrefTranslate on HTMLAnchorElement.
+# - ChromeContentRendererClient::SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() turns on WebShare on Windows,
+#   which puts share() and canShare() on Navigator.
+# Each release's listing shows where a new one appears, and the Parity Checks of the Script Fingerprint where a Page and
+# Chrome differ.
+CONTENT_ENABLED = frozenset(
+    {
+        "LocalNetworkAccessPermissionPolicy",
+        "PaymentApp",
+        "PaymentRequest",
+        "SerialPortConnected",
+        "TranslateService",
+        "WebShare",
+    }
+)
+
+# The features that Chrome's content layer turns off when a renderer starts, whatever their status: at the end of
+# SetRuntimeFeaturesFromCommandLine(), LegacyAbstractRange is the inverse of OpaqueRange, which is stable in Chrome 155
+# to 157, so that AbstractRange.prototype lacks startContainer and its other containers.
+CONTENT_DISABLED = frozenset({"LegacyAbstractRange"})
 
 # The keys of a feature that the generator reads or knows to leave aside, with why.
 _KEYS = {
@@ -119,7 +143,7 @@ def read_features(entries: Sequence[Mapping[str, Any]]) -> list[Feature]:
         copies_default = entry.get("copied_from_base_feature_if", "enabled_or_overridden") == "enabled_or_overridden"
         if base_feature != "none" and copies_default and entry.get("base_feature_status", "") == "enabled":
             stable = True
-        stable = MACHINE_DECIDED.get(name, stable or name in CONTENT_ENABLED)
+        stable = MACHINE_DECIDED.get(name, (stable or name in CONTENT_ENABLED) and name not in CONTENT_DISABLED)
         features.append(
             Feature(
                 name=name,
