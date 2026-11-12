@@ -301,7 +301,7 @@ What a page reads of the browser and the machine is what its Session sends, work
 | `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` | The window's size and place |
 | `devicePixelRatio` | The display's scale |
 
-The event handler attributes of `Screen`, `ScreenOrientation` and `NetworkInformation` are Known Gaps, and none of these values changes while a Page runs, so no `change` event comes. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
+None of these values changes while a Page runs, so no `change` event comes, and the `onchange` handlers of `Screen`, `ScreenOrientation` and `NetworkInformation` are kept but never run. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
 
 `mitto::NewPageContext()` makes such a context, and the Page program makes one for about:blank and one for each document that its Session loads. The window's timers, `queueMicrotask()`, `performance`, `fetch()` and `matchMedia()` have their behaviour, as [the event loop](#the-event-loop), [fetch()](#fetch) and [Media queries](#media-queries) say.
 
@@ -341,8 +341,8 @@ Known Gaps of `fetch()` in M6: `RequestInit`'s members beyond `method`, `headers
 | `DocumentType` | Its name and identifiers, and `ChildNode`'s members |
 | `Window` | `window`, `self`, `document`, `performance`, `setTimeout()`, `setInterval()`, `clearTimeout()`, `clearInterval()`, `queueMicrotask()`, `fetch()`, `navigator`, `clientInformation`, `screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` and `devicePixelRatio`, as [The window](#the-window) says and `matchMedia()` |
 | `Navigator` | What [The window](#the-window) lists. Its other members, such as `plugins`, `clipboard` and `getGamepads()`, are Known Gaps |
-| `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member but the event handler attributes, as [The window](#the-window) says |
-| `MediaQueryList`, `MediaQueryListEvent` | All but `onchange`, as [Media queries](#media-queries) says |
+| `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member, as [The window](#the-window) says |
+| `MediaQueryList`, `MediaQueryListEvent` | Every member, as [Media queries](#media-queries) says |
 | `Performance` | `now()` and `timeOrigin`, coarsened as Chrome's are. Its timelines, marks and measures are Known Gaps |
 | `Headers` | `new Headers()` from pairs or a record, `append()`, `set()`, `delete()`, `get()`, `has()` and `getSetCookie()`, with Chrome's checks and guards. Iterating over it is a Known Gap |
 | `Request` | `new Request()`, `method`, `url` and `headers` |
@@ -376,7 +376,6 @@ A Machine does not change while a Page runs, so no `change` event is ever fired,
 
 Known Gaps of media queries:
 
-- `onchange`, until the bindings give event handler attributes their behaviour.
 - The math functions other than `calc()`, `min()`, `max()` and `clamp()`, such as `round()` or `sin()`, and a product or quotient of two dimensions, which Blink's typed arithmetic takes. A value with one does not parse, so its media feature is unknown, where Chrome computes it: `(width: round(10px, 3px))` is written back as given and never matches, where Chrome writes `(width: calc(9px))`.
 - The units of the root element's font beyond `em` and `rem`: `ex`, `ch`, `ic`, `cap` and `lh` and their root forms take Blink's sizes for a document with no font data until the Runtime has fonts (roadmap, M9).
 - `(fallback: none)`, a feature of container queries that Blink parses in a media query too and whose evaluation then stops Chrome's renderer, is unknown.

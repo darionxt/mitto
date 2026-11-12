@@ -6,9 +6,8 @@
 // change event is ever fired, as none would be in Chrome on that machine. The
 // listeners are kept as an EventTarget keeps them. Blink also keeps a list
 // with change listeners alive while its document is, which matters only to a
-// WeakRef; here the collector takes it once nothing else holds it. onchange
-// is a Known Gap until the bindings give event handler attributes their
-// behaviour.
+// WeakRef; here the collector takes it once nothing else holds it. The
+// bindings run onchange, as they run every event handler attribute.
 //
 // Upstream: third_party/blink/renderer/core/css/media_query_list.h
 // Upstream: third_party/blink/renderer/core/css/media_query_list.cc
