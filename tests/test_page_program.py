@@ -131,7 +131,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 6
+_PROTOCOL_VERSION = 7
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -190,7 +190,14 @@ _DEFAULT_START: dict[str, object] = {
     },
     # Which the library adds: what about:blank's navigator.connection gives.
     "connection": {"rtt": 100, "downlink": 2.65},
+    "features": {"enable_blink_features": [], "disable_blink_features": [], "v8_flags": []},
 }
+
+
+def _with_features(**lists: list[str]) -> dict[str, object]:
+    """Return the default start with each of `lists` in place in its features."""
+    features: dict[str, list[str]] = {"enable_blink_features": [], "disable_blink_features": [], "v8_flags": []}
+    return {**_DEFAULT_START, "features": {**features, **lists}}
 
 
 class _Session:
@@ -446,6 +453,28 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
     assert session.refusal() == 'the time zone "Mars/Olympus_Mons" is unknown'
 
 
+def test_a_page_starts_with_the_features_and_v8_flags_of_its_start(session: _Session) -> None:
+    session.start(
+        _with_features(
+            enable_blink_features=["HasUAVisualTransition", "CSSTextDecorationSkipSpaces"],
+            disable_blink_features=["NewHTMLSettingMethods", "HasUAVisualTransition"],
+            v8_flags=["--no-js_iterator_join", "--sqrt_allocation_limits"],
+        )
+    )
+    script = "['afterHTML' in CharacterData.prototype, 'hasUAVisualTransition' in PopStateEvent.prototype,"
+    script += " 'join' in Iterator.prototype]"
+
+    assert session.evaluate(script) == (False, "[false,false,false]")
+
+
+def test_a_page_with_no_features_in_its_start_has_the_engine_releases(session: _Session) -> None:
+    session.start()
+    script = "['afterHTML' in CharacterData.prototype, 'hasUAVisualTransition' in PopStateEvent.prototype,"
+    script += " 'join' in Iterator.prototype]"
+
+    assert session.evaluate(script) == (False, "[true,true,true]")
+
+
 @pytest.mark.parametrize(
     ("start", "why"),
     [
@@ -482,6 +511,17 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
             {**_DEFAULT_START, "connection": {"rtt": 125, "downlink": 2.65}},
             'a start whose "connection" is not an rtt and a downlink that Chrome gives',
         ),
+        (
+            {name: value for name, value in _DEFAULT_START.items() if name != "features"},
+            'a start whose "features" is not an object',
+        ),
+        (_with_features(js_flags=[]), 'a start whose features have the unknown key "js_flags"'),
+        (
+            _with_features(enable_blink_features=["A,B"]),
+            "a start whose features' \"enable_blink_features\" holds what is not a feature's name",
+        ),
+        (_with_features(v8_flags=["--a b"]), 'a start whose features\' "v8_flags" holds what is not a V8 flag'),
+        (_with_features(disable_blink_features=["NoSuchFeature"]), "no runtime-enabled feature is named NoSuchFeature"),
     ],
     ids=str,
 )
@@ -557,6 +597,26 @@ def test_a_session_argument_that_names_no_channel_is_wrong(program: Path, argume
 
     assert result.returncode == _WRONG_ARGUMENTS
     assert result.stderr == "--session= names no channel and process\n"
+
+
+@pytest.mark.parametrize(
+    "option", ["--enable-blink-features=HasUAVisualTransition", "--disable-blink-features=", "--html=<p>"]
+)
+@pytest.mark.skipif(sys.platform == "win32", reason="the channel is a named pipe on Windows")
+def test_a_sessions_page_takes_its_features_and_document_from_the_session(program: Path, option: str) -> None:
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        result = subprocess.run(
+            [program, option, f"--session={theirs.fileno()},{os.getpid()}"],
+            pass_fds=[theirs.fileno()],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=_TIMEOUT_SECONDS,
+            check=False,
+        )
+
+    assert result.returncode == _WRONG_ARGUMENTS
+    assert result.stderr.startswith("usage: ")
 
 
 # The messages of a Page's requests, in native/page_messages.h.

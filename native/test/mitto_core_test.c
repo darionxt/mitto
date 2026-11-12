@@ -807,7 +807,7 @@ static int Cookies(const char* url) {
 
 // What a Page starts with, as a Session's Machine and Persona say it.
 static const char kPageOptions[] =
-    "{\"version\": 3, \"start\": {\"time_zone\": \"America/New_York\", "
+    "{\"version\": 4, \"start\": {\"time_zone\": \"America/New_York\", "
     "\"locale\": \"en-US\", \"processors\": 8, \"touch_points\": 0, "
     "\"work_area_x\": 0, \"work_area_y\": 0, \"work_area_width\": 1920, "
     "\"work_area_height\": 1032, \"window_state\": \"maximised\", "
@@ -824,7 +824,9 @@ static const char kPageOptions[] =
     "\"mobile\": false, \"platform\": \"Windows\", "
     "\"platform_version\": \"19.0.0\", \"architecture\": \"x86\", "
     "\"bitness\": \"64\", \"model\": \"\", \"ua_full_version\": "
-    "\"157.0.8103.39\", \"wow64\": false, \"form_factors\": []}}}}";
+    "\"157.0.8103.39\", \"wow64\": false, \"form_factors\": []}}, "
+    "\"features\": {\"enable_blink_features\": [], "
+    "\"disable_blink_features\": [], \"v8_flags\": []}}}";
 
 static MittoPage* g_page;
 static int64_t g_page_process;
