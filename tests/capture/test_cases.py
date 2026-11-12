@@ -40,6 +40,7 @@ from tools.capture import (
 from tools.capture.cases import HINTS_ASKED, HOST_NAMES, PROXY_CONNECT, START_PATH, respond_on
 from tools.capture.page import KIND_PATHS, RequestKind
 from tools.capture.recording import ConnectionRecord, Json
+from tools.capture.script_page import RECORD_PATH, SCRIPT_RUNS
 
 _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
@@ -689,8 +690,18 @@ def _go_through_run(entry: dict[str, str], proxy_port: int) -> None:
             send_cases(Http2Client(sock) if run.route == HTTP2 else _Http1Client(sock), run, authority)
 
 
+def _post_a_record(entry: dict[str, str]) -> None:
+    """Do what the page of a Script Fingerprint does once the probe has finished: post a record."""
+    address = urlsplit(entry["url"])
+    assert address.hostname is not None
+    assert address.port is not None
+    record = b'{"format": 1, "objects": [], "values": {}, "reports": []}'
+    with connect(address.port, offered=("http/1.1",), host=address.hostname) as sock:
+        http1_exchange(sock, "POST", RECORD_PATH, authority=address.netloc, body=record)
+
+
 def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> None:
-    http1_port, http2_port, plain_http_port, proxy_port = free_tcp_ports(4)
+    http1_port, http2_port, plain_http_port, proxy_port, script_port = free_tcp_ports(5)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind(("127.0.0.1", 0))
         http3_port = sock.getsockname()[1]
@@ -710,6 +721,8 @@ def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> Non
         str(plain_http_port),
         "--proxy-port",
         str(proxy_port),
+        "--script-port",
+        str(script_port),
         "--click-in",
         str(tmp_path / "no chrome here"),
     ]
@@ -725,11 +738,16 @@ def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> Non
         time.sleep(0.05)
         entries = json.loads(runs_file.read_text(encoding="utf-8"))["runs"]
         for entry in entries:
-            _go_through_run(entry, proxy_port)
+            if entry["fingerprint"] == "script":
+                _post_a_record(entry)
+            else:
+                _go_through_run(entry, proxy_port)
         output = process.communicate(timeout=30.0)[0]
         assert process.returncode == 0, output
 
-    assert [entry["name"] for entry in entries] == [run.name for run in RUNS]
+    # The Script Fingerprint first, from a user data directory that has only had its seed.
+    assert [entry["name"] for entry in entries] == [run.name for run in (*SCRIPT_RUNS, *RUNS)]
+    assert [entry["fingerprint"] for entry in entries] == ["script"] + ["wire"] * len(RUNS)
     assert all(entry["flags"] for entry in entries)
     assert all(entry["label"] for entry in entries)
     assert '--host-resolver-rules="MAP capture.test 127.0.0.1,' in output

@@ -11,6 +11,7 @@ from tools.release.chrome_releases import security_fixes
 from tools.release.drop import REPOSITORY, DropError, drop_oldest
 from tools.release.machine_sources import refresh_table
 from tools.release.machines import STATISTICS_PATH, TABLE_PATH, MachineTableError, read_statistics, write_table
+from tools.release.page_features import PageFeaturesError, write_page_features
 from tools.release.patch_builds import build_changes, builds_after, patch_builds_report
 from tools.release.persona import PERSONAS_DIRECTORY, PersonaDataError, write_persona
 from tools.release.publish import PublishError, dry_run_version, release_notes, tag_version
@@ -45,6 +46,12 @@ def _patch_builds(args: argparse.Namespace) -> int:
 def _persona(args: argparse.Namespace) -> int:
     path = write_persona(args.release, args.baselines, args.personas)
     print(f"Wrote {path} from the Baselines of Chrome {args.release}.")
+    return 0
+
+
+def _page_features(args: argparse.Namespace) -> int:
+    build = ENGINE_BUILD_PATH.read_text(encoding="utf-8").strip()
+    print(write_page_features(build, date.today(), fetch_from_the_network, args.personas))
     return 0
 
 
@@ -129,6 +136,18 @@ def main() -> int:
     )
     persona.set_defaults(run=_persona)
 
+    page_features = commands.add_parser(
+        "page-features",
+        help=(
+            "work out from each Chrome Release's tag and today's variations seed what a Page of its Persona turns on"
+            " and off, write it into the Personas' files and print it for review"
+        ),
+    )
+    page_features.add_argument(
+        "--personas", type=Path, default=PERSONAS_DIRECTORY, help="directory of the Personas (default: %(default)s)"
+    )
+    page_features.set_defaults(run=_page_features)
+
     machines = commands.add_parser(
         "machines",
         help=(
@@ -182,6 +201,7 @@ def main() -> int:
         ExportError,
         KnownGapsError,
         MachineTableError,
+        PageFeaturesError,
         PersonaDataError,
         PublishError,
         WebError,
