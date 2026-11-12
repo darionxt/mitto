@@ -1,6 +1,6 @@
 # Parity Checks
 
-A **Parity Check** compares what the public API sends through the native core with what real Chrome sent, as recorded in a **Baseline**. Everything milestones M1 and M2 do is measured with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
+A **Parity Check** compares what the public API sends through the native core with what real Chrome sent, as recorded in a **Baseline**. Everything milestones M1 and M2 do is measured with them, and what a page sees in a **Page**, its **Script Fingerprint**, with [those of M7](#the-script-fingerprint). Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md).
 
 ## Run them
 
@@ -28,11 +28,13 @@ The native core of the **Engine Release** presents every Chrome Release in turn,
 
 The test of the real Baselines runs all this twice: through `mitto.Session`, and through a `mitto.AsyncSession` in its place. The two build a request in one place and differ in how they wait, so they should show the same list. `uv run python -m tools.parity` writes the list from `mitto.Session`.
 
+The checks of the Script Fingerprint are tested the same way, with the real Baseline of Chrome 157 changed on purpose: `tests/parity/test_script_gaps.py` holds how each change is named and of which kind, and what the Machine's values miss, with no native library, and `tests/parity/test_script_parity.py` runs them through a real Page.
+
 ## Baselines
 
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
 
-Other files under `RELEASE` are left alone: `*.raw.json`, anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines, and the Baselines of the **Script Fingerprint** in `RELEASE/script/`, which are [Normal Forms](capture.md#the-normal-form-of-a-script-fingerprint) of what the probe records and not of the wire.
+Other files under `RELEASE` are left alone: `*.raw.json`, anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines, and the Baselines of the **Script Fingerprint** in `RELEASE/script/`, which are [Normal Forms](capture.md#the-normal-form-of-a-script-fingerprint) of what the probe records and not of the wire, and which [their own checks](#the-script-fingerprint) read.
 
 A value that [follows the machine](capture.md#what-stays-and-what-does-not), such as `sec-ch-ua-platform-version`, is `<machine>` in a Baseline and in what a Session sent, so a check compares where its line is and not what it says. That is why a drawn Machine passes as any other does. Its form is checked instead, against the same [forms](capture.md#the-form-of-a-hidden-value): `tests/test_machine.py` for every value a Session works out from its Machine, and [`tools.capture.machine_forms`](baselines.md#check-and-commit) for real Chrome's recordings, on the machine that keeps them.
 
@@ -95,6 +97,83 @@ uv run python -m tools.parity
 ```
 
 This needs a native library, and it runs the same comparison as the tests. It also prints how many gaps each Recording Case has, over every Chrome Release and protocol, where 0 means the case matches. `--baselines DIR` uses another directory of Baselines, with its own list. Read the diff before you commit it. Fixing a gap only removes lines. An added line means mitto moved away from a Baseline, or a Baseline changed.
+
+## The Script Fingerprint
+
+The Parity Checks of M7 compare what a page sees in a **Page** with what it saw in real Chrome: the Normal Form of what [the probe](runtime.md#the-probe) records, against the Baselines in `tests/baselines/RELEASE/script/`, which [baselines.md](baselines.md#the-script-fingerprint) records.
+
+### Run them
+
+They need a native library with the Page program beside it, as a wheel holds them, or as `out/mitto` and `out/runtime` of a build give them once both files are in one directory ([building.md](building.md#build-the-runtime)). `uv run pytest tests/parity` runs them with the wire's checks, and skips them without a Page program. CI's native job runs them on every **Host**, from the installed wheel, through `mitto.Session` and through a `mitto.AsyncSession` in its place, as it runs the wire's.
+
+### What a check does
+
+For each Baseline, it:
+
+1. starts a [capture server](capture.md);
+2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release** and a **Machine** drawn for it, as the wire's checks do, which accepts the server's private certificate and finds the case pages' names through `_settings`, as Chrome was told to;
+3. opens a Page on the Recording Case's page, `/script/page` at the case pages' name, through the private `Session._open_page()`, as a caller's Page loads a page. That page runs in the Page as it ran in Chrome: once it has loaded, it runs the probe in a timer through an indirect eval, and posts the record to the server with `fetch()`. So nothing reaches into the Page from outside while the probe walks;
+4. takes the [Normal Form](capture.md#the-normal-form-of-a-script-fingerprint) of the posted record, and compares it with the Baseline;
+5. holds each value that both hide as `<machine>` to the Page's Machine, as [below](#the-machines-values).
+
+A Page takes about a second for all of this, Chrome's three Releases together about three.
+
+### Gaps
+
+A gap is one field in which the two Normal Forms differ, named by the path at which the probe found an object, as `navigator.connection`, and what differs in it:
+
+| Field | What differs | Its values |
+| --- | --- | --- |
+| `PATH` | An object that only one side reached, such as `navigation.currentEntry` | Its kind, tag and prototype |
+| `PATH KEY` | A key of the object, such as `Navigator.prototype tag`, `proto`, `function` or `new` | The key's value |
+| `PATH own KEY` | An own property, such as `Navigator.prototype own share` | Its flags and value, or flags, getter and setter |
+| `PATH get NAME` | What a getter gave, such as `history get length` | The value |
+| `PATH calls NAME` | What a check gave on a new plain object, such as `CookieStore.prototype calls set` | The outcome |
+| `PATH own <order>`, `PATH get <order>`, `PATH calls <order>` | The order of the keys both sides have | Each key that moved, with its place among those keys, as a longest run of keys that keep their order leaves them |
+| `values["KEY"]["PART"]` | A value of the probe's third step, compared into its objects, such as `values["new Intl.NumberFormat().resolvedOptions()"]["locale"]` | The value, or the whole entry where one side threw |
+| `reports` | What the walk made the page report | The reports |
+
+A failure names the Chrome Release, the Recording Case, the kind of gap and the field, with both values:
+
+```text
+Chrome 157, page, behaviour, history get length
+  Baseline: 1
+  mitto:    0
+```
+
+### The kind of a gap
+
+Each gap has a kind, which says who closes it. The exit of M7 has Known Gaps for missing behaviour only, so a shape or a value is for mitto to match, and the list only holds one until it does:
+
+| Kind | Which gaps |
+| --- | --- |
+| `machine` | A place that the Normal Form hides as `<machine>` (`MACHINE_PLACES` in [`script_normal_form.py`](../tools/capture/script_normal_form.py)), in either comparison |
+| `persona` | A place that the Persona decides (`PERSONA_PLACES` in [`script_gaps.py`](../tools/parity/script_gaps.py)): `navigator`'s `userAgent`, `appVersion`, `platform`, `language` and `languages`, `navigator.userAgentData`'s `brands`, `mobile` and `platform`, the high entropy values, and what follows the locale in Intl and `toLocaleString()` |
+| `behaviour` | Any other value that a getter or the third step gave, an index of an object that a getter gave or what an array or a plain object that a getter gave holds, an object that the walk reached through a getter, and the reports |
+| `shape` | Everything else: the own properties of interface objects, prototypes and the platform's objects, their flags, names, lengths and order, prototypes, tags, the outcome of a constructor without `new` and of the checks, and an object that the walk reached through own properties and prototypes alone |
+
+An object, and what it holds as data, takes the kind of the nearest getter on the way that the walk reached it: `navigator.languages own 0` is the Persona's, because the getter `languages` of `navigator` gave the array, and `viewport.segments["0"]` is behaviour, because the getter `segments` gave the array that holds it.
+
+### The Machine's values
+
+A value at a place that the Normal Form hides compares as `<machine>` on both sides, so the comparison only sees where it is and whether a getter threw there, as the wire's checks see `sec-ch-ua-platform-version`. A Session draws a new Machine each time, so a check holds what the Page gave there to that Machine, from the record before its Normal Form, in [`script_machine.py`](../tools/parity/script_machine.py):
+
+- At a place that a Page reads from its start message, such as `innerWidth` or the time zone of `Intl.DateTimeFormat`, it must be what Chrome gives for that Machine (`PAGE_READS`), which is what `tests/test_machine.py` holds to [the forms](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint) of real Chrome's values.
+- At a place whose value has the renderer's noise on it, `rtt` and `downlink` of `navigator.connection`, and at one that a Page works out by Chrome's own code (`WORKED_OUT_IN_A_PAGE`), such as the heap limit or the strings of a date, it must have the form that real Chrome's values have there.
+
+A value that misses is a gap of the kind `machine`, in the field of its place, whose values say only `<machine>: the Machine's` and `<machine>: not the Machine's`, or the form and `<machine>: not of that form`, so that no drawn value reaches the list.
+
+### Their known-gaps list
+
+`tests/baselines/script_known_gaps.json` holds the Script Fingerprint's Known Gaps, beside the wire's, one per line, with the keys `release`, `case`, `kind`, `field`, `baseline` and `mitto`. A run fails on a gap that is not in the list and on one in the list that no longer exists, as the wire's does. There is one list for every Host, because a Script Fingerprint must not depend on the Host either. `grep '"kind": "shape"' tests/baselines/script_known_gaps.json` lists what is for mitto to match.
+
+To write the list again from what the Page does now:
+
+```bash
+uv run python -m tools.parity --script
+```
+
+It needs a native library with the Page program beside it, prints how many gaps there are of each kind and for each Chrome Release, and takes `--baselines DIR` as the wire's command does. Read the diff before you commit it: a fixed gap only removes lines.
 
 ## What the native core states
 

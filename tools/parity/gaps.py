@@ -4,10 +4,13 @@ import json
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from tools.capture.names import GREASE
 from tools.capture.recording import Json
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 KNOWN_GAPS_FILE_NAME = "known_gaps.json"
 
@@ -143,8 +146,11 @@ def _shown(value: Json) -> str:
     return _NOTHING if value is None else json.dumps(value)
 
 
-def dumps_known_gaps(gaps: Iterable[Gap]) -> str:
-    """Write a known-gaps list as text: one gap per line, so that a gap that closes is one line that goes."""
+def dumps_known_gaps(gaps: Iterable["DataclassInstance"]) -> str:
+    """Write a known-gaps list as text: one gap per line, so that a gap that closes is one line that goes.
+
+    The gaps are those of the wire's list or of the Script Fingerprint's, each a dataclass whose fields are its keys.
+    """
     lines = [json.dumps(asdict(gap)) for gap in gaps]
     return "[\n" + ",\n".join(lines) + "\n]\n" if lines else "[]\n"
 
@@ -165,7 +171,7 @@ def loads_known_gaps(text: str) -> list[Gap]:
 
 
 @dataclass(frozen=True, slots=True)
-class Mismatches:
+class Mismatches[G: DataclassInstance]:
     """How the gaps a run found differ from the known-gaps list. It is false when they agree.
 
     Attributes:
@@ -173,8 +179,8 @@ class Mismatches:
         gone: The gaps that are in the list but were not found.
     """
 
-    unlisted: list[Gap]
-    gone: list[Gap]
+    unlisted: list[G]
+    gone: list[G]
 
     def __bool__(self) -> bool:
         return bool(self.unlisted or self.gone)
@@ -190,8 +196,11 @@ class Mismatches:
         return "\n".join(sections)
 
 
-def mismatches(found: Iterable[Gap], listed: Iterable[Gap]) -> Mismatches:
-    """Compare the gaps a run found with the known-gaps list. A gap whose value has changed is a different gap."""
+def mismatches[G: DataclassInstance](found: Iterable[G], listed: Iterable[G]) -> Mismatches[G]:
+    """Compare the gaps a run found with the known-gaps list. A gap whose value has changed is a different gap.
+
+    The gaps are those of the wire's list, or those of the Script Fingerprint's.
+    """
     found_by_text = {_identity_text(gap): gap for gap in found}
     listed_by_text = {_identity_text(gap): gap for gap in listed}
     return Mismatches(
@@ -200,5 +209,5 @@ def mismatches(found: Iterable[Gap], listed: Iterable[Gap]) -> Mismatches:
     )
 
 
-def _identity_text(gap: Gap) -> str:
+def _identity_text(gap: "DataclassInstance") -> str:
     return json.dumps(asdict(gap), sort_keys=True)
