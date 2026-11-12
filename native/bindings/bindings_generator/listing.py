@@ -4,6 +4,8 @@ The release routine compares the listing of the old Engine Release with the new 
 shows which interfaces and members a page gains or loses, and which features they are behind.
 """
 
+from collections.abc import Mapping
+
 from bindings_generator.install_plan import Phase, Property, plan_interface
 from bindings_generator.model import ExposedConstruct, Interface
 
@@ -49,8 +51,14 @@ def _owner(interface: Interface, target: str) -> str:
     return f"{interface.name} instance"
 
 
-def write_listing(interfaces: list[Interface]) -> str:
-    """Lists the interfaces and namespaces, by name, each with its own properties in the order Chrome installs them."""
+def write_listing(interfaces: list[Interface], marks: Mapping[tuple[str, str, str], str] | None = None) -> str:
+    """Lists the interfaces and namespaces, by name, each with its own properties in the order Chrome installs them.
+
+    Args:
+        interfaces: the interfaces, namespaces and callback interfaces.
+        marks: what to add to a property that has no behaviour, such as "Known Gap", by its interface, target and name.
+    """
+    marks = marks or {}
     lines: list[str] = []
     for interface in sorted(interfaces, key=lambda item: item.name):
         if interface.kind not in ("interface", "namespace") and not interface.has_interface_object:
@@ -72,5 +80,7 @@ def write_listing(interfaces: list[Interface]) -> str:
             constructible = "" if interface.constructor_group else ", not constructible"
             lines.append(f"  {interface.name}.length = {length}{constructible}")
         for property_ in plan_interface(interface):
-            lines.append(f"  {_owner(interface, property_.target)}.{property_.name}: {_describe(property_)}")
+            line = f"  {_owner(interface, property_.target)}.{property_.name}: {_describe(property_)}"
+            mark = marks.get((interface.name, property_.target, property_.name))
+            lines.append(f"{line}, {mark}" if mark else line)
     return "\n".join(lines) + "\n"

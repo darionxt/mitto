@@ -22,6 +22,7 @@
 
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr_exclusion.h"
+#include "mitto/bindings/idl_type_info.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-external.h"
 #include "v8/include/v8-forward.h"
@@ -61,20 +62,32 @@ enum class MemberTarget : uint8_t {
 };
 
 // MemberInfo::flags.
-inline constexpr uint8_t kMemberHasSetter = 1 << 0;
+inline constexpr uint16_t kMemberHasSetter = 1 << 0;
 // [LegacyLenientThis]: a receiver of another kind gets undefined, without V8's
 // signature check.
-inline constexpr uint8_t kMemberLenientThis = 1 << 1;
+inline constexpr uint16_t kMemberLenientThis = 1 << 1;
 // An operation that returns a promise, which a receiver of another kind
 // rejects, without V8's signature check.
-inline constexpr uint8_t kMemberReturnsPromise = 1 << 2;
+inline constexpr uint16_t kMemberReturnsPromise = 1 << 2;
 // A static member, on the interface object, whose receiver is not checked.
-inline constexpr uint8_t kMemberStatic = 1 << 3;
+inline constexpr uint16_t kMemberStatic = 1 << 3;
 // [Replaceable]: the setter shadows the attribute with a data property of the
 // receiver.
-inline constexpr uint8_t kMemberReplaceable = 1 << 4;
+inline constexpr uint16_t kMemberReplaceable = 1 << 4;
 // [LegacyLenientSetter]: the setter does nothing.
-inline constexpr uint8_t kMemberLenientSetter = 1 << 5;
+inline constexpr uint16_t kMemberLenientSetter = 1 << 5;
+// [PutForwards]: the setter sets the attribute `forward` of what the getter
+// gives.
+inline constexpr uint16_t kMemberPutForwards = 1 << 6;
+// [NewObject]: the getter gives a new object each time.
+inline constexpr uint16_t kMemberNewObject = 1 << 7;
+// An event handler attribute, which is not a Known Gap: its setter stores any
+// object and turns anything else into null, and its getter gives what it
+// stored, as Chrome's do.
+inline constexpr uint16_t kMemberEventHandler = 1 << 8;
+// A Known Gap whose default would be unsafe or impossible, which keeps
+// today's error (known_gaps.py in the generator says which).
+inline constexpr uint16_t kMemberRefused = 1 << 9;
 
 // One own property of a construct's interface object, prototype or instances.
 struct MemberInfo {
@@ -84,15 +97,23 @@ struct MemberInfo {
   // RAW_PTR_EXCLUSION: #global-scope, as in WrapperTypeInfo.
   RAW_PTR_EXCLUSION const WrapperTypeInfo* owner;
   ConditionFunction condition;
-  // For kIteratorAlias, the operation whose function it is.
+  // For kIteratorAlias, the operation whose function it is. With
+  // kMemberPutForwards, the attribute that the setter sets.
   const char* forward;
+  // For kAttribute, its type.
+  RAW_PTR_EXCLUSION const IdlTypeInfo* type;
+  // For kOperation, its overloads.
+  RAW_PTR_EXCLUSION const OperationInfo* operation;
   // For kConstant, its value. For kIntrinsic, the v8::Intrinsic.
   int64_t value;
+  uint16_t flags;
+  // For a Known Gap, a number of its own among all of them, by which a
+  // document remembers that it reported it.
+  uint16_t number;
   MemberKind kind;
   MemberTarget target;
   // The v8::PropertyAttribute of the property.
   uint8_t attributes;
-  uint8_t flags;
   // An operation's length.
   int16_t length;
 };
@@ -104,6 +125,15 @@ enum class ConstructorKind : uint8_t {
   kKnownGap,
   // [HTMLConstructor], which throws as it does with no custom element defined.
   kHTMLConstructor,
+};
+
+// The C++ class that the bindings put behind an object of an interface without
+// a class, made by a Known Gap: that of its nearest ancestor with a class,
+// which must be one of these.
+enum class ObjectBehind : uint8_t {
+  kNone,
+  kEventTarget,
+  kEvent,
 };
 
 // InterfaceTable::flags.
@@ -120,6 +150,9 @@ inline constexpr uint8_t kInterfaceAllCollection = 1 << 2;
 inline constexpr uint8_t kInterfaceCodeLike = 1 << 3;
 // [LegacyNoInterfaceObject]: no `constructor` on the prototype.
 inline constexpr uint8_t kInterfaceNoInterfaceObject = 1 << 4;
+// The constructor is a Known Gap that keeps today's error, as a member with
+// kMemberRefused does.
+inline constexpr uint8_t kInterfaceConstructorRefused = 1 << 5;
 
 struct InterfaceTable {
   // What goes on the template, in order.
@@ -131,10 +164,19 @@ struct InterfaceTable {
   RAW_PTR_EXCLUSION base::span<const char* const> unscopables;
   // When the constructor is there, null for always.
   ConditionFunction constructor_condition;
+  // The constructor's overloads.
+  RAW_PTR_EXCLUSION const OperationInfo* constructor_operation;
   ConstructorKind constructor;
+  ObjectBehind behind;
   int16_t constructor_length;
+  // The constructor's number as a Known Gap.
+  uint16_t constructor_number;
   uint8_t flags;
 };
+
+// The data of a member's callbacks: a v8::External of its MemberInfo.
+v8::Local<v8::External> DataOfMember(v8::Isolate* isolate,
+                                     const MemberInfo& member);
 
 // WrapperTypeInfo::install_interface_template of a construct with a table.
 void InstallTemplateFromTable(v8::Isolate* isolate,

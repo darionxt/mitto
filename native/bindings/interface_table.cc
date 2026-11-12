@@ -29,11 +29,6 @@ bool IsInstalled(const MemberInfo& member, const PerIsolateData& data) {
   return !member.condition || member.condition(data);
 }
 
-v8::Local<v8::External> DataOf(v8::Isolate* isolate, const MemberInfo& member) {
-  return v8::External::New(isolate, const_cast<MemberInfo*>(&member),
-                           kMemberInfoTag);
-}
-
 // The property key of a member's name, a well-known symbol for "@@x".
 v8::Local<v8::Name> KeyOf(v8::Isolate* isolate, std::string_view name) {
   if (name == "@@iterator") {
@@ -63,6 +58,11 @@ bool HasSignature(const MemberInfo& member) {
 // the page's value on the receiver.
 void ReplaceableSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* const isolate = info.GetIsolate();
+  // bind_gen's make_check_argument_length() for a [Replaceable] setter.
+  if (info.Length() < 1) {
+    ThrowTypeError(isolate, ExceptionMessages::NotEnoughArguments(1, 0));
+    return;
+  }
   const auto& member = *static_cast<const MemberInfo*>(
       info.Data().As<v8::External>()->Value(kMemberInfoTag));
   std::ignore = info.This()->CreateDataProperty(
@@ -145,14 +145,14 @@ void InstallOnTemplates(v8::Isolate* isolate,
                          member.owner->interface_name, &KnownGapAttributeGetter,
                          SetterOf(member), AttributesOf(member),
                          v8::SideEffectType::kHasNoSideEffect,
-                         DataOf(isolate, member));
+                         DataOfMember(isolate, member));
         break;
       case MemberKind::kOperation:
         InstallOperation(
             isolate, target, signature, member.name,
             member.owner->interface_name, OperationCallbackOf(member),
             member.length, AttributesOf(member),
-            v8::SideEffectType::kHasSideEffect, DataOf(isolate, member));
+            v8::SideEffectType::kHasSideEffect, DataOfMember(isolate, member));
         break;
       case MemberKind::kConstant:
         InstallConstant(isolate, target, member.name, member.value);
@@ -238,7 +238,7 @@ void InstallInterface(v8::Isolate* isolate,
     const v8::FunctionCallback callback =
         CallbackOfOperation(table, "item", &item);
     instance_template->SetCallAsFunctionHandler(callback,
-                                                DataOf(isolate, *item));
+                                                DataOfMember(isolate, *item));
     instance_template->MarkAsUndetectable();
   }
   if ((table.flags & kInterfaceCodeLike) &&
@@ -255,6 +255,12 @@ void InstallInterface(v8::Isolate* isolate,
 }
 
 }  // namespace
+
+v8::Local<v8::External> DataOfMember(v8::Isolate* isolate,
+                                     const MemberInfo& member) {
+  return v8::External::New(isolate, const_cast<MemberInfo*>(&member),
+                           kMemberInfoTag);
+}
 
 void InstallTemplateFromTable(v8::Isolate* isolate,
                               v8::Local<v8::Template> construct_template,
@@ -331,14 +337,14 @@ void InstallContextPropertiesFromTable(v8::Local<v8::Context> context,
             isolate, context, target, member_signature, member.name,
             info.interface_name, &KnownGapAttributeGetter, SetterOf(member),
             AttributesOf(member), v8::SideEffectType::kHasNoSideEffect,
-            DataOf(isolate, member));
+            DataOfMember(isolate, member));
         break;
       case MemberKind::kOperation:
         InstallOperationOnObject(
             isolate, context, target, member_signature, member.name,
             info.interface_name, OperationCallbackOf(member), member.length,
             AttributesOf(member), v8::SideEffectType::kHasSideEffect,
-            DataOf(isolate, member));
+            DataOfMember(isolate, member));
         break;
       case MemberKind::kConstant:
         InstallConstantOnObject(isolate, context, target, member.name,

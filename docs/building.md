@@ -283,7 +283,7 @@ Measured for Chromium 157.0.8103.39, each from an empty build directory:
 
 Of the stripped program, ICU's data is 10.8 MB and V8's snapshot 0.37 MB. A wheel that carried the program would grow by about its compressed size, nearly three times what the wheel is today. On Linux the program needs only glibc and libgcc from the system, as `ldd` shows, like the library. On Windows, as for the library, the program holds no debug information to strip: it is in `mitto_page.exe.pdb` beside it, 301 MB. Sizes are in MB of 1,000,000 bytes.
 
-The bindings of the interfaces that have no C++ class, about a thousand, are tables of data ([runtime.md](runtime.md#how-the-generator-works)). Measured on macOS arm64 against `main` at d5bac4c, from the same export: they add 1.11 MB to `mitto_page` as built, 0.81 MB stripped, of which 0.69 MB is constant data, and 0.13 MB compressed with deflate. The generator takes about 3 seconds with or without them, and their eight files compile in about half a second each.
+The bindings of the interfaces that have no C++ class, about a thousand, are tables of data ([runtime.md](runtime.md#how-the-generator-works)). Measured on macOS arm64 against `main` at d5bac4c, from the same export: they add 1.11 MB to `mitto_page` as built, 0.81 MB stripped, of which 0.69 MB is constant data, and 0.13 MB compressed with deflate. The generator takes about 3 seconds with or without them, and their eight files compile in about half a second each. The tables of types, dictionaries and operations by which Known Gaps convert their arguments ([runtime.md](runtime.md#what-a-known-gap-does)), with the code that reads them, add 1.65 MB more as built, 1.01 MB stripped and 0.18 MB compressed, and about a second of compiling.
 
 ### What the Runtime costs
 
