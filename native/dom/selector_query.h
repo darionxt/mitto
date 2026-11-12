@@ -13,7 +13,7 @@
 // Upstream: third_party/blink/renderer/core/css/parser/css_selector_parser.cc
 // Upstream: third_party/blink/renderer/core/css/parser/css_tokenizer.cc
 // Upstream: third_party/blink/renderer/core/css/selector_checker.cc
-// Upstream: third_party/blink/renderer/core/dom/selector_query.cc
+// Upstream: third_party/blink/renderer/core/css/selector_query.cc
 
 #ifndef MITTO_DOM_SELECTOR_QUERY_H_
 #define MITTO_DOM_SELECTOR_QUERY_H_
