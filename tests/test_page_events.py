@@ -162,7 +162,9 @@ def test_nested_timers_are_clamped_to_4_milliseconds_from_the_seventh_on(program
     waits = _evaluate(program, script)
 
     assert len(waits) == 30
-    assert all(wait >= 3.9 for wait in waits[6:])
+    # Each reading of performance.now() is coarsened to 100 microseconds, up or down, so two readings can lose up to
+    # 0.2 ms of a wait of 4 ms, and their difference in doubles can fall just below a multiple of 0.1.
+    assert all(wait >= 3.8 for wait in waits[6:])
 
 
 def test_an_interval_repeats_until_cleared_and_is_clamped_once_deep_enough(program: Path) -> None:
