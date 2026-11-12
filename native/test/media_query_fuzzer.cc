@@ -10,10 +10,15 @@
 // and its other bits pick the machine that the queries are evaluated for.
 //
 // The tokens must cover the input in order, with every block that starts
-// either ended or still open at the end, and when every block is ended, the
-// media query list that the parser writes back must parse to itself. With one
-// still open it need not: Blink closes a condition's parentheses when it
-// writes it back, so an open block inside one gains a ")" each time.
+// either ended or still open at the end. When every block is ended, what the
+// parser writes back of what it wrote back must be the same again. The first
+// time need not be: a value past the largest float, such as calc(1e38in) in
+// pixels, is written as it is held, as a double, and the tokenizer reads a
+// number back into the floats' range, so Chrome 157 writes
+// (width: calc(1e38in)) as (width: calc(9.6e+39px)), and that as
+// (width: calc(3.40282e+38px)). With a block still open nothing settles:
+// Blink closes a condition's parentheses when it writes it back, so an open
+// block inside one gains a ")" each time.
 
 #include "mitto/css/media_query.h"
 
@@ -137,7 +142,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const std::unique_ptr<mitto::MediaQuerySet> again =
       mitto::ParseMediaQuerySet(media_text, features);
   if (blocks_end) {
-    CHECK(again->MediaText() == media_text);
+    const std::u16string again_text = again->MediaText();
+    CHECK(mitto::ParseMediaQuerySet(again_text, features)->MediaText() ==
+          again_text);
   }
 
   // Six digits of a number written back can evaluate otherwise than the

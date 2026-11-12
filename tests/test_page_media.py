@@ -31,6 +31,9 @@ _TIMEOUT_SECONDS = 60
 # Queries and what Chrome 157 writes back for each in MediaQueryList.media, which follows no machine: lower case,
 # Chrome's spacing, values as Blink writes them, math simplified, "not all" for a query that does not parse, and
 # <general-enclosed> as it was given.
+# A number of 98 digits, past the largest float, which the tokenizer holds to it.
+_BIG = "4" * 97 + "1"
+
 _WRITTEN_BACK = [
     ("", ""),
     ("screen AND (MIN-WIDTH:500px)", "screen and (min-width: 500px)"),
@@ -49,6 +52,14 @@ _WRITTEN_BACK = [
     ("(min-color: 4294967296)", "(min-color: 2147483647)"),
     ("(device-aspect-ratio: 16.1/9.0)", "(device-aspect-ratio: 16.1 / 9)"),
     ("(aspect-ratio: 0/0)", "(aspect-ratio: 1 / 0)"),
+    # A value that a unit or arithmetic takes past the largest float is written as it is held, and reads back as the
+    # largest float.
+    (f"(width: {_BIG}in)", "(width: 3.40282e+38in)"),
+    (f"(width: calc((({_BIG}in))))", "(width: calc(3.26671e+40px))"),
+    ("(width: calc(3.26671e+40px))", "(width: calc(3.40282e+38px))"),
+    ("(width: calc(1e38px * 100))", "(width: calc(1e+40px))"),
+    ("(width: calc(1e38em + 1e38em + 1e38em + 1e38em))", "(width: calc(4e+38em))"),
+    ("(resolution: calc(1e38dpi))", "(resolution: calc(1.04167e+36dppx))"),
     # Blink checks no unit for a ratio's first term.
     ("(aspect-ratio: 1px)", "(aspect-ratio: 1px / 1)"),
     ("(min-aspect-ratio: calc(1.4))", "(min-aspect-ratio: calc(1.4) / 1)"),
