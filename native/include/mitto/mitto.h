@@ -34,7 +34,7 @@
 // The version of the options that mitto_page_open() reads. Adding an option
 // changes neither this nor MITTO_ABI_VERSION. Increase this one when an existing
 // option changes its meaning.
-#define MITTO_PAGE_OPTIONS_VERSION 3
+#define MITTO_PAGE_OPTIONS_VERSION 4
 
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
@@ -768,7 +768,7 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // and needs no trailing NUL byte:
 //
 //   {
-//     "version": 3,
+//     "version": 4,
 //     "start": {"time_zone": "America/New_York", "locale": "en-US",
 //               "processors": 8, "touch_points": 0,
 //               "work_area_x": 0, "work_area_y": 0,
@@ -777,6 +777,21 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //               "window_x": 0, "window_y": 0,
 //               "window_width": 1920, "window_height": 1032,
 //               "contrast_theme": "none", "inverted_colors": "none",
+//               "memory": 8, "screen_width": 1920, "screen_height": 1080,
+//               "scale": 1, "viewport_width": 1920, "viewport_height": 945,
+//               "color_scheme": "light", "reduced_motion": "no-preference",
+//               "reduced_transparency": "no-preference",
+//               "effective_type": "4g",
+//               "navigator": {
+//                 "user_agent": "Mozilla/5.0 ...", "platform": "Win32",
+//                 "languages": "en-US,en",
+//                 "user_agent_data": {
+//                   "brands": [{"brand": "Chromium", "version": "157"}, ...],
+//                   "full_version_list": [...], "mobile": false,
+//                   "platform": "Windows", "platform_version": "19.0.0",
+//                   "architecture": "x86", "bitness": "64", "model": "",
+//                   "ua_full_version": "157.0.8103.39", "wow64": false,
+//                   "form_factors": ["Desktop"]}},
 //               "features": {"enable_blink_features": [],
 //                            "disable_blink_features": ["CanvasDrawElement"],
 //                            "v8_flags": ["--sqrt_allocation_limits"]}},
@@ -792,9 +807,9 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //
 // - "version" is required and must be MITTO_PAGE_OPTIONS_VERSION.
 // - "start" is required: what the Page starts with, which it would otherwise
-//   read from the machine, as the Session's Machine and Persona say, with every
-//   key above and no other. Places and sizes are in device-independent pixels,
-//   from the display's top left corner:
+//   read from the machine and the browser, as the Session's Machine, Persona
+//   and Accept-Language say, with every key above and no other. Places and
+//   sizes are in device-independent pixels, from the display's top left corner:
 //   - "time_zone" is the IANA name of the time zone that the Page's Date and
 //     Intl report, and "locale" the BCP 47 tag of the locale that its Intl
 //     falls back to. The Page process checks both, because only it holds ICU's
@@ -814,6 +829,25 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     "dusk", "night-sky", "high-contrast-1", "high-contrast-2",
 //     "high-contrast-black" or "high-contrast-white". "inverted_colors" is
 //     "inverted" with Windows' colour filter that inverts colours, or "none".
+//   - "memory" is what Chrome makes of the memory, 2, 4, 8, 16 or 32 GiB.
+//   - "screen_width" and "screen_height" are the primary display, "scale" its
+//     scale, from 1 to 5, and "viewport_width" and "viewport_height" the
+//     window's page area. Each size is at least 1.
+//   - "color_scheme" is "light" or "dark", "reduced_motion" and
+//     "reduced_transparency" each "no-preference" or "reduce", and
+//     "effective_type" the effective connection type that the Session's ect
+//     hint gives: "slow-2g", "2g", "3g" or "4g".
+//   - "navigator" is what the browser tells the Page of itself: "user_agent",
+//     the Session's User-Agent, "platform", what navigator.platform gives,
+//     "languages", the languages of Chrome's setting separated by commas, from
+//     which the Session's Accept-Language comes, and "user_agent_data", the
+//     values of the Session's user agent client hints: "brands" and
+//     "full_version_list", each a list of {"brand", "version"}, "mobile" and
+//     "wow64", each a boolean, "form_factors", a list of strings, and
+//     "platform", "platform_version", "architecture", "bitness", "model" and
+//     "ua_full_version", each a string. The user agent and the languages are
+//     each at most 4096 bytes of UTF-8, the other strings at most 256, and the
+//     lists at most 32 items long.
 //   - "features" is what the Page turns on and off beside the Engine Release's
 //     runtime-enabled features and V8's defaults, as the Session's Persona
 //     says, with these three keys and no other. "enable_blink_features" and
@@ -825,6 +859,8 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     at most 256, set in their order after the Engine Release's, each as gin
 //     writes one: "--name", "--no-name" or "--name=value", at most 256
 //     characters, with no space.
+//   The library works out what the Page's navigator.connection gives from the
+//   Session's network estimate.
 // - "url" is where the Page navigates once it opens, through the Session, as a
 //   request of the navigation template does without an Initiator. The
 //   response, after any redirects, is the Page's document, and its URL the

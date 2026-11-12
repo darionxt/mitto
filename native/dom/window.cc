@@ -13,8 +13,10 @@
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/request.h"
+#include "mitto/dom/screen.h"
 #include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -52,6 +54,28 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   WindowProperties::Trace(visitor);
   visitor->Trace(document_);
   visitor->Trace(performance_);
+  visitor->Trace(navigator_);
+  visitor->Trace(screen_);
+}
+
+mitto::Navigator* Window::Navigator() {
+  if (!navigator_) {
+    navigator_ = mitto::Navigator::Create(start_, connection_);
+  }
+  return navigator_.Get();
+}
+
+mitto::Screen* Window::Screen() {
+  if (!screen_) {
+    screen_ = mitto::Screen::Create(start_);
+  }
+  return screen_.Get();
+}
+
+void Window::SetStart(const PageStart& start,
+                      const PageConnection& connection) {
+  start_ = start;
+  connection_ = connection;
 }
 
 mitto::Performance* Window::Performance() {

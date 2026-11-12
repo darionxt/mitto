@@ -34,6 +34,7 @@ __all__ = [
     "WRITE_SIZE",
     "BodyAvailable",
     "BodyWanted",
+    "BrandVersion",
     "ConsoleLevel",
     "ConsoleMessage",
     "EventType",
@@ -59,8 +60,10 @@ __all__ = [
     "PageFeatures",
     "PageLoaded",
     "PageNavigated",
+    "PageNavigator",
     "PageRequestTemplate",
     "PageStart",
+    "PageUserAgentData",
     "Priority",
     "PrivateSettings",
     "ReadyKind",
@@ -91,7 +94,7 @@ REQUEST_OPTIONS_VERSION = 1
 COOKIES_VERSION = 1
 
 # The MITTO_PAGE_OPTIONS_VERSION of the C header this module is written against.
-PAGE_OPTIONS_VERSION = 3
+PAGE_OPTIONS_VERSION = 4
 
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
@@ -884,6 +887,88 @@ class FetchParams:
         return option
 
 
+@dataclass(frozen=True, slots=True)
+class BrandVersion:
+    """A brand of a Chrome Release and its version, as sec-ch-ua lists them.
+
+    Attributes:
+        brand: The brand, such as "Google Chrome".
+        version: Its version, such as "157" in sec-ch-ua or "157.0.8103.39" in sec-ch-ua-full-version-list.
+    """
+
+    brand: str
+    version: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PageUserAgentData:
+    """What Chrome's browser tells each renderer of its user agent, which navigator.userAgentData gives a page: Blink's
+    UserAgentMetadata, which the user agent client hints also come from.
+
+    Attributes:
+        brands: The brands with their major versions, in sec-ch-ua's order.
+        full_version_list: The brands with their full versions, in sec-ch-ua-full-version-list's order.
+        mobile: Whether the browser claims a phone, as sec-ch-ua-mobile says.
+        platform: The operating system, such as "Windows", as sec-ch-ua-platform says.
+        platform_version: Its version, as sec-ch-ua-platform-version says, such as "19.0.0".
+        architecture: The processor's architecture, such as "x86".
+        bitness: "64" or "32".
+        model: The device's model, "" on a desktop.
+        ua_full_version: The full version of the Chrome Release, as sec-ch-ua-full-version says.
+        wow64: Whether a 32-bit Chrome runs on 64-bit Windows.
+        form_factors: The form factors, such as ("Desktop",).
+    """
+
+    brands: tuple[BrandVersion, ...]
+    full_version_list: tuple[BrandVersion, ...]
+    mobile: bool
+    platform: str
+    platform_version: str
+    architecture: str
+    bitness: str
+    model: str
+    ua_full_version: str
+    wow64: bool
+    form_factors: tuple[str, ...]
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "user_agent_data" of the "navigator" of the "start" option of mitto_page_open()."""
+        option: dict[str, object] = {name.name: getattr(self, name.name) for name in fields(self)}
+        option["brands"] = [{"brand": item.brand, "version": item.version} for item in self.brands]
+        option["full_version_list"] = [
+            {"brand": item.brand, "version": item.version} for item in self.full_version_list
+        ]
+        option["form_factors"] = list(self.form_factors)
+        return option
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PageNavigator:
+    """What Chrome's browser tells each renderer of itself, which a page's navigator reads.
+
+    Attributes:
+        user_agent: The User-Agent that the Session sends.
+        platform: What navigator.platform gives, such as "Win32".
+        languages: The languages of Chrome's settings, separated by commas, such as "en-US,en", from which the Session's
+            Accept-Language comes.
+        user_agent_data: What navigator.userAgentData gives.
+    """
+
+    user_agent: str
+    platform: str
+    languages: str
+    user_agent_data: PageUserAgentData
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "navigator" of the "start" option of mitto_page_open()."""
+        return {
+            "user_agent": self.user_agent,
+            "platform": self.platform,
+            "languages": self.languages,
+            "user_agent_data": self.user_agent_data.to_option(),
+        }
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PageFeatures:
     """What a Page turns on and off beside the Engine Release's runtime-enabled features and V8's defaults, as its
@@ -906,7 +991,8 @@ class PageFeatures:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PageStart:
-    """What a Page starts with, which it would otherwise read from the machine: the "start" option of mitto_page_open().
+    """What a Page starts with, which it would otherwise read from the machine and the browser: the "start" option of
+    mitto_page_open().
 
     Places and sizes on the desktop are in device-independent pixels, from the display's top left corner.
 
@@ -926,6 +1012,17 @@ class PageStart:
         window_height: The height of Chrome's window, with its bars and borders.
         contrast_theme: Windows' contrast theme, such as "aquatic", or "none".
         inverted_colors: "inverted" with Windows' colour filter that inverts colours, or "none".
+        memory: What navigator.deviceMemory gives: 2, 4, 8, 16 or 32.
+        screen_width: The width of the primary display.
+        screen_height: The height of the primary display.
+        scale: The display's scale, such as 1.25, which devicePixelRatio gives.
+        viewport_width: The width of the window's page area.
+        viewport_height: The height of the window's page area.
+        color_scheme: "light" or "dark".
+        reduced_motion: "no-preference" or "reduce".
+        reduced_transparency: "no-preference" or "reduce".
+        effective_type: The effective connection type of the network, such as "4g", as the ect hint says.
+        navigator: What the browser tells the Page of itself.
         features: What the Persona's Chrome Release turns on and off.
     """
 
@@ -944,11 +1041,23 @@ class PageStart:
     window_height: int
     contrast_theme: str
     inverted_colors: str
+    memory: int
+    screen_width: int
+    screen_height: int
+    scale: float
+    viewport_width: int
+    viewport_height: int
+    color_scheme: str
+    reduced_motion: str
+    reduced_transparency: str
+    effective_type: str
+    navigator: PageNavigator
     features: PageFeatures
 
     def to_option(self) -> dict[str, object]:
         """Return the "start" option of mitto_page_open()."""
         option = {start_field.name: getattr(self, start_field.name) for start_field in fields(self)}
+        option["navigator"] = self.navigator.to_option()
         option["features"] = self.features.to_option()
         return option
 

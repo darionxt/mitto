@@ -10,7 +10,10 @@ on:
       - tests/test_core_test_program.py
       - tests/test_page_bindings.py
       - tests/test_page_document.py
+      - tests/test_page_probe.py
       - tests/test_page_program.py
+      - tools/capture/probe.js
+      - tools/capture/probe.py
       - tools/workspace/**
   push:
     branches: [main]
@@ -21,7 +24,10 @@ on:
       - tests/test_core_test_program.py
       - tests/test_page_bindings.py
       - tests/test_page_document.py
+      - tests/test_page_probe.py
       - tests/test_page_program.py
+      - tools/capture/probe.js
+      - tools/capture/probe.py
       - tools/workspace/**
   # The nightly run calls these jobs to build from nothing, and fuzzes then as main does.
   workflow_call:
@@ -139,7 +145,7 @@ jobs:
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
       - name: Run the Page program's tests
         if: matrix.tests == 'page'
-        run: uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py -rs
+        run: uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py tests/test_page_probe.py -rs
         env:
           MITTO_PAGE_PROGRAM: ${{ runner.temp }}/native-core/mitto_page
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer

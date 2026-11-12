@@ -13,6 +13,7 @@ bindings_generator/listing.py
 bindings_generator/main.py
 bindings_generator/model.py
 bindings_generator/runtime_features.py
+bindings_generator/table_writer.py
 bindings_generator/web_idl_reader.py
 generate_bindings.py
 ../../tools/idl_parser/__init__.py

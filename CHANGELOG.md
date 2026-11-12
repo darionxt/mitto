@@ -4,7 +4,7 @@ What changes for callers in each version of mitto, newest first. The notes of ea
 
 ## 0.3.0
 
-A **Machine** also holds what a page reads of the computer and no client hint sends: its time zone, processors, work area, window, touch screen, contrast theme and colour filter. A Page, whose API stays private, starts with them and with its Persona's locale. What a Session sends does not change.
+A **Machine** also holds what a page reads of the computer and no client hint sends: its time zone, processors, work area, window, touch screen, contrast theme and colour filter. A Page, whose API stays private, starts with them, with the rest of its Machine, and with its Persona's locale, user agent and user agent client hints, and its `navigator`, `screen` and window give the same values that its Session sends. What a Session sends does not change.
 
 - [`Machine`](docs/api.md#machine) has 14 new fields, `work_area_x`, `work_area_y`, `work_area_width`, `work_area_height`, `window_state`, `window_x`, `window_y`, `window_width`, `window_height`, `contrast_theme`, `inverted_colors`, `time_zone`, `processors` and `touch_points`, and [`Machine.draw()`](docs/api.md#machinedraw) takes each of them. A Machine that a caller makes needs every one, so a call of `Machine()` with only the values of mitto 0.2 raises a `TypeError`. `Machine.draw()` with those values draws the rest to fit them, a display that the table does not have too.
 - A drawn Machine claims the time zone `America/New_York`, for the locale `en-US` of every Persona, logical processors from Firefox's statistics of processor cores, the taskbar at the bottom, and no touch screen, contrast theme or colour filter, [as persona.md says](docs/persona.md#what-a-page-reads-beside-the-hints).

@@ -1,6 +1,9 @@
 #include "mitto/bindings/script_wrappable.h"
 
+#include <tuple>
+
 #include "base/check.h"
+#include "mitto/bindings/idl_member_installer.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-template.h"
@@ -17,8 +20,12 @@ v8::Local<v8::Object> ScriptWrappable::ToV8(v8::Isolate* isolate) {
     return wrapper_.Get(isolate);
   }
   // An instance of the interface's template, made without calling its
-  // constructor, as Blink makes the wrapper of an object that C++ created.
+  // constructor, as Blink makes the wrapper of an object that C++ created,
+  // once the context has made the interface object, as Blink's
+  // V8DOMWrapper::CreateWrapper() asks for it first, so that the prototype
+  // has what the context decides.
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  std::ignore = InterfaceObject(context, *GetWrapperTypeInfo());
   const v8::Local<v8::FunctionTemplate> interface_template =
       PerIsolateData::From(isolate)->InterfaceTemplate(isolate,
                                                        GetWrapperTypeInfo());

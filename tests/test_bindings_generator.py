@@ -19,8 +19,10 @@ from bindings_generator.listing import write_listing
 from bindings_generator.model import (
     ALWAYS,
     Attribute,
+    CollectionLike,
     Condition,
     Constant,
+    ExposedConstruct,
     ExtendedAttributes,
     IdlType,
     Interface,
@@ -29,6 +31,7 @@ from bindings_generator.model import (
     TypeKind,
 )
 from bindings_generator.runtime_features import read_features
+from bindings_generator.table_writer import Construct, write_tables
 
 BINDINGS = Path(__file__).resolve().parents[1] / "native" / "bindings"
 
@@ -78,10 +81,11 @@ def _names(plan: list[Property]) -> list[str]:
     return [f"{property_.target}.{property_.name}" for property_ in plan]
 
 
-def test_a_feature_that_chromes_content_layer_turns_on_is_stable() -> None:
-    # content/child/runtime_features.cc copies kLocalNetworkAccessChecks, on by default, into it, which the file of
+@pytest.mark.parametrize("name", ["LocalNetworkAccessPermissionPolicy", "PaymentApp", "PaymentRequest"])
+def test_a_feature_that_chromes_content_layer_turns_on_is_stable(name: str) -> None:
+    # Chrome's content layer copies a base::Feature of another name, on by default, into each, which the file of
     # features does not say.
-    features = read_features([{"name": "LocalNetworkAccessPermissionPolicy", "base_feature": "none"}])
+    features = read_features([{"name": name, "status": "experimental", "base_feature": "none"}])
 
     assert [feature.stable for feature in features] == [True]
 
@@ -365,6 +369,22 @@ def test_the_cpp_types_of_the_constructs_that_timers_and_fetch_use() -> None:
     assert types.default_value(byte_string, '""', "a") == '""'
 
 
+def test_the_cpp_types_of_what_navigator_returns() -> None:
+    types = TypeMapper(frozenset(), frozenset())
+    string = IdlType(TypeKind.STRING, "DOMString")
+    languages = IdlType(TypeKind.FROZEN_ARRAY, "FrozenArray<DOMString>", members=(string,))
+    hardware_concurrency = IdlType(TypeKind.INTEGER, "unsigned long long")
+
+    # The class makes a frozen array or an object, and returns it as it is.
+    assert types.return_type(languages, "a") == "v8::Local<v8::Value>"
+    assert types.to_v8(languages, "impl->Languages()") == "impl->Languages()"
+    assert types.return_type(IdlType(TypeKind.OBJECT, "object"), "a") == "v8::Local<v8::Object>"
+    # A 64-bit integer goes to a page as a Number, which a V8 Integer of 32 bits could not hold.
+    assert types.return_type(hardware_concurrency, "a") == "uint64_t"
+    assert types.to_v8(hardware_concurrency, "x") == "v8::Number::New(isolate, static_cast<double>(x))"
+    assert types.to_v8(IdlType(TypeKind.INTEGER, "unsigned long"), "x") == "v8::Integer::NewFromUnsigned(isolate, x)"
+
+
 def test_an_enumeration_converts_only_to_its_strings() -> None:
     types = TypeMapper(frozenset(), frozenset(), {"RequestMode": ("navigate", "cors")})
     lines = types.from_v8(IdlType(TypeKind.ENUMERATION, "RequestMode"), "value", "mode", Site(fail="return;"), "a")
@@ -387,3 +407,121 @@ def test_a_callback_function_argument_throws_chromes_message_for_a_value_that_is
     )
 
     assert 'ExceptionMessages::ArgumentNotOfType(0, "Function")' in "\n".join(lines)
+
+
+def _window(*constructs: ExposedConstruct) -> Interface:
+    return _interface(
+        name="Window",
+        extended_attributes=_extended("Global"),
+        attributes=(_attribute("window"),),
+        operation_groups=(_operation("alert"),),
+        exposed=constructs,
+    )
+
+
+def test_a_global_objects_exposed_constructs_come_between_its_constants_and_operations() -> None:
+    # bind_gen installs the attributes, then the constants, then the exposed constructs, then the operations, and puts
+    # those that each context decides on the global object later.
+    secure = Condition(other=("SecureContext",), context_dependent=True)
+    window = _window(
+        ExposedConstruct("Node", "interface", "Node", ALWAYS),
+        ExposedConstruct("Cache", "interface", "Cache", secure),
+        ExposedConstruct("CSS", "namespace", "CSS", ALWAYS),
+    )
+
+    plan = plan_interface(window)
+
+    assert [(p.target, p.name, p.phase) for p in plan if p.target == "instance"] == [
+        ("instance", "window", Phase.TEMPLATE),
+        ("instance", "Node", Phase.TEMPLATE),
+        ("instance", "CSS", Phase.TEMPLATE),
+        ("instance", "alert", Phase.TEMPLATE),
+        ("instance", "Cache", Phase.CONTEXT),
+    ]
+    node = next(p for p in plan if p.name == "Node")
+    assert (node.kind, node.enumerable, node.configurable, node.writable) == ("construct", False, True, True)
+
+
+def test_a_window_behind_a_feature_exposes_its_featured_constructs_with_each_context() -> None:
+    # Window's objects come from Chrome's context snapshot, which holds what is always there.
+    window = _window(ExposedConstruct("Gated", "interface", "Gated", Condition(features=("F",))))
+
+    gated = next(p for p in plan_interface(window) if p.name == "Gated")
+
+    assert gated.phase is Phase.CONTEXT
+
+
+def test_namespaces_and_callback_interfaces_have_constants_on_their_object_only() -> None:
+    constant = Constant("ONE", IdlType(TypeKind.INTEGER, "unsigned short"), 1, ExtendedAttributes(), ALWAYS)
+
+    namespace = plan_interface(_interface(kind="namespace", constants=(constant,)))
+    callback = plan_interface(_interface(kind="callback interface", constants=(constant,)))
+
+    assert _names(namespace) == ["interface.@@toStringTag", "interface.ONE"]
+    assert _names(callback) == ["interface.ONE"]
+
+
+def test_an_operation_is_installed_where_any_of_its_overloads_is() -> None:
+    either = Condition(alternatives=(Condition(features=("A",)), Condition(other=("Exposed=Worker",))))
+    always = Condition(alternatives=(Condition(features=("A",)), ALWAYS))
+
+    assert condition_test(either, "Thing.f") == "((features.IsEnabled(RuntimeFeature::kA)))"
+    assert condition_test(always, "Thing.f") == "true"
+    assert either.describe() == "([RuntimeEnabled=A]) or ([Exposed=Worker])"
+
+
+def test_the_listing_names_what_each_exposed_construct_gives() -> None:
+    window = _window(
+        ExposedConstruct("webkitURL", "alias", "URL", ALWAYS),
+        ExposedConstruct("Image", "factory function", "HTMLImageElement", ALWAYS, length=0),
+    )
+
+    lines = write_listing([window]).splitlines()
+
+    assert "  Window instance.webkitURL: interface object of URL, not enumerable" in lines
+    assert "  Window instance.Image: factory function of HTMLImageElement, length 0, not enumerable" in lines
+
+
+def test_a_table_holds_each_member_in_the_plans_order_with_its_condition() -> None:
+    interface = _interface(
+        attributes=(_attribute("on", readonly=False), _attribute("gated", condition=Condition(features=("F",)))),
+        operation_groups=(_operation("run", length=2),),
+        constructor_group=_operation("constructor", length=1),
+    )
+    construct = Construct(interface, 7, None, in_global_prototype_chain=False)
+
+    files = write_tables([construct], 2, lambda name: False, condition_test)
+
+    source = files["interfaces_without_class_0.cc"]
+    rows = [line.strip() for line in source.splitlines() if line.startswith('    {"')]
+    assert [row.split(",")[0] for row in rows] == ['{"on"', '{"run"', '{"gated"']
+    assert "kMemberHasSetter" in rows[0]
+    assert "&Condition0" in rows[2]
+    assert "return features.IsEnabled(RuntimeFeature::kF);" in source
+    assert "ConstructorKind::kKnownGap" in source
+    assert "    7,\n    &kThingTable," in source
+    assert files["interfaces_without_class_1.cc"].count("const WrapperTypeInfo") == 0
+    assert "class V8Thing final {" in files["interfaces_without_class.h"]
+
+
+def test_a_table_leaves_out_what_a_page_never_installs() -> None:
+    interface = _interface(attributes=(_attribute("isolated", condition=Condition(other=("IsolatedContext",))),))
+
+    source = write_tables([Construct(interface, 0, None, False)], 1, lambda name: False, condition_test)[
+        "interfaces_without_class_0.cc"
+    ]
+
+    assert '"isolated"' not in source
+
+
+def test_iterator_symbols_can_be_replaced_and_the_others_cannot() -> None:
+    # Blink installs @@iterator with v8::DontEnum alone, and @@toStringTag and @@unscopables read-only.
+    pair = CollectionLike("iterable", (), (_operation("entries"),), "entries")
+    indexed = _interface(special_operations=("indexed getter",))
+    iterable = _interface(collection=pair, unscopables=("x",))
+
+    def writable(interface: Interface) -> dict[str, bool | None]:
+        return {p.name: p.writable for p in plan_interface(interface) if p.name.startswith("@@")}
+
+    assert writable(indexed) == {"@@toStringTag": False, "@@iterator": True}
+    assert writable(iterable) == {"@@toStringTag": False, "@@unscopables": False, "@@iterator": True}

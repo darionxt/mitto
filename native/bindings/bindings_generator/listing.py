@@ -5,13 +5,22 @@ shows which interfaces and members a page gains or loses, and which features the
 """
 
 from bindings_generator.install_plan import Phase, Property, plan_interface
-from bindings_generator.model import Interface
+from bindings_generator.model import ExposedConstruct, Interface
 
 __all__ = ["write_listing"]
 
 
 def _describe(property_: Property) -> str:
-    if property_.kind == "accessor":
+    member = property_.member
+    if isinstance(member, ExposedConstruct):
+        text = {
+            "interface": "interface object",
+            "callback interface": "callback interface object",
+            "namespace": "namespace object",
+            "alias": f"interface object of {member.target}",
+            "factory function": f"factory function of {member.target}, length {member.length}",
+        }[member.kind]
+    elif property_.kind == "accessor":
         text = "get set" if property_.setter else "get"
     elif property_.kind == "method":
         text = f"method, length {property_.length}"
@@ -44,7 +53,7 @@ def write_listing(interfaces: list[Interface]) -> str:
     """Lists the interfaces and namespaces, by name, each with its own properties in the order Chrome installs them."""
     lines: list[str] = []
     for interface in sorted(interfaces, key=lambda item: item.name):
-        if interface.kind not in ("interface", "namespace"):
+        if interface.kind not in ("interface", "namespace") and not interface.has_interface_object:
             continue
         heading = f"{interface.kind} {interface.name}"
         if interface.parent:
