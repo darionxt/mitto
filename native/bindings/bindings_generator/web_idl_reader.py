@@ -378,10 +378,11 @@ def _read_collection(definition: Any, exposures: _Exposures) -> CollectionLike |
     has_return = False
     if hasattr(declaration, "extended_attributes"):
         has_return = "HasAsyncIteratorReturnAlgorithm" in _check_extended_attributes(where, declaration)
+    types: dict[str, IdlType] = {}
     for type_name in ("key_type", "value_type"):
         declared = getattr(declaration, type_name, None)
         if declared is not None:
-            _read_type(declared, where)
+            types[type_name] = _read_type(declared, where)
     for argument in getattr(declaration, "arguments", ()) or ():
         _read_type(argument.idl_type, where)
 
@@ -412,6 +413,8 @@ def _read_collection(definition: Any, exposures: _Exposures) -> CollectionLike |
         iterator_operation=iterator_operation,
         iterator=iterator,
         has_return=has_return,
+        key_type=types.get("key_type"),
+        value_type=types.get("value_type"),
     )
 
 

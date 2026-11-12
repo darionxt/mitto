@@ -34,6 +34,7 @@ from bindings_generator.model import (
     ALWAYS,
     Argument,
     Attribute,
+    CollectionLike,
     Condition,
     Constant,
     Dictionary,
@@ -67,10 +68,14 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # - NewObject: the class returns a new object, which Blink only checks.
 # - NoAllocDirectCall: the install plan puts the member where Blink does; V8's fast call itself only saves time.
 # - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
-# - PutForwards: only an attribute's setter forwards, and the writer refuses that setter's behaviour, so an attribute
-#   with it can have its getter alone.
+# - SaveSameObject: the bindings keep what a static attribute's getter gave on the interface object, as bind_gen's do on
+#   the receiver; the class keeps what an instance's attribute gives.
+# - PutForwards and LegacyLenientSetter: only an attribute's setter forwards or does nothing, and the writer refuses that
+#   setter's behaviour, so an attribute with either can have its getter alone.
 # - Serializable and Transferable: only structured cloning reads them, which nothing in a Page can reach yet: it has
 #   neither postMessage() nor structuredClone().
+# - V8EnableIndexOf and V8EnableIterableToList: interceptors that let V8 take its fast paths through an indexed
+#   collection, which give what V8's ordinary steps give over the indexed properties.
 # The others are followed by the install plan, by the context's install function, or here. A Known Gap needs none of
 # them: the install plan and its condition decide where it goes, and its callback only throws.
 WRITTEN = frozenset(
@@ -84,6 +89,7 @@ WRITTEN = frozenset(
         "Exposed",
         "Global",
         "HTMLConstructor",
+        "LegacyLenientSetter",
         "LegacyNoInterfaceObject",
         "LegacyUnenumerableNamedProperties",
         "LegacyUnforgeable",
@@ -96,12 +102,26 @@ WRITTEN = frozenset(
         "Replaceable",
         "RuntimeEnabled",
         "SameObject",
+        "SaveSameObject",
         "SecureContext",
         "Serializable",
         "Transferable",
         "Unscopable",
+        "V8EnableIndexOf",
+        "V8EnableIterableToList",
     }
 )
+
+# The name of an interface's constructor in the members that interfaces.gni names.
+CONSTRUCTOR = "constructor"
+
+# A value iterator's methods, which are Array.prototype's own (Web IDL's "define the iteration methods").
+_ARRAY_INTRINSICS = {
+    "entries": "v8::kArrayProto_entries",
+    "keys": "v8::kArrayProto_keys",
+    "values": "v8::kArrayProto_values",
+    "forEach": "v8::kArrayProto_forEach",
+}
 
 # What makes a reflected attribute's behaviour more than reading and writing its content attribute.
 _REFLECT_BEYOND_CONTENT = ("URL", "ReflectOnly", "ReflectMissing", "ReflectInvalid", "ReflectEmpty")
@@ -123,15 +143,22 @@ class ImplementedInterface:
             An indexed or named property operation that is a Known Gap is not installed at all. One that the class has
             needs more of it: length() for an indexed getter, NamedPropertyEnumerator() and NamedPropertyQuery() for a
             named one, as Blink's classes have.
+        made_by_known_gaps: whether a Known Gap may make an object of the class with nothing given, which its static
+            CreateForKnownGap(const WrapperTypeInfo&) makes. Then "constructor" names the constructor in `missing` or
+            `implemented` as any member, and a constructor that is a Known Gap makes the class's object that way.
+            Without it, the class always has its constructor's behaviour.
     """
 
     name: str
     header: str
     missing: tuple[str, ...] = ()
     implemented: tuple[str, ...] | None = None
+    made_by_known_gaps: bool = False
 
     def has_behaviour(self, member: str, accessor: str | None = None) -> bool:
         """Whether the class has the member's behaviour, or for `accessor` "get" its getter's."""
+        if member == CONSTRUCTOR and not self.made_by_known_gaps:
+            return True
         if self.implemented is None:
             return member not in self.missing
         if member in self.implemented:
@@ -386,16 +413,104 @@ class _InterfaceWriter:
             return attribute.name not in self.implemented.missing
         return self.implemented.has_behaviour(attribute.name, accessor)
 
+    # A read-only maplike or setlike declaration with behaviour.
+
+    def _collection_with_behaviour(self) -> CollectionLike | None:
+        """The interface's maplike or setlike declaration, when its class names it: the writer writes its members, which
+        read the class's MaplikeEntries() or SetlikeValues(), as Blink's classes give their iteration source."""
+        collection = self.interface.collection
+        if collection is None or collection.kind not in (self.implemented.implemented or ()):
+            return None
+        where = f"{collection.kind} of {self.interface.name}"
+        if collection.kind not in ("maplike", "setlike") or collection.value_type is None:
+            raise UnhandledError(f"{where}: the C++ writer handles the behaviour of read-only maplike and setlike only")
+        if any(group.name in ("set", "add", "delete", "clear") for group in collection.operation_groups):
+            raise UnhandledError(f"{where}: the C++ writer handles the behaviour of read-only maplike and setlike only")
+        return collection
+
+    def _collection_items(self, collection: CollectionLike, where: str) -> tuple[str, list[str], str, str]:
+        """The loop over the class's items, the statements that start it, and the V8 values of each item's key and
+        value: a maplike's key and value, a setlike's value twice, as Web IDL's set iteration gives them."""
+        assert collection.value_type is not None
+        value_type = collection.value_type
+        self.types.return_type(value_type, where)
+        if collection.kind == "setlike":
+            value = self.types.to_v8(value_type, "item")
+            return "for (const auto& item : impl->SetlikeValues()) {", [], value, value
+        assert collection.key_type is not None
+        self.types.return_type(collection.key_type, where)
+        key = self.types.to_v8(collection.key_type, "item.first")
+        return "for (const auto& item : impl->MaplikeEntries()) {", [], key, self.types.to_v8(value_type, "item.second")
+
+    def _collection_member(self, collection: CollectionLike, name: str, member: Attribute | OperationGroup) -> str:
+        """The callback of one member of a read-only maplike or setlike declaration with behaviour."""
+        where = f"{collection.kind} of {self.interface.name}"
+        loop, _, key, value = self._collection_items(collection, where)
+        if isinstance(member, Attribute):
+            # size
+            items = "impl->SetlikeValues()" if collection.kind == "setlike" else "impl->MaplikeEntries()"
+            size = self.types.to_v8(member.idl_type, f"static_cast<uint32_t>({items}.size())")
+            return self._add_callback(name, [*self._receiver(), f"info.GetReturnValue().Set({size});"])
+        body = self._receiver()
+        if member.name in ("entries", "keys", "values", "forEach"):
+            body.append("const v8::Local<v8::Context> context = isolate->GetCurrentContext();")
+        if member.name in ("entries", "keys", "values"):
+            item = {"entries": "v8::Array::New(isolate, pair, 2)", "keys": "pair[0]", "values": "pair[1]"}[member.name]
+            assert collection.iterator is not None
+            body += [
+                "std::vector<v8::Local<v8::Value>> items;",
+                loop,
+                f"  v8::Local<v8::Value> pair[] = {{{key}, {value}}};",
+                f"  items.push_back({item});",
+                "}",
+                "v8::Local<v8::Value> iterator;",
+                f"if (NewIteratorOverList(context, V8{collection.iterator}::kWrapperTypeInfo, items).ToLocal(&iterator)) {{",
+                "  info.GetReturnValue().Set(iterator);",
+                "}",
+            ]
+            return self._add_callback(name, body)
+        operation = member.only_overload(f"{where}: {member.name}()")
+        body.append(self._exception_state())
+        conversions, passed = self._arguments(operation.arguments[:1], f"operation {self.where(member.name)}")
+        body += conversions
+        if member.name == "forEach":
+            # Web IDL's forEach(): the callback with the value, the key and the object, for each item in order.
+            body += [
+                loop,
+                f"  v8::Local<v8::Value> arguments[] = {{{value}, {key}, info.This()}};",
+                f"  if ({passed[0]}->Call(context, info[1], 3, arguments).IsEmpty()) {{",
+                "    return;",
+                "  }",
+                "}",
+            ]
+            return self._add_callback(name, body)
+        found = "item" if collection.kind == "setlike" else "item.first"
+        result = "v8::True(isolate)" if member.name == "has" else value
+        missing = "v8::False(isolate)" if member.name == "has" else "v8::Undefined(isolate)"
+        body += [
+            loop,
+            f"  if ({found} == {passed[0]}) {{",
+            f"    info.GetReturnValue().Set({result});",
+            "    return;",
+            "  }",
+            "}",
+            f"info.GetReturnValue().Set({missing});",
+        ]
+        return self._add_callback(name, body)
+
     def attribute_getter(self, attribute: Attribute) -> str:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeGetCallback"
+        collection = self._collection_with_behaviour()
+        if collection is not None and attribute in collection.attributes:
+            return self._collection_member(collection, name, attribute)
         reflected = reflected_attribute(attribute)
         lenient = "LegacyLenientThis" in attribute.extended_attributes
         if not self._has_attribute_behaviour(attribute, "get"):
             return self._missing(name, has_receiver=not attribute.is_static, lenient=lenient)
         _check_written(where, attribute.extended_attributes)
         if attribute.is_static:
-            raise UnhandledError(f"{where}: the C++ writer does not handle static attributes")
+            return self._static_attribute_getter(name, attribute, where)
         if reflected is not None:
             if attribute.idl_type.kind is TypeKind.BOOLEAN:
                 call = f'impl->ReflectedBooleanAttribute(u"{reflected}")'
@@ -422,6 +537,37 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
                 f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, 'result')});",
+            ],
+        )
+
+    def _static_attribute_getter(self, name: str, attribute: Attribute, where: str) -> str:
+        """A static attribute's getter, which calls the class's static method. With [SaveSameObject], what it gives
+        first is kept on the receiver, which for a static attribute is the interface object, and given again, as
+        bind_gen's getter does."""
+        if "RaisesException" in attribute.extended_attributes:
+            raise UnhandledError(f"{where}: the C++ writer does not handle a static attribute that raises an exception")
+        self.types.return_type(attribute.idl_type, where)
+        value = self.types.to_v8(attribute.idl_type, f"{self.cls}::{self.method_name(attribute)}()")
+        if "SaveSameObject" not in attribute.extended_attributes:
+            return self._add_callback(name, [f"info.GetReturnValue().Set({value});"])
+        key = f"mitto:{self.interface.name}.{attribute.name}"
+        return self._add_callback(
+            name,
+            [
+                "const v8::Local<v8::Context> context = isolate->GetCurrentContext();",
+                "const v8::Local<v8::Private> key =",
+                f'    v8::Private::ForApi(isolate, v8::String::NewFromUtf8Literal(isolate, "{key}"));',
+                "v8::Local<v8::Value> value;",
+                "if (!info.This()->GetPrivate(context, key).ToLocal(&value)) {",
+                "  return;",
+                "}",
+                "if (value->IsUndefined()) {",
+                f"  value = {value};",
+                "  if (info.This()->SetPrivate(context, key, value).IsNothing()) {",
+                "    return;",
+                "  }",
+                "}",
+                "info.GetReturnValue().Set(value);",
             ],
         )
 
@@ -533,6 +679,9 @@ class _InterfaceWriter:
     def operation(self, group: OperationGroup) -> str:
         where = f"operation {self.where(group.name)}"
         name = f"{function_name(group.name)}{'Static' if group.is_static else ''}OperationCallback"
+        collection = self._collection_with_behaviour()
+        if collection is not None and group in collection.operation_groups:
+            return self._collection_member(collection, name, group)
         if not self.implemented.has_behaviour(group.name):
             if self.returns_promise(group):
                 return self._missing_promise(name, group.name, has_receiver=not group.is_static)
@@ -611,6 +760,14 @@ class _InterfaceWriter:
             # V8ObjectConstructor::IsValidConstructorMode(), whatever the call.
             return self._add_callback(name, ['ThrowTypeError(isolate, "Illegal constructor");'])
         where = f"constructor of {self.interface.name}"
+        if not self.implemented.has_behaviour(CONSTRUCTOR):
+            # A Known Gap, as a table's constructor is, which makes the class's object with nothing given.
+            overloads = self.context.types.operation(group, where)
+            number = self.context.gaps.number()
+            return self._add_callback(
+                name,
+                [f"KnownGapConstructorOfClass(info, {self.v8_class}::kWrapperTypeInfo, *{overloads}, {number});"],
+            )
         operation = group.only_overload(where)
         _check_written(where, operation.extended_attributes)
         if "HTMLConstructor" in operation.extended_attributes:
@@ -801,6 +958,12 @@ class _InterfaceWriter:
                 "prototype_template->SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values,",
                 f"                                             {self._attributes(property_)});",
             ]
+        if member is None and property_.name in _ARRAY_INTRINSICS and property_.kind == "method" and not on_objects:
+            # A value iterator's methods, which are Array.prototype's own, as Blink installs them.
+            return [
+                f'prototype_template->SetIntrinsicDataProperty(v8::String::NewFromUtf8Literal(isolate, "{property_.name}"),',
+                f"                                             {_ARRAY_INTRINSICS[property_.name]}, {self._attributes(property_)});",
+            ]
         if property_.name == "@@iterator":
             collection = self.interface.collection
             if not on_objects or collection is None or collection.iterator_operation is None:
@@ -851,6 +1014,10 @@ class _InterfaceWriter:
             data = ""
             if getter.startswith("&KnownGap") or setter.startswith("&KnownGap"):
                 data = f", {self._known_gap_data(property_)}"
+            if getter.startswith("&KnownGap") and self.types.reduce(member.idl_type).kind is TypeKind.PROMISE:
+                # As for an operation that returns a promise: no signature, so that the Known Gap's getter rejects for
+                # a receiver of another kind, as bind_gen's make_check_receiver() and its promise scope do.
+                signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
                 f"{setter}, {attributes}, {side_effect}{data});"
@@ -937,6 +1104,18 @@ class _InterfaceWriter:
         ]
         if interface.name == "DOMException":
             lines.append("  InheritFromErrorPrototype(isolate, interface_template);")
+        if interface.name == "Location":
+            # Location's specialness, from the HTML standard's "create a Location object", as a table installs it.
+            lines += [
+                "  instance_template->SetIntrinsicDataProperty(",
+                '      v8::String::NewFromUtf8Literal(isolate, "valueOf"), v8::kObjProto_valueOf,',
+                "      static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));",
+                "  instance_template->Set(",
+                "      v8::Symbol::GetToPrimitive(isolate), v8::Undefined(isolate),",
+                "      static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));",
+                "  instance_template->SetImmutableProto();",
+                "  prototype_template->SetImmutableProto();",
+            ]
         if "Global" in interface.extended_attributes:
             # Web IDL's [[SetPrototypeOf]] of a global object and of the prototypes on its chain.
             lines += ["  instance_template->SetImmutableProto();", "  prototype_template->SetImmutableProto();"]
@@ -953,6 +1132,17 @@ class _InterfaceWriter:
         lines += _indent(self._install_properties(template_properties, on_objects=False))
         if self.indexed_and_named_properties():
             lines.append("  InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);")
+        if interface.name == "HTMLAllCollection":
+            # document.all: undetectable, and calling it calls item(), as a table installs it.
+            item = next(property_ for property_ in template_properties if property_.name == "item")
+            if self.implemented.has_behaviour("item"):
+                callback, data = f"&{function_name('item')}OperationCallback", ""
+            else:
+                callback, data = "&KnownGapOperation", f", {self._known_gap_data(item)}"
+            lines += [
+                f"  instance_template->SetCallAsFunctionHandler({callback}{data});",
+                "  instance_template->MarkAsUndetectable();",
+            ]
         lines.append("}")
         return lines
 
@@ -1051,7 +1241,7 @@ class _InterfaceWriter:
         for unhandled in ("stringifier", "legacy_factory_functions"):
             if getattr(interface, unhandled):
                 raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {unhandled}")
-        if interface.collection is not None:
+        if interface.collection is not None and self._collection_with_behaviour() is None:
             collection_members = [attribute.name for attribute in interface.collection.attributes]
             collection_members += [group.name for group in interface.collection.operation_groups]
             if any(self.implemented.has_behaviour(member) for member in collection_members):
@@ -1089,6 +1279,9 @@ class _InterfaceWriter:
             includes.add(
                 header_of(construct.target) if self.has_class(construct.target) else f"mitto/bindings/{TABLES_HEADER}"
             )
+        if self._collection_with_behaviour() is not None:
+            # Its iterator's WrapperTypeInfo.
+            includes.add(f"mitto/bindings/{TABLES_HEADER}")
         source = [
             _BANNER,
             f'#include "mitto/bindings/{base}.h"',
@@ -1119,6 +1312,13 @@ class _InterfaceWriter:
         ]
         for callback in self.callbacks:
             source += [callback, ""]
+        if self.implemented.made_by_known_gaps:
+            source += [
+                "ScriptWrappable* CreateForKnownGap(const WrapperTypeInfo& info) {",
+                f"  return {self.cls}::CreateForKnownGap(info);",
+                "}",
+                "",
+            ]
         source += self._construct_table()
         source += self._known_gap_table()
         source += [*install, "", *context, "", "}  // namespace", ""]
@@ -1135,6 +1335,7 @@ class _InterfaceWriter:
             "    WrapperTypeInfo::Kind::kInterface,",
             f"    {self.index},",
             "    nullptr,",
+            f"    {'&CreateForKnownGap' if self.implemented.made_by_known_gaps else 'nullptr'},",
             "};",
             "",
             f"{self.cls}* {self.v8_class}::ToWrappable(v8::Isolate* isolate, v8::Local<v8::Value> value) {{",
@@ -1288,12 +1489,20 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         ordered.append(name)
         pending += [n for n in types.used_dictionaries if n not in bodies and n not in pending]
 
+    # The classes that the unions and the dictionaries' members name, which the header declares.
     union_interfaces = sorted(
         {
             member.name
             for union in types.used_unions.values()
             for member in union.members
             if member.kind is TypeKind.INTERFACE
+        }
+        | {
+            name
+            for dictionary in ordered
+            for member in definitions.dictionaries[dictionary].own_members
+            for name in _interfaces_in(member.idl_type)
+            if types.can_hold_a_value(IdlType(TypeKind.INTERFACE, name))
         }
     )
     header = [
@@ -1657,6 +1866,10 @@ def _check_named_members(name: str, interface: Interface, implemented: Implement
     attributes = {attribute.name for attribute in interface.attributes}
     members = attributes | {group.name for group in interface.operation_groups}
     members |= {special.kind for special in interface.special_operations}
+    if implemented.made_by_known_gaps and interface.constructor_group is not None:
+        members.add(CONSTRUCTOR)
+    if interface.collection is not None:
+        members.add(interface.collection.kind)
     for missing in implemented.missing:
         if missing not in members:
             raise UnhandledError(f"{name} has no member {missing}")
@@ -1816,6 +2029,7 @@ def write_bindings(
             {name: interface.parent for name, interface in definitions.interfaces.items()},
             by_name.__contains__,
             indexes.__contains__,
+            lambda name: name in by_name and by_name[name].made_by_known_gaps,
         ),
         factory_functions={
             group.name: group

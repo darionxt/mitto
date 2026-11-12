@@ -225,7 +225,8 @@ class TypeMapper:
         """The C++ type that a class's method returns for the type."""
         idl_type = self.reduce(idl_type)
         kind = idl_type.kind
-        nullable_ok = kind in (TypeKind.INTERFACE, TypeKind.ANY, TypeKind.STRING)
+        # The class gives null as a value of its own for a nullable frozen array.
+        nullable_ok = kind in (TypeKind.INTERFACE, TypeKind.ANY, TypeKind.STRING, TypeKind.FROZEN_ARRAY)
         if idl_type.nullable and not nullable_ok:
             raise self._refuse(idl_type, where, "a return value")
         if kind is TypeKind.UNDEFINED:
@@ -258,8 +259,10 @@ class TypeMapper:
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
             self.used_interfaces.add(idl_type.name)
             return f"mitto::{idl_type.name}*"
-        if kind is TypeKind.INTERFACE and idl_type.nullable:
-            # No object can be of an interface without a class, so the class can only give null.
+        if kind is TypeKind.INTERFACE:
+            # No object can be of an interface without a class, so the class can only give null, which Blink's classes
+            # also give for a type that the IDL does not make nullable, as Document's rootElement does in an HTML
+            # document.
             return "bindings::ScriptWrappable*"
         if kind is TypeKind.SEQUENCE:
             element = idl_type.members[0]

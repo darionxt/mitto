@@ -26,6 +26,10 @@ namespace mitto {
 v8::Local<v8::Array> FrozenArray(
     v8::Isolate* isolate,
     const std::vector<v8::Local<v8::Value>>& items);
+// The same, of strings.
+v8::Local<v8::Array> FrozenArrayOfStrings(
+    v8::Isolate* isolate,
+    const std::vector<std::u16string>& items);
 
 // An object with each of `members` as a data property, in their order, as
 // Blink's generated code writes a dictionary's members and V8ObjectBuilder an

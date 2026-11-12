@@ -20,6 +20,7 @@
 namespace mitto::bindings {
 
 struct InterfaceTable;
+class ScriptWrappable;
 
 struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
   // What kind of definition it is, which decides its template, as Blink's
@@ -54,6 +55,11 @@ struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
                v8::Local<v8::Object> prototype_object,
                v8::Local<v8::Object> instance_object,
                const WrapperTypeInfo& info);
+  // Makes an object of the class with nothing given, whose wrapper is of
+  // `info`: the class's own or that of an interface without a class that
+  // inherits from it.
+  using CreateForKnownGapFunction =
+      ScriptWrappable* (*)(const WrapperTypeInfo& info);
 
   const char* interface_name;
   // The interface it inherits from, or null.
@@ -86,6 +92,11 @@ struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
   // the generator writes.
   // RAW_PTR_EXCLUSION: #global-scope, as `parent`.
   RAW_PTR_EXCLUSION const InterfaceTable* table;
+  // For an interface with a C++ class that a Known Gap may make an object of
+  // (`made_by_known_gaps` in interfaces.gni), the function that makes it:
+  // known_gap.h's NewObjectOfInterface() calls it for the class and for an
+  // interface without a class that inherits from it. Null for any other.
+  CreateForKnownGapFunction create_for_known_gap;
 };
 
 }  // namespace mitto::bindings

@@ -149,6 +149,9 @@ enum class ObjectBehind : uint8_t {
   kNone,
   kEventTarget,
   kEvent,
+  // A class that a Known Gap may make an object of, whose
+  // WrapperTypeInfo::create_for_known_gap makes it.
+  kClass,
 };
 
 // InterfaceTable::flags.

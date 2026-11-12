@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -29,16 +30,26 @@
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-forward.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-value.h"
 
 namespace mitto {
 
+class BarProp;
+class CrashReportContext;
+class CustomElementRegistry;
 class DOMTimerCoordinator;
 class Document;
 class Fetcher;
+class History;
+class Location;
 class MediaQueryList;
+class Navigation;
 class Navigator;
 class Performance;
 class Screen;
+class StyleMedia;
+class Viewport;
+class VisualViewport;
 
 class Window final : public WindowProperties {
  public:
@@ -90,6 +101,33 @@ class Window final : public WindowProperties {
   int32_t OuterHeight() const { return start_.window_height; }
   double DevicePixelRatio() const { return start_.scale; }
   MediaQueryList* MatchMedia(const std::u16string& query);
+  // A top-level window of a tab that a Session opened: its own top, parent
+  // and frames, with no opener.
+  Window* Frames() { return this; }
+  Window* Top() { return this; }
+  Window* Parent() { return this; }
+  v8::Local<v8::Value> OpenerForBindings() const;
+  void SetOpenerForBindings(v8::Local<v8::Value> opener,
+                            bindings::ExceptionState& exception_state);
+  std::u16string Origin() const;
+  bool IsSecureContextForBindings() const;
+  // Chrome keys agent clusters by origin by default.
+  bool OriginAgentCluster() const { return true; }
+  bool OffscreenBuffering() const { return true; }
+  CrashReportContext* CrashReport();
+  mitto::Location* Location();
+  mitto::History* History();
+  BarProp* Locationbar() { return Bar(kLocationbar); }
+  BarProp* Menubar() { return Bar(kMenubar); }
+  BarProp* Personalbar() { return Bar(kPersonalbar); }
+  BarProp* Scrollbars() { return Bar(kScrollbars); }
+  BarProp* Statusbar() { return Bar(kStatusbar); }
+  BarProp* Toolbar() { return Bar(kToolbar); }
+  mitto::VisualViewport* VisualViewport();
+  mitto::Viewport* Viewport();
+  mitto::StyleMedia* StyleMedia();
+  mitto::Navigation* Navigation();
+  CustomElementRegistry* CustomElements();
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -120,10 +158,33 @@ class Window final : public WindowProperties {
   const PageStart& Start() const { return start_; }
 
  private:
+  // The window's bars, each an object of its own, as Blink's are.
+  enum BarKind : size_t {
+    kLocationbar,
+    kMenubar,
+    kPersonalbar,
+    kScrollbars,
+    kStatusbar,
+    kToolbar,
+    kBarCount,
+  };
+
+  BarProp* Bar(BarKind kind);
+
   cppgc::Member<mitto::Document> document_;
   cppgc::Member<mitto::Performance> performance_;
   cppgc::Member<mitto::Navigator> navigator_;
   cppgc::Member<mitto::Screen> screen_;
+  cppgc::Member<CrashReportContext> crash_report_;
+  cppgc::Member<mitto::Location> location_;
+  cppgc::Member<mitto::History> history_;
+  // In the object, not in a std::vector's buffer, for cppgc to trace.
+  std::array<cppgc::Member<BarProp>, kBarCount> bars_;
+  cppgc::Member<mitto::VisualViewport> visual_viewport_;
+  cppgc::Member<mitto::Viewport> viewport_;
+  cppgc::Member<mitto::StyleMedia> style_media_;
+  cppgc::Member<mitto::Navigation> navigation_;
+  cppgc::Member<CustomElementRegistry> custom_elements_;
   PageStart start_;
   PageConnection connection_;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;

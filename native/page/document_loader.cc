@@ -321,6 +321,15 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
   document_->SetReadiness(Document::Readiness::kLoading);
+  // Blink's Document::lastModifiedTime(): the response's Last-Modified, where
+  // it parses.
+  const std::string last_modified =
+      HeaderField(response.headers, "last-modified");
+  base::Time last_modified_time;
+  if (!last_modified.empty() &&
+      base::Time::FromString(last_modified.c_str(), &last_modified_time)) {
+    document_->SetLastModified(last_modified_time);
+  }
   // What DocumentLoadTiming and the navigation's response keep, for
   // window.chrome. The response's start is when the Page hears of it.
   ChromeObjectData& chrome_object_data = runner_->chrome_object_data();

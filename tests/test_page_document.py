@@ -192,8 +192,8 @@ def test_the_windows_other_members_are_known_gaps(program: Path) -> None:
 def test_a_member_whose_behaviour_is_missing_gives_its_default(program: Path) -> None:
     # An object of an interface without a class, with nothing behind it, the same one each time.
     script = """
-        const nodes = document.body.childNodes;
-        [nodes instanceof NodeList, nodes === document.body.childNodes, nodes.length].join()
+        const tokens = document.body.classList;
+        [tokens instanceof DOMTokenList, tokens === document.body.classList, tokens.length].join()
     """
 
     assert _evaluate(program, script) == "true,true,0"

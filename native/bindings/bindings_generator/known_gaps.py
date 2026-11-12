@@ -5,9 +5,11 @@ generator refuses by name, so that it keeps today's error, a Known Gap whose def
 
 - a member of Crypto or SubtleCrypto, whose default would be predictable random values or keys;
 - one whose default would be an object of an interface that has a C++ class, or that inherits from one, whose class's
-  members would find no object behind it. An interface whose nearest ancestor with a class is EventTarget or Event
-  is the exception: its objects get that class's object behind them, so that addEventListener(), dispatchEvent() and
-  Event's members work on them;
+  members would find no object behind it. Two kinds of interface are the exception. One whose nearest ancestor with a
+  class is EventTarget or Event: its objects get that class's object behind them, so that addEventListener(),
+  dispatchEvent() and Event's members work on them. And one whose nearest class, itself or an ancestor, a Known Gap
+  may make (`made_by_known_gaps` in interfaces.gni): its objects get the object that the class makes with nothing given,
+  such as an empty HTMLCollection, through the class's CreateForKnownGap();
 - one whose default the Runtime cannot make, such as a callback that is not nullable.
 
 Event handler attributes are not Known Gaps: their setter stores any object and turns anything else into null, and
@@ -49,6 +51,8 @@ class KnownGaps:
         parents: each interface's parent, by name.
         has_class: whether an interface has a C++ class.
         has_bindings: whether an interface has bindings, a class or a table, so that the Runtime can make its objects.
+        made_by_known_gaps: whether a Known Gap may make an object of a class with nothing given, through its
+            CreateForKnownGap().
     """
 
     def __init__(
@@ -56,10 +60,12 @@ class KnownGaps:
         parents: dict[str, str | None],
         has_class: Callable[[str], bool],
         has_bindings: Callable[[str], bool],
+        made_by_known_gaps: Callable[[str], bool] = lambda name: False,
     ) -> None:
         self._parents = parents
         self._has_class = has_class
         self._has_bindings = has_bindings
+        self._made_by_known_gaps = made_by_known_gaps
         self._attribute_numbers: dict[tuple[str, str], int] = {}
         self.count = 0
 
@@ -85,12 +91,25 @@ class KnownGaps:
             current = self._parents.get(current)
         return None
 
+    def object_behind(self, interface: str) -> str:
+        """What the Runtime puts behind an object of an interface without a class that a Known Gap makes: "kNone",
+        "kEventTarget", "kEvent", or "kClass" for the object that its nearest class makes for a Known Gap, as
+        interface_table.h's ObjectBehind names them."""
+        behind = self.class_behind(interface)
+        if behind is None:
+            return "kNone"
+        if behind in CLASSES_BEHIND_OBJECTS:
+            return f"k{behind}"
+        return "kClass" if self._made_by_known_gaps(behind) else "kNone"
+
     def object_is_safe(self, interface: str) -> bool:
-        """Whether the Runtime can make an object of the interface with nothing behind it."""
-        if not self._has_bindings(interface) or self._has_class(interface):
+        """Whether the Runtime can make an object of the interface with nothing given."""
+        if self._has_class(interface):
+            return self._made_by_known_gaps(interface)
+        if not self._has_bindings(interface):
             return False
         behind = self.class_behind(interface)
-        return behind is None or behind in CLASSES_BEHIND_OBJECTS
+        return behind is None or behind in CLASSES_BEHIND_OBJECTS or self._made_by_known_gaps(behind)
 
     def default_is_safe(self, idl_type: IdlType) -> bool:
         """Whether the type's default is safe and possible."""

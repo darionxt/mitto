@@ -1,6 +1,7 @@
 #include "mitto/dom/window.h"
 
 #include <memory>
+#include <tuple>
 #include <utility>
 
 #include "base/check.h"
@@ -8,16 +9,25 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_window.h"
+#include "mitto/dom/bar_prop.h"
+#include "mitto/dom/crash_report_context.h"
+#include "mitto/dom/custom_element_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/history.h"
+#include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
+#include "mitto/dom/navigation.h"
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/request.h"
 #include "mitto/dom/screen.h"
+#include "mitto/dom/style_media.h"
+#include "mitto/dom/viewport.h"
+#include "mitto/dom/visual_viewport.h"
 #include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -25,6 +35,7 @@
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
+#include "v8/include/v8-object.h"
 #include "v8/include/v8-primitive.h"
 #include "v8/include/v8-promise.h"
 
@@ -57,6 +68,113 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(performance_);
   visitor->Trace(navigator_);
   visitor->Trace(screen_);
+  visitor->Trace(crash_report_);
+  visitor->Trace(location_);
+  visitor->Trace(history_);
+  for (const cppgc::Member<BarProp>& bar : bars_) {
+    visitor->Trace(bar);
+  }
+  visitor->Trace(visual_viewport_);
+  visitor->Trace(viewport_);
+  visitor->Trace(style_media_);
+  visitor->Trace(navigation_);
+  visitor->Trace(custom_elements_);
+}
+
+v8::Local<v8::Value> Window::OpenerForBindings() const {
+  return v8::Null(v8::Isolate::GetCurrent());
+}
+
+// DOMWindow::setOpenerForBindings(): null disowns the opener, which a window
+// that a Session opened has not, and any other value shadows the attribute
+// with a data property of the window.
+void Window::SetOpenerForBindings(v8::Local<v8::Value> opener,
+                                  bindings::ExceptionState& exception_state) {
+  if (opener->IsNull()) {
+    return;
+  }
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::PropertyDescriptor descriptor(opener, /*writable=*/true);
+  descriptor.set_enumerable(true);
+  descriptor.set_configurable(true);
+  std::ignore = ToV8(isolate)->DefineProperty(
+      isolate->GetCurrentContext(),
+      v8::String::NewFromUtf8Literal(isolate, "opener"), descriptor);
+}
+
+// The serialized origin of the window's document, "null" for an opaque one, as
+// LocalDOMWindow::origin() gives it.
+std::u16string Window::Origin() const {
+  return base::UTF8ToUTF16(
+      url::Origin::Create(GURL(document_->UrlForBinding())).Serialize());
+}
+
+bool Window::IsSecureContextForBindings() const {
+  return bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+      ->secure_context();
+}
+
+CrashReportContext* Window::CrashReport() {
+  if (!crash_report_) {
+    crash_report_ = CrashReportContext::Create();
+  }
+  return crash_report_.Get();
+}
+
+mitto::Location* Window::Location() {
+  if (!location_) {
+    location_ = Location::Create(this);
+  }
+  return location_.Get();
+}
+
+mitto::History* Window::History() {
+  if (!history_) {
+    history_ = History::Create();
+  }
+  return history_.Get();
+}
+
+BarProp* Window::Bar(BarKind kind) {
+  if (!bars_[kind]) {
+    bars_[kind] = BarProp::Create();
+  }
+  return bars_[kind].Get();
+}
+
+mitto::VisualViewport* Window::VisualViewport() {
+  if (!visual_viewport_) {
+    visual_viewport_ = VisualViewport::Create(start_);
+  }
+  return visual_viewport_.Get();
+}
+
+mitto::Viewport* Window::Viewport() {
+  if (!viewport_) {
+    viewport_ = Viewport::Create(start_);
+  }
+  return viewport_.Get();
+}
+
+mitto::StyleMedia* Window::StyleMedia() {
+  if (!style_media_) {
+    style_media_ = StyleMedia::Create();
+  }
+  return style_media_.Get();
+}
+
+mitto::Navigation* Window::Navigation() {
+  if (!navigation_) {
+    navigation_ = Navigation::Create(this);
+  }
+  return navigation_.Get();
+}
+
+CustomElementRegistry* Window::CustomElements() {
+  if (!custom_elements_) {
+    custom_elements_ = CustomElementRegistry::Create();
+  }
+  return custom_elements_.Get();
 }
 
 mitto::Navigator* Window::Navigator() {

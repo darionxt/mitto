@@ -509,16 +509,31 @@ const OverloadInfo* Arguments(const v8::FunctionCallbackInfo<v8::Value>& info,
 }
 
 // The object behind a new object of `info`, made with a constructor's
-// converted arguments: for an Event, its type and EventInit.
+// converted arguments: for an Event, its type and EventInit. For an interface
+// with a class that a Known Gap may make, the object of its own class.
 ScriptWrappable* MakeObjectBehind(
     v8::Isolate* isolate,
     const WrapperTypeInfo& info,
     const std::vector<v8::Local<v8::Value>>& arguments) {
+  if (!info.table) {
+    CHECK(info.create_for_known_gap);
+    return info.create_for_known_gap(info);
+  }
   const PerIsolateData::ObjectHooks& hooks =
       PerIsolateData::From(isolate)->object_hooks();
   switch (info.table->behind) {
     case ObjectBehind::kNone:
       return nullptr;
+    case ObjectBehind::kClass: {
+      // The nearest ancestor with a class, which the generator checked makes
+      // objects for Known Gaps (known_gaps.py).
+      const WrapperTypeInfo* ancestor = info.parent;
+      while (ancestor->table) {
+        ancestor = ancestor->parent;
+      }
+      CHECK(ancestor->create_for_known_gap);
+      return ancestor->create_for_known_gap(info);
+    }
     case ObjectBehind::kEventTarget:
       return hooks.create_event_target(info);
     case ObjectBehind::kEvent: {
@@ -568,7 +583,74 @@ void Construct(const v8::FunctionCallbackInfo<v8::Value>& info,
   info.GetReturnValue().Set(info.This());
 }
 
+// The items of an iterator over a list, and the index of the next one, which
+// NewIteratorOverList() keeps on the iterator.
+v8::Local<v8::Private> IteratorItemsKey(v8::Isolate* isolate) {
+  return v8::Private::ForApi(
+      isolate, v8::String::NewFromUtf8Literal(isolate, "mitto:iterator items"));
+}
+
+v8::Local<v8::Private> IteratorIndexKey(v8::Isolate* isolate) {
+  return v8::Private::ForApi(
+      isolate, v8::String::NewFromUtf8Literal(isolate, "mitto:iterator index"));
+}
+
+// The next item of an iterator over a list into `value`, or false when it has
+// none left or is over nothing. Returns nothing if that threw.
+v8::Maybe<bool> NextItemOfList(v8::Local<v8::Context> context,
+                               v8::Local<v8::Object> iterator,
+                               v8::Local<v8::Value>* value) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Value> items;
+  v8::Local<v8::Value> index;
+  if (!iterator->GetPrivate(context, IteratorItemsKey(isolate))
+           .ToLocal(&items) ||
+      !iterator->GetPrivate(context, IteratorIndexKey(isolate))
+           .ToLocal(&index)) {
+    return v8::Nothing<bool>();
+  }
+  if (!items->IsArray()) {
+    return v8::Just(false);
+  }
+  const uint32_t next = index.As<v8::Uint32>()->Value();
+  const v8::Local<v8::Array> array = items.As<v8::Array>();
+  if (next >= array->Length()) {
+    return v8::Just(false);
+  }
+  if (!array->Get(context, next).ToLocal(value) ||
+      iterator
+          ->SetPrivate(context, IteratorIndexKey(isolate),
+                       v8::Integer::NewFromUnsigned(isolate, next + 1))
+          .IsNothing()) {
+    return v8::Nothing<bool>();
+  }
+  return v8::Just(true);
+}
+
 }  // namespace
+
+v8::MaybeLocal<v8::Value> NewIteratorOverList(
+    v8::Local<v8::Context> context,
+    const WrapperTypeInfo& iterator,
+    const std::vector<v8::Local<v8::Value>>& items) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Value> object;
+  if (!NewObjectOfInterface(context, iterator).ToLocal(&object)) {
+    return {};
+  }
+  const v8::Local<v8::Array> array = v8::Array::New(
+      isolate, const_cast<v8::Local<v8::Value>*>(items.data()), items.size());
+  if (object.As<v8::Object>()
+          ->SetPrivate(context, IteratorItemsKey(isolate), array)
+          .IsNothing() ||
+      object.As<v8::Object>()
+          ->SetPrivate(context, IteratorIndexKey(isolate),
+                       v8::Integer::New(isolate, 0))
+          .IsNothing()) {
+    return {};
+  }
+  return object;
+}
 
 void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* const isolate = info.GetIsolate();
@@ -585,11 +667,15 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
       return;
     }
   }
+  v8::Local<v8::Value> value = (member.flags & kMemberIteratorReturn)
+                                   ? info[0]
+                                   : v8::Undefined(isolate).As<v8::Value>();
+  bool has_item = false;
+  if (!asynchronous && !(member.flags & kMemberIteratorReturn) &&
+      !NextItemOfList(context, info.This(), &value).To(&has_item)) {
+    return;
+  }
   // Web IDL's CreateIterResultObject(): value, then done.
-  const v8::Local<v8::Value> value =
-      (member.flags & kMemberIteratorReturn)
-          ? info[0]
-          : v8::Undefined(isolate).As<v8::Value>();
   const v8::Local<v8::Object> result = v8::Object::New(isolate);
   if (result
           ->CreateDataProperty(
@@ -598,7 +684,7 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
       result
           ->CreateDataProperty(context,
                                v8::String::NewFromUtf8Literal(isolate, "done"),
-                               v8::True(isolate))
+                               v8::Boolean::New(isolate, !has_item))
           .IsNothing()) {
     return;
   }
@@ -613,9 +699,10 @@ void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
 }
 
 bool IsSafeObjectType(const WrapperTypeInfo& info) {
-  // The generator gives a table to every interface whose objects a Known Gap
-  // may make, and a class to the others.
-  return info.table != nullptr;
+  // The generator gives a table to every interface without a class, and a
+  // function that makes an object to each class whose objects a Known Gap may
+  // make.
+  return info.table != nullptr || info.create_for_known_gap != nullptr;
 }
 
 v8::MaybeLocal<v8::Value> NewObjectOfInterface(v8::Local<v8::Context> context,
@@ -825,6 +912,19 @@ void KnownGapConstructor(const v8::FunctionCallbackInfo<v8::Value>& info) {
   }
   Construct(info, interface, *table.constructor_operation,
             table.constructor_number,
+            base::StrCat({"new ", interface.interface_name}));
+}
+
+void KnownGapConstructorOfClass(const v8::FunctionCallbackInfo<v8::Value>& info,
+                                const WrapperTypeInfo& interface,
+                                const OperationInfo& operation,
+                                uint16_t number) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  if (!info.IsConstructCall()) {
+    ThrowTypeError(isolate, ExceptionMessages::ConstructorCalledAsFunction());
+    return;
+  }
+  Construct(info, interface, operation, number,
             base::StrCat({"new ", interface.interface_name}));
 }
 

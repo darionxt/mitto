@@ -17,7 +17,23 @@
 #
 # An event handler attribute that the class lacks is not a Known Gap: the
 # bindings give it Chrome's behaviour themselves.
+#
+# `made_by_known_gaps = true` says that a Known Gap may make an object of the
+# class with nothing given, which the class's static CreateForKnownGap() makes,
+# for a Known Gap that gives one, and for one that gives an object of an
+# interface without a class that inherits from it. Then `constructor` names
+# the constructor as any member, and a constructor that is a Known Gap makes
+# the object that way. Without it, the class has its constructor.
+#
+# "maplike" or "setlike" in `implemented` gives a read-only declaration of
+# that kind its behaviour: the bindings write its members, which read the
+# class's MaplikeEntries() or SetlikeValues().
 mitto_bindings_interfaces = [
+  {
+    name = "BarProp"
+    file = "bar_prop"
+    made_by_known_gaps = true
+  },
   {
     name = "CharacterData"
     file = "character_data"
@@ -43,8 +59,53 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "CrashReportContext"
+    file = "crash_report_context"
+    made_by_known_gaps = true
+    implemented = []
+  },
+  {
+    name = "CustomElementRegistry"
+    file = "custom_element_registry"
+    made_by_known_gaps = true
+    implemented = []
+  },
+  {
     name = "DOMException"
     file = "dom_exception"
+  },
+  {
+    name = "DOMRect"
+    file = "dom_rect"
+    made_by_known_gaps = true
+    implemented = [
+      "constructor",
+      "x",
+      "y",
+      "width",
+      "height",
+      "fromRect",
+    ]
+  },
+  {
+    name = "DOMRectReadOnly"
+    file = "dom_rect_read_only"
+    made_by_known_gaps = true
+
+    # toJSON() gives what Web IDL's default toJSON steps read, as a Known Gap
+    # does.
+    implemented = [
+      "constructor",
+      "x",
+      "y",
+      "width",
+      "height",
+      "top",
+      "right",
+      "bottom",
+      "left",
+      "fromRect",
+    ]
   },
   {
     name = "Document"
@@ -77,7 +138,40 @@ mitto_bindings_interfaces = [
       "prepend",
       "querySelector",
       "replaceChildren",
+      "get domain",
+      "designMode",
+      "scrollingElement",
+      "activeElement",
+      "hidden",
+      "visibilityState",
+      "webkitVisibilityState",
+      "webkitHidden",
+      "get fullscreenEnabled",
+      "webkitFullscreenEnabled",
+      "pictureInPictureEnabled",
+      "get fullscreenElement",
+      "webkitCurrentFullScreenElement",
+      "webkitFullscreenElement",
+      "rootElement",
+      "customElementRegistry",
+      "lastModified",
+      "images",
+      "embeds",
+      "plugins",
+      "links",
+      "forms",
+      "scripts",
+      "anchors",
+      "applets",
+      "all",
+      "children",
     ]
+  },
+  {
+    name = "DocumentPictureInPicture"
+    file = "document_picture_in_picture"
+    made_by_known_gaps = true
+    implemented = [ "window" ]
   },
   {
     name = "DocumentType"
@@ -127,6 +221,7 @@ mitto_bindings_interfaces = [
       "setAttribute",
       "toggleAttribute",
       "webkitMatchesSelector",
+      "children",
     ]
   },
   {
@@ -134,11 +229,35 @@ mitto_bindings_interfaces = [
     file = "event"
   },
   {
+    name = "EventCounts"
+    file = "event_counts"
+    made_by_known_gaps = true
+    implemented = [ "maplike" ]
+  },
+  {
     name = "EventTarget"
     file = "event_target"
 
     # It returns an Observable, which has no class yet.
     missing = [ "when" ]
+  },
+  {
+    name = "FontFaceSet"
+    file = "font_face_set"
+    made_by_known_gaps = true
+    implemented = [ "status" ]
+  },
+  {
+    name = "HTMLAllCollection"
+    file = "html_all_collection"
+    made_by_known_gaps = true
+
+    # Its named getter, namedItem() and item() give a union of HTMLCollection and
+    # Element, which the C++ writer does not return yet.
+    implemented = [
+      "length",
+      "indexed getter",
+    ]
   },
   {
     name = "HTMLBRElement"
@@ -149,6 +268,11 @@ mitto_bindings_interfaces = [
     name = "HTMLBodyElement"
     file = "html_body_element"
     implemented = []
+  },
+  {
+    name = "HTMLCollection"
+    file = "html_collection"
+    made_by_known_gaps = true
   },
   {
     name = "HTMLDivElement"
@@ -257,6 +381,42 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "History"
+    file = "history"
+    made_by_known_gaps = true
+
+    # scrollRestoration keeps what a page sets, as a Known Gap does.
+    implemented = [
+      "length",
+      "state",
+    ]
+  },
+  {
+    name = "Location"
+    file = "location"
+    made_by_known_gaps = true
+
+    # Navigating, through its setters and methods, is a Known Gap.
+    implemented = [
+      "get href",
+      "origin",
+      "get protocol",
+      "get host",
+      "get hostname",
+      "get port",
+      "get pathname",
+      "get search",
+      "get hash",
+      "toString",
+    ]
+  },
+  {
+    name = "MediaSource"
+    file = "media_source"
+    made_by_known_gaps = true
+    implemented = [ "canConstructInDedicatedWorker" ]
+  },
+  {
     name = "MemoryInfo"
     file = "memory_info"
   },
@@ -267,6 +427,36 @@ mitto_bindings_interfaces = [
   {
     name = "MimeTypeArray"
     file = "mime_type_array"
+  },
+  {
+    name = "Navigation"
+    file = "navigation"
+    made_by_known_gaps = true
+    implemented = [
+      "currentEntry",
+      "transition",
+      "activation",
+      "canGoBack",
+      "canGoForward",
+      "entries",
+    ]
+  },
+  {
+    name = "NavigationActivation"
+    file = "navigation_activation"
+    made_by_known_gaps = true
+  },
+  {
+    name = "NavigationHistoryEntry"
+    file = "navigation_history_entry"
+    made_by_known_gaps = true
+    implemented = [
+      "key",
+      "id",
+      "url",
+      "index",
+      "sameDocument",
+    ]
   },
   {
     name = "Navigator"
@@ -343,6 +533,8 @@ mitto_bindings_interfaces = [
       "normalize",
       "removeChild",
       "replaceChild",
+      "childNodes",
+      "baseURI",
     ]
   },
   {
@@ -355,6 +547,22 @@ mitto_bindings_interfaces = [
     file = "media_query_list_event"
   },
   {
+    name = "NodeList"
+    file = "node_list"
+    made_by_known_gaps = true
+    implemented = [
+      "length",
+      "item",
+      "indexed getter",
+    ]
+  },
+  {
+    name = "Notification"
+    file = "notification"
+    made_by_known_gaps = true
+    implemented = [ "maxActions" ]
+  },
+  {
     name = "Performance"
     file = "performance"
     implemented = [
@@ -362,6 +570,12 @@ mitto_bindings_interfaces = [
       "timeOrigin",
       "memory",
     ]
+  },
+  {
+    name = "PerformanceObserver"
+    file = "performance_observer"
+    made_by_known_gaps = true
+    implemented = [ "supportedEntryTypes" ]
   },
   {
     name = "Plugin"
@@ -377,6 +591,18 @@ mitto_bindings_interfaces = [
   {
     name = "PopStateEvent"
     file = "pop_state_event"
+  },
+  {
+    name = "PressureObserver"
+    file = "pressure_observer"
+    made_by_known_gaps = true
+    implemented = [ "knownSources" ]
+  },
+  {
+    name = "PushManager"
+    file = "push_manager"
+    made_by_known_gaps = true
+    implemented = [ "supportedContentEncodings" ]
   },
   {
     name = "Request"
@@ -423,12 +649,49 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "StyleMedia"
+    file = "style_media"
+    made_by_known_gaps = true
+    implemented = [ "type" ]
+  },
+  {
     name = "Text"
     file = "text"
     implemented = [
       "splitText",
       "wholeText",
     ]
+  },
+  {
+    name = "TrustedTypePolicyFactory"
+    file = "trusted_type_policy_factory"
+    made_by_known_gaps = true
+    implemented = [ "defaultPolicy" ]
+  },
+  {
+    name = "Viewport"
+    file = "viewport"
+    made_by_known_gaps = true
+  },
+  {
+    name = "VisualViewport"
+    file = "visual_viewport"
+    made_by_known_gaps = true
+    implemented = [
+      "offsetLeft",
+      "offsetTop",
+      "pageLeft",
+      "pageTop",
+      "width",
+      "height",
+      "scale",
+    ]
+  },
+  {
+    name = "WGSLLanguageFeatures"
+    file = "wgsl_language_features"
+    made_by_known_gaps = true
+    implemented = [ "setlike" ]
   },
   {
     name = "Window"
@@ -457,6 +720,28 @@ mitto_bindings_interfaces = [
       "outerHeight",
       "devicePixelRatio",
       "matchMedia",
+      "frames",
+      "top",
+      "parent",
+      "opener",
+      "origin",
+      "isSecureContext",
+      "originAgentCluster",
+      "offscreenBuffering",
+      "crashReport",
+      "get location",
+      "history",
+      "locationbar",
+      "menubar",
+      "personalbar",
+      "scrollbars",
+      "statusbar",
+      "toolbar",
+      "visualViewport",
+      "viewport",
+      "styleMedia",
+      "navigation",
+      "customElements",
     ]
   },
   {
