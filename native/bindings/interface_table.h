@@ -12,10 +12,8 @@
 // data.
 //
 // Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
-// Upstream:
-// third_party/blink/renderer/platform/bindings/idl_member_installer.cc
-// Upstream:
-// third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+// Upstream: third_party/blink/renderer/platform/bindings/idl_member_installer.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 
 #ifndef MITTO_BINDINGS_INTERFACE_TABLE_H_
 #define MITTO_BINDINGS_INTERFACE_TABLE_H_
