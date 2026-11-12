@@ -25,12 +25,27 @@ uint64_t PageRequests::Start(PageRequestKind kind,
                              std::string url,
                              Client& client) {
   PageRequest request;
-  request.number = next_number_++;
   request.kind = kind;
   request.url = std::move(url);
+  return Start(std::move(request), client);
+}
+
+uint64_t PageRequests::Start(PageRequest request, Client& client) {
+  request.number = next_number_++;
   open_[request.number].client = &client;
   send_.Run(EncodeRequest(request));
   return request.number;
+}
+
+void PageRequests::Cancel(uint64_t number) {
+  const auto found = open_.find(number);
+  if (found == open_.end() || !found->second.client) {
+    return;
+  }
+  // It stays open until the Session ends it, so that what the Session sent
+  // meanwhile still counts against its credit.
+  found->second.client = nullptr;
+  send_.Run(EncodeCancel(number));
 }
 
 void PageRequests::TookBody(uint64_t number, size_t bytes) {
@@ -76,7 +91,9 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
     return;
   }
   open->started = true;
-  open->client->OnResponseStarted(response);
+  if (open->client) {
+    open->client->OnResponseStarted(response);
+  }
 }
 
 void PageRequests::OnResponseBody(PageResponseBody body) {
@@ -88,6 +105,10 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
     refuse_.Run(base::StrCat({"more of the body of request ",
                               base::NumberToString(body.number),
                               " than the Page has given credit for"}));
+    return;
+  }
+  if (!open->client) {
+    // Cancelled: the Session needs no credit for what it sent meanwhile.
     return;
   }
   open->untaken += body.bytes.size();
@@ -102,7 +123,9 @@ void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {
   }
   Client* const client = open->client;
   open_.erase(ended.number);
-  client->OnResponseEnded(ended.net_error);
+  if (client) {
+    client->OnResponseEnded(ended.net_error);
+  }
 }
 
 }  // namespace mitto

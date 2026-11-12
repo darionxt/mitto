@@ -130,7 +130,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 3
+_PROTOCOL_VERSION = 4
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 _DEFAULT_START = {"time_zone": "UTC", "locale": "en-US"}
@@ -470,10 +470,51 @@ _SCRIPT_KIND = 1
 _DOCUMENT_URL = "http://www.example.test/page"
 
 
-def _respond(session: _Session, number: int, url: str, content_type: str, status: int = 200) -> None:
-    encoded = url.encode()
-    headers = f"Content-Type: {content_type}\n".encode()
-    session.send(_RESPONSE_STARTED, struct.pack("<QiI", number, status, len(encoded)) + encoded + headers)
+def _sized(data: bytes) -> bytes:
+    return struct.pack("<I", len(data)) + data
+
+
+def _request(
+    number: int,
+    kind: int,
+    url: str,
+    method: str = "GET",
+    headers: str = "",
+    body: bytes | None = None,
+    *,
+    same_origin: bool = False,
+) -> bytes:
+    """The payload of a Request: its number, Kind, mode, URL, method and lines, and its body, if it has one."""
+    has_body = b"\x00" if body is None else b"\x01" + body
+    return (
+        struct.pack("<QBB", number, kind, int(same_origin))
+        + _sized(url.encode())
+        + _sized(method.encode())
+        + _sized(headers.encode())
+        + has_body
+    )
+
+
+def _respond(
+    session: _Session,
+    number: int,
+    url: str,
+    content_type: str,
+    status: int = 200,
+    *,
+    status_text: str = "OK",
+    redirected: bool = False,
+    cors: bool = False,
+    headers: str = "",
+) -> None:
+    lines = f"Content-Type: {content_type}\n{headers}".encode()
+    session.send(
+        _RESPONSE_STARTED,
+        struct.pack("<QiBBq", number, status, int(redirected), int(cors), 0)
+        + _sized(url.encode())
+        + _sized(status_text.encode("latin-1"))
+        + lines,
+    )
 
 
 def _body(session: _Session, number: int, data: bytes) -> None:
@@ -504,7 +545,7 @@ def test_a_page_loads_the_document_that_its_session_sends_and_asks_for_its_scrip
 
     # It takes what came, and asks for the script it reaches, with the URL resolved against the document's.
     assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(document)))
-    assert session.receive() == (_REQUEST, struct.pack("<QB", 1, _SCRIPT_KIND) + b"http://www.example.test/app.js")
+    assert session.receive() == (_REQUEST, _request(1, _SCRIPT_KIND, "http://www.example.test/app.js"))
     _end(session, 0)
     script = b"document.cookie = 'set=by script'; window.seen = [document.cookie, !!document.getElementById('b')];"
     _respond(session, 1, "http://www.example.test/app.js", "text/javascript")
@@ -545,6 +586,151 @@ def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -
     _end(session, 0)
     assert session.receive() == (_LOADED, b"")
     assert session.evaluate("document.getElementById('later').textContent.length") == (False, "2000")
+
+
+_FETCH_KIND = 2
+_CANCEL = 17
+
+
+def _loaded(session: _Session) -> None:
+    """Give the Page an empty document, and wait until it has loaded."""
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, b"<p>fetch</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+
+
+def test_a_fetch_asks_the_session_for_what_its_script_gives_and_resolves_with_the_response(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1) + b"fetch('/data', {method: 'POST', body: 'hi', headers: {'X-A': '1'}})"
+        b".then(async r => [r.status, r.statusText, r.redirected, r.headers.get('x-b'), await r.text()])",
+    )
+
+    assert session.receive() == (
+        _REQUEST,
+        _request(
+            1,
+            _FETCH_KIND,
+            "http://www.example.test/data",
+            "POST",
+            "X-A: 1\nContent-Type: text/plain;charset=UTF-8\n",
+            b"hi",
+        ),
+    )
+    _respond(
+        session,
+        1,
+        "http://www.example.test/moved",
+        "text/plain",
+        201,
+        status_text="Made",
+        redirected=True,
+        headers="X-B: 2\n",
+    )
+    _body(session, 1, b"the body")
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 8))
+    _end(session, 1)
+    assert session.evaluated() == (1, False, '[201,"Made",true,"2","the body"]')
+    assert session.close() == 0
+
+
+def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE, struct.pack("<Q", 1) + b"window.got = fetch('/large').then(r => { window.response = r; }); null"
+    )
+    # fetch() asks the Session at once, before the script that calls it returns.
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, "null")
+    _respond(session, 1, "http://www.example.test/large", "text/plain")
+    _body(session, 1, b"x" * _BODY_WINDOW)
+
+    # The Response holds its window, and no script reads it, so the Session gets no room for more.
+    assert _nothing_comes(session)
+
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"response.text().then(text => text.length)")
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, _BODY_WINDOW))
+    _body(session, 1, b"y" * 10)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, 10))
+    _end(session, 1)
+    assert session.evaluated() == (2, False, str(_BODY_WINDOW + 10))
+    assert session.close() == 0
+
+
+def test_a_fetch_that_the_session_fails_rejects_and_a_failed_body_rejects_its_read(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"fetch('/a').then(() => 'ok', e => String(e))")
+    assert session.receive()[0] == _REQUEST
+    _end(session, 1, -102)
+    assert session.evaluated() == (1, False, '"TypeError: Failed to fetch"')
+
+    session.send(_EVALUATE, struct.pack("<Q", 2) + b"fetch('/b').then(r => r.text()).then(() => 'ok', e => String(e))")
+    assert session.receive()[0] == _REQUEST
+    _respond(session, 2, "http://www.example.test/b", "text/plain")
+    _body(session, 2, b"part")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 2, -100)
+    assert session.evaluated() == (2, False, '"TypeError: Failed to fetch"')
+    assert session.close() == 0
+
+
+def test_a_fetch_whose_body_cannot_fit_in_a_frame_rejects_and_the_page_goes_on(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    script = (
+        b"fetch('/upload', {method: 'POST', body: new Uint8Array(16 * 1024 * 1024)})"
+        b".then(() => 'sent', error => String(error))"
+    )
+
+    assert session.evaluate(script.decode()) == (False, '"TypeError: Failed to fetch"')
+    assert session.evaluate("1 + 1", call=2) == (False, "2")
+    assert session.close() == 0
+
+
+def test_a_cors_response_shows_only_the_header_names_that_cors_lets_through(session: _Session) -> None:
+    # The Session says the response's tainting is cors, which a redirect back to the document's origin keeps.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1) + b"fetch('/back').then(r => [r.type, r.headers.get('x-hidden'), r.headers.get('x-shown'),"
+        b" r.headers.get('content-type')])",
+    )
+    assert session.receive()[0] == _REQUEST
+    _respond(
+        session,
+        1,
+        _DOCUMENT_URL,
+        "text/plain",
+        redirected=True,
+        cors=True,
+        headers="X-Hidden: 1\nX-Shown: 2\nAccess-Control-Expose-Headers: X-Shown\n",
+    )
+    _end(session, 1)
+    assert session.evaluated() == (1, False, '["cors",null,"2","text/plain"]')
+    assert session.close() == 0
+
+
+def test_timers_run_while_the_page_waits_for_a_response(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1) + b"window.ticks = 0; const id = setInterval(() => ++ticks, 5);"
+        b"fetch('/slow').then(r => r.text()).then(text => { clearInterval(id); return [text, ticks > 2]; })",
+    )
+    assert session.receive()[0] == _REQUEST
+    assert _nothing_comes(session, 0.2)
+    _respond(session, 1, "http://www.example.test/slow", "text/plain")
+    _end(session, 1)
+    assert session.evaluated() == (1, False, '["",true]')
+    assert session.close() == 0
 
 
 def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Session) -> None:

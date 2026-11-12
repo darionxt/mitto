@@ -22,6 +22,12 @@ class RequestClient {
   // MITTO_EVENT_REDIRECT_FOLLOWED event describes it.
   virtual void OnResponseEvent(RequestEvent event) = 0;
 
+  // Whether the response that `event` describes may go on: a redirect be
+  // followed, or a response reach the client. One that may not ends the
+  // request with net::ERR_FAILED, as Chrome's CORS check fails it, before
+  // OnResponseEvent() hears of it. Called with the event of each.
+  virtual bool AllowsResponse(const RequestEvent& event) = 0;
+
   // What the next read of the body goes into, and how many bytes it may take
   // at most. Nothing else touches the buffer during a read.
   virtual net::IOBuffer* read_buffer() = 0;

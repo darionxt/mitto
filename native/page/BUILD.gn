@@ -57,6 +57,10 @@ executable("mitto_page") {
     "document_loader.cc",
     "document_loader.h",
     "mitto_page.cc",
+    "page_fetcher.cc",
+    "page_fetcher.h",
+    "page_platform.cc",
+    "page_platform.h",
     "page_reporter.cc",
     "page_reporter.h",
     "page_requests.cc",
@@ -67,6 +71,8 @@ executable("mitto_page") {
     "session_channel.h",
     "session_cookie_jar.cc",
     "session_cookie_jar.h",
+    "wall_clock_clamper.cc",
+    "wall_clock_clamper.h",
   ]
   deps = [
     ":icu_data",

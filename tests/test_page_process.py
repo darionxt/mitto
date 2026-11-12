@@ -215,7 +215,22 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 3
+_PROTOCOL_VERSION = 4
+
+
+def _script_request(number: int, url: str) -> str:
+    """The Python expression of a script Request's payload, which a fake Page program sends."""
+    return _fetch_request(number, url, kind=1)
+
+
+def _fetch_request(number: int, url: str, method: str = "GET", lines: str = "", kind: int = 2) -> str:
+    """The Python expression of a Request's payload, with no body, which a fake Page program sends."""
+    return (
+        f"struct.pack('<QBBI', {number}, {kind}, 0, {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
+        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + b'\\x00'"
+    )
+
+
 _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
 
 
@@ -255,6 +270,30 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
             id="too-large",
         ),
         pytest.param(
+            "unasked-cancel",
+            f"{_HELLO}\nsend(17, struct.pack('<Q', 7))",
+            "the library refused a message from the Page: a cancel of request 7, which the Page has not asked for",
+            id="unasked-cancel",
+        ),
+        pytest.param(
+            "forbidden-header",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', lines='Cookie: a=b' + chr(10))})",
+            "the library refused a message from the Page: a request with the forbidden request header Cookie",
+            id="forbidden-header",
+        ),
+        pytest.param(
+            "forbidden-method",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', method='TRACE')})",
+            "the library refused a message from the Page: a request with a method that a page cannot send",
+            id="forbidden-method",
+        ),
+        pytest.param(
+            "script-with-lines",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', lines='X-A: 1' + chr(10), kind=1)})",
+            "the library refused a message from the Page: a script request with a method, header lines, a body or a mode",
+            id="script-with-lines",
+        ),
+        pytest.param(
             "unasked-credit",
             f"{_HELLO}\nsend(9, struct.pack('<QI', 7, 10))",
             "the library refused a message from the Page: credit for request 7, which the Page has not asked for",
@@ -262,14 +301,14 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
         ),
         pytest.param(
             "request-numbered-again",
-            f"{_HELLO}\nsend(8, struct.pack('<QB', 2, 1) + b'http://127.0.0.1:1/a.js')"
-            "\nsend(8, struct.pack('<QB', 2, 1) + b'http://127.0.0.1:1/b.js')",
+            f"{_HELLO}\nsend(8, {_script_request(2, 'http://127.0.0.1:1/a.js')})"
+            f"\nsend(8, {_script_request(2, 'http://127.0.0.1:1/b.js')})",
             "the library refused a message from the Page: a request numbered 2, after one numbered 2",
             id="request-numbered-again",
         ),
         pytest.param(
             "navigation-number",
-            f"{_HELLO}\nsend(8, struct.pack('<QB', 0, 1) + b'http://127.0.0.1:1/a.js')",
+            f"{_HELLO}\nsend(8, {_script_request(0, 'http://127.0.0.1:1/a.js')})",
             "the library refused a message from the Page: a request numbered 0, which is the navigation's",
             id="navigation-number",
         ),

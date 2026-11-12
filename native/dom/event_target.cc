@@ -14,6 +14,7 @@
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-primitive.h"
 
 namespace mitto {
@@ -67,6 +68,12 @@ void CallListener(v8::Isolate* isolate,
                   v8::Local<v8::Value> current_target,
                   v8::Local<v8::Value> event) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  // The HTML Standard's clean up after running a callback: the microtasks that
+  // a listener queues run once it returns, if no script is running, as
+  // Blink's V8ScriptRunner::CallFunction() runs them. After the TryCatch, so
+  // that what they throw is reported on its own.
+  const v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kRunMicrotasks);
   const v8::TryCatch try_catch(isolate);
   v8::Local<v8::Function> function;
   v8::Local<v8::Value> receiver = current_target;

@@ -26,6 +26,8 @@ ABOUT_BLANK = "about:blank"
 
 # The Request Kinds of what a Page asks its Session for: its navigation, its classic scripts and its scripts' fetch().
 _PAGE_REQUEST_KINDS = (RequestKind.NAVIGATION, RequestKind.SCRIPT, RequestKind.FETCH)
+# The template of a Page's fetch() with a body, beside one per Request Kind.
+_FETCH_WITH_BODY = "fetch_with_body"
 
 
 class SessionState:
@@ -117,16 +119,20 @@ class SessionState:
         """
         if url == ABOUT_BLANK:
             return self.native.open_page()
-        requests: dict[str, PageRequestTemplate] = {}
-        for kind in _PAGE_REQUEST_KINDS:
-            defaults = self._persona.request_defaults(kind)
-            requests[kind.value] = PageRequestTemplate(
-                headers=defaults["headers"],
-                priority=defaults["priority"],
-                priority_incremental=defaults["priority_incremental"],
-                fetch=defaults["fetch"],
-            )
+        requests = {kind.value: self._page_request_template(kind) for kind in _PAGE_REQUEST_KINDS}
+        # A fetch() with a body sends the lines that one has, with its Content-Type where the Persona puts it.
+        requests[_FETCH_WITH_BODY] = self._page_request_template(RequestKind.FETCH, with_body=True)
         return self.native.open_page(url=url, requests=requests)
+
+    def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:
+        """Return what a Page's request of `kind` sends, as this Session's Persona says."""
+        defaults = self._persona.request_defaults(kind, with_body=with_body)
+        return PageRequestTemplate(
+            headers=defaults["headers"],
+            priority=defaults["priority"],
+            priority_incremental=defaults["priority_incremental"],
+            fetch=defaults["fetch"],
+        )
 
     def begin_close(self) -> Callable[[], None]:
         """Take the cookies to save and refuse every later call to the native Session, none of which blocks for long.

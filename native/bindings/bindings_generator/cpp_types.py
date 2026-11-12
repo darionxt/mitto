@@ -41,9 +41,17 @@ _CONVERTED_INTEGERS = frozenset({"byte", "octet", "short", "unsigned short", "lo
 _ANNOTATIONS = frozenset({"LegacyNullToEmptyString"})
 
 
+def _union_member_name(member: IdlType) -> str:
+    if member.kind is TypeKind.SEQUENCE:
+        return f"{_union_member_name(member.members[0])}Sequence"
+    if member.kind is TypeKind.RECORD:
+        return f"{_union_member_name(member.members[0])}{_union_member_name(member.members[1])}Record"
+    return member.name[0].upper() + member.name[1:]
+
+
 def union_name(idl_type: IdlType) -> str:
     """The C++ name of a union, as Blink's union_name_mapper.py names it, such as AddEventListenerOptionsOrBoolean."""
-    return "Or".join(member.name[0].upper() + member.name[1:] for member in idl_type.members)
+    return "Or".join(_union_member_name(member) for member in idl_type.members)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -88,9 +96,16 @@ class TypeMapper:
         dictionaries: the dictionaries that the database holds.
     """
 
-    def __init__(self, implemented: frozenset[str], dictionaries: frozenset[str]) -> None:
+    def __init__(
+        self,
+        implemented: frozenset[str],
+        dictionaries: frozenset[str],
+        enumerations: dict[str, tuple[str, ...]] | None = None,
+    ) -> None:
         self._implemented = implemented
         self._dictionaries = dictionaries
+        self._enumerations = enumerations or {}
+        self._names = 0
         self.used_dictionaries: list[str] = []
         self.used_unions: dict[str, IdlType] = {}
         self.used_interfaces: set[str] = set()
@@ -129,6 +144,17 @@ class TypeMapper:
             idl_type, members=tuple(members), name=" or ".join(member.syntax for member in members)
         )
 
+    def enumeration_values(self, idl_type: IdlType, where: str) -> tuple[str, ...]:
+        """The strings of an enumeration."""
+        if idl_type.name not in self._enumerations:
+            raise UnhandledError(f"{where}: the enumeration {idl_type.name} is not in the database")
+        return self._enumerations[idl_type.name]
+
+    def _name(self, base: str) -> str:
+        """A new C++ name, for the variables of a conversion nested in another."""
+        self._names += 1
+        return f"{base}{self._names}"
+
     def _refuse(self, idl_type: IdlType, where: str, use: str) -> UnhandledError:
         return UnhandledError(f"{where}: the C++ writer does not handle {use} of type {idl_type.syntax}")
 
@@ -150,9 +176,18 @@ class TypeMapper:
             return "bool"
         if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS and not idl_type.nullable:
             return _INTEGERS[idl_type.name]
+        if kind is TypeKind.FLOATING_POINT and not idl_type.nullable:
+            return "float" if idl_type.name.endswith("float") else "double"
         if kind is TypeKind.STRING and idl_type.name in ("DOMString", "USVString"):
             if idl_type.nullable:
                 return "const std::optional<std::u16string>&"
+            return "const std::u16string&"
+        if kind is TypeKind.STRING and idl_type.name == "ByteString" and not idl_type.nullable:
+            # Its code units are bytes, so a std::string holds it, as Latin-1.
+            return "const std::string&"
+        if kind is TypeKind.ENUMERATION and not idl_type.nullable:
+            # One of the enumeration's strings, as a page wrote it.
+            self.enumeration_values(idl_type, where)
             return "const std::u16string&"
         if kind is TypeKind.ANY:
             return "v8::Local<v8::Value>"
@@ -161,6 +196,16 @@ class TypeMapper:
             return f"mitto::{idl_type.name}*"
         if kind is TypeKind.CALLBACK_INTERFACE:
             return "v8::Local<v8::Object>"
+        if kind is TypeKind.CALLBACK_FUNCTION:
+            # Empty for null, when the type is nullable.
+            return "v8::Local<v8::Function>"
+        if kind is TypeKind.SEQUENCE and not idl_type.nullable:
+            element = self.value_type(idl_type.members[0], where)
+            return f"const std::vector<{element}>&"
+        if kind is TypeKind.RECORD and not idl_type.nullable:
+            key = self.value_type(idl_type.members[0], where)
+            value = self.value_type(idl_type.members[1], where)
+            return f"const std::vector<std::pair<{key}, {value}>>&"
         if kind is TypeKind.DICTIONARY and not idl_type.nullable:
             self._use_dictionary(idl_type.name)
             return f"const {idl_type.name}&"
@@ -190,6 +235,11 @@ class TypeMapper:
             return "float" if idl_type.name.endswith("float") else "double"
         if kind is TypeKind.STRING and idl_type.name in ("DOMString", "USVString"):
             return "std::optional<std::u16string>" if idl_type.nullable else "std::u16string"
+        if kind is TypeKind.STRING and idl_type.name == "ByteString":
+            return "std::optional<std::string>" if idl_type.nullable else "std::string"
+        if kind is TypeKind.PROMISE:
+            # The class settles it; an error before it returns rejects it.
+            return "v8::Local<v8::Promise>"
         if kind is TypeKind.ENUMERATION:
             # The value as a page sees it, one of the enumeration's strings, where Blink returns its V8 enum class.
             return "std::u16string"
@@ -208,6 +258,8 @@ class TypeMapper:
                 return f"std::vector<mitto::{element.name}*>"
             if element.kind is TypeKind.STRING and element.name == "DOMString" and not element.nullable:
                 return "std::vector<std::u16string>"
+            if element.kind is TypeKind.STRING and element.name == "ByteString" and not element.nullable:
+                return "std::vector<std::string>"
         raise self._refuse(idl_type, where, "a return value")
 
     def to_v8(self, idl_type: IdlType, expression: str) -> str:
@@ -222,10 +274,16 @@ class TypeMapper:
             return f"v8::Integer::New(isolate, {expression})"
         if kind is TypeKind.FLOATING_POINT:
             return f"v8::Number::New(isolate, {expression})"
+        if kind is TypeKind.STRING and idl_type.name == "ByteString":
+            if idl_type.nullable:
+                return f"ToV8NullableByteString(isolate, {expression})"
+            return f"ToV8ByteString(isolate, {expression})"
         if kind is TypeKind.STRING:
             if idl_type.nullable:
                 return f"ToV8NullableString(isolate, {expression})"
             return f"ToV8String(isolate, {expression})"
+        if kind is TypeKind.PROMISE:
+            return expression
         if kind is TypeKind.ENUMERATION:
             return f"ToV8String(isolate, {expression})"
         if kind is TypeKind.ANY:
@@ -233,18 +291,28 @@ class TypeMapper:
         if kind is TypeKind.INTERFACE:
             return f"ToV8(isolate, {expression})"
         if kind is TypeKind.SEQUENCE:
+            if idl_type.members[0].kind is TypeKind.STRING and idl_type.members[0].name == "ByteString":
+                return f"ToV8ByteStringArray(isolate, {expression})"
             if idl_type.members[0].kind is TypeKind.STRING:
                 return f"ToV8StringArray(isolate, {expression})"
             return f"ToV8Array(isolate, {expression})"
         raise AssertionError(idl_type.syntax)
 
     def _register_union(self, idl_type: IdlType, where: str) -> None:
-        handled = (TypeKind.BOOLEAN, TypeKind.DICTIONARY, TypeKind.STRING, TypeKind.INTERFACE)
+        handled = (
+            TypeKind.BOOLEAN,
+            TypeKind.DICTIONARY,
+            TypeKind.STRING,
+            TypeKind.INTERFACE,
+            TypeKind.SEQUENCE,
+            TypeKind.RECORD,
+        )
         for member in idl_type.members:
             if member.kind not in handled or member.nullable or member.extended_attributes.entries:
                 raise self._refuse(idl_type, where, "a union")
-            if member.kind is TypeKind.STRING and member.name != "DOMString":
-                raise self._refuse(idl_type, where, "a union")
+            if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
+                # Checks that its elements convert.
+                self.value_type(member, where)
         # Interfaces with a class can be any number. Of the others, Web IDL's conversion takes the first that fits, so
         # the writer allows one of each.
         kinds = [member.kind for member in idl_type.members if member.kind is not TypeKind.INTERFACE]
@@ -261,10 +329,14 @@ class TypeMapper:
         """The C++ type of a member of a union, in its std::variant."""
         if member.kind is TypeKind.BOOLEAN:
             return "bool"
+        if member.kind is TypeKind.STRING and member.name == "ByteString":
+            return "std::string"
         if member.kind is TypeKind.STRING:
             return "std::u16string"
         if member.kind is TypeKind.INTERFACE:
             return f"mitto::{member.name}*"
+        if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
+            return self.value_type(member, "a union")
         return member.name
 
     def from_v8(self, idl_type: IdlType, value: str, target: str, site: Site, where: str) -> list[str]:
@@ -289,6 +361,81 @@ class TypeMapper:
                 f"  {site.fail}",
                 "}",
             ]
+        if kind is TypeKind.STRING and idl_type.name == "ByteString":
+            if idl_type.nullable:
+                raise self._refuse(idl_type, where, "a value")
+            return [
+                f"std::string {target};",
+                f"if (!FromV8ByteString(isolate, {value}, &{target})) {{",
+                f"  {site.fail}",
+                "}",
+            ]
+        if kind is TypeKind.ENUMERATION:
+            if idl_type.nullable:
+                raise self._refuse(idl_type, where, "a value")
+            values = ", ".join(f'u"{item}"' for item in self.enumeration_values(idl_type, where))
+            table = self._name("kEnumerationValues")
+            return [
+                f"static constexpr std::u16string_view {table}[] = {{{values}}};",
+                f"std::u16string {target};",
+                f'if (!FromV8Enumeration(isolate, {value}, {table}, "{idl_type.name}", &{target})) {{',
+                f"  {site.fail}",
+                "}",
+            ]
+        if kind is TypeKind.CALLBACK_FUNCTION:
+            if site.argument_index is not None or site.argument_index_expression is not None:
+                message = site.not_of_type("Function")
+            else:
+                message = '"The given value is not a function."'
+            lines = [
+                f"v8::Local<v8::Function> {target};",
+                f"if ({value}->IsFunction()) {{",
+                f"  {target} = {value}.As<v8::Function>();",
+            ]
+            if idl_type.nullable:
+                lines.append(f"}} else if (!{value}->IsNullOrUndefined()) {{")
+            else:
+                lines.append("} else {")
+            lines += [f"  exception_state.ThrowTypeError({message});", f"  {site.fail}", "}"]
+            return lines
+        if kind is TypeKind.SEQUENCE:
+            if idl_type.nullable:
+                raise self._refuse(idl_type, where, "a value")
+            element_type = idl_type.members[0]
+            element = self._name("element")
+            item = self._name("item")
+            inner = self.from_v8(element_type, item, element, Site(fail="return false;"), where)
+            return [
+                f"{cpp_type} {target};",
+                f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
+                *["      " + line for line in inner],
+                f"      {target}.push_back(std::move({element}));",
+                "      return true;",
+                "    })) {",
+                f"  {site.fail}",
+                "}",
+            ]
+        if kind is TypeKind.RECORD:
+            if idl_type.nullable:
+                raise self._refuse(idl_type, where, "a value")
+            key = self._name("key")
+            key_value = self._name("key_value")
+            item = self._name("item")
+            item_value = self._name("item_value")
+            converted_key = self.from_v8(idl_type.members[0], key_value, key, Site(fail="return false;"), where)
+            converted_item = self.from_v8(idl_type.members[1], item_value, item, Site(fail="return false;"), where)
+            return [
+                f"{cpp_type} {target};",
+                f"if (!IterateRecord(isolate, {value}, exception_state, {_quote(idl_type.syntax)},",
+                f"                   [&](v8::Local<v8::Value> {key_value}, v8::Local<v8::Value> {item_value}) {{",
+                *["      " + line for line in converted_key],
+                *["      " + line for line in converted_item],
+                f"      {target}.emplace_back(std::move({key}), std::move({item}));",
+                "      return true;",
+                "    })) {",
+                f"  {site.fail}",
+                "}",
+            ]
         if kind is TypeKind.STRING:
             if "LegacyNullToEmptyString" in idl_type.extended_attributes:
                 function = "FromV8StringNullToEmpty"
@@ -301,6 +448,16 @@ class TypeMapper:
                 f"if (!{function}(isolate, {value}, &{target})) {{",
                 f"  {site.fail}",
                 "}",
+            ]
+        if kind is TypeKind.FLOATING_POINT:
+            restricted = "false" if idl_type.name.startswith("unrestricted") else "true"
+            name = idl_type.name.removeprefix("unrestricted ")
+            return [
+                f"double {target}_double;",
+                f'if (!FromV8Double(isolate, {value}, {restricted}, "{name}", &{target}_double)) {{',
+                f"  {site.fail}",
+                "}",
+                f"const {cpp_type} {target} = static_cast<{cpp_type}>({target}_double);",
             ]
         if kind is TypeKind.ANY:
             return [f"const v8::Local<v8::Value> {target} = {value};"]
@@ -342,8 +499,19 @@ class TypeMapper:
         kind = idl_type.kind
         if kind is TypeKind.BOOLEAN and literal in ("true", "false"):
             return literal
-        if kind is TypeKind.STRING and literal.startswith('"'):
+        if kind is TypeKind.INTEGER and literal.lstrip("-").isdigit():
+            return literal
+        if kind is TypeKind.FLOATING_POINT:
+            try:
+                float(literal)
+            except ValueError:
+                pass
+            else:
+                return literal if "." in literal or "e" in literal.lower() else f"{literal}.0"
+        if kind is TypeKind.ENUMERATION and literal.startswith('"'):
             return "u" + literal
+        if kind is TypeKind.STRING and literal.startswith('"'):
+            return literal if idl_type.name == "ByteString" else "u" + literal
         if kind is TypeKind.STRING and idl_type.nullable and literal == "null":
             return "std::nullopt"
         if kind is TypeKind.DICTIONARY and literal == "{}":

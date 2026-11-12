@@ -2,7 +2,9 @@
 // library starts it for a Page with --session=, and it serves that Page's
 // Session over the channel that the argument names: see session_channel.h and
 // docs/runtime.md. Given a script instead, it starts V8, runs the script in a
-// new context and prints what the script returns, as String() would write it.
+// new context, runs the event loop until no task or timer is left, and prints
+// what the script returns, as String() would write it, or what the promise it
+// returns was fulfilled with.
 // The context's document is about:blank's, or with --html= the one that the
 // HTML parser builds from MARKUP. SCRIPT "-" reads the script from standard
 // input, for one longer than a command line holds. Both are in UTF-8.
@@ -19,7 +21,9 @@
 // Windows, with those that the options name, separated by commas, turned on or
 // off, as Chrome's options of the same names do.
 //
-// Exits with 1 if the script throws, and with 2 if the arguments are wrong.
+// Exits with 1 if the script throws or its promise is rejected or never
+// settles, and with 2 if the arguments are wrong. What a timer or a microtask
+// throws goes to standard error, as a console would show it.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -32,17 +36,31 @@
 #include <utility>
 #include <vector>
 
+#include "base/at_exit.h"
 #include "base/check.h"
+#include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
+#include "base/location.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/current_thread.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/task/task_observer.h"
 #include "base/types/expected.h"
 #include "build/build_config.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/dom/dom_timer.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/window.h"
+#include "mitto/page/page_platform.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_channel.h"
 #include "mitto/page_messages.h"
@@ -56,8 +74,11 @@
 #include "v8/include/v8-initialization.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-microtask-queue.h"
+#include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-platform.h"
 #include "v8/include/v8-primitive.h"
+#include "v8/include/v8-promise.h"
 #include "v8/include/v8-script.h"
 #include "v8/include/v8-snapshot.h"
 #include "v8/include/v8-value.h"
@@ -152,9 +173,54 @@ std::optional<std::string> ToUtf8(v8::Isolate* isolate,
   return std::string(UNSAFE_BUFFERS(std::string_view(*text, text.length())));
 }
 
-// Runs `source` in a new context whose document `html` builds, and writes what
-// it returns to standard output, or what it throws to standard error. Returns
-// whether it finished without throwing.
+// Writes what a timer or a microtask threw, which nothing caught, as a console
+// shows it.
+void PrintUncaught(v8::Local<v8::Message> message,
+                   v8::Local<v8::Value> exception) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::TryCatch try_catch(isolate);
+  const std::optional<std::string> text =
+      ToUtf8(isolate, isolate->GetCurrentContext(), exception);
+  WriteLine(stderr, "Uncaught " + text.value_or("exception"));
+}
+
+// The event loop of the command line: after each task, a microtask
+// checkpoint, as in a Page, and the end of the loop once no task is ready and
+// no timer is set.
+class CommandLineLoop final : public base::TaskObserver {
+ public:
+  CommandLineLoop(v8::Isolate* isolate, base::RunLoop& run_loop)
+      : isolate_(isolate), run_loop_(run_loop) {
+    base::CurrentThread::Get()->AddTaskObserver(this);
+  }
+
+  CommandLineLoop(const CommandLineLoop&) = delete;
+  CommandLineLoop& operator=(const CommandLineLoop&) = delete;
+
+  ~CommandLineLoop() override {
+    base::CurrentThread::Get()->RemoveTaskObserver(this);
+  }
+
+  // base::TaskObserver:
+  void WillProcessTask(const base::PendingTask& pending_task,
+                       bool was_blocked_or_low_priority) override {}
+  void DidProcessTask(const base::PendingTask& pending_task) override {
+    const v8::HandleScope handle_scope(isolate_);
+    v8::MicrotasksScope::PerformCheckpoint(isolate_);
+    if (mitto::Window::Current().TimerCount() == 0) {
+      run_loop_->QuitWhenIdle();
+    }
+  }
+
+ private:
+  const raw_ptr<v8::Isolate> isolate_;
+  const raw_ref<base::RunLoop> run_loop_;
+};
+
+// Runs `source` in a new context whose document `html` builds, then the event
+// loop until nothing is left, and writes what the script returns to standard
+// output, or what it threw to standard error. Returns whether it finished
+// without throwing.
 bool RunScript(v8::Isolate* isolate,
                std::string_view html,
                std::string_view source) {
@@ -162,26 +228,84 @@ bool RunScript(v8::Isolate* isolate,
   const v8::Local<v8::Context> context =
       mitto::NewPageContext(isolate, base::UTF8ToUTF16(html));
   const v8::Context::Scope context_scope(context);
+  mitto::DOMTimerCoordinator timers(isolate, context);
+  mitto::Window::Current().SetTimers(&timers);
+  isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
+                                            v8::Isolate::kMessageError);
+
+  v8::Global<v8::Value> result;
+  v8::Global<v8::Value> exception;
+  bool threw = false;
+  base::RunLoop run_loop;
+  const CommandLineLoop loop(isolate, run_loop);
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](v8::Isolate* isolate, std::string_view source,
+             v8::Global<v8::Value>* result, v8::Global<v8::Value>* exception,
+             bool* threw) {
+            const v8::HandleScope handle_scope(isolate);
+            const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+            const v8::MicrotasksScope microtasks_scope(
+                context, v8::MicrotasksScope::kRunMicrotasks);
+            const v8::TryCatch try_catch(isolate);
+            v8::Local<v8::String> source_string;
+            v8::Local<v8::Script> script;
+            v8::Local<v8::Value> value;
+            if (v8::String::NewFromUtf8(isolate, source.data(),
+                                        v8::NewStringType::kNormal,
+                                        base::checked_cast<int>(source.size()))
+                    .ToLocal(&source_string) &&
+                v8::Script::Compile(context, source_string).ToLocal(&script) &&
+                script->Run(context).ToLocal(&value)) {
+              result->Reset(isolate, value);
+              return;
+            }
+            *threw = true;
+            if (try_catch.HasCaught()) {
+              exception->Reset(isolate, try_catch.Exception());
+            }
+          },
+          isolate, source, &result, &exception, &threw));
+  run_loop.Run();
+  mitto::Window::Current().SetTimers(nullptr);
+
   const v8::TryCatch try_catch(isolate);
-  v8::Local<v8::String> source_string;
-  v8::Local<v8::Script> script;
-  v8::Local<v8::Value> result;
-  if (v8::String::NewFromUtf8(isolate, source.data(),
-                              v8::NewStringType::kNormal,
-                              base::checked_cast<int>(source.size()))
-          .ToLocal(&source_string) &&
-      v8::Script::Compile(context, source_string).ToLocal(&script) &&
-      script->Run(context).ToLocal(&result)) {
-    if (const std::optional<std::string> text =
-            ToUtf8(isolate, context, result)) {
-      WriteLine(stdout, *text);
-      return true;
+  if (threw) {
+    const std::optional<std::string> text =
+        exception.IsEmpty() ? std::nullopt
+                            : ToUtf8(isolate, context, exception.Get(isolate));
+    WriteLine(stderr, "Uncaught " + text.value_or("exception"));
+    return false;
+  }
+  v8::Local<v8::Value> value = result.Get(isolate);
+  if (value->IsPromise()) {
+    const v8::Local<v8::Promise> promise = value.As<v8::Promise>();
+    switch (promise->State()) {
+      case v8::Promise::kFulfilled:
+        value = promise->Result();
+        break;
+      case v8::Promise::kRejected: {
+        const std::optional<std::string> text =
+            ToUtf8(isolate, context, promise->Result());
+        WriteLine(stderr,
+                  "Uncaught (in promise) " + text.value_or("exception"));
+        return false;
+      }
+      case v8::Promise::kPending:
+        WriteLine(stderr, "the promise did not settle");
+        return false;
     }
   }
-  const std::optional<std::string> exception =
+  if (const std::optional<std::string> text = ToUtf8(isolate, context, value)) {
+    WriteLine(stdout, *text);
+    return true;
+  }
+  // What String() threw for it.
+  const std::optional<std::string> thrown =
       try_catch.HasCaught() ? ToUtf8(isolate, context, try_catch.Exception())
                             : std::nullopt;
-  WriteLine(stderr, "Uncaught " + exception.value_or("exception"));
+  WriteLine(stderr, "Uncaught " + thrown.value_or("exception"));
   return false;
 }
 
@@ -246,19 +370,27 @@ int main(int argc, char** argv) {
     argument = *script_from_input;
   }
 
+  const base::AtExitManager at_exit_manager;
+  // What //base reads of it is not on this command line.
+  base::CommandLine::Init(0, nullptr);
+
   // ICU reads its data from memory, as in Chrome's renderers, which map the
   // file that the browser gives them.
   UErrorCode status = U_ZERO_ERROR;
   udata_setCommonData(mitto_icu_data, &status);
   CHECK(U_SUCCESS(status));
 
+  // The main thread's task executor is the Page's event loop, which V8's own
+  // tasks for the main thread join, as Chrome's renderers have it.
+  auto main_thread = std::make_unique<base::SingleThreadTaskExecutor>();
+
   // Before anything of V8 asks for a random number, as in Chrome's renderers.
   v8::V8::SetEntropySource(&mitto::GenerateEntropy);
   v8::StartupData snapshot = {mitto_v8_snapshot,
                               base::checked_cast<int>(mitto_v8_snapshot_size)};
   v8::V8::SetSnapshotDataBlob(&snapshot);
-  const std::unique_ptr<v8::Platform> platform =
-      v8::platform::NewDefaultPlatform();
+  const auto platform = std::make_unique<mitto::PagePlatform>(
+      v8::platform::NewDefaultPlatform(), main_thread->task_runner());
   v8::V8::InitializePlatform(platform.get());
   CHECK(v8::V8::Initialize());
 
@@ -272,17 +404,22 @@ int main(int argc, char** argv) {
       v8::CppHeap::Create(platform.get(), v8::CppHeapCreateParams({}))
           .release();
   v8::Isolate* const isolate = v8::Isolate::New(params);
+  // Microtasks run when the outermost script that the Runtime runs returns,
+  // and after each task, as Blink has them.
+  isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
   bool finished = false;
   {
     const v8::Isolate::Scope isolate_scope(isolate);
     const std::unique_ptr<mitto::bindings::PerIsolateData> data =
         mitto::bindings::PerIsolateData::Create(isolate, std::move(*features));
     if (session) {
-      mitto::ServeSession(*platform, isolate, *std::move(session));
+      mitto::ServeSession(isolate, *std::move(session));
     } else {
       finished = RunScript(isolate, html.value_or(""), argument);
     }
   }
+  // V8's tasks that wait go while the isolate still lives.
+  main_thread.reset();
   isolate->Dispose();
   v8::V8::Dispose();
   v8::V8::DisposePlatform();

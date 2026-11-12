@@ -22,11 +22,18 @@
 "\x01"
 "\x05"
 "Uncaught (in promise) "
-# What a request holds: a number, a kind from 1 to 2, then a URL. A credit
-# holds a number and up to 65536 bytes.
+# What a request holds: a number, a kind from 1 to 2, then a URL, a method and
+# header lines, each after its size, and a byte that says whether a body
+# follows. A credit holds a number and up to 65536 bytes. A cancel holds a
+# number.
 "\x01\x00\x00\x00\x00\x00\x00\x00"
 "\x02"
 "https://example.com/a.js"
 "\x00\x00\x01\x00"
+"\x03\x00\x00\x00GET"
+"\x04\x00\x00\x00POST"
+"X-Test: 1\x0a"
+"Cookie: a=b\x0a"
+"\x11\x00\x00\x00"
 # What document.cookie may be set to.
 "a=b; HttpOnly"

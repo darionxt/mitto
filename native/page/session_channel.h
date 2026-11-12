@@ -12,7 +12,6 @@
 
 namespace v8 {
 class Isolate;
-class Platform;
 }  // namespace v8
 
 namespace mitto {
@@ -35,12 +34,11 @@ struct SessionArgument {
 std::optional<SessionArgument> ParseSessionArgument(std::string_view argument);
 
 // Serves the Session at the other end of the channel: reads its messages on a
-// thread of its own and runs its scripts in `isolate` on this thread. The
-// process ends when the channel closes, when the process that holds the library
-// ends, and when it refuses a message, so this returns only if it cannot start.
-void ServeSession(v8::Platform& platform,
-                  v8::Isolate* isolate,
-                  SessionArgument session);
+// thread of its own and runs its scripts in `isolate` on this thread, whose
+// task executor is the Page's event loop. The process ends when the channel
+// closes, when the process that holds the library ends, and when it refuses a
+// message, so this returns only if it cannot start.
+void ServeSession(v8::Isolate* isolate, SessionArgument session);
 
 }  // namespace mitto
 

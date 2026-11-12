@@ -37,8 +37,12 @@
     "HTMLTitleElement",
     "HTMLUListElement",
     "HTMLUnknownElement",
+    "Headers",
     "Node",
+    "Performance",
     "PopStateEvent",
+    "Request",
+    "Response",
     "Text",
     "Window",
   ];
@@ -654,7 +658,11 @@
     HTMLTitleElement: () => element("title"),
     HTMLUListElement: () => element("ul"),
     HTMLUnknownElement: () => element("unknown"),
+    Headers: () => new Headers(),
+    Performance: () => performance,
     PopStateEvent: () => new PopStateEvent("x"),
+    Request: () => new Request("https://example.com/"),
+    Response: () => new Response(),
     Text: () => new Text("x"),
   };
   for (const [name, make] of Object.entries(instances)) {
@@ -662,6 +670,46 @@
   }
 
   const cases = {
+    "setTimeout without an argument": () => setTimeout(),
+    "setTimeout with an empty string": () => setTimeout("", 1),
+    "clearTimeout of no timer": () => clearTimeout(2 ** 30),
+    "queueMicrotask with a number": () => queueMicrotask(1),
+    "queueMicrotask without an argument": () => queueMicrotask(),
+    "performance.now and timeOrigin": () => [typeof performance.now(), typeof performance.timeOrigin],
+    "Headers with a number": () => new Headers(5),
+    "Headers with a pair of one": () => new Headers([["a"]]),
+    "Headers with a code point beyond Latin-1": () => new Headers({ a: "\u0100" }),
+    "Headers with a name that is not a token": () => new Headers({ "a b": "c" }),
+    "Headers that append, set, delete and get": () => {
+      const headers = new Headers({ Accept: "a", "X-One": " padded " });
+      headers.append("accept", "b");
+      headers.set("x-two", "2");
+      headers.delete("X-ONE");
+      return [headers.get("ACCEPT"), headers.get("x-one"), headers.get("x-two"), headers.has("x-two"),
+              headers.getSetCookie()];
+    },
+    "Headers.get with a name that is not a token": () => new Headers().get("a b"),
+    "Request with CONNECT": () => new Request("https://example.com/", { method: "CONNECT" }),
+    "Request with a method that is not a token": () => new Request("https://example.com/", { method: "a b" }),
+    "Request with a body and GET": () => new Request("https://example.com/", { body: "x" }),
+    "Request with credentials in its URL": () => new Request("https://user:pass@example.com/"),
+    "Request with mode navigate": () => new Request("https://example.com/", { mode: "navigate" }),
+    "Request with a mode that is not one": () => new Request("https://example.com/", { mode: "x" }),
+    "Request that is not a URL": () => new Request("https://"),
+    "Request with its members": () => {
+      const request = new Request("https://example.com/a?b", { method: "put", headers: { "X-A": "1" }, body: "b" });
+      return [request.method, request.url, request.headers.get("x-a"), request.headers.get("content-type")];
+    },
+    "Response with status 99": () => new Response("x", { status: 99 }),
+    "Response with a status text that is not one": () => new Response("x", { statusText: "a\nb" }),
+    "Response with a body and status 204": () => new Response("x", { status: 204 }),
+    "Response with its members": () => {
+      const response = new Response("made", { status: 202, statusText: "Made", headers: { "X-M": "1" } });
+      return [response.status, response.ok, response.statusText, response.type, response.url, response.redirected,
+              response.bodyUsed, response.headers.get("x-m"), response.headers.get("content-type")];
+    },
+    "Response.json of a function": () => Response.json(() => {}),
+    "Response.json of an object": () => Response.json({ a: 1 }).headers.get("content-type"),
     "addEventListener with a number": () => new EventTarget().addEventListener("x", 5),
     "addEventListener with one argument": () => new EventTarget().addEventListener("x"),
     "addEventListener with a signal that is not an AbortSignal": () =>

@@ -32,6 +32,8 @@ from tests.page_processes import process_is_gone, wait_until_gone
 _URL = "about:blank"
 # Long enough for a Page process to answer on a busy runner, and short enough to keep the tests quick.
 _SHORT_TIMEOUT = 0.3
+# Long enough for a timer or a failing request on a busy runner.
+_TIMEOUT = 10
 _MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
 
 
@@ -89,14 +91,15 @@ def test_a_page_at_about_blank_keeps_that_url_and_has_a_process_of_its_own(page:
     assert not process_is_gone(page.process_id)
 
 
-def test_a_page_at_about_blank_has_its_document_and_no_timers_until_the_runtime_has_them(page: Page) -> None:
-    # A Page's window is its global object, with about:blank's document when it navigates nowhere. Its timers and fetch()
-    # are Known Gaps, which throw.
+def test_a_page_at_about_blank_has_its_document_timers_and_a_fetch_that_fails(page: Page) -> None:
+    # A Page's window is its global object, with about:blank's document when it navigates nowhere. With no document from
+    # its Session, it has no Initiator for a request, so fetch() fails as a network error does.
     script = "[window === globalThis, document.documentElement.outerHTML, typeof setTimeout, typeof fetch]"
 
     assert page.evaluate(script) == [True, "<html><head></head><body></body></html>", "function", "function"]
-    with pytest.raises(ScriptError, match=r"^Uncaught TypeError: Failed to execute 'setTimeout' on 'Window': "):
-        page.evaluate("setTimeout(() => {})")
+    assert page.evaluate("new Promise(resolve => setTimeout(resolve, 1, 'later'))", timeout=_TIMEOUT) == "later"
+    with pytest.raises(ScriptError, match=r"^Uncaught \(in promise\) TypeError: Failed to fetch$"):
+        page.evaluate("fetch('http://127.0.0.1:1/')", timeout=_TIMEOUT)
 
 
 @pytest.mark.parametrize(
@@ -124,10 +127,16 @@ def test_evaluate_waits_for_a_promise_that_another_call_settles(page: Page) -> N
         assert waiting.result(timeout=10) == {"done": True}
 
 
-def test_a_promise_that_nothing_settles_times_out_since_a_page_has_no_timers_yet(page: Page) -> None:
-    # The Runtime's event loop and timers come later. Until then only a script can settle a promise.
+def test_a_promise_that_nothing_settles_times_out(page: Page) -> None:
     with pytest.raises(PageTimeoutError):
         page.evaluate("new Promise(resolve => {})", timeout=_SHORT_TIMEOUT)
+
+
+def test_a_promise_that_a_timer_settles_gives_its_result_while_the_page_runs_other_calls(page: Page) -> None:
+    page.evaluate("window.later = new Promise(resolve => setTimeout(resolve, 50, 'from a timer'))")
+
+    assert page.evaluate("1 + 1") == 2
+    assert page.evaluate("later", timeout=_TIMEOUT) == "from a timer"
 
 
 @pytest.mark.parametrize(

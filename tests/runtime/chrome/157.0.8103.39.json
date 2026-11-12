@@ -19052,6 +19052,251 @@
         },
         "wrongReceiver": []
       },
+      "Headers": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "Headers",
+            "length": 0
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "Headers"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "append",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "append",
+                "length": 2
+              }
+            }
+          ],
+          [
+            "delete",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "delete",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "get",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "get",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "getSetCookie",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "getSetCookie",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "has",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "has",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "set",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "set",
+                "length": 2
+              }
+            }
+          ],
+          [
+            "entries",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "entries",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "forEach",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "forEach",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "keys",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "keys",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "values",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "values",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "Headers",
+                "length": 0
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
+        "toStringTag": "Headers",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'Headers': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "value": "{}"
+        },
+        "wrongReceiver": [
+          [
+            "append",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "delete",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "getSetCookie",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "has",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "set",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "entries",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "forEach",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "keys",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "values",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
       "Node": {
         "global": {
           "enumerable": false,
@@ -19981,6 +20226,404 @@
           ]
         ]
       },
+      "Performance": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "Performance",
+            "length": 0
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "Performance"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "timeOrigin",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get timeOrigin",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "onresourcetimingbufferfull",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get onresourcetimingbufferfull",
+                "length": 0
+              },
+              "set": {
+                "name": "set onresourcetimingbufferfull",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "clearMarks",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "clearMarks",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "clearMeasures",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "clearMeasures",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "clearResourceTimings",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "clearResourceTimings",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "getEntries",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "getEntries",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "getEntriesByName",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "getEntriesByName",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "getEntriesByType",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "getEntriesByType",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "mark",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "mark",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "measure",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "measure",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "setResourceTimingBufferSize",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "setResourceTimingBufferSize",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "toJSON",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "toJSON",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "now",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "now",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "Performance",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "timing",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get timing",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "navigation",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get navigation",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "memory",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get memory",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "eventCounts",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get eventCounts",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "interactionCount",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get interactionCount",
+                "length": 0
+              },
+              "set": null
+            }
+          ]
+        ],
+        "prototypeParent": "EventTarget",
+        "interfaceObjectParent": "EventTarget",
+        "toStringTag": "Performance",
+        "callWithoutNew": {
+          "threw": "TypeError: Illegal constructor"
+        },
+        "constructWithoutArguments": {
+          "threw": "TypeError: Failed to construct 'Performance': Illegal constructor"
+        },
+        "wrongReceiver": [
+          [
+            "get timeOrigin",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get onresourcetimingbufferfull",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "set onresourcetimingbufferfull",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "clearMarks",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "clearMeasures",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "clearResourceTimings",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "getEntries",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "getEntriesByName",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "getEntriesByType",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "mark",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "measure",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "setResourceTimingBufferSize",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "toJSON",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "now",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get timing",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get navigation",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get memory",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get eventCounts",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get interactionCount",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
       "PopStateEvent": {
         "global": {
           "enumerable": false,
@@ -20076,6 +20719,964 @@
           ],
           [
             "get hasUAVisualTransition",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
+      "Request": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "Request",
+            "length": 1
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 1
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "Request"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "method",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get method",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "url",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get url",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "headers",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get headers",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "destination",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get destination",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "referrer",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get referrer",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "referrerPolicy",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get referrerPolicy",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "mode",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get mode",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "credentials",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get credentials",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "cache",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get cache",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "redirect",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get redirect",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "integrity",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get integrity",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "keepalive",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get keepalive",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "signal",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get signal",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "duplex",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get duplex",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "isHistoryNavigation",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get isHistoryNavigation",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "bodyUsed",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get bodyUsed",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "arrayBuffer",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "arrayBuffer",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "blob",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "blob",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "clone",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "clone",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "formData",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "formData",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "json",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "json",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "text",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "text",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "targetAddressSpace",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get targetAddressSpace",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "isReloadNavigation",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get isReloadNavigation",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "body",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get body",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "bytes",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "bytes",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "textStream",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "textStream",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "Request",
+                "length": 1
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
+        "toStringTag": "Request",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'Request': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "threw": "TypeError: Failed to construct 'Request': 1 argument required, but only 0 present."
+        },
+        "wrongReceiver": [
+          [
+            "get method",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get url",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get headers",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get destination",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get referrer",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get referrerPolicy",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get mode",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get credentials",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get cache",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get redirect",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get integrity",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get keepalive",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get signal",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get duplex",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get isHistoryNavigation",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get bodyUsed",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "arrayBuffer",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "blob",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "clone",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "formData",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "json",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "text",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "get targetAddressSpace",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get isReloadNavigation",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get body",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "bytes",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "textStream",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ]
+        ]
+      },
+      "Response": {
+        "global": {
+          "enumerable": false,
+          "configurable": true,
+          "writable": true,
+          "value": {
+            "name": "Response",
+            "length": 0
+          }
+        },
+        "interfaceObject": [
+          [
+            "length",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": 0
+            }
+          ],
+          [
+            "name",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": false,
+              "value": "Response"
+            }
+          ],
+          [
+            "prototype",
+            {
+              "enumerable": false,
+              "configurable": false,
+              "writable": false,
+              "value": "object"
+            }
+          ],
+          [
+            "error",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "error",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "json",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "json",
+                "length": 1
+              }
+            }
+          ],
+          [
+            "redirect",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "redirect",
+                "length": 1
+              }
+            }
+          ]
+        ],
+        "prototype": [
+          [
+            "type",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get type",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "url",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get url",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "redirected",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get redirected",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "status",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get status",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "ok",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get ok",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "statusText",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get statusText",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "headers",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get headers",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "body",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get body",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "bodyUsed",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "get": {
+                "name": "get bodyUsed",
+                "length": 0
+              },
+              "set": null
+            }
+          ],
+          [
+            "arrayBuffer",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "arrayBuffer",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "blob",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "blob",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "clone",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "clone",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "formData",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "formData",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "json",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "json",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "text",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "text",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "bytes",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "bytes",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "textStream",
+            {
+              "enumerable": true,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "textStream",
+                "length": 0
+              }
+            }
+          ],
+          [
+            "constructor",
+            {
+              "enumerable": false,
+              "configurable": true,
+              "writable": true,
+              "value": {
+                "name": "Response",
+                "length": 0
+              }
+            }
+          ]
+        ],
+        "prototypeParent": "Object",
+        "interfaceObjectParent": "Function",
+        "toStringTag": "Response",
+        "callWithoutNew": {
+          "threw": "TypeError: Failed to construct 'Response': Please use the 'new' operator, this DOM object constructor cannot be called as a function."
+        },
+        "constructWithoutArguments": {
+          "value": "{}"
+        },
+        "wrongReceiver": [
+          [
+            "get type",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get url",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get redirected",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get status",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get ok",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get statusText",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get headers",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get body",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "get bodyUsed",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "arrayBuffer",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "blob",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "clone",
+            {
+              "threw": "TypeError: Illegal invocation"
+            }
+          ],
+          [
+            "formData",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "json",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "text",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "bytes",
+            {
+              "value": "{}"
+            }
+          ],
+          [
+            "textStream",
             {
               "threw": "TypeError: Illegal invocation"
             }
@@ -20374,6 +21975,8 @@
       "HTMLTitleElement": [],
       "HTMLUListElement": [],
       "HTMLUnknownElement": [],
+      "Headers": [],
+      "Performance": [],
       "PopStateEvent": [
         [
           "isTrusted",
@@ -20388,9 +21991,167 @@
           }
         ]
       ],
+      "Request": [],
+      "Response": [],
       "Text": []
     },
     "cases": [
+      [
+        "setTimeout without an argument",
+        {
+          "threw": "TypeError: Failed to execute 'setTimeout' on 'Window': 1 argument required, but only 0 present."
+        }
+      ],
+      [
+        "setTimeout with an empty string",
+        {
+          "value": "0"
+        }
+      ],
+      [
+        "clearTimeout of no timer",
+        {
+          "value": "undefined"
+        }
+      ],
+      [
+        "queueMicrotask with a number",
+        {
+          "threw": "TypeError: Failed to execute 'queueMicrotask' on 'Window': parameter 1 is not of type 'Function'."
+        }
+      ],
+      [
+        "queueMicrotask without an argument",
+        {
+          "threw": "TypeError: Failed to execute 'queueMicrotask' on 'Window': 1 argument required, but only 0 present."
+        }
+      ],
+      [
+        "performance.now and timeOrigin",
+        {
+          "value": "[\"number\",\"number\"]"
+        }
+      ],
+      [
+        "Headers with a number",
+        {
+          "threw": "TypeError: Failed to construct 'Headers': The provided value is not of type '(record<ByteString, ByteString> or sequence<sequence<ByteString>>)'."
+        }
+      ],
+      [
+        "Headers with a pair of one",
+        {
+          "threw": "TypeError: Failed to construct 'Headers': Invalid value"
+        }
+      ],
+      [
+        "Headers with a code point beyond Latin-1",
+        {
+          "threw": "TypeError: Failed to construct 'Headers': String contains non ISO-8859-1 code point."
+        }
+      ],
+      [
+        "Headers with a name that is not a token",
+        {
+          "threw": "TypeError: Failed to construct 'Headers': Invalid name"
+        }
+      ],
+      [
+        "Headers that append, set, delete and get",
+        {
+          "value": "[\"a, b\",null,\"2\",true,[]]"
+        }
+      ],
+      [
+        "Headers.get with a name that is not a token",
+        {
+          "threw": "TypeError: Failed to execute 'get' on 'Headers': Invalid name"
+        }
+      ],
+      [
+        "Request with CONNECT",
+        {
+          "threw": "TypeError: Failed to construct 'Request': 'CONNECT' HTTP method is unsupported."
+        }
+      ],
+      [
+        "Request with a method that is not a token",
+        {
+          "threw": "TypeError: Failed to construct 'Request': 'a b' is not a valid HTTP method."
+        }
+      ],
+      [
+        "Request with a body and GET",
+        {
+          "threw": "TypeError: Failed to construct 'Request': Request with GET/HEAD method cannot have body."
+        }
+      ],
+      [
+        "Request with credentials in its URL",
+        {
+          "threw": "TypeError: Failed to construct 'Request': Request cannot be constructed from a URL that includes credentials: https://user:pass@example.com/"
+        }
+      ],
+      [
+        "Request with mode navigate",
+        {
+          "threw": "TypeError: Failed to construct 'Request': Cannot construct a Request with a RequestInit whose mode member is set as 'navigate'."
+        }
+      ],
+      [
+        "Request with a mode that is not one",
+        {
+          "threw": "TypeError: Failed to construct 'Request': Failed to read the 'mode' property from 'RequestInit': The provided value 'x' is not a valid enum value of type RequestMode."
+        }
+      ],
+      [
+        "Request that is not a URL",
+        {
+          "threw": "TypeError: Failed to construct 'Request': Failed to parse URL from https://"
+        }
+      ],
+      [
+        "Request with its members",
+        {
+          "value": "[\"PUT\",\"https://example.com/a?b\",\"1\",\"text/plain;charset=UTF-8\"]"
+        }
+      ],
+      [
+        "Response with status 99",
+        {
+          "threw": "RangeError: Failed to construct 'Response': The status provided (99) is outside the range [200, 599]."
+        }
+      ],
+      [
+        "Response with a status text that is not one",
+        {
+          "threw": "TypeError: Failed to construct 'Response': Invalid statusText"
+        }
+      ],
+      [
+        "Response with a body and status 204",
+        {
+          "threw": "TypeError: Failed to construct 'Response': Response with null body status cannot have body"
+        }
+      ],
+      [
+        "Response with its members",
+        {
+          "value": "[202,true,\"Made\",\"default\",\"\",false,false,\"1\",\"text/plain;charset=UTF-8\"]"
+        }
+      ],
+      [
+        "Response.json of a function",
+        {
+          "threw": "TypeError: Failed to execute 'json' on 'Response': The data is not JSON serializable"
+        }
+      ],
+      [
+        "Response.json of an object",
+        {
+          "value": "application/json"
+        }
+      ],
       [
         "addEventListener with a number",
         {

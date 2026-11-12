@@ -7,8 +7,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/at_exit.h"
-#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
@@ -21,7 +19,6 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/task/single_thread_task_executor.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
@@ -192,6 +189,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kGetCookies:
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
+      case PageMessage::kCancel:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -343,16 +341,10 @@ std::optional<SessionArgument> ParseSessionArgument(std::string_view argument) {
   return session;
 }
 
-void ServeSession(v8::Platform& platform,
-                  v8::Isolate* isolate,
-                  SessionArgument session) {
-  const base::AtExitManager at_exit_manager;
-  // What //base reads of it is not on this command line.
-  base::CommandLine::Init(0, nullptr);
+void ServeSession(v8::Isolate* isolate, SessionArgument session) {
   isolate->SetOOMErrorHandler(&OnOutOfMemory);
-  base::SingleThreadTaskExecutor main_thread;
   SessionCookieJar cookie_jar;
-  ScriptRunner runner(platform, isolate);
+  ScriptRunner runner(isolate);
 
   // Reads the channel while a script runs, so that the Page process ends when
   // it closes, even in the middle of a script that never ends.
@@ -362,9 +354,10 @@ void ServeSession(v8::Platform& platform,
     return;
   }
   // Never destroyed: the process ends while the I/O thread uses it.
-  SessionLink* const link = std::make_unique<SessionLink>(
-                                main_thread.task_runner(), runner, cookie_jar)
-                                .release();
+  SessionLink* const link =
+      std::make_unique<SessionLink>(
+          base::SingleThreadTaskRunner::GetCurrentDefault(), runner, cookie_jar)
+          .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),
                                 std::move(session)));

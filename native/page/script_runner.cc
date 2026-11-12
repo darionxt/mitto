@@ -15,12 +15,15 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/current_thread.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/dom_timer.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/document_loader.h"
+#include "mitto/page/page_fetcher.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "third_party/icu/source/common/unicode/locid.h"
@@ -30,7 +33,6 @@
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
-#include "v8/include/libplatform/libplatform.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -109,10 +111,13 @@ bool IsUrlPotentiallyTrustworthy(const GURL& url) {
          origin.scheme() == url::kFileScheme;
 }
 
-ScriptRunner::ScriptRunner(v8::Platform& platform, v8::Isolate* isolate)
-    : platform_(platform), isolate_(isolate) {}
+ScriptRunner::ScriptRunner(v8::Isolate* isolate) : isolate_(isolate) {}
 
-ScriptRunner::~ScriptRunner() = default;
+ScriptRunner::~ScriptRunner() {
+  if (!context_.IsEmpty()) {
+    base::CurrentThread::Get()->RemoveTaskObserver(this);
+  }
+}
 
 std::optional<std::string> ScriptRunner::Start(
     const PageStart& start,
@@ -148,13 +153,34 @@ std::optional<std::string> ScriptRunner::Start(
       v8::Isolate::TimeZoneDetection::kSkip);
   isolate_->LocaleConfigurationChangeNotification();
   reporter_ = std::make_unique<PageReporter>(isolate_, send_);
+  bindings::PerIsolateData::From(isolate_)->SetExceptionReporter(
+      base::BindRepeating(&PageReporter::ReportException,
+                          base::Unretained(reporter_.get())));
 
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = NewPageContext(isolate_);
   context_.Reset(isolate_, context);
+  AttachWindow(context);
   // Once the context has its interfaces, as Blink tells its inspector.
   reporter_->ContextCreated(context);
+  base::CurrentThread::Get()->AddTaskObserver(this);
   return std::nullopt;
+}
+
+void ScriptRunner::AttachWindow(v8::Local<v8::Context> context) {
+  const v8::Context::Scope context_scope(context);
+  timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
+  fetcher_ = std::make_unique<PageFetcher>(*requests_);
+  Window& window = Window::Current();
+  window.SetTimers(timers_.get());
+  window.SetFetcher(fetcher_.get());
+}
+
+void ScriptRunner::WillProcessTask(const base::PendingTask& pending_task,
+                                   bool was_blocked_or_low_priority) {}
+
+void ScriptRunner::DidProcessTask(const base::PendingTask& pending_task) {
+  EndTask();
 }
 
 void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
@@ -165,13 +191,18 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
   }
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
+  const v8::Context::Scope context_scope(context);
   std::optional<PageEvaluated> evaluated;
+  v8::Local<v8::Value> result;
   {
-    const v8::Context::Scope context_scope(context);
+    // The script's microtasks run when it returns, as Blink runs them once a
+    // script it ran returns, after the TryCatch has gone, so that what they
+    // throw is reported rather than taken for the script's.
+    const v8::MicrotasksScope microtasks_scope(
+        context, v8::MicrotasksScope::kRunMicrotasks);
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::String> source;
     v8::Local<v8::Script> compiled;
-    v8::Local<v8::Value> result;
     if (!v8::String::NewFromUtf8(isolate_, script.data(),
                                  v8::NewStringType::kNormal,
                                  base::checked_cast<int>(script.size()))
@@ -179,7 +210,10 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
         !v8::Script::Compile(context, source).ToLocal(&compiled) ||
         !compiled->Run(context).ToLocal(&result)) {
       evaluated = FailureOf(call, Failure(isolate_, context, try_catch));
-    } else if (result->IsPromise()) {
+    }
+  }
+  if (!evaluated) {
+    if (result->IsPromise()) {
       // The microtasks of the script have run, so what they settle has
       // settled.
       evaluated = SettledResultOf(call, context, result.As<v8::Promise>());
@@ -190,7 +224,6 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
   if (evaluated) {
     settled_.push_back(*std::move(evaluated));
   }
-  EndTask();
 }
 
 void ScriptRunner::EndTask() {
@@ -198,18 +231,37 @@ void ScriptRunner::EndTask() {
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  RunPendingTasks();
-  // As Blink does after each task.
-  isolate_->PerformMicrotaskCheckpoint();
-  reporter_->ReportUnhandledRejections(context_.Get(isolate_));
-  // After the errors that the task left uncaught, so that the Session has
-  // heard of them by the time it has a result. Writing them out may have run
-  // more microtasks, which may have settled more.
+  // As Blink's scheduler does after each task.
+  v8::MicrotasksScope::PerformCheckpoint(isolate_);
+  // As Blink's RejectedPromises::ProcessQueue(): the promises that the task
+  // left rejected with no handler are reported from a task of their own, so
+  // that a handler that a task queued before it adds is in time.
+  std::vector<PageReporter::Rejection> rejections =
+      reporter_->TakeUnhandledRejections();
+  if (!rejections.empty()) {
+    ++reports_queued_;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&ScriptRunner::ReportRejections, base::Unretained(this),
+                       std::move(rejections)));
+  }
+  // Results wait for the reports queued before them.
+  if (reports_queued_ > 0) {
+    return;
+  }
   std::vector<PageEvaluated> settled;
   settled.swap(settled_);
-  for (const PageEvaluated& result : settled) {
-    send_.Run(EncodeEvaluated(result));
+  for (const PageEvaluated& evaluated : settled) {
+    send_.Run(EncodeEvaluated(evaluated));
   }
+}
+
+void ScriptRunner::ReportRejections(
+    std::vector<PageReporter::Rejection> rejections) {
+  --reports_queued_;
+  const v8::HandleScope handle_scope(isolate_);
+  reporter_->ReportUnhandledRejections(context_.Get(isolate_),
+                                       std::move(rejections));
 }
 
 void ScriptRunner::OnResponseStarted(PageResponseStarted response) {
@@ -233,12 +285,9 @@ void ScriptRunner::RunTask(base::OnceClosure task) {
   if (context_.IsEmpty()) {
     return;
   }
-  {
-    const v8::HandleScope handle_scope(isolate_);
-    const v8::Context::Scope context_scope(context_.Get(isolate_));
-    std::move(task).Run();
-  }
-  EndTask();
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Context::Scope context_scope(context_.Get(isolate_));
+  std::move(task).Run();
 }
 
 void ScriptRunner::PostTask(base::OnceClosure task) {
@@ -248,18 +297,34 @@ void ScriptRunner::PostTask(base::OnceClosure task) {
                                 std::move(task)));
 }
 
-Document& ScriptRunner::CommitDocument(const GURL& url) {
+Document& ScriptRunner::CommitDocument(const GURL& url,
+                                       base::TimeTicks navigation_start) {
   const v8::HandleScope handle_scope(isolate_);
   for (const uint64_t call : waiting_calls_) {
     settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
   }
   waiting_calls_.clear();
+  {
+    // The old window's timers and fetches stop with its context.
+    const v8::Context::Scope old_scope(context_.Get(isolate_));
+    Window::Current().SetTimers(nullptr);
+    Window::Current().SetFetcher(nullptr);
+  }
+  timers_.reset();
+  fetcher_.reset();
   reporter_->ContextDestroyed(context_.Get(isolate_));
+  // What the new document's DOMHighResTimeStamp counts from, as Blink takes
+  // it from the navigation's start.
+  const base::TimeTicks now = base::TimeTicks::Now();
+  bindings::PerIsolateData::From(isolate_)->set_time_origin(
+      navigation_start.is_null() || navigation_start > now ? now
+                                                           : navigation_start);
   // A [SecureContext] member is installed when a context is made.
   bindings::PerIsolateData::From(isolate_)->set_secure_context(
       IsUrlPotentiallyTrustworthy(url));
   const v8::Local<v8::Context> context = NewPageContext(isolate_);
   context_.Reset(isolate_, context);
+  AttachWindow(context);
   const v8::Context::Scope context_scope(context);
   Document* const document = Document::CreateHTML();
   document->SetUrl(base::UTF8ToUTF16(url.spec()));
@@ -282,33 +347,31 @@ void ScriptRunner::RunClassicScript(std::u16string_view source,
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
   const v8::Context::Scope context_scope(context);
-  {
-    const v8::TryCatch try_catch(isolate_);
-    v8::Local<v8::String> text;
-    v8::Local<v8::String> name;
-    v8::Local<v8::Script> compiled;
-    if (!v8::String::NewFromTwoByte(
-             isolate_, reinterpret_cast<const uint16_t*>(source.data()),
-             v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
-             .ToLocal(&text) ||
-        !v8::String::NewFromUtf8(isolate_, url.spec().data(),
-                                 v8::NewStringType::kNormal,
-                                 base::checked_cast<int>(url.spec().size()))
-             .ToLocal(&name)) {
-      return;
-    }
-    v8::ScriptOrigin origin(name);
-    if (!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
-        compiled->Run(context).IsEmpty()) {
-      if (try_catch.HasCaught()) {
-        send_.Run(EncodeUncaughtError(
-            DescribeUncaught(isolate_, context, try_catch.Exception(),
-                             kUncaught, kMaxPayloadSize)));
-      }
-    }
+  // The HTML Standard's clean up after running script: its microtasks run
+  // once it returns, after the TryCatch, so that what they throw is reported
+  // on its own.
+  const v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kRunMicrotasks);
+  const v8::TryCatch try_catch(isolate_);
+  v8::Local<v8::String> text;
+  v8::Local<v8::String> name;
+  v8::Local<v8::Script> compiled;
+  if (!v8::String::NewFromTwoByte(
+           isolate_, reinterpret_cast<const uint16_t*>(source.data()),
+           v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
+           .ToLocal(&text) ||
+      !v8::String::NewFromUtf8(isolate_, url.spec().data(),
+                               v8::NewStringType::kNormal,
+                               base::checked_cast<int>(url.spec().size()))
+           .ToLocal(&name)) {
+    return;
   }
-  // The HTML Standard's clean up after running script.
-  isolate_->PerformMicrotaskCheckpoint();
+  v8::ScriptOrigin origin(name);
+  if ((!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
+       compiled->Run(context).IsEmpty()) &&
+      try_catch.HasCaught() && try_catch.CanContinue()) {
+    reporter_->ReportException(try_catch.Exception());
+  }
 }
 
 PageEvaluated ScriptRunner::ResultOf(uint64_t call,
@@ -421,11 +484,6 @@ void ScriptRunner::OnRejected(const v8::FunctionCallbackInfo<v8::Value>& info) {
   runner.settled_.push_back(runner.FailureOf(
       call, DescribeUncaught(isolate, isolate->GetCurrentContext(), info[0],
                              kUncaughtInPromise, kMaxEvaluatedTextSize)));
-}
-
-void ScriptRunner::RunPendingTasks() {
-  while (v8::platform::PumpMessageLoop(&*platform_, isolate_)) {
-  }
 }
 
 }  // namespace mitto
