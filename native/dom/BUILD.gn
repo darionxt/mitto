@@ -2,7 +2,7 @@
 # built with the bindings that the generator writes for them, which call them,
 # and the tree builder of the HTML parser, which makes their nodes.
 
-import("//mitto/bindings/interfaces.gni")
+import("//mitto/bindings/generated_files.gni")
 
 source_set("dom") {
   sources = [
@@ -114,19 +114,10 @@ source_set("dom") {
     "window_properties.h",
   ]
 
-  # What //mitto/bindings:generate_bindings writes for these classes.
-  _generated_dir = "$root_gen_dir/mitto/bindings"
-  sources += [
-    "$_generated_dir/dictionaries.cc",
-    "$_generated_dir/dictionaries.h",
-    "$_generated_dir/interface_objects.cc",
-    "$_generated_dir/interface_objects.h",
-  ]
-  foreach(interface, mitto_bindings_interfaces) {
-    sources += [
-      "$_generated_dir/v8_${interface.file}.cc",
-      "$_generated_dir/v8_${interface.file}.h",
-    ]
+  # What //mitto/bindings:generate_bindings writes for these classes and for
+  # every other interface a page can reach.
+  foreach(file, mitto_bindings_generated_dom_files) {
+    sources += [ "$root_gen_dir/mitto/bindings/$file" ]
   }
   public_deps = [
     "//mitto:page_channel",

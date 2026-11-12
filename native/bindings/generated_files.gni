@@ -1,0 +1,34 @@
+# The files that //mitto/bindings:generate_bindings writes for the Page's DOM,
+# which //mitto/dom compiles with the classes they call: the bindings of each
+# interface that has a C++ class, in interfaces.gni, and the tables of every
+# other interface, namespace and callback interface that a page can reach.
+# docs/runtime.md says how the generator works.
+
+import("//mitto/bindings/interfaces.gni")
+
+# The tables go into a fixed number of files, so that GN knows them before the
+# generator runs, and they compile side by side. Each is data.
+mitto_bindings_table_files = [
+  "interfaces_without_class_0.cc",
+  "interfaces_without_class_1.cc",
+  "interfaces_without_class_2.cc",
+  "interfaces_without_class_3.cc",
+  "interfaces_without_class_4.cc",
+  "interfaces_without_class_5.cc",
+  "interfaces_without_class_6.cc",
+  "interfaces_without_class_7.cc",
+]
+
+mitto_bindings_generated_dom_files = [
+                                       "dictionaries.cc",
+                                       "dictionaries.h",
+                                       "interface_objects.cc",
+                                       "interface_objects.h",
+                                       "interfaces_without_class.h",
+                                     ] + mitto_bindings_table_files
+foreach(interface, mitto_bindings_interfaces) {
+  mitto_bindings_generated_dom_files += [
+    "v8_${interface.file}.cc",
+    "v8_${interface.file}.h",
+  ]
+}

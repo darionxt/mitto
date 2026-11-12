@@ -16,7 +16,7 @@ own properties in Chrome's order.
 import dataclasses
 import enum
 
-from bindings_generator.model import ALWAYS, Attribute, Condition, Constant, Interface, OperationGroup
+from bindings_generator.model import ALWAYS, Attribute, Condition, Constant, ExposedConstruct, Interface, OperationGroup
 
 __all__ = ["CONTEXT_SNAPSHOT_INTERFACES", "Phase", "Property", "plan_interface"]
 
@@ -36,7 +36,7 @@ class Phase(enum.Enum):
     """On the objects of each context, after V8 made them from the templates."""
 
 
-Member = Attribute | Constant | OperationGroup | None
+Member = Attribute | Constant | OperationGroup | ExposedConstruct | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,7 +46,9 @@ class Property:
     Attributes:
         name: the property's name, or for a symbol its well-known name, such as "@@iterator".
         target: "interface", "prototype" or "instance".
-        kind: "accessor", "method" or "value".
+        kind: "accessor", "method", "value", or "construct" for a global object's property that gives a construct
+            exposed on it, which Blink installs as a lazy data property: V8 calls its getter the first time a page
+            reads it, and the property is a data property from then on.
         enumerable, configurable: its attributes.
         writable: whether a value can change, None for an accessor.
         length: a method's length.
@@ -79,7 +81,7 @@ class _Entry:
     """A member as bind_gen's make_property_entries_and_callback_defs() lists it."""
 
     group: str
-    """"attribute", "constant" or "operation"."""
+    """"attribute", "constant", "construct" or "operation"."""
     properties: tuple[Property, ...]
     condition: Condition
     no_alloc_direct_call: bool
@@ -114,8 +116,10 @@ def _attribute_entry(attribute: Attribute, interface: Interface) -> _Entry:
     return _Entry("attribute", (property_,), attribute.condition, nadc)
 
 
-def _constant_entry(constant: Constant) -> _Entry:
-    # IDLMemberInstaller::InstallConstants() puts each constant on the prototype and then on the interface object.
+def _constant_entry(constant: Constant, interface: Interface) -> _Entry:
+    # IDLMemberInstaller::InstallConstants() puts each constant on the prototype, if there is one, and then on the
+    # interface object. A namespace and a callback interface have no prototype.
+    targets = ("prototype", "interface") if interface.kind == "interface" else ("interface",)
     properties = tuple(
         Property(
             name=constant.name,
@@ -128,9 +132,25 @@ def _constant_entry(constant: Constant) -> _Entry:
             member=constant,
             condition=constant.condition,
         )
-        for target in ("prototype", "interface")
+        for target in targets
     )
     return _Entry("constant", properties, constant.condition, False)
+
+
+def _construct_entry(construct: ExposedConstruct) -> _Entry:
+    # IDLMemberInstaller::InstallExposedConstructs(): a lazy data property of the global object, not enumerable.
+    property_ = Property(
+        name=construct.name,
+        target="instance",
+        kind="construct",
+        enumerable=False,
+        configurable=True,
+        writable=True,
+        value=construct.target,
+        member=construct,
+        condition=construct.condition,
+    )
+    return _Entry("construct", (property_,), construct.condition, False)
 
 
 def _operation_entry(group: OperationGroup, interface: Interface, name: str | None = None) -> _Entry:
@@ -175,7 +195,8 @@ def _stringifier_entry(interface: Interface) -> _Entry:
 def _entries(interface: Interface) -> list[_Entry]:
     """The members in the order that make_property_entries_and_callback_defs() lists them."""
     entries = [_attribute_entry(attribute, interface) for attribute in interface.attributes]
-    entries += [_constant_entry(constant) for constant in interface.constants]
+    entries += [_constant_entry(constant, interface) for constant in interface.constants]
+    entries += [_construct_entry(construct) for construct in interface.exposed]
     if interface.kind != "callback interface":
         entries += [_operation_entry(group, interface) for group in interface.operation_groups]
     if interface.stringifier is not None:
@@ -193,6 +214,7 @@ def _install_function(entries: list[_Entry], phase: Phase) -> list[Property]:
         ("attribute", False),
         ("attribute", True),
         ("constant", False),
+        ("construct", False),
         ("operation", False),
         (
             "operation",
@@ -211,14 +233,16 @@ def _install_function(entries: list[_Entry], phase: Phase) -> list[Property]:
     return result
 
 
-def _symbol(name: str, phase: Phase, enumerable: bool = False, value: str | None = None) -> Property:
+def _symbol(name: str, phase: Phase, value: str | None = None, writable: bool = False) -> Property:
+    """A property of the prototype under a well-known symbol: @@toStringTag and @@unscopables are read-only, and Blink
+    installs @@iterator and @@asyncIterator with v8::DontEnum alone, so that a page can replace them."""
     return Property(
         name=name,
         target="prototype",
         kind="value",
-        enumerable=enumerable,
+        enumerable=False,
         configurable=True,
-        writable=False,
+        writable=writable,
         value=value,
         phase=phase,
     )
@@ -235,7 +259,7 @@ def plan_interface(interface: Interface) -> list[Property]:
         # SetupIDLInterfaceTemplate() gives the prototype its @@toStringTag before anything else.
         properties.append(_symbol("@@toStringTag", Phase.TEMPLATE, value=interface.name))
         if "indexed getter" in interface.special_operations and "Global" not in interface.extended_attributes:
-            properties.append(_symbol("@@iterator", Phase.TEMPLATE))
+            properties.append(_symbol("@@iterator", Phase.TEMPLATE, writable=True))
         collection = interface.collection
         if collection is not None and collection.kind == "iterable" and collection.iterator_operation is None:
             for name in ("entries", "keys", "values", "forEach"):
@@ -290,7 +314,7 @@ def plan_interface(interface: Interface) -> list[Property]:
         collection = interface.collection
         if collection is not None and collection.iterator_operation is not None:
             symbol = "@@asyncIterator" if collection.kind == "async iterable" else "@@iterator"
-            properties.append(_symbol(symbol, Phase.CONTEXT))
+            properties.append(_symbol(symbol, Phase.CONTEXT, writable=True))
     properties += _install_function(dependent, Phase.CONTEXT)
     if from_snapshot:
         properties += _install_function(independent, Phase.CONTEXT)

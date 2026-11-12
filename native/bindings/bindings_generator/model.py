@@ -19,6 +19,7 @@ __all__ = [
     "Constant",
     "Dictionary",
     "DictionaryMember",
+    "ExposedConstruct",
     "ExtendedAttributes",
     "IdlType",
     "Interface",
@@ -119,18 +120,23 @@ class Condition:
         other: what else decides it, as the extended attributes say it, such as "SecureContext".
         context_dependent: whether Blink decides it for each context, after the interface's templates are made, and
             so installs the construct after those that the templates hold.
+        alternatives: for the overloads of one operation whose conditions differ, each overload's condition: the
+            operation is installed if any of them holds, and `features` and `other` are empty.
     """
 
     features: tuple[str, ...] = ()
     other: tuple[str, ...] = ()
     context_dependent: bool = False
+    alternatives: tuple["Condition", ...] = ()
 
     @property
     def is_always(self) -> bool:
-        return not self.features and not self.other
+        return not self.features and not self.other and not self.alternatives
 
     def describe(self) -> str:
         """The condition as the listing writes it, empty when there is none."""
+        if self.alternatives:
+            return " or ".join(f"({alternative.describe()})" for alternative in self.alternatives)
         return " ".join([f"[RuntimeEnabled={feature}]" for feature in self.features] + [f"[{c}]" for c in self.other])
 
 
@@ -214,6 +220,26 @@ class CollectionLike:
 
 
 @dataclasses.dataclass(frozen=True)
+class ExposedConstruct:
+    """A property of a global object that gives a construct exposed on it, as bind_gen's exposed construct entries.
+
+    Attributes:
+        name: the property's name.
+        kind: "interface", "callback interface" or "namespace" for the construct's own object, "alias" for a
+            [LegacyWindowAlias] of an interface object, or "factory function" for a [LegacyFactoryFunction].
+        target: the interface or namespace whose object, or whose factory function, the property gives.
+        condition: when it is exposed, as the global object sees it.
+        length: a factory function's length.
+    """
+
+    name: str
+    kind: str
+    target: str
+    condition: Condition
+    length: int = 0
+
+
+@dataclasses.dataclass(frozen=True)
 class Interface:
     """An interface, a namespace or a callback interface, with its partials and mixins merged in.
 
@@ -225,6 +251,9 @@ class Interface:
         condition: when it is exposed beyond that.
         stringifier: the stringifier's attribute name, "" for an operation, or None.
         exposed_constructs: the interfaces and namespaces exposed on this global interface, in Blink's order.
+        exposed: for a [Global] interface, the properties of its global object that give the constructs exposed on it,
+            in the order that bind_gen lists them: the interfaces, callback interfaces and namespaces that have an
+            object, then the aliases, then the factory functions.
     """
 
     kind: str
@@ -249,6 +278,14 @@ class Interface:
     unscopables: tuple[str, ...]
     """The names in the prototype's @@unscopables, its own and inherited, sorted."""
     stringifier_condition: Condition = ALWAYS
+    exposed: tuple[ExposedConstruct, ...] = ()
+
+    @property
+    def has_interface_object(self) -> bool:
+        """Whether a global object it is exposed on gets an object for it: a callback interface only with constants."""
+        if "LegacyNoInterfaceObject" in self.extended_attributes:
+            return False
+        return self.kind != "callback interface" or bool(self.constants)
 
     def is_exposed_on(self, global_name: str) -> bool:
         return any(name in (global_name, "*") for name, _ in self.exposure)

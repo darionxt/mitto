@@ -26,6 +26,8 @@
 
 namespace mitto::bindings {
 
+struct ExposedConstructInfo;
+
 class PerIsolateData {
  public:
   // What the bindings need of DOMException, whose class is the DOM's, which
@@ -93,10 +95,23 @@ class PerIsolateData {
     secure_context_ = secure_context;
   }
 
-  // The interface's template, which this makes the first time.
+  // The template of an interface or a callback interface, which this makes
+  // the first time.
   v8::Local<v8::FunctionTemplate> InterfaceTemplate(
       v8::Isolate* isolate,
       const WrapperTypeInfo* info);
+
+  // The template of a namespace, which this makes the first time.
+  v8::Local<v8::ObjectTemplate> NamespaceTemplate(v8::Isolate* isolate,
+                                                  const WrapperTypeInfo* info);
+
+  // The template of a [LegacyFactoryFunction], which this makes the first
+  // time, as Blink's CreateLegacyFactoryFunctionFunction() does: its function
+  // can be called with `new`, takes the factory's name and length, and
+  // inherits from its interface's template.
+  v8::Local<v8::FunctionTemplate> FactoryFunctionTemplate(
+      v8::Isolate* isolate,
+      const ExposedConstructInfo& construct);
 
   // Whether `value` is an object of the interface or of one that inherits from
   // it.
@@ -125,8 +140,9 @@ class PerIsolateData {
   base::TimeTicks time_origin_;
   ExceptionReporter exception_reporter_;
   bool secure_context_ = true;
-  std::map<const WrapperTypeInfo*, v8::Eternal<v8::FunctionTemplate>>
-      templates_;
+  std::map<const WrapperTypeInfo*, v8::Eternal<v8::Template>> templates_;
+  std::map<const ExposedConstructInfo*, v8::Eternal<v8::FunctionTemplate>>
+      factory_function_templates_;
   DOMExceptionHooks dom_exception_hooks_;
   std::vector<DictionaryContext> dictionary_contexts_;
 };
