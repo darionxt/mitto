@@ -115,7 +115,17 @@ v8::MaybeLocal<v8::Value> ConvertInteger(v8::Isolate* isolate,
   }
   number = std::trunc(number);
   if (range.values == 0) {
-    return v8::Number::New(isolate, number + 0.0);
+    // Blink's DoubleToInteger(): modulo 2^64, as an unsigned long long, which
+    // a long long reads as signed.
+    const double modulo = std::fmod(number, 18446744073709551616.0);
+    const uint64_t bits = modulo >= 0 ? static_cast<uint64_t>(modulo)
+                                      : std::numeric_limits<uint64_t>::max() -
+                                            static_cast<uint64_t>(-modulo) + 1;
+    if (type.kind == IdlTypeKind::kLongLong) {
+      return v8::Number::New(isolate,
+                             static_cast<double>(static_cast<int64_t>(bits)));
+    }
+    return v8::Number::New(isolate, static_cast<double>(bits));
   }
   number = std::fmod(number, range.values);
   if (number < range.minimum) {
@@ -482,7 +492,8 @@ v8::MaybeLocal<v8::Value> ConvertUnion(v8::Isolate* isolate,
                                        v8::Local<v8::Value> value,
                                        ExceptionState& exception_state) {
   std::vector<const IdlTypeInfo*> members;
-  bool nullable = false;
+  // The union's own nullability, or one of its members'.
+  bool nullable = type.flags & kIdlTypeNullable;
   Flatten(type, members, nullable);
   const auto find = [&](auto test) -> const IdlTypeInfo* {
     for (const IdlTypeInfo* member : members) {
