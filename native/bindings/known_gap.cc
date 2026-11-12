@@ -533,6 +533,23 @@ void KnownGapAttributeSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
       !IsObjectOf(isolate, *member.owner, info.This())) {
     return;
   }
+  if (member.flags & kMemberLenientSetter) {
+    // [LegacyLenientSetter]: a setter that does nothing.
+    return;
+  }
+  if (member.flags & kMemberReplaceable) {
+    // [Replaceable]: bind_gen's make_steps_of_replaceable(), a data property of
+    // the page's value on the receiver, whatever its type, after the check of
+    // make_check_argument_length().
+    if (info.Length() < 1) {
+      ThrowTypeError(isolate, ExceptionMessages::NotEnoughArguments(1, 0));
+      return;
+    }
+    std::ignore = info.This()->CreateDataProperty(
+        isolate->GetCurrentContext(), ToV8StringFromUtf8(isolate, member.name),
+        info[0]);
+    return;
+  }
   if (SetterLacksItsArgument(info, member)) {
     return;
   }

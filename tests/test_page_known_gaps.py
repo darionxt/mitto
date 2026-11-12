@@ -195,3 +195,10 @@ def test_a_refused_known_gap_keeps_todays_error(program: Path, script: str, mess
     # Its default would be predictable random values, or an object of a class with nothing behind it.
     assert _evaluate(program, script).startswith(f"threw: TypeError: {message}")
     assert _evaluate(program, script).endswith("Not implemented.")
+
+
+def test_a_replaceable_known_gap_of_a_class_takes_any_value(program: Path) -> None:
+    # Window has a class but not statusbar's behaviour, and [Replaceable] shadows it with a data property.
+    script = "window.statusbar = 42; return [window.statusbar, typeof Object.getOwnPropertyDescriptor(window, 'statusbar').value].join();"
+
+    assert _evaluate(program, script) == "value: 42,number"
