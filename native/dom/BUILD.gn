@@ -82,6 +82,8 @@ source_set("dom") {
     "media_query_list.h",
     "media_query_list_event.cc",
     "media_query_list_event.h",
+    "memory_info.cc",
+    "memory_info.h",
     "navigator.cc",
     "navigator.h",
     "navigator_ua_data.cc",

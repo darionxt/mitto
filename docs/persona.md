@@ -521,6 +521,7 @@ The **Runtime** reads the same machine, or a page could tell that its scripts an
 | A page reads | From the machine | How it agrees with the Session |
 | --- | --- | --- |
 | `navigator.deviceMemory` | The same memory | The Machine holds the value that `device-memory` sends |
+| `jsHeapSizeLimit` of `performance.memory` and `console.memory` | The same memory, from which V8 works out its heap's limits ([building.md](building.md#what-chromes-renderer-sets-up-on-its-isolate)) | The Machine holds the memory that `device-memory` sends, and V8's heap follows it |
 | `devicePixelRatio`, and `resolution` in `matchMedia()` | The scale, times the zoom | The value that `dpr` sends |
 | `innerWidth`, `innerHeight`, and `width` and `height` in `matchMedia()` | The viewport | The values that `viewport-width` and `sec-ch-viewport-height` send |
 | `screen.width`, `screen.height` | The display, over the scale | Enclosed, by the function of [`src/mitto/_window.py`](../src/mitto/_window.py) that gives the work area |

@@ -627,8 +627,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.type = type;
     event.status = request_->GetResponseCode();
     event.from_cache = request_->was_cached();
-    event.protocol = net::HttpConnectionInfoToString(
-        request_->response_info().connection_info);
+    const net::HttpResponseInfo& response_info = request_->response_info();
+    event.protocol =
+        net::HttpConnectionInfoToString(response_info.connection_info);
+    event.alpn_negotiated_protocol = response_info.alpn_negotiated_protocol;
+    event.was_alpn_negotiated = response_info.was_alpn_negotiated;
+    event.was_fetched_via_spdy = response_info.was_fetched_via_spdy;
     event.url = request_->url().spec();
     event.headers = HeaderLines(*request_->response_headers());
     event.status_text = request_->response_headers()->GetStatusText();

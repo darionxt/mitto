@@ -3,6 +3,7 @@
 #include "base/no_destructor.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_performance.h"
+#include "mitto/dom/memory_info.h"
 #include "mitto/dom/time_clamper.h"
 
 namespace mitto {
@@ -49,6 +50,12 @@ double Performance::TimeOrigin() const {
   return ClampTimeResolution(
       (unix_at_zero_monotonic_ - base::Time::UnixEpoch()) +
       (time_origin_ - base::TimeTicks()));
+}
+
+MemoryInfo* Performance::Memory() const {
+  return MemoryInfo::Create(MemoryInfo::IsProcessLockedToSite()
+                                ? MemoryInfo::Precision::kPrecise
+                                : MemoryInfo::Precision::kBucketized);
 }
 
 // static

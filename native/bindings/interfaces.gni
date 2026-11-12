@@ -253,6 +253,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "MemoryInfo"
+    file = "memory_info"
+  },
+  {
     name = "Navigator"
     file = "navigator"
     implemented = [
@@ -343,6 +347,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "now",
       "timeOrigin",
+      "memory",
     ]
   },
   {

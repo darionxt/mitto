@@ -131,7 +131,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 7
+_PROTOCOL_VERSION = 8
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -676,9 +676,11 @@ def _respond(
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
-        struct.pack("<QiBBqId", number, status, int(redirected), int(cors), 0, *connection)
+        struct.pack("<QiBBBBqId", number, status, int(redirected), int(cors), 0, 0, 0, *connection)
         + _sized(url.encode())
         + _sized(status_text.encode("latin-1"))
+        + _sized(b"http/1.1")
+        + _sized(b"unknown")
         + lines,
     )
 
