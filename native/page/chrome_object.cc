@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 
-#include <cmath>
 #include <initializer_list>
 #include <string_view>
 #include <tuple>
@@ -14,6 +13,7 @@
 #include "base/strings/strcat.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/performance.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -343,13 +343,16 @@ void ChromeObjectData::StartAt(base::TimeTicks start) {
 }
 
 int64_t ChromeObjectData::ToIntegerMilliseconds(base::TimeTicks time) const {
-  // PerformanceTiming::MonotonicTimeToIntegerMilliseconds().
+  // PerformanceTiming::MonotonicTimeToIntegerMilliseconds(): coarsened as
+  // performance.timeOrigin is, with the same clamper, and then cut to whole
+  // milliseconds, so that requestTime agrees with timeOrigin.
+  // Upstream: third_party/blink/renderer/core/timing/performance_timing.cc
   if (time.is_null()) {
     return 0;
   }
   const base::Time wall = unix_at_zero_monotonic + (time - base::TimeTicks());
   return static_cast<int64_t>(
-      std::floor((wall - base::Time::UnixEpoch()).InMillisecondsF()));
+      Performance::ClampTimeResolution(wall - base::Time::UnixEpoch()));
 }
 
 void InstallChromeObject(v8::Local<v8::Context> context,

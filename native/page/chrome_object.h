@@ -34,8 +34,9 @@ struct ChromeObjectData {
   // reads as a Unix time from the wall clock now.
   void StartAt(base::TimeTicks navigation_start);
 
-  // A time of the loading as Blink's PerformanceTiming gives it: whole
-  // milliseconds since the Unix epoch, or 0 for one that has not come.
+  // A time of the loading as Blink's PerformanceTiming gives it: coarsened as
+  // performance.timeOrigin is, then whole milliseconds since the Unix epoch, or
+  // 0 for one that has not come.
   int64_t ToIntegerMilliseconds(base::TimeTicks time) const;
 
   // The Unix time at the zero of base::TimeTicks, as Performance takes it.

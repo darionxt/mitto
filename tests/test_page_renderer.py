@@ -577,7 +577,7 @@ def test_a_document_s_load_times_follow_its_loading(server: _PageServer) -> None
               return {
                 order: t.requestTime === t.startLoadTime && t.requestTime <= t.commitLoadTime &&
                        t.commitLoadTime <= t.finishDocumentLoadTime && t.finishDocumentLoadTime <= t.finishLoadTime,
-                origin: Math.abs(t.requestTime * 1000 - performance.timeOrigin) < 1,
+                origin: performance.timeOrigin - t.requestTime * 1000,
                 milliseconds: [t.requestTime, t.commitLoadTime, t.finishLoadTime].every(
                   (s) => Math.abs(Math.round(s * 1000) - s * 1000) < 1e-3),
                 csi: [csi.startE === t.requestTime * 1000, csi.onloadT === t.finishDocumentLoadTime * 1000,
@@ -588,9 +588,14 @@ def test_a_document_s_load_times_follow_its_loading(server: _PageServer) -> None
             })()"""
         )
 
+    # As in Chrome, requestTime is the navigation's start coarsened to 100 microseconds and cut to whole milliseconds,
+    # and timeOrigin the same start coarsened by the same clamper, so it is up to 0.9 ms later. Each takes the wall
+    # clock at its own moment, as DocumentLoadTiming and Performance do, so the two can land a step of 0.1 ms apart, and
+    # their doubles lose about 0.0002 ms at this size.
+    origin = result.pop("origin")
+    assert -0.1 - 1e-3 <= origin <= 1.0 + 1e-3
     assert result == {
         "order": True,
-        "origin": True,
         "milliseconds": True,
         "csi": [True, True, True, 15],
         # The Runtime paints nothing.
