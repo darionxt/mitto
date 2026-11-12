@@ -52,8 +52,12 @@ _INTERFACES = [
     "HTMLTitleElement",
     "HTMLUListElement",
     "HTMLUnknownElement",
+    "Headers",
     "Node",
+    "Performance",
     "PopStateEvent",
+    "Request",
+    "Response",
     "Text",
     "Window",
 ]
