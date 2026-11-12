@@ -23,7 +23,7 @@ import pytest
 import mitto
 from mitto import _native, _page
 from mitto._errors import PageEndedError, PageError, PageTimeoutError, ScriptError
-from mitto._native import ConsoleMessage, PageEnded, PageErrorCode, PageEvaluated, UncaughtError
+from mitto._native import ConsoleMessage, KnownGap, PageEnded, PageErrorCode, PageEvaluated, UncaughtError
 from mitto._page import KEPT_REPORTS, Page, PageRecord, outcome_of
 from mitto._persona import WINDOWS_PERSONAS, load_persona
 from mitto._timeout import to_seconds
@@ -365,6 +365,12 @@ def test_a_page_keeps_the_errors_that_its_scripts_leave_uncaught(page: Page) -> 
     assert page.console_messages == []
 
 
+def test_a_page_names_each_known_gap_that_its_document_reaches_once(page: Page) -> None:
+    assert page.evaluate("const h = new Highlight(); h.priority = 3; [h.priority, new Highlight().priority]") == [3, 0]
+
+    assert page.known_gaps == ["new Highlight", "Highlight.prototype.priority"]
+
+
 @pytest.mark.parametrize(
     ("expression", "timeout", "error", "message"),
     [
@@ -511,11 +517,13 @@ def test_a_page_record_keeps_the_last_reports() -> None:
     for number in range(KEPT_REPORTS + 1):
         record.add(ConsoleMessage("log", str(number)))
         record.add(UncaughtError(str(number)))
+        record.add(KnownGap(str(number)))
 
     assert len(record.console_messages) == KEPT_REPORTS
     assert next(iter(record.console_messages)) == ConsoleMessage("log", "1")
     assert len(record.uncaught_errors) == KEPT_REPORTS
     assert next(iter(record.uncaught_errors)) == "1"
+    assert len(record.known_gaps) == KEPT_REPORTS
 
 
 def test_a_page_record_keeps_the_last_reports_within_a_limit_on_their_text(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -128,6 +128,13 @@ class _BlockingPage:
 
         return self._run(read())
 
+    @property
+    def known_gaps(self) -> list[str]:
+        async def read() -> list[str]:
+            return self._page.known_gaps
+
+        return self._run(read())
+
     def evaluate(self, expression: str, **options: Any) -> Any:
         return self._run(self._page.evaluate(expression, **options))
 

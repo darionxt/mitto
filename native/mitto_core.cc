@@ -1825,7 +1825,8 @@ int32_t mitto_page_next_event(MittoPage* page,
     event->json_size = next.json.size();
   }
   if (next.error != MITTO_PAGE_ERROR_NONE ||
-      next.type == MITTO_PAGE_EVENT_CONSOLE) {
+      next.type == MITTO_PAGE_EVENT_CONSOLE ||
+      next.type == MITTO_PAGE_EVENT_KNOWN_GAP) {
     event->message = mitto::CopyToNewBuffer(next.message);
     event->message_size = next.message.size();
   }

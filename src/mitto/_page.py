@@ -21,6 +21,7 @@ from mitto._arguments import require_type
 from mitto._errors import PageEndedError, PageTimeoutError, ScriptError
 from mitto._native import (
     ConsoleMessage,
+    KnownGap,
     NativePage,
     NativePageEvent,
     PageEnded,
@@ -84,6 +85,7 @@ class PageRecord:
     Attributes:
         console_messages: What the Page's scripts wrote to the console, the oldest first, as LastReports keeps them.
         uncaught_errors: What a console says of each error that no script caught, likewise.
+        known_gaps: The members whose behaviour the Runtime lacks that each document reached, in order, likewise.
         ended: How the Page ended, once its event has come.
         navigated: How the navigation that opened the Page went, once its event has come.
         loaded: Whether the window's load event has been dispatched.
@@ -94,6 +96,7 @@ class PageRecord:
         self._results: dict[int, PageEvaluated | None] = {}
         self.console_messages: LastReports[ConsoleMessage] = LastReports(lambda message: message.text)
         self.uncaught_errors: LastReports[str] = LastReports(str)
+        self.known_gaps: LastReports[str] = LastReports(str)
         self.ended: PageEnded | None = None
         self.navigated: PageNavigated | None = None
         self.loaded = False
@@ -127,6 +130,8 @@ class PageRecord:
                 self.console_messages.append(event)
             case UncaughtError(text=text):
                 self.uncaught_errors.append(text)
+            case KnownGap(name=name):
+                self.known_gaps.append(name)
             case PageEnded():
                 self.ended = event
             case PageNavigated():
@@ -255,6 +260,17 @@ class Page:
         with self._lock:
             self._take_waiting_events()
             return list(self._record.uncaught_errors)
+
+    @property
+    def known_gaps(self) -> list[str]:
+        """The members whose behaviour the Runtime lacks, Known Gaps, that the Page's documents have reached, in order.
+
+        Each document names each one once, the first time it reaches it, such as "URL.prototype.href" or "new
+        Highlight", as console_messages keeps them. docs/runtime.md, "What a Known Gap does", says what one does.
+        """
+        with self._lock:
+            self._take_waiting_events()
+            return list(self._record.known_gaps)
 
     def evaluate(self, expression: str, *, timeout: float | None = None) -> Any:
         """Run a script in the Page, and block until its result has arrived, with the GIL released while it waits.

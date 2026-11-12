@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 10
+#define MITTO_ABI_VERSION 11
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -89,6 +89,10 @@
 // The window's load event has been dispatched: the document and its classic
 // scripts have loaded and run.
 #define MITTO_PAGE_EVENT_LOADED 6
+// The document reached a member whose behaviour the Runtime lacks, a Known
+// Gap, for the first time: each document reports each one once, as Chrome's
+// use counters count a feature. The Page goes on.
+#define MITTO_PAGE_EVENT_KNOWN_GAP 7
 
 // The level of a console message, as the console method that wrote it says:
 // console.debug(), console.log(), console.info(), console.warn() and
@@ -205,9 +209,11 @@ typedef struct MittoPageEvent {
   // Any event with an error: what went wrong, in UTF-8, such as "Uncaught
   // TypeError: x is not a function" or "the Page process was ended by signal
   // 9". CONSOLE: the message, in UTF-8, with its arguments written as V8's
-  // inspector writes them for Chrome's log, separated by spaces. The Page
-  // process writes both, so a caller reads them as it would read text from a
-  // server, and they may hold a NUL character, which `message_size` counts.
+  // inspector writes them for Chrome's log, separated by spaces. KNOWN_GAP:
+  // the member's name, such as "URL.prototype.href" or "new Highlight". The
+  // Page process writes these, so a caller reads them as it would read text
+  // from a server, and they may hold a NUL character, which `message_size`
+  // counts.
   char* message;
   size_t message_size;
   // CONSOLE: one of the MITTO_PAGE_CONSOLE values.

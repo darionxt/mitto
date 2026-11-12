@@ -131,7 +131,8 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 8
+_KNOWN_GAP = 18
+_PROTOCOL_VERSION = 9
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -239,9 +240,9 @@ class _Session:
     def evaluated(self) -> tuple[int, bool, str]:
         """Return the next result's call, whether it failed, and its result as JSON or why it failed.
 
-        The console messages and uncaught errors before it go to `reports`.
+        The console messages, uncaught errors and Known Gaps before it go to `reports`.
         """
-        while (message := self.receive())[0] in {_CONSOLE, _UNCAUGHT_ERROR}:
+        while (message := self.receive())[0] in {_CONSOLE, _UNCAUGHT_ERROR, _KNOWN_GAP}:
             self.reports.append(message)
         message_type, payload = message
         assert message_type == _EVALUATED, payload
@@ -834,6 +835,28 @@ def test_a_page_reads_the_browser_and_the_machine_that_it_starts_with(session: _
         "devicePixelRatio": 1,
         "connection": ["4g", 100, 2.65],
     }
+
+
+def test_a_page_tells_its_session_of_each_known_gap_once_for_each_document(session: _Session) -> None:
+    # A constructor, then an attribute whose setter and getter are one Known Gap, as Chrome's use counters count one
+    # feature once for each document.
+    script = "const h = new Highlight(); h.priority = 2; [h.priority, h.priority, new Highlight().priority].join()"
+    session.start()
+
+    assert session.evaluate(script) == (False, '"2,2,0"')
+    assert session.evaluate("new Highlight().priority") == (False, "0")
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, b"<p>another document</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+    assert session.evaluate("new Highlight().priority") == (False, "0")
+    assert session.reports == [
+        (_KNOWN_GAP, b"new Highlight"),
+        (_KNOWN_GAP, b"Highlight.prototype.priority"),
+        (_KNOWN_GAP, b"new Highlight"),
+        (_KNOWN_GAP, b"Highlight.prototype.priority"),
+    ]
 
 
 def test_a_page_takes_its_documents_connection_from_the_navigation(session: _Session) -> None:
