@@ -18,6 +18,7 @@ __all__ = [
     "maximised_viewport",
     "normal_viewport",
     "normal_window_around",
+    "screen_size",
     "work_area",
 ]
 
@@ -53,12 +54,18 @@ _WINDOW_MAX_DEFAULT_WIDTH = 1050
 _MIN_SCREEN_WIDTH_FOR_HALVING = 1600
 
 
-def work_area(display_width: int, display_height: int, scale: Fraction, windows: int) -> Rect:
-    """Return the work area of a display in pixels, at a scale, with the taskbar of a Windows along its bottom.
+def screen_size(display_width: int, display_height: int, scale: Fraction) -> tuple[int, int]:
+    """Return the size of a display in pixels at a scale, as a page's screen.width and screen.height read it.
 
     A display whose size is no whole number of device-independent pixels takes the next one up, as Chrome encloses it.
     """
-    return Rect(0, 0, math.ceil(display_width / scale), math.ceil(display_height / scale) - TASKBAR_HEIGHTS[windows])
+    return math.ceil(display_width / scale), math.ceil(display_height / scale)
+
+
+def work_area(display_width: int, display_height: int, scale: Fraction, windows: int) -> Rect:
+    """Return the work area of a display in pixels, at a scale, with the taskbar of a Windows along its bottom."""
+    width, height = screen_size(display_width, display_height, scale)
+    return Rect(0, 0, width, height - TASKBAR_HEIGHTS[windows])
 
 
 def first_window(display_width: int, display_height: int, area: Rect) -> Rect:

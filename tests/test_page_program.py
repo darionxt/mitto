@@ -19,6 +19,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -130,7 +131,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 5
+_PROTOCOL_VERSION = 6
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -150,6 +151,45 @@ _DEFAULT_START: dict[str, object] = {
     "window_height": 1032,
     "contrast_theme": "none",
     "inverted_colors": "none",
+    "memory": 8,
+    "screen_width": 1920,
+    "screen_height": 1080,
+    "scale": 1,
+    "viewport_width": 1920,
+    "viewport_height": 945,
+    "color_scheme": "light",
+    "reduced_motion": "no-preference",
+    "reduced_transparency": "no-preference",
+    "effective_type": "4g",
+    "navigator": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+        " Chrome/157.0.0.0 Safari/537.36",
+        "platform": "Win32",
+        "languages": "en-US,en",
+        "user_agent_data": {
+            "brands": [
+                {"brand": "Not-A.Brand", "version": "99"},
+                {"brand": "Google Chrome", "version": "157"},
+                {"brand": "Chromium", "version": "157"},
+            ],
+            "full_version_list": [
+                {"brand": "Not-A.Brand", "version": "99.0.0.0"},
+                {"brand": "Google Chrome", "version": "157.0.8103.39"},
+                {"brand": "Chromium", "version": "157.0.8103.39"},
+            ],
+            "mobile": False,
+            "platform": "Windows",
+            "platform_version": "19.0.0",
+            "architecture": "x86",
+            "bitness": "64",
+            "model": "",
+            "ua_full_version": "157.0.8103.39",
+            "wow64": False,
+            "form_factors": ["Desktop"],
+        },
+    },
+    # Which the library adds: what about:blank's navigator.connection gives.
+    "connection": {"rtt": 100, "downlink": 2.65},
 }
 
 
@@ -409,7 +449,7 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
 @pytest.mark.parametrize(
     ("start", "why"),
     [
-        ({**_DEFAULT_START, "screen_width": 1920}, 'a start with the unknown key "screen_width"'),
+        ({**_DEFAULT_START, "display_width": 1920}, 'a start with the unknown key "display_width"'),
         (
             {name: value for name, value in _DEFAULT_START.items() if name != "locale"},
             'a start whose "locale" is not a name',
@@ -419,6 +459,29 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
         ({**_DEFAULT_START, "window_state": "first"}, 'a start whose "window_state" is not "maximised" or "normal"'),
         ({**_DEFAULT_START, "contrast_theme": "black"}, 'a start whose "contrast_theme" is not a contrast theme'),
         ({**_DEFAULT_START, "inverted_colors": True}, 'a start whose "inverted_colors" is not "none" or "inverted"'),
+        ({**_DEFAULT_START, "memory": 12}, 'a start whose "memory" is not 2, 4, 8, 16 or 32'),
+        ({**_DEFAULT_START, "scale": 0.5}, 'a start whose "scale" is not a number from 1 to 5'),
+        (
+            {**_DEFAULT_START, "viewport_height": 0},
+            'a start whose "viewport_height" is not a whole number from 1 to 2147483647',
+        ),
+        ({**_DEFAULT_START, "color_scheme": "blue"}, 'a start whose "color_scheme" is not one of "light", "dark"'),
+        (
+            {**_DEFAULT_START, "effective_type": "5g"},
+            'a start whose "effective_type" is not one of "slow-2g", "2g", "3g", "4g"',
+        ),
+        (
+            {**_DEFAULT_START, "navigator": {"user_agent": "Mozilla/5.0"}},
+            'a start whose "navigator" is not a user agent, a platform, languages and their data',
+        ),
+        (
+            {name: value for name, value in _DEFAULT_START.items() if name != "connection"},
+            'a start whose "connection" is not an rtt and a downlink that Chrome gives',
+        ),
+        (
+            {**_DEFAULT_START, "connection": {"rtt": 125, "downlink": 2.65}},
+            'a start whose "connection" is not an rtt and a downlink that Chrome gives',
+        ),
     ],
     ids=str,
 )
@@ -547,11 +610,13 @@ def _respond(
     redirected: bool = False,
     cors: bool = False,
     headers: str = "",
+    connection: tuple[int, float] = (0, 0.0),
 ) -> None:
+    """Send the start of a response: for the navigation, `connection` is the rtt and downlink of its document."""
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
-        struct.pack("<QiBBq", number, status, int(redirected), int(cors), 0)
+        struct.pack("<QiBBqId", number, status, int(redirected), int(cors), 0, *connection)
         + _sized(url.encode())
         + _sized(status_text.encode("latin-1"))
         + lines,
@@ -640,6 +705,131 @@ def _loaded(session: _Session) -> None:
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
     assert session.receive() == (_LOADED, b"")
+
+
+# What a page reads of the browser and the machine, from what the Page starts with.
+_NAVIGATOR_AND_SCREEN = """
+    ({
+      userAgent: navigator.userAgent,
+      appVersion: navigator.appVersion,
+      platform: navigator.platform,
+      language: navigator.language,
+      languages: navigator.languages,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      deviceMemory: navigator.deviceMemory,
+      maxTouchPoints: navigator.maxTouchPoints,
+      brands: navigator.userAgentData.brands,
+      mobile: navigator.userAgentData.mobile,
+      uaPlatform: navigator.userAgentData.platform,
+      screen: [screen.width, screen.height, screen.availLeft, screen.availTop, screen.availWidth, screen.availHeight],
+      window: [screenX, screenY, screenLeft, screenTop, outerWidth, outerHeight, innerWidth, innerHeight],
+      devicePixelRatio,
+      connection: [navigator.connection.effectiveType, navigator.connection.rtt, navigator.connection.downlink],
+    })
+"""
+
+
+def test_a_page_reads_the_browser_and_the_machine_that_it_starts_with(session: _Session) -> None:
+    session.start()
+
+    failed, text = session.evaluate(_NAVIGATOR_AND_SCREEN)
+
+    assert not failed, text
+    navigator: Any = _DEFAULT_START["navigator"]
+    data = navigator["user_agent_data"]
+    assert json.loads(text) == {
+        "userAgent": navigator["user_agent"],
+        "appVersion": navigator["user_agent"].removeprefix("Mozilla/"),
+        "platform": "Win32",
+        "language": "en-US",
+        "languages": ["en-US", "en"],
+        "hardwareConcurrency": 8,
+        "deviceMemory": 8,
+        "maxTouchPoints": 0,
+        "brands": data["brands"],
+        "mobile": False,
+        "uaPlatform": "Windows",
+        "screen": [1920, 1080, 0, 0, 1920, 1032],
+        "window": [0, 0, 0, 0, 1920, 1032, 1920, 945],
+        "devicePixelRatio": 1,
+        "connection": ["4g", 100, 2.65],
+    }
+
+
+def test_a_page_takes_its_documents_connection_from_the_navigation(session: _Session) -> None:
+    session.start()
+    _respond(session, 0, _DOCUMENT_URL, "text/html", connection=(150, 2.4))
+    _body(session, 0, b"<p>connection</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+
+    assert session.evaluate("[navigator.connection.rtt, navigator.connection.downlink]") == (False, "[150,2.4]")
+
+
+@pytest.mark.parametrize(
+    ("languages", "expected"),
+    [
+        pytest.param("de-DE,de,en", ["de-DE", "de", "en"], id="three"),
+        pytest.param(" en_GB , fr ", ["en-GB", "fr"], id="sanitized"),
+        pytest.param("", ["en-US"], id="none-gives-the-locale"),
+    ],
+)
+def test_a_page_reads_its_languages_as_chrome_parses_its_setting(
+    session: _Session, languages: str, expected: list[str]
+) -> None:
+    navigator: Any = _DEFAULT_START["navigator"]
+    session.start({**_DEFAULT_START, "navigator": {**navigator, "languages": languages}})
+
+    failed, text = session.evaluate("[navigator.language, navigator.languages]")
+
+    assert (failed, json.loads(text)) == (False, [expected[0], expected])
+
+
+def test_high_entropy_values_resolve_with_what_the_hints_send(session: _Session) -> None:
+    session.start()
+    script = """
+        navigator.userAgentData.getHighEntropyValues(
+          ["wow64", "platformVersion", "architecture", "model", "bitness", "uaFullVersion", "fullVersionList",
+           "formFactors", "unknown"])
+          .then((values) => [Object.keys(values), values])
+    """
+
+    failed, text = session.evaluate(script)
+
+    assert not failed, text
+    navigator: Any = _DEFAULT_START["navigator"]
+    data = navigator["user_agent_data"]
+    keys, values = json.loads(text)
+    # A dictionary's members in their sorted order.
+    assert keys == sorted(keys)
+    assert values == {
+        "architecture": "x86",
+        "bitness": "64",
+        "brands": data["brands"],
+        "formFactors": ["Desktop"],
+        "fullVersionList": data["full_version_list"],
+        "mobile": False,
+        "model": "",
+        "platform": "Windows",
+        "platformVersion": "19.0.0",
+        "uaFullVersion": "157.0.8103.39",
+        "wow64": False,
+    }
+
+
+def test_screen_orientation_cannot_be_locked_as_on_windows(session: _Session) -> None:
+    session.start()
+    script = """
+        screen.orientation.lock("portrait").then(
+          () => "locked",
+          (error) => [error.name, error.message, screen.orientation.type, screen.orientation.angle])
+    """
+
+    assert session.evaluate(script) == (
+        False,
+        '["NotSupportedError","screen.orientation.lock() is not available on this device.","landscape-primary",0]',
+    )
 
 
 def test_a_fetch_asks_the_session_for_what_its_script_gives_and_resolves_with_the_response(session: _Session) -> None:

@@ -38,6 +38,7 @@
 #include "net/cookies/site_for_cookies.h"
 #include "net/http/http_util.h"
 #include "url/origin.h"
+#include "url/url_constants.h"
 
 namespace mitto {
 namespace {
@@ -483,6 +484,7 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     return false;
   }
   options_ = std::move(options);
+  options_.start.connection = ConnectionOf(GURL(url::kAboutBlankURL));
   // The Page reads these in order, so nothing waits for its hello.
   channel_->Send(EncodeHello());
   channel_->Send(EncodeStart(options_.start));
@@ -671,6 +673,7 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     if (request.is_navigation()) {
       response.navigation_start =
           (request.start() - base::TimeTicks()).InMicroseconds();
+      response.connection = ConnectionOf(document_url_);
     }
     response.url = event.url;
     response.status_text = event.status_text;
@@ -678,6 +681,18 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     channel_->Send(EncodeResponseStarted(response));
   }
   request.ReadIfCredited();
+}
+
+PageConnection PageHost::ConnectionOf(const GURL& url) const {
+  const NetworkQuality* const quality = network_->GetNetworkQuality();
+  if (!quality) {
+    return PageConnection();
+  }
+  // The document's site, as a subresource of its page takes it
+  // (FetchRules::AddClientHints()). about:blank's is opaque.
+  const RendererNetworkQuality renderer = GetRendererNetworkQuality(
+      *quality, net::SchemefulSite(url::Origin::Create(url)), url);
+  return {.rtt = renderer.rtt, .downlink = renderer.downlink};
 }
 
 bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {

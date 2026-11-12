@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/containers/span.h"
 #include "base/types/expected.h"
@@ -28,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 5;
+inline constexpr uint32_t kPageProtocolVersion = 6;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -165,9 +166,73 @@ enum class WindowState : uint8_t {
   kNormal = 2,
 };
 
-// What a Page starts with, which it would otherwise read from the machine:
-// what its Session's Machine and Persona say. Places and sizes on the desktop
-// are in device-independent pixels, from the display's top left corner.
+// A brand of the browser and its version, as sec-ch-ua lists them.
+struct PageBrandVersion {
+  std::string brand;
+  std::string version;
+
+  friend bool operator==(const PageBrandVersion&,
+                         const PageBrandVersion&) = default;
+};
+
+// What the browser tells each renderer of its user agent, which
+// navigator.userAgentData gives a page: blink::UserAgentMetadata, from which
+// the user agent client hints of the Session's requests come too.
+struct PageUserAgentData {
+  PageUserAgentData();
+  PageUserAgentData(const PageUserAgentData&);
+  PageUserAgentData& operator=(const PageUserAgentData&);
+  ~PageUserAgentData();
+
+  // In the order of sec-ch-ua.
+  std::vector<PageBrandVersion> brands;
+  // In the order of sec-ch-ua-full-version-list.
+  std::vector<PageBrandVersion> full_version_list;
+  bool mobile = false;
+  // Such as "Windows".
+  std::string platform;
+  // Such as "19.0.0": the Machine's.
+  std::string platform_version;
+  std::string architecture;
+  std::string bitness;
+  std::string model;
+  std::string ua_full_version;
+  bool wow64 = false;
+  std::vector<std::string> form_factors;
+};
+
+// What the browser tells each renderer of itself, which navigator reads.
+struct PageNavigator {
+  PageNavigator();
+  PageNavigator(const PageNavigator&);
+  PageNavigator& operator=(const PageNavigator&);
+  ~PageNavigator();
+
+  // The User-Agent of the Session.
+  std::string user_agent;
+  // What navigator.platform gives, such as "Win32".
+  std::string platform;
+  // The languages of Chrome's setting, separated by commas, such as
+  // "en-US,en", which the Session's Accept-Language comes from.
+  std::string languages;
+  PageUserAgentData user_agent_data;
+};
+
+// What navigator.connection gives a document: the Session's network estimate,
+// with the noise that the renderer process of the document's site adds for
+// its host, capped and rounded. It is what a fetch() from that document to its
+// own host sends in rtt and downlink.
+struct PageConnection {
+  // A multiple of 50 milliseconds, at most 3000.
+  uint32_t rtt = 0;
+  // In Mbps, a multiple of 0.05, at most 10.
+  double downlink = 0;
+};
+
+// What a Page starts with, which it would otherwise read from the machine and
+// the browser: what its Session's Machine, Persona and settings say. Places and
+// sizes on the desktop are in device-independent pixels, from the display's
+// top left corner.
 struct PageStart {
   PageStart();
   PageStart(const PageStart&);
@@ -201,6 +266,28 @@ struct PageStart {
   std::string contrast_theme;
   // Whether Windows' colour filter inverts colours.
   bool inverted_colors = false;
+  // The memory in GiB as Chrome rounds it, 2, 4, 8, 16 or 32, which
+  // navigator.deviceMemory gives.
+  int memory = 0;
+  // The primary display.
+  int screen_width = 0;
+  int screen_height = 0;
+  // The display's scale, such as 1.25, which devicePixelRatio gives.
+  double scale = 1;
+  // The window's page area.
+  int viewport_width = 0;
+  int viewport_height = 0;
+  // "light" or "dark".
+  std::string color_scheme;
+  // "no-preference" or "reduce".
+  std::string reduced_motion;
+  std::string reduced_transparency;
+  // The effective connection type, such as "4g", as the ect hint says.
+  std::string effective_type;
+  PageNavigator navigator;
+  // What about:blank's document reads, which the library works out and adds
+  // to what the "start" option of mitto_page_open() holds.
+  PageConnection connection;
 };
 
 // What a call to a Page gave back.
@@ -272,6 +359,9 @@ struct PageResponseStarted {
   // every process of the machine shares: what the document's
   // performance.timeOrigin counts from. 0 for the Page's own requests.
   int64_t navigation_start = 0;
+  // For the navigation, what the document's navigator.connection gives. 0 for
+  // the Page's own requests.
+  PageConnection connection;
   // The URL of the response, in UTF-8.
   std::string url;
   // The status line's reason phrase, in bytes.
@@ -363,10 +453,12 @@ struct FrameFromSession {
 std::string EncodeFrame(PageMessage type, std::string_view payload);
 
 std::string EncodeHello();
+// With the start's connection.
 std::string EncodeStart(const PageStart& start);
 
-// Returns what a Page starts with, from the JSON object of a kStart, which the
-// "start" of mitto_page_open()'s options holds too, or why it is not that.
+// Returns what a Page starts with, from the "start" of mitto_page_open()'s
+// options, or why it is not that. It has no connection, which the library adds
+// before it sends the start on.
 base::expected<PageStart, std::string> ReadStart(const base::DictValue& dict);
 // `script` is at most kMaxScriptSize bytes.
 std::string EncodeEvaluate(uint64_t call, std::string_view script);
