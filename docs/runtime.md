@@ -102,7 +102,7 @@ Each message travels as a frame: the size of its payload and its type, each a 32
 
 ## The messages
 
-Version 8 of the messages:
+Version 9 of the messages:
 
 | Type | Name | Way | Payload |
 | --- | --- | --- | --- |
@@ -123,6 +123,7 @@ Version 8 of the messages:
 | 15 | Response ended | To the Page | The number of the request, and a net error, a 32-bit number: 0 when all of the body has come, and otherwise why the request failed, with or without a response |
 | 16 | Cookies | To the Page | The number of the question that it answers, and the document's cookies, as a `Cookie` header's line holds them |
 | 17 | Cancel | To the Session | The number of a request that the Page no longer wants. Its end follows, with `ERR_ABORTED`, unless it has ended already |
+| 18 | Known gap | To the Session | The name of a member whose behaviour the Runtime lacks, such as `Highlight.prototype.priority` or `new Highlight`, in UTF-8, the first time the document reaches it ([What a Known Gap does](#what-a-known-gap-does)) |
 
 The library sends its hello, the start and any script at once, without waiting for the Page's hello, because the Page reads them in order.
 
@@ -152,7 +153,7 @@ the Page refused a message from the library: the time zone "Mars/Olympus_Mons" i
 
 - `mitto_page_open()` opens a Page on a Session, with versioned JSON options, whose `start` is what the Page starts with. An unknown key is refused. With `url`, the Page navigates there once it opens, as [Loading a document](#loading-a-document) says, with what each Request Kind sends in `requests`.
 - `mitto_page_evaluate()` sends a script and stores the number of its call. Each call gets one `MITTO_PAGE_EVENT_EVALUATED` event, with the result as JSON or an error.
-- `mitto_page_next_event()` takes the next event, blocking for as long as the caller says, and `mitto_page_event_free()` releases it. Beside `MITTO_PAGE_EVENT_EVALUATED` and `MITTO_PAGE_EVENT_ENDED`, a Page has a `MITTO_PAGE_EVENT_CONSOLE` event for each console message, with its level, a `MITTO_PAGE_EVENT_UNCAUGHT_ERROR` event for each error that no script caught, a `MITTO_PAGE_EVENT_NAVIGATED` event when its navigation has its response, with the document's URL and status, or has failed, with the net error, and a `MITTO_PAGE_EVENT_LOADED` event when the window's `load` event has been dispatched.
+- `mitto_page_next_event()` takes the next event, blocking for as long as the caller says, and `mitto_page_event_free()` releases it. Beside `MITTO_PAGE_EVENT_EVALUATED` and `MITTO_PAGE_EVENT_ENDED`, a Page has a `MITTO_PAGE_EVENT_CONSOLE` event for each console message, with its level, a `MITTO_PAGE_EVENT_UNCAUGHT_ERROR` event for each error that no script caught, a `MITTO_PAGE_EVENT_KNOWN_GAP` event with the name of each Known Gap, the first time each document reaches it, a `MITTO_PAGE_EVENT_NAVIGATED` event when its navigation has its response, with the document's URL and status, or has failed, with the net error, and a `MITTO_PAGE_EVENT_LOADED` event when the window's `load` event has been dispatched.
 - `mitto_page_end_waits()` ends each wait of `mitto_page_next_event()` on another thread, and makes each later one return at once if no event waits, so that the thread that closes a Page can stop another that waits, as `mitto_session_end_waits()` does for a Session.
 - `mitto_page_process_id()` gives the ID of the Page's process.
 - `mitto_page_close()` closes the Page.
@@ -205,7 +206,7 @@ A Known Gap does what the owner chose on 2026-11-12, in [#208](https://github.co
    - converts each argument as Web IDL says.
 
    For an operation that returns a promise, an error from any of these rejects the promise. So a wrong argument fails as it does in Chrome, and the page's own getters, iterators, `valueOf()` and `toString()` run as they run in Chrome. The converted arguments are thrown away: only the call into the Runtime's C++ is missing. [`idl_conversions.cc`](../native/bindings/idl_conversions.cc) converts each type as Blink's `NativeValueTraits` do, with their messages, a union as `bind_gen`'s `union.py` tries its members, and a dictionary's members in order, with the member being read in front of an error. It resolves overloads as `bind_gen`'s overload dispatcher does: the items of Web IDL's effective overload set that take as many arguments as the call gives, and among them the one that the value of the distinguishing argument selects, by the same tests in the same order. A call that no overload takes throws "N arguments required, but only M present." with the fewest that any overload needs, or else "Overload resolution failed.".
-2. **A report.** It tells the Session the first time a document reaches it after its arguments have converted, named as the listing names it, such as `Navigator.prototype.getBattery`, or `new Highlight` for a constructor. The bindings remember for each document which they reported; the Page passes the report on to the Session in a later step of M7. Chrome's use counters count a feature the same way, once for each document (`UseCounterImpl::Count()` in `third_party/blink/renderer/core/frame/use_counter_impl.cc`). A Known Gap inside a member's behaviour, such as a selector that needs more than simple selectors, reports the same way. The generator also marks each Known Gap in `web_idl_listing.txt`, so that each build writes all of them down, including those that no Parity Check sees.
+2. **A report.** It tells the Session the first time a document reaches it after its arguments have converted, named as the listing names it, such as `Navigator.prototype.getBattery`, or `new Highlight` for a constructor. The bindings remember for each document which they reported, and the Page sends each report to the Session as a Known gap message, which reaches a caller as a `MITTO_PAGE_EVENT_KNOWN_GAP` event and Python as the Page's `known_gaps`. Chrome's use counters count a feature the same way, once for each document (`UseCounterImpl::Count()` in `third_party/blink/renderer/core/frame/use_counter_impl.cc`). A Known Gap inside a member's behaviour, such as a selector that needs more than simple selectors, reports the same way. The generator also marks each Known Gap in `web_idl_listing.txt`, so that each build writes all of them down, including those that no Parity Check sees.
 3. **Its type's default.**
 
    | Member | What it does |
@@ -462,7 +463,7 @@ Until the release that ships the Runtime, Python's Page is private: `Session._op
 `_open_page(url, timeout=None)` navigates the Page to `url` through the Session, as [Loading a document](#loading-a-document) says, and returns once the window's `load` event has been dispatched. `timeout` is a number of seconds for that wait. A navigation that fails raises the `RequestError` that `session.get(url)` raises for that failure, and a timeout raises `PageTimeoutError`: either closes the Page first. `about:blank` navigates nowhere, as a new tab's first document needs no request. `url` is then the document's URL, after the navigation's redirects. The Page's scripts run in its document's context, which has V8's built-ins, its console and the interfaces that [the bindings](#the-bindings) have so far, with [timers](#timers) and [`fetch()`](#fetch).
 
 - `evaluate(expression, timeout=None)` runs a script and returns its result as Python's `json` reads what `JSON.stringify()` writes, with `None` for what it writes nothing for. It waits for a promise to settle, as the Page program does. `timeout` is a number of seconds, as a request's total time is.
-- `console_messages` holds what the scripts wrote to the console, each with its `level` and `text`, and `uncaught_errors` what a console says of each error that no script caught, for tests and debugging. Each keeps the last 1000, and fewer when their text is longer than 32 Mi characters, so that a Page that writes long messages cannot fill the caller's memory.
+- `console_messages` holds what the scripts wrote to the console, each with its `level` and `text`, `uncaught_errors` what a console says of each error that no script caught, and `known_gaps` the name of each Known Gap that each document reached, once for each document, for tests and debugging. Each keeps the last 1000, and fewer when their text is longer than 32 Mi characters, so that a Page that writes long messages cannot fill the caller's memory.
 - `process_id` is the ID of the Page's process.
 - `close()` ends the process and waits for it to go, which takes up to 2 seconds before a kill. An AsyncPage waits for that on a thread of its own.
 

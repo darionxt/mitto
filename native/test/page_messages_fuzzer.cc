@@ -100,6 +100,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kCancel:
           CHECK_EQ(payload.size(), 8u);
           break;
+        case mitto::PageMessage::kKnownGap:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(frame->known_gap));
+          CHECK_EQ(frame->known_gap.size(), payload.size());
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:

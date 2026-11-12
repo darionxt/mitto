@@ -160,6 +160,13 @@ std::optional<std::string> ScriptRunner::Start(
   bindings::PerIsolateData::From(isolate_)->SetExceptionReporter(
       base::BindRepeating(&PageReporter::ReportException,
                           base::Unretained(reporter_.get())));
+  // The first time each document reaches a Known Gap, the Session hears of it.
+  bindings::PerIsolateData::From(isolate_)->SetKnownGapReporter(
+      base::BindRepeating(
+          [](const SendFrame& send, std::string_view name) {
+            send.Run(EncodeKnownGap(name));
+          },
+          send_));
 
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context =

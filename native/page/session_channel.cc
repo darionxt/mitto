@@ -191,6 +191,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kSetCookie:
       case PageMessage::kLoaded:
       case PageMessage::kCancel:
+      case PageMessage::kKnownGap:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

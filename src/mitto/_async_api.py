@@ -313,6 +313,12 @@ class AsyncPage:
         self._take_waiting_events()
         return list(self._record.uncaught_errors)
 
+    @property
+    def known_gaps(self) -> list[str]:
+        """The Known Gaps that the Page's documents have reached, as Page.known_gaps says."""
+        self._take_waiting_events()
+        return list(self._record.known_gaps)
+
     async def evaluate(self, expression: str, *, timeout: float | None = None) -> Any:
         """Run a script in the Page, and return its result once it has arrived, as Page.evaluate() does.
 

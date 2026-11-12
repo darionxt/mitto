@@ -69,7 +69,8 @@ static_assert(static_cast<int>(ConsoleLevel::kError) ==
 
 bool IsReport(const PageEvent& event) {
   return event.type == MITTO_PAGE_EVENT_CONSOLE ||
-         event.type == MITTO_PAGE_EVENT_UNCAUGHT_ERROR;
+         event.type == MITTO_PAGE_EVENT_UNCAUGHT_ERROR ||
+         event.type == MITTO_PAGE_EVENT_KNOWN_GAP;
 }
 
 // Returns the bytes that `text` names, one for each character, as the C API's
@@ -978,6 +979,13 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCancel:
       OnCancel(frame->cancelled);
       return;
+    case PageMessage::kKnownGap: {
+      PageEvent event;
+      event.type = MITTO_PAGE_EVENT_KNOWN_GAP;
+      event.message = std::move(frame->known_gap);
+      PushReport(std::move(event));
+      return;
+    }
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:

@@ -82,7 +82,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 10
+ABI_VERSION = 11
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -171,6 +171,7 @@ class PageEventType(enum.IntEnum):
     UNCAUGHT_ERROR = 4
     NAVIGATED = 5
     LOADED = 6
+    KNOWN_GAP = 7
 
 
 class ConsoleLevel(enum.IntEnum):
@@ -739,6 +740,17 @@ class UncaughtError:
 
 
 @dataclass(frozen=True, slots=True)
+class KnownGap:
+    """The document reached a member whose behaviour the Runtime lacks, for the first time. The Page goes on.
+
+    Attributes:
+        name: The member, such as "URL.prototype.href" or "new Highlight".
+    """
+
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class PageNavigated:
     """The navigation that opening the Page started has its response, and its document takes about:blank's place; or it
     failed before a response, and the Page keeps about:blank.
@@ -760,7 +772,7 @@ class PageLoaded:
     """The window's load event has been dispatched: the document and its classic scripts have loaded and run."""
 
 
-NativePageEvent = PageEvaluated | PageEnded | ConsoleMessage | UncaughtError | PageNavigated | PageLoaded
+NativePageEvent = PageEvaluated | PageEnded | ConsoleMessage | UncaughtError | KnownGap | PageNavigated | PageLoaded
 
 
 class NativePage:
@@ -1645,6 +1657,8 @@ def _copy_page_event(native: MittoPageEvent) -> NativePageEvent:
             return ConsoleMessage(level=ConsoleLevel(native.level).name.lower(), text=message)
         case PageEventType.UNCAUGHT_ERROR:
             return UncaughtError(text=message)
+        case PageEventType.KNOWN_GAP:
+            return KnownGap(name=message)
         case PageEventType.NAVIGATED:
             url = ctypes.string_at(native.url, native.url_size).decode(errors="replace") if native.url else ""
             return PageNavigated(url=url, status=native.status, net_error=native.net_error)

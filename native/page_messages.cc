@@ -174,7 +174,7 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kCancel);
+         type <= static_cast<uint32_t>(PageMessage::kKnownGap);
 }
 
 bool IsRequestKind(uint8_t kind) {
@@ -942,6 +942,10 @@ std::string EncodeUncaughtError(std::string_view text) {
   return EncodeFrame(PageMessage::kUncaughtError, text);
 }
 
+std::string EncodeKnownGap(std::string_view name) {
+  return EncodeFrame(PageMessage::kKnownGap, name);
+}
+
 std::string EncodeRequest(const PageRequest& request) {
   const char kind = static_cast<char>(request.kind);
   const char same_origin = request.same_origin ? 1 : 0;
@@ -1130,6 +1134,12 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.cancelled = DecodeUint64(payload);
       return frame;
+    case PageMessage::kKnownGap:
+      if (!IsText(payload)) {
+        return base::unexpected("a Known Gap that is not UTF-8");
+      }
+      frame.known_gap = std::move(payload);
+      return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1230,6 +1240,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kSetCookie:
     case PageMessage::kLoaded:
     case PageMessage::kCancel:
+    case PageMessage::kKnownGap:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

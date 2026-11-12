@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 8;
+inline constexpr uint32_t kPageProtocolVersion = 9;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -131,6 +131,10 @@ enum class PageMessage : uint32_t {
   // Page no longer wants. Its end follows, with net::ERR_ABORTED unless it
   // has ended already.
   kCancel = 17,
+  // To the Session: the name of a member whose behaviour the Runtime lacks, a
+  // Known Gap, such as "URL.prototype.href", in UTF-8, the first time the
+  // document reaches it.
+  kKnownGap = 18,
 };
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
@@ -438,6 +442,8 @@ struct FrameFromPage {
   PageConsoleMessage console;
   // kUncaughtError.
   std::string uncaught_error;
+  // kKnownGap.
+  std::string known_gap;
   // kRequest.
   PageRequest request;
   // kCredit.
@@ -499,6 +505,8 @@ std::string EncodeEvaluated(const PageEvaluated& evaluated);
 std::string EncodeConsole(const PageConsoleMessage& message);
 // `text` is at most kMaxPayloadSize bytes.
 std::string EncodeUncaughtError(std::string_view text);
+// `name` is at most kMaxPayloadSize bytes.
+std::string EncodeKnownGap(std::string_view name);
 // The request fits in a frame.
 std::string EncodeRequest(const PageRequest& request);
 std::string EncodeCancel(uint64_t number);
