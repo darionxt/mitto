@@ -191,6 +191,8 @@ A Known Gap does what the owner chose on 2026-11-12, in [#208](https://github.co
    | Operation that returns a promise | Returns a promise resolved with the default of the promised type |
    | Constructor | Returns an object of the interface with nothing behind it |
 
+   The one exception, which the owner chose on 2026-11-12: a `toJSON()` that returns an object gives what Web IDL's default toJSON steps collect, so that a page sees Chrome's keys. It gives a new object with each attribute of a JSON type of the interface that declares it and of each ancestor that declares a `toJSON()` too, ancestors first, each read through the object as a page reads it. Enumerations count among the JSON types, as Blink's own `toJSON()` methods include them. So `JSON.stringify(new DOMRect())` gives Chrome's `{"x":0,"y":0,"width":0,"height":0,"top":0,"right":0,"bottom":0,"left":0}`. Blink has no default `toJSON()` of its own: each class writes one.
+
    A type's default is:
    - `null` for a nullable type;
    - `false`, 0 or `""`;

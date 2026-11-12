@@ -95,6 +95,10 @@ inline constexpr uint16_t kMemberIteratorReturn = 1 << 11;
 // toString() of a stringifier attribute, `forward`, of type `type`: it gives
 // what the attribute's getter gives, as Blink's does, and shares its number.
 inline constexpr uint16_t kMemberStringifierAttribute = 1 << 12;
+// A toJSON() that returns an object: it gives the object of Web IDL's default
+// toJSON steps, with the attributes that DefaultToJSONAttributes(value) names,
+// as the owner chose on 2026-11-12.
+inline constexpr uint16_t kMemberDefaultToJSON = 1 << 13;
 
 // One own property of a construct's interface object, prototype or instances.
 struct MemberInfo {
@@ -112,7 +116,8 @@ struct MemberInfo {
   RAW_PTR_EXCLUSION const IdlTypeInfo* type;
   // For kOperation, its overloads.
   RAW_PTR_EXCLUSION const OperationInfo* operation;
-  // For kConstant, its value. For kIntrinsic, the v8::Intrinsic.
+  // For kConstant, its value. For kIntrinsic, the v8::Intrinsic. With
+  // kMemberDefaultToJSON, the index of the attributes it reads.
   int64_t value;
   uint16_t flags;
   // For a Known Gap, a number of its own among all of them, by which a

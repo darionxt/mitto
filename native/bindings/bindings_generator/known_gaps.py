@@ -12,15 +12,24 @@ generator refuses by name, so that it keeps today's error, a Known Gap whose def
 
 Event handler attributes are not Known Gaps: their setter stores any object and turns anything else into null, and
 their getter gives what it stored, which is Chrome's behaviour.
+
+A toJSON() that returns an object gives what Web IDL's default toJSON steps collect, as the owner chose on 2026-11-12,
+so that a page sees Chrome's keys: default_tojson_attributes() says which attributes.
 """
 
 # Upstream: third_party/blink/renderer/bindings/core/v8/js_event_handler.cc
 
 from collections.abc import Callable
 
-from bindings_generator.model import Attribute, IdlType, Interface, OperationGroup, TypeKind
+from bindings_generator.model import Attribute, Dictionary, IdlType, Interface, OperationGroup, TypeKind
 
-__all__ = ["CLASSES_BEHIND_OBJECTS", "EVENT_HANDLER_CALLBACKS", "KnownGaps"]
+__all__ = [
+    "CLASSES_BEHIND_OBJECTS",
+    "EVENT_HANDLER_CALLBACKS",
+    "KnownGaps",
+    "default_tojson_attributes",
+    "has_default_tojson",
+]
 
 # The classes that the bindings put behind an object of an interface without a class that inherits from them.
 CLASSES_BEHIND_OBJECTS = frozenset({"EventTarget", "Event"})
@@ -118,3 +127,68 @@ class KnownGaps:
     def is_event_handler(attribute: Attribute) -> bool:
         idl_type = attribute.idl_type
         return idl_type.kind is TypeKind.CALLBACK_FUNCTION and idl_type.name in EVENT_HANDLER_CALLBACKS
+
+
+def has_default_tojson(group: OperationGroup) -> bool:
+    """Whether a toJSON() that is a Known Gap gives the default toJSON steps' object: one that returns an object."""
+    return (
+        group.name == "toJSON"
+        and not group.is_static
+        and all(overload.return_type.kind is TypeKind.OBJECT for overload in group.overloads)
+    )
+
+
+def _declares_tojson(interface: Interface) -> bool:
+    return any(group.name == "toJSON" and not group.is_static for group in interface.operation_groups)
+
+
+def _is_json_type(idl_type: IdlType, interfaces: dict[str, Interface], dictionaries: dict[str, Dictionary]) -> bool:
+    """Web IDL's JSON types, and enumerations, whose values are strings and which Blink's toJSON() methods include."""
+    kind = idl_type.kind
+    if kind in (
+        TypeKind.BOOLEAN,
+        TypeKind.INTEGER,
+        TypeKind.FLOATING_POINT,
+        TypeKind.STRING,
+        TypeKind.ENUMERATION,
+        TypeKind.OBJECT,
+    ):
+        return True
+    if kind in (TypeKind.UNION, TypeKind.SEQUENCE, TypeKind.FROZEN_ARRAY):
+        return all(_is_json_type(member, interfaces, dictionaries) for member in idl_type.members)
+    if kind is TypeKind.RECORD:
+        return _is_json_type(idl_type.members[1], interfaces, dictionaries)
+    if kind is TypeKind.DICTIONARY:
+        name: str | None = idl_type.name
+        while name is not None and name in dictionaries:
+            dictionary = dictionaries[name]
+            if not all(_is_json_type(member.idl_type, interfaces, dictionaries) for member in dictionary.own_members):
+                return False
+            name = dictionary.parent
+        return name is None
+    if kind is TypeKind.INTERFACE:
+        current: str | None = idl_type.name
+        while current is not None and current in interfaces:
+            if _declares_tojson(interfaces[current]):
+                return True
+            current = interfaces[current].parent
+    return False
+
+
+def default_tojson_attributes(
+    owner: Interface, interfaces: dict[str, Interface], dictionaries: dict[str, Dictionary]
+) -> list[Attribute]:
+    """The attributes that Web IDL's default toJSON steps collect for a toJSON() declared on `owner`: those of a JSON
+    type of each interface of its inheritance stack that declares toJSON(), ancestors first, each in its order."""
+    stack: list[Interface] = []
+    current: Interface | None = owner
+    while current is not None:
+        stack.append(current)
+        current = interfaces.get(current.parent) if current.parent is not None else None
+    return [
+        attribute
+        for interface in reversed(stack)
+        if _declares_tojson(interface)
+        for attribute in interface.attributes
+        if not attribute.is_static and _is_json_type(attribute.idl_type, interfaces, dictionaries)
+    ]

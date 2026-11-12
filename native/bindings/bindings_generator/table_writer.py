@@ -19,12 +19,13 @@ from collections.abc import Callable
 from bindings_generator.cpp_types import header_of
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
-from bindings_generator.known_gaps import KnownGaps
+from bindings_generator.known_gaps import KnownGaps, default_tojson_attributes, has_default_tojson
 from bindings_generator.model import (
     ALWAYS,
     Attribute,
     Condition,
     Constant,
+    Dictionary,
     ExtendedAttributes,
     IdlType,
     Interface,
@@ -111,6 +112,9 @@ class KnownGapContext:
     """Each [LegacyFactoryFunction], by its name."""
     marks: dict[tuple[str, str, str], str] = dataclasses.field(default_factory=dict[tuple[str, str, str], str])
     """What the listing says of each property that has no behaviour, by its interface, target and name."""
+    interfaces: dict[str, Interface] = dataclasses.field(default_factory=dict[str, Interface])
+    """Every interface, for the attributes that a toJSON() reads."""
+    dictionaries: dict[str, Dictionary] = dataclasses.field(default_factory=dict[str, Dictionary])
 
 
 def member_row(
@@ -199,6 +203,11 @@ def member_row(
     elif isinstance(member, OperationGroup):
         kind, number = "kOperation", str(context.gaps.number())
         operation = context.types.operation(member, f"operation {where}")
+        if has_default_tojson(member):
+            # The default toJSON steps, as the owner chose on 2026-11-12: the attributes they read, by their index.
+            flags.append("kMemberDefaultToJSON")
+            attributes = default_tojson_attributes(owner, context.interfaces, context.dictionaries)
+            value = str(context.types.json_attributes(attributes, f"operation {where}"))
         if member.is_static:
             flags.append("kMemberStatic")
         if any(overload.return_type.kind is TypeKind.PROMISE for overload in member.overloads):

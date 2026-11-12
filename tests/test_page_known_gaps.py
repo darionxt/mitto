@@ -197,6 +197,21 @@ def test_a_stringifier_gives_what_its_attributes_getter_gives(program: Path) -> 
     assert _evaluate(program, script) == "value: a b|a b|https://b.test/x|https://b.test/x"
 
 
+def test_to_json_gives_what_the_default_tojson_steps_collect(program: Path) -> None:
+    # The one exception to the type's default, which the owner chose on 2026-11-12. Chrome 157 gives the same string
+    # for the same script.
+    script = (
+        "return [JSON.stringify(new DOMRect()), Object.keys(new DOMMatrix().toJSON()).join(), "
+        "Object.keys(new DOMPoint().toJSON()).join(), Object.getPrototypeOf(new DOMRect().toJSON()) === Object.prototype, "
+        "new DOMRect().toJSON() === new DOMRect().toJSON()].join('|');"
+    )
+
+    assert _evaluate(program, script) == (
+        'value: {"x":0,"y":0,"width":0,"height":0,"top":0,"right":0,"bottom":0,"left":0}|'
+        "a,b,c,d,e,f,m11,m12,m13,m14,m21,m22,m23,m24,m31,m32,m33,m34,m41,m42,m43,m44,is2D,isIdentity|x,y,z,w|true|false"
+    )
+
+
 def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
     script = "const h = new Highlight(); return String([h instanceof Highlight, Object.getPrototypeOf(h) === Highlight.prototype]);"
 

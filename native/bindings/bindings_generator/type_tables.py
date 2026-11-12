@@ -13,7 +13,7 @@ interfaces and the bindings of the classes that name them.
 from collections.abc import Callable
 
 from bindings_generator.errors import UnhandledError
-from bindings_generator.model import Condition, Dictionary, IdlType, OperationGroup, TypeKind
+from bindings_generator.model import Attribute, Condition, Dictionary, IdlType, OperationGroup, TypeKind
 
 __all__ = ["HEADER", "SOURCE", "ConditionFunctions", "TypeTables", "union_name_in_idl"]
 
@@ -165,6 +165,8 @@ class TypeTables:
         self._operations: dict[tuple[object, ...], str] = {}
         self._operation_lines: list[str] = []
         self._declarations: list[str] = []
+        self._json_lists: dict[tuple[tuple[str, str], ...], int] = {}
+        self._json_lines: list[str] = []
 
     def type(self, idl_type: IdlType, where: str) -> str:
         """The address of the type's IdlTypeInfo."""
@@ -295,6 +297,46 @@ class TypeTables:
         self._operations[key] = f"&kOperation{index}"
         return self._operations[key]
 
+    def json_attributes(self, attributes: list[Attribute], where: str) -> int:
+        """The index of a list of attributes that the default toJSON steps read, each with its condition, among those
+        that DefaultToJSONAttributes() gives."""
+        entries: list[tuple[str, str]] = []
+        for attribute in attributes:
+            condition = self._conditions.reference(attribute.condition, f"attribute {attribute.name} of {where}")
+            if condition is not None:
+                entries.append((attribute.name, condition))
+        key = tuple(entries)
+        if key not in self._json_lists:
+            index = len(self._json_lists)
+            self._json_lists[key] = index
+            rows = ", ".join(f"{{{_quote(name)}, {condition}}}" for name, condition in entries)
+            if entries:
+                self._json_lines.append(f"constexpr JsonAttributeInfo kJsonAttributes{index}[] = {{{rows}}};")
+        return self._json_lists[key]
+
+    def _json_list_lines(self) -> list[str]:
+        spans = [
+            f"    base::span<const JsonAttributeInfo>(kJsonAttributes{index})" if key else "    {}"
+            for key, index in self._json_lists.items()
+        ]
+        lines = [*self._json_lines, ""]
+        if spans:
+            lines += [
+                "constexpr base::span<const JsonAttributeInfo> kJsonAttributeLists[] = {",
+                *(f"{s}," for s in spans),
+                "};",
+                "",
+            ]
+            body = ["  return kJsonAttributeLists[static_cast<size_t>(index)];"]
+        else:
+            body = ["  NOTREACHED();"]
+        return [
+            *lines,
+            "base::span<const JsonAttributeInfo> DefaultToJSONAttributes(int64_t index) {",
+            *body,
+            "}",
+        ]
+
     def write(self, includes: set[str]) -> tuple[str, str]:
         """The header that declares every table, and the source that defines them.
 
@@ -326,6 +368,7 @@ class TypeTables:
                 for include in sorted(
                     includes
                     | {
+                        "base/notreached.h",
                         "mitto/bindings/per_isolate_data.h",
                         "mitto/bindings/runtime_feature_set.h",
                         "mitto/bindings/runtime_features.h",
@@ -345,6 +388,8 @@ class TypeTables:
             *self._dictionary_lines,
             "",
             *self._operation_lines,
+            "",
+            *self._json_list_lines(),
             "",
             "}  // namespace mitto::bindings",
             "",

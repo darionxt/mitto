@@ -338,6 +338,31 @@ v8::MaybeLocal<v8::Value> DefaultOf(v8::Isolate* isolate,
   NOTREACHED();
 }
 
+// Web IDL's default toJSON steps: a new object with each attribute that they
+// collect, read through the receiver as a page would read it, so that an
+// interface that declares an attribute again, as DOMRect does x, gives its own
+// getter's value, as Chrome's classes do.
+void DefaultToJSON(const v8::FunctionCallbackInfo<v8::Value>& info,
+                   const MemberInfo& member) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const PerIsolateData& data = *PerIsolateData::From(isolate);
+  const v8::Local<v8::Object> result = v8::Object::New(isolate);
+  for (const JsonAttributeInfo& attribute :
+       DefaultToJSONAttributes(member.value)) {
+    if (attribute.condition && !attribute.condition(data)) {
+      continue;
+    }
+    const v8::Local<v8::String> key = ToV8StringFromUtf8(isolate, attribute.name);
+    v8::Local<v8::Value> value;
+    if (!info.This()->Get(context, key).ToLocal(&value) ||
+        result->CreateDataProperty(context, key, value).IsNothing()) {
+      return;
+    }
+  }
+  info.GetReturnValue().Set(result);
+}
+
 // What a getter gives on its receiver: what its setter stored there, or what
 // it gave before, or its type's default, which it keeps there if it is an
 // object, unless the IDL says [NewObject].
@@ -709,6 +734,10 @@ void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
     return;
   }
   ReportMember(isolate, member);
+  if (member.flags & kMemberDefaultToJSON) {
+    DefaultToJSON(info, member);
+    return;
+  }
   v8::Local<v8::Value> value;
   if (DefaultOf(isolate, isolate->GetCurrentContext(), *overload->return_type)
           .ToLocal(&value)) {

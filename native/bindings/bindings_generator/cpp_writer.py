@@ -1684,6 +1684,8 @@ def write_bindings(
             for group in interface.legacy_factory_functions
         },
         marks={} if marks is None else marks,
+        interfaces=definitions.interfaces,
+        dictionaries=definitions.dictionaries,
     )
     files: dict[str, str] = {}
     for name, interface in sorted(by_name.items()):
