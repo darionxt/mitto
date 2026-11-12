@@ -367,7 +367,8 @@ v8::Local<v8::Function> InterfaceObject(v8::Local<v8::Context> context,
   }
   CHECK(!objects->Set(context, key, interface_object).IsEmpty());
   v8::Local<v8::Object> prototype_object;
-  if (info.kind == WrapperTypeInfo::Kind::kInterface) {
+  if (info.kind == WrapperTypeInfo::Kind::kInterface ||
+      info.kind == WrapperTypeInfo::Kind::kIterator) {
     prototype_object =
         interface_object
             ->Get(context, v8::String::NewFromUtf8Literal(isolate, "prototype"))

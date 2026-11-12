@@ -31,6 +31,7 @@ from bindings_generator.extended_attributes import KNOWN, Role
 from bindings_generator.install_plan import Phase, Property, plan_interface
 from bindings_generator.known_gaps import KnownGaps
 from bindings_generator.model import (
+    ALWAYS,
     Argument,
     Attribute,
     Condition,
@@ -1534,6 +1535,64 @@ def _interfaces_in(idl_type: IdlType) -> list[str]:
     return [name for member in idl_type.members for name in _interfaces_in(member)]
 
 
+# The intrinsic that an iterator's prototype inherits from, by the kind of declaration, as bind_gen's
+# SetupIDLIteratorTemplate() takes it.
+_ITERATOR_PROTOTYPES = {
+    "iterable": "v8::kIteratorPrototype",
+    "async iterable": "v8::kAsyncIteratorPrototype",
+    "maplike": "v8::kMapIteratorPrototype",
+    "setlike": "v8::kSetIteratorPrototype",
+}
+
+
+def _iterators(definitions: Definitions, names: list[str]) -> dict[str, tuple[Interface, str, str]]:
+    """The iterator of each interface with bindings whose iterable, maplike, setlike or async iterable declaration
+    gives one, by its identifier: an interface of its own with next(), and return() for an async iterator with
+    [HasAsyncIteratorReturnAlgorithm], with the name a page sees and the intrinsic its prototype inherits from.
+
+    A Known Gap gives one that is done at once, an iterator over nothing.
+    """
+    iterators: dict[str, tuple[Interface, str, str]] = {}
+    for name in names:
+        collection = definitions.interfaces[name].collection
+        if collection is None or collection.iterator is None:
+            continue
+        asynchronous = collection.kind == "async iterable"
+        operations = [_iterator_operation("next", ())]
+        if asynchronous and collection.has_return:
+            value = Argument("value", IdlType(TypeKind.ANY, "any"), True, False, None)
+            operations.append(_iterator_operation("return", (value,)))
+        iterator = Interface(
+            kind="async iterator" if asynchronous else "sync iterator",
+            name=collection.iterator,
+            parent=None,
+            tag=0,
+            max_subclass_tag=0,
+            exposure=(),
+            condition=ALWAYS,
+            extended_attributes=ExtendedAttributes(),
+            attributes=(),
+            constants=(),
+            constructor_group=None,
+            legacy_factory_functions=(),
+            operation_groups=tuple(operations),
+            stringifier=None,
+            collection=None,
+            special_operations=(),
+            legacy_window_aliases=(),
+            exposed_constructs=(),
+            unscopables=(),
+        )
+        display = f"{name} {'AsyncIterator' if asynchronous else 'Iterator'}"
+        iterators[collection.iterator] = (iterator, display, _ITERATOR_PROTOTYPES[collection.kind])
+    return iterators
+
+
+def _iterator_operation(name: str, arguments: tuple[Argument, ...]) -> OperationGroup:
+    operation = Operation(name, arguments, IdlType(TypeKind.ANY, "any"), False, ExtendedAttributes(), ALWAYS)
+    return OperationGroup(name, (operation,), False, 0, ExtendedAttributes(), ALWAYS)
+
+
 def _constructs_with_tables(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> list[str]:
     """The constructs that get tables, sorted by name: each that has no C++ class and that the global object exposes,
     with or without an interface object, each ancestor of one, and each interface that their attributes and
@@ -1593,8 +1652,9 @@ def write_bindings(
     types = TypeMapper(frozenset(by_name), frozenset(definitions.dictionaries), definitions.enumerations)
     chains = _global_prototype_chains(definitions)
     with_tables = _constructs_with_tables(definitions, by_name)
+    iterators = _iterators(definitions, [*by_name, *with_tables])
     # Every construct with bindings has a number of its own, by name.
-    indexes = {name: index for index, name in enumerate(sorted([*by_name, *with_tables]))}
+    indexes = {name: index for index, name in enumerate(sorted([*by_name, *with_tables, *iterators]))}
     named_classes: set[str] = set()
 
     def info_of(name: str) -> str | None:
@@ -1646,6 +1706,11 @@ def write_bindings(
         )
         for name in with_tables
     ]
+    constructs += [
+        Construct(iterator, indexes[name], None, False, display, intrinsic)
+        for name, (iterator, display, intrinsic) in iterators.items()
+    ]
+    constructs.sort(key=lambda construct: construct.interface.name)
     files.update(write_tables(constructs, table_shards, by_name.__contains__, condition_test, context))
     type_includes = {header_of(name) for name in named_classes} | {f"mitto/bindings/{TABLES_HEADER}"}
     files[TYPES_HEADER], files[TYPES_SOURCE] = context.types.write(type_includes)

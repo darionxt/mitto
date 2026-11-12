@@ -81,7 +81,8 @@ struct IdlTypeInfo {
   IdlTypeKind kind;
   uint8_t flags;
   // For kInterface, the interface, or null for one that a Page has no
-  // bindings for, which no value can be an object of.
+  // bindings for, which no value can be an object of. For kIterator, the
+  // iterator.
   // RAW_PTR_EXCLUSION: #global-scope, as in WrapperTypeInfo, for each field.
   RAW_PTR_EXCLUSION const WrapperTypeInfo* interface;
   // For kDictionary, the dictionary.

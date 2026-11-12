@@ -8,7 +8,7 @@ generator refuses by name, so that it keeps today's error, a Known Gap whose def
   members would find no object behind it. An interface whose nearest ancestor with a class is EventTarget or Event
   is the exception: its objects get that class's object behind them, so that addEventListener(), dispatchEvent() and
   Event's members work on them;
-- one whose default the Runtime cannot make yet, such as an iterator, or a callback that is not nullable.
+- one whose default the Runtime cannot make, such as a callback that is not nullable.
 
 Event handler attributes are not Known Gaps: their setter stores any object and turns anything else into null, and
 their getter gives what it stored, which is Chrome's behaviour.
@@ -85,8 +85,10 @@ class KnownGaps:
             return any(self.default_is_safe(member) for member in idl_type.members)
         if kind is TypeKind.PROMISE:
             return self.default_is_safe(idl_type.members[0])
+        if kind is TypeKind.ITERATOR:
+            # An iterator over nothing, as the generator writes one for each iterable.
+            return self._has_bindings(idl_type.name)
         return kind not in (
-            TypeKind.ITERATOR,
             TypeKind.SYMBOL,
             TypeKind.CALLBACK_FUNCTION,
             TypeKind.CALLBACK_INTERFACE,

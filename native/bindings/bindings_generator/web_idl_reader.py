@@ -374,8 +374,9 @@ def _read_collection(definition: Any, exposures: _Exposures) -> CollectionLike |
         raise UnhandledError(f"interface {owner}: more than one of iterable, maplike and setlike")
     kind, declaration = present[0]
     where = f"{kind} of {owner}"
+    has_return = False
     if hasattr(declaration, "extended_attributes"):
-        _check_extended_attributes(where, declaration)
+        has_return = "HasAsyncIteratorReturnAlgorithm" in _check_extended_attributes(where, declaration)
     for type_name in ("key_type", "value_type"):
         declared = getattr(declaration, type_name, None)
         if declared is not None:
@@ -399,11 +400,17 @@ def _read_collection(definition: Any, exposures: _Exposures) -> CollectionLike |
         )
     elif kind != "iterable" or declaration.key_type is not None:
         iterator_operation = next(group.identifier for group in declaration.operation_groups if group[0].is_iterator)
+    # The iterator that the operations give, which web_idl names after the interface.
+    iterator: str | None = None
+    if iterator_operation is not None:
+        iterator = f"{'AsyncIterator' if kind == 'async iterable' else 'SyncIterator'}_{owner}"
     return CollectionLike(
         kind=kind,
         attributes=tuple(_read_attribute(attribute, owner, exposures) for attribute in declaration.attributes),
         operation_groups=tuple(_read_group(group, owner, exposures) for group in groups),
         iterator_operation=iterator_operation,
+        iterator=iterator,
+        has_return=has_return,
     )
 
 

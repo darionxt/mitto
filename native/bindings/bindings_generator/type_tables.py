@@ -194,7 +194,7 @@ class TypeTables:
         else:
             name = idl_type.syntax.removesuffix("?")
         interface = "nullptr"
-        if kind is TypeKind.INTERFACE:
+        if kind in (TypeKind.INTERFACE, TypeKind.ITERATOR):
             # An interface that a Page has no bindings for, as one exposed only to workers, has no objects there.
             interface = self._info_of(idl_type.name) or "nullptr"
         dictionary = self.dictionary(idl_type.name, where) if kind is TypeKind.DICTIONARY else "nullptr"

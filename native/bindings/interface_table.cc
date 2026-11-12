@@ -87,6 +87,9 @@ v8::FunctionCallback SetterOf(const MemberInfo& member) {
 }
 
 v8::FunctionCallback OperationCallbackOf(const MemberInfo& member) {
+  if (member.flags & (kMemberIteratorNext | kMemberIteratorReturn)) {
+    return &IteratorStep;
+  }
   return (member.flags & kMemberReturnsPromise) ? &KnownGapPromiseOperation
                                                 : &KnownGapOperation;
 }
@@ -283,6 +286,33 @@ void InstallTemplateFromTable(v8::Isolate* isolate,
       interface_template->SetCallHandler(&IllegalConstructor);
       InstallOnTemplates(isolate, {interface_template, {}, {}, {}}, *info.table,
                          data);
+      return;
+    }
+    case WrapperTypeInfo::Kind::kIterator: {
+      // SetupIDLIteratorTemplate(): the prototype inherits from one of V8's
+      // iterator prototypes, and has the iterator's name for @@toStringTag.
+      const v8::Local<v8::FunctionTemplate> interface_template =
+          construct_template.As<v8::FunctionTemplate>();
+      const v8::Local<v8::FunctionTemplate> intrinsic =
+          v8::FunctionTemplate::New(isolate, nullptr, v8::Local<v8::Value>(),
+                                    v8::Local<v8::Signature>(), 0,
+                                    v8::ConstructorBehavior::kThrow);
+      intrinsic->RemovePrototype();
+      intrinsic->SetIntrinsicDataProperty(
+          ToV8StringFromUtf8(isolate, "prototype"),
+          static_cast<v8::Intrinsic>(info.table->parent_intrinsic));
+      interface_template->Inherit(intrinsic);
+      interface_template->ReadOnlyPrototype();
+      interface_template->SetClassName(class_string);
+      interface_template->PrototypeTemplate()->Set(
+          v8::Symbol::GetToStringTag(isolate), class_string,
+          static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum));
+      InstallOnTemplates(
+          isolate,
+          {interface_template, interface_template->PrototypeTemplate(),
+           interface_template->InstanceTemplate(),
+           v8::Signature::New(isolate, interface_template)},
+          *info.table, data);
       return;
     }
     case WrapperTypeInfo::Kind::kNamespace: {

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -104,6 +105,7 @@ bool HasDefault(const IdlTypeInfo& type) {
     case IdlTypeKind::kPromise:
       return HasDefault(*type.members[0]);
     case IdlTypeKind::kIterator:
+      return type.interface && IsSafeObjectType(*type.interface);
     case IdlTypeKind::kSymbol:
     case IdlTypeKind::kCallbackFunction:
     case IdlTypeKind::kCallbackInterface:
@@ -324,10 +326,12 @@ v8::MaybeLocal<v8::Value> DefaultOf(v8::Isolate* isolate,
         }
       }
       NOTREACHED();
+    case IdlTypeKind::kIterator:
+      // An iterator over nothing.
+      return NewObjectOfInterface(context, *type.interface);
     case IdlTypeKind::kSymbol:
     case IdlTypeKind::kCallbackInterface:
     case IdlTypeKind::kCallbackFunction:
-    case IdlTypeKind::kIterator:
       // The generator refuses a Known Gap of these (known_gaps.py).
       NOTREACHED();
   }
@@ -540,6 +544,48 @@ void Construct(const v8::FunctionCallbackInfo<v8::Value>& info,
 }
 
 }  // namespace
+
+void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const MemberInfo& member = MemberOf(info);
+  const bool asynchronous = member.flags & kMemberReturnsPromise;
+  std::optional<ExceptionToRejectPromiseScope> reject_promise_scope;
+  if (asynchronous) {
+    reject_promise_scope.emplace(info);
+    // Without V8's signature check, as bind_gen's make_check_receiver() does
+    // for an operation that returns a promise.
+    if (!IsObjectOf(isolate, *member.owner, info.This())) {
+      ThrowTypeError(isolate, "Illegal invocation");
+      return;
+    }
+  }
+  // Web IDL's CreateIterResultObject(): value, then done.
+  const v8::Local<v8::Value> value =
+      (member.flags & kMemberIteratorReturn)
+          ? info[0]
+          : v8::Undefined(isolate).As<v8::Value>();
+  const v8::Local<v8::Object> result = v8::Object::New(isolate);
+  if (result
+          ->CreateDataProperty(
+              context, v8::String::NewFromUtf8Literal(isolate, "value"), value)
+          .IsNothing() ||
+      result
+          ->CreateDataProperty(context,
+                               v8::String::NewFromUtf8Literal(isolate, "done"),
+                               v8::True(isolate))
+          .IsNothing()) {
+    return;
+  }
+  if (!asynchronous) {
+    info.GetReturnValue().Set(result);
+    return;
+  }
+  v8::Local<v8::Value> promise;
+  if (ResolvedPromise(context, result).ToLocal(&promise)) {
+    info.GetReturnValue().Set(promise);
+  }
+}
 
 bool IsSafeObjectType(const WrapperTypeInfo& info) {
   // The generator gives a table to every interface whose objects a Known Gap

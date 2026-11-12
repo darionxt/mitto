@@ -9,7 +9,7 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from bindings_generator import extended_attributes
+from bindings_generator import cpp_writer, extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import Site, TypeMapper
 from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute
@@ -37,6 +37,7 @@ from bindings_generator.model import (
 from bindings_generator.runtime_features import read_features
 from bindings_generator.table_writer import Construct, KnownGapContext, write_tables
 from bindings_generator.type_tables import TypeTables
+from bindings_generator.web_idl_reader import Definitions
 
 BINDINGS = Path(__file__).resolve().parents[1] / "native" / "bindings"
 
@@ -638,3 +639,27 @@ def test_an_operation_table_holds_each_overload_with_its_arguments() -> None:
     assert "kOverloads0[] = {{kArguments0_0, &kIdlType1, nullptr}, {kArguments0_1, &kIdlType0, &Condition0}};" in (
         source
     )
+
+
+def test_each_iterable_gets_an_iterator_of_its_own() -> None:
+    # Blink's database merges an iterable's iterator into the interface, so the generator writes its table itself.
+    pair = CollectionLike("iterable", (), (_operation("entries"),), "entries", iterator="SyncIterator_Thing")
+    streamed = CollectionLike(
+        "async iterable", (), (_operation("values"),), "values", iterator="AsyncIterator_Stream", has_return=True
+    )
+    window = _window(ExposedConstruct("Thing", "interface", "Thing", ALWAYS))
+    interfaces = {
+        "Window": window,
+        "Thing": _interface(collection=pair),
+        "Stream": _interface(name="Stream", collection=streamed),
+    }
+    definitions = Definitions(interfaces, {}, {}, {}, frozenset())
+
+    iterators = cpp_writer._iterators(definitions, ["Thing", "Stream"])  # pyright: ignore[reportPrivateUsage]
+
+    thing, thing_name, thing_parent = iterators["SyncIterator_Thing"]
+    stream, stream_name, stream_parent = iterators["AsyncIterator_Stream"]
+    assert (thing.kind, thing_name, thing_parent) == ("sync iterator", "Thing Iterator", "v8::kIteratorPrototype")
+    assert [group.name for group in thing.operation_groups] == ["next"]
+    assert (stream_name, stream_parent) == ("Stream AsyncIterator", "v8::kAsyncIteratorPrototype")
+    assert [group.name for group in stream.operation_groups] == ["next", "return"]

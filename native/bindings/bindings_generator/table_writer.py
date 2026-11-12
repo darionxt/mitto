@@ -52,6 +52,8 @@ _ARRAY_INTRINSICS = {
 _TARGETS = {"interface": "kInterface", "prototype": "kPrototype", "instance": "kInstance"}
 
 _KINDS = {
+    "sync iterator": "WrapperTypeInfo::Kind::kIterator",
+    "async iterator": "WrapperTypeInfo::Kind::kIterator",
     "interface": "WrapperTypeInfo::Kind::kInterface",
     "callback interface": "WrapperTypeInfo::Kind::kCallbackInterface",
     "namespace": "WrapperTypeInfo::Kind::kNamespace",
@@ -73,6 +75,10 @@ class Construct:
     index: int
     interface_object_parent: str | None
     in_global_prototype_chain: bool
+    display_name: str | None = None
+    """The name a page sees, where it is not the identifier: "Headers Iterator" for SyncIterator_Headers."""
+    parent_intrinsic: str | None = None
+    """For an iterator, the intrinsic its prototype inherits from, such as "v8::kIteratorPrototype"."""
 
 
 def shard_name(shard: int) -> str:
@@ -172,6 +178,12 @@ def member_row(
             flags.append("kMemberEventHandler")
         elif context.gaps.refuses(owner, member):
             flags.append("kMemberRefused")
+    elif isinstance(member, OperationGroup) and owner.kind in ("sync iterator", "async iterator"):
+        # An iterator over nothing: next() is done at once, and return() too.
+        kind = "kOperation"
+        flags.append("kMemberIteratorReturn" if member.name == "return" else "kMemberIteratorNext")
+        if owner.kind == "async iterator":
+            flags.append("kMemberReturnsPromise")
     elif isinstance(member, OperationGroup):
         kind, number = "kOperation", str(context.gaps.number())
         operation = context.types.operation(member, f"operation {where}")
@@ -288,7 +300,8 @@ class _ShardWriter:
             flags.append("kInterfaceAllCollection")
         if "IsCodeLike" in interface.extended_attributes:
             flags.append("kInterfaceCodeLike")
-        if "LegacyNoInterfaceObject" in interface.extended_attributes:
+        if "LegacyNoInterfaceObject" in interface.extended_attributes or construct.parent_intrinsic:
+            # An iterator's prototype has no `constructor` either.
             flags.append("kInterfaceNoInterfaceObject")
         self.tables += [
             f"constexpr InterfaceTable k{name}Table = {{",
@@ -299,6 +312,7 @@ class _ShardWriter:
             f"    {constructor_operation},",
             f"    ConstructorKind::{constructor},",
             f"    ObjectBehind::{object_behind},",
+            f"    {construct.parent_intrinsic or '-1'},",
             f"    {length},",
             f"    {constructor_number},",
             f"    {' | '.join(flags) if flags else '0'},",
@@ -317,7 +331,7 @@ class _ShardWriter:
         return [
             f"const WrapperTypeInfo V8{interface.name}::kWrapperTypeInfo = {{",
             f"    {{{interface.tag}}},",
-            f"    {_quote(interface.name)},",
+            f"    {_quote(construct.display_name or interface.name)},",
             f"    {parent},",
             f"    static_cast<v8::CppHeapPointerTag>({interface.tag}),",
             f"    static_cast<v8::CppHeapPointerTag>({interface.max_subclass_tag}),",

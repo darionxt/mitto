@@ -199,7 +199,7 @@ A Known Gap does what the owner chose on 2026-11-12, in [#208](https://github.co
    - the first value of an enumeration;
    - for an interface, an object of that interface with nothing behind it, whose members are Known Gaps too.
 
-   A getter gives the same such object each time on one receiver, unless the IDL says `[NewObject]`. An iterable, maplike or setlike declaration on an object with nothing behind it iterates over nothing.
+   A getter gives the same such object each time on one receiver, unless the IDL says `[NewObject]`. An iterable, maplike or setlike declaration on an object with nothing behind it iterates over nothing: its `entries()`, `keys()` and `values()` give an iterator of Chrome's shape, whose prototype holds `next()` and the iterator's name for `@@toStringTag`, such as "URLSearchParams Iterator", and inherits from V8's `%IteratorPrototype%`, or its Map, Set or async iterator prototype, and whose `next()` is done at once. The generator writes the table of each such iterator itself, since Blink's database merges them into their interfaces.
 
 Some members follow other rules:
 
@@ -210,7 +210,7 @@ Some members follow other rules:
   - a member of `Crypto` or `SubtleCrypto`, whose default would be predictable random values or keys;
   - an attribute or operation that gives an object of an interface that has a C++ class, whose class's members would find no object behind it.
 
-  Each of these needs behaviour, or an outcome written by hand. Until it has one, it keeps `TypeError: Not implemented.` ([`known_gaps.py`](../native/bindings/bindings_generator/known_gaps.py)), and the listing marks it "Known Gap, refused". An object that a Page has no bindings for, such as one of an interface exposed only to workers, is refused the same way. For Chromium 157.0.8103.39, 186 members are refused.
+  Each of these needs behaviour, or an outcome written by hand. Until it has one, it keeps `TypeError: Not implemented.` ([`known_gaps.py`](../native/bindings/bindings_generator/known_gaps.py)), and the listing marks it "Known Gap, refused". An object that a Page has no bindings for, such as one of an interface exposed only to workers, is refused the same way. For Chromium 157.0.8103.39, 107 members are refused.
 - **The members that pages call most** get behaviour, or Chrome's outcome for the Page's state, written by hand, unless the default already is Chrome's outcome. These are the members used on at least 1% of page loads, by Chrome Platform Status's use counters. Chrome's outcome is the one for a Machine that has granted no permission, has only the devices it claims, and has no user activation. For example, `navigator.permissions.query()` gives `"prompt"`, where the first value of `PermissionState` would say `"granted"`. Where Chrome waits for a person, the outcome may be a promise that never settles, as `getUserMedia()` waits at its prompt. A member written this way is no longer a Known Gap.
 
 The defaults keep a page's script running where Chrome's runs, and with it the requests the script makes. They are often Chrome's own values too. In a walk of a new page in Chrome 157, 85% of the getters within three steps of `window` gave their type's default, every event handler among them. A Parity Check therefore shows a Known Gap only where its default differs from Chrome's value.

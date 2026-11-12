@@ -32,6 +32,10 @@ struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
     kCallbackInterface,
     // An object template, whose object is the namespace object.
     kNamespace,
+    // The iterator of an iterable, maplike, setlike or async iterable
+    // declaration: a function template whose prototype inherits from one of
+    // V8's iterator prototypes, and that no global object exposes.
+    kIterator,
   };
 
   // Installs the members on the template, which is a function template for an

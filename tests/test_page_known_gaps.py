@@ -247,3 +247,40 @@ def test_a_replaceable_known_gap_of_a_class_takes_any_value(program: Path) -> No
     script = "window.statusbar = 42; return [window.statusbar, typeof Object.getOwnPropertyDescriptor(window, 'statusbar').value].join();"
 
     assert _evaluate(program, script) == "value: 42,number"
+
+
+# An iterable's iterator, over nothing, as Chrome 157 showed for the same scripts.
+_ITERATORS_AS_CHROME = {
+    "its prototype": (
+        """const describe = (o) => Reflect.ownKeys(o).map((key) => {
+            const d = Object.getOwnPropertyDescriptor(o, key);
+            const value = typeof d.value === 'function' ? 'f' + d.value.length : JSON.stringify(d.value);
+            return String(key) + ':' + value + (d.enumerable ? 'e' : '') + (d.configurable ? 'c' : '') + (d.writable ? 'w' : '');
+        }).join(' ');
+        return describe(Object.getPrototypeOf(new URLSearchParams().entries()));""",
+        'value: next:f0ecw Symbol(Symbol.toStringTag):"URLSearchParams Iterator"c',
+    ),
+    "%IteratorPrototype% above it": (
+        "const it = new URLSearchParams().entries(); "
+        "return Object.getPrototypeOf(Object.getPrototypeOf(it)) === "
+        "Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));",
+        "value: true",
+    ),
+    "done at once": ("return JSON.stringify(new URLSearchParams().entries().next());", 'value: {"done":true}'),
+    "next() of another object": (
+        "return Object.getPrototypeOf(new URLSearchParams().entries()).next.call({});",
+        "threw: TypeError: Illegal invocation",
+    ),
+    "a setlike's": (
+        "const set = Object.getPrototypeOf(new Set().values()); "
+        "return Object.getPrototypeOf(Object.getPrototypeOf(document.fonts.values())) === set;",
+        "value: true",
+    ),
+}
+
+
+@pytest.mark.parametrize(("script", "chrome"), list(_ITERATORS_AS_CHROME.values()), ids=list(_ITERATORS_AS_CHROME))
+def test_an_iterable_known_gap_gives_an_iterator_over_nothing_as_chrome_has_it(
+    program: Path, script: str, chrome: str
+) -> None:
+    assert _evaluate(program, script) == chrome
