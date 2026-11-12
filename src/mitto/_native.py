@@ -13,7 +13,7 @@ import math
 import os
 import sys
 from collections.abc import Buffer, Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self, TypedDict
@@ -59,6 +59,7 @@ __all__ = [
     "PageLoaded",
     "PageNavigated",
     "PageRequestTemplate",
+    "PageStart",
     "Priority",
     "PrivateSettings",
     "ReadyKind",
@@ -89,7 +90,7 @@ REQUEST_OPTIONS_VERSION = 1
 COOKIES_VERSION = 1
 
 # The MITTO_PAGE_OPTIONS_VERSION of the C header this module is written against.
-PAGE_OPTIONS_VERSION = 1
+PAGE_OPTIONS_VERSION = 2
 
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
@@ -882,6 +883,51 @@ class FetchParams:
         return option
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PageStart:
+    """What a Page starts with, which it would otherwise read from the machine: the "start" option of mitto_page_open().
+
+    Places and sizes on the desktop are in device-independent pixels, from the display's top left corner.
+
+    Attributes:
+        time_zone: The IANA name of the time zone that the Page's Date and Intl report.
+        locale: The BCP 47 tag of the locale that the Page's Intl falls back to.
+        processors: The number of logical processors, from 1 to 64.
+        touch_points: How many touch points the touch screen takes, from 0, for none, to 256.
+        work_area_x: Where the work area, which is the display less the taskbar, starts from the left.
+        work_area_y: Where the work area starts from the top.
+        work_area_width: The width of the work area.
+        work_area_height: The height of the work area.
+        window_state: "maximised" or "normal".
+        window_x: Where Chrome's window starts from the left.
+        window_y: Where Chrome's window starts from the top.
+        window_width: The width of Chrome's window, with its bars and borders.
+        window_height: The height of Chrome's window, with its bars and borders.
+        contrast_theme: Windows' contrast theme, such as "aquatic", or "none".
+        inverted_colors: "inverted" with Windows' colour filter that inverts colours, or "none".
+    """
+
+    time_zone: str
+    locale: str
+    processors: int
+    touch_points: int
+    work_area_x: int
+    work_area_y: int
+    work_area_width: int
+    work_area_height: int
+    window_state: str
+    window_x: int
+    window_y: int
+    window_width: int
+    window_height: int
+    contrast_theme: str
+    inverted_colors: str
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "start" option of mitto_page_open()."""
+        return {start_field.name: getattr(self, start_field.name) for start_field in fields(self)}
+
+
 @dataclass(frozen=True, slots=True)
 class PageRequestTemplate:
     """What a Page's request of one Request Kind sends, as its Session's Persona says: one entry of the "requests" option
@@ -1192,9 +1238,8 @@ class Session:
 
     def open_page(
         self,
+        start: PageStart,
         *,
-        time_zone: str | None = None,
-        locale: str | None = None,
         url: str | None = None,
         requests: Mapping[str, PageRequestTemplate] | None = None,
     ) -> NativePage:
@@ -1203,26 +1248,21 @@ class Session:
         Starting the process takes a few milliseconds, which this blocks for.
 
         Args:
-            time_zone: The IANA name of the time zone that the Page's Date and Intl report, or None for UTC.
-            locale: The BCP 47 tag of the locale that the Page's Intl falls back to, or None for en-US.
+            start: What the Page starts with, as the Session's Machine and Persona say.
             url: Where the Page navigates once it opens, through this Session, whose PageNavigated and PageLoaded events
                 say how that went, or None to stay at about:blank.
             requests: What a request of each Request Kind sends, by the kind's value: "navigation", needed with `url`,
                 and "script" and "fetch", for the Page's own requests, and "fetch_with_body" for a fetch() with a body.
 
         Raises:
-            ValueError: If this Session has been closed, or the native core refuses `time_zone` or `locale`. One that ICU
-                does not know ends the Page, which its first call says.
+            ValueError: If this Session has been closed, or the native core refuses `start`. A time zone or locale that
+                ICU does not know ends the Page, which its first call says.
             NativeLibraryError: If no Page program lies beside the native library, which means that this build of mitto
                 has no Runtime.
             OSError: If the Page's process cannot start.
         """
         self._require_open()
-        options: dict[str, object] = {"version": PAGE_OPTIONS_VERSION}
-        if time_zone is not None:
-            options["time_zone"] = time_zone
-        if locale is not None:
-            options["locale"] = locale
+        options: dict[str, object] = {"version": PAGE_OPTIONS_VERSION, "start": start.to_option()}
         if url is not None:
             encode_url(url)
             options["url"] = url
@@ -1236,7 +1276,7 @@ class Session:
                 f"the Runtime is not in this build of mitto: no {PAGE_PROGRAM_NAME} lies beside the native library"
             )
         if net_error == _ERR_INVALID_ARGUMENT:
-            raise ValueError(f"the native core refused the time zone {time_zone!r} or the locale {locale!r} of a Page")
+            raise ValueError(f"the native core refused what a Page starts with: {start}")
         if net_error != 0:
             name: bytes = self._library.mitto_net_error_name(net_error)
             raise OSError(f"the process of a Page cannot start: {name.decode()} ({net_error})")

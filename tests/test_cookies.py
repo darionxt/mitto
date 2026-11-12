@@ -1453,6 +1453,62 @@ def test_a_file_from_mitto_0_1_loads_in_a_session_of_its_machine(tmp_path: Path)
         assert [cookie.name for cookie in session.cookies] == ["a"]
 
 
+# What mitto 0.2 saved of a Machine, which knew nothing of what only a page reads.
+FIELDS_OF_0_2 = (
+    "memory",
+    "display_width",
+    "display_height",
+    "scale",
+    "viewport_width",
+    "viewport_height",
+    "round_trip_ms",
+    "throughput_kbps",
+    "color_scheme",
+    "reduced_motion",
+    "reduced_transparency",
+    "platform_version",
+    "seed",
+)
+
+
+def saved_by_0_2(machine: mitto.Machine, **changes: object) -> dict[str, object]:
+    """Return what mitto 0.2 saved of a Machine, with `changes` made, where a value of ... leaves its field out."""
+    saved = {**{name: value for name, value in dataclasses.asdict(machine).items() if name in FIELDS_OF_0_2}, **changes}
+    return {name: value for name, value in saved.items() if value is not ...}
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_file_from_mitto_0_2_loads_as_the_machine_its_seed_draws_and_saves_all_of_it(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    with new_session() as session:
+        session.cookies.set(Cookie("a", "1", domain=HOST))
+        listed = json.loads(session._native.list_cookies())["cookies"]  # pyright: ignore[reportPrivateUsage]
+    file.write_bytes(file_of(listed, machine=saved_by_0_2(MACHINE)))
+
+    with new_session(file, machine=None) as session:
+        assert session.machine == MACHINE
+        assert [cookie.name for cookie in session.cookies] == ["a"]
+
+    assert json.loads(file.read_text())["machine"] == dataclasses.asdict(MACHINE)
+
+
+@pytest.mark.usefixtures("native_library")
+def test_a_file_from_mitto_0_2_of_a_machine_with_no_seed_loads_as_the_same_machine_each_time(tmp_path: Path) -> None:
+    file = tmp_path / "cookies.json"
+    # A display that the table does not have, which a caller of mitto 0.2 gave in full.
+    saved = saved_by_0_2(MACHINE, display_width=1700, display_height=1000, scale=1.75, viewport_width=900, seed=None)
+    file.write_bytes(file_of([], machine={**saved, "viewport_height": 500}))
+
+    with new_session(file, machine=None) as session:
+        first = session.machine
+    with new_session(file, machine=None) as session:
+        assert session.machine == first
+
+    assert first.seed is None
+    assert (first.display_width, first.viewport_width, first.viewport_height) == (1700, 900, 500)
+    assert first.window_state == "normal"
+
+
 @pytest.mark.usefixtures("native_library")
 @pytest.mark.parametrize(
     "contents",
@@ -1490,6 +1546,12 @@ def test_a_file_of_version_1_that_the_native_core_refuses_is_named(tmp_path: Pat
         file_of([], machine=machine_with(memory=7)),
         file_of([], machine=machine_with(memory="8")),
         file_of([], machine=machine_with(seed=True)),
+        file_of([], machine=machine_with(time_zone="Mars/Olympus_Mons")),
+        file_of([], machine=machine_with(processors=0)),
+        file_of([], machine=saved_by_0_2(MACHINE, seed=...)),
+        file_of([], machine=saved_by_0_2(MACHINE, seed=1.5)),
+        file_of([], machine=saved_by_0_2(MACHINE, memory=7)),
+        file_of([], machine=saved_by_0_2(MACHINE, viewport_width=100_000)),
         file_of([], machine=[]),
         file_of({}),
         b"[]",

@@ -209,7 +209,7 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 
 In mitto 0.1, once a server asked for the hints that follow the machine, every Session of a Persona sent [the same values](#what-they-say). Each is a value a real Chrome sends, but real Chrome users spread over many machines, so all Sessions landed on one point, which a server can count. A Session that saved its cookies and came back also came back as that one machine.
 
-So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Everything it plans is built: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table.
+So each Session now claims a **Machine** of its own, drawn from [a table](#the-table) unless [`machine=`](api.md#machine) gives one. This section says what decides each of those values in Chrome, which values go together, how common each one is, and how the table and a draw are made. The decision is [ADR-0007](adr/0007-a-machine-of-its-own-per-session.md), and [M5](roadmap.md#m5-a-machine-for-each-session) builds it. Everything it plans is built: the Machine, its draw from the table, its values in the hints, the Machine saved with the cookies, the noise on `rtt` and `downlink` for each host, `sec-ch-ua-platform-version` hidden in the normal form, and a step of the release routine that refreshes the table. [M7](roadmap.md#m7-script-parity) adds [what a page reads](#what-a-page-reads-beside-the-hints) and no hint sends: the time zone, the processors, the work area and the window's place, the touch points, and Windows' contrast themes and colour filters.
 
 No Baseline holds these values, and recording them on other machines would put those machines in the repository. So what follows comes from Chromium's source at 155.0.8059.85, 156.0.8078.80 and 157.0.8103.39. What each file named here does with these values is the same in all three, apart from checks that became `CHECK`, so each answer holds for every **Chrome Release** in the **Supported Window**. The one exception is in the table: Chrome 157 lets a contrast theme decide the colour scheme, and 155 and 156 do not. Each path is under `chromium/src`.
 
@@ -231,6 +231,49 @@ No Baseline holds these values, and recording them on other machines would put t
 | `sec-ch-ua-model`, `sec-ch-ua-form-factors` | Nothing of the machine | `""` and `"Desktop"` on every Windows machine | `components/embedder_support/user_agent_utils.cc` (`BuildModelInfo`, `GetFormFactorsClientHint`) |
 
 Chrome reads the memory, the platform version and the architecture once in each run, the first time it needs them. The other values follow the machine as it changes, such as a window that is made larger.
+
+### What a page reads beside the hints
+
+A page reads more of the machine than a server does. In Chromium 157.0.8103.39:
+
+| A page reads | What Chrome reads | What it gives on Windows | Where |
+| --- | --- | --- | --- |
+| `Intl.DateTimeFormat().resolvedOptions().timeZone`, and the offsets and names of `Date` | Windows' time zone and the region of the user's settings. ICU looks the zone up in its windowsZones table, which comes from Unicode's CLDR, and takes the first zone that the table lists for that region, or for the world if the region has none. Blink sets that zone in each renderer, and V8 gives its canonical name, and `UTC` for `Etc/UTC` | [A zone of that table](#the-time-zone), such as `America/New_York` for Eastern Time in the United States, and never another zone of the same region, such as `America/Detroit` | `third_party/icu/source/common/wintz.cpp`, `third_party/blink/renderer/core/timezone/timezone_controller.cc`, `v8/src/objects/intl-objects.cc` (`DefaultTimeZone`) |
+| `navigator.hardwareConcurrency` | The number of logical processors in Chrome's processor group, as `GetSystemInfo()` gives it | A whole number from 1 to 64 | `base/system/sys_info_win.cc` |
+| `navigator.maxTouchPoints` | Whether a touch screen is ready, `SM_DIGITIZER`, and how many touch points it takes, `SM_MAXIMUMTOUCHES` | `0` without a touch screen | `ui/base/pointer/pointer_device_win.cc` |
+| `screen.availLeft`, `screen.availTop`, `screen.availWidth`, `screen.availHeight` | The primary display's work area, which leaves out the taskbar, in pixels over the scale, enclosed | The display less a taskbar of 48 on Windows 11 and 40 on Windows 10, [as read](#the-taskbar-and-chromes-bars) | `ui/display/win/screen_win.cc` |
+| `screenX`, `screenY`, `outerWidth`, `outerHeight` | Where the window is and how large, with Chrome's bars and borders | For a maximised window, the work area. For Chrome's first window on a new profile, [the place and size](#the-taskbar-and-chromes-bars) that `GetDefaultWindowBounds()` gives | `chrome/browser/ui/window_sizer/window_sizer.cc` |
+| `forced-colors` and `prefers-contrast` in `matchMedia()`, and from Chrome 157 `prefers-color-scheme` | Whether a contrast theme is on, `SPI_GETHIGHCONTRAST`, and its Window and WindowText colours | `forced-colors: active` with any contrast theme. `prefers-contrast: more` at a contrast of at least 7:1 between the two colours, `less` at 2.5:1 or less, `custom` between them, and `no-preference` with no theme. The colour scheme is `dark` for a Window colour whose lightness is below 33%, and `light` above 67% | `ui/native_theme/os_settings_provider_win.cc`, `ui/native_theme/os_settings_provider.cc` |
+| `inverted-colors` in `matchMedia()` | Whether Windows' colour filter is on, and which filter it is, in the user's registry | `inverted` for the filter that inverts colours, and `none` with no filter or any other, greyscale inverted too | `ui/native_theme/os_settings_provider_win.cc` |
+
+#### The time zone
+
+So a page on Windows can only read a time zone that is the first of its region in the windowsZones table of the ICU that its Chrome builds with. [`src/mitto/time_zones.json`](../src/mitto/time_zones.json) lists them, 363 for Chromium 157.0.8103.39, by the names that a page reads, such as `Asia/Calcutta`, where other browsers give `Asia/Kolkata`. [The release routine](releasing.md#7-refresh-the-table-of-machines) writes it from the table of the ICU that the Engine Release's `DEPS` pins, which is under the Unicode License v3, and a Machine takes no other zone.
+
+A Machine's time zone is drawn to fit the locale of the Persona, which a page's `Intl` falls back to: every Persona's is `en-US`, and a draw gives it `America/New_York`. The owner chose both on 2026-11-12: the locale to choose the zone, over a zone drawn on its own or one that each caller has to give, and one zone for `en-US`, over the zones of the United States weighted by the US Census Bureau's estimates of their people. Sessions that leave through one address then claim one zone, as the computers of a household or an office do, where a draw for each Session would put one address in several zones, and the largest zone of the United States is where that is seen least. A later version may draw the zone by weight instead, and a saved Machine keeps the zone it has.
+
+A server can compare the time zone with where the address its requests come from is, and the default matches that only by chance. So a caller whose requests leave through a proxy gives the zone of the proxy's exit with [`time_zone=`](api.md#machinedraw), such as `Machine.draw(time_zone="Europe/Berlin")`.
+
+The locale stays the Persona's. [`accept_language=`](api.md#accept_language) changes what `Accept-Language` says, as a person's languages in Chrome's settings do, and not the language of Chrome itself, so a Page's `Intl` keeps falling back to `en-US`.
+
+#### Contrast themes and colour filters
+
+Windows 11 has four contrast themes, and Windows 10 four others, in theme files of the same names. Each turns on forced colours. Each of Windows 11's has a contrast of at least 7:1 between its Window and WindowText colours, so it gives `prefers-contrast: more`, and Windows 10's are taken to give the same. Read on Windows 11 26H2 on 2026-11-12, from `C:\Windows\Resources\Ease of Access Themes`:
+
+| A Machine's `contrast_theme` | Windows | In Settings | File | Window, WindowText | Colour scheme |
+| --- | --- | --- | --- | --- | --- |
+| `aquatic` | 11 | Aquatic | `hcblack.theme` | 32 32 32, 255 255 255 | `dark` |
+| `desert` | 11 | Desert | `hcwhite.theme` | 255 250 239, 61 61 61 | `light` |
+| `dusk` | 11 | Dusk | `hc1.theme` | 45 50 54, 255 255 255 | `dark` |
+| `night-sky` | 11 | Night sky | `hc2.theme` | 0 0 0, 255 255 255 | `dark` |
+| `high-contrast-1` | 10 | High Contrast #1 | `hc1.theme` | Not read | `dark`. Not confirmed |
+| `high-contrast-2` | 10 | High Contrast #2 | `hc2.theme` | Not read | `dark`. Not confirmed |
+| `high-contrast-black` | 10 | High Contrast Black | `hcblack.theme` | Not read | `dark`. Not confirmed |
+| `high-contrast-white` | 10 | High Contrast White | `hcwhite.theme` | Not read | `light`. Not confirmed |
+
+Windows 11 still calls the files by Windows 10's names, so each name in Settings goes with the file of its colours. The colour scheme is the one that Chrome 157 takes from the theme. Chrome 155 and 156 keep the colour scheme of the app mode under a contrast theme, so a Machine holds only the scheme that the theme gives, which an app mode of that scheme gives them too, and each of the three Chrome Releases can send it.
+
+Of Windows' colour filters, Chrome reads only the one that inverts colours. A user can also change a theme's colours, which gives `custom` or `less`, and a Machine holds no such theme.
 
 ### The noise on `rtt` and `downlink`
 
@@ -281,11 +324,13 @@ Microsoft's sources are its page on [detecting Windows 11 through client hints](
 
 ### What goes together
 
-- **The display, its scale and the window.** A viewport is at most as wide as the display in device-independent pixels, which is its pixels over the scale, and a window that fills the display is exactly that wide. Its height is at most the work area over the scale, less Chrome's bars. The taskbar and Chrome's bars keep their size in device-independent pixels at any scale, give or take a pixel of rounding ([as read](#the-taskbar-and-chromes-bars)), so a scale and a viewport have to be drawn with a display, and not apart from it. For example, a 1920 by 1080 display at 125% is 1536 by 864, and a window that fills it is 1536 wide.
+- **The display, its scale, the work area and the window.** The work area is the display less the taskbar, which follows the Windows, a maximised window is the work area, and Chrome's first window takes its place and size from the work area. A viewport is at most as wide as the display in device-independent pixels, which is its pixels over the scale, and a window that fills the display is exactly that wide. Its height is at most the work area over the scale, less Chrome's bars. The taskbar and Chrome's bars keep their size in device-independent pixels at any scale, give or take a pixel of rounding ([as read](#the-taskbar-and-chromes-bars)), so a scale and a viewport have to be drawn with a display, and not apart from it. For example, a 1920 by 1080 display at 125% is 1536 by 864, and a window that fills it is 1536 wide.
 - **The Windows version and the viewport's height.** Windows 10 and Windows 11 have taskbars of different heights, 40 and 48, so a window that fills the display has a height that follows the version. [The heights below](#the-taskbar-and-chromes-bars) say how each was found.
 - **The round trip, `ect` and `downlink`.** `ect` follows the round trip with no noise, so `4g` goes with an `rtt` of at most 300, and `3g` with 250 to 1550. The throughput is an estimate of its own, which `ect` does not read.
 - **The Windows version and the Chrome Release.** Every Windows 10 and 11 runs every Chrome Release in the Supported Window, so the Persona does not limit the platform version. How common each version is does.
-- **On their own.** The memory, the colour scheme, reduced motion and reduced transparency are each apart from the rest. The memory goes loosely with the kind of machine, and so with its display, but no public statistics join the two. The three settings are a user's own.
+- **A contrast theme, the Windows and the colour scheme.** Each contrast theme is of one Windows, and from Chrome 157 it decides the colour scheme, [as above](#contrast-themes-and-colour-filters).
+- **The time zone and the locale.** The locale is the Persona's, and the time zone is drawn for it, [as above](#the-time-zone).
+- **On their own.** The memory, the processors, the touch points, the colour scheme, reduced motion, reduced transparency and the colour filter are each apart from the rest. The memory and the processors go loosely with the kind of machine, with each other and with the display, and a touch screen with a laptop's display, but no public statistics join them. The settings are a user's own.
 - **The zoom.** Chrome keeps a zoom for each host, and a default. It multiplies `dpr` and divides the viewport, as the page would. A machine at 100% is the common case, and a zoom for each host would be a setting of its own.
 
 #### The taskbar and Chrome's bars
@@ -302,6 +347,8 @@ A window that fills the display is as wide as the work area, and its page area i
 | 10 | 125% and up | Not read | Taken from Windows 11 | Taken from Windows 11 | Taken from Windows 11 | The same code draws Chrome's bars on both. Not confirmed |
 
 The taskbar is `screen.height - screen.availHeight`, the bars are `outerHeight - innerHeight`, and the side borders are `outerWidth - innerWidth`. A maximised window has no border. So a window that fills a 1920 by 1080 display on Windows 11 at 100% has a viewport of 1920 by 945, which is what [the Persona claims](#what-they-say) today.
+
+A Machine holds the work area and the window as these give them: a maximised window at the work area's place and of its size, and Chrome's first window 10 from its top left corner with the size of `GetDefaultWindowBounds()`. The sizes were read. The places come from the source, and a reading of `screenX` and `screenY` would confirm them.
 
 How each was read, on 2026-11-08:
 
@@ -332,10 +379,15 @@ These are the public statistics found on 2026-11-08, with the latest period each
 | Dark mode | [Chrome Platform Status](https://chromestatus.com/metrics/feature/timeline/popularity/3581), `PreferredColorSchemeDarkSetting`, early November 2026 | About 40% of page loads, on every platform with Android, which is not Windows alone |
 | Reduced motion and transparency | None | Only how many pages ask for them, not how many users turn them on |
 | The round trip and throughput | [Chrome UX Report](https://developer.chrome.com/docs/crux/bigquery) | A round trip in three bins for each origin, country and kind of device, in BigQuery. A table for all desktops would have to be worked out from it there. Not fetched |
+| The processors | Firefox, week of 2026-10-26, all desktop systems | Physical cores: 4 29.9%, 2 23.9%, 6 15.1%, 8 12.2%, 10 7.6%, 12 3.8%, 14 2.5%, 16 2.0%, and 2.9% that Firefox does not name. A page reads logical processors, which Firefox does not count |
+| The time zone | None for desktop users | The US Census Bureau's estimates give the people of each state, in the public domain, and so of each zone of the United States |
+| Touch screens, contrast themes and colour filters | None | Only how many pages ask for `pointer: coarse`, `forced-colors` or `inverted-colors`, not how many users have them |
 
 Firefox rounds the memory to whole GB, so for Chrome's values 3 GB counts as `2`, 6 GB as `4`, 7 and 12 GB as `8`, 14, 15 and 24 GB as `16`, and 31 and 64 GB as `32`. 6 and 12 GB sit on Chrome's ties, so a few of them would go up instead.
 
-Where a public source has nothing, a Machine can still take what most users have: Windows ships with animations and transparency on, so `no-preference` for both is what most real machines say, and a value that most users share puts no Session on a point of its own.
+Firefox counts physical cores, and a page reads logical processors, so the owner set a rule on 2026-11-12: two for each core, as Intel's Hyper-Threading and AMD's simultaneous multithreading give, but 16 for 10 cores and 20 for 14, as Intel's processors with cores of two kinds mostly have, whose efficient cores run one thread each. So the processors are `4`, `8`, `12`, `16`, `20`, `24` and `32`. Some processors run one thread on each core, such as Intel's Celerons, and those machines would give fewer.
+
+Where a public source has nothing, a Machine can still take what most users have: Windows ships with animations and transparency on, so `no-preference` for both is what most real machines say, and a value that most users share puts no Session on a point of its own. The owner took the same for the taskbar, at the bottom as Windows sets it up and as Windows 11 keeps it, for no touch screen, no contrast theme and no colour filter, on 2026-11-12. A touch screen also gives a page `ontouchstart`, `TouchEvent` and `pointer: coarse`, which the Runtime does not have yet.
 
 #### Licences
 
@@ -347,12 +399,13 @@ Where a public source has nothing, a Machine can still take what most users have
 | Chrome Platform Status | None found for its data | No |
 | Steam's survey | None, and Valve's terms keep all rights | No. It can only check what the others say |
 | Cloudflare Radar | [CC BY-NC 4.0](https://developers.cloudflare.com/radar/) | No, since Apache-2.0 allows commercial use |
+| ICU's windowsZones table, from Unicode's CLDR, which [the time zones](#the-time-zone) come from | [Unicode License v3](https://www.unicode.org/license.txt), with its notice wherever the data goes | Yes, with [`TIME_ZONES_NOTICE`](../TIME_ZONES_NOTICE) beside it, so the wheel declares `Apache-2.0 AND CC-BY-SA-3.0 AND Unicode-3.0` |
 
 This is a reading of their terms, not legal advice. A table under a share-alike licence beside Apache-2.0 code is a decision for the owner.
 
 #### Keeping the table current
 
-StatCounter has a month on the second of the next and revises it for 45 days, through a CSV link that its page uses but does not document. Firefox's report is weekly, at stable JSON addresses. The Chrome UX Report is monthly, in BigQuery, and needs a Google Cloud account. So [a step of the release routine](releasing.md#7-refresh-the-table-of-machines) fetches StatCounter's newest month that it no longer revises and Firefox's newest week, writes the table again and shows its diff for review. Steam's survey has no API and is no source for the table.
+StatCounter has a month on the second of the next and revises it for 45 days, through a CSV link that its page uses but does not document. Firefox's report is weekly, at stable JSON addresses, its processor cores too. The Chrome UX Report is monthly, in BigQuery, and needs a Google Cloud account. So [a step of the release routine](releasing.md#7-refresh-the-table-of-machines) fetches StatCounter's newest month that it no longer revises and Firefox's newest week, writes the table again and shows its diff for review. The same step writes [the time zones](#the-time-zone) again from the ICU of the Engine Release. Steam's survey has no API and is no source for the table.
 
 ### The table
 
@@ -365,19 +418,25 @@ uv run python -m tools.release machines --saved
 | Group | Its rows | From |
 | --- | --- | --- |
 | `platform_version` | `"19.0.0"` for Windows 11 and `"10.0.0"` for Windows 10, each with which Windows it is | StatCounter's shares of Windows 11 and 10. Older Windows cannot run Chrome 155 to 157, so it counts for nothing |
-| `display` | The display in pixels, its scale, which window it has and that window's viewport, for each Windows | Firefox's sizes in pixels, each split between 100%, 125%, 150% and 200% by how common StatCounter finds the size that each scale gives in CSS pixels. A size in CSS pixels that more than one display gives, such as 1280×720 from 1920×1080 at 150% and from 2560×1440 at 200%, is shared out between them by Firefox's shares. A size in pixels that gives no size StatCounter names at any of them is at 100%. Then the owner's weights for the window: 70% maximised and 30% Chrome's first window on a new profile. Each Windows has the same displays and windows at the same weights, and its own taskbar in the viewport |
+| `display` | The display in pixels, its scale, its work area, which window it has, that window's place and size and its viewport, for each Windows | Firefox's sizes in pixels, each split between 100%, 125%, 150% and 200% by how common StatCounter finds the size that each scale gives in CSS pixels. A size in CSS pixels that more than one display gives, such as 1280×720 from 1920×1080 at 150% and from 2560×1440 at 200%, is shared out between them by Firefox's shares. A size in pixels that gives no size StatCounter names at any of them is at 100%. Then the owner's weights for the window: 70% maximised and 30% Chrome's first window on a new profile, whose state is `normal`, and the owner's taskbar, at the bottom. Each Windows has the same displays and windows at the same weights, and its own taskbar in the work area and the viewport |
 | `memory` | 2, 4, 8, 16 and 32 GiB | Firefox's sizes in whole GB, each counted as what Chrome sends for that many GiB, as above |
 | `network` | Chrome's starting values for Wi-Fi and for Ethernet | The owner's weights: 60% Wi-Fi and 40% Ethernet |
 | `color_scheme` | `light` and `dark` | The owner's weights: 30% `dark` |
 | `reduced_motion`, `reduced_transparency` | `no-preference` | The owner's: what Windows comes with |
+| `contrast_theme`, `inverted_colors` | `none` | The owner's: what Windows comes with |
+| `time_zone` | `America/New_York`, for the locale `en-US` | The owner's: [one zone for each locale](#the-time-zone) |
+| `processors` | 4, 8, 12, 16, 20, 24 and 32 | Firefox's physical cores, as logical processors by [the owner's rule](#how-common-each-one-is) |
+| `touch_points` | `0` | The owner's: no touch screen |
 
-The viewport follows from the display, the scale, the window and the Windows, by [the taskbar and Chrome's bars](#the-taskbar-and-chromes-bars): a maximised window has the work area less Chrome's bars, and Chrome's first window on a new profile has the size that `GetDefaultWindowBounds()` gives it, less its bars and borders. Windows 10 at 125% and up takes the bars and borders of Windows 11 and its own taskbar of 40, as that table does. Windows offers more scales than the four read there, such as 175% and 250%, which wait for a reading of Chrome's bars, so a display's share goes to those four.
+The work area, the window and the viewport follow from the display, the scale, the window's state and the Windows, by [the taskbar and Chrome's bars](#the-taskbar-and-chromes-bars), which [`src/mitto/_window.py`](../src/mitto/_window.py) holds: a maximised window is the work area, with the work area less Chrome's bars for its viewport, and Chrome's first window on a new profile has the place and size that `GetDefaultWindowBounds()` gives it, and that size less its bars and borders for its viewport. Windows 10 at 125% and up takes the bars and borders of Windows 11 and its own taskbar of 40, as that table does. Windows offers more scales than the four read there, such as 175% and 250%, which wait for a reading of Chrome's bars, so a display's share goes to those four.
 
 A source's "Other", StatCounter's 800×600 and its sizes that only another system gives, such as 1470×956 of a Mac, count for nothing, because no size in pixels from Firefox gives them at a scale Windows offers. The weights of each group are whole numbers out of 1,000,000, so that a draw needs no floating point, and a row whose weight rounds to nothing is left out. The table has one line for each row, so that a change of weight is one line of its diff. It holds its licence and the credit of each source, and [`MACHINE_TABLE_NOTICE`](../MACHINE_TABLE_NOTICE) goes with it in the wheel.
 
-[`Machine.draw()`](api.md#machinedraw) draws the groups in the order above. Each group takes a number of its own from the SHA-256 of the seed and the group's name, and the row that number lands on when each row has as many numbers as its weight, among the rows that fit what is fixed and drawn already. So a value fixed in one group leaves the others as the seed draws them, unless they have to fit together, and the same seed and table give the same Machine on every Host and in every Python. A row of the platform version only goes if a display fits it, so a viewport of one Windows draws that Windows. A Machine checks each value against [what Chrome can read](#what-decides-each-value), and that the viewport fits on the display.
+[`Machine.draw()`](api.md#machinedraw) draws the groups in the order above. Each group takes a number of its own from the SHA-256 of the seed and the group's name, and the row that number lands on when each row has as many numbers as its weight, among the rows that fit what is fixed and drawn already. So a value fixed in one group leaves the others as the seed draws them, unless they have to fit together, and the same seed and table give the same Machine on every Host and in every Python. A row of the platform version only goes if a display fits it, so a viewport of one Windows draws that Windows. A contrast theme fixes the Windows and the colour scheme that go with it. A display that no row has, given with its scale and viewport, gets the work area of a taskbar at its bottom, and a maximised window if the viewport fills that less Chrome's bars, or else a window around the viewport, with the bars and borders read at the nearest scale below. A Machine checks each value against [what Chrome can read](#what-decides-each-value) and [what a page reads](#what-a-page-reads-beside-the-hints), that the work area lies on the display, that a maximised window is the work area, and that the viewport fits on the display and in the window.
 
-[`tests/test_machine.py`](../tests/test_machine.py) checks that every value of a draw is one Chrome sends and that each row keeps to [what goes together](#what-goes-together), [`tests/release/test_write_machines.py`](../tests/release/test_write_machines.py) that the script writes the table byte for byte, and [`tests/release/test_refresh_machines.py`](../tests/release/test_refresh_machines.py) that a refresh takes the periods that [the release routine](releasing.md#7-refresh-the-table-of-machines) names and changes nothing when a source fails, with answers that the sources gave on 2026-11-08.
+A Machine that mitto 0.2 saved lacks what only a page reads. Loading it draws those fields from its seed to fit what it has, as a draw with each of its values fixed would, so a Machine drawn from the table comes back as the Machine that its seed draws now. One with no seed draws them from a number that the SHA-256 of what it holds gives, so it is the same Machine in every process, and once it is saved again it holds all of it.
+
+[`tests/test_machine.py`](../tests/test_machine.py) checks that every value of a draw is one Chrome sends or gives a page, that each row keeps to [what goes together](#what-goes-together), and that a Machine of mitto 0.2 loads the same in another process, [`tests/release/test_write_machines.py`](../tests/release/test_write_machines.py) that the script writes the table byte for byte, and [`tests/release/test_refresh_machines.py`](../tests/release/test_refresh_machines.py) that a refresh takes the periods that [the release routine](releasing.md#7-refresh-the-table-of-machines) names, writes the time zones, and changes nothing when a source fails, with answers that the sources gave on 2026-11-08 and 2026-11-12.
 
 ### Where it lives
 
@@ -389,7 +448,7 @@ A source's "Other", StatCounter's 800×600 and its sizes that only another syste
 | Repeatable? | The same seed gives the same machine with the same table. The machine keeps its seed, and a later mitto that knows more fields draws the new ones from it, to fit those it has | Tests need the same values twice, and a saved machine must not change when mitto learns more |
 | Saved? | In `cookie_file` and by [`Cookies.save()`](api.md#cookiessave), beside the cookies. A Session that loads the file is that machine | A returning user whose machine changed between visits would stand out |
 | A file from mitto 0.1? | It has no machine, so it loads with the one every Session claimed then, the values [above](#what-they-say) | A returning Session must not change machine because mitto changed |
-| What it holds | The memory, the display with its scale, the viewport, the round trip and throughput as estimated before noise, the three settings and the Windows version | What Chrome reads, and not what it sends, so that noise can be added for each host and a page can later read the same machine |
+| What it holds | The memory, the display with its scale, the work area, the window, the viewport, the round trip and throughput as estimated before noise, the user's settings, the Windows version, the time zone, the processors and the touch points | What Chrome reads, and not what it sends, so that noise can be added for each host and a page reads the same machine |
 | What it leaves to the Persona | `sec-ch-ua-arch`, `sec-ch-ua-bitness`, `sec-ch-ua-wow64`, `sec-ch-ua-model` and `sec-ch-ua-form-factors` | They are the same on every x64 Windows machine. Windows on Arm would need Baselines of its own first, to show that nothing else changes |
 | The salts of the noise | Drawn each time a Session opens, from its seed if it has one, and never saved | Chrome draws them again each time it starts, so a returning user has new ones too. A seed gives the same ones again, so that a test sees the same values |
 | On a Windows **Host** | Drawn as on every other Host, and never read from the machine mitto runs on | The owner decided this on 2026-11-08 |
@@ -419,13 +478,19 @@ The **Runtime** will have to read the same machine, or a page could tell that it
 | `devicePixelRatio`, and `resolution` in `matchMedia()` | The scale, times the zoom |
 | `innerWidth`, `innerHeight`, and `width` and `height` in `matchMedia()` | The viewport |
 | `screen.width`, `screen.height` | The display, over the scale |
-| `screen.availWidth`, `screen.availHeight` | The work area, over the scale |
-| `outerWidth`, `outerHeight`, `screenX`, `screenY` | The window: the viewport with Chrome's bars, and where it is |
+| `screen.availLeft`, `screen.availTop`, `screen.availWidth`, `screen.availHeight` | The work area |
+| `outerWidth`, `outerHeight`, `screenX`, `screenY` | The window's place and size |
 | `prefers-color-scheme`, `prefers-reduced-motion` and `prefers-reduced-transparency` in `matchMedia()` | The three settings |
-| `prefers-contrast`, `forced-colors` and `inverted-colors` in `matchMedia()` | Windows' contrast themes and colour filters, which no hint sends |
+| `prefers-contrast`, `forced-colors` and `inverted-colors` in `matchMedia()` | The contrast theme and the colour filter, which no hint sends |
 | `navigator.connection` | The same estimate, with the renderer's noise for the page's host, in `third_party/blink/renderer/modules/netinfo/network_information.cc` |
 | `navigator.userAgentData.getHighEntropyValues()` | The platform version, and what the Persona holds |
-| `navigator.hardwareConcurrency`, `navigator.maxTouchPoints`, the GPU through WebGL, the time zone | Nothing yet |
+| `navigator.hardwareConcurrency` | The processors |
+| `navigator.maxTouchPoints` | The touch points |
+| `Date`, and `Intl`'s time zone | The time zone, which a Page sets today |
+| `Intl`'s locale | The Persona's locale, which a Page sets today |
+| The GPU through WebGL | Nothing yet, until M10 |
+
+A Page gets these values, but the network's, in [its start message](runtime.md#the-messages), and sets the time zone and the locale. M7 gives a page the rest.
 
 So the shape has to allow three things. It keeps what Chrome reads, such as the display, its scale and the work area, and not only the viewport, so that `screen` and the window agree with the hints. It keeps the estimate before noise, because a page and a request add different noise. And it takes new fields: a machine saved by one version of mitto loads in a later one that knows more, which draws what is missing from the machine's seed to fit what it has.
 

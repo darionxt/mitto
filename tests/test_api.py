@@ -28,7 +28,14 @@ import mitto
 from mitto import _native
 from mitto._body import FileFields, QueryParams, RequestData
 from mitto._cookies import CookiePriority, CookieSourceScheme, CookieSourceType, SameSite
-from mitto._machine import ColorScheme, ReducedMotion, ReducedTransparency
+from mitto._machine import (
+    ColorScheme,
+    ContrastTheme,
+    InvertedColors,
+    ReducedMotion,
+    ReducedTransparency,
+    WindowState,
+)
 from mitto._native import PrivateSettings
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, RequestKind, load_persona
 from mitto._request import BodyOptions, RequestHeaders
@@ -892,6 +899,12 @@ WRONG_VALUES: dict[object, object] = {
     ColorScheme | None: 5,
     ReducedMotion | None: 5,
     ReducedTransparency | None: 5,
+    WindowState: 5,
+    ContrastTheme: 5,
+    InvertedColors: 5,
+    WindowState | None: 5,
+    ContrastTheme | None: 5,
+    InvertedColors | None: 5,
     mitto.Machine | None: "mitto-0.1",
 }
 

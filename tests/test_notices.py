@@ -358,4 +358,6 @@ def test_the_notices_are_as_the_script_writes_them_and_go_into_each_wheel() -> N
     assert notices.render(entries) == text
     assert entries[0].name == "The Chromium Project"
     assert {host for entry in entries for host in entry.hosts} == set(notices.HOST_NAMES)
-    assert sorted(project["license-files"]) == sorted(["LICENSE", "MACHINE_TABLE_NOTICE", notices.NOTICES_FILE.name])
+    assert sorted(project["license-files"]) == sorted(
+        ["LICENSE", "MACHINE_TABLE_NOTICE", "TIME_ZONES_NOTICE", notices.NOTICES_FILE.name]
+    )

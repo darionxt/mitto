@@ -2,11 +2,13 @@
 
 Chromium Dash and Google's version history answered on 2026-11-07, StatCounter and the Firefox Public Data Report on
 2026-11-08, and Chromium's Gitiles servers, the Chrome Releases blog and the version history of Chrome 157 on 2026-11-10.
-The answers in data/ keep only the fields that the scripts read: the Gitiles logs keep each commit's first line and its
-Bug: lines, .gitmodules the submodules that the tests name, and the blog's feed the three posts that list the fixes the
-tests name, with each line of a fix up to its reporter and the sentence on an exploit in the wild. StatCounter's and Firefox's are under
-CC BY-SA 3.0: StatCounter Global Stats, https://gs.statcounter.com/, and the Firefox Public Data Report by Mozilla,
-https://data.firefox.com/dashboard/hardware.
+Firefox's processor cores and Chromium's DEPS and ICU's windowsZones table were saved on 2026-11-12, the cores with the
+weeks that the other answers of Firefox have. The answers in data/ keep only the fields that the scripts read: the
+Gitiles logs keep each commit's first line and its Bug: lines, .gitmodules the submodules that the tests name, DEPS the
+lines that pin ICU, and the blog's feed the three posts that list the fixes the tests name, with each line of a fix up to
+its reporter and the sentence on an exploit in the wild. StatCounter's and Firefox's are under CC BY-SA 3.0: StatCounter
+Global Stats, https://gs.statcounter.com/, and the Firefox Public Data Report by Mozilla,
+https://data.firefox.com/dashboard/hardware. ICU's table is Unicode's CLDR, under the Unicode License v3.
 """
 
 from pathlib import Path
@@ -14,12 +16,15 @@ from pathlib import Path
 from tools.release.chrome_releases import FEED_URL
 from tools.release.dash import DASH_URL
 from tools.release.gitiles import CHROMIUM_URL
-from tools.release.machine_sources import FIREFOX_DATA_URL, STATCOUNTER_CHART_URL
+from tools.release.machine_sources import FIREFOX_DATA_URL, ICU_URL, STATCOUNTER_CHART_URL
 from tools.release.version_history import RELEASES_URL
 
 DATA = Path(__file__).parent / "data"
 
 _SCHEDULE_URL = f"{DASH_URL}/fetch_milestone_schedule?mstone="
+
+ICU_157 = "2a51536dfb3b448bdf3dae70c782ea2879c90904"
+"""The commit of ICU that Chromium 157.0.8103.39 builds with."""
 
 ANGLE_URL = "https://chromium.googlesource.com/angle/angle"
 """Where ANGLE's repository is, which 157.0.8103.38 rolls to a new commit."""
@@ -49,6 +54,9 @@ _ANSWERS = {
     },
     f"{FIREFOX_DATA_URL}/resolution/index.json": "firefox_resolution.json",
     f"{FIREFOX_DATA_URL}/ram/index.json": "firefox_ram.json",
+    f"{FIREFOX_DATA_URL}/cpuCores/index.json": "firefox_cpu_cores.json",
+    f"{CHROMIUM_URL}/+/157.0.8103.39/DEPS?format=TEXT": "deps_157.0.8103.39.txt",
+    f"{ICU_URL}/+/{ICU_157}/source/data/misc/windowsZones.txt?format=TEXT": "icu_windows_zones_2a51536dfb3b.txt",
     f"{RELEASES_URL}?filter=version%3E%3D157%2Cversion%3C158": "version_history_157.json",
     **{
         gitiles_log_url(CHROMIUM_URL, old, new): f"gitiles_src_{old}..{new}.json"

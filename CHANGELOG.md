@@ -2,6 +2,17 @@
 
 What changes for callers in each version of mitto, newest first. The notes of each version's GitHub release hold its entry, and [releasing.md](docs/releasing.md#what-changes-for-callers) says how one is written.
 
+## 0.3.0
+
+A **Machine** also holds what a page reads of the computer and no client hint sends: its time zone, processors, work area, window, touch screen, contrast theme and colour filter. A Page, whose API stays private, starts with them and with its Persona's locale. What a Session sends does not change.
+
+- [`Machine`](docs/api.md#machine) has 14 new fields, `work_area_x`, `work_area_y`, `work_area_width`, `work_area_height`, `window_state`, `window_x`, `window_y`, `window_width`, `window_height`, `contrast_theme`, `inverted_colors`, `time_zone`, `processors` and `touch_points`, and [`Machine.draw()`](docs/api.md#machinedraw) takes each of them. A Machine that a caller makes needs every one, so a call of `Machine()` with only the values of mitto 0.2 raises a `TypeError`. `Machine.draw()` with those values draws the rest to fit them, a display that the table does not have too.
+- A drawn Machine claims the time zone `America/New_York`, for the locale `en-US` of every Persona, logical processors from Firefox's statistics of processor cores, the taskbar at the bottom, and no touch screen, contrast theme or colour filter, [as persona.md says](docs/persona.md#what-a-page-reads-beside-the-hints).
+- A Machine refuses a time zone that Chrome on Windows never gives a page, such as `"Asia/Kolkata"` where Chrome gives `"Asia/Calcutta"`, a work area that is not on the display, a maximised window that is not the work area, a viewport larger than its window, and a contrast theme of the other Windows or with another colour scheme than it gives.
+- A [`cookie_file`](docs/api.md#cookie_file) from mitto 0.2 loads with the new fields drawn from its Machine's seed, to fit what it has, or for a Machine with no seed worked out from what it has, so that it is the same Machine in every process. `close()` saves all of it, which mitto 0.2 refuses, so a caller that may go back to mitto 0.2 needs a copy of the file from before.
+- [`Machine.named("mitto-0.1")`](docs/api.md#machinenamed) holds the new fields too: its work area, a maximised window, 8 processors, no touch screen and `America/New_York`.
+- The wheel declares its licence as `Apache-2.0 AND CC-BY-SA-3.0 AND Unicode-3.0`. The list of time zones that a Machine takes, `mitto/time_zones.json`, comes from ICU's data, under the Unicode License v3, whose notice is in [`TIME_ZONES_NOTICE`](TIME_ZONES_NOTICE).
+
 ## 0.2.1
 
 mitto installs on Windows on x64 too, from a `py3-none-win_amd64` wheel, with Python 3.12 or later, as on macOS on arm64 and Linux on x86_64. A Session presents Windows Chrome on every **Host**, on Windows as on macOS and Linux, with the same Personas and Machines. On macOS and Linux nothing changes for callers.

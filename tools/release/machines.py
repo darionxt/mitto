@@ -15,6 +15,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+from mitto._window import READ_SCALES, Rect, first_window, maximised_viewport, normal_viewport, work_area
+
 __all__ = [
     "STATISTICS",
     "STATISTICS_PATH",
@@ -27,6 +29,7 @@ __all__ = [
     "display_shares",
     "dumps_statistics",
     "dumps_table",
+    "logical_processors",
     "read_statistics",
     "table_data",
     "write_table",
@@ -66,12 +69,14 @@ class Statistics:
         css_displays: StatCounter's shares of each display size on desktops, in CSS pixels, so with the scale applied.
         pixel_displays: Firefox's shares of each display size, in pixels.
         memory: Firefox's shares of each size of memory, in whole GB.
+        processor_cores: Firefox's shares of each number of physical processor cores.
     """
 
     windows_versions: Source
     css_displays: Source
     pixel_displays: Source
     memory: Source
+    processor_cores: Source
 
 
 def read_statistics(path: Path = STATISTICS_PATH) -> Statistics:
@@ -97,7 +102,7 @@ _WINDOWS = {"Win11": ("19.0.0", 11), "Win10": ("10.0.0", 10)}
 
 # The scales of Windows' display settings at which Chrome's bars were read on Windows 11, so that a viewport can be worked
 # out. Windows offers more, which wait for a reading.
-_SCALES = tuple(Fraction(percent, 100) for percent in (100, 125, 150, 200))
+_SCALES = READ_SCALES
 
 # Chrome on a desktop holds the memory between these, in GiB.
 _SMALLEST_MEMORY_GIB = 2
@@ -108,6 +113,20 @@ _MIB_PER_GIB = 1024
 _COLOR_SCHEMES = {"light": 70, "dark": 30}
 _REDUCED_MOTION = {"no-preference": 100}
 _REDUCED_TRANSPARENCY = {"no-preference": 100}
+_CONTRAST_THEMES = {"none": 100}
+_INVERTED_COLORS = {"none": 100}
+_TOUCH_POINTS = {0: 100}
+# The time zone of each locale that a Persona has: one, so that Sessions that leave through one address claim one zone, as
+# the computers of a household or an office do, and the largest zone of the United States, where that is least seen.
+_TIME_ZONES = {"en-US": {"America/New_York": 100}}
+_OWNER_TIME_ZONES = "The owner of mitto: one time zone for each locale, the largest of its country"
+
+# Chrome on Windows gives a page the number of logical processors, and Firefox counts physical cores. The owner's rule: a
+# core runs two threads, but for the counts that Intel's processors with cores of two kinds mostly give, whose efficient
+# cores run one.
+_HYBRID_LOGICAL_PROCESSORS = {10: 16, 14: 20}
+_THREADS_PER_CORE = 2
+_MOST_LOGICAL_PROCESSORS = 64
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -182,6 +201,7 @@ def table_data(statistics: Statistics = STATISTICS) -> dict[str, Any]:
                     statistics.css_displays,
                     statistics.pixel_displays,
                     statistics.memory,
+                    statistics.processor_cores,
                 )
             ),
             f"Worked into a table of weighted rows for mitto by its authors, and shared under CC BY-SA 3.0, {_LICENCE_URL}",
@@ -194,8 +214,9 @@ def table_data(statistics: Statistics = STATISTICS) -> dict[str, Any]:
             "display": {
                 "source": (
                     f"{statistics.pixel_displays.credit}, split by scale by {statistics.css_displays.credit}. The window:"
-                    f" {_OWNER_WINDOWS}, with the taskbar and Chrome's bars read on Windows 11 at each scale and on"
-                    " Windows 10 at 100%, whose taskbar is taken to be as high at every scale"
+                    f" {_OWNER_WINDOWS}, and the owner's taskbar, at the bottom as Windows sets it up, with the taskbar"
+                    " and Chrome's bars read on Windows 11 at each scale and on Windows 10 at 100%, whose taskbar is taken"
+                    " to be as high at every scale"
                 ),
                 "rows": _display_rows(statistics),
             },
@@ -207,6 +228,17 @@ def table_data(statistics: Statistics = STATISTICS) -> dict[str, Any]:
             "color_scheme": {"source": _OWNER, "rows": _rows("color_scheme", _COLOR_SCHEMES)},
             "reduced_motion": {"source": _OWNER, "rows": _rows("reduced_motion", _REDUCED_MOTION)},
             "reduced_transparency": {"source": _OWNER, "rows": _rows("reduced_transparency", _REDUCED_TRANSPARENCY)},
+            "contrast_theme": {"source": _OWNER, "rows": _rows("contrast_theme", _CONTRAST_THEMES)},
+            "inverted_colors": {"source": _OWNER, "rows": _rows("inverted_colors", _INVERTED_COLORS)},
+            "time_zone": {"source": _OWNER_TIME_ZONES, "rows": _time_zone_rows()},
+            "processors": {
+                "source": (
+                    f"{statistics.processor_cores.credit}, as logical processors by the owner's rule: two for each"
+                    " core, and 16 for 10 cores and 20 for 14, as Intel's processors with cores of two kinds have"
+                ),
+                "rows": _processor_rows(statistics.processor_cores.shares),
+            },
+            "touch_points": {"source": _OWNER, "rows": _rows("touch_points", _TOUCH_POINTS)},
         },
     }
 
@@ -265,15 +297,25 @@ def _display_rows(statistics: Statistics) -> list[dict[str, Any]]:
     shares = display_shares(statistics.css_displays.shares, statistics.pixel_displays.shares)
     rows: list[dict[str, Any]] = []
     for _, windows in _WINDOWS.values():
-        for (display, share), (window, window_share) in itertools.product(shares.items(), _WINDOW_SHARES.items()):
-            viewport_width, viewport_height = _VIEWPORTS[window](display, windows)
+        for (display, share), (window_state, window_share) in itertools.product(shares.items(), _WINDOW_SHARES.items()):
+            area = _work_area(display, windows)
+            if window_state == _MAXIMISED:
+                window = area
+                viewport_width, viewport_height = maximised_viewport(area, display.scale)
+            else:
+                window = first_window(display.width, display.height, area)
+                viewport_width, viewport_height = normal_viewport(window, display.scale)
             rows.append(
                 {
                     "windows": windows,
-                    "window": window,
                     "display_width": display.width,
                     "display_height": display.height,
                     "scale": _json_number(display.scale),
+                    **dict(
+                        zip(("work_area_x", "work_area_y", "work_area_width", "work_area_height"), area, strict=True)
+                    ),
+                    "window_state": window_state,
+                    **dict(zip(("window_x", "window_y", "window_width", "window_height"), window, strict=True)),
                     "viewport_width": viewport_width,
                     "viewport_height": viewport_height,
                     "share": share * window_share,
@@ -283,55 +325,19 @@ def _display_rows(statistics: Statistics) -> list[dict[str, Any]]:
     return [row for windows in (11, 10) for row in _weighted([row for row in rows if row["windows"] == windows])]
 
 
-# The window, in device-independent pixels, as read on 2026-11-08: the taskbar, which Windows 10 was read to have at 100%
-# only, and Chrome's bars of a maximised window and its bars, top border and side borders of a window that is not.
-_TASKBAR_HEIGHTS = {11: 48, 10: 40}
-_MAXIMISED_BARS = {Fraction(1): 87, Fraction(5, 4): 86, Fraction(3, 2): 87, Fraction(2): 87}
-_WINDOW_TOP = {Fraction(1): 95, Fraction(5, 4): 95, Fraction(3, 2): 94, Fraction(2): 93}
-_WINDOW_SIDES = {Fraction(1): 16, Fraction(5, 4): 14, Fraction(3, 2): 15, Fraction(2): 13}
-
-# Chrome's first window on a new profile, in GetDefaultWindowBounds() of chrome/browser/ui/window_sizer/window_sizer.cc,
-# with the constants of window_sizer_aura.cc.
-_WINDOW_TILE = 10
-_WINDOW_MAX_DEFAULT_WIDTH = 1050
-_MIN_SCREEN_WIDTH_FOR_HALVING = 1600
-
+# A window that fills the work area, and one that does not: Chrome's first window on a new profile, which has no saved
+# size. The table's windows that are not maximised are all Chrome's first window.
 _MAXIMISED = "maximised"
-_FIRST = "first"
-_OWNER_WINDOWS = f"the owner's weights, 70% {_MAXIMISED} and 30% Chrome's {_FIRST} window on a new profile"
-_WINDOW_SHARES = {_MAXIMISED: 0.7, _FIRST: 0.3}
+_NORMAL = "normal"
+_OWNER_WINDOWS = f"the owner's weights, 70% {_MAXIMISED} and 30% Chrome's first window on a new profile"
+_WINDOW_SHARES = {_MAXIMISED: 0.7, _NORMAL: 0.3}
 
 
-def _work_area(display: Display, windows: int) -> tuple[int, int]:
-    """Return the size of the display less the taskbar, in device-independent pixels."""
-    width = display.width / display.scale
-    height = display.height / display.scale - _TASKBAR_HEIGHTS[windows]
-    if width.denominator != 1 or height.denominator != 1:
+def _work_area(display: Display, windows: int) -> Rect:
+    """Return the display less a taskbar at its bottom, in device-independent pixels, of which the table takes whole ones."""
+    if (display.width / display.scale).denominator != 1 or (display.height / display.scale).denominator != 1:
         raise MachineTableError(f"{display} has no whole number of device-independent pixels")
-    return int(width), int(height)
-
-
-def _maximised_viewport(display: Display, windows: int) -> tuple[int, int]:
-    """Return the viewport of a window that fills the work area, which has no border."""
-    width, height = _work_area(display, windows)
-    return width, height - _MAXIMISED_BARS[display.scale]
-
-
-def _first_window_viewport(display: Display, windows: int) -> tuple[int, int]:
-    """Return the viewport of Chrome's first window on a new profile, which has no saved size."""
-    width, height = _work_area(display, windows)
-    window_width = min(width - 2 * _WINDOW_TILE, _WINDOW_MAX_DEFAULT_WIDTH)
-    window_height = height - 2 * _WINDOW_TILE
-    # A display of 16:10 or wider, whose work area is wide enough, takes half of it, so that two windows fit side by side.
-    if display.width / display.height * 10 >= 16 and width > _MIN_SCREEN_WIDTH_FOR_HALVING:
-        window_width = int(width / 2 - 1.5 * _WINDOW_TILE)
-    # A portrait display takes 4:3.
-    if display.height > display.width and window_height > window_width:
-        window_height = (window_width // 4) * 3
-    return window_width - _WINDOW_SIDES[display.scale], window_height - _WINDOW_TOP[display.scale]
-
-
-_VIEWPORTS = {_MAXIMISED: _maximised_viewport, _FIRST: _first_window_viewport}
+    return work_area(display.width, display.height, display.scale, windows)
 
 
 # The estimator's starting values in net/nqe/network_quality_estimator_params.cc, which a new Chrome sends.
@@ -345,7 +351,40 @@ def _network_rows() -> list[dict[str, Any]]:
     return _weighted([{**network, "share": share} for network, share in _NETWORKS])
 
 
-def _rows(name: str, shares: Mapping[str, float]) -> list[dict[str, Any]]:
+def _time_zone_rows() -> list[dict[str, Any]]:
+    return [
+        row
+        for locale, shares in _TIME_ZONES.items()
+        for row in _weighted([{"locale": locale, "time_zone": zone, "share": share} for zone, share in shares.items()])
+    ]
+
+
+def logical_processors(cores: int) -> int:
+    """Return the logical processors that the owner's rule gives a number of physical cores.
+
+    Raises:
+        MachineTableError: If that is more than Chrome on Windows can give.
+    """
+    processors = _HYBRID_LOGICAL_PROCESSORS.get(cores, cores * _THREADS_PER_CORE)
+    if processors > _MOST_LOGICAL_PROCESSORS:
+        raise MachineTableError(f"{cores} cores give more logical processors than Chrome on Windows reports")
+    return processors
+
+
+def _processor_rows(shares: Mapping[str, float]) -> list[dict[str, Any]]:
+    by_processors: defaultdict[int, float] = defaultdict(float)
+    for name, share in shares.items():
+        if name == "Other":
+            continue
+        if not name.isdigit() or int(name) < 1:
+            raise MachineTableError(f"{name!r} is no number of processor cores")
+        by_processors[logical_processors(int(name))] += share
+    return _weighted(
+        [{"processors": processors, "share": share} for processors, share in sorted(by_processors.items())]
+    )
+
+
+def _rows(name: str, shares: Mapping[Any, float]) -> list[dict[str, Any]]:
     return _weighted([{name: value, "share": share} for value, share in shares.items()])
 
 

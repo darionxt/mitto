@@ -34,7 +34,7 @@
 // The version of the options that mitto_page_open() reads. Adding an option
 // changes neither this nor MITTO_ABI_VERSION. Increase this one when an existing
 // option changes its meaning.
-#define MITTO_PAGE_OPTIONS_VERSION 1
+#define MITTO_PAGE_OPTIONS_VERSION 2
 
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
@@ -768,9 +768,15 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // and needs no trailing NUL byte:
 //
 //   {
-//     "version": 1,
-//     "time_zone": "America/New_York",
-//     "locale": "en-US",
+//     "version": 2,
+//     "start": {"time_zone": "America/New_York", "locale": "en-US",
+//               "processors": 8, "touch_points": 0,
+//               "work_area_x": 0, "work_area_y": 0,
+//               "work_area_width": 1920, "work_area_height": 1032,
+//               "window_state": "maximised",
+//               "window_x": 0, "window_y": 0,
+//               "window_width": 1920, "window_height": 1032,
+//               "contrast_theme": "none", "inverted_colors": "none"},
 //     "url": "https://example.com/",
 //     "requests": {
 //       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
@@ -782,13 +788,29 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   }
 //
 // - "version" is required and must be MITTO_PAGE_OPTIONS_VERSION.
-// - "time_zone" is the IANA name of the time zone that the Page's Date and Intl
-//   report. The default is "UTC".
-// - "locale" is the BCP 47 tag of the locale that the Page's Intl falls back to.
-//   The default is "en-US".
-// The Page process checks both, because only it holds ICU's whole data. If it
-// does not know one, it refuses it, and the Page ends with
-// MITTO_PAGE_ERROR_REFUSED.
+// - "start" is required: what the Page starts with, which it would otherwise
+//   read from the machine, as the Session's Machine and Persona say, with every
+//   key above and no other. Places and sizes are in device-independent pixels,
+//   from the display's top left corner:
+//   - "time_zone" is the IANA name of the time zone that the Page's Date and
+//     Intl report, and "locale" the BCP 47 tag of the locale that its Intl
+//     falls back to. The Page process checks both, because only it holds ICU's
+//     whole data. If it does not know one, it refuses it, and the Page ends
+//     with MITTO_PAGE_ERROR_REFUSED. Each is at most 64 characters of ASCII
+//     letters, digits, '_', '-', '+' and '/'.
+//   - "processors" is the number of logical processors, from 1 to 64, and
+//     "touch_points" how many touch points the touch screen takes, from 0, for
+//     none, to 256.
+//   - "work_area_x", "work_area_y", "work_area_width" and "work_area_height" are
+//     the display less the taskbar. Its place is at least 0 and its size at
+//     least 1.
+//   - "window_state" is "maximised" or "normal", and "window_x", "window_y",
+//     "window_width" and "window_height" are Chrome's window, with its bars and
+//     borders, whose size is at least 1.
+//   - "contrast_theme" is Windows' contrast theme: "none", "aquatic", "desert",
+//     "dusk", "night-sky", "high-contrast-1", "high-contrast-2",
+//     "high-contrast-black" or "high-contrast-white". "inverted_colors" is
+//     "inverted" with Windows' colour filter that inverts colours, or "none".
 // - "url" is where the Page navigates once it opens, through the Session, as a
 //   request of the navigation template does without an Initiator. The
 //   response, after any redirects, is the Page's document, and its URL the

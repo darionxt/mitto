@@ -58,7 +58,7 @@ assert "Chrome/155" in sent["User-Agent"]
 
 #### `machine=`
 
-The **Machine** to claim: the computer whose memory, display, window, network, user settings and Windows version go in [the client hints that follow the machine](persona.md#what-they-say), once a server asks for them. The default draws one with [`Machine.draw()`](#machinedraw), so that each Session claims a machine of its own. `rtt` and `downlink` also get [Chrome's noise for each host](persona.md#the-noise-on-rtt-and-downlink), from salts that the Session draws when it opens, from the Machine's seed if it has one. A value that is neither a [`Machine`](#machine-1) nor `None` raises a `TypeError`.
+The **Machine** to claim: the computer whose memory, display, window, network, user settings and Windows version go in [the client hints that follow the machine](persona.md#what-they-say), once a server asks for them, and whose time zone, processors and touch screen a page reads too. The default draws one with [`Machine.draw()`](#machinedraw), so that each Session claims a machine of its own. `rtt` and `downlink` also get [Chrome's noise for each host](persona.md#the-noise-on-rtt-and-downlink), from salts that the Session draws when it opens, from the Machine's seed if it has one. A value that is neither a [`Machine`](#machine-1) nor `None` raises a `TypeError`.
 
 ```python
 machine = mitto.Machine.draw(seed=7, memory=16)
@@ -71,7 +71,7 @@ A Session whose [`cookie_file`](#cookie_file) holds a Machine claims that one in
 
 #### `accept_language=`
 
-The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`, and one that is neither text nor `None` a `TypeError`.
+The value of `Accept-Language` in place of the Persona's `en-US,en;q=0.9`, as a person's languages change it in Chrome. It leaves Chrome's own language as it is, which a page's `Intl` falls back to: the Persona's `en-US`. An empty string sends none. `//net` adds the line, in [the place Chrome's has](persona.md#what-comes-from-where). A value the native core refuses raises a `ValueError`, and one that is neither text nor `None` a `TypeError`.
 
 ```python
 with mitto.Session(accept_language="de-DE,de;q=0.9") as session:
@@ -102,7 +102,7 @@ What a request's [`timeout=`](#timeout-1) defaults to: a number is the total tim
 
 A file to keep the cookies in, with the Session's [Machine](#machine-1). They load from it now, if it exists, and the Session claims the Machine it holds, so that a Session that comes back is the same machine. `close()` saves them to it, as [`Cookies.save()`](#cookiessave) does. A crash loses what came after the last save, which a caller can make more often with `session.cookies.save(path)`. Chrome writes its store every 30 seconds. The default keeps them only until the Session closes. What origins asked for in client hints is not in the file, so it starts over with each Session.
 
-A file from mitto 0.1 holds no Machine, so a Session that loads it claims the one every Session of mitto 0.1 claimed, [`Machine.named("mitto-0.1")`](#machinenamed). `close()` saves it in the new version, which mitto 0.1 cannot read.
+A file from mitto 0.1 holds no Machine, so a Session that loads it claims the one every Session of mitto 0.1 claimed, [`Machine.named("mitto-0.1")`](#machinenamed). `close()` saves it in the new version, which mitto 0.1 cannot read. A file from mitto 0.2 holds a Machine without what only a page reads, such as its time zone and window, which a Session that loads it draws from the Machine's seed to fit the rest, or for a Machine with no seed works out from the rest, so that it is the same Machine in every process. `close()` saves all of it, which mitto 0.2 cannot read.
 
 A file that does not hold cookies this Session can use, or holds another Machine than `machine=` gives, raises a `ValueError`, because closing the Session would otherwise overwrite it. A value that is neither text, a path nor `None` raises a `TypeError`.
 
@@ -242,6 +242,15 @@ Machine(
     display_width: int,
     display_height: int,
     scale: float,
+    work_area_x: int,
+    work_area_y: int,
+    work_area_width: int,
+    work_area_height: int,
+    window_state: WindowState,
+    window_x: int,
+    window_y: int,
+    window_width: int,
+    window_height: int,
     viewport_width: int,
     viewport_height: int,
     round_trip_ms: int,
@@ -249,14 +258,21 @@ Machine(
     color_scheme: ColorScheme,
     reduced_motion: ReducedMotion,
     reduced_transparency: ReducedTransparency,
+    contrast_theme: ContrastTheme,
+    inverted_colors: InvertedColors,
     platform_version: str,
+    time_zone: str,
+    processors: int,
+    touch_points: int,
     seed: int | None = None,
 )
 ```
 
-The computer a Session claims to run on, as Chrome reads it. A Session works out each client hint that follows the machine from it, [as Chrome does](persona.md#what-decides-each-value). It is apart from the **Host** and from the **Persona**, and never read from the computer mitto runs on. [`Machine.draw()`](#machinedraw) gives one from a table that ships with mitto, and a caller can make one too.
+The computer a Session claims to run on, as Chrome reads it. A Session works out each client hint that follows the machine from it, [as Chrome does](persona.md#what-decides-each-value), and a page reads the rest of it, [as persona.md lists](persona.md#the-runtime). It is apart from the **Host** and from the **Persona**, and never read from the computer mitto runs on. [`Machine.draw()`](#machinedraw) gives one from a table that ships with mitto, and a caller can make one too, with every value.
 
-A value of a type it does not take raises a `TypeError` that names it, and `True` and `False` are no number. A value that Chrome on Windows 10 or 11 cannot read raises a `ValueError`, and so does a viewport larger than the display.
+A value of a type it does not take raises a `TypeError` that names it, and `True` and `False` are no number. A value that Chrome on Windows 10 or 11 cannot read raises a `ValueError`, and so do values that do not fit together: a viewport larger than the display, a work area that is not on the display, a maximised window that is not the work area, a viewport larger than its window, and a contrast theme of the other Windows or with another colour scheme than it gives.
+
+Sizes and places on the desktop are in device-independent pixels, which are the display's pixels over the scale, from the display's top left corner, as a page reads them.
 
 | Attribute | Type | What it holds |
 | --- | --- | --- |
@@ -264,14 +280,28 @@ A value of a type it does not take raises a `TypeError` that names it, and `True
 | `display_width` | `int` | The width of the primary display, in pixels |
 | `display_height` | `int` | The height of the primary display, in pixels |
 | `scale` | `float` | The scale in Windows' display settings, such as 1.25 for 125%: 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5 or 5. `dpr` says it |
-| `viewport_width` | `int` | The width of the window's page area, in device-independent pixels, which are the display's pixels over the scale. At most the display's |
-| `viewport_height` | `int` | The height of the window's page area, in device-independent pixels. At most the display's |
+| `work_area_x` | `int` | Where the work area starts from the left, which is the display less the taskbar: 0 with the taskbar at the bottom. At least 0 |
+| `work_area_y` | `int` | Where the work area starts from the top: 0 with the taskbar at the bottom. At least 0 |
+| `work_area_width` | `int` | The width of the work area, which lies on the display |
+| `work_area_height` | `int` | The height of the work area |
+| `window_state` | `WindowState` | `"maximised"`, for a window that fills the work area, or `"normal"` |
+| `window_x` | `int` | Where Chrome's window starts from the left. A window can start off the display |
+| `window_y` | `int` | Where Chrome's window starts from the top |
+| `window_width` | `int` | The width of Chrome's window, with its borders. A maximised window is the work area |
+| `window_height` | `int` | The height of Chrome's window, with its bars and borders |
+| `viewport_width` | `int` | The width of the window's page area. At most the display's and the window's |
+| `viewport_height` | `int` | The height of the window's page area. At most the display's and the window's |
 | `round_trip_ms` | `int` | The round trip of HTTP that Chrome's network quality estimator has, in milliseconds. `rtt` is it with Chrome's noise for the host, at most 3000 and rounded to 50, and `ect` follows from it with no noise |
 | `throughput_kbps` | `int` | The throughput that the estimator has, in kbps. `downlink` is it with the same noise, at most 10,000 and rounded to 50, in Mbps |
 | `color_scheme` | `ColorScheme` | `"light"` or `"dark"` |
 | `reduced_motion` | `ReducedMotion` | `"no-preference"`, or `"reduce"` with Windows' animation effects off |
 | `reduced_transparency` | `ReducedTransparency` | `"no-preference"`, or `"reduce"` with Windows' transparency effects off |
+| `contrast_theme` | `ContrastTheme` | `"none"`, or Windows' contrast theme: `"aquatic"`, `"desert"`, `"dusk"` or `"night-sky"` on Windows 11, and `"high-contrast-1"`, `"high-contrast-2"`, `"high-contrast-black"` or `"high-contrast-white"` on Windows 10. Each turns on forced colours, and gives the colour scheme that [persona.md lists](persona.md#contrast-themes-and-colour-filters) |
+| `inverted_colors` | `InvertedColors` | `"none"`, or `"inverted"` with Windows' colour filter that inverts colours |
 | `platform_version` | `str` | What `sec-ch-ua-platform-version` says: the version of Windows' UniversalApiContract, such as `"19.0.0"` for Windows 11 from 24H2 and `"10.0.0"` for Windows 10 from 2004. [Which Windows](persona.md#which-windows) has each |
+| `time_zone` | `str` | The time zone, by the name that Chrome on Windows gives a page, such as `"America/New_York"`: the canonical name of a zone that Windows' time zone and region give, so `"Asia/Calcutta"` and not `"Asia/Kolkata"`, and `"UTC"` for UTC. [The time zone](persona.md#the-time-zone) says which, and why a draw gives `"America/New_York"` |
+| `processors` | `int` | The number of logical processors, from 1 to 64. `navigator.hardwareConcurrency` says it |
+| `touch_points` | `int` | How many touch points the touch screen takes, from 1 to 256, or 0 for none. `navigator.maxTouchPoints` says it |
 | `seed` | `int \| None` | What `draw()` drew it from, or `None` for one that a caller made |
 
 #### `Machine.draw()`
@@ -284,6 +314,15 @@ Machine.draw(
     display_width: int | None = None,
     display_height: int | None = None,
     scale: float | None = None,
+    work_area_x: int | None = None,
+    work_area_y: int | None = None,
+    work_area_width: int | None = None,
+    work_area_height: int | None = None,
+    window_state: WindowState | None = None,
+    window_x: int | None = None,
+    window_y: int | None = None,
+    window_width: int | None = None,
+    window_height: int | None = None,
     viewport_width: int | None = None,
     viewport_height: int | None = None,
     round_trip_ms: int | None = None,
@@ -291,24 +330,30 @@ Machine.draw(
     color_scheme: ColorScheme | None = None,
     reduced_motion: ReducedMotion | None = None,
     reduced_transparency: ReducedTransparency | None = None,
+    contrast_theme: ContrastTheme | None = None,
+    inverted_colors: InvertedColors | None = None,
     platform_version: str | None = None,
+    time_zone: str | None = None,
+    processors: int | None = None,
+    touch_points: int | None = None,
 ) -> Self
 ```
 
 Return a Machine drawn from [the table](persona.md#the-table) that ships with mitto, with each value given here and the rest drawn to fit them.
 
-The display, its scale and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the viewport too, since its taskbar takes some of the height. Each other value is drawn on its own.
+The display, its scale, the work area, the window and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the display too, since its taskbar takes some of the height. A display that the table does not have can be given by its size, scale and viewport alone, as in mitto 0.2: it then gets the work area of a taskbar at its bottom, and a maximised window if the viewport fills that work area less Chrome's bars, or else a window around the viewport where Chrome puts its first. A contrast theme draws the Windows that has it and the colour scheme it gives. Each other value is drawn on its own. The time zone is drawn for the Persona's locale, which is `en-US` for every Persona, and that gives `"America/New_York"`, so a Session whose requests leave through a proxy gives the zone of the proxy's exit as `time_zone`, since a server can compare the two.
 
 The same seed and the same table give the same Machine on every Host, and a value given in one group leaves what the seed draws for the others as it was, unless they have to fit together. Without a seed, one is drawn, which the Machine keeps. Another version of mitto can have another table, which draws another Machine from the same seed.
 
 It raises what `Machine` raises, a `TypeError` if `seed` is not a whole number, and a `ValueError` if no row of the table has the values given of a group whose values are not all given.
 
 ```python
-machine = mitto.Machine.draw(seed=7, memory=16)
+machine = mitto.Machine.draw(seed=7, memory=16, time_zone="Europe/Berlin")
 
 assert machine.memory == 16
+assert machine.time_zone == "Europe/Berlin"
 assert machine.seed == 7
-assert mitto.Machine.draw(seed=7, memory=16) == machine
+assert mitto.Machine.draw(seed=7, memory=16, time_zone="Europe/Berlin") == machine
 ```
 
 #### `Machine.named()`
@@ -317,7 +362,7 @@ assert mitto.Machine.draw(seed=7, memory=16) == machine
 Machine.named(name: str) -> Self
 ```
 
-Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills it on Windows 11 24H2, a round trip of 50 ms and a throughput of 10,000 kbps, and the settings that Windows comes with. mitto 0.1 sent that network as an `rtt` of 50 and a `downlink` of 10 to every host, and with Chrome's noise the `downlink` is now from 9 to 10, by host. Another name raises a `ValueError`, and anything but text a `TypeError`.
+Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills its work area on Windows 11 24H2, a round trip of 50 ms and a throughput of 10,000 kbps, and the settings that Windows comes with. mitto 0.1 had no Runtime, so what only a page reads is what the table draws most often: 8 logical processors, no touch screen and the time zone `America/New_York`. mitto 0.1 sent that network as an `rtt` of 50 and a `downlink` of 10 to every host, and with Chrome's noise the `downlink` is now from 9 to 10, by host. Another name raises a `ValueError`, and anything but text a `TypeError`.
 
 ```python
 assert mitto.Machine.named("mitto-0.1").viewport_height == 945

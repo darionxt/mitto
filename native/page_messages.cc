@@ -1,6 +1,8 @@
 #include "mitto/page_messages.h"
 
+#include <algorithm>
 #include <array>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -22,6 +24,60 @@ namespace {
 
 constexpr std::string_view kTimeZoneKey = "time_zone";
 constexpr std::string_view kLocaleKey = "locale";
+constexpr std::string_view kWindowStateKey = "window_state";
+constexpr std::string_view kContrastThemeKey = "contrast_theme";
+constexpr std::string_view kInvertedColorsKey = "inverted_colors";
+
+constexpr std::string_view kMaximised = "maximised";
+constexpr std::string_view kNormal = "normal";
+constexpr std::string_view kNotInverted = "none";
+constexpr std::string_view kInverted = "inverted";
+
+// Windows' contrast themes, those of Windows 11 and then those of Windows 10,
+// after "none".
+constexpr auto kContrastThemes = std::to_array<std::string_view>(
+    {"none", "aquatic", "desert", "dusk", "night-sky", "high-contrast-1",
+     "high-contrast-2", "high-contrast-black", "high-contrast-white"});
+
+// Names of time zones, locales and settings are short and ASCII. Which time
+// zones and locales exist only the Page knows, because only it holds ICU's
+// whole data.
+constexpr size_t kMaxNameSize = 64;
+
+// The names of a start, each a field of PageStart.
+struct StartName {
+  std::string_view key;
+  std::string PageStart::* field;
+};
+constexpr auto kStartNames = std::to_array<StartName>({
+    {kTimeZoneKey, &PageStart::time_zone},
+    {kLocaleKey, &PageStart::locale},
+    {kContrastThemeKey, &PageStart::contrast_theme},
+});
+
+// The numbers of a start, each a field of PageStart, and the least and the
+// most that a Machine can have. Windows holds Chrome to 64 logical processors,
+// in one group of them.
+struct StartNumber {
+  std::string_view key;
+  int PageStart::* field;
+  int least;
+  int most;
+};
+constexpr int kMost = std::numeric_limits<int>::max();
+constexpr int kLeast = std::numeric_limits<int>::min();
+constexpr auto kStartNumbers = std::to_array<StartNumber>({
+    {"processors", &PageStart::processors, 1, 64},
+    {"touch_points", &PageStart::touch_points, 0, 256},
+    {"work_area_x", &PageStart::work_area_x, 0, kMost},
+    {"work_area_y", &PageStart::work_area_y, 0, kMost},
+    {"work_area_width", &PageStart::work_area_width, 1, kMost},
+    {"work_area_height", &PageStart::work_area_height, 1, kMost},
+    {"window_x", &PageStart::window_x, kLeast, kMost},
+    {"window_y", &PageStart::window_y, kLeast, kMost},
+    {"window_width", &PageStart::window_width, 1, kMost},
+    {"window_height", &PageStart::window_height, 1, kMost},
+});
 
 constexpr uint8_t kHasResult = 0;
 constexpr uint8_t kFailed = 1;
@@ -101,35 +157,36 @@ base::expected<std::string, std::string> ReadRefused(std::string payload) {
   return base::ok(std::move(payload));
 }
 
-base::expected<PageStart, std::string> ReadStart(std::string_view payload) {
-  std::optional<base::DictValue> dict =
+bool IsName(std::string_view name) {
+  return !name.empty() && name.size() <= kMaxNameSize &&
+         std::ranges::all_of(name, [](char c) {
+           return base::IsAsciiAlphaNumeric(c) || c == '_' || c == '-' ||
+                  c == '+' || c == '/';
+         });
+}
+
+bool IsStartKey(std::string_view key) {
+  return key == kWindowStateKey || key == kInvertedColorsKey ||
+         std::ranges::any_of(
+             kStartNames,
+             [key](const StartName& name) { return name.key == key; }) ||
+         std::ranges::any_of(kStartNumbers, [key](const StartNumber& number) {
+           return number.key == key;
+         });
+}
+
+std::string NotA(std::string_view key, std::string_view what) {
+  return base::StrCat({"a start whose \"", key, "\" is not ", what});
+}
+
+base::expected<PageStart, std::string> ReadStartPayload(
+    std::string_view payload) {
+  const std::optional<base::DictValue> dict =
       base::JSONReader::ReadDict(payload, base::JSON_PARSE_RFC);
   if (!dict) {
     return base::unexpected("a start that is not a JSON object");
   }
-  PageStart start;
-  bool has_time_zone = false;
-  bool has_locale = false;
-  for (const auto [key, value] : *dict) {
-    if (!value.is_string()) {
-      return base::unexpected(
-          base::StrCat({"a start whose \"", key, "\" is not a string"}));
-    }
-    if (key == kTimeZoneKey) {
-      start.time_zone = value.GetString();
-      has_time_zone = true;
-    } else if (key == kLocaleKey) {
-      start.locale = value.GetString();
-      has_locale = true;
-    } else {
-      return base::unexpected(
-          base::StrCat({"a start with the unknown key \"", key, "\""}));
-    }
-  }
-  if (!has_time_zone || !has_locale) {
-    return base::unexpected("a start without a time zone and a locale");
-  }
-  return start;
+  return ReadStart(*dict);
 }
 
 // Takes the next part of `bytes`, after its size as a 32-bit number, into
@@ -359,9 +416,64 @@ std::string EncodeHello() {
 
 std::string EncodeStart(const PageStart& start) {
   base::DictValue dict;
-  dict.Set(kTimeZoneKey, start.time_zone);
-  dict.Set(kLocaleKey, start.locale);
+  for (const StartName& name : kStartNames) {
+    dict.Set(name.key, start.*name.field);
+  }
+  for (const StartNumber& number : kStartNumbers) {
+    dict.Set(number.key, start.*number.field);
+  }
+  dict.Set(kWindowStateKey, start.window_state == WindowState::kMaximised
+                                ? kMaximised
+                                : kNormal);
+  dict.Set(kInvertedColorsKey,
+           start.inverted_colors ? kInverted : kNotInverted);
   return EncodeFrame(PageMessage::kStart, *base::WriteJson(dict));
+}
+
+base::expected<PageStart, std::string> ReadStart(const base::DictValue& dict) {
+  for (const auto [key, value] : dict) {
+    if (!IsStartKey(key)) {
+      return base::unexpected(
+          base::StrCat({"a start with the unknown key \"", key, "\""}));
+    }
+  }
+  PageStart start;
+  for (const StartName& name : kStartNames) {
+    const std::string* const value = dict.FindString(name.key);
+    if (!value || !IsName(*value)) {
+      return base::unexpected(NotA(name.key, "a name"));
+    }
+    start.*name.field = *value;
+  }
+  if (std::ranges::find(kContrastThemes, start.contrast_theme) ==
+      kContrastThemes.end()) {
+    return base::unexpected(NotA(kContrastThemeKey, "a contrast theme"));
+  }
+  for (const StartNumber& number : kStartNumbers) {
+    const std::optional<int> value = dict.FindInt(number.key);
+    if (!value || *value < number.least || *value > number.most) {
+      return base::unexpected(NotA(
+          number.key, base::StrCat({"a whole number from ",
+                                    base::NumberToString(number.least), " to ",
+                                    base::NumberToString(number.most)})));
+    }
+    start.*number.field = *value;
+  }
+  const std::string* const window_state = dict.FindString(kWindowStateKey);
+  if (!window_state ||
+      (*window_state != kMaximised && *window_state != kNormal)) {
+    return base::unexpected(
+        NotA(kWindowStateKey, "\"maximised\" or \"normal\""));
+  }
+  start.window_state = *window_state == kMaximised ? WindowState::kMaximised
+                                                   : WindowState::kNormal;
+  const std::string* const inverted = dict.FindString(kInvertedColorsKey);
+  if (!inverted || (*inverted != kInverted && *inverted != kNotInverted)) {
+    return base::unexpected(
+        NotA(kInvertedColorsKey, "\"none\" or \"inverted\""));
+  }
+  start.inverted_colors = *inverted == kInverted;
+  return start;
 }
 
 std::string EncodeEvaluate(uint64_t call, std::string_view script) {
@@ -606,7 +718,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       return frame;
     }
     case PageMessage::kStart: {
-      base::expected<PageStart, std::string> start = ReadStart(payload);
+      base::expected<PageStart, std::string> start = ReadStartPayload(payload);
       if (!start.has_value()) {
         return base::unexpected(std::move(start).error());
       }

@@ -38,12 +38,17 @@ _MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
 
 
 @pytest.fixture
-def session(native_library: Any, both_apis: str) -> Iterator[mitto.Session]:
-    """Return a Session through each API in turn, or skip if no Page program lies beside the library."""
+def page_program(native_library: Any, both_apis: str) -> None:
+    """Run a test through each API in turn, or skip it if no Page program lies beside the library."""
     library_path = _native.find_library()
     assert library_path is not None
     if not library_path.with_name(_native.PAGE_PROGRAM_NAME).is_file():
         pytest.skip("no Page program beside the library")
+
+
+@pytest.fixture
+def session(page_program: None) -> Iterator[mitto.Session]:
+    """Return a Session through each API in turn, or skip if no Page program lies beside the library."""
     with mitto.Session() as session:
         yield session
 
@@ -76,6 +81,36 @@ def page(session: mitto.Session) -> Iterator[Page]:
 )
 def test_a_page_gives_a_result_as_json_gives_it(page: Page, script: str, result: Any) -> None:
     assert page.evaluate(script) == result
+
+
+# What a page reads of its time zone and locale: the zone's name, the offset from UTC at the epoch, the name that Date gives
+# the zone there, Intl's locale and a number written in it.
+_TIME_ZONE_AND_LOCALE = """
+    [
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      new Date(0).getTimezoneOffset(),
+      new Date(0).toString().replace(/^.*\\(/, "("),
+      Intl.DateTimeFormat().resolvedOptions().locale,
+      (1234.5).toLocaleString(),
+    ]
+"""
+
+
+@pytest.mark.parametrize(
+    ("time_zone", "expected"),
+    [
+        (None, ["America/New_York", 300, "(Eastern Standard Time)", "en-US", "1,234.5"]),
+        ("Asia/Tokyo", ["Asia/Tokyo", -540, "(Japan Standard Time)", "en-US", "1,234.5"]),
+        ("UTC", ["UTC", 0, "(Coordinated Universal Time)", "en-US", "1,234.5"]),
+    ],
+    ids=str,
+)
+def test_a_page_reports_the_time_zone_of_its_machine_and_the_locale_of_its_persona(
+    page_program: None, time_zone: str | None, expected: list[Any]
+) -> None:
+    machine = mitto.Machine.draw(seed=1) if time_zone is None else mitto.Machine.draw(seed=1, time_zone=time_zone)
+    with mitto.Session(machine=machine) as session, _open_page(session) as page:
+        assert page.evaluate(_TIME_ZONE_AND_LOCALE) == expected
 
 
 def test_scripts_share_one_context(page: Page) -> None:

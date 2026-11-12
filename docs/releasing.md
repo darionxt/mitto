@@ -135,22 +135,23 @@ Then run `uv run pytest tests/test_persona.py tests/release`. If the script refu
 uv run python -m tools.release machines
 ```
 
-This fetches the public statistics that [the table of Machines](persona.md#the-table) is made from again, writes them to [`tools/release/machine_statistics.json`](../tools/release/machine_statistics.json), and writes [`src/mitto/machine_table.json`](../src/mitto/machine_table.json) from them. It prints the period it took from each source, and whether that is new, revised or as before. Then read the diff:
+This fetches the public statistics that [the table of Machines](persona.md#the-table) is made from again, writes them to [`tools/release/machine_statistics.json`](../tools/release/machine_statistics.json), and writes [`src/mitto/machine_table.json`](../src/mitto/machine_table.json) from them. It prints the period it took from each source, and whether that is new, revised or as before. It also writes [`src/mitto/time_zones.json`](../src/mitto/time_zones.json), [the time zones](persona.md#the-time-zone) that Chrome on Windows can give a page, from the ICU that the build in `tools/workspace/chromium_tag` pins, and says whether they changed. Then read the diff:
 
 ```bash
-git diff -- tools/release/machine_statistics.json src/mitto/machine_table.json
+git diff -- tools/release/machine_statistics.json src/mitto/machine_table.json src/mitto/time_zones.json
 ```
 
 | Source | How often it updates | What a refresh takes |
 | --- | --- | --- |
 | StatCounter: Windows 10 against 11, and the display in CSS pixels | Monthly. A month comes out on the second of the next, and StatCounter revises it for 45 days from then | The newest month it no longer revises, so a month counts from the middle of the month after next. It asks the CSV link that StatCounter's pages use for their download, which StatCounter does not document |
-| Firefox Public Data Report: the display in pixels, and the memory | Weekly, at stable JSON addresses under `data.firefox.com/datasets/desktop/hardware` | Its newest week |
+| Firefox Public Data Report: the display in pixels, the memory and the processor cores | Weekly, at stable JSON addresses under `data.firefox.com/datasets/desktop/hardware` | Its newest week |
+| ICU's windowsZones table, from Unicode's CLDR: the time zones | With each build of Chromium that rolls ICU | The table of the ICU that the Engine Release's `DEPS` pins, through Chromium's Gitiles servers |
 
 The statistics' diff shows which shares moved, and the table's what that does to the weights. The table's credits name the period of each source, so they follow what was fetched, and [`MACHINE_TABLE_NOTICE`](../MACHINE_TABLE_NOTICE) leaves the periods to them. The owner's weights, which the table marks, stay as they are: they are in [`tools/release/machines.py`](../tools/release/machines.py), and only a change there moves them. A name that a source did not give before, such as a new version of Windows or a new display size, counts only where [persona.md](persona.md#the-table) says the table takes it, so look for one in the diff.
 
-If a source does not answer, or answers in a form the script does not read, such as a CSV of another month or JSON without its shares, the script says which and why, exits with an error and changes neither file. The table then stays as it was for this run: say so in the run's pull request. A form that has changed for good is a change to [`tools/release/machine_sources.py`](../tools/release/machine_sources.py) and to the answers saved in `tests/release/data`, which `tests/release` checks it with, and no network.
+If a source does not answer, or answers in a form the script does not read, such as a CSV of another month or JSON without its shares, the script says which and why, exits with an error and changes none of the files. The table then stays as it was for this run: say so in the run's pull request. A form that has changed for good is a change to [`tools/release/machine_sources.py`](../tools/release/machine_sources.py) and to the answers saved in `tests/release/data`, which `tests/release` checks it with, and no network.
 
-`--saved` writes the table from the statistics as they are and fetches nothing, such as after a change to an owner's weight.
+`--saved` writes the table from the statistics as they are and fetches nothing, such as after a change to an owner's weight. It leaves the time zones as they are.
 
 ### 8. Drop the oldest Chrome Release
 
