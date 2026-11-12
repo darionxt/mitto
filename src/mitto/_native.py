@@ -57,6 +57,7 @@ __all__ = [
     "PageErrorCode",
     "PageEvaluated",
     "PageEventType",
+    "PageFeatures",
     "PageLoaded",
     "PageNavigated",
     "PageNavigator",
@@ -93,7 +94,7 @@ REQUEST_OPTIONS_VERSION = 1
 COOKIES_VERSION = 1
 
 # The MITTO_PAGE_OPTIONS_VERSION of the C header this module is written against.
-PAGE_OPTIONS_VERSION = 3
+PAGE_OPTIONS_VERSION = 4
 
 # Names the library of a local build. It takes precedence over the library in the installed package.
 LIBRARY_ENV_VAR = "MITTO_NATIVE_LIBRARY"
@@ -969,6 +970,26 @@ class PageNavigator:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PageFeatures:
+    """What a Page turns on and off beside the Engine Release's runtime-enabled features and V8's defaults, as its
+    Persona says: the "features" of the "start" option of mitto_page_open().
+
+    Attributes:
+        enable_blink_features: Names of runtime-enabled features to turn on, as Chrome's --enable-blink-features takes.
+        disable_blink_features: Names of those to turn off after, as Chrome's --disable-blink-features takes.
+        v8_flags: V8's flags, such as "--no-foo", in the order to set them, after the Engine Release's.
+    """
+
+    enable_blink_features: tuple[str, ...] = ()
+    disable_blink_features: tuple[str, ...] = ()
+    v8_flags: tuple[str, ...] = ()
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "features" of the "start" option of mitto_page_open()."""
+        return {page_field.name: list(getattr(self, page_field.name)) for page_field in fields(self)}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PageStart:
     """What a Page starts with, which it would otherwise read from the machine and the browser: the "start" option of
     mitto_page_open().
@@ -1003,6 +1024,7 @@ class PageStart:
         reduced_transparency: "no-preference" or "reduce".
         effective_type: The effective connection type of the network, such as "4g", as the ect hint says.
         navigator: What the browser tells the Page of itself.
+        features: What the Persona's Chrome Release turns on and off.
     """
 
     time_zone: str
@@ -1031,11 +1053,13 @@ class PageStart:
     reduced_transparency: str
     effective_type: str
     navigator: PageNavigator
+    features: PageFeatures
 
     def to_option(self) -> dict[str, object]:
         """Return the "start" option of mitto_page_open()."""
         option = {start_field.name: getattr(self, start_field.name) for start_field in fields(self)}
         option["navigator"] = self.navigator.to_option()
+        option["features"] = self.features.to_option()
         return option
 
 

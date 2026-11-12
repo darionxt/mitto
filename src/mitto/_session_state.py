@@ -15,7 +15,15 @@ from mitto._arguments import require_path, require_type
 from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
 from mitto._cookies import Cookies
 from mitto._machine import Machine, draw_noise_salts, effective_connection_type
-from mitto._native import MEMORY_CACHE, NativePage, NetworkQuality, PageRequestTemplate, PageStart, PrivateSettings
+from mitto._native import (
+    MEMORY_CACHE,
+    NativePage,
+    NetworkQuality,
+    PageFeatures,
+    PageRequestTemplate,
+    PageStart,
+    PrivateSettings,
+)
 from mitto._navigator import page_navigator
 from mitto._persona import RequestKind, load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
@@ -165,6 +173,7 @@ class SessionState:
             reduced_transparency=machine.reduced_transparency,
             effective_type=effective_connection_type(machine.round_trip_ms),
             navigator=page_navigator(self._persona, self._accept_language, machine),
+            features=PageFeatures(),
         )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:

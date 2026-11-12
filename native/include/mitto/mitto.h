@@ -34,7 +34,7 @@
 // The version of the options that mitto_page_open() reads. Adding an option
 // changes neither this nor MITTO_ABI_VERSION. Increase this one when an existing
 // option changes its meaning.
-#define MITTO_PAGE_OPTIONS_VERSION 3
+#define MITTO_PAGE_OPTIONS_VERSION 4
 
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
@@ -768,7 +768,7 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // and needs no trailing NUL byte:
 //
 //   {
-//     "version": 3,
+//     "version": 4,
 //     "start": {"time_zone": "America/New_York", "locale": "en-US",
 //               "processors": 8, "touch_points": 0,
 //               "work_area_x": 0, "work_area_y": 0,
@@ -791,7 +791,10 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //                   "platform": "Windows", "platform_version": "19.0.0",
 //                   "architecture": "x86", "bitness": "64", "model": "",
 //                   "ua_full_version": "157.0.8103.39", "wow64": false,
-//                   "form_factors": ["Desktop"]}}},
+//                   "form_factors": ["Desktop"]}},
+//               "features": {"enable_blink_features": [],
+//                            "disable_blink_features": ["CanvasDrawElement"],
+//                            "v8_flags": ["--sqrt_allocation_limits"]}},
 //     "url": "https://example.com/",
 //     "requests": {
 //       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
@@ -846,6 +849,17 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     "ua_full_version", each a string. The user agent and the languages are
 //     each at most 4096 bytes of UTF-8, the other strings at most 256, and the
 //     lists at most 32 items long.
+//   - "features" is what the Page turns on and off beside the Engine Release's
+//     runtime-enabled features and V8's defaults, as the Session's Persona
+//     says, with these three keys and no other. "enable_blink_features" and
+//     "disable_blink_features" name runtime-enabled features to turn on, and
+//     then off, as Chrome's --enable-blink-features and
+//     --disable-blink-features do, at most 4096 each, each at most 128 ASCII
+//     letters, digits and '_'. The Page process refuses a name that is not a
+//     feature, because only it holds the bindings. "v8_flags" are V8's flags,
+//     at most 256, set in their order after the Engine Release's, each as gin
+//     writes one: "--name", "--no-name" or "--name=value", at most 256
+//     characters, with no space.
 //   The library works out what the Page's navigator.connection gives from the
 //   Session's network estimate.
 // - "url" is where the Page navigates once it opens, through the Session, as a

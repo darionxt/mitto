@@ -600,15 +600,8 @@ def test_a_document_s_load_times_follow_its_loading(server: _PageServer) -> None
     }
 
 
-# A Session's Page starts V8 before its start message comes, so its heap's limits are those of 8 GiB until V8 starts
-# after the start (#230), when it reads the Machine's memory there.
-_BEFORE_THE_START = pytest.mark.xfail(reason="V8 starts before the start message", strict=True)
-
-
 @pytest.mark.usefixtures("page_program")
-@pytest.mark.parametrize(
-    "memory", [pytest.param(2, marks=_BEFORE_THE_START), pytest.param(4, marks=_BEFORE_THE_START), 8, 16]
-)
+@pytest.mark.parametrize("memory", [2, 4, 8, 16])
 def test_performance_memory_is_precise_at_a_site_and_follows_the_machine(server: _PageServer, memory: int) -> None:
     machine = dataclasses.replace(mitto.Machine.draw(seed=216), memory=memory)
     with mitto.Session(machine=machine) as session, _open_page(session, server.url()) as page:

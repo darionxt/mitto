@@ -21,9 +21,11 @@
 // runtime-enabled features expose them: the Engine Release's for stable on
 // Windows, with those that the options name, separated by commas, turned on or
 // off, as Chrome's options of the same names do, and window.chrome and the
-// rest of what Chrome's renderer adds. V8 has the flags of the Engine
-// Release's renderer, then those of FLAGS, separated by commas, as Chrome's
-// --js-flags gives them.
+// rest of what Chrome's renderer adds. A Session's Page takes no such options:
+// its features and V8's flags come in its start message, so V8 starts once
+// that has come. V8 has the flags of the Engine Release's renderer, then the
+// Persona's, then those of FLAGS, separated by commas, as Chrome's --js-flags
+// gives them.
 //
 // Exits with 1 if the script throws or its promise is rejected or never
 // settles, and with 2 if the arguments are wrong. What a timer or a microtask
@@ -50,8 +52,10 @@
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_executor.h"
@@ -121,9 +125,9 @@ constexpr std::string_view kUsage =
 constexpr std::string_view kEnableFeatures = "--enable-blink-features=";
 constexpr std::string_view kDisableFeatures = "--disable-blink-features=";
 constexpr std::string_view kJsFlags = "--js-flags=";
-// The memory in GiB that V8 works out its heap's limits from: a Machine's of
-// the most common kind (docs/persona.md). V8 starts before a Session's start
-// message comes, which carries the Machine's.
+// The memory in GiB that the command line's V8 works out its heap's limits
+// from: a Machine's of the most common kind (docs/persona.md). A Session's Page
+// takes its Machine's from its start.
 constexpr int kMemoryGib = 8;
 constexpr std::string_view kHtml = "--html=";
 constexpr std::string_view kStandardInput = "-";
@@ -232,6 +236,98 @@ class CommandLineInspector final : public v8_inspector::V8InspectorClient {
  private:
   std::unique_ptr<v8_inspector::V8Inspector> inspector_;
 };
+
+// V8 as the Page program runs it: its platform, one isolate, which the main
+// thread has entered, and the bindings' data of that isolate.
+struct PageV8 {
+  std::unique_ptr<mitto::PagePlatform> platform;
+  raw_ptr<v8::Isolate> isolate = nullptr;
+  std::unique_ptr<mitto::bindings::PerIsolateData> data;
+};
+
+// Starts V8 for a machine with `memory_gib` of memory, with the flags of the
+// Engine Release's renderer, then `v8_flags`, each as gin writes one, such as
+// "--no-foo", then `js_flags`, set before V8 initialises, as gin sets Chrome's,
+// and makes its isolate as Blink makes a main thread's, with `features`, on the
+// main thread, whose task runner is `main_thread`.
+void StartV8(PageV8& v8,
+             scoped_refptr<base::SingleThreadTaskRunner> main_thread,
+             int memory_gib,
+             base::span<const std::string> v8_flags,
+             base::span<const std::string> js_flags,
+             mitto::bindings::RuntimeFeatureSet features) {
+  // The flags of the Page's start come after those that every Page of the
+  // Engine Release has, so that they override them, and --js-flags= last.
+  mitto::SetEngineV8Flags(memory_gib);
+  mitto::SetV8Flags(v8_flags);
+  mitto::SetV8Flags(js_flags);
+  // Before anything of V8 asks for a random number, as in Chrome's renderers.
+  v8::V8::SetEntropySource(&mitto::GenerateEntropy);
+  v8::StartupData snapshot = {mitto_v8_snapshot,
+                              base::checked_cast<int>(mitto_v8_snapshot_size)};
+  v8::V8::SetSnapshotDataBlob(&snapshot);
+  v8.platform = std::make_unique<mitto::PagePlatform>(
+      v8::platform::NewDefaultPlatform(), std::move(main_thread));
+  v8::V8::InitializePlatform(v8.platform.get());
+  CHECK(v8::V8::Initialize());
+
+  v8::Isolate::CreateParams params;
+  params.array_buffer_allocator_shared =
+      std::shared_ptr<v8::ArrayBuffer::Allocator>(
+          v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+  // The heap of the Runtime's C++ objects, which V8 collects with its own, as
+  // Blink's renderers have it. The isolate owns it.
+  params.cpp_heap =
+      v8::CppHeap::Create(v8.platform.get(), v8::CppHeapCreateParams({}))
+          .release();
+  mitto::ConfigurePageIsolate(params, memory_gib);
+  v8.isolate = v8::Isolate::New(params);
+  // Microtasks run when the outermost script that the Runtime runs returns,
+  // and after each task, as Blink has them.
+  v8.isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
+  mitto::InitializePageIsolate(v8.isolate);
+  v8.isolate->Enter();
+  v8.data =
+      mitto::bindings::PerIsolateData::Create(v8.isolate, std::move(features));
+}
+
+// Ends what StartV8() started, if it did. V8's tasks that wait on the main
+// thread go while the isolate still lives.
+void StopV8(PageV8& v8,
+            std::unique_ptr<base::SingleThreadTaskExecutor> main_thread) {
+  if (!v8.isolate) {
+    return;
+  }
+  v8.data.reset();
+  v8.isolate->Exit();
+  main_thread.reset();
+  v8::Isolate* const isolate = v8.isolate;
+  v8.isolate = nullptr;
+  isolate->Dispose();
+  v8::V8::Dispose();
+  v8::V8::DisposePlatform();
+}
+
+// Starts V8 for a Session's Page with the memory, the features and the V8 flags
+// that its start says, then `js_flags`. Returns the isolate, or why the Page
+// refuses the start.
+base::expected<v8::Isolate*, std::string> StartV8ForSession(
+    PageV8* v8,
+    scoped_refptr<base::SingleThreadTaskRunner> main_thread,
+    std::vector<std::string> js_flags,
+    const mitto::PageStart& start) {
+  base::expected<mitto::bindings::RuntimeFeatureSet, std::string> features =
+      mitto::bindings::RuntimeFeatureSet::FromSwitches(
+          base::JoinString(start.features.enable_blink_features, ","),
+          base::JoinString(start.features.disable_blink_features, ","));
+  if (!features.has_value()) {
+    return base::unexpected("no runtime-enabled feature is named " +
+                            features.error());
+  }
+  StartV8(*v8, std::move(main_thread), start.memory, start.features.v8_flags,
+          js_flags, *std::move(features));
+  return v8->isolate.get();
+}
 
 // The event loop of the command line: after each task, a microtask
 // checkpoint, as in a Page, and the end of the loop once no task is ready and
@@ -385,13 +481,17 @@ int main(int argc, char** argv) {
   std::string_view enable;
   std::string_view disable;
   std::string_view js_flags;
+  bool enable_given = false;
+  bool disable_given = false;
   std::optional<std::string_view> html;
   for (const std::string_view option :
        base::span(arguments).subspan(1u).first(arguments.size() - 2)) {
     if (option.starts_with(kEnableFeatures)) {
       enable = option.substr(kEnableFeatures.size());
+      enable_given = true;
     } else if (option.starts_with(kDisableFeatures)) {
       disable = option.substr(kDisableFeatures.size());
+      disable_given = true;
     } else if (option.starts_with(kJsFlags)) {
       js_flags = option.substr(kJsFlags.size());
     } else if (option.starts_with(kHtml)) {
@@ -401,13 +501,6 @@ int main(int argc, char** argv) {
       return kWrongArguments;
     }
   }
-  base::expected<mitto::bindings::RuntimeFeatureSet, std::string> features =
-      mitto::bindings::RuntimeFeatureSet::FromSwitches(enable, disable);
-  if (!features.has_value()) {
-    WriteLine(stderr, "mitto_page: no runtime-enabled feature is named " +
-                          features.error());
-    return kWrongArguments;
-  }
   std::string_view argument = arguments.back();
   std::optional<mitto::SessionArgument> session;
   if (argument.starts_with(mitto::kSessionArgumentPrefix)) {
@@ -416,11 +509,23 @@ int main(int argc, char** argv) {
       WriteLine(stderr, "--session= names no channel and process");
       return kWrongArguments;
     }
-    if (html) {
-      // A Session's Page gets its document from the Session.
+    if (html || enable_given || disable_given) {
+      // A Session's Page gets its document from the Session, and its features
+      // in its start message.
       WriteLine(stderr, kUsage);
       return kWrongArguments;
     }
+  }
+  std::optional<mitto::bindings::RuntimeFeatureSet> features;
+  if (!session) {
+    base::expected<mitto::bindings::RuntimeFeatureSet, std::string> set =
+        mitto::bindings::RuntimeFeatureSet::FromSwitches(enable, disable);
+    if (!set.has_value()) {
+      WriteLine(stderr, "mitto_page: no runtime-enabled feature is named " +
+                            set.error());
+      return kWrongArguments;
+    }
+    features = *std::move(set);
   }
   std::optional<std::string> script_from_input;
   if (argument == kStandardInput) {
@@ -447,50 +552,19 @@ int main(int argc, char** argv) {
   // tasks for the main thread join, as Chrome's renderers have it.
   auto main_thread = std::make_unique<base::SingleThreadTaskExecutor>();
 
-  // Before anything of V8 asks for a random number, as in Chrome's renderers.
-  v8::V8::SetEntropySource(&mitto::GenerateEntropy);
-  v8::StartupData snapshot = {mitto_v8_snapshot,
-                              base::checked_cast<int>(mitto_v8_snapshot_size)};
-  v8::V8::SetSnapshotDataBlob(&snapshot);
-  const auto platform = std::make_unique<mitto::PagePlatform>(
-      v8::platform::NewDefaultPlatform(), main_thread->task_runner());
-  // V8's flags as Chrome's renderer sets them, then those of --js-flags=,
-  // before V8's platform, as gin sets them.
-  mitto::SetEngineV8Flags(kMemoryGib);
-  mitto::SetV8Flags(mitto::SplitJsFlags(js_flags));
-  v8::V8::InitializePlatform(platform.get());
-  CHECK(v8::V8::Initialize());
-
-  v8::Isolate::CreateParams params;
-  params.array_buffer_allocator_shared =
-      std::shared_ptr<v8::ArrayBuffer::Allocator>(
-          v8::ArrayBuffer::Allocator::NewDefaultAllocator());
-  // The heap of the Runtime's C++ objects, which V8 collects with its own, as
-  // Blink's renderers have it. The isolate owns it.
-  params.cpp_heap =
-      v8::CppHeap::Create(platform.get(), v8::CppHeapCreateParams({}))
-          .release();
-  mitto::ConfigurePageIsolate(params, kMemoryGib);
-  v8::Isolate* const isolate = v8::Isolate::New(params);
-  // Microtasks run when the outermost script that the Runtime runs returns,
-  // and after each task, as Blink has them.
-  isolate->SetMicrotasksPolicy(v8::MicrotasksPolicy::kScoped);
-  mitto::InitializePageIsolate(isolate);
+  PageV8 v8;
   bool finished = false;
-  {
-    const v8::Isolate::Scope isolate_scope(isolate);
-    const std::unique_ptr<mitto::bindings::PerIsolateData> data =
-        mitto::bindings::PerIsolateData::Create(isolate, std::move(*features));
-    if (session) {
-      mitto::ServeSession(isolate, *std::move(session));
-    } else {
-      finished = RunScript(isolate, html.value_or(""), argument);
-    }
+  if (session) {
+    mitto::ServeSession(
+        *std::move(session),
+        base::BindOnce(&StartV8ForSession, base::Unretained(&v8),
+                       main_thread->task_runner(),
+                       mitto::SplitJsFlags(js_flags)));
+  } else {
+    StartV8(v8, main_thread->task_runner(), kMemoryGib, {},
+            mitto::SplitJsFlags(js_flags), *std::move(features));
+    finished = RunScript(v8.isolate, html.value_or(""), argument);
   }
-  // V8's tasks that wait go while the isolate still lives.
-  main_thread.reset();
-  isolate->Dispose();
-  v8::V8::Dispose();
-  v8::V8::DisposePlatform();
+  StopV8(v8, std::move(main_thread));
   return finished ? 0 : kScriptThrew;
 }
