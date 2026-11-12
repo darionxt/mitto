@@ -131,7 +131,7 @@ _EVALUATE = 4
 _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
-_PROTOCOL_VERSION = 7
+_PROTOCOL_VERSION = 8
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -676,9 +676,11 @@ def _respond(
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
-        struct.pack("<QiBBqId", number, status, int(redirected), int(cors), 0, *connection)
+        struct.pack("<QiBBBBqId", number, status, int(redirected), int(cors), 0, 0, 0, *connection)
         + _sized(url.encode())
         + _sized(status_text.encode("latin-1"))
+        + _sized(b"http/1.1")
+        + _sized(b"unknown")
         + lines,
     )
 
@@ -730,6 +732,24 @@ def test_a_page_loads_the_document_that_its_session_sends_and_asks_for_its_scrip
         False,
         f'["{_DOCUMENT_URL}","complete",["from=session; set=by script",false],"b"]',
     )
+    assert session.close() == 0
+
+
+def test_a_documents_event_handler_attributes_run_as_it_loads(session: _Session) -> None:
+    # The handlers are listeners of their targets, which the loading's events reach in Chrome's order.
+    session.start()
+    document = (
+        b"<!doctype html><script>window.seen = [];"
+        b"document.onreadystatechange = () => seen.push(document.readyState);"
+        b"window.onload = (event) => seen.push('load ' + event.target.nodeName);</script>"
+    )
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, document)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(document)))
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+
+    assert session.evaluate("seen.join()") == (False, '"interactive,complete,load #document"')
     assert session.close() == 0
 
 

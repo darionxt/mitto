@@ -14,6 +14,9 @@
 #   no name. "indexed getter" and "named getter" name those operations. An
 #   indexed or named property operation that is a Known Gap is not installed
 #   at all.
+#
+# An event handler attribute that the class lacks is not a Known Gap: the
+# bindings give it Chrome's behaviour themselves.
 mitto_bindings_interfaces = [
   {
     name = "CharacterData"
@@ -254,6 +257,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "MemoryInfo"
+    file = "memory_info"
+  },
+  {
     name = "MimeType"
     file = "mime_type"
   },
@@ -299,9 +306,8 @@ mitto_bindings_interfaces = [
     name = "NetworkInformation"
     file = "network_information"
 
-    # Its event handler attributes are Known Gaps until the generator gives event
-    # handlers their behaviour, and NetInfoDownlinkMax keeps type and downlinkMax
-    # from Windows.
+    # The bindings run its event handler attributes, and NetInfoDownlinkMax keeps
+    # type and downlinkMax from Windows.
     missing = [
       "onchange",
       "ontypechange",
@@ -354,6 +360,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "now",
       "timeOrigin",
+      "memory",
     ]
   },
   {
@@ -401,8 +408,7 @@ mitto_bindings_interfaces = [
     name = "Screen"
     file = "screen"
 
-    # Its event handler attribute is a Known Gap until the generator gives event
-    # handlers their behaviour.
+    # The bindings run its event handler attribute.
     missing = [
       "onchange",
     ]
@@ -411,8 +417,7 @@ mitto_bindings_interfaces = [
     name = "ScreenOrientation"
     file = "screen_orientation"
 
-    # Its event handler attribute is a Known Gap until the generator gives event
-    # handlers their behaviour.
+    # The bindings run its event handler attribute.
     missing = [
       "onchange",
     ]

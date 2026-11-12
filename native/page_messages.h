@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 7;
+inline constexpr uint32_t kPageProtocolVersion = 8;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -286,7 +286,8 @@ struct PageStart {
   // Whether Windows' colour filter inverts colours.
   bool inverted_colors = false;
   // The memory in GiB as Chrome rounds it, 2, 4, 8, 16 or 32, which
-  // navigator.deviceMemory gives.
+  // navigator.deviceMemory gives, and from which V8 works out its heap's
+  // limits, as gin works them out from the machine's.
   int memory = 0;
   // The primary display.
   int screen_width = 0;
@@ -380,6 +381,10 @@ struct PageResponseStarted {
   // every process of the machine shares: what the document's
   // performance.timeOrigin counts from. 0 for the Page's own requests.
   int64_t navigation_start = 0;
+  // Of the connection, as net::HttpResponseInfo has it: whether it went over
+  // HTTP/2 or QUIC, and whether ALPN chose a protocol.
+  bool was_fetched_via_spdy = false;
+  bool was_alpn_negotiated = false;
   // For the navigation, what the document's navigator.connection gives. 0 for
   // the Page's own requests.
   PageConnection connection;
@@ -387,6 +392,11 @@ struct PageResponseStarted {
   std::string url;
   // The status line's reason phrase, in bytes.
   std::string status_text;
+  // What net::HttpConnectionInfoToString() calls the connection's protocol,
+  // such as "h2", and the protocol that ALPN chose, "unknown" for none, each
+  // a name of at most 64 characters.
+  std::string connection_info;
+  std::string alpn_negotiated_protocol;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;

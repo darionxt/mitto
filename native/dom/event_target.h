@@ -14,6 +14,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "mitto/bindings/dictionaries.h"
@@ -42,7 +43,8 @@ class EventListenerEntry final
                      v8::Local<v8::Object> callback,
                      bool capture,
                      bool passive,
-                     bool once);
+                     bool once,
+                     bool attribute_handler = false);
   ~EventListenerEntry();
 
   void Trace(cppgc::Visitor* visitor) const;
@@ -56,6 +58,13 @@ class EventListenerEntry final
   bool once() const { return once_; }
   bool removed() const { return removed_; }
   void set_removed() { removed_ = true; }
+  // Whether it is the listener of an event handler attribute, such as
+  // `onload`, whose callback is the handler that the attribute was set to.
+  bool attribute_handler() const { return attribute_handler_; }
+  // Sets an event handler attribute's handler again, keeping its place.
+  void set_callback(v8::Isolate* isolate, v8::Local<v8::Object> callback) {
+    callback_.Reset(isolate, callback);
+  }
 
   // The next listener of the target, in the order they were added.
   EventListenerEntry* next() const { return next_.Get(); }
@@ -67,6 +76,7 @@ class EventListenerEntry final
   const bool capture_;
   const bool passive_;
   const bool once_;
+  const bool attribute_handler_;
   bool removed_ = false;
   cppgc::Member<EventListenerEntry> next_;
 };
@@ -100,6 +110,17 @@ class EventTarget : public bindings::ScriptWrappable {
   // an event at a window with the legacy target override flag, such as load,
   // whose target is the window's document.
   bool DispatchEventWithTarget(Event* event, EventTarget* target);
+
+  // The handler of the event handler attribute for `type`, such as `onload`
+  // for load, or null.
+  v8::Local<v8::Value> AttributeEventHandler(v8::Isolate* isolate,
+                                             std::u16string_view type) const;
+  // Sets it, as the HTML Standard's event handler attributes do: its listener
+  // joins the others the first time, keeps its place when it is set again, and
+  // goes when it is set to null, for which `handler` is not an object.
+  void SetAttributeEventHandler(v8::Isolate* isolate,
+                                const std::u16string& type,
+                                v8::Local<v8::Value> handler);
 
  private:
   // Runs the listeners of the event's type, and returns whether the event is

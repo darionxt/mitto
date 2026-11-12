@@ -204,6 +204,51 @@ def test_a_refused_known_gap_keeps_todays_error(program: Path, script: str, mess
     assert _evaluate(program, script).endswith("Not implemented.")
 
 
+# Event handler attributes are not Known Gaps: each is a listener of its EventTarget, as Chrome 157 showed.
+_HANDLERS_AS_CHROME = {
+    "a handler keeps its place, and false cancels": (
+        """const seen = [];
+        const signal = new AbortController().signal;
+        signal.addEventListener('abort', () => seen.push('first'));
+        signal.onabort = () => seen.push('handler');
+        signal.addEventListener('abort', () => seen.push('last'));
+        signal.onabort = function () { seen.push('replaced ' + (this === signal)); return false; };
+        const event = new Event('abort', {cancelable: true});
+        seen.push(String(signal.dispatchEvent(event)), String(event.defaultPrevented));
+        signal.onabort = null;
+        signal.dispatchEvent(new Event('abort'));
+        return seen.join('|');""",
+        "value: first|replaced true|last|false|true|first|last",
+    ),
+    "a handler is not the listener of the same function": (
+        """const signal = new AbortController().signal;
+        const f = () => {};
+        signal.onabort = f;
+        signal.addEventListener('abort', f);
+        let calls = 0;
+        signal.onabort = () => calls++;
+        signal.removeEventListener('abort', f);
+        signal.dispatchEvent(new Event('abort'));
+        return calls;""",
+        "value: 1",
+    ),
+    "the body's window events are the window's": (
+        "document.body.onload = () => 1; return window.onload === document.body.onload;",
+        "value: true",
+    ),
+    "a handler that cannot be called does nothing": (
+        "const signal = new AbortController().signal; signal.onabort = {}; "
+        "return signal.dispatchEvent(new Event('abort'));",
+        "value: true",
+    ),
+}
+
+
+@pytest.mark.parametrize(("script", "chrome"), list(_HANDLERS_AS_CHROME.values()), ids=list(_HANDLERS_AS_CHROME))
+def test_an_event_handler_attribute_is_a_listener_as_in_chrome(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script) == chrome
+
+
 def test_a_replaceable_known_gap_of_a_class_takes_any_value(program: Path) -> None:
     # Window has a class but not statusbar's behaviour, and [Replaceable] shadows it with a data property.
     script = "window.statusbar = 42; return [window.statusbar, typeof Object.getOwnPropertyDescriptor(window, 'statusbar').value].join();"

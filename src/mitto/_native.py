@@ -1012,7 +1012,8 @@ class PageStart:
         window_height: The height of Chrome's window, with its bars and borders.
         contrast_theme: Windows' contrast theme, such as "aquatic", or "none".
         inverted_colors: "inverted" with Windows' colour filter that inverts colours, or "none".
-        memory: What navigator.deviceMemory gives: 2, 4, 8, 16 or 32.
+        memory: What navigator.deviceMemory gives: 2, 4, 8, 16 or 32, and from which the Page's V8 works out its heap's
+            limits.
         screen_width: The width of the primary display.
         screen_height: The height of the primary display.
         scale: The display's scale, such as 1.25, which devicePixelRatio gives.
