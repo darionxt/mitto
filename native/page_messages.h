@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/containers/span.h"
 #include "base/types/expected.h"
@@ -28,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 5;
+inline constexpr uint32_t kPageProtocolVersion = 6;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -165,6 +166,25 @@ enum class WindowState : uint8_t {
   kNormal = 2,
 };
 
+// What a Page turns on and off beside the Engine Release's runtime-enabled
+// features and V8's defaults, as its Persona says: what its Chrome Release did
+// not ship yet, and what the variations seed of that release switches.
+struct PageFeatures {
+  PageFeatures();
+  PageFeatures(const PageFeatures&);
+  PageFeatures& operator=(const PageFeatures&);
+  ~PageFeatures();
+
+  // Names of runtime-enabled features to turn on, and then off, as Chrome's
+  // --enable-blink-features and --disable-blink-features take them. Which
+  // features exist only the Page knows, because only it holds the bindings.
+  std::vector<std::string> enable_blink_features;
+  std::vector<std::string> disable_blink_features;
+  // V8's flags, such as "--no-foo" or "--foo=1", in the order to set them,
+  // after those of the Engine Release.
+  std::vector<std::string> v8_flags;
+};
+
 // What a Page starts with, which it would otherwise read from the machine:
 // what its Session's Machine and Persona say. Places and sizes on the desktop
 // are in device-independent pixels, from the display's top left corner.
@@ -201,6 +221,8 @@ struct PageStart {
   std::string contrast_theme;
   // Whether Windows' colour filter inverts colours.
   bool inverted_colors = false;
+  // What the Persona's Chrome Release turns on and off.
+  PageFeatures features;
 };
 
 // What a call to a Page gave back.

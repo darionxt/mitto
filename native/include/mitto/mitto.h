@@ -34,7 +34,7 @@
 // The version of the options that mitto_page_open() reads. Adding an option
 // changes neither this nor MITTO_ABI_VERSION. Increase this one when an existing
 // option changes its meaning.
-#define MITTO_PAGE_OPTIONS_VERSION 2
+#define MITTO_PAGE_OPTIONS_VERSION 3
 
 // A request's priority, with the values and meaning of net::RequestPriority.
 #define MITTO_PRIORITY_THROTTLED 0
@@ -768,7 +768,7 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 // and needs no trailing NUL byte:
 //
 //   {
-//     "version": 2,
+//     "version": 3,
 //     "start": {"time_zone": "America/New_York", "locale": "en-US",
 //               "processors": 8, "touch_points": 0,
 //               "work_area_x": 0, "work_area_y": 0,
@@ -776,7 +776,10 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //               "window_state": "maximised",
 //               "window_x": 0, "window_y": 0,
 //               "window_width": 1920, "window_height": 1032,
-//               "contrast_theme": "none", "inverted_colors": "none"},
+//               "contrast_theme": "none", "inverted_colors": "none",
+//               "features": {"enable_blink_features": [],
+//                            "disable_blink_features": ["CanvasDrawElement"],
+//                            "v8_flags": ["--sqrt_allocation_limits"]}},
 //     "url": "https://example.com/",
 //     "requests": {
 //       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
@@ -811,6 +814,17 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     "dusk", "night-sky", "high-contrast-1", "high-contrast-2",
 //     "high-contrast-black" or "high-contrast-white". "inverted_colors" is
 //     "inverted" with Windows' colour filter that inverts colours, or "none".
+//   - "features" is what the Page turns on and off beside the Engine Release's
+//     runtime-enabled features and V8's defaults, as the Session's Persona
+//     says, with these three keys and no other. "enable_blink_features" and
+//     "disable_blink_features" name runtime-enabled features to turn on, and
+//     then off, as Chrome's --enable-blink-features and
+//     --disable-blink-features do, at most 4096 each, each at most 128 ASCII
+//     letters, digits and '_'. The Page process refuses a name that is not a
+//     feature, because only it holds the bindings. "v8_flags" are V8's flags,
+//     at most 256, set in their order after the Engine Release's, each as gin
+//     writes one: "--name", "--no-name" or "--name=value", at most 256
+//     characters, with no space.
 // - "url" is where the Page navigates once it opens, through the Session, as a
 //   request of the navigation template does without an Initiator. The
 //   response, after any redirects, is the Page's document, and its URL the

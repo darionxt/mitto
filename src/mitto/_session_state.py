@@ -14,7 +14,15 @@ from mitto._arguments import require_path, require_type
 from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
 from mitto._cookies import Cookies
 from mitto._machine import Machine, draw_noise_salts
-from mitto._native import MEMORY_CACHE, NativePage, NetworkQuality, PageRequestTemplate, PageStart, PrivateSettings
+from mitto._native import (
+    MEMORY_CACHE,
+    NativePage,
+    NetworkQuality,
+    PageFeatures,
+    PageRequestTemplate,
+    PageStart,
+    PrivateSettings,
+)
 from mitto._persona import RequestKind, load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
 from mitto._timeout import Timeout, to_timeout
@@ -145,6 +153,7 @@ class SessionState:
             window_height=machine.window_height,
             contrast_theme=machine.contrast_theme,
             inverted_colors=machine.inverted_colors,
+            features=PageFeatures(),
         )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:

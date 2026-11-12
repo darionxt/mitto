@@ -1153,7 +1153,13 @@ PAGE_START: dict[str, Any] = {
     "window_height": 1032,
     "contrast_theme": "none",
     "inverted_colors": "none",
+    "features": {"enable_blink_features": [], "disable_blink_features": [], "v8_flags": []},
 }
+
+
+def page_features(**lists: Any) -> dict[str, Any]:
+    """Return the features of a start, with each of `lists` in place."""
+    return {**PAGE_START["features"], **lists}
 
 
 def blank_page_options(**start: Any) -> bytes:
@@ -1322,6 +1328,35 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
         pytest.param(blank_page_options(window_state="first"), id="unknown-window-state"),
         pytest.param(blank_page_options(contrast_theme="high-contrast"), id="unknown-contrast-theme"),
         pytest.param(blank_page_options(inverted_colors="reduce"), id="unknown-inverted-colors"),
+        pytest.param(
+            json.dumps(
+                {
+                    "version": _native.PAGE_OPTIONS_VERSION,
+                    "start": {key: value for key, value in PAGE_START.items() if key != "features"},
+                }
+            ).encode(),
+            id="no-features",
+        ),
+        pytest.param(blank_page_options(features=[]), id="features-not-an-object"),
+        pytest.param(blank_page_options(features=page_features(js_flags=[])), id="unknown-key-in-the-features"),
+        pytest.param(
+            blank_page_options(features={"enable_blink_features": [], "disable_blink_features": []}),
+            id="no-v8-flags",
+        ),
+        pytest.param(blank_page_options(features=page_features(enable_blink_features="A")), id="features-not-a-list"),
+        pytest.param(blank_page_options(features=page_features(enable_blink_features=["A,B"])), id="comma-in-a-name"),
+        pytest.param(blank_page_options(features=page_features(disable_blink_features=[""])), id="empty-name"),
+        pytest.param(blank_page_options(features=page_features(disable_blink_features=[1])), id="name-not-a-string"),
+        pytest.param(blank_page_options(features=page_features(disable_blink_features=["A" * 129])), id="long-name"),
+        pytest.param(
+            blank_page_options(features=page_features(enable_blink_features=["A"] * 4097)), id="too-many-names"
+        ),
+        pytest.param(blank_page_options(features=page_features(v8_flags=["maglev"])), id="flag-without-dashes"),
+        pytest.param(blank_page_options(features=page_features(v8_flags=["--"])), id="flag-without-a-name"),
+        pytest.param(blank_page_options(features=page_features(v8_flags=["--a --b"])), id="two-flags-in-one"),
+        pytest.param(blank_page_options(features=page_features(v8_flags=["--a=b c"])), id="space-in-a-value"),
+        pytest.param(blank_page_options(features=page_features(v8_flags=["--a" * 100])), id="long-flag"),
+        pytest.param(blank_page_options(features=page_features(v8_flags=["--a"] * 257)), id="too-many-flags"),
     ],
 )
 def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_handle: Any, options: bytes) -> None:
@@ -1342,6 +1377,13 @@ def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_
         {"contrast_theme": "night-sky", "inverted_colors": "inverted"},
         {"contrast_theme": "high-contrast-white"},
         {"time_zone": "Etc/GMT+12", "locale": "zh-Hans-CN"},
+        {
+            "features": page_features(
+                enable_blink_features=["CSSTextDecorationSkipSpaces"],
+                disable_blink_features=["CanvasDrawElement", "NewHTMLSettingMethods"],
+                v8_flags=["--no-js_iterator_join", "--sqrt_allocation_limits_factor=1.1"],
+            )
+        },
     ],
     ids=str,
 )
