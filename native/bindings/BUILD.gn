@@ -148,6 +148,12 @@ action_with_pydeps("generate_bindings") {
         ]
       }
     }
+    if (defined(interface.made_by_known_gaps) && interface.made_by_known_gaps) {
+      args += [
+        "--made-by-known-gaps",
+        interface.name,
+      ]
+    }
     if (defined(interface.implemented)) {
       args += [
         "--only-implemented",

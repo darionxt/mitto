@@ -236,6 +236,10 @@ class CollectionLike:
     iterator, whose operations are Array.prototype's."""
     has_return: bool = False
     """For an async iterable, whether its iterator has return(): [HasAsyncIteratorReturnAlgorithm]."""
+    key_type: IdlType | None = None
+    """The type of its keys: a maplike's or a pair iterable's, None for the others."""
+    value_type: IdlType | None = None
+    """The type of its values."""
 
 
 @dataclasses.dataclass(frozen=True)

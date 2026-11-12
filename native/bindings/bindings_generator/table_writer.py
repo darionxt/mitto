@@ -311,8 +311,7 @@ class _ShardWriter:
                     constructor_number = str(self._context.gaps.number())
                     if self._context.gaps.refuses(interface, None):
                         flags.append("kInterfaceConstructorRefused")
-        behind = self._context.gaps.class_behind(name)
-        object_behind = {None: "kNone", "EventTarget": "kEventTarget", "Event": "kEvent"}.get(behind, "kNone")
+        object_behind = self._context.gaps.object_behind(name)
         if construct.in_global_prototype_chain:
             flags.append("kInterfaceInGlobalPrototypeChain")
         if name == "Location":
@@ -362,6 +361,7 @@ class _ShardWriter:
             f"    {_KINDS[interface.kind]},",
             f"    {construct.index},",
             f"    &k{interface.name}Table,",
+            "    nullptr,",
             "};",
             "",
         ]

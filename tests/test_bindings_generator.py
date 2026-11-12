@@ -248,8 +248,16 @@ def test_the_cpp_writer_refuses_a_type_it_cannot_convert_and_names_it() -> None:
 
     with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type long long$"):
         types.argument_type(IdlType(TypeKind.INTEGER, "long long"), "argument x of Thing.f")
-    with pytest.raises(UnhandledError, match=r"of type Observable$"):
-        types.return_type(IdlType(TypeKind.INTERFACE, "Observable"), "operation EventTarget.when return type")
+    with pytest.raises(UnhandledError, match=r"of type boolean\?$"):
+        types.return_type(IdlType(TypeKind.BOOLEAN, "boolean", nullable=True), "attribute Thing.on")
+
+
+def test_a_class_can_give_null_for_an_interface_without_a_class_whatever_the_idl_says() -> None:
+    # Blink's classes give null for a type that the IDL does not make nullable, as Document's rootElement does.
+    types = TypeMapper(frozenset({"Event"}), frozenset())
+
+    assert types.return_type(IdlType(TypeKind.INTERFACE, "SVGSVGElement"), "x") == "bindings::ScriptWrappable*"
+    assert types.return_type(IdlType(TypeKind.INTERFACE, "Event"), "x") == "mitto::Event*"
 
 
 @pytest.mark.parametrize("pydeps", ["generate_bindings.pydeps", "test/generator_test.pydeps"])
@@ -789,3 +797,119 @@ def test_the_default_tojson_steps_read_json_attributes_of_each_interface_that_de
     _, source = types.write(set())
     assert 'constexpr JsonAttributeInfo kJsonAttributes0[] = {{"a", nullptr}, {"b", nullptr}};' in source
     assert "return kJsonAttributeLists[static_cast<size_t>(index)];" in source
+
+
+def test_a_known_gap_may_make_an_object_of_a_class_that_makes_one_for_it() -> None:
+    # HTMLCollection's class makes an empty one, and HTMLFormControlsCollection, without a class, gets one behind it.
+    parents = {"HTMLCollection": None, "HTMLFormControlsCollection": "HTMLCollection", "Node": None, "Attr": "Node"}
+    classes = {"HTMLCollection", "Node"}
+    gaps = KnownGaps(parents, classes.__contains__, set(parents).__contains__, {"HTMLCollection"}.__contains__)
+
+    def interface(name: str) -> IdlType:
+        return IdlType(TypeKind.INTERFACE, name)
+
+    assert gaps.default_is_safe(interface("HTMLCollection"))
+    assert gaps.default_is_safe(interface("HTMLFormControlsCollection"))
+    assert not gaps.default_is_safe(interface("Node"))
+    assert not gaps.default_is_safe(interface("Attr"))
+    assert gaps.object_behind("HTMLFormControlsCollection") == "kClass"
+    assert gaps.object_behind("Attr") == "kNone"
+    assert not gaps.refuses(_interface(name="HTMLCollection"), None)
+
+
+def _made(*implemented: str, constructor: bool = True) -> str:
+    """The bindings of a class that a Known Gap may make, with a constructor that takes a boolean."""
+    group = None
+    if constructor:
+        argument = Argument("on", BOOLEAN, False, False, None)
+        operation = Operation("constructor", (argument,), UNDEFINED, False, ExtendedAttributes(), ALWAYS)
+        group = OperationGroup("constructor", (operation,), False, 1, ExtendedAttributes(), ALWAYS)
+    interface = _interface(attributes=(_attribute("on"),), constructor_group=group)
+    implemented_interface = ImplementedInterface(
+        "Thing", "mitto/dom/thing.h", implemented=implemented, made_by_known_gaps=True
+    )
+    return _bindings_of(interface, implemented_interface)
+
+
+def test_a_class_that_a_known_gap_may_make_says_how_and_may_leave_its_constructor_a_known_gap() -> None:
+    source = _made("on")
+
+    assert "  return mitto::Thing::CreateForKnownGap(info);" in source
+    assert "    &CreateForKnownGap,\n};" in source
+    assert "KnownGapConstructorOfClass(info, V8Thing::kWrapperTypeInfo, *&kOperation0, 0);" in source
+    assert "mitto::Thing::Create(" not in source
+    assert "mitto::Thing::Create(arg1_on)" in _made("on", "constructor")
+
+
+def test_a_class_without_it_has_its_constructor_and_makes_nothing_for_known_gaps() -> None:
+    argument = Argument("on", BOOLEAN, False, False, None)
+    operation = Operation("constructor", (argument,), UNDEFINED, False, ExtendedAttributes(), ALWAYS)
+    group = OperationGroup("constructor", (operation,), False, 1, ExtendedAttributes(), ALWAYS)
+
+    source = _bindings_of(
+        _interface(constructor_group=group), ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=())
+    )
+
+    assert "mitto::Thing::Create(arg1_on)" in source
+    assert "    nullptr,\n    nullptr,\n};" in source
+    with pytest.raises(UnhandledError, match="Thing has no member constructor"):
+        _bindings_of(
+            _interface(constructor_group=group),
+            ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("constructor",)),
+        )
+
+
+def test_a_static_attribute_with_save_same_object_is_kept_on_the_interface_object() -> None:
+    strings = IdlType(TypeKind.FROZEN_ARRAY, "FrozenArray", members=(IdlType(TypeKind.STRING, "DOMString"),))
+    count = IdlType(TypeKind.INTEGER, "unsigned long")
+    interface = _interface(
+        attributes=(
+            Attribute("kinds", strings, True, True, _extended("SameObject", "SaveSameObject"), ALWAYS),
+            Attribute("most", count, True, True, ExtendedAttributes(), ALWAYS),
+        )
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert 'v8::String::NewFromUtf8Literal(isolate, "mitto:Thing.kinds"));' in source
+    assert "  value = mitto::Thing::Kinds();" in source
+    assert "info.GetReturnValue().Set(v8::Integer::NewFromUnsigned(isolate, mitto::Thing::Most()));" in source
+
+
+def test_a_read_only_maplike_with_behaviour_reads_the_classs_entries() -> None:
+    string = IdlType(TypeKind.STRING, "DOMString")
+    size = Attribute("size", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, ExtendedAttributes(), ALWAYS)
+    key = Argument("key", string, False, False, None)
+    callback = Argument("callback", IdlType(TypeKind.CALLBACK_FUNCTION, "ForEachIteratorCallback"), False, False, None)
+    this_arg = Argument("thisArg", IdlType(TypeKind.ANY, "any"), True, False, None)
+
+    def group(name: str, arguments: tuple[Argument, ...], returns: IdlType) -> OperationGroup:
+        operation = Operation(name, arguments, returns, False, ExtendedAttributes(), ALWAYS)
+        return OperationGroup(name, (operation,), False, len(arguments), ExtendedAttributes(), ALWAYS)
+
+    iterator = IdlType(TypeKind.ITERATOR, "SyncIterator_Thing")
+    maplike = CollectionLike(
+        "maplike",
+        (size,),
+        (
+            group("entries", (), iterator),
+            group("forEach", (callback, this_arg), UNDEFINED),
+            group("get", (key,), IdlType(TypeKind.ANY, "any")),
+            group("has", (key,), BOOLEAN),
+        ),
+        "entries",
+        iterator="SyncIterator_Thing",
+        key_type=string,
+        value_type=IdlType(TypeKind.INTEGER, "unsigned long long"),
+    )
+
+    source = _bindings_of(
+        _interface(collection=maplike), ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("maplike",))
+    )
+
+    assert "for (const auto& item : impl->MaplikeEntries()) {" in source
+    assert "static_cast<uint32_t>(impl->MaplikeEntries().size())" in source
+    assert "NewIteratorOverList(context, V8SyncIterator_Thing::kWrapperTypeInfo, items)" in source
+    assert "->Call(context, info[1], 3, arguments).IsEmpty()" in source
+    assert "info.GetReturnValue().Set(v8::Undefined(isolate));" in source
+    assert "info.GetReturnValue().Set(v8::False(isolate));" in source

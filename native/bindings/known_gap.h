@@ -26,6 +26,11 @@
 #ifndef MITTO_BINDINGS_KNOWN_GAP_H_
 #define MITTO_BINDINGS_KNOWN_GAP_H_
 
+#include <stdint.h>
+
+#include <vector>
+
+#include "mitto/bindings/idl_type_info.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-function-callback.h"
 #include "v8/include/v8-local-handle.h"
@@ -42,19 +47,38 @@ void KnownGapPromiseOperation(const v8::FunctionCallbackInfo<v8::Value>& info);
 void KnownGapConstructor(const v8::FunctionCallbackInfo<v8::Value>& info);
 // A [LegacyFactoryFunction]'s, with its ExposedConstructInfo as its data.
 void KnownGapFactoryFunction(const v8::FunctionCallbackInfo<v8::Value>& info);
+// The constructor of an interface with a class that a Known Gap may make,
+// where the class lacks the constructor's behaviour: its bindings call it with
+// the constructor's overloads and number. It makes the class's object with
+// nothing given behind the object V8 made for `new`.
+void KnownGapConstructorOfClass(const v8::FunctionCallbackInfo<v8::Value>& info,
+                                const WrapperTypeInfo& interface,
+                                const OperationInfo& operation,
+                                uint16_t number);
 // next() and return() of an iterator over nothing, which a Known Gap gives:
 // { value: undefined, done: true }, or for return() the value it gets, and for
 // an async iterator a promise resolved with it, as Blink's iterators give once
-// they are done.
+// they are done. The next() of an iterator over a list gives each of its items
+// in turn first, { value: item, done: false }.
 void IteratorStep(const v8::FunctionCallbackInfo<v8::Value>& info);
 
+// An iterator of `iterator`, the iterator interface of a maplike or setlike
+// declaration, over `items`, which its next() gives in order, as Blink's
+// iterators give what their iteration source took when they were made.
+v8::MaybeLocal<v8::Value> NewIteratorOverList(
+    v8::Local<v8::Context> context,
+    const WrapperTypeInfo& iterator,
+    const std::vector<v8::Local<v8::Value>>& items);
+
 // Whether a Known Gap may make an object of the interface: one without a C++
-// class, which has a table.
+// class, which has a table, or one whose class makes objects for Known Gaps.
 bool IsSafeObjectType(const WrapperTypeInfo& info);
 
-// An object of an interface without a C++ class in `context`, with nothing
-// behind it but, for one that inherits from EventTarget or Event, an object of
-// that class.
+// An object of an interface in `context` that a Known Gap may make: for one
+// without a C++ class, with nothing behind it but, for one that inherits from
+// EventTarget, Event or a class that makes objects for Known Gaps, an object of
+// that class; for one with a class, the object its class makes with nothing
+// given.
 v8::MaybeLocal<v8::Value> NewObjectOfInterface(v8::Local<v8::Context> context,
                                                const WrapperTypeInfo& info);
 

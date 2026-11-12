@@ -17,6 +17,17 @@
 #
 # An event handler attribute that the class lacks is not a Known Gap: the
 # bindings give it Chrome's behaviour themselves.
+#
+# `made_by_known_gaps = true` says that a Known Gap may make an object of the
+# class with nothing given, which the class's static CreateForKnownGap() makes,
+# for a Known Gap that gives one, and for one that gives an object of an
+# interface without a class that inherits from it. Then `constructor` names
+# the constructor as any member, and a constructor that is a Known Gap makes
+# the object that way. Without it, the class has its constructor.
+#
+# "maplike" or "setlike" in `implemented` gives a read-only declaration of
+# that kind its behaviour: the bindings write its members, which read the
+# class's MaplikeEntries() or SetlikeValues().
 mitto_bindings_interfaces = [
   {
     name = "CharacterData"

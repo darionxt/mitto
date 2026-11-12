@@ -32,6 +32,12 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--implemented", action="append", default=[], help="INTERFACE.MEMBER whose behaviour the class has"
     )
+    parser.add_argument(
+        "--made-by-known-gaps",
+        action="append",
+        default=[],
+        help="an interface whose class makes an object for a Known Gap with nothing given",
+    )
     parser.add_argument("--output-dir", type=Path, required=True, help="where the C++ goes")
     parser.add_argument("--output", action="append", default=[], help="a file that GN expects in the output directory")
     parser.add_argument("--listing", type=Path, required=True, help="where the listing of every interface goes")
@@ -64,19 +70,31 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
         missing = _members_by_interface(arguments.missing)
         listed = _members_by_interface(arguments.implemented)
         only_implemented = set(arguments.only_implemented)
+        made_by_known_gaps = set(arguments.made_by_known_gaps)
         implemented: list[ImplementedInterface] = []
         for name in arguments.interface:
             members = listed.pop(name, [])
+            made = name in made_by_known_gaps
             if name in only_implemented:
                 if name in missing:
                     raise UnhandledError(f"{name} names both its missing members and its implemented ones")
                 implemented.append(
-                    ImplementedInterface(name=name, header=_class_header(name), implemented=tuple(members))
+                    ImplementedInterface(
+                        name=name, header=_class_header(name), implemented=tuple(members), made_by_known_gaps=made
+                    )
                 )
             else:
                 implemented.append(
-                    ImplementedInterface(name=name, header=_class_header(name), missing=tuple(missing.pop(name, [])))
+                    ImplementedInterface(
+                        name=name,
+                        header=_class_header(name),
+                        missing=tuple(missing.pop(name, [])),
+                        made_by_known_gaps=made,
+                    )
                 )
+        if made_by_known_gaps - set(arguments.interface):
+            unknown = ", ".join(sorted(made_by_known_gaps - set(arguments.interface)))
+            raise UnhandledError(f"--made-by-known-gaps names interfaces without a C++ class: {unknown}")
         if missing:
             raise UnhandledError(f"--missing names interfaces without a C++ class: {', '.join(sorted(missing))}")
         if listed or only_implemented - set(arguments.interface):
