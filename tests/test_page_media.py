@@ -49,6 +49,9 @@ _WRITTEN_BACK = [
     ("(min-color: 4294967296)", "(min-color: 2147483647)"),
     ("(device-aspect-ratio: 16.1/9.0)", "(device-aspect-ratio: 16.1 / 9)"),
     ("(aspect-ratio: 0/0)", "(aspect-ratio: 1 / 0)"),
+    # Blink checks no unit for a ratio's first term.
+    ("(aspect-ratio: 1px)", "(aspect-ratio: 1px / 1)"),
+    ("(min-aspect-ratio: calc(1.4))", "(min-aspect-ratio: calc(1.4) / 1)"),
     ("(width: 123456789px)", "(width: 1.23457e+08px)"),
     ("(100px<width<=200px)", "(100px < width <= 200px)"),
     ("(width >= 100px) or (not (color))", "(width >= 100px) or (not (color))"),
@@ -226,6 +229,10 @@ def _expected_from(machine: mitto.Machine) -> dict[str, bool]:
         "(orientation: landscape)": machine.viewport_width > machine.viewport_height,
         f"(resolution: {machine.scale}dppx)": True,
         f"(-webkit-device-pixel-ratio: {machine.scale})": True,
+        # Blink takes a math function of a number as an integer first, which rounds it.
+        "(-webkit-device-pixel-ratio: calc(1.4))": machine.scale == 1,
+        # A ratio's first term may have a unit, which Blink drops.
+        "(min-aspect-ratio: 1px)": machine.viewport_width >= machine.viewport_height,
         "(min-resolution: 2dppx)": machine.scale >= 2,
         "(prefers-color-scheme: dark)": machine.color_scheme == "dark",
         "(prefers-color-scheme: light)": machine.color_scheme == "light",

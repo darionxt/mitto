@@ -342,6 +342,10 @@ std::optional<MediaQueryExpValue> ConsumeExpValue(
     std::u16string_view feature,
     CssTokenStream& stream,
     const MediaQueryFeatures& features) {
+  // Every feature tries an integer first, as Blink does, and an integer takes
+  // a math function of a number too, which then rounds: Chrome 157 matches
+  // (-webkit-device-pixel-ratio: calc(1.4)) at a ratio of 1, and not
+  // (-webkit-device-pixel-ratio: 1.4).
   std::optional<CssPrimitiveValue> value = ConsumeInteger(stream);
   if (!value && !FeatureExpectingInteger(feature, features)) {
     value = ConsumeNumber(stream, /*non_negative=*/false);
@@ -366,6 +370,9 @@ std::optional<MediaQueryExpValue> ConsumeExpValue(
     return MediaQueryExpValue(std::move(ident));
   }
 
+  // Blink checks no unit for a ratio's first term, so Chrome 157 writes
+  // (aspect-ratio: 1px) back as (aspect-ratio: 1px / 1) and compares 1 with
+  // the viewport's ratio.
   if (FeatureWithAspectRatio(feature)) {
     const std::optional<double> known = value->GetValueIfKnown();
     if (known && *known < 0.0) {
