@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 6;
+inline constexpr uint32_t kPageProtocolVersion = 7;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -229,6 +229,25 @@ struct PageConnection {
   double downlink = 0;
 };
 
+// What a Page turns on and off beside the Engine Release's runtime-enabled
+// features and V8's defaults, as its Persona says: what its Chrome Release did
+// not ship yet, and what the variations seed of that release switches.
+struct PageFeatures {
+  PageFeatures();
+  PageFeatures(const PageFeatures&);
+  PageFeatures& operator=(const PageFeatures&);
+  ~PageFeatures();
+
+  // Names of runtime-enabled features to turn on, and then off, as Chrome's
+  // --enable-blink-features and --disable-blink-features take them. Which
+  // features exist only the Page knows, because only it holds the bindings.
+  std::vector<std::string> enable_blink_features;
+  std::vector<std::string> disable_blink_features;
+  // V8's flags, such as "--no-foo" or "--foo=1", in the order to set them,
+  // after those of the Engine Release.
+  std::vector<std::string> v8_flags;
+};
+
 // What a Page starts with, which it would otherwise read from the machine and
 // the browser: what its Session's Machine, Persona and settings say. Places and
 // sizes on the desktop are in device-independent pixels, from the display's
@@ -288,6 +307,8 @@ struct PageStart {
   // What about:blank's document reads, which the library works out and adds
   // to what the "start" option of mitto_page_open() holds.
   PageConnection connection;
+  // What the Persona's Chrome Release turns on and off.
+  PageFeatures features;
 };
 
 // What a call to a Page gave back.

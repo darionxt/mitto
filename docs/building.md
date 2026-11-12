@@ -104,11 +104,12 @@ third_party\ninja\ninja.exe -C out\mitto mitto
 
 depot_tools' `ninja` command refuses a build directory where Siso has run, and this one does not.
 
-This builds three targets from [`native/`](../native), about 4,200 steps in all:
+This builds four targets from [`native/`](../native), about 4,200 steps in all:
 
 - `mitto_core`, the shared library `out/mitto/libmitto_core.dylib`, `libmitto_core.so` on Linux and `mitto_core.dll` on Windows. It exports only the C API in [`native/include/mitto/mitto.h`](../native/include/mitto/mitto.h), and on Windows also `GetHandleVerifier`, which `//base` marks `__declspec(dllexport)` in `base/win/scoped_handle_verifier.cc`. A linker cannot take that away, and it clashes with nothing, because Windows looks up an import in the DLL that the import names. `//base` only looks for it in the program that started the process.
 - `mitto_core_test`, a small C program that drives a request through the C API, the way an outside caller does, and prints the result. Its scenarios of Pages need the Page program beside the library ([runtime.md](runtime.md#tests)).
 - `html_tokenizer_test`, which runs html5lib's tokenizer tests against the **Runtime**'s HTML tokenizer in [`native/html`](../native/html). The library does not link the tokenizer: a **Page** runs in a process of its own ([ADR-0009](adr/0009-a-process-for-each-page.md)). See [The HTML tokenizer's tests](#the-html-tokenizers-tests).
+- `media_query_test`, which runs the cases of Blink's own media query tests against the Runtime's CSS tokenizer, media query parser and evaluator in [`native/css`](../native/css), which the library does not link either. See [The media query tests](#the-media-query-tests).
 
 Run the test program, which needs a network connection:
 
@@ -142,6 +143,16 @@ It runs each test once for each of its initial states, with its whole input in o
 
 The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
+### The media query tests
+
+`media_query_test` holds the case tables of Blink's `media_query_set_test.cc` and `media_query_evaluator_test.cc`, as the Engine Release has them, and sets up what a query reads as each Blink test sets up `MediaValuesCachedData`. It leaves out the tests that need a frame and its layout, the one of what a style sheet's cache depends on, and those of `@custom-media`, which need style sheets. It needs no files:
+
+```bash
+out/mitto/media_query_test
+```
+
+It prints each case that fails, with what it expected and what it got, and fails if any does. For Chromium 157.0.8103.39 all 712 cases pass. The release routine's [comparison of two releases](#compare-two-releases) shows when Blink changes those tests or the files that `native/css` ports, and their tables are copied again then. The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the sanitizer workflow run it too.
+
 ## Build the Runtime
 
 The **Runtime** runs a **Page**'s scripts in a process of its own, on the **Engine Release**'s V8 ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md), [ADR-0009](adr/0009-a-process-for-each-page.md)). Its targets are in [`native/page`](../native/page) and [`native/bindings`](../native/bindings), and the group `//mitto:runtime` builds them. It exists only in a build directory that asks for it with the GN argument `mitto_enable_runtime`, which is off in [`tools/workspace/args.gn`](../tools/workspace/args.gn). [`tools/workspace/runtime_args.gn`](../tools/workspace/runtime_args.gn) turns it on, with the other arguments that the Runtime needs. The [source export](#build-from-the-source-export) carries what it reads, so it also [builds from there](#the-runtime-from-the-source-export), with no checkout. That build directory builds the Runtime and not the library, which `out/mitto` builds as before: [one of those arguments](#icus-data-and-v8s-snapshot) would clash with the library on Linux.
@@ -168,7 +179,7 @@ A compile job of V8 needs far more memory than one of the library, and ninja run
 
 This builds four things:
 
-- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context, then the event loop until no task is ready and no timer is set, and prints what the script returns, as `String()` writes it, or for a promise what it was fulfilled with. A script that throws, or whose promise is rejected or never settles, makes it print why to standard error and exit with 1. What a timer or a microtask throws goes to standard error, and the program goes on. `--version` prints V8's version. Each context has a `Window` for its global object and the interfaces that the Runtime implements, such as `Document`, `Element` and `EventTarget`, with Chrome's members and messages, and a `document`: about:blank's, or with `--html=MARKUP` before the script, the one that the HTML parser builds from that markup ([runtime.md](runtime.md#the-document)). A script of `-` makes it read the script from standard input, for one longer than a command line holds: Windows' takes 32,767 characters. Scripts and markup are UTF-8, also on Windows, where the program reads its command line in UTF-16. `--enable-blink-features=` and `--disable-blink-features=`, before the script, turn runtime-enabled features on and off by name, as in Chrome ([runtime.md](runtime.md#runtime-enabled-features)).
+- `mitto_page`, the Page program, `out/runtime/mitto_page` and `mitto_page.exe` on Windows. The library starts it for each Page, with `--session=` and its end of the channel, and it then serves that Page's Session, as [runtime.md](runtime.md) describes. Given a script instead, it starts V8, runs the script in a new context, then the event loop until no task is ready and no timer is set, and prints what the script returns, as `String()` writes it, or for a promise what it was fulfilled with. A script that throws, or whose promise is rejected or never settles, makes it print why to standard error and exit with 1. What a timer or a microtask throws goes to standard error, and the program goes on. `--version` prints V8's version. Each context has a `Window` for its global object and the interfaces that the Runtime implements, such as `Document`, `Element` and `EventTarget`, with Chrome's members and messages, and a `document`: about:blank's, or with `--html=MARKUP` before the script, the one that the HTML parser builds from that markup ([runtime.md](runtime.md#the-document)). A script of `-` makes it read the script from standard input, for one longer than a command line holds: Windows' takes 32,767 characters. Scripts and markup are UTF-8, also on Windows, where the program reads its command line in UTF-16. `--enable-blink-features=` and `--disable-blink-features=`, before the script, turn runtime-enabled features on and off by name, as in Chrome ([runtime.md](runtime.md#runtime-enabled-features)). A Session's Page takes neither, nor `--html=`: its features come in its start message.
 - `html_tree_builder_test`, which runs html5lib's tree construction tests against the HTML parser's tree builder in [`native/dom`](../native/dom): see [The tree builder's tests](#the-tree-builders-tests).
 - The Web IDL database, `out/runtime/gen/mitto/bindings/web_idl_database.pickle`: see [below](#the-web-idl-database).
 - The bindings, which the bindings generator writes from the database into `out/runtime/gen/mitto/bindings`, with a listing of every interface and member it plans, `web_idl_listing.txt`, and the generator's own test, which checks that it refuses an extended attribute it does not know ([runtime.md](runtime.md#the-bindings)). The generator reads the whole database on every build, so a construct it does not handle stops the build with a message that names it.
@@ -448,7 +459,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
 | `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program, the tree builder's test and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 
@@ -460,7 +471,7 @@ The fuzz targets have a build of their own because Chromium's fuzzing builds def
 
 ```bash
 export MITTO_PAGE_PROGRAM=/absolute/path/to/new/directory/chromium-<tag>/src/out/runtime-asan/mitto_page
-ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py
+ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_page_program.py tests/test_page_bindings.py tests/test_page_document.py tests/test_page_media.py
 ```
 
 To run the C test program against a local [capture server](capture.md), with `mitto_core_test` from the `asan` or the `ubsan` build:
@@ -472,7 +483,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML, `media_query_fuzzer` for what a page gives `matchMedia()` and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
 
 ```bash
 mkdir corpus

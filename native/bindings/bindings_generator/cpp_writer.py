@@ -57,7 +57,8 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # The extended attributes beyond those of role NONE that the writer follows on a member it writes behaviour for.
 # - ActiveScriptWrappable: a C++ object and its wrapper hold each other, so the wrapper and its listeners live as long as
 #   anything reaches the object, as the navigator does its connection, which is all that Blink's pending activity adds
-#   for the classes that have it.
+#   for most classes that have it. Blink also keeps a MediaQueryList with change listeners alive while nothing reaches
+#   it, which only a WeakRef or FinalizationRegistry can see; a class with it says in its header what it keeps.
 # - CEReactions: the Runtime has no custom elements, so there are no reactions to run around a call.
 # - CachedAccessor and CachedAttribute: a page sees the same value either way; caching only saves calls.
 # - CrossOrigin: only a frame of another origin sees it, and a Page has no frames yet.
