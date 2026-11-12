@@ -29,6 +29,7 @@ from bindings_generator.model import (
     Constant,
     Dictionary,
     DictionaryMember,
+    ExposedConstruct,
     ExtendedAttributes,
     IdlType,
     Interface,
@@ -56,7 +57,7 @@ class Definitions:
     """Everything the reader took from the database."""
 
     interfaces: dict[str, Interface]
-    """Interfaces and namespaces, by identifier."""
+    """Interfaces, namespaces and callback interfaces, by identifier."""
     dictionaries: dict[str, Dictionary]
     callback_interfaces: dict[str, CallbackInterface]
     enumerations: dict[str, tuple[str, ...]]
@@ -77,10 +78,11 @@ def read_database(database: Any) -> Definitions:
             raise UnhandledError(f"the database holds a kind of definition the generator does not handle: {kind}")
 
     interfaces: dict[str, Interface] = {}
-    for definition in itertools.chain(database.interfaces, database.namespaces):
+    for definition in itertools.chain(database.interfaces, database.namespaces, database.callback_interfaces):
         interfaces[definition.identifier] = _read_interface(definition)
     callback_interfaces = {
-        definition.identifier: _read_callback_interface(definition) for definition in database.callback_interfaces
+        definition.identifier: _callback_interface(interfaces[definition.identifier])
+        for definition in database.callback_interfaces
     }
     for definition in database.callback_functions:
         where = f"callback {definition.identifier}"
@@ -214,16 +216,7 @@ class _Exposures:
         return condition_of(member.exposure, global_names)
 
     def group_condition(self, group: Any) -> Condition:
-        """An overload group is exposed where any of its overloads is."""
-        global_names = self._global_names_for_member(group)
-        conditions = [condition_of(overload.exposure, global_names) for overload in group]
-        if any(condition.is_always for condition in conditions):
-            return ALWAYS
-        if len(set(conditions)) == 1:
-            return conditions[0]
-        # Blink checks each overload's condition and installs the function if any holds.
-        either = " or ".join(f"({condition.describe()})" for condition in conditions)
-        return Condition(other=(either,), context_dependent=bool(group.exposure.is_context_dependent(global_names)))
+        return group_condition(group, self._global_names_for_member(group))
 
     def _global_names_for_member(self, member: Any) -> list[str]:
         if self._scopes is None:
@@ -237,6 +230,19 @@ class _Exposures:
         if not all(is_exposed_wherever_class_like_is(overload.exposure) for overload in overloads):
             return self._global_names
         return sorted({entry.global_name for entry in member.exposure.global_names_and_features})
+
+
+def group_condition(group: Any, global_names: list[str]) -> Condition:
+    """An overload group is exposed where any of its overloads is, as bind_gen's expr_or() of their conditions."""
+    conditions = [condition_of(overload.exposure, global_names) for overload in group]
+    if any(condition.is_always for condition in conditions):
+        return ALWAYS
+    if len(set(conditions)) == 1:
+        return conditions[0]
+    return Condition(
+        alternatives=tuple(dict.fromkeys(conditions)),
+        context_dependent=bool(group.exposure.is_context_dependent(global_names)),
+    )
 
 
 def _is_group(member: Any) -> bool:
@@ -409,6 +415,42 @@ def _read_special_operations(definition: Any) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _read_exposed(definition: Any) -> tuple[ExposedConstruct, ...]:
+    """The properties of a [Global] interface's global object that give the constructs exposed on it, in the order
+    that bind_gen's make_property_entries_and_callback_defs() lists them, each with its condition as the global object
+    sees it."""
+    global_names = list(definition.extended_attributes.values_of("Global"))
+    constructs: list[ExposedConstruct] = []
+    for construct in definition.exposed_constructs:
+        if "LegacyNoInterfaceObject" in construct.extended_attributes:
+            continue
+        if construct.is_namespace:
+            kind = "namespace"
+        elif construct.is_callback_interface:
+            kind = "callback interface"
+        else:
+            kind = "interface"
+        name = construct.identifier
+        constructs.append(ExposedConstruct(name, kind, name, condition_of(construct.exposure, global_names)))
+    for alias in definition.legacy_window_aliases:
+        where = f"[LegacyWindowAlias={alias.identifier}]"
+        _check_extended_attributes(where, alias)
+        condition = condition_of(alias.exposure, global_names)
+        constructs.append(ExposedConstruct(alias.identifier, "alias", alias.original.identifier, condition))
+    for construct in definition.exposed_constructs:
+        for group in getattr(construct, "legacy_factory_function_groups", ()):
+            constructs.append(
+                ExposedConstruct(
+                    group.identifier,
+                    "factory function",
+                    construct.identifier,
+                    group_condition(group, global_names),
+                    length=int(group.min_num_of_required_arguments),
+                )
+            )
+    return tuple(constructs)
+
+
 def _read_interface(definition: Any) -> Interface:
     name = definition.identifier
     if definition.is_namespace:
@@ -469,11 +511,11 @@ def _read_interface(definition: Any) -> Interface:
         exposed_constructs=tuple(construct.identifier for construct in getattr(definition, "exposed_constructs", ())),
         unscopables=tuple(sorted(unscopables)),
         stringifier_condition=stringifier_condition,
+        exposed=_read_exposed(definition) if "Global" in extended else (),
     )
 
 
-def _read_callback_interface(definition: Any) -> CallbackInterface:
-    interface = _read_interface(definition)
+def _callback_interface(interface: Interface) -> CallbackInterface:
     operations = [group.name for group in interface.operation_groups if not group.is_static]
     if len(operations) != 1:
         raise UnhandledError(f"callback interface {interface.name}: the generator handles one operation only")

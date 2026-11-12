@@ -3,7 +3,8 @@
 These run where MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_program.py does. What a page sees of the
 interfaces the Runtime implements is compared with what real Chrome of the Engine Release showed: tests/runtime/chrome
 holds a record for each Chrome build, which probe.js made there through record.html (docs/runtime.md says how), and the
-same probe runs here.
+same probe runs here. The global object is compared whole, with every interface object, namespace and alias that the
+bindings give it.
 """
 
 import json
@@ -106,8 +107,26 @@ def page(program: Path) -> dict[str, Any]:
     return json.loads(result.stdout)
 
 
+# What a Page's global object has or lacks beside Chrome's that is not the bindings', and that other tickets of M7
+# give or take away (#216): window.chrome, which Chrome's renderer makes outside Blink's Web IDL files, and
+# SharedArrayBuffer, which Chrome takes away from a page that is not cross-origin isolated.
+_GLOBAL_OUTSIDE_THE_BINDINGS = frozenset({"chrome", "SharedArrayBuffer"})
+
+
 def test_there_is_a_recording_of_the_engine_release() -> None:
     assert (_RECORDINGS / f"{_ENGINE_BUILD}.json").is_file()
+
+
+def test_the_global_object_has_chromes_own_properties_in_chromes_order(
+    chrome: dict[str, Any], page: dict[str, Any]
+) -> None:
+    # V8's builtins, then the interface objects, namespaces, aliases and factory functions on Window's template, which
+    # V8 installs last first, then Window's members, then what the context decides, each with its attributes, name and
+    # length, for the Engine Release's stable set of features.
+    def outside(entries: list[Any]) -> list[Any]:
+        return [entry for entry in entries if entry[0] not in _GLOBAL_OUTSIDE_THE_BINDINGS]
+
+    assert outside(page["global"]) == outside(chrome["global"])
 
 
 @pytest.mark.parametrize("name", _INTERFACES)

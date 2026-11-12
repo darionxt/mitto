@@ -25,6 +25,7 @@ the Runtime implements show them.
 # Upstream: third_party/blink/renderer/build/scripts/templates/features_generated.cc.tmpl
 # Upstream: third_party/blink/renderer/core/exported/web_view_impl.cc
 # Upstream: content/child/runtime_features.cc
+# Upstream: content/browser/web_contents/web_contents_impl.cc
 
 import dataclasses
 from collections.abc import Mapping, Sequence
@@ -43,11 +44,16 @@ PLATFORM = "Win"
 MACHINE_DECIDED = {"TouchEventFeatureDetection": False}
 
 # The features that Chrome's content layer turns on when a renderer starts, from a base::Feature of another name that is
-# on by default, which runtime_enabled_features.json5 does not say: SetRuntimeFeaturesFromChromiumFeatures() copies
-# network::features::kLocalNetworkAccessChecks, on by default in services/network/public/cpp/features.cc, into
-# LocalNetworkAccessPermissionPolicy, which puts targetAddressSpace on Request. Each release's listing shows where a new
-# one appears on an interface that the Runtime implements.
-CONTENT_ENABLED = frozenset({"LocalNetworkAccessPermissionPolicy"})
+# on by default, which runtime_enabled_features.json5 does not say:
+# - SetRuntimeFeaturesFromChromiumFeatures() copies network::features::kLocalNetworkAccessChecks, on by default in
+#   services/network/public/cpp/features.cc, into LocalNetworkAccessPermissionPolicy, which puts targetAddressSpace on
+#   Request, and features::kServiceWorkerPaymentApps, on by default in content/public/common/content_features.cc, into
+#   PaymentApp, which exposes PaymentManager.
+# - WebContentsImpl::ComputeWebPreferences() sets payment_request_enabled from features::kWebPayments, on by default in
+#   content/public/common/content_features.cc, and WebViewImpl::ApplyWebPreferences() copies it into PaymentRequest,
+#   which exposes PaymentRequest and the interfaces that go with it.
+# Each release's listing shows where a new one appears, and a comparison of a Page's global object with Chrome's.
+CONTENT_ENABLED = frozenset({"LocalNetworkAccessPermissionPolicy", "PaymentApp", "PaymentRequest"})
 
 # The keys of a feature that the generator reads or knows to leave aside, with why.
 _KEYS = {
