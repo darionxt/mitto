@@ -333,6 +333,15 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "MediaQueryList"
+    file = "media_query_list"
+    missing = [ "onchange" ]
+  },
+  {
+    name = "MediaQueryListEvent"
+    file = "media_query_list_event"
+  },
+  {
     name = "Performance"
     file = "performance"
     implemented = [
@@ -425,6 +434,7 @@ mitto_bindings_interfaces = [
       "outerWidth",
       "outerHeight",
       "devicePixelRatio",
+      "matchMedia",
     ]
   },
   {

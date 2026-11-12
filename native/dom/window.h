@@ -35,6 +35,7 @@ namespace mitto {
 class DOMTimerCoordinator;
 class Document;
 class Fetcher;
+class MediaQueryList;
 class Navigator;
 class Performance;
 class Screen;
@@ -88,6 +89,7 @@ class Window final : public WindowProperties {
   int32_t OuterWidth() const { return start_.window_width; }
   int32_t OuterHeight() const { return start_.window_height; }
   double DevicePixelRatio() const { return start_.scale; }
+  MediaQueryList* MatchMedia(const std::u16string& query);
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }

@@ -100,5 +100,12 @@ executable("mitto_page") {
   # (sandbox/policy/win/sandbox_win.cc), so this program leaves it out too.
   if (is_win) {
     configs -= [ "//build/config/compiler:cet_shadow_stack" ]
+
+    # The 8 MiB stack of chrome.exe, which Chrome's renderers run as, where
+    # Windows gives a program 1 MiB, so that what recurses once for each level
+    # of a page's input, such as the parentheses of a media query, goes as deep
+    # as in Chrome. V8 sets its own limit for scripts either way.
+    # Upstream: chrome/BUILD.gn
+    ldflags = [ "/STACK:0x800000" ]
   }
 }
