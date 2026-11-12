@@ -1,11 +1,15 @@
 // The timers of a window: setTimeout(), setInterval() and the clearing of
 // either, as the HTML Standard has them, and as Chrome runs them where it
-// differs: on the real clock, as delayed tasks of the Page's event loop.
+// differs: on the real clock, as delayed tasks of the Page's event loop. The
+// defaults of SetIntervalWithoutClamp, LowerHighResolutionTimerThreshold and
+// AlignWakeUps decide the clamp and the precision, so their files are named.
 //
 // Upstream: third_party/blink/renderer/core/scheduler/dom_timer.h
 // Upstream: third_party/blink/renderer/core/scheduler/dom_timer.cc
 // Upstream: third_party/blink/renderer/core/scheduler/scheduled_action.cc
 // Upstream: third_party/blink/renderer/platform/timer.cc
+// Upstream: third_party/blink/common/features.cc
+// Upstream: base/task/task_features.cc
 
 #ifndef MITTO_DOM_DOM_TIMER_H_
 #define MITTO_DOM_DOM_TIMER_H_
