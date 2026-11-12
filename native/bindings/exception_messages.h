@@ -36,6 +36,26 @@ class ExceptionMessages {
   static std::string FailedToSet(std::string_view property,
                                  std::string_view type,
                                  std::string_view detail);
+  static std::string FailedToEnumerate(std::string_view type,
+                                       std::string_view detail);
+  static std::string FailedToGetIndexed(std::string_view property,
+                                        std::string_view type,
+                                        std::string_view detail);
+  static std::string FailedToSetIndexed(std::string_view property,
+                                        std::string_view type,
+                                        std::string_view detail);
+  static std::string FailedToDeleteIndexed(std::string_view property,
+                                           std::string_view type,
+                                           std::string_view detail);
+  static std::string FailedToGetNamed(std::string_view property,
+                                      std::string_view type,
+                                      std::string_view detail);
+  static std::string FailedToSetNamed(std::string_view property,
+                                      std::string_view type,
+                                      std::string_view detail);
+  static std::string FailedToDeleteNamed(std::string_view property,
+                                         std::string_view type,
+                                         std::string_view detail);
 
   static std::string ConstructorCalledAsFunction();
   static std::string ArgumentNotOfType(int argument_index,

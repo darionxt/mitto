@@ -25,6 +25,7 @@ __all__ = [
     "Interface",
     "Operation",
     "OperationGroup",
+    "SpecialOperation",
     "TypeKind",
 ]
 
@@ -166,6 +167,19 @@ class Operation:
 
 
 @dataclasses.dataclass(frozen=True)
+class SpecialOperation:
+    """An indexed or named property operation, which V8 runs as an interceptor.
+
+    Attributes:
+        kind: "indexed getter", "indexed setter", "named getter", "named setter" or "named deleter".
+        operation: the operation, whose name is "" for one declared without an identifier.
+    """
+
+    kind: str
+    operation: Operation
+
+
+@dataclasses.dataclass(frozen=True)
 class OperationGroup:
     """The overloads of one operation, or the constructors of an interface, which make one function.
 
@@ -271,8 +285,9 @@ class Interface:
     operation_groups: tuple[OperationGroup, ...]
     stringifier: str | None
     collection: CollectionLike | None
-    special_operations: tuple[str, ...]
-    """The indexed and named property operations, such as "indexed getter", which V8 runs as interceptors."""
+    special_operations: tuple[SpecialOperation, ...]
+    """The indexed and named property operations, which V8 runs as interceptors, in the order of SpecialOperation's
+    kinds."""
     legacy_window_aliases: tuple[str, ...]
     exposed_constructs: tuple[str, ...]
     unscopables: tuple[str, ...]
@@ -289,6 +304,10 @@ class Interface:
 
     def is_exposed_on(self, global_name: str) -> bool:
         return any(name in (global_name, "*") for name, _ in self.exposure)
+
+    def special_operation(self, kind: str) -> SpecialOperation | None:
+        """The special operation of that kind, such as "indexed getter", or None."""
+        return next((special for special in self.special_operations if special.kind == kind), None)
 
 
 @dataclasses.dataclass(frozen=True)

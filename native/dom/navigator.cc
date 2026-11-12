@@ -6,8 +6,10 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
+#include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
 #include "mitto/dom/network_information.h"
+#include "mitto/dom/plugin_array.h"
 #include "mitto/dom/script_values.h"
 #include "v8/include/v8-isolate.h"
 
@@ -65,6 +67,8 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(languages_array_);
   visitor->Trace(connection_);
+  visitor->Trace(plugins_);
+  visitor->Trace(mime_types_);
 }
 
 uint64_t Navigator::HardwareConcurrency() const {
@@ -143,8 +147,23 @@ bool Navigator::Webdriver() const {
 }
 
 bool Navigator::PdfViewerEnabled() const {
-  // Chrome's PDF viewer handles application/pdf in a new profile.
+  // Chrome's PDF viewer handles application/pdf in a new profile, so
+  // navigator.plugins lists it.
   return true;
+}
+
+PluginArray* Navigator::Plugins() {
+  if (!plugins_) {
+    plugins_ = PluginArray::Create();
+  }
+  return plugins_.Get();
+}
+
+MimeTypeArray* Navigator::MimeTypes() {
+  if (!mime_types_) {
+    mime_types_ = MimeTypeArray::Create(Plugins());
+  }
+  return mime_types_.Get();
 }
 
 bool Navigator::JavaEnabled() const {

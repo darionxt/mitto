@@ -12,7 +12,7 @@ import pytest
 from bindings_generator import extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import Site, TypeMapper
-from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute
+from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute, write_bindings
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
 from bindings_generator.known_gaps import KnownGaps
@@ -32,11 +32,13 @@ from bindings_generator.model import (
     Interface,
     Operation,
     OperationGroup,
+    SpecialOperation,
     TypeKind,
 )
 from bindings_generator.runtime_features import read_features
 from bindings_generator.table_writer import Construct, KnownGapContext, write_tables
 from bindings_generator.type_tables import TypeTables
+from bindings_generator.web_idl_reader import Definitions
 
 BINDINGS = Path(__file__).resolve().parents[1] / "native" / "bindings"
 
@@ -526,7 +528,7 @@ def test_a_table_leaves_out_what_a_page_never_installs() -> None:
 def test_iterator_symbols_can_be_replaced_and_the_others_cannot() -> None:
     # Blink installs @@iterator with v8::DontEnum alone, and @@toStringTag and @@unscopables read-only.
     pair = CollectionLike("iterable", (), (_operation("entries"),), "entries")
-    indexed = _interface(special_operations=("indexed getter",))
+    indexed = _interface(special_operations=(SpecialOperation("indexed getter", _operation("item").overloads[0]),))
     iterable = _interface(collection=pair, unscopables=("x",))
 
     def writable(interface: Interface) -> dict[str, bool | None]:
@@ -638,3 +640,91 @@ def test_an_operation_table_holds_each_overload_with_its_arguments() -> None:
     assert "kOverloads0[] = {{kArguments0_0, &kIdlType1, nullptr}, {kArguments0_1, &kIdlType0, &Condition0}};" in (
         source
     )
+
+
+def _collection(*specials: str, unenumerable: bool = True) -> Interface:
+    """An interface like PluginArray, with `length`, item() and namedItem(), and the special operations named."""
+    thing = IdlType(TypeKind.INTERFACE, "Thing", nullable=True)
+    item = Operation(
+        "item",
+        (Argument("index", IdlType(TypeKind.INTEGER, "unsigned long"), False, False, None),),
+        thing,
+        False,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+    named_item = Operation(
+        "namedItem",
+        (Argument("name", IdlType(TypeKind.STRING, "DOMString"), False, False, None),),
+        thing,
+        False,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+    operations = {"indexed getter": item, "named getter": named_item, "named setter": named_item}
+    return _interface(
+        attributes=(
+            Attribute("length", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, ExtendedAttributes(), ALWAYS),
+        ),
+        operation_groups=tuple(
+            OperationGroup(operation.name, (operation,), False, 1, ExtendedAttributes(), ALWAYS)
+            for operation in (item, named_item)
+        ),
+        special_operations=tuple(SpecialOperation(kind, operations[kind]) for kind in specials),
+        extended_attributes=_extended("LegacyUnenumerableNamedProperties") if unenumerable else ExtendedAttributes(),
+    )
+
+
+def _bindings_of(interface: Interface, implemented: ImplementedInterface) -> str:
+    """The bindings that the C++ writer gives the interface, beside a Window that exposes it."""
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=tuple(ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Thing", "Window")),
+    )
+    definitions = Definitions({"Thing": interface, "Window": window}, {}, {}, {}, frozenset())
+    files = write_bindings(definitions, [], [implemented, ImplementedInterface("Window", "mitto/dom/window.h")])
+    return files["v8_thing.cc"]
+
+
+def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() -> None:
+    source = _bindings_of(
+        _collection("indexed getter", "named getter"), ImplementedInterface("Thing", "mitto/dom/thing.h")
+    )
+
+    assert "return HolderOf(isolate, holder)->Length();" in source
+    assert "return ToV8(isolate, HolderOf(isolate, holder)->Item(index));" in source
+    assert "const auto result = HolderOf(isolate, holder)->NamedItem(name);" in source
+    assert "return HolderOf(isolate, holder)->NamedPropertyEnumerator();" in source
+    assert "return HolderOf(isolate, holder)->NamedPropertyQuery(name);" in source
+    assert "    kNamedPropertiesUnenumerable,\n};" in source
+    assert "InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);" in source
+    # %Array.prototype.values%, as Blink installs it for an indexed getter.
+    assert "SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values," in source
+
+
+def test_a_named_getter_alone_leaves_the_indices_to_it() -> None:
+    source = _bindings_of(
+        _collection("named getter", unenumerable=False), ImplementedInterface("Thing", "mitto/dom/thing.h")
+    )
+
+    assert "kIndexedAndNamedProperties = {\n    nullptr,\n    nullptr,\n    &NamedPropertyGetter," in source
+    assert "    0,\n};" in source
+    assert "kArrayProto_values" not in source
+
+
+def test_a_getter_that_is_a_known_gap_has_no_interceptor() -> None:
+    implemented = ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("length", "item", "namedItem"))
+
+    source = _bindings_of(_collection("indexed getter", "named getter"), implemented)
+
+    assert "InstallIndexedAndNamedProperties" not in source
+    assert "kArrayProto_values" in source
+
+
+def test_the_writer_refuses_what_it_cannot_install_of_named_properties() -> None:
+    with pytest.raises(UnhandledError, match="interface Thing: the C\\+\\+ writer does not handle its named setter"):
+        _bindings_of(_collection("named getter", "named setter"), ImplementedInterface("Thing", "mitto/dom/thing.h"))

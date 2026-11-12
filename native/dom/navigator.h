@@ -1,7 +1,7 @@
 // The HTML Standard's Navigator, a window's `navigator`, with what the
 // Session's Persona says of the browser, its user agent, client hints and
 // languages, and what its Machine says of the computer: processors, memory and
-// touch points. Its other members are Known Gaps.
+// touch points, and the PDF viewer's plugins. Its other members are Known Gaps.
 //
 // Upstream: third_party/blink/renderer/core/frame/navigator.cc
 // Upstream: third_party/blink/renderer/core/frame/navigator_id.cc
@@ -31,8 +31,10 @@
 
 namespace mitto {
 
+class MimeTypeArray;
 class NavigatorUAData;
 class NetworkInformation;
+class PluginArray;
 
 class Navigator final : public bindings::ScriptWrappable {
  public:
@@ -65,6 +67,10 @@ class Navigator final : public bindings::ScriptWrappable {
   bool OnLine() const;
   bool Webdriver() const;
   bool PdfViewerEnabled() const;
+  // The same object each time, [SameObject], made the first time a page asks,
+  // as NavigatorPlugins keeps them.
+  PluginArray* Plugins();
+  MimeTypeArray* MimeTypes();
   bool JavaEnabled() const;
   NetworkInformation* Connection();
   float DeviceMemory() const;
@@ -85,6 +91,8 @@ class Navigator final : public bindings::ScriptWrappable {
   const std::string effective_type_;
   v8::TracedReference<v8::Array> languages_array_;
   cppgc::Member<NetworkInformation> connection_;
+  cppgc::Member<PluginArray> plugins_;
+  cppgc::Member<MimeTypeArray> mime_types_;
 };
 
 }  // namespace mitto
