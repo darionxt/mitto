@@ -13,6 +13,7 @@ a group of 1%, leaves most of them in its default group, as a Baseline is record
 # Upstream: components/variations/proto/layer.proto
 # Upstream: components/variations/study_filtering.cc
 # Upstream: components/variations/variations_layers.cc
+# Upstream: base/feature_list.cc
 # Upstream: gin/v8_initializer.cc
 
 import base64
@@ -338,6 +339,7 @@ def majority_switches(seed: VariationsSeed, client: Client) -> tuple[list[Featur
 
     A feature counts when the study that switches it, as Chrome takes the first study of each name that applies, switches
     it alike for more than half of all installations: its groups' share times the share of a layer's slots it holds.
+    Of two studies that switch one feature, the first counts, as Chrome keeps a feature's first override.
 
     Returns:
         The switched features, in the order of their studies, and the studies that switch a feature and whose filter
@@ -359,7 +361,14 @@ def majority_switches(seed: VariationsSeed, client: Client) -> tuple[list[Featur
                 undecided.append(UndecidedStudy(study.name, study.filter.undecided, tuple(dict.fromkeys(features))))
             continue
         taken.add(study.name)
-        switches += _study_switches(study, _layer_share(study, seed.layers))
+        # Chrome keeps the first override of a feature (FeatureList::RegisterOverride()), so a later study that
+        # switches one again changes nothing.
+        switched = {switch.feature for switch in switches}
+        switches += [
+            switch
+            for switch in _study_switches(study, _layer_share(study, seed.layers))
+            if switch.feature not in switched
+        ]
     return switches, undecided
 
 

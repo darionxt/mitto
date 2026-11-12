@@ -329,3 +329,14 @@ def test_groups_that_agree_on_the_parameters_count_together() -> None:
 
     [switch] = switches_of(data)
     assert (dict(switch.params), switch.params_share, switch.params_agreed) == ({"factor": "80"}, 0.6, True)
+
+
+def test_of_two_studies_that_switch_one_feature_the_first_counts() -> None:
+    data = seed(
+        study("Launch", group("Enabled", 100, enable=("V8Flag_sqrt_allocation_limits",)), filter=windows_stable()),
+        study(
+            "KillSwitch", group("Disabled", 100, disable=("V8Flag_sqrt_allocation_limits",)), filter=windows_stable()
+        ),
+    )
+
+    assert [(switch.study, switch.enabled) for switch in switches_of(data)] == [("Launch", True)]

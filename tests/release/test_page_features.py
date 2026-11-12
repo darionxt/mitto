@@ -488,3 +488,11 @@ def test_chromes_copy_order_decides_between_two_overrides_of_one_feature(reverse
 
     assert "Plain" in result.page.disable_blink_features
     assert [line.split(":")[0] for line in result.switched] == ["Plain on", "Plain off"]
+
+
+def test_a_v8_flag_feature_keeps_its_first_override() -> None:
+    switches = [switch("V8Flag_sqrt_allocation_limits", True), switch("V8Flag_sqrt_allocation_limits", False)]
+
+    page = persona_features(ENGINE_SOURCE, ENGINE_SOURCE, SEED, switches, baseline_seed=SEED).page
+
+    assert page.v8_flags == ("--sqrt_allocation_limits",)

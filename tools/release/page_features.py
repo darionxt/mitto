@@ -473,7 +473,9 @@ def _v8_flags(
                 f" {engine.v8_features.get(flag, 'not')} and cannot turn on: a Known Gap if a page can see it"
             )
     agreed: list[FeatureSwitch] = []
-    for switch in switches:
+    # A feature keeps its first override, as in FeatureList::RegisterOverride().
+    first = list({switch.feature: switch for switch in reversed(switches)}.values())[::-1]
+    for switch in first:
         if switch.feature.startswith(_V8_FLAG_PREFIX) and switch.enabled and not switch.params_agreed:
             review.append(
                 f"The seed turns {switch.feature} on for {switch.share:.0%} of installations in {switch.study}, but no"
