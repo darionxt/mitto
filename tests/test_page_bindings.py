@@ -1,10 +1,10 @@
 """Tests of the bindings in the Page program, which the generator in native/bindings writes from Blink's Web IDL files.
 
-These run where MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_program.py does. What a page sees of the
-interfaces the Runtime implements is compared with what real Chrome of the Engine Release showed: tests/runtime/chrome
-holds a record for each Chrome build, which probe.js made there through record.html (docs/runtime.md says how), and the
-same probe runs here. The global object is compared whole, with every interface object, namespace and alias that the
-bindings give it.
+These run where MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_program.py does. What a page sees of every
+interface, the global object's own properties among it, is the Parity Checks' of the Script Fingerprint
+(docs/parity.md). Here, tests/page_cases.js runs in the Page program, and what some calls throw or do, and the own
+properties of an instance of each class that the Runtime implements, are compared with what Chrome 157.0.8103.39 gave for
+the same script, which tests/data/page_cases.json keeps.
 """
 
 import json
@@ -18,50 +18,9 @@ import pytest
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 60
 _WRONG_ARGUMENTS = 2
-_REPOSITORY = Path(__file__).resolve().parents[1]
-_RECORDINGS = _REPOSITORY / "tests" / "runtime" / "chrome"
-_ENGINE_BUILD = (_REPOSITORY / "tools" / "workspace" / "chromium_tag").read_text(encoding="utf-8").strip()
-
-# The interfaces that the probe records, those that the Runtime implements. A member whose behaviour the Runtime does
-# not have yet, a Known Gap that native/bindings/interfaces.gni lists, has Chrome's shape all the same.
-_INTERFACES = [
-    "CharacterData",
-    "Comment",
-    "DOMException",
-    "Document",
-    "DocumentType",
-    "Element",
-    "Event",
-    "EventTarget",
-    "HTMLBRElement",
-    "HTMLBodyElement",
-    "HTMLDivElement",
-    "HTMLDocument",
-    "HTMLElement",
-    "HTMLHeadElement",
-    "HTMLHeadingElement",
-    "HTMLHtmlElement",
-    "HTMLLIElement",
-    "HTMLLinkElement",
-    "HTMLMetaElement",
-    "HTMLOListElement",
-    "HTMLParagraphElement",
-    "HTMLPreElement",
-    "HTMLScriptElement",
-    "HTMLSpanElement",
-    "HTMLStyleElement",
-    "HTMLTitleElement",
-    "HTMLUListElement",
-    "HTMLUnknownElement",
-    "Headers",
-    "Node",
-    "Performance",
-    "PopStateEvent",
-    "Request",
-    "Response",
-    "Text",
-    "Window",
-]
+_TESTS = Path(__file__).resolve().parent
+_CASES = _TESTS / "page_cases.js"
+_AS_CHROME = _TESTS / "data" / "page_cases.json"
 
 
 @pytest.fixture(scope="module")
@@ -90,75 +49,28 @@ def _evaluate(program: Path, script: str, *options: str) -> str:
     return result.stdout.removesuffix("\n")
 
 
-@pytest.fixture(scope="module")
-def chrome() -> dict[str, Any]:
-    """What Chrome of the Engine Release recorded."""
-    recording: dict[str, Any] = json.loads((_RECORDINGS / f"{_ENGINE_BUILD}.json").read_text(encoding="utf-8"))
-    assert recording["chrome"] == _ENGINE_BUILD
-    return recording["probe"]
+_CHROME: dict[str, Any] = json.loads(_AS_CHROME.read_text(encoding="utf-8"))
+"""What Chrome 157.0.8103.39 gave for tests/page_cases.js, which M6 recorded on Windows."""
 
 
 @pytest.fixture(scope="module")
 def page(program: Path) -> dict[str, Any]:
-    """What the Page program records with the same probe, which it reads from standard input: the probe is longer than
-    a command line holds on Windows."""
-    result = _run(program, "-", stdin=(_RECORDINGS / "probe.js").read_text(encoding="utf-8"))
+    """What the Page program gives for the same script, which it reads from standard input: the script is longer than a
+    command line holds on Windows."""
+    result = _run(program, "-", stdin=_CASES.read_text(encoding="utf-8"))
     assert (result.returncode, result.stderr) == (0, "")
     return json.loads(result.stdout)
 
 
-# What a Page's global object has or lacks beside Chrome's that is not the bindings', and that other tickets of M7
-# give or take away (#216): window.chrome, which Chrome's renderer makes outside Blink's Web IDL files, and
-# SharedArrayBuffer, which Chrome takes away from a page that is not cross-origin isolated.
-_GLOBAL_OUTSIDE_THE_BINDINGS = frozenset({"chrome", "SharedArrayBuffer"})
+@pytest.mark.parametrize("name", list(_CHROME["instances"]))
+def test_an_instance_has_chromes_own_properties(page: dict[str, Any], name: str) -> None:
+    # Such as Event's isTrusted and Document's location, which are [LegacyUnforgeable], and none for the others.
+    assert page["instances"][name] == _CHROME["instances"][name]
 
 
-def test_there_is_a_recording_of_the_engine_release() -> None:
-    assert (_RECORDINGS / f"{_ENGINE_BUILD}.json").is_file()
-
-
-def test_the_global_object_has_chromes_own_properties_in_chromes_order(
-    chrome: dict[str, Any], page: dict[str, Any]
-) -> None:
-    # V8's builtins, then the interface objects, namespaces, aliases and factory functions on Window's template, which
-    # V8 installs last first, then Window's members, then what the context decides, each with its attributes, name and
-    # length, for the Engine Release's stable set of features.
-    def outside(entries: list[Any]) -> list[Any]:
-        return [entry for entry in entries if entry[0] not in _GLOBAL_OUTSIDE_THE_BINDINGS]
-
-    assert outside(page["global"]) == outside(chrome["global"])
-
-
-@pytest.mark.parametrize("name", _INTERFACES)
-@pytest.mark.parametrize(
-    "part",
-    [
-        "global",
-        "interfaceObject",
-        "prototype",
-        "prototypeParent",
-        "interfaceObjectParent",
-        "toStringTag",
-        "callWithoutNew",
-        "constructWithoutArguments",
-        "wrongReceiver",
-    ],
-)
-def test_an_interface_is_as_chrome_has_it(chrome: dict[str, Any], page: dict[str, Any], name: str, part: str) -> None:
-    # Own properties in order, with their attributes, names and lengths, and what calls with the wrong receiver throw.
-    assert page["interfaces"][name][part] == chrome["interfaces"][name][part]
-
-
-@pytest.mark.parametrize("name", sorted(set(_INTERFACES) - {"CharacterData", "DocumentType", "Node", "Window"}))
-def test_an_instance_has_chromes_own_properties(chrome: dict[str, Any], page: dict[str, Any], name: str) -> None:
-    # CharacterData and Node have no instances of their own, a page makes no doctype without a parser of documents,
-    # and Window's instance holds every interface object, which the Page lacks until M7.
-    assert page["instances"][name] == chrome["instances"][name]
-
-
-def test_the_cases_go_as_in_chrome(chrome: dict[str, Any], page: dict[str, Any]) -> None:
-    assert [name for name, _ in page["cases"]] == [name for name, _ in chrome["cases"]]
-    for (name, outcome), (_, expected) in zip(page["cases"], chrome["cases"], strict=True):
+def test_the_cases_go_as_in_chrome(page: dict[str, Any]) -> None:
+    assert [name for name, _ in page["cases"]] == [name for name, _ in _CHROME["cases"]]
+    for (name, outcome), (_, expected) in zip(page["cases"], _CHROME["cases"], strict=True):
         assert (name, outcome) == (name, expected)
 
 

@@ -188,6 +188,9 @@ def member_row(
             forward = _quote(extended.value_of("PutForwards") or "")
         if member.is_static:
             flags.append("kMemberStatic")
+        if member.idl_type.kind is TypeKind.PROMISE:
+            # No V8 signature check: another kind of receiver rejects the promise, as bind_gen's make_check_receiver().
+            flags.append("kMemberReturnsPromise")
         if "NewObject" in extended:
             flags.append("kMemberNewObject")
         if context.gaps.is_event_handler(member):

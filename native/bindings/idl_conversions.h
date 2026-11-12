@@ -53,6 +53,28 @@ const OverloadInfo* ConvertArguments(
     std::vector<v8::Local<v8::Value>>& converted,
     ExceptionState& exception_state);
 
+// The two halves of ConvertArguments(), for a caller that does something in
+// between, as bind_gen's overload dispatcher chooses an overload before the
+// overload's own function checks the receiver. ChooseOverload() returns the
+// overload that the call's arguments select, after the tests of the
+// distinguishing argument, or null if none does or a test threw.
+// ConvertOverloadArguments() converts the arguments for it, and returns false
+// if one threw.
+const OverloadInfo* ChooseOverload(
+    const v8::FunctionCallbackInfo<v8::Value>& info,
+    const OperationInfo& operation,
+    ExceptionState& exception_state);
+bool ConvertOverloadArguments(const v8::FunctionCallbackInfo<v8::Value>& info,
+                              const OverloadInfo& overload,
+                              std::vector<v8::Local<v8::Value>>& converted,
+                              ExceptionState& exception_state);
+
+// Whether the IDL declares more than one overload of `operation`, for which
+// bind_gen writes an overload dispatcher, however many of them the page's
+// feature set has, such as NavigatorLogin.setStatus() with one behind
+// FedCmLightweightMode.
+bool HasOverloads(const OperationInfo& operation);
+
 }  // namespace mitto::bindings
 
 #endif  // MITTO_BINDINGS_IDL_CONVERSIONS_H_
