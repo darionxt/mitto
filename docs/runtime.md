@@ -228,7 +228,7 @@ A Known Gap does what the owner chose on 2026-11-12, in [#208](https://github.co
 
 Some members follow other rules:
 
-- **Event handler attributes** are not Known Gaps. The generator gives them Chrome's behaviour, as it does for reflected attributes. The getter gives `null` until a handler is set. The setter stores any object, and turns anything else into `null` without throwing, as `JSEventHandler::CreateOrNull()` does. Running the handler when the Runtime dispatches its event comes in a later step of M7.
+- **Event handler attributes** are not Known Gaps. The generator gives them Chrome's behaviour, as it does for reflected attributes. The getter gives `null` until a handler is set. The setter stores any object, and turns anything else into `null` without throwing, as `JSEventHandler::CreateOrNull()` does. The handler is a listener of its EventTarget ([`event_handlers.h`](../native/dom/event_handlers.h)): it joins the listeners the first time it is set, keeps its place when it is set again, and goes when it is set to `null`, as the HTML Standard's event handlers do. A dispatch calls it with the current target for `this` and the event for its argument, does nothing for one that cannot be called, and cancels the event when it returns `false`, as Blink's `JSEventHandler::InvokeInternal()` does. An `HTMLBodyElement`'s handlers of the window's events, such as `onload`, are its window's. A handler written in a content attribute, such as `<body onload="...">`, is not compiled yet, and neither is the special handling of an `ErrorEvent` at a window or of `beforeunload`, events that the Runtime does not fire.
 - **An attribute's setter** ignores a string that is not one of its enumeration's values, as Web IDL says, and one with `[PutForwards]` sets the attribute it names on what the getter gives, as `bind_gen`'s setters do. A setter of a nullable type, a dictionary, `any` or an event handler called with no argument throws "1 argument required, but only 0 present.".
 - **An object of an interface without a class** whose nearest ancestor with a class is `EventTarget` or `Event` has an object of that class behind it, which the DOM makes ([`objects_behind.h`](../native/dom/objects_behind.h)), so that `addEventListener()` and `dispatchEvent()` work on an `AbortSignal`, and `type` and `bubbles` on a `CustomEvent`, which its constructor's `type` and `EventInit` give. Its own members stay Known Gaps.
 - **The generator refuses by name** a Known Gap whose default would be unsafe or impossible:
@@ -326,7 +326,7 @@ What a page reads of the browser and the machine is what its Session sends, work
 | `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` | The window's size and place |
 | `devicePixelRatio` | The display's scale |
 
-The event handler attributes of `Screen`, `ScreenOrientation` and `NetworkInformation` are Known Gaps, and none of these values changes while a Page runs, so no `change` event comes. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
+None of these values changes while a Page runs, so no `change` event comes, and the `onchange` handlers of `Screen`, `ScreenOrientation` and `NetworkInformation` are kept but never run. `navigator.plugins` and `navigator.mimeTypes` are Known Gaps until the C++ writer handles indexed and named property getters. The window's document is about:blank's, `<html><head></head><body></body></html>` in quirks mode, until the Page loads a document through its Session. The Page program given a script takes the document's markup with `--html=MARKUP`, and the script from standard input for `-`.
 
 `mitto::NewPageContext()` makes such a context, and the Page program makes one for about:blank and one for each document that its Session loads. The window's timers, `queueMicrotask()`, `performance`, `fetch()` and `matchMedia()` have their behaviour, as [the event loop](#the-event-loop), [fetch()](#fetch) and [Media queries](#media-queries) say.
 
@@ -366,8 +366,8 @@ Known Gaps of `fetch()` in M6: `RequestInit`'s members beyond `method`, `headers
 | `DocumentType` | Its name and identifiers, and `ChildNode`'s members |
 | `Window` | `window`, `self`, `document`, `performance`, `setTimeout()`, `setInterval()`, `clearTimeout()`, `clearInterval()`, `queueMicrotask()`, `fetch()`, `navigator`, `clientInformation`, `screen`, `innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `screenX`, `screenY`, `screenLeft`, `screenTop` and `devicePixelRatio`, as [The window](#the-window) says and `matchMedia()` |
 | `Navigator` | What [The window](#the-window) lists. Its other members, such as `plugins`, `clipboard` and `getGamepads()`, are Known Gaps |
-| `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member but the event handler attributes, as [The window](#the-window) says |
-| `MediaQueryList`, `MediaQueryListEvent` | All but `onchange`, as [Media queries](#media-queries) says |
+| `NavigatorUAData`, `NetworkInformation`, `Screen`, `ScreenOrientation` | Every member, as [The window](#the-window) says |
+| `MediaQueryList`, `MediaQueryListEvent` | Every member, as [Media queries](#media-queries) says |
 | `Performance` | `now()` and `timeOrigin`, coarsened as Chrome's are. Its timelines, marks and measures are Known Gaps |
 | `Headers` | `new Headers()` from pairs or a record, `append()`, `set()`, `delete()`, `get()`, `has()` and `getSetCookie()`, with Chrome's checks and guards. Iterating over it is a Known Gap |
 | `Request` | `new Request()`, `method`, `url` and `headers` |
@@ -401,7 +401,6 @@ A Machine does not change while a Page runs, so no `change` event is ever fired,
 
 Known Gaps of media queries:
 
-- `onchange`, until the bindings give event handler attributes their behaviour.
 - The math functions other than `calc()`, `min()`, `max()` and `clamp()`, such as `round()` or `sin()`, and a product or quotient of two dimensions, which Blink's typed arithmetic takes. A value with one does not parse, so its media feature is unknown, where Chrome computes it: `(width: round(10px, 3px))` is written back as given and never matches, where Chrome writes `(width: calc(9px))`.
 - The units of the root element's font beyond `em` and `rem`: `ex`, `ch`, `ic`, `cap` and `lh` and their root forms take Blink's sizes for a document with no font data until the Runtime has fonts (roadmap, M9).
 - `(fallback: none)`, a feature of container queries that Blink parses in a media query too and whose evaluation then stops Chrome's renderer, is unknown.

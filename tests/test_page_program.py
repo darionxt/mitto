@@ -735,6 +735,24 @@ def test_a_page_loads_the_document_that_its_session_sends_and_asks_for_its_scrip
     assert session.close() == 0
 
 
+def test_a_documents_event_handler_attributes_run_as_it_loads(session: _Session) -> None:
+    # The handlers are listeners of their targets, which the loading's events reach in Chrome's order.
+    session.start()
+    document = (
+        b"<!doctype html><script>window.seen = [];"
+        b"document.onreadystatechange = () => seen.push(document.readyState);"
+        b"window.onload = (event) => seen.push('load ' + event.target.nodeName);</script>"
+    )
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, document)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(document)))
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+
+    assert session.evaluate("seen.join()") == (False, '"interactive,complete,load #document"')
+    assert session.close() == 0
+
+
 def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -> None:
     session.start()
     first = b"<script src=/wait.js></script>"

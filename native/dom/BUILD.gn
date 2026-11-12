@@ -23,6 +23,8 @@ source_set("dom") {
     "element.h",
     "event.cc",
     "event.h",
+    "event_handlers.cc",
+    "event_handlers.h",
     "event_target.cc",
     "event_target.h",
     "fetch_loader.cc",

@@ -5,6 +5,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_exception.h"
+#include "mitto/dom/event_handlers.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/objects_behind.h"
 #include "mitto/dom/window.h"
@@ -22,7 +23,9 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   bindings::PerIsolateData* const data =
       bindings::PerIsolateData::From(isolate);
   data->SetDOMExceptionHooks(DOMException::BindingsHooks());
-  data->SetObjectHooks(ObjectsBehindHooks());
+  bindings::PerIsolateData::ObjectHooks hooks = ObjectsBehindHooks();
+  AddEventHandlerHooks(hooks);
+  data->SetObjectHooks(hooks);
   // A new document reports each Known Gap it reaches again.
   data->StartDocument();
   const v8::Local<v8::ObjectTemplate> global_template =
