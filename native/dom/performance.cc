@@ -12,13 +12,6 @@ namespace {
 // A Page is never cross-origin isolated.
 constexpr bool kCrossOriginIsolated = false;
 
-// One secret for the process, as Blink keeps one static clamper.
-double ClampTimeResolution(base::TimeDelta time) {
-  static const base::NoDestructor<TimeClamper> clamper;
-  return clamper->ClampTimeResolution(time, kCrossOriginIsolated)
-      .InMillisecondsF();
-}
-
 // Blink's GetUnixAtZeroMonotonic().
 base::Time UnixAtZeroMonotonic() {
   return base::Time::Now() - (base::TimeTicks::Now() - base::TimeTicks());
@@ -56,6 +49,14 @@ MemoryInfo* Performance::Memory() const {
   return MemoryInfo::Create(MemoryInfo::IsProcessLockedToSite()
                                 ? MemoryInfo::Precision::kPrecise
                                 : MemoryInfo::Precision::kBucketized);
+}
+
+// static
+double Performance::ClampTimeResolution(base::TimeDelta time) {
+  // One secret for the process, as Blink keeps one static clamper.
+  static const base::NoDestructor<TimeClamper> clamper;
+  return clamper->ClampTimeResolution(time, kCrossOriginIsolated)
+      .InMillisecondsF();
 }
 
 // static

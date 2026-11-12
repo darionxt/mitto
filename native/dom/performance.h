@@ -34,6 +34,11 @@ class Performance final : public EventTarget {
   // the process is locked to a site.
   MemoryInfo* Memory() const;
 
+  // Blink's Performance::ClampTimeResolution(): `time` in milliseconds,
+  // coarsened as every time that a page reads is, with the process's one
+  // secret, so that two readings of one moment agree.
+  static double ClampTimeResolution(base::TimeDelta time);
+
   // Blink's MonotonicTimeToDOMHighResTimeStamp(): `time` in milliseconds since
   // `time_origin`, each coarsened before the difference, and 0 for a time
   // before it.
