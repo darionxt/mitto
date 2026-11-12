@@ -15,7 +15,14 @@ from tools.capture import HTTP1, HTTP2
 from tools.capture.recording import Json
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.release import persona
-from tools.release.persona import PersonaDataError, dumps_persona, persona_data, persona_path, write_persona
+from tools.release.persona import (
+    PAGE_FEATURES_KEY,
+    PersonaDataError,
+    dumps_persona,
+    persona_data,
+    persona_path,
+    write_persona,
+)
 
 BASELINES = load_baselines(BASELINES_DIRECTORY)
 ENGINE = max(WINDOWS_PERSONAS, key=int)
@@ -41,16 +48,25 @@ def replaced(name: str, value: str) -> Callable[[list[str]], list[str]]:
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
 def test_the_file_of_each_persona_is_byte_for_byte_what_its_baselines_write(release: str) -> None:
-    written = dumps_persona(persona_data(release, BASELINES)).encode()
+    data = persona_data(release, BASELINES)
+    data[PAGE_FEATURES_KEY] = json.loads(persona_path(release).read_text(encoding="utf-8"))[PAGE_FEATURES_KEY]
 
-    assert written == persona_path(release).read_bytes()
+    assert dumps_persona(data).encode() == persona_path(release).read_bytes()
 
 
-def test_writing_a_persona_writes_its_file_in_the_directory(tmp_path: Path) -> None:
+def test_writing_a_persona_keeps_what_its_page_starts_with(tmp_path: Path) -> None:
+    shutil.copy(persona_path(ENGINE), tmp_path)
+
     path = write_persona(ENGINE, BASELINES_DIRECTORY, tmp_path)
 
     assert path == tmp_path / f"chrome_{ENGINE}_windows.json"
     assert path.read_bytes() == persona_path(ENGINE).read_bytes()
+
+
+def test_writing_a_persona_that_has_no_file_yet_leaves_out_what_its_page_starts_with(tmp_path: Path) -> None:
+    path = write_persona(ENGINE, BASELINES_DIRECTORY, tmp_path)
+
+    assert PAGE_FEATURES_KEY not in json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_a_new_chrome_release_gets_the_release_of_its_directory(tmp_path: Path) -> None:

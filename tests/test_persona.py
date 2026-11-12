@@ -316,3 +316,30 @@ def test_the_full_version_is_the_build_that_recorded_the_baselines(release: str)
 
     assert lines["sec-ch-ua-full-version"] == f'"{build[1]}"'
     assert lines["sec-ch-ua-full-version-list"].count(f'v="{build[1]}"') == 2
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_a_persona_turns_each_runtime_enabled_feature_on_or_off_at_most_once(release: str) -> None:
+    features = PERSONAS[release].page_features
+    names = features.enable_blink_features + features.disable_blink_features
+
+    assert len(names) == len(set(names))
+    assert all(re.fullmatch(r"\w+", name) for name in names)
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_a_persona_sets_each_v8_flag_as_gin_writes_it_once(release: str) -> None:
+    flags = PERSONAS[release].page_features.v8_flags
+    names = [flag.removeprefix("--").split("=", 1)[0].removeprefix("no-") for flag in flags]
+
+    assert all(re.fullmatch(r"--[\w-]+(=\S+)?", flag) for flag in flags)
+    assert len(names) == len(set(names))
+
+
+def test_an_older_persona_turns_off_what_the_engine_release_added() -> None:
+    engine = max(WINDOWS_PERSONAS, key=int)
+    turned_off = {release: set(PERSONAS[release].page_features.disable_blink_features) for release in WINDOWS_PERSONAS}
+
+    for release in WINDOWS_PERSONAS:
+        if release != engine:
+            assert len(turned_off[release]) > len(turned_off[engine])

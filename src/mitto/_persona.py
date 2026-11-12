@@ -16,7 +16,7 @@ from typing import NotRequired, Self, TypedDict
 
 from mitto._body import EncodedBody, StreamBody
 from mitto._machine import Machine, client_hints
-from mitto._native import FetchParams, Priority
+from mitto._native import FetchParams, PageFeatures, Priority
 
 __all__ = [
     "CHROME_155_WINDOWS",
@@ -93,6 +93,15 @@ class _KindData(TypedDict):
     body: NotRequired[_BodyData]
 
 
+class _PageFeaturesData(TypedDict):
+    """What a Page of the Persona turns on and off, in a Persona's file."""
+
+    seed: str
+    enable_blink_features: list[str]
+    disable_blink_features: list[str]
+    v8_flags: list[str]
+
+
 class _PersonaData(TypedDict):
     """A Persona's file."""
 
@@ -101,6 +110,7 @@ class _PersonaData(TypedDict):
     accept_language: str
     user_agent: str
     kinds: dict[str, _KindData]
+    page_features: _PageFeaturesData
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,12 +123,16 @@ class Persona:
         accept_language: The Session's setting of the same name.
         user_agent: The native Session's setting of the same name, which is what its Chrome sends where no request's
             headers reach: in a CONNECT and in a fetch for a certificate.
+        page_features: What a Page of this Persona turns on and off beside the Engine Release's runtime-enabled
+            features and V8's defaults, so that it lacks what its Chrome Release did not ship and has what its
+            variations seed switches.
     """
 
     release: str
     operating_system: str
     accept_language: str
     user_agent: str
+    page_features: PageFeatures
     _kinds: dict[RequestKind, _KindData]
 
     @property
@@ -195,6 +209,11 @@ def load_persona(name: str) -> Persona:
         operating_system=data["operating_system"],
         accept_language=data["accept_language"],
         user_agent=data["user_agent"],
+        page_features=PageFeatures(
+            enable_blink_features=tuple(data["page_features"]["enable_blink_features"]),
+            disable_blink_features=tuple(data["page_features"]["disable_blink_features"]),
+            v8_flags=tuple(data["page_features"]["v8_flags"]),
+        ),
         _kinds={RequestKind(kind): kind_data for kind, kind_data in data["kinds"].items()},
     )
 
