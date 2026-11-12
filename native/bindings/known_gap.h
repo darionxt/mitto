@@ -18,8 +18,9 @@
 //    its return type's default, a promise resolved with the promised type's;
 //    a constructor gives the object V8 made for `new`.
 //
-// An event handler attribute stores and gives what Chrome's do, and reports
-// nothing. A member that the generator refuses keeps today's error,
+// An event handler attribute stores and gives what Chrome's do, as a listener
+// of the EventTarget behind its object (PerIsolateData::ObjectHooks), and
+// reports nothing. A member that the generator refuses keeps today's error,
 // `TypeError: Not implemented.`.
 
 #ifndef MITTO_BINDINGS_KNOWN_GAP_H_

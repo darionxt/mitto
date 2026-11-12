@@ -106,6 +106,39 @@ void CallListener(v8::Isolate* isolate,
   }
 }
 
+// Runs an event handler attribute's handler, as Blink's
+// JSEventHandler::InvokeInternal() does: nothing for one that cannot be
+// called, which a page can set; the current target for `this` and the event
+// for its argument; and a return value of false cancels the event. Chrome's
+// special handling of an ErrorEvent at a window and of beforeunload concerns
+// events that the Runtime does not fire yet.
+void CallAttributeHandler(v8::Isolate* isolate,
+                          v8::Local<v8::Object> handler,
+                          v8::Local<v8::Value> current_target,
+                          v8::Local<v8::Value> event_wrapper,
+                          Event* event) {
+  if (!handler->IsFunction()) {
+    return;
+  }
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kRunMicrotasks);
+  const v8::TryCatch try_catch(isolate);
+  v8::Local<v8::Value> arguments[] = {event_wrapper};
+  v8::Local<v8::Value> result;
+  if (!handler.As<v8::Function>()
+           ->Call(context, current_target, 1, arguments)
+           .ToLocal(&result)) {
+    if (try_catch.HasCaught()) {
+      bindings::ReportException(isolate, try_catch.Exception());
+    }
+    return;
+  }
+  if (result->IsFalse()) {
+    event->PreventDefault();
+  }
+}
+
 }  // namespace
 
 EventListenerEntry::EventListenerEntry(v8::Isolate* isolate,
@@ -113,12 +146,14 @@ EventListenerEntry::EventListenerEntry(v8::Isolate* isolate,
                                        v8::Local<v8::Object> callback,
                                        bool capture,
                                        bool passive,
-                                       bool once)
+                                       bool once,
+                                       bool attribute_handler)
     : type_(type),
       callback_(isolate, callback),
       capture_(capture),
       passive_(passive),
-      once_(once) {}
+      once_(once),
+      attribute_handler_(attribute_handler) {}
 
 EventListenerEntry::~EventListenerEntry() = default;
 
@@ -158,7 +193,10 @@ void EventTarget::AddEventListener(
   has_event_target_data_ = true;
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
-    if (entry->type() == type && entry->capture() == flat.capture &&
+    // An event handler attribute's listener is the handler's own, never the
+    // page's function, as Blink wraps the handler in a JSEventHandler.
+    if (!entry->attribute_handler() && entry->type() == type &&
+        entry->capture() == flat.capture &&
         entry->callback(v8::Isolate::GetCurrent())->StrictEquals(listener)) {
       return;
     }
@@ -185,7 +223,8 @@ void EventTarget::RemoveEventListener(
   }
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
-    if (entry->type() == type && entry->capture() == capture &&
+    if (!entry->attribute_handler() && entry->type() == type &&
+        entry->capture() == capture &&
         entry->callback(v8::Isolate::GetCurrent())->StrictEquals(listener)) {
       RemoveEntry(entry);
       return;
@@ -213,6 +252,54 @@ void EventTarget::RemoveEntry(EventListenerEntry* entry) {
     entry->set_next(nullptr);
     return;
   }
+}
+
+v8::Local<v8::Value> EventTarget::AttributeEventHandler(
+    v8::Isolate* isolate,
+    std::u16string_view type) const {
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->attribute_handler() && entry->type() == type) {
+      return entry->callback(isolate);
+    }
+  }
+  return v8::Null(isolate);
+}
+
+void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
+                                           const std::u16string& type,
+                                           v8::Local<v8::Value> handler) {
+  EventListenerEntry* existing = nullptr;
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->attribute_handler() && entry->type() == type) {
+      existing = entry;
+      break;
+    }
+  }
+  if (!handler->IsObject()) {
+    if (existing) {
+      RemoveEntry(existing);
+    }
+    return;
+  }
+  if (existing) {
+    existing->set_callback(isolate, handler.As<v8::Object>());
+    return;
+  }
+  // Blink's EventTarget::SetAttributeEventListener() adds it as any listener,
+  // which makes the target's EventTargetData.
+  has_event_target_data_ = true;
+  EventListenerEntry* const entry =
+      bindings::MakeGarbageCollected<EventListenerEntry>(
+          isolate, type, handler.As<v8::Object>(), /*capture=*/false,
+          /*passive=*/false, /*once=*/false, /*attribute_handler=*/true);
+  if (last_listener_) {
+    last_listener_->set_next(entry);
+  } else {
+    first_listener_ = entry;
+  }
+  last_listener_ = entry;
 }
 
 bool EventTarget::DispatchEventForBindings(
@@ -274,8 +361,13 @@ bool EventTarget::FireEventListeners(Event* event) {
       RemoveEntry(entry.Get());
     }
     event->SetInPassiveListener(entry->passive());
-    CallListener(isolate, entry->callback(isolate), current_target,
-                 event_wrapper);
+    if (entry->attribute_handler()) {
+      CallAttributeHandler(isolate, entry->callback(isolate), current_target,
+                           event_wrapper, event);
+    } else {
+      CallListener(isolate, entry->callback(isolate), current_target,
+                   event_wrapper);
+    }
     event->SetInPassiveListener(false);
   }
   return event->DefaultPrevented();

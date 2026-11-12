@@ -70,6 +70,19 @@ class PerIsolateData {
                                      bool bubbles,
                                      bool cancelable,
                                      bool composed) = nullptr;
+    // The handler of the event handler attribute for `type` of `receiver`,
+    // into `handler`, null for none. Returns false for a receiver that has no
+    // EventTarget behind it.
+    bool (*get_event_handler)(v8::Isolate* isolate,
+                              v8::Local<v8::Object> receiver,
+                              const std::u16string& type,
+                              v8::Local<v8::Value>* handler) = nullptr;
+    // Sets it, null for anything that is not an object. Returns false for a
+    // receiver that has no EventTarget behind it.
+    bool (*set_event_handler)(v8::Isolate* isolate,
+                              v8::Local<v8::Object> receiver,
+                              const std::u16string& type,
+                              v8::Local<v8::Value> handler) = nullptr;
   };
 
   // A dictionary being converted, and the member it reads.

@@ -5,6 +5,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "base/check.h"
@@ -420,6 +421,55 @@ bool SetterLacksItsArgument(const v8::FunctionCallbackInfo<v8::Value>& info,
   return true;
 }
 
+// The event type of an event handler attribute: its name without "on", but for
+// the WebKit-prefixed ones whose events are named in camel case, as Blink's
+// DEFINE_ATTRIBUTE_EVENT_LISTENER lines in event_target.h have them.
+std::u16string EventTypeOf(const MemberInfo& member) {
+  const std::string_view name = std::string_view(member.name).substr(2);
+  constexpr std::pair<std::string_view, std::u16string_view> kCamelCase[] = {
+      {"webkitanimationend", u"webkitAnimationEnd"},
+      {"webkitanimationiteration", u"webkitAnimationIteration"},
+      {"webkitanimationstart", u"webkitAnimationStart"},
+      {"webkittransitionend", u"webkitTransitionEnd"},
+  };
+  for (const auto& [attribute, type] : kCamelCase) {
+    if (name == attribute) {
+      return std::u16string(type);
+    }
+  }
+  return std::u16string(name.begin(), name.end());
+}
+
+// An event handler attribute of an object with an EventTarget behind it: its
+// listener there, which the target's dispatch runs (event_handlers.h in the
+// DOM). Returns false for an object with none, whose attribute keeps its
+// handler as any Known Gap keeps a value.
+bool GetEventHandler(const v8::FunctionCallbackInfo<v8::Value>& info,
+                     const MemberInfo& member) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const PerIsolateData::ObjectHooks& hooks =
+      PerIsolateData::From(isolate)->object_hooks();
+  v8::Local<v8::Value> handler;
+  if (!hooks.get_event_handler ||
+      !hooks.get_event_handler(isolate, info.This(), EventTypeOf(member),
+                               &handler)) {
+    return false;
+  }
+  info.GetReturnValue().Set(handler);
+  return true;
+}
+
+bool SetEventHandler(const v8::FunctionCallbackInfo<v8::Value>& info,
+                     const MemberInfo& member,
+                     v8::Local<v8::Value> handler) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const PerIsolateData::ObjectHooks& hooks =
+      PerIsolateData::From(isolate)->object_hooks();
+  return hooks.set_event_handler &&
+         hooks.set_event_handler(isolate, info.This(), EventTypeOf(member),
+                                 handler);
+}
+
 // What an operation or a constructor does with its arguments: the overload
 // they choose, each converted, into `converted`. Returns null if that threw.
 const OverloadInfo* Arguments(const v8::FunctionCallbackInfo<v8::Value>& info,
@@ -523,6 +573,9 @@ void KnownGapAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
     return;
   }
   ReportMember(isolate, member);
+  if ((member.flags & kMemberEventHandler) && GetEventHandler(info, member)) {
+    return;
+  }
   GetValue(info, member);
 }
 
@@ -562,6 +615,10 @@ void KnownGapAttributeSetter(const v8::FunctionCallbackInfo<v8::Value>& info) {
     return;
   }
   ReportMember(isolate, member);
+  if ((member.flags & kMemberEventHandler) &&
+      SetEventHandler(info, member, value)) {
+    return;
+  }
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   std::ignore = info.This()->SetPrivate(
       context,
