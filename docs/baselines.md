@@ -109,6 +109,10 @@ On 2026-11-07 the server answered this, which kept the builds the Baselines alre
 
 The feed gives each build its share of a fraction group, and only shares in the same group compare. That day there were two groups. One holds the pinnable builds, and 157.0.8103.39 had all of it. In the other, none pinnable, 156.0.8078.80 had 49.5%, 156.0.8078.81 and 157.0.8103.38 24.75% each, and 156.0.8078.82 and 158.0.8127.18 0.5% each. 155.0.8059.86 had 10 to 25% of that group from 2026-10-20 to 2026-10-26, against 49.5 to 80% for 155.0.8059.85, and none since. So the pinned build of each older Chrome Release was also the one with the largest share, and the newer builds were rollouts to a few installations.
 
+The Engine Release is the exception between two runs. Its Baselines keep the build that the engine is built from, `tools/workspace/chromium_tag`, even when the server pins a newer one by then. Its Persona names the build of its Baselines, and a Page runs that build's V8 and Blink. So a newer build would give the Baselines another full version than the Persona's, and could change what a page sees. A newer pinned build only reaches the engine through [a patch run](releasing.md#what-a-patch-run-does). A patch run records no Baselines, and the Persona keeps the build of its Baselines until the next run, which records all of them again.
+
+On 2026-11-12 the server still gave 155.0.8059.85 and 156.0.8078.80, with the installers below. For `157.` it gave 157.0.8103.79, which the feed has marked pinnable since 2026-11-11. For `157.0.8103.39` it still gave that build and its installer. So [the Script Fingerprint](#the-script-fingerprint) of Chrome 157 came from the installed 157.0.8103.39, the Engine Release, as its wire Baselines and its Persona do. The run for Chrome 158 records all three Chrome Releases again, from the builds that the server pins then.
+
 ## The variations seed and the country
 
 Chrome fetches a variations seed, and field trials from it apply from the next start. Without it, Chrome looks fine and runs with no field trials, so a recording session waits for the seed, restarts Chrome and checks that `chrome://version` lists active variations.
@@ -205,7 +209,7 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
 | 156 | [Google's update server](#an-older-chrome-release), unpacked | 156.0.8078.80 | `43cca215206b634b89d226ed71522c7f58c5430b8559b92e782dd7bd77add7cc` | None |
 | 157 | [Google's update server](#install-chrome), installed | 157.0.8103.39 | `389b9e21de9a520a6e24ba807ee8760409ccc837457bbcc460d2fdce0d5e8df5` | None |
 
-All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is [the build to record](#which-build): the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06 for hash, signature and version, and [recorded](#chrome-155-and-156) that day. On 2026-11-07 the server still named all three builds and these installers, with the hashes above, and [sessions with that day's seed](#the-seed-of-2026-11-07) gave the Baselines byte for byte.
+All of them are stable Chrome signed by Google, so what they send needs no correcting. Each is [the build to record](#which-build): the newest build of its Chrome Release that the release feed marks as `pinnable`, which is what the server answers with. The 155 and 156 builds were checked on 2026-11-06 for hash, signature and version, and [recorded](#chrome-155-and-156) that day. On 2026-11-07 the server still named all three builds and these installers, with the hashes above, and [sessions with that day's seed](#the-seed-of-2026-11-07) gave the Baselines byte for byte. On 2026-11-12 it named the same 155 and 156, and a newer build for the pin of 157, which [is not recorded](#which-build). The [Baselines of the Script Fingerprint](#its-baselines) come from these three builds.
 
 A recording of an older Chrome Release gets the seed of the day it is recorded, as every installation of that Chrome Release does on that day. Each Chrome Release gets [its own cut](#their-variations-seeds) of that seed.
 
@@ -266,7 +270,7 @@ So what Chrome 157 showed does not simply carry over, because the older seeds ha
 
 `IncreaseAmplificationFactor` is one of the shared studies, so what [Chrome 157](#chrome-157) shows about it holds here too. It has the same groups, the same `quic_options` and the same slots of its layer.
 
-The serial number in `chrome.txt` can differ between sessions of one Chrome Release, in the part before the `#`. The studies stay the same when it does. The `chrome.txt` files in the repository now come from [a later seed](#their-seed).
+The serial number in `chrome.txt` can differ between sessions of one Chrome Release, in the part before the `#`. The studies stay the same when it does. The `chrome.txt` files in the repository now come from [a later seed](#its-baselines).
 
 ### Their field trials
 
@@ -314,7 +318,7 @@ Field trials differ between sessions as they did before, with no effect on the n
 
 ### Client hints
 
-`cases/client_hints_http1.json`, `cases/client_hints_http2.json`, `cases/client_hints_http3.json`, `cases/client_hints_plain_http.json` and `chrome.txt` come from the first of three later sessions of each Chrome Release, recorded on 2026-11-07, on the same machine with the same builds and the same seed.
+`cases/client_hints_http1.json`, `cases/client_hints_http2.json`, `cases/client_hints_http3.json` and `cases/client_hints_plain_http.json` come from the first of three later sessions of each Chrome Release, recorded on 2026-11-07, on the same machine with the same builds and the same seed. So did `chrome.txt`, until [the Script Fingerprint's sessions](#its-baselines) replaced it.
 
 The three sessions of each Chrome Release gave identical normal forms in all thirteen files, and none drew [the field trial that reaches the wire](#chrome-157). The nine files from before came out byte for byte the same in all nine sessions, so neither these runs nor another day moved them. The checks in [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording hold for these cases in each Chrome Release. A connection looks the same here as in the main file of its protocol, so these cases too differ from the others in their requests only.
 
@@ -346,7 +350,35 @@ Three studies of the seed of 2026-11-11 split what a page sees by user data dire
 
 Chrome 157.0.8103.39, installed, with the seed of 2026-11-12, on 2026-11-12: five sessions from new user data directories gave the same `script/page.json`, 1,333,321 bytes, byte for byte. Two of them were whole sessions, two stopped after the Script Fingerprint, and one had `-NoDebuggingPort`, so the fixed debugging port leaves no trace in a page. Each drew `Default` of all three studies. In the two whole sessions, all thirteen normal forms of the wire were byte for byte the Baselines in `tests/baselines/157`, so the page that comes first moves nothing on the wire. [The check of hidden values](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint) passed for all five: 73 values in their forms, and none of the 23 values it looked for in the Normal Form.
 
-No Baseline of the Script Fingerprint is in the repository yet.
+### Its Baselines
+
+`tests/baselines/RELEASE/script/page.json` comes from two whole sessions of each Chrome Release, recorded on 2026-11-12 through `record.ps1` with [the same builds](#where-each-chrome-release-comes-from) on the same machine: 157.0.8103.39 installed, [and not the build pinned that day](#which-build), and 155 and 156 unpacked. All six got the seed `20261112-010037.919000-production`, with 665, 653 and 619 studies for Chrome 155, 156 and 157. The variations server gave the same serial numbers the same day.
+
+- **The Script Fingerprint.** Both sessions of each Chrome Release gave the same `script/page.json`, byte for byte: 1,326,747 bytes for Chrome 155, 1,326,906 for 156 and 1,333,321 for 157, the same file as the five sessions of Chrome 157 above. No session drew a group other than `Default` of the studies in `$PageStudies`, so none had to be recorded again. In Chrome 155 and 156 only `V8Turbolev` applies, because the filters of `FencedFramesDeprecation` and `UniversalOptOutSettings` start at 157, so `chrome.txt` names no group of those two. [The check of hidden values](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint) passed for all six: 73 values in their forms, and none of the 23 values it looked for in the Normal Form.
+- **The wire.** In all six sessions, the thirteen normal forms of the wire were byte for byte the Baselines already there, so they stay as they are, and no session drew [the field trial that reaches the wire](#chrome-157). Each Chrome Release's `chrome.txt` is now that of a session of these, with the seed above and the groups of `$PageStudies`. It is the first session's for Chrome 155 and 157, and the second's for 156. The first session of Chrome 156 drew `Enabled_20261105` of `NetworkQualityEstimatorAsyncNotifyHeadersReceived`, which turns on that feature of `//net` for 10% of user data directories, and leaves it off for the rest, as `//net` has it by default. Its fourteen normal forms were the same as the second session's, whose `chrome.txt` shows what most installations have. That is what [`native/feature_list.cc`](../native/feature_list.cc) takes from it.
+- **The Persona data.** `uv run python -m tools.release page-features`, run that day once the sessions were in, evaluated the same seed, and so no longer said that the Baselines had another one. Its lists for each Persona were the same as with the seed of 2026-11-11, so only the seed in each Persona's `page_features` changed ([persona.md](persona.md#chrome-155-156-and-157)).
+
+Field trials differed between the two sessions of each Chrome Release as they did on the wire before, with no effect on any normal form. New in that list are `PreloadActivationReportWithExtensionInterception` and `NetworkQualityEstimatorAsyncNotifyHeadersReceived`, between user data directories in Chrome 156.
+
+### What differs from Chrome 157 in a page
+
+Chrome 157's Normal Form has 2,150 objects, and those of Chrome 155 and 156 have 2,142 each. They differ in three ways. Everything else is the same in all three: every other value of the probe's third step, the checks and their messages but for their order, the permission states, the permissions policy's lists, `Intl`, the media text of each feature of `matchMedia()`, `window.chrome` and `console.memory`. None of the three has what the seed turns off: Protected Audience, `attributionSrc`, `setAttributionReporting()` and `browsingTopics()`.
+
+- **What the Persona decides.** `navigator.userAgent` and `appVersion` name the Chrome Release as `User-Agent` does. `navigator.userAgentData.brands` and the brands of `getHighEntropyValues()` are those of `sec-ch-ua`. Its `fullVersionList` and `uaFullVersion` are those of `sec-ch-ua-full-version-list` and `sec-ch-ua-full-version` ([the values above](#client-hints)).
+- **What Chrome 157 added behind runtime-enabled features.** 4 interface objects and 65 members that Chrome 156 lacks, and in Chrome 155 also 3 static members of `RTCPeerConnection`. Each is behind a feature that the older Persona's `page_features` turns off ([persona.md](persona.md#chrome-155-156-and-157)):
+
+  | Feature | What Chrome 157 has | Off in |
+  |---|---|---|
+  | `CanvasDrawElement` | The interface objects `CanvasPaintEvent`, `ElementGeometryUpdateEvent` and `ElementImage`. 9 members of `HTMLCanvasElement.prototype`, such as `captureElementImage` and `onpaint`, and 3 of `OffscreenCanvas.prototype`. `drawElementImage` of both 2D contexts, `texElementSubImage2D` of both WebGL contexts and `drawElementImageToTexture` of `GPUQueue` | 155, 156 |
+  | `NewHTMLSettingMethods` | 22 members of `Element.prototype`, 12 of `CharacterData.prototype` and 10 of `ShadowRoot.prototype`, such as `appendHTML`, `afterHTMLUnsafe` and `streamHTML` | 155, 156 |
+  | `TrustedTypesCreateParserOptions` | The interface object `TrustedHTMLParserOptions`, and `createParserOptions` of `TrustedTypePolicy.prototype` | 155, 156 |
+  | `WebTransportReliability` | `reliability` of `WebTransport.prototype`, and `WebTransport.supportsReliableOnly` | 155, 156 |
+  | `WebTransportHeaders` | `responseHeaders` of `WebTransport.prototype` | 155, 156 |
+  | `RTCDiagnosticLogging` | `startDiagnosticLogging`, `stopDiagnosticLogging` and `cancelDiagnosticLogging` of `RTCPeerConnection`, which the Normal Form calls `webkitRTCPeerConnection`, the first name the probe reaches it by | 155 |
+
+- **The order of members.** The moves that [persona.md](persona.md#what-an-older-persona-cannot-turn-off) lists as Known Gaps of the older Personas, and no others. On the global, `ProgressEvent`, `Lock` and `LockManager` moved in 157, and `Clipboard`, `ClipboardItem`, `ServiceWorker` and `ServiceWorkerContainer` in 156. In prototypes, members of `UIEvent`, `AnimationEvent`, `TransitionEvent`, `Worker`, `SharedWorker`, both readers of `ReadableStream`, `Navigator`, `ServiceWorkerRegistration` and five kinds of performance entry moved in 157, and `navigator`'s getters and the checks follow. The probe also walks the prototypes of `Node`'s interfaces, which [#207](https://github.com/darionxt/mitto/issues/207)'s walks left out, and none of them moved between the three.
+
+So between the Chrome Releases of the Supported Window, an older Persona's `page_features` covers every member that differs, and what it cannot give is the order of those members. [#213](https://github.com/darionxt/mitto/issues/213)'s Parity Checks will show that order as Known Gaps of those Personas.
 
 ## The seed of 2026-11-07
 

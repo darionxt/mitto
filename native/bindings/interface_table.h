@@ -36,6 +36,8 @@ class PerIsolateData;
 inline constexpr v8::ExternalPointerTypeTag kMemberInfoTag = 1;
 inline constexpr v8::ExternalPointerTypeTag kExposedConstructInfoTag = 2;
 inline constexpr v8::ExternalPointerTypeTag kWrapperTypeInfoTag = 3;
+// That of an IndexedAndNamedProperties, in indexed_and_named_properties.h.
+inline constexpr v8::ExternalPointerTypeTag kIndexedAndNamedPropertiesTag = 4;
 
 // Whether a Page installs a member. Null for a member that it always installs.
 using ConditionFunction = bool (*)(const PerIsolateData& data);

@@ -35,6 +35,7 @@ from bindings_generator.model import (
     Interface,
     Operation,
     OperationGroup,
+    SpecialOperation,
     TypeKind,
 )
 
@@ -414,20 +415,17 @@ def _read_collection(definition: Any, exposures: _Exposures) -> CollectionLike |
     )
 
 
-def _read_special_operations(definition: Any) -> tuple[str, ...]:
+def _read_special_operations(definition: Any, exposures: _Exposures) -> tuple[SpecialOperation, ...]:
     properties: Any = getattr(definition, "indexed_and_named_properties", None)
     if properties is None:
         return ()
-    names: list[str] = []
+    specials: list[SpecialOperation] = []
     for name in ("indexed_getter", "indexed_setter", "named_getter", "named_setter", "named_deleter"):
         operation = getattr(properties, name)
         if operation is not None:
-            names.append(name.replace("_", " "))
-            where = f"{name.replace('_', ' ')} of {definition.identifier}"
-            _check_extended_attributes(where, operation)
-            _read_arguments(operation.arguments, where)
-            _read_type(operation.return_type, f"{where} return type")
-    return tuple(names)
+            kind = name.replace("_", " ")
+            specials.append(SpecialOperation(kind, _read_operation(operation, definition.identifier, exposures, kind)))
+    return tuple(specials)
 
 
 def _read_exposed(definition: Any) -> tuple[ExposedConstruct, ...]:
@@ -521,7 +519,7 @@ def _read_interface(definition: Any) -> Interface:
         operation_groups=tuple(_read_group(group, name, exposures) for group in definition.operation_groups),
         stringifier=stringifier,
         collection=_read_collection(definition, exposures) if kind == "interface" else None,
-        special_operations=_read_special_operations(definition) if kind == "interface" else (),
+        special_operations=_read_special_operations(definition, exposures) if kind == "interface" else (),
         legacy_window_aliases=tuple(alias.identifier for alias in getattr(definition, "legacy_window_aliases", ())),
         exposed_constructs=tuple(construct.identifier for construct in getattr(definition, "exposed_constructs", ())),
         unscopables=tuple(sorted(unscopables)),

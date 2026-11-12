@@ -178,6 +178,8 @@ source_set("bindings") {
     "idl_member_installer.cc",
     "idl_member_installer.h",
     "idl_type_info.h",
+    "indexed_and_named_properties.cc",
+    "indexed_and_named_properties.h",
     "interface_table.cc",
     "interface_table.h",
     "known_gap.cc",

@@ -258,7 +258,7 @@ def plan_interface(interface: Interface) -> list[Property]:
     if interface.kind == "interface":
         # SetupIDLInterfaceTemplate() gives the prototype its @@toStringTag before anything else.
         properties.append(_symbol("@@toStringTag", Phase.TEMPLATE, value=interface.name))
-        if "indexed getter" in interface.special_operations and "Global" not in interface.extended_attributes:
+        if interface.special_operation("indexed getter") and "Global" not in interface.extended_attributes:
             properties.append(_symbol("@@iterator", Phase.TEMPLATE, writable=True))
         collection = interface.collection
         if collection is not None and collection.kind == "iterable" and collection.iterator_operation is None:
