@@ -3,6 +3,8 @@
 A navigation counts as the user's only with a user gesture, and with a gesture Chrome sends Sec-Fetch-User. A script on
 the page has none to give, so the gesture has to come from outside. It goes through the debugging port, and only runs
 the page's own click on the page's own element.
+
+It never attaches to a page of a Script Fingerprint, which needs no click, and which a debugger could change.
 """
 
 import contextlib
@@ -13,9 +15,12 @@ import threading
 from pathlib import Path
 from types import TracebackType
 from typing import Self, cast
+from urllib.parse import urlsplit
 
 from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
+
+from tools.capture.script_page import SCRIPT_DIRECTORY
 
 _ACTIVE_PORT_FILE = "DevToolsActivePort"
 _LOOPBACK = "127.0.0.1"
@@ -23,6 +28,7 @@ _POLL_SECONDS = 0.1
 _ANSWER_TIMEOUT_SECONDS = 5.0
 _STOP_TIMEOUT_SECONDS = 10.0
 _WEB_SCHEMES = ("http://", "https://")
+_SCRIPT_PAGES = f"/{SCRIPT_DIRECTORY}/"
 
 _CLICK_NEXT = """
 (() => {
@@ -80,7 +86,7 @@ class PageClicker:
                 self._stopping.wait(_POLL_SECONDS)
 
     def _page_socket(self) -> str:
-        """Return the debugging address of the page that shows a web address."""
+        """Return the debugging address of the page that shows a web address, other than a Script Fingerprint's."""
         port = int(self._port_file.read_text(encoding="utf-8").split()[0])
         connection = http.client.HTTPConnection(_LOOPBACK, port, timeout=_ANSWER_TIMEOUT_SECONDS)
         try:
@@ -91,5 +97,7 @@ class PageClicker:
         return next(
             target["webSocketDebuggerUrl"]
             for target in targets
-            if target["type"] == "page" and target["url"].startswith(_WEB_SCHEMES)
+            if target["type"] == "page"
+            and target["url"].startswith(_WEB_SCHEMES)
+            and not urlsplit(target["url"]).path.startswith(_SCRIPT_PAGES)
         )

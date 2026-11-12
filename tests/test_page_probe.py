@@ -1,4 +1,4 @@
-"""Tests that the probe, tools/capture/probe.js, runs to its end in a Page and gives the same record twice in a row.
+"""Tests that the probe, tools/capture/probe.js, runs to its end in a Page and gives the same Normal Form twice in a row.
 
 A Parity Check gives the probe to a Page, so a Page that cannot finish it, or that it changes, fails here first. What the
 record says is the Parity Checks' to compare with Chrome's (docs/runtime.md, "The probe").
@@ -19,14 +19,8 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
-from tools.capture.probe import (
-    RUN_TO_RUN,
-    RecordValue,
-    dumps_record,
-    probe_script,
-    read_record,
-    without_run_to_run_values,
-)
+from tools.capture.probe import RecordValue, dumps_record, probe_script, read_record
+from tools.capture.script_normal_form import script_normal_form
 
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 # A Page runs the probe in well under a second today. Chrome takes about a tenth of one for all it exposes, which a Page
@@ -86,7 +80,8 @@ def test_the_probe_runs_to_its_end_in_a_page_and_gives_the_same_record_twice(ses
     second = _run_in_a_page(session)
 
     _assert_whole(first)
-    assert without_run_to_run_values(second) == without_run_to_run_values(first)
+    # about:blank has no origin of its own to put behind placeholders.
+    assert script_normal_form(second, None) == script_normal_form(first, None)
 
 
 def test_the_probe_runs_to_its_end_in_the_page_program() -> None:
@@ -98,33 +93,14 @@ def test_the_probe_runs_to_its_end_in_the_page_program() -> None:
     second = _run_in_the_page_program(Path(path))
 
     _assert_whole(first)
-    assert without_run_to_run_values(second) == without_run_to_run_values(first)
+    assert script_normal_form(second, None) == script_normal_form(first, None)
 
 
 def _record(*objects: dict[str, RecordValue]) -> dict[str, RecordValue]:
     return {"format": 1, "objects": list(objects), "values": {}, "reports": []}
 
 
-def test_the_values_that_change_from_run_to_run_are_hidden() -> None:
-    record = _record(
-        {"path": "performance", "get": [["timeOrigin", 1.5], ["timing", ["object", "performance.timing"]]]},
-        {"path": "performance.timing", "get": [["navigationStart", 1], ["loadEventEnd", 2]]},
-        {"path": "navigator.connection", "get": [["effectiveType", "4g"], ["rtt", 50], ["downlink", 10]]},
-    )
-
-    assert without_run_to_run_values(record) == _record(
-        {"path": "performance", "get": [["timeOrigin", RUN_TO_RUN], ["timing", ["object", "performance.timing"]]]},
-        {"path": "performance.timing", "get": [["navigationStart", RUN_TO_RUN], ["loadEventEnd", RUN_TO_RUN]]},
-        {
-            "path": "navigator.connection",
-            "get": [["effectiveType", "4g"], ["rtt", RUN_TO_RUN], ["downlink", RUN_TO_RUN]],
-        },
-    )
-    # The record itself stays as it was.
-    assert record["objects"] != without_run_to_run_values(record)["objects"]
-
-
-def test_a_record_is_written_with_a_line_for_each_property_getter_and_check() -> None:
+def test_a_record_is_written_with_a_line_for_each_property_getter_check_and_value() -> None:
     record = _record(
         {
             "path": "globalThis",
@@ -134,6 +110,7 @@ def test_a_record_is_written_with_a_line_for_each_property_getter_and_check() ->
         },
         {"path": "f", "kind": "function", "new": ["throws", "TypeError: no"]},
     )
+    record["values"] = {"one": {"value": [1, 2]}, "two": {"throws": "TypeError: no"}}
 
     text = dumps_record(record)
 
@@ -153,7 +130,10 @@ def test_a_record_is_written_with_a_line_for_each_property_getter_and_check() ->
         "},",
         '{"path": "f", "kind": "function", "new": ["throws", "TypeError: no"]}',
         "],",
-        '"values": {},',
+        '"values": {',
+        '"one": {"value": [1, 2]},',
+        '"two": {"throws": "TypeError: no"}',
+        "},",
         '"reports": []',
         "}",
     ]

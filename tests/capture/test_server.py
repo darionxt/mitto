@@ -19,7 +19,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
 from tests.capture import samples
-from tests.capture.clients import Http2Client, client_context, connect, http1_get
+from tests.capture.clients import Http2Client, client_context, connect, http1_exchange, http1_get
 from tests.capture.http3_client import Http3Client
 from tools.capture import (
     DEFAULT_HOST,
@@ -33,10 +33,14 @@ from tools.capture import (
     RequestKind,
     normal_form,
 )
-from tools.capture.cases import HOST_NAMES
+from tools.capture.cases import CASE_HOST, HOST_NAMES
+from tools.capture.http1 import Http1Request
 from tools.capture.http2 import SETTINGS
 from tools.capture.page import DONE_PATH
-from tools.capture.recording import ConnectionRecord, QuicConnectionRecord
+from tools.capture.probe import RecordValue, probe_script
+from tools.capture.recording import SCRIPT, ConnectionRecord, QuicConnectionRecord
+from tools.capture.script_normal_form import read_script_raw_record
+from tools.capture.script_page import PAGE_PATH, RECORD_PATH
 
 _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
@@ -556,7 +560,7 @@ def test_named_ports_may_share_a_number_across_tcp_and_udp() -> None:
 
 def test_command_line_writes_the_recordings_of_its_runs(tmp_path: Path) -> None:
     # Named ports, as by default: a server that starts twice gets away with it on port 0.
-    http1_port, http2_port, plain_http_port, proxy_port = free_ports(4)
+    http1_port, http2_port, plain_http_port, proxy_port, script_port = free_ports(5)
     http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
     command = [
         sys.executable,
@@ -564,6 +568,8 @@ def test_command_line_writes_the_recordings_of_its_runs(tmp_path: Path) -> None:
         "tools.capture",
         "--out",
         str(tmp_path),
+        "--script-port",
+        str(script_port),
         "--http1-port",
         str(http1_port),
         "--http2-port",
@@ -679,3 +685,111 @@ def test_command_line_refuses_another_host(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert "localhost" in result.stderr
+
+
+def test_the_page_of_a_script_fingerprint_runs_the_probe_and_takes_its_record() -> None:
+    record = b'{"format": 1, "objects": [], "values": {}, "reports": []}'
+    with CaptureServer() as server:
+        authority = server.authority(SCRIPT, host=CASE_HOST)
+        with connect(server.port(SCRIPT), host=CASE_HOST) as sock:
+            assert sock.selected_alpn_protocol() == "http/1.1"
+            page = http1_exchange(sock, "GET", PAGE_PATH, authority=authority)
+            posted = http1_exchange(sock, "POST", RECORD_PATH, authority=authority, body=record)
+            other = http1_exchange(sock, "GET", KIND_PATHS[RequestKind.NAVIGATION], authority=authority)
+        assert server.wait_for_page(SCRIPT, _TIMEOUT_SECONDS, done_path=RECORD_PATH)
+        recording = server.recording(SCRIPT, host=CASE_HOST)
+
+    text = page.body.decode()
+    assert (page.status, page.headers["cache-control"]) == (200, "no-store")
+    assert json.dumps(probe_script()).replace("<", "\\u003c") in text
+    assert text.count("</script>") == 1
+    # Nothing that would be a property of the window, which the probe reads.
+    assert " id=" not in text
+    assert " name=" not in text
+    assert (posted.status, other.status) == (200, 404)
+    (connection,) = recording.connections
+    assert isinstance(connection, ConnectionRecord)
+    request = connection.requests[1]
+    assert isinstance(request, Http1Request)
+    assert request.body == record
+
+
+def test_the_wires_routes_do_not_record_the_page_of_a_script_fingerprint() -> None:
+    with CaptureServer() as server:
+        with connect(server.port(SCRIPT), host=CASE_HOST) as sock:
+            http1_get(sock, PAGE_PATH)
+
+        assert all(server.recording(route).connections == () for route in (HTTP1, HTTP2, HTTP3, PLAIN_HTTP))
+
+
+def test_command_line_writes_the_record_of_a_script_fingerprint_and_its_normal_form(tmp_path: Path) -> None:
+    ports = free_ports(5)
+    http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
+    record: dict[str, RecordValue] = {
+        "format": 1,
+        "objects": [{"path": "globalThis", "kind": "instance", "get": [["innerWidth", 1371], ["origin", "x"]]}],
+        "values": {},
+        "reports": [],
+    }
+    command = [
+        sys.executable,
+        "-m",
+        "tools.capture",
+        "--out",
+        str(tmp_path),
+        *("--http1-port", str(ports[0]), "--http2-port", str(ports[1]), "--http3-port", str(http3_port)),
+        *("--plain-http-port", str(ports[2]), "--proxy-port", str(ports[3]), "--script-port", str(ports[4])),
+        "--runs",
+        "script/page",
+    ]
+    with subprocess.Popen(
+        command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ) as process:
+        assert process.stdout is not None
+        printed: list[str] = []
+        while not printed or not printed[-1].startswith("Waiting"):
+            printed.append(process.stdout.readline())
+            assert printed[-1], "".join(printed)
+        assert f"Script Fingerprint of a top-level page: https://capture.test:{ports[4]}{PAGE_PATH}\n" in printed
+        with connect(ports[4], host=CASE_HOST) as sock:
+            http1_exchange(
+                sock, "POST", RECORD_PATH, authority=f"{CASE_HOST}:{ports[4]}", body=json.dumps(record).encode()
+            )
+        output = process.stdout.read()
+        assert process.wait(_TIMEOUT_SECONDS) == 0, output
+
+    (run,) = json.loads((tmp_path / "runs.json").read_text(encoding="utf-8"))["runs"]
+    assert (run["name"], run["fingerprint"]) == ("script/page", "script")
+    raw = read_script_raw_record((tmp_path / "script" / "page.raw.json").read_text(encoding="utf-8"))
+    assert (raw.url, raw.peers, raw.record) == (f"https://capture.test:{ports[4]}{PAGE_PATH}", ("127.0.0.1",), record)
+    form = (tmp_path / "script" / "page.json").read_text(encoding="utf-8")
+    assert '  ["innerWidth", "<machine>"],' in form.splitlines()
+
+
+def test_command_line_explains_a_page_that_posted_no_record(tmp_path: Path) -> None:
+    ports = free_ports(5)
+    http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
+    command = [
+        sys.executable,
+        "-m",
+        "tools.capture",
+        "--out",
+        str(tmp_path),
+        *("--http1-port", str(ports[0]), "--http2-port", str(ports[1]), "--http3-port", str(http3_port)),
+        *("--plain-http-port", str(ports[2]), "--proxy-port", str(ports[3]), "--script-port", str(ports[4])),
+        "--runs",
+        "script/page",
+    ]
+    with subprocess.Popen(
+        command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    ) as process:
+        assert process.stdout is not None
+        while not process.stdout.readline().startswith("Waiting"):
+            pass
+        with connect(ports[4], host=CASE_HOST) as sock:
+            http1_exchange(sock, "POST", RECORD_PATH, authority=f"{CASE_HOST}:{ports[4]}", body=b"[]")
+        _, errors = process.communicate(timeout=_TIMEOUT_SECONDS)
+
+    assert process.returncode == 1
+    assert "the page posted no record of the probe" in errors
+    assert not (tmp_path / "script" / "page.json").exists()

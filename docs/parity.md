@@ -32,7 +32,7 @@ The test of the real Baselines runs all this twice: through `mitto.Session`, and
 
 A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
 
-Other files under `RELEASE` are left alone: `*.raw.json` and anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines.
+Other files under `RELEASE` are left alone: `*.raw.json`, anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines, and the Baselines of the **Script Fingerprint** in `RELEASE/script/`, which are [Normal Forms](capture.md#the-normal-form-of-a-script-fingerprint) of what the probe records and not of the wire.
 
 A value that [follows the machine](capture.md#what-stays-and-what-does-not), such as `sec-ch-ua-platform-version`, is `<machine>` in a Baseline and in what a Session sent, so a check compares where its line is and not what it says. That is why a drawn Machine passes as any other does. Its form is checked instead, against the same [forms](capture.md#the-form-of-a-hidden-value): `tests/test_machine.py` for every value a Session works out from its Machine, and [`tools.capture.machine_forms`](baselines.md#check-and-commit) for real Chrome's recordings, on the machine that keeps them.
 

@@ -1,6 +1,6 @@
 # Recording Baselines
 
-A **Baseline** is ground truth: what real Chrome sent. This page is how to record the Baselines of a **Chrome Release** on Windows, because the **Persona** is Windows Chrome, and [where each Chrome Release comes from](#where-each-chrome-release-comes-from). They end up in `tests/baselines/RELEASE/`, where [Parity Checks](parity.md) compare with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md), and [capture.md](capture.md) explains the capture kit.
+A **Baseline** is ground truth: what real Chrome sent, and what its pages' scripts could see. This page is how to record the Baselines of a **Chrome Release** on Windows, because the **Persona** is Windows Chrome, and [where each Chrome Release comes from](#where-each-chrome-release-comes-from). They end up in `tests/baselines/RELEASE/`, where [Parity Checks](parity.md) compare with them. Terms in **bold** are defined in [CONTEXT.md](../CONTEXT.md), and [capture.md](capture.md) explains the capture kit.
 
 ## What it takes
 
@@ -159,9 +159,9 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
 
 1. It starts Chrome with the first five flags below and `about:blank`, waits until `Local State` has [`variations_seed_serial_number` or `variations_country`](#the-variations-seed-and-the-country), about 15 seconds, and closes Chrome through its window. It gives up if neither comes within six minutes. Do not kill it: Chrome counts that as a crash, and a crash streak makes it give up its seed.
 2. It starts the capture server, `uv run python -m tools.capture --out recordings\a --click-in USER_DATA_DIRECTORY`, which writes the address and flags of [each run](capture.md#recording-cases) to `runs.json`.
-3. For each run, it starts Chrome again with its flags and its address, in the order of that list. The server clicks what the case pages ask to have clicked, through the debugging port. The script waits until the server has written that run's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. The server exits after the last.
-4. It checks that every client's address is loopback, that `Accept-Language` is `en-US`, that Chrome lists active variations, and that Chrome's version did not change.
-5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list. Each run also gets a line for each of [the two features Chrome turns on in its own code](#features-on-in-chromes-own-code).
+3. For each run, it starts Chrome again with its flags and its address, in the order of that list. The first is the page of [the Script Fingerprint](#the-script-fingerprint), then come the wire's. The server clicks what the case pages ask to have clicked, through the debugging port. The script waits until the server has written that run's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. After the Script Fingerprint's page, it stops the session if the directory drew a group other than `Default` of a study that changes what a page sees, `$PageStudies` in the script. The server exits after the last.
+4. It checks that every client's address is loopback, that `Accept-Language` is `en-US` and the Script Fingerprint's `navigator.language` too, that Chrome lists active variations, and that Chrome's version did not change.
+5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run of the wire, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list. Each run also gets a line for each of [the two features Chrome turns on in its own code](#features-on-in-chromes-own-code). The Script Fingerprint's run gets the group of each of `$PageStudies`, or `none` where the seed does not hold it.
 
 | Flag | On | Why |
 |---|---|---|
@@ -175,24 +175,25 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
 | `--host-resolver-rules=RULES` | Starts at a case page, except through the proxy | Sends the names of the case pages to loopback |
 | `--no-proxy-server` | Starts at a case page, except through the proxy | Names that are not local would otherwise go to whatever proxy the machine has |
 | `--proxy-server=URL` | The starts through the proxy | Makes Chrome reach the case page through the capture server's proxy. What else Chrome sends meanwhile, such as asking for a new seed, the proxy refuses |
-| `--remote-debugging-port=0` | Recording starts, by the script | How the script reads `chrome://version` and clicks the case pages without a person. At the machine you need no such flag, and you click yourself. `-NoDebuggingPort` leaves it out, without field trials and features in `chrome.txt` and with only the main **Request Kinds** |
+| `--remote-debugging-port=0` | Recording starts of the wire, by the script | How the script reads `chrome://version` and clicks the case pages without a person. At the machine you need no such flag, and you click yourself. `-NoDebuggingPort` leaves it out, without field trials and features in `chrome.txt` and with only the Script Fingerprint and the main **Request Kinds** |
+| `--remote-debugging-port=9207` | The start of the Script Fingerprint, by the script | How the script reads `chrome://version` once the page has posted its record. Port 0 would make `navigator.webdriver` true, and a fixed port changes nothing a page sees. `-NoDebuggingPort` leaves it out too |
 
 ## Check and commit
 
-1. Record a second session, with new paths, and compare the normal forms where you have Git, such as with `git diff --no-index recordings/a/http1.json recordings/b/http1.json` and the same for each file in `cases`. They should be identical. If they are not, find the cause and write it under the Chrome Release below. `chrome.txt` will differ, as Chrome 157 shows below.
+1. Record a second session, with new paths, and compare the normal forms where you have Git, such as with `git diff --no-index recordings/a/http1.json recordings/b/http1.json` and the same for each file in `cases` and for `script/page.json`. They should be identical. If they are not, find the cause and write it under the Chrome Release below. `chrome.txt` will differ, as Chrome 157 shows below.
 2. Check that the files hold nothing personal. A normal form has placeholders for the host and no paths. `chrome.txt` has no paths, and the script leaves the page's command line and profile path out. Search both for the machine's name, the user's name and anything like a path or an address, in place of `NAME` here:
 
    ```bash
-   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?,client_hints_*}.json recordings/a/chrome.txt
+   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?,client_hints_*}.json recordings/a/script/page.json recordings/a/chrome.txt
    ```
 
-3. On the Windows machine, check that each value the normal form hides as `<machine>` has [the form a Session's has](capture.md#the-form-of-a-hidden-value). Each directory should say `pass`. It prints no value, but the raw recordings it reads hold this machine's own, so they stay on it:
+3. On the Windows machine, check that each value the normal form hides as `<machine>` has [the form a Session's has](capture.md#the-form-of-a-hidden-value), on the wire and in [the Script Fingerprint](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint), and that none of this machine's values shows in the Script Fingerprint's Normal Form. Each directory should say `pass`. It prints no value, but the raw recordings it reads hold this machine's own, so they stay on it:
 
    ```powershell
    uv run python -m tools.capture.machine_forms recordings\a recordings\b
    ```
 
-4. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, and the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
+4. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`, and `script/page.json` to `tests/baselines/RELEASE/script/`, where the wire's Parity Checks do not look. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
 5. Write the Persona's file again, because `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name the build. See [persona.md](persona.md#write-one).
 6. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
 
@@ -336,6 +337,16 @@ The seed's version is the same as [the day before](#their-seed), and so is the p
 On 2026-11-08 `sec-ch-ua-platform-version` joined the hints that the normal form hides, because each Session claims [a Windows of its own](persona.md#which-windows). The Baselines were written again with that one value changed: `"19.0.0"` became `<machine>` 17 times in each of `cases/client_hints_http1.json`, `cases/client_hints_http2.json` and `cases/client_hints_http3.json`, of each Chrome Release, and nothing else changed. On the Windows machine, the normal forms of the first session of each Chrome Release that recorded [the client hints](#client-hints), with that line hidden the same way, are byte for byte the Baselines in all thirteen files.
 
 [The check of hidden values](capture.md#the-form-of-a-hidden-value) passed on the raw recordings of all three of those sessions of each Chrome Release, and of the three of [the seed of 2026-11-07](#the-seed-of-2026-11-07): 600 values in 13 raw recordings for each, and every one of them in its form.
+
+## The Script Fingerprint
+
+A recording session records the [Script Fingerprint](capture.md#the-script-fingerprint) of a top-level page in the first start of Chrome after the variations seed has arrived, before the wire's runs, from the same user data directory. So a Baseline of it has the seed's field trials, as every installation does from its second start, and the seed changes what a page sees: in Chrome 157 `setAttributionReporting` goes from `XMLHttpRequest.prototype` and two lists of `document.featurePolicy` lose features, and in Chrome 155 and 156 Protected Audience goes too ([#207](https://github.com/darionxt/mitto/issues/207)).
+
+Three studies of the seed of 2026-11-11 split what a page sees by user data directory, each with 1% of directories in a group of its own: `FencedFramesDeprecation`, which takes Fenced Frames away, `UniversalOptOutSettings`, which adds `navigator.globalPrivacyControl`, and `V8Turbolev`, which changes V8's compilers. A Baseline holds what most installations see, so the session stops when the directory drew another group than `Default` of one of them, and a new directory draws again. A later seed may split more, and `$PageStudies` in the script names those it checks.
+
+Chrome 157.0.8103.39, installed, with the seed of 2026-11-12, on 2026-11-12: five sessions from new user data directories gave the same `script/page.json`, 1,333,321 bytes, byte for byte. Two of them were whole sessions, two stopped after the Script Fingerprint, and one had `-NoDebuggingPort`, so the fixed debugging port leaves no trace in a page. Each drew `Default` of all three studies. In the two whole sessions, all thirteen normal forms of the wire were byte for byte the Baselines in `tests/baselines/157`, so the page that comes first moves nothing on the wire. [The check of hidden values](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint) passed for all five: 73 values in their forms, and none of the 23 values it looked for in the Normal Form.
+
+No Baseline of the Script Fingerprint is in the repository yet.
 
 ## The seed of 2026-11-07
 

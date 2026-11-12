@@ -13,9 +13,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.capture.test_script_normal_form import getters_of
 from tools.capture import HTTP1, HTTP2, HTTP3, RESUMPTION_RUNS, RUNS, CaptureServer, Recording, Run, normal_form
 from tools.capture.devtools import PageClicker
+from tools.capture.http1 import Http1Request
+from tools.capture.probe import RecordValue, dumps_record, read_record
 from tools.capture.recording import Json
+from tools.capture.script_normal_form import MACHINE_PLACES, machine_values, script_normal_form
+from tools.capture.script_page import SCRIPT_RUNS, ScriptRun
 
 _CHROME_ENV_VAR = "MITTO_CHROME"
 _PAGE_TIMEOUT_SECONDS = 60.0
@@ -325,3 +330,55 @@ def test_real_chrome_sends_only_what_is_safe_to_repeat_as_early_data(chrome: str
     assert request_of(resumed, "resumption_fetch")["early_data"] == ["request", "control", "qpack_encoder"]
     assert request_of(resumed, "resumption_navigation")["early_data"] == ["request", "control", "qpack_encoder"]
     assert request_of(resumed, "resumption_post")["early_data"] == ["control"]
+
+
+def record_script_fingerprint(chrome: str, run: ScriptRun) -> dict[str, RecordValue]:
+    """Take a Chrome with a fresh user data directory through a run of a Script Fingerprint, with no debugging port, and
+    return the Normal Form of what its page posted."""
+    with (
+        CaptureServer() as server,
+        tempfile.TemporaryDirectory(prefix="mitto-capture-", ignore_cleanup_errors=True) as user_data,
+    ):
+        process = subprocess.Popen(
+            [
+                chrome,
+                "--headless=new",
+                f"--user-data-dir={user_data}",
+                *server.chrome_flags(run),
+                "--no-first-run",
+                "--no-default-browser-check",
+                server.start_url(run),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            assert server.wait_for_page(run.route, _PAGE_TIMEOUT_SECONDS, done_path=run.done_path), (
+                f"{run.name} did not finish"
+            )
+        finally:
+            process.terminate()
+            try:
+                process.wait(_EXIT_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        recording = server.recording(run.route, host=run.host)
+    (body,) = [
+        request.body
+        for connection in recording.connections
+        for request in connection.requests
+        if isinstance(request, Http1Request) and request.target == run.done_path
+    ]
+    return script_normal_form(read_record(body.decode()), server.start_url(run))
+
+
+@pytest.mark.parametrize("run", SCRIPT_RUNS, ids=lambda run: run.name)
+def test_two_records_of_a_script_fingerprint_have_the_same_normal_form(chrome: str, run: ScriptRun) -> None:
+    first = record_script_fingerprint(chrome, run)
+    second = record_script_fingerprint(chrome, run)
+
+    assert dumps_record(first) == dumps_record(second)
+    assert [value for _, value in machine_values(first)] == ["<machine>"] * len(MACHINE_PLACES)
+    # A start with no debugging port, and with none of those that make a browser under automation.
+    assert getters_of(first, "navigator")["webdriver"] is False
