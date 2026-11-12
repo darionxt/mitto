@@ -1,7 +1,7 @@
-// What the Runtime's tests compare with Chrome: the own properties of the
-// interfaces that the Runtime implements, with their attributes, names and
-// lengths, in order; what a call with the wrong receiver throws; and what some
-// calls throw or do. It runs as it is in the Page program and, through
+// What the Runtime's tests compare with Chrome: the global object's own
+// properties, with their attributes, names and lengths, in order; the own
+// properties of the interfaces that the Runtime implements, the same way; what
+// a call with the wrong receiver throws; and what some calls throw or do. It runs as it is in the Page program and, through
 // record.html, in Chrome, and its value is the record as JSON.
 //
 // It records interfaces, descriptors, lengths and messages only, which say
@@ -605,7 +605,10 @@
     };
   };
 
-  const record = { interfaces: {}, instances: {}, cases: [] };
+  // Read before anything else here touches the global object, whose lazy
+  // properties, such as the interface objects, become data properties when
+  // read: the descriptor of each reads it.
+  const record = { global: ownProperties(globalThis), interfaces: {}, instances: {}, cases: [] };
   for (const name of interfaces) {
     const object = globalThis[name];
     if (typeof object !== "function") {

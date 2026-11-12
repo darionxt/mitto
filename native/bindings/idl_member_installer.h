@@ -17,6 +17,7 @@
 #include <string_view>
 
 #include "base/containers/span.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "v8/include/v8-function-callback.h"
 #include "v8/include/v8-function.h"
@@ -41,7 +42,8 @@ void InheritFromErrorPrototype(
 
 void InstallConstructor(v8::Local<v8::FunctionTemplate> interface_template,
                         v8::FunctionCallback callback,
-                        int length);
+                        int length,
+                        v8::Local<v8::Value> data = {});
 
 // For an interface without a constructor: `callback` throws "Illegal
 // constructor" without the context of a call, as Blink's
@@ -50,7 +52,8 @@ void InstallIllegalConstructor(
     v8::Local<v8::FunctionTemplate> interface_template,
     v8::FunctionCallback callback);
 
-// `setter` is null for a read-only attribute.
+// `setter` is null for a read-only attribute. `data` is what the callbacks get
+// as their data, such as the member's entry of an interface table.
 void InstallAttribute(v8::Isolate* isolate,
                       v8::Local<v8::Template> target,
                       v8::Local<v8::Signature> signature,
@@ -59,7 +62,8 @@ void InstallAttribute(v8::Isolate* isolate,
                       v8::FunctionCallback getter,
                       v8::FunctionCallback setter,
                       v8::PropertyAttribute attributes,
-                      v8::SideEffectType getter_side_effect);
+                      v8::SideEffectType getter_side_effect,
+                      v8::Local<v8::Value> data = {});
 
 void InstallOperation(v8::Isolate* isolate,
                       v8::Local<v8::Template> target,
@@ -69,7 +73,8 @@ void InstallOperation(v8::Isolate* isolate,
                       v8::FunctionCallback callback,
                       int length,
                       v8::PropertyAttribute attributes,
-                      v8::SideEffectType side_effect);
+                      v8::SideEffectType side_effect,
+                      v8::Local<v8::Value> data = {});
 
 // The same, on an object that a context made, for what the context decides.
 void InstallAttributeOnObject(v8::Isolate* isolate,
@@ -81,7 +86,8 @@ void InstallAttributeOnObject(v8::Isolate* isolate,
                               v8::FunctionCallback getter,
                               v8::FunctionCallback setter,
                               v8::PropertyAttribute attributes,
-                              v8::SideEffectType getter_side_effect);
+                              v8::SideEffectType getter_side_effect,
+                              v8::Local<v8::Value> data = {});
 void InstallOperationOnObject(v8::Isolate* isolate,
                               v8::Local<v8::Context> context,
                               v8::Local<v8::Object> target,
@@ -91,7 +97,8 @@ void InstallOperationOnObject(v8::Isolate* isolate,
                               v8::FunctionCallback callback,
                               int length,
                               v8::PropertyAttribute attributes,
-                              v8::SideEffectType side_effect);
+                              v8::SideEffectType side_effect,
+                              v8::Local<v8::Value> data = {});
 
 // Gives the prototype its @@unscopables, an object with a null prototype that
 // has each name set to true, as Web IDL says for members with [Unscopable].
@@ -111,12 +118,25 @@ void InstallConstant(v8::Isolate* isolate,
                      v8::Local<v8::Template> target,
                      const char* name,
                      int64_t value);
+void InstallConstantOnObject(v8::Isolate* isolate,
+                             v8::Local<v8::Context> context,
+                             v8::Local<v8::Object> target,
+                             const char* name,
+                             int64_t value);
 
-// The interface object in `context`, whose own prototype is its parent's
-// interface object, if it has a parent, or the nearest ancestor's that has
-// one.
+// The interface object of an interface or a callback interface in `context`,
+// which the context makes once, as Blink's V8PerContextData::
+// ConstructorForType() does: its own prototype is its parent's interface
+// object, if it has a parent, or the nearest ancestor's that has one, and
+// what the context decides is installed on it, its prototype and, for a
+// global interface, the global object, before anything else can reach them.
 v8::Local<v8::Function> InterfaceObject(v8::Local<v8::Context> context,
                                         const WrapperTypeInfo& info);
+
+// A new namespace object in `context`, with what the context decides, as
+// Blink's GetExposedNamespaceObject() makes one each time it is asked.
+v8::Local<v8::Object> NamespaceObject(v8::Local<v8::Context> context,
+                                      const WrapperTypeInfo& info);
 
 // Makes a promise rejected with a TypeError of `message` the call's result, as
 // Blink's bindings answer a call of an operation that returns a promise and
@@ -124,17 +144,38 @@ v8::Local<v8::Function> InterfaceObject(v8::Local<v8::Context> context,
 void RejectWithTypeError(const v8::FunctionCallbackInfo<v8::Value>& info,
                          std::string_view message);
 
-// Puts the interface object on the global object of `context`, writable,
-// configurable and not enumerable, as Blink's exposed constructs are.
-void InstallInterfaceObject(v8::Local<v8::Context> context,
-                            const char* name,
-                            const WrapperTypeInfo& info);
+// A property of a global object that gives a construct exposed on it.
+struct ExposedConstructInfo {
+  enum class Kind : uint8_t {
+    // The interface object of an interface or a callback interface, under its
+    // own name or a [LegacyWindowAlias].
+    kInterfaceObject,
+    kNamespaceObject,
+    // A [LegacyFactoryFunction] of the interface, such as Image.
+    kFactoryFunction,
+  };
 
-// Installs what `context` decides on the interface's objects in it, and on
-// `instance_object`, the global object, for a global interface.
-void InstallContextDependentPropertiesOf(v8::Local<v8::Context> context,
-                                         const WrapperTypeInfo& info,
-                                         v8::Local<v8::Object> instance_object);
+  const char* name;
+  // RAW_PTR_EXCLUSION: #global-scope, as in WrapperTypeInfo.
+  RAW_PTR_EXCLUSION const WrapperTypeInfo* target;
+  Kind kind;
+  // A factory function's length.
+  int16_t length;
+};
+
+// Puts the property on a global object's template, or on a context's global
+// object, as a lazy data property that is not enumerable, as Blink's
+// IDLMemberInstaller::InstallExposedConstructs() does: V8 makes the object the
+// first time a page reads it, and the property is a data property from then
+// on. V8 installs a template's lazy data properties before its others, last
+// first, as Chrome's window shows.
+void InstallExposedConstruct(v8::Isolate* isolate,
+                             v8::Local<v8::ObjectTemplate> instance_template,
+                             const ExposedConstructInfo& construct);
+void InstallExposedConstructOnObject(v8::Isolate* isolate,
+                                     v8::Local<v8::Context> context,
+                                     v8::Local<v8::Object> instance_object,
+                                     const ExposedConstructInfo& construct);
 
 }  // namespace mitto::bindings
 

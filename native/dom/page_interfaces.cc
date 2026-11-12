@@ -29,11 +29,10 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   const v8::Context::Scope context_scope(context);
   Window* const window = Window::Create();
   window->AssociateWithContext(isolate, context);
-  bindings::InstallInterfaceObjects(context);
   // LocalWindowProxy::Initialize(): the inspector and the embedder hear of the
   // context before its conditional features go in.
   did_create(context);
-  bindings::InstallConditionalFeatures(context);
+  bindings::InstallInterfaceObjects(context);
   // The document of about:blank is what the parser makes of no markup.
   Document* const document = Document::CreateHTML();
   ParseHtmlDocument(*document, markup);

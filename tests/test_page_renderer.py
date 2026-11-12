@@ -120,11 +120,18 @@ def test_window_chrome_has_what_chrome_puts_on_a_page(program: Path) -> None:
 
 
 def test_window_chrome_comes_before_what_the_context_decides(program: Path) -> None:
-    # Chrome adds it once the global object has its interface objects, before its conditional features, so in Chrome
-    # crashReport and cookieStore come right after it.
-    after = _evaluate(program, '(n => n.slice(n.indexOf("chrome") + 1, n.indexOf("chrome") + 3))(Object.keys(window))')
+    # Chrome adds it once the global object has what Window's template gives it, V8's builtins last, and before its
+    # conditional features, so in Chrome it comes between WebAssembly and crashReport.
+    around = _evaluate(
+        program,
+        """[Object.getOwnPropertyNames(window), Object.keys(window)].map(
+             (n) => n.slice(n.indexOf("chrome") - 2, n.indexOf("chrome") + 3))""",
+    )
 
-    assert after == ["crashReport", "cookieStore"]
+    assert around == [
+        ["Temporal", "WebAssembly", "chrome", "crashReport", "cookieStore"],
+        ["webkitCancelAnimationFrame", "webkitRequestAnimationFrame", "chrome", "crashReport", "cookieStore"],
+    ]
 
 
 def test_load_times_and_csi_give_chrome_s_members(program: Path) -> None:

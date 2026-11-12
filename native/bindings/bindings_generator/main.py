@@ -2,6 +2,7 @@
 
 import argparse
 import itertools
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,9 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
         if listed or only_implemented - set(arguments.interface):
             unknown = set(listed) | (only_implemented - set(arguments.interface))
             raise UnhandledError(f"--implemented names interfaces without a C++ class: {', '.join(sorted(unknown))}")
-        files = write_bindings(definitions, features, implemented)
+        # GN names the files of the tables, as many as it wants of them.
+        shards = sum(1 for output in arguments.output if re.fullmatch(r"interfaces_without_class_\d+\.cc", output))
+        files = write_bindings(definitions, features, implemented, max(shards, 1))
     except UnhandledError as error:
         print(f"generate_bindings.py: {error}", file=sys.stderr)
         return 1
@@ -93,10 +96,18 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
             file=sys.stderr,
         )
         return 1
-    arguments.listing.write_text(write_listing(list(definitions.interfaces.values())), encoding="utf-8")
+    _write_if_changed(arguments.listing, write_listing(list(definitions.interfaces.values())))
     for name, content in files.items():
-        (arguments.output_dir / name).write_text(content, encoding="utf-8")
+        _write_if_changed(arguments.output_dir / name, content)
     return 0
+
+
+def _write_if_changed(path: Path, content: str) -> None:
+    """Writes the file only if its content changes, so that ninja, which GN's actions restat, compiles again only what
+    a change of the generator or of interfaces.gni changes."""
+    if path.is_file() and path.read_text(encoding="utf-8") == content:
+        return
+    path.write_text(content, encoding="utf-8")
 
 
 def _members_by_interface(items: list[str]) -> dict[str, list[str]]:

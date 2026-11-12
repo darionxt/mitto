@@ -22,7 +22,7 @@ behaviour from the writer itself, which reads and writes the content attribute t
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/codegen_expr.py
 
 import dataclasses
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import Site, TypeMapper, header_of, union_name
@@ -35,6 +35,7 @@ from bindings_generator.model import (
     Condition,
     Constant,
     Dictionary,
+    ExposedConstruct,
     ExtendedAttributes,
     IdlType,
     Interface,
@@ -43,6 +44,8 @@ from bindings_generator.model import (
     TypeKind,
 )
 from bindings_generator.runtime_features import Feature
+from bindings_generator.table_writer import HEADER as TABLES_HEADER
+from bindings_generator.table_writer import Construct, write_tables
 from bindings_generator.web_idl_reader import PAGE_GLOBAL_NAME, Definitions
 
 __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
@@ -140,6 +143,15 @@ def condition_test(condition: Condition, where: str) -> str | None:
     isolated, and no embedder turns a context-enabled feature on for it. A feature that a context could turn on, such
     as one an origin trial can enable, is on if the Page's set has it, since a Page has no origin trials.
     """
+    if condition.alternatives:
+        # The overloads of one operation whose conditions differ: Blink installs it if any of them holds.
+        found = [condition_test(alternative, where) for alternative in condition.alternatives]
+        alternatives = [test for test in found if test is not None]
+        if not alternatives:
+            return None
+        if "true" in alternatives:
+            return "true"
+        return "(" + " || ".join(f"({test})" for test in alternatives) + ")"
     tests = [f"features.IsEnabled(RuntimeFeature::k{feature})" for feature in condition.features]
     for other in condition.other:
         if other == "SecureContext":
@@ -199,12 +211,17 @@ class _InterfaceWriter:
         types: TypeMapper,
         in_global_prototype_chain: bool,
         interface_object_parent: str | None,
+        index: int,
+        has_class: Callable[[str], bool],
     ) -> None:
         self.interface = interface
         self.implemented = implemented
         self.types = types
         self.in_global_prototype_chain = in_global_prototype_chain
         self.interface_object_parent = interface_object_parent
+        self.index = index
+        self.has_class = has_class
+        self.constructs: list[ExposedConstruct] = []
         self.cls = f"mitto::{interface.name}"
         self.v8_class = f"V8{interface.name}"
         self.callbacks: list[str] = []
@@ -603,6 +620,8 @@ class _InterfaceWriter:
 
     def _member_where(self, property_: Property) -> str:
         member = property_.member
+        if isinstance(member, ExposedConstruct):
+            return f"exposed construct {self.where(member.name)}"
         if isinstance(member, Attribute):
             return f"attribute {self.where(member.name)}"
         if isinstance(member, Constant):
@@ -618,7 +637,7 @@ class _InterfaceWriter:
             behaviour = self.implemented.has_behaviour(member.name)
         else:
             behaviour = True
-        if member is not None and behaviour:
+        if member is not None and not isinstance(member, ExposedConstruct) and behaviour:
             _check_written(where, member.extended_attributes)
 
     def _install(self, property_: Property, on_objects: bool) -> list[str]:
@@ -653,6 +672,17 @@ class _InterfaceWriter:
                 "  }",
                 "}",
             ]
+        if isinstance(member, ExposedConstruct):
+            if member.kind == "factory function" and self.has_class(member.target):
+                raise UnhandledError(
+                    f"{self.where(member.name)}: the C++ writer does not call the class of a factory function"
+                )
+            if member not in self.constructs:
+                self.constructs.append(member)
+            construct = f"kExposedConstructs[{self.constructs.index(member)}]"
+            if on_objects:
+                return [f"InstallExposedConstructOnObject(isolate, context, instance_object, {construct});"]
+            return [f"InstallExposedConstruct(isolate, instance_template, {construct});"]
         if property_.name == "@@unscopables":
             if not on_objects:
                 raise UnhandledError(f"{self.where(property_.name)}: @@unscopables on a template")
@@ -740,7 +770,10 @@ class _InterfaceWriter:
         interface = self.interface
         parent = "nullptr" if interface.parent is None else f"&V8{interface.parent}::kWrapperTypeInfo"
         lines = [
-            "void InstallInterfaceTemplate(v8::Isolate* isolate, v8::Local<v8::FunctionTemplate> interface_template) {",
+            "void InstallInterfaceTemplate(v8::Isolate* isolate, v8::Local<v8::Template> construct_template,",
+            "                              const WrapperTypeInfo& info) {",
+            "  const v8::Local<v8::FunctionTemplate> interface_template =",
+            "      construct_template.As<v8::FunctionTemplate>();",
             "  [[maybe_unused]] PerIsolateData* const data = PerIsolateData::From(isolate);",
             "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
             "  [[maybe_unused]] const v8::Local<v8::ObjectTemplate> instance_template =",
@@ -776,13 +809,18 @@ class _InterfaceWriter:
             "void InstallContextDependentProperties(v8::Local<v8::Context> context,",
             "                                       v8::Local<v8::Object> interface_object,",
             "                                       v8::Local<v8::Object> prototype_object,",
-            "                                       v8::Local<v8::Object> instance_object) {",
+            "                                       v8::Local<v8::Object> instance_object,",
+            "                                       const WrapperTypeInfo& info) {",
             "  [[maybe_unused]] v8::Isolate* const isolate = v8::Isolate::GetCurrent();",
             "  [[maybe_unused]] PerIsolateData* const data = PerIsolateData::From(isolate);",
             "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
             "  [[maybe_unused]] const v8::Local<v8::Signature> signature = v8::Signature::New(",
             f"      isolate, data->InterfaceTemplate(isolate, &{self.v8_class}::kWrapperTypeInfo));",
         ]
+        if "Global" in self.interface.extended_attributes:
+            # As bind_gen's per-context install functions of a [Global] interface: the global object, behind the
+            # global proxy, whatever object the call names.
+            lines += ["  if (instance_object.IsEmpty()) {", "    instance_object = context->Global();", "  }"]
         if "LegacyNoInterfaceObject" in self.interface.extended_attributes:
             # V8 defines `constructor` on every prototype that a template makes.
             lines.append("  DeleteConstructorProperty(isolate, context, prototype_object);")
@@ -790,6 +828,25 @@ class _InterfaceWriter:
         lines += _indent(self._install_properties(context_properties, on_objects=True))
         lines.append("}")
         return lines
+
+    def _construct_table(self) -> list[str]:
+        """The exposed constructs that the install functions name, in the order they name them."""
+        if not self.constructs:
+            return []
+        kinds = {
+            "interface": "kInterfaceObject",
+            "callback interface": "kInterfaceObject",
+            "alias": "kInterfaceObject",
+            "namespace": "kNamespaceObject",
+            "factory function": "kFactoryFunction",
+        }
+        lines = ["constexpr ExposedConstructInfo kExposedConstructs[] = {"]
+        for construct in self.constructs:
+            lines.append(
+                f'    {{"{construct.name}", &V8{construct.target}::kWrapperTypeInfo, '
+                f"ExposedConstructInfo::Kind::{kinds[construct.kind]}, {construct.length}}},"
+            )
+        return [*lines, "};", ""]
 
     def write(self) -> tuple[str, str]:
         interface = self.interface
@@ -861,6 +918,10 @@ class _InterfaceWriter:
             includes.add(header_of(interface.parent))
         if self.interface_object_parent is not None:
             includes.add(header_of(self.interface_object_parent))
+        for construct in self.constructs:
+            includes.add(
+                header_of(construct.target) if self.has_class(construct.target) else f"mitto/bindings/{TABLES_HEADER}"
+            )
         source = [
             _BANNER,
             f'#include "mitto/bindings/{base}.h"',
@@ -891,6 +952,7 @@ class _InterfaceWriter:
         ]
         for callback in self.callbacks:
             source += [callback, ""]
+        source += self._construct_table()
         source += [*install, "", *context, "", "}  // namespace", ""]
         source += [
             f"const WrapperTypeInfo {self.v8_class}::kWrapperTypeInfo = {{",
@@ -902,6 +964,9 @@ class _InterfaceWriter:
             "    &InstallInterfaceTemplate,",
             f"    {'nullptr' if self.interface_object_parent is None else f'&V8{self.interface_object_parent}::kWrapperTypeInfo'},",
             "    &InstallContextDependentProperties,",
+            "    WrapperTypeInfo::Kind::kInterface,",
+            f"    {self.index},",
+            "    nullptr,",
             "};",
             "",
             f"{self.cls}* {self.v8_class}::ToWrappable(v8::Isolate* isolate, v8::Local<v8::Value> value) {{",
@@ -1345,43 +1410,17 @@ def _write_features(features: list[Feature]) -> tuple[str, str]:
 
 
 def _write_interface_objects(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> tuple[str, str]:
-    """The function that puts the interface objects on a Page's global object, in the order of Window's, and the one
-    that then installs on each interface's objects what the context decides, between which Chrome's renderer adds its
-    own objects, such as window.chrome."""
-    window = definitions.interfaces[PAGE_GLOBAL_NAME]
-    lines: list[str] = []
-    decided: list[str] = []
-    installed: list[tuple[str, str]] = []
-    # An interface with [LegacyNoInterfaceObject] has no interface object on the global object, though Blink's
-    # database lists it among the global's exposed constructs, as bind_gen skips it.
+    """The function that sets up a Page's global object once its context exists: it makes the interface object of
+    Window, which installs on the global object what the context decides, its exposed constructs among them, as Blink's
+    LocalWindowProxy::InstallConditionalFeatures() asks for it."""
+    if PAGE_GLOBAL_NAME not in implemented:
+        raise UnhandledError(f"{PAGE_GLOBAL_NAME}, the global interface of a Page, has no C++ class")
+    not_exposed = set(implemented) - set(definitions.interfaces[PAGE_GLOBAL_NAME].exposed_constructs)
     hidden = {
-        name for name in implemented if "LegacyNoInterfaceObject" in definitions.interfaces[name].extended_attributes
+        name for name in not_exposed if "LegacyNoInterfaceObject" in definitions.interfaces[name].extended_attributes
     }
-    for name in window.exposed_constructs:
-        if name not in implemented or name in hidden:
-            continue
-        interface = definitions.interfaces[name]
-        test = condition_test(interface.condition, f"interface {name}")
-        if test is None:
-            continue
-        installed.append((name, test))
-        call = f'InstallInterfaceObject(context, "{name}", V8{name}::kWrapperTypeInfo);'
-        if test != "true":
-            lines += [f"  if ({test}) {{", f"    {call}", "  }"]
-        else:
-            lines.append(f"  {call}")
-    not_exposed = set(implemented) - set(window.exposed_constructs)
     if not_exposed - hidden:
         raise UnhandledError(f"interfaces not exposed on {PAGE_GLOBAL_NAME}: {', '.join(sorted(not_exposed - hidden))}")
-    installed += [(name, "true") for name in sorted(hidden)]
-    for name, test in installed:
-        # Properties defined through the global proxy go on the global object behind it.
-        instance = "context->Global()" if "Global" in definitions.interfaces[name].extended_attributes else "{}"
-        call = f"InstallContextDependentPropertiesOf(context, V8{name}::kWrapperTypeInfo, {instance});"
-        if test != "true":
-            decided += [f"  if ({test}) {{", f"    {call}", "  }"]
-        else:
-            decided.append(f"  {call}")
     header = [
         _BANNER,
         "#ifndef MITTO_BINDINGS_INTERFACE_OBJECTS_H_",
@@ -1391,49 +1430,32 @@ def _write_interface_objects(definitions: Definitions, implemented: dict[str, Im
         "",
         "namespace mitto::bindings {",
         "",
-        "// Puts the interface object of each interface that the Runtime implements",
-        "// and the Page's features expose on the global object of `context`, in the",
-        "// order of Chrome's Window.",
+        f"// Sets up the global object of `context`, a {PAGE_GLOBAL_NAME}, as Chrome does",
+        "// once a window's context exists: makes its interface object, and so",
+        "// installs on the global object what the context decides, among it the",
+        "// interface objects and namespaces that the context exposes. The others are",
+        "// on the global object's template.",
         "void InstallInterfaceObjects(v8::Local<v8::Context> context);",
-        "",
-        "// Installs what the context decides on those interfaces' objects and on the",
-        "// global object, once each interface object exists, as Blink's",
-        "// LocalWindowProxy::InstallConditionalFeatures() does.",
-        "void InstallConditionalFeatures(v8::Local<v8::Context> context);",
         "",
         "}  // namespace mitto::bindings",
         "",
         "#endif  // MITTO_BINDINGS_INTERFACE_OBJECTS_H_",
         "",
     ]
-    includes = sorted(header_of(name) for name in implemented)
     source = [
         _BANNER,
         '#include "mitto/bindings/interface_objects.h"',
         "",
+        "#include <tuple>",
+        "",
         '#include "mitto/bindings/idl_member_installer.h"',
-        '#include "mitto/bindings/per_isolate_data.h"',
-        '#include "mitto/bindings/runtime_feature_set.h"',
-        '#include "mitto/bindings/runtime_features.h"',
-        *[f'#include "{path}"' for path in includes],
+        f'#include "{header_of(PAGE_GLOBAL_NAME)}"',
         '#include "v8/include/v8-context.h"',
-        '#include "v8/include/v8-isolate.h"',
-        '#include "v8/include/v8-object.h"',
         "",
         "namespace mitto::bindings {",
         "",
         "void InstallInterfaceObjects(v8::Local<v8::Context> context) {",
-        "  [[maybe_unused]] PerIsolateData* const data =",
-        "      PerIsolateData::From(v8::Isolate::GetCurrent());",
-        "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
-        *lines,
-        "}",
-        "",
-        "void InstallConditionalFeatures(v8::Local<v8::Context> context) {",
-        "  [[maybe_unused]] PerIsolateData* const data =",
-        "      PerIsolateData::From(v8::Isolate::GetCurrent());",
-        "  [[maybe_unused]] const RuntimeFeatureSet& features = data->features();",
-        *decided,
+        f"  std::ignore = InterfaceObject(context, V8{PAGE_GLOBAL_NAME}::kWrapperTypeInfo);",
         "}",
         "",
         "}  // namespace mitto::bindings",
@@ -1478,10 +1500,35 @@ def _check_named_members(name: str, interface: Interface, implemented: Implement
             raise UnhandledError(f"{name} has no member {member}")
 
 
+def _constructs_with_tables(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> list[str]:
+    """The constructs that get tables: each that the global object exposes, with or without an interface object, and
+    each ancestor of one, that has no C++ class, sorted by name."""
+    window = definitions.interfaces[PAGE_GLOBAL_NAME]
+    names: set[str] = set()
+    for name in window.exposed_constructs:
+        interface = definitions.interfaces[name]
+        if interface.kind == "callback interface" and not interface.has_interface_object:
+            continue
+        current: str | None = name
+        while current is not None:
+            names.add(current)
+            current = definitions.interfaces[current].parent
+    return sorted(names - set(implemented))
+
+
 def write_bindings(
-    definitions: Definitions, features: list[Feature], implemented: Iterable[ImplementedInterface]
+    definitions: Definitions,
+    features: list[Feature],
+    implemented: Iterable[ImplementedInterface],
+    table_shards: int = 1,
 ) -> dict[str, str]:
     """Returns each file the bindings need, by its name in the output directory.
+
+    Args:
+        definitions: everything the reader took from the database.
+        features: the runtime-enabled features.
+        implemented: the interfaces that have a C++ class.
+        table_shards: how many files hold the tables of the constructs that have no class.
 
     Raises:
         UnhandledError: if an implemented interface uses anything the writer does not handle.
@@ -1496,15 +1543,31 @@ def write_bindings(
         _check_named_members(name, definitions.interfaces[name], interface)
     types = TypeMapper(frozenset(by_name), frozenset(definitions.dictionaries), definitions.enumerations)
     chains = _global_prototype_chains(definitions)
+    with_tables = _constructs_with_tables(definitions, by_name)
+    # Every construct with bindings has a number of its own, by name.
+    indexes = {name: index for index, name in enumerate(sorted([*by_name, *with_tables]))}
     files: dict[str, str] = {}
     for name, interface in sorted(by_name.items()):
         writer = _InterfaceWriter(
-            definitions.interfaces[name], interface, types, name in chains, _interface_object_parent(name, definitions)
+            definitions.interfaces[name],
+            interface,
+            types,
+            name in chains,
+            _interface_object_parent(name, definitions),
+            indexes[name],
+            by_name.__contains__,
         )
         header, source = writer.write()
         base = f"v8_{file_name(name)}"
         files[f"{base}.h"] = header
         files[f"{base}.cc"] = source
+    constructs = [
+        Construct(
+            definitions.interfaces[name], indexes[name], _interface_object_parent(name, definitions), name in chains
+        )
+        for name in with_tables
+    ]
+    files.update(write_tables(constructs, table_shards, by_name.__contains__, condition_test))
     files["dictionaries.h"], files["dictionaries.cc"] = _write_dictionaries(definitions, types)
     files["runtime_features.h"], files["runtime_features.cc"] = _write_features(features)
     files["interface_objects.h"], files["interface_objects.cc"] = _write_interface_objects(definitions, by_name)
