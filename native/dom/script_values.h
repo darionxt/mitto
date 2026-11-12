@@ -1,0 +1,55 @@
+// What the DOM's classes hand a page as Blink makes it: frozen arrays, plain
+// objects of a dictionary's members, and promises that a task of their own
+// settles.
+//
+// Upstream: third_party/blink/renderer/bindings/core/v8/to_v8_traits.h
+// Upstream: third_party/blink/renderer/bindings/core/v8/v8_object_builder.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/script_promise_resolver.cc
+
+#ifndef MITTO_DOM_SCRIPT_VALUES_H_
+#define MITTO_DOM_SCRIPT_VALUES_H_
+
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "v8/include/v8-container.h"
+#include "v8/include/v8-forward.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-promise.h"
+
+namespace mitto {
+
+// An array of `items`, frozen, as Blink gives a FrozenArray<T>.
+v8::Local<v8::Array> FrozenArray(
+    v8::Isolate* isolate,
+    const std::vector<v8::Local<v8::Value>>& items);
+
+// An object with each of `members` as a data property, in their order, as
+// Blink's generated code writes a dictionary's members and V8ObjectBuilder an
+// object.
+v8::Local<v8::Object> PlainObject(
+    v8::Isolate* isolate,
+    const std::vector<std::pair<std::string_view, v8::Local<v8::Value>>>&
+        members);
+
+// Resolves `resolver` with `value` from a task of its own, as Blink's
+// ScriptPromiseResolver does once an answer comes, unless the window of the
+// current context has gone by then.
+void ResolveFromTask(v8::Isolate* isolate,
+                     v8::Local<v8::Promise::Resolver> resolver,
+                     v8::Local<v8::Value> value);
+
+// Rejects `resolver` from a task of its own, as ResolveFromTask() resolves,
+// with a DOMException of `name` and `message` that the task makes, so that its
+// stack holds no script, as Blink's does.
+void RejectWithDOMExceptionFromTask(v8::Isolate* isolate,
+                                    v8::Local<v8::Promise::Resolver> resolver,
+                                    std::string name,
+                                    std::string message);
+
+}  // namespace mitto
+
+#endif  // MITTO_DOM_SCRIPT_VALUES_H_

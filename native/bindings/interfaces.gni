@@ -253,6 +253,52 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Navigator"
+    file = "navigator"
+    implemented = [
+      "maxTouchPoints",
+      "doNotTrack",
+      "hardwareConcurrency",
+      "cookieEnabled",
+      "appCodeName",
+      "appName",
+      "appVersion",
+      "platform",
+      "product",
+      "productSub",
+      "userAgent",
+      "vendor",
+      "vendorSub",
+      "language",
+      "languages",
+      "onLine",
+      "webdriver",
+      "pdfViewerEnabled",
+      "connection",
+      "javaEnabled",
+      "deviceMemory",
+      "userAgentData",
+    ]
+  },
+  {
+    name = "NavigatorUAData"
+    file = "navigator_ua_data"
+  },
+  {
+    name = "NetworkInformation"
+    file = "network_information"
+
+    # Its event handler attributes are Known Gaps until the generator gives event
+    # handlers their behaviour, and NetInfoDownlinkMax keeps type and downlinkMax
+    # from Windows.
+    missing = [
+      "onchange",
+      "ontypechange",
+      "type",
+      "downlinkMax",
+    ]
+  },
+  {
     name = "Node"
     file = "node"
     implemented = [
@@ -321,6 +367,26 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Screen"
+    file = "screen"
+
+    # Its event handler attribute is a Known Gap until the generator gives event
+    # handlers their behaviour.
+    missing = [
+      "onchange",
+    ]
+  },
+  {
+    name = "ScreenOrientation"
+    file = "screen_orientation"
+
+    # Its event handler attribute is a Known Gap until the generator gives event
+    # handlers their behaviour.
+    missing = [
+      "onchange",
+    ]
+  },
+  {
     name = "Text"
     file = "text"
     implemented = [
@@ -342,6 +408,18 @@ mitto_bindings_interfaces = [
       "clearInterval",
       "queueMicrotask",
       "fetch",
+      "navigator",
+      "clientInformation",
+      "screen",
+      "innerWidth",
+      "innerHeight",
+      "screenX",
+      "screenLeft",
+      "screenY",
+      "screenTop",
+      "outerWidth",
+      "outerHeight",
+      "devicePixelRatio",
     ]
   },
   {

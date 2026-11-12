@@ -318,7 +318,8 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   url_ = GURL(response.url);
   // The Session's base::TimeTicks, which the Page's clock shares.
   document_ = &runner_->CommitDocument(
-      url_, base::TimeTicks() + base::Microseconds(response.navigation_start));
+      url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
+      response.connection);
   document_->SetReadiness(Document::Readiness::kLoading);
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
 }

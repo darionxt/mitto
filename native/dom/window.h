@@ -1,6 +1,7 @@
 // The HTML Standard's Window, a Page's global object, with `window`, `self`,
-// `document`, `performance`, the timers, queueMicrotask() and fetch(); its
-// other members are Known Gaps.
+// `document`, `performance`, the timers, queueMicrotask() and fetch(),
+// `navigator` and `screen`, and the window's place and size as the Session's
+// Machine has them; its other members are Known Gaps.
 //
 // A context's global object and its global proxy both wrap the Window, as in
 // Blink, so that a call whose receiver is either finds it. The window's
@@ -23,6 +24,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/window_properties.h"
+#include "mitto/page_messages.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-forward.h"
@@ -33,7 +35,9 @@ namespace mitto {
 class DOMTimerCoordinator;
 class Document;
 class Fetcher;
+class Navigator;
 class Performance;
+class Screen;
 
 class Window final : public WindowProperties {
  public:
@@ -72,6 +76,18 @@ class Window final : public WindowProperties {
   v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
                                const bindings::RequestInit& init,
                                bindings::ExceptionState& exception_state);
+  mitto::Navigator* Navigator();
+  mitto::Navigator* ClientInformation() { return Navigator(); }
+  mitto::Screen* Screen();
+  int32_t InnerWidth() const { return start_.viewport_width; }
+  int32_t InnerHeight() const { return start_.viewport_height; }
+  int32_t ScreenX() const { return start_.window_x; }
+  int32_t ScreenLeft() const { return ScreenX(); }
+  int32_t ScreenY() const { return start_.window_y; }
+  int32_t ScreenTop() const { return ScreenY(); }
+  int32_t OuterWidth() const { return start_.window_width; }
+  int32_t OuterHeight() const { return start_.window_height; }
+  double DevicePixelRatio() const { return start_.scale; }
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -90,10 +106,24 @@ class Window final : public WindowProperties {
   size_t TimerCount() const;
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
+  // Whether the Page still runs the window's context: it gives the window its
+  // timers until the context goes.
+  bool HasContext() const { return timers_ != nullptr; }
+  // What the window reads of the browser and the machine, from the Page's
+  // start, and what navigator.connection gives its document. Without them, as
+  // in the Page program given a script, it reads what a default PageStart
+  // holds.
+  void SetStart(const PageStart& start, const PageConnection& connection);
+  // What the window reads of the browser and the machine.
+  const PageStart& Start() const { return start_; }
 
  private:
   cppgc::Member<mitto::Document> document_;
   cppgc::Member<mitto::Performance> performance_;
+  cppgc::Member<mitto::Navigator> navigator_;
+  cppgc::Member<mitto::Screen> screen_;
+  PageStart start_;
+  PageConnection connection_;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
 };
