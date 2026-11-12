@@ -240,3 +240,10 @@ _HANDLERS_AS_CHROME = {
 @pytest.mark.parametrize(("script", "chrome"), list(_HANDLERS_AS_CHROME.values()), ids=list(_HANDLERS_AS_CHROME))
 def test_an_event_handler_attribute_is_a_listener_as_in_chrome(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome
+
+
+def test_a_replaceable_known_gap_of_a_class_takes_any_value(program: Path) -> None:
+    # Window has a class but not statusbar's behaviour, and [Replaceable] shadows it with a data property.
+    script = "window.statusbar = 42; return [window.statusbar, typeof Object.getOwnPropertyDescriptor(window, 'statusbar').value].join();"
+
+    assert _evaluate(program, script) == "value: 42,number"
