@@ -185,6 +185,18 @@ def test_a_setter_stores_the_converted_value_for_its_getter(program: Path) -> No
     assert _evaluate(program, script) == "value: 7,number,spelling-error"
 
 
+def test_a_stringifier_gives_what_its_attributes_getter_gives(program: Path) -> None:
+    # Blink's toString() of a stringifier attribute is that attribute's getter, so after the same sets Chrome 157 gives
+    # the same string.
+    script = (
+        "const list = document.body.classList; list.value = 'a b'; "
+        "const url = new URL('https://a.test/'); url.href = 'https://b.test/x'; "
+        "return [String(list), list.toString(), `${url}`, url.toString()].join('|');"
+    )
+
+    assert _evaluate(program, script) == "value: a b|a b|https://b.test/x|https://b.test/x"
+
+
 def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
     script = "const h = new Highlight(); return String([h instanceof Highlight, Object.getPrototypeOf(h) === Highlight.prototype]);"
 

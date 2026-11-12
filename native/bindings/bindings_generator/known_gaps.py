@@ -51,12 +51,21 @@ class KnownGaps:
         self._parents = parents
         self._has_class = has_class
         self._has_bindings = has_bindings
+        self._attribute_numbers: dict[tuple[str, str], int] = {}
         self.count = 0
 
     def number(self) -> int:
         """A number of its own for the next Known Gap, by which a document remembers that it reported it."""
         self.count += 1
         return self.count - 1
+
+    def attribute_number(self, interface: str, attribute: str) -> int:
+        """The number of an attribute's Known Gap, which its accessors and a stringifier that gives it share, and
+        under which an object keeps what the setter stored."""
+        key = (interface, attribute)
+        if key not in self._attribute_numbers:
+            self._attribute_numbers[key] = self.number()
+        return self._attribute_numbers[key]
 
     def class_behind(self, interface: str) -> str | None:
         """The nearest class among an interface and its ancestors, or None."""

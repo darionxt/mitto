@@ -92,6 +92,9 @@ inline constexpr uint16_t kMemberRefused = 1 << 9;
 // nothing, which is done at once. They are not Known Gaps.
 inline constexpr uint16_t kMemberIteratorNext = 1 << 10;
 inline constexpr uint16_t kMemberIteratorReturn = 1 << 11;
+// toString() of a stringifier attribute, `forward`, of type `type`: it gives
+// what the attribute's getter gives, as Blink's does, and shares its number.
+inline constexpr uint16_t kMemberStringifierAttribute = 1 << 12;
 
 // One own property of a construct's interface object, prototype or instances.
 struct MemberInfo {
@@ -102,9 +105,10 @@ struct MemberInfo {
   RAW_PTR_EXCLUSION const WrapperTypeInfo* owner;
   ConditionFunction condition;
   // For kIteratorAlias, the operation whose function it is. With
-  // kMemberPutForwards, the attribute that the setter sets.
+  // kMemberPutForwards, the attribute that the setter sets. With
+  // kMemberStringifierAttribute, the attribute that toString() gives.
   const char* forward;
-  // For kAttribute, its type.
+  // For kAttribute, its type, which kMemberStringifierAttribute gives too.
   RAW_PTR_EXCLUSION const IdlTypeInfo* type;
   // For kOperation, its overloads.
   RAW_PTR_EXCLUSION const OperationInfo* operation;

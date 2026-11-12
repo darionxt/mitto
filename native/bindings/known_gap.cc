@@ -696,6 +696,12 @@ void KnownGapOperation(const v8::FunctionCallbackInfo<v8::Value>& info) {
     ThrowNotImplemented(isolate);
     return;
   }
+  if (member.flags & kMemberStringifierAttribute) {
+    // Blink's toString() of a stringifier attribute is the attribute's getter.
+    ReportMember(isolate, member);
+    GetValue(info, member);
+    return;
+  }
   std::vector<v8::Local<v8::Value>> arguments;
   const OverloadInfo* const overload =
       Arguments(info, *member.operation, arguments);

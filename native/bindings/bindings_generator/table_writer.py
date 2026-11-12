@@ -153,10 +153,22 @@ def member_row(
         kind, value = "kIntrinsic", _ARRAY_INTRINSICS[property_.name]
     elif member is None and property_.name == "toString":
         # The stringifier, an operation of its own, which gives a string.
-        kind, number = "kOperation", str(context.gaps.number())
+        kind = "kOperation"
         operation = context.types.operation(_STRINGIFIER, where)
+        attribute = next((each for each in owner.attributes if each.name == owner.stringifier), None)
+        if attribute is None:
+            number = str(context.gaps.number())
+        else:
+            # Blink's toString() of a stringifier attribute is the attribute's getter, so it gives what the getter
+            # gives, the value that the setter stored among it.
+            flags.append("kMemberStringifierAttribute")
+            forward = _quote(attribute.name)
+            number = str(context.gaps.attribute_number(owner.name, attribute.name))
+            type_info = context.types.type(attribute.idl_type, f"attribute {owner.name}.{attribute.name}")
+            if context.gaps.refuses(owner, attribute):
+                flags.append("kMemberRefused")
     elif isinstance(member, Attribute):
-        number = str(context.gaps.number())
+        number = str(context.gaps.attribute_number(owner.name, member.name))
         type_info = context.types.type(member.idl_type, f"attribute {where}")
         if property_.setter:
             flags.append("kMemberHasSetter")
