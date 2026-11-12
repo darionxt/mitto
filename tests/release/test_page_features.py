@@ -496,3 +496,15 @@ def test_a_v8_flag_feature_keeps_its_first_override() -> None:
     page = persona_features(ENGINE_SOURCE, ENGINE_SOURCE, SEED, switches, baseline_seed=SEED).page
 
     assert page.v8_flags == ("--sqrt_allocation_limits",)
+
+
+def test_a_feature_new_in_the_engine_release_that_an_older_feature_implies_goes_to_review() -> None:
+    engine_features = ENGINE_FEATURES.replace(
+        '    {name: "Implied",',
+        '    {name: "NewImplied", status: "experimental", implied_by: ["Shared"]},\n    {name: "Implied",',
+    )
+    engine = read_release(ENGINE, files(engine_features, ENGINE_V8_FEATURES))
+
+    review = persona_features(OLDER_SOURCE, engine, SEED, (), baseline_seed=SEED).review
+
+    assert any(line.startswith(f"Not in Chrome {OLDER}'s file") and line.endswith(": NewImplied") for line in review)

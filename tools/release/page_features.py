@@ -412,7 +412,8 @@ def _blink_switches(states: Mapping[str, bool], engine: ReleaseSource) -> tuple[
 
 def _blink_review(release: ReleaseSource, engine: ReleaseSource, states: Mapping[str, bool]) -> list[str]:
     """Return what the Engine Release's features cannot match of a release's: a feature whose dependencies give it another
-    state there, and the features that only the release has and has on."""
+    state there, the features that only the release has and has on, and those that only the Engine Release has, which
+    a feature that implies them turns on although they are off."""
     wanted = _effective(release.features, states)
     engine_states = {f.name: states.get(f.name, False) for f in engine.features}
     got = _effective(engine.features, engine_states)
@@ -427,6 +428,12 @@ def _blink_review(release: ReleaseSource, engine: ReleaseSource, states: Mapping
         review.append(
             f"On in Chrome {release.build} and not in the Engine Release's file, so shipped for good or gone, which is a"
             f" Known Gap if a page can see it: {', '.join(only_here)}"
+        )
+    implied_only = [name for name, on in got.items() if on and name not in wanted]
+    if implied_only:
+        review.append(
+            f"Not in Chrome {release.build}'s file, and on through a feature of the Engine Release that implies it, which"
+            f" is a Known Gap if a page can see it: {', '.join(implied_only)}"
         )
     return review
 
