@@ -34,6 +34,10 @@ constexpr std::string_view kMemoryKey = "memory";
 constexpr std::string_view kScaleKey = "scale";
 constexpr std::string_view kNavigatorKey = "navigator";
 constexpr std::string_view kConnectionKey = "connection";
+constexpr std::string_view kFeaturesKey = "features";
+constexpr std::string_view kEnableBlinkFeaturesKey = "enable_blink_features";
+constexpr std::string_view kDisableBlinkFeaturesKey = "disable_blink_features";
+constexpr std::string_view kV8FlagsKey = "v8_flags";
 
 constexpr std::string_view kMaximised = "maximised";
 constexpr std::string_view kNormal = "normal";
@@ -132,6 +136,21 @@ constexpr auto kStartNumbers = std::to_array<StartNumber>({
     {"viewport_height", &PageStart::viewport_height, 1, kMost},
 });
 
+// The lists of a start's features, each a field of PageFeatures. Blink has
+// about 1,300 runtime-enabled features, and gin sets a few dozen V8 flags.
+struct FeatureList {
+  std::string_view key;
+  std::vector<std::string> PageFeatures::* field;
+  size_t most;
+};
+constexpr auto kFeatureLists = std::to_array<FeatureList>({
+    {kEnableBlinkFeaturesKey, &PageFeatures::enable_blink_features, 4096},
+    {kDisableBlinkFeaturesKey, &PageFeatures::disable_blink_features, 4096},
+    {kV8FlagsKey, &PageFeatures::v8_flags, 256},
+});
+constexpr size_t kMaxFeatureNameSize = 128;
+constexpr size_t kMaxV8FlagSize = 256;
+
 constexpr uint8_t kHasResult = 0;
 constexpr uint8_t kFailed = 1;
 
@@ -218,9 +237,73 @@ bool IsName(std::string_view name) {
          });
 }
 
+// A runtime-enabled feature's name, as runtime_enabled_features.json5 has
+// them, so that no comma can split one into two.
+bool IsFeatureName(std::string_view name) {
+  return !name.empty() && name.size() <= kMaxFeatureNameSize &&
+         std::ranges::all_of(name, [](char c) {
+           return base::IsAsciiAlphaNumeric(c) || c == '_';
+         });
+}
+
+// A V8 flag as gin writes one, "--name", "--no-name" or "--name=value", whose
+// value holds no space, so that V8 reads it as one flag.
+bool IsV8Flag(std::string_view flag) {
+  if (!flag.starts_with("--") || flag.size() > kMaxV8FlagSize) {
+    return false;
+  }
+  flag.remove_prefix(2u);
+  const size_t equals = flag.find('=');
+  const std::string_view name = flag.substr(0u, equals);
+  const std::string_view value = equals == std::string_view::npos
+                                     ? std::string_view()
+                                     : flag.substr(equals + 1u);
+  return !name.empty() && std::ranges::all_of(name, [](char c) {
+    return base::IsAsciiAlphaNumeric(c) || c == '_' || c == '-';
+  }) && std::ranges::all_of(value, [](char c) {
+    return base::IsAsciiPrintable(c) && c != ' ';
+  });
+}
+
+base::expected<PageFeatures, std::string> ReadFeatures(
+    const base::DictValue& dict) {
+  for (const auto [key, value] : dict) {
+    if (std::ranges::none_of(kFeatureLists, [key](const FeatureList& list) {
+          return list.key == key;
+        })) {
+      return base::unexpected(base::StrCat(
+          {"a start whose features have the unknown key \"", key, "\""}));
+    }
+  }
+  PageFeatures features;
+  for (const FeatureList& list : kFeatureLists) {
+    const base::ListValue* const items = dict.FindList(list.key);
+    if (!items || items->size() > list.most) {
+      return base::unexpected(base::StrCat(
+          {"a start whose features' \"", list.key,
+           "\" is not a list of at most ", base::NumberToString(list.most)}));
+    }
+    for (const base::Value& item : *items) {
+      const std::string* const text = item.GetIfString();
+      const bool valid =
+          text &&
+          (list.key == kV8FlagsKey ? IsV8Flag(*text) : IsFeatureName(*text));
+      if (!valid) {
+        return base::unexpected(base::StrCat(
+            {"a start whose features' \"", list.key, "\" holds ",
+             list.key == kV8FlagsKey ? "what is not a V8 flag"
+                                     : "what is not a feature's name"}));
+      }
+      (features.*list.field).push_back(*text);
+    }
+  }
+  return features;
+}
+
 bool IsStartKey(std::string_view key) {
   return key == kWindowStateKey || key == kInvertedColorsKey ||
          key == kMemoryKey || key == kScaleKey || key == kNavigatorKey ||
+         key == kFeaturesKey ||
          std::ranges::any_of(
              kStartNames,
              [key](const StartName& name) { return name.key == key; }) ||
@@ -646,6 +729,10 @@ PageNavigator::PageNavigator() = default;
 PageNavigator::PageNavigator(const PageNavigator&) = default;
 PageNavigator& PageNavigator::operator=(const PageNavigator&) = default;
 PageNavigator::~PageNavigator() = default;
+PageFeatures::PageFeatures() = default;
+PageFeatures::PageFeatures(const PageFeatures&) = default;
+PageFeatures& PageFeatures::operator=(const PageFeatures&) = default;
+PageFeatures::~PageFeatures() = default;
 
 PageStart::PageStart() = default;
 PageStart::PageStart(const PageStart&) = default;
@@ -706,6 +793,15 @@ std::string EncodeStart(const PageStart& start) {
            base::DictValue()
                .Set("rtt", static_cast<int>(start.connection.rtt))
                .Set("downlink", start.connection.downlink));
+  base::DictValue features;
+  for (const FeatureList& list : kFeatureLists) {
+    base::ListValue items;
+    for (const std::string& item : start.features.*list.field) {
+      items.Append(item);
+    }
+    features.Set(list.key, std::move(items));
+  }
+  dict.Set(kFeaturesKey, std::move(features));
   return EncodeFrame(PageMessage::kStart, *base::WriteJson(dict));
 }
 
@@ -785,6 +881,15 @@ base::expected<PageStart, std::string> ReadStart(const base::DictValue& dict) {
         kNavigatorKey, "a user agent, a platform, languages and their data"));
   }
   start.navigator = *std::move(navigator);
+  const base::DictValue* const features = dict.FindDict(kFeaturesKey);
+  if (!features) {
+    return base::unexpected(NotA(kFeaturesKey, "an object"));
+  }
+  base::expected<PageFeatures, std::string> read = ReadFeatures(*features);
+  if (!read.has_value()) {
+    return base::unexpected(std::move(read).error());
+  }
+  start.features = *std::move(read);
   return start;
 }
 
