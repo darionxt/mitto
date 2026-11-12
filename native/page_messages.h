@@ -185,9 +185,10 @@ struct PageEvaluated {
 // A request that a Page asks its Session for. Its Initiator is the Page's
 // document, as the Session loaded it, so the Page does not say it.
 //
-// Its payload is the number, as a 64-bit number, the Kind, as a byte, the URL,
-// the method and the header lines, each after its size as a 32-bit number,
-// and then a byte that is 1 if a body follows, which is the rest.
+// Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
+// that is 1 for a fetch of mode same-origin, the URL, the method and the
+// header lines, each after its size as a 32-bit number, and then a byte that is
+// 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -206,6 +207,8 @@ struct PageRequest {
   std::string headers;
   // None with GET or HEAD.
   std::optional<std::string> body;
+  // A fetch of mode same-origin, which no hop may take to another origin.
+  bool same_origin = false;
 };
 
 // How much more of a request's body a Page has taken.

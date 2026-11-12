@@ -189,7 +189,11 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
         {"a request of the unknown kind ", base::NumberToString(kind)}));
   }
   request.kind = static_cast<PageRequestKind>(kind);
-  bytes.remove_prefix(9);
+  if (bytes.size() < 10 || static_cast<uint8_t>(bytes[9]) > 1) {
+    return base::unexpected("a request with a mode that is not one");
+  }
+  request.same_origin = bytes[9] == 1;
+  bytes.remove_prefix(10);
   std::string_view url;
   std::string_view method;
   std::string_view headers;
@@ -220,9 +224,10 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
     return base::unexpected("a request with a body and the method GET or HEAD");
   }
   if (request.kind == PageRequestKind::kScript &&
-      (request.method != "GET" || !request.headers.empty() || request.body)) {
+      (request.method != "GET" || !request.headers.empty() || request.body ||
+       request.same_origin)) {
     return base::unexpected(
-        "a script request with a method, header lines or a body");
+        "a script request with a method, header lines, a body or a mode");
   }
   return request;
 }
@@ -387,10 +392,12 @@ std::string EncodeUncaughtError(std::string_view text) {
 
 std::string EncodeRequest(const PageRequest& request) {
   const char kind = static_cast<char>(request.kind);
+  const char same_origin = request.same_origin ? 1 : 0;
   const char has_body = request.body ? 1 : 0;
   return EncodeFrame(
       PageMessage::kRequest,
       base::StrCat({EncodeUint64(request.number), std::string_view(&kind, 1),
+                    std::string_view(&same_origin, 1),
                     EncodeUint32(static_cast<uint32_t>(request.url.size())),
                     request.url,
                     EncodeUint32(static_cast<uint32_t>(request.method.size())),

@@ -25,10 +25,12 @@ class Response;
 
 class FetchLoader final : public FetchClient {
  public:
-  // `resolver` is fetch()'s, in `context`.
+  // `resolver` is fetch()'s, in `context`. The response of a HEAD request,
+  // `head`, has a null body.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
-              v8::Local<v8::Promise::Resolver> resolver);
+              v8::Local<v8::Promise::Resolver> resolver,
+              bool head);
 
   FetchLoader(const FetchLoader&) = delete;
   FetchLoader& operator=(const FetchLoader&) = delete;
@@ -55,6 +57,7 @@ class FetchLoader final : public FetchClient {
   const raw_ptr<v8::Isolate> isolate_;
   v8::Global<v8::Context> context_;
   v8::Global<v8::Promise::Resolver> resolver_;
+  const bool head_;
   raw_ptr<FetchController> controller_ = nullptr;
   // The Response, which a script may let go until it reads the body.
   cppgc::WeakPersistent<Response> response_;

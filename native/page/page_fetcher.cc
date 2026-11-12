@@ -80,7 +80,7 @@ void PageFetcher::Fetch(FetchRequestData data,
   started.client().OnStarted(started);
   // A request has to fit in one frame, so a body that leaves it no room, of
   // nearly 16 MiB, fails as a request that cannot be sent does: a Known Gap.
-  const size_t size = 22 + data.url.size() + data.method.size() +
+  const size_t size = 23 + data.url.size() + data.method.size() +
                       data.headers.size() + (data.body ? data.body->size() : 0);
   if (size > kMaxPayloadSize) {
     started.client().OnResponseEnded(kFailed);
@@ -92,6 +92,7 @@ void PageFetcher::Fetch(FetchRequestData data,
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
+  page_request.same_origin = data.same_origin;
   started.set_number(requests_->Start(std::move(page_request), started));
   open_.emplace(started.number(), std::move(request));
 }

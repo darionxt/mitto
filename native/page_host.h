@@ -252,18 +252,26 @@ class PageHost final : public PageChannel::Delegate {
   void OnSetCookie(const std::string& line);
   void OnCancel(uint64_t number);
 
+  // What the library checks of a Page's request as it goes, each hop and
+  // redirect included.
+  struct FetchChecks {
+    // A fetch, whose responses from another origin pass the CORS check.
+    bool is_fetch = false;
+    // The script set a line that a hop to another origin would need a CORS
+    // preflight for.
+    bool unsafe_lines = false;
+    // Mode same-origin: no hop may go to another origin.
+    bool same_origin = false;
+  };
+
   // Starts a request numbered `number`, whose client is a Request that
-  // `requests_` holds. Each response of a fetch from another origin, redirects
-  // included, has to pass the CORS check before the request goes on, and
-  // `unsafe_lines` says that the script set a line that a hop to another
-  // origin would need a CORS preflight for.
+  // `requests_` holds, and which goes on only as `checks` allow.
   void StartRequest(uint64_t number,
                     GURL url,
                     net::HttpRequestHeaders headers,
                     RequestOptions options,
                     std::optional<std::vector<char>> body,
-                    bool is_fetch,
-                    bool unsafe_lines);
+                    FetchChecks checks);
 
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, const RequestEvent& event);

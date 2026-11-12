@@ -50,10 +50,12 @@ std::set<std::string> ExposedHeaderNames(const Headers& headers) {
 
 FetchLoader::FetchLoader(v8::Isolate* isolate,
                          v8::Local<v8::Context> context,
-                         v8::Local<v8::Promise::Resolver> resolver)
+                         v8::Local<v8::Promise::Resolver> resolver,
+                         bool head)
     : isolate_(isolate),
       context_(isolate, context),
-      resolver_(isolate, resolver) {}
+      resolver_(isolate, resolver),
+      head_(head) {}
 
 FetchLoader::~FetchLoader() {
   if (Response* const response = response_.Get()) {
@@ -97,7 +99,8 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
     headers->AppendLine(name, value);
   }
   headers->set_guard(Headers::Guard::kImmutable);
-  const bool null_body = IsNullBodyStatus(head.status);
+  // The Fetch Standard's null body: a HEAD request's, or a null body status's.
+  const bool null_body = head_ || IsNullBodyStatus(head.status);
   Response* const response = Response::CreateFetched(
       cors ? Response::ResponseType::kCors : Response::ResponseType::kBasic,
       head.status, head.status_text, base::UTF8ToUTF16(head.url),

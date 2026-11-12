@@ -150,8 +150,10 @@ v8::Local<v8::Promise> Window::Fetch(
   data.url = request->url().spec();
   data.headers = request->GetHeaders()->ToLines();
   data.body = request->body();
-  fetcher_->Fetch(std::move(data),
-                  std::make_unique<FetchLoader>(isolate, context, resolver));
+  data.same_origin = request->mode() == Request::Mode::kSameOrigin;
+  fetcher_->Fetch(std::move(data), std::make_unique<FetchLoader>(
+                                       isolate, context, resolver,
+                                       /*head=*/request->Method() == "HEAD"));
   return resolver->GetPromise();
 }
 

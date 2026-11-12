@@ -74,7 +74,11 @@ class _PageServer:
                     return
                 self.send_header("Content-Length", str(len(route.body)))
                 self.end_headers()
-                self.wfile.write(route.body)
+                if self.command != "HEAD":
+                    self.wfile.write(route.body)
+
+            def do_HEAD(self) -> None:
+                self.do_GET()
 
             def log_message(self, format: str, *args: Any) -> None:
                 pass
@@ -784,3 +788,38 @@ def test_a_null_body_reads_as_empty_and_stays_unused_after_the_request_ends(
             "})"
         )
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [204, "", False, ""]
+
+
+def test_a_same_origin_fetch_does_not_follow_a_redirect_to_another_origin(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    with _PageServer() as other:
+        other.routes["/dest"] = _Route(
+            b"dest", headers=[("Content-Type", "text/plain"), ("Access-Control-Allow-Origin", "*")]
+        )
+        server.routes["/hop"] = _Route(status=302, headers=[("Location", other.url("/dest"))])
+        url = server.page("/", "<p>same origin</p>")
+
+        with _open_page(session, url) as page:
+            result = page.evaluate(
+                "Promise.all([fetch('/hop', {mode: 'same-origin'}), fetch('" + other.url("/dest") + "', "
+                "{mode: 'same-origin'})].map(p => p.then(() => 'fetched', error => String(error))))",
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+        assert result == ["TypeError: Failed to fetch", "TypeError: Failed to fetch"]
+        assert other.headers_of("/dest") == []
+
+
+def test_a_head_request_gives_a_null_body(session: mitto.Session, server: _PageServer) -> None:
+    server.routes["/thing"] = _Route(b"", headers=[("Content-Type", "text/plain")])
+    url = server.page("/", "<p>head</p>")
+
+    with _open_page(session, url) as page:
+        script = (
+            "fetch('/thing', {method: 'HEAD'}).then(async response => {"
+            "  await new Promise(resolve => setTimeout(resolve, 50));"
+            "  return [response.status, await response.text(), response.bodyUsed, await response.text()];"
+            "})"
+        )
+        assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [200, "", False, ""]

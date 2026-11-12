@@ -226,7 +226,7 @@ def _script_request(number: int, url: str) -> str:
 def _fetch_request(number: int, url: str, method: str = "GET", lines: str = "", kind: int = 2) -> str:
     """The Python expression of a Request's payload, with no body, which a fake Page program sends."""
     return (
-        f"struct.pack('<QBI', {number}, {kind}, {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
+        f"struct.pack('<QBBI', {number}, {kind}, 0, {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
         f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + b'\\x00'"
     )
 
@@ -290,7 +290,7 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
         pytest.param(
             "script-with-lines",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', lines='X-A: 1' + chr(10), kind=1)})",
-            "the library refused a message from the Page: a script request with a method, header lines or a body",
+            "the library refused a message from the Page: a script request with a method, header lines, a body or a mode",
             id="script-with-lines",
         ),
         pytest.param(

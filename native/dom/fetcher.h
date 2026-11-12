@@ -28,6 +28,8 @@ struct FetchRequestData {
   // The lines that the script set, each "name: value" and a line feed.
   std::string headers;
   std::optional<std::string> body;
+  // Mode same-origin, which no hop may take to another origin.
+  bool same_origin = false;
 };
 
 // A response, after any redirects.

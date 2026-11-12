@@ -81,7 +81,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK(!mitto::IsForbiddenMethod(frame->request.method));
           CHECK_EQ(frame->request.url.size() + frame->request.method.size() +
                        frame->request.headers.size() +
-                       frame->request.body.value_or("").size() + 22,
+                       frame->request.body.value_or("").size() + 23,
                    payload.size());
           break;
         case mitto::PageMessage::kCredit:

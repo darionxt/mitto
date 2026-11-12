@@ -373,16 +373,11 @@ void PageEvents::PushCallAfterEnd(uint64_t call) {
 // Page, reading the body only as far as the Page has given credit.
 class PageHost::Request final : public RequestClient {
  public:
-  Request(PageHost& host,
-          uint64_t number,
-          GURL url,
-          bool is_fetch,
-          bool unsafe_lines)
+  Request(PageHost& host, uint64_t number, GURL url, FetchChecks checks)
       : host_(host),
         number_(number),
         last_url_(std::move(url)),
-        is_fetch_(is_fetch),
-        unsafe_lines_(unsafe_lines),
+        checks_(checks),
         start_(base::TimeTicks::Now()),
         buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kBodyWindow)) {}
 
@@ -398,10 +393,7 @@ class PageHost::Request final : public RequestClient {
 
   uint64_t number() const { return number_; }
   bool is_navigation() const { return number_ == kNavigationRequest; }
-  bool is_fetch() const { return is_fetch_; }
-  // Whether the page's script set a header line that is not CORS-safelisted,
-  // which a hop to another origin would need a preflight for.
-  bool unsafe_lines() const { return unsafe_lines_; }
+  const FetchChecks& checks() const { return checks_; }
   bool cors() const { return cors_; }
   bool tainted() const { return tainted_; }
 
@@ -472,8 +464,7 @@ class PageHost::Request final : public RequestClient {
   const uint64_t number_;
   // The URL of the hop the request is at.
   GURL last_url_;
-  const bool is_fetch_;
-  const bool unsafe_lines_;
+  const FetchChecks checks_;
   bool cors_ = false;
   bool tainted_ = false;
   const base::TimeTicks start_;
@@ -516,7 +507,7 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, *options_.url,
                  options_.navigation->headers, std::move(navigation_options),
-                 std::nullopt, /*is_fetch=*/false, /*unsafe_lines=*/false);
+                 std::nullopt, FetchChecks());
   }
   return true;
 }
@@ -526,10 +517,8 @@ void PageHost::StartRequest(uint64_t number,
                             net::HttpRequestHeaders headers,
                             RequestOptions options,
                             std::optional<std::vector<char>> body,
-                            bool is_fetch,
-                            bool unsafe_lines) {
-  auto request =
-      std::make_unique<Request>(*this, number, url, is_fetch, unsafe_lines);
+                            FetchChecks checks) {
+  auto request = std::make_unique<Request>(*this, number, url, checks);
   Request& client = *request;
   requests_.emplace(number, std::move(request));
   client.set_job(
@@ -593,9 +582,12 @@ void PageHost::OnRequest(PageRequest asked) {
   } else if (is_fetch &&
              !url::Origin::Create(document_url_).IsSameOriginWith(url)) {
     // A cross-origin fetch, which the CORS check holds to its response. One
-    // that would need a CORS preflight first is a Known Gap: the preflight is
-    // a request that no Persona records yet.
-    if (!IsCorsSafelistedMethod(asked.method) || unsafe_lines) {
+    // of mode same-origin fails, as in Chrome. One that would need a CORS
+    // preflight first is a Known Gap: the preflight is a request that no
+    // Persona records yet.
+    if (asked.same_origin) {
+      net_error = net::ERR_FAILED;
+    } else if (!IsCorsSafelistedMethod(asked.method) || unsafe_lines) {
       net_error = net::ERR_NOT_IMPLEMENTED;
     }
   }
@@ -628,7 +620,10 @@ void PageHost::OnRequest(PageRequest asked) {
     body.emplace(asked.body->begin(), asked.body->end());
   }
   StartRequest(asked.number, std::move(url), std::move(headers),
-               std::move(options), std::move(body), is_fetch, unsafe_lines);
+               std::move(options), std::move(body),
+               FetchChecks{.is_fetch = is_fetch,
+                           .unsafe_lines = unsafe_lines,
+                           .same_origin = asked.same_origin});
 }
 
 void PageHost::OnCancel(uint64_t number) {
@@ -700,7 +695,8 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
 }
 
 bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
-  if (!request.is_fetch()) {
+  const FetchChecks& checks = request.checks();
+  if (!checks.is_fetch) {
     return true;
   }
   // Upstream: services/network/cors/cors_url_loader.cc
@@ -717,9 +713,11 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   // preflight there is not followed: the preflight is a Known Gap, and
   // following without it would send what the script asked for to a server
   // that has not agreed to it.
+  // Nor is one of mode same-origin, as in Chrome.
   if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
       !document_origin.IsSameOriginWith(GURL(event.new_url)) &&
-      (!IsCorsSafelistedMethod(event.new_method) || request.unsafe_lines())) {
+      (checks.same_origin || !IsCorsSafelistedMethod(event.new_method) ||
+       checks.unsafe_lines)) {
     return false;
   }
   if (!request.cors()) {

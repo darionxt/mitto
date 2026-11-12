@@ -475,12 +475,19 @@ def _sized(data: bytes) -> bytes:
 
 
 def _request(
-    number: int, kind: int, url: str, method: str = "GET", headers: str = "", body: bytes | None = None
+    number: int,
+    kind: int,
+    url: str,
+    method: str = "GET",
+    headers: str = "",
+    body: bytes | None = None,
+    *,
+    same_origin: bool = False,
 ) -> bytes:
-    """The payload of a Request: its number, Kind, URL, method and lines, and its body, if it has one."""
+    """The payload of a Request: its number, Kind, mode, URL, method and lines, and its body, if it has one."""
     has_body = b"\x00" if body is None else b"\x01" + body
     return (
-        struct.pack("<QB", number, kind)
+        struct.pack("<QBB", number, kind, int(same_origin))
         + _sized(url.encode())
         + _sized(method.encode())
         + _sized(headers.encode())
