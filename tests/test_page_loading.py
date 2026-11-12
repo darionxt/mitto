@@ -8,6 +8,7 @@ and needs a native library with the Page program beside it, as CI's native job i
 import http.server
 import socket
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -576,13 +577,22 @@ def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(
     session: mitto.Session, server: _PageServer
 ) -> None:
     # A Page gives its Session credit for a body only as a script reads it, so a large body that nothing reads stops
-    # the server, as a full Mojo data pipe does in Chrome.
-    size = 16 * 1024 * 1024
+    # the server, as a full Mojo data pipe does in Chrome. The system's socket buffers take some first, which on
+    # Windows' loopback is more than 16 MiB, so the body is far larger, and the server writes it a piece at a time.
+    piece = b"x" * (1024 * 1024)
+    pieces = 64
+    progress = {"written": 0}
     written = threading.Event()
 
     def write(handler: http.server.BaseHTTPRequestHandler) -> None:
-        handler.wfile.write(b"x" * size)
+        for _ in range(pieces):
+            handler.wfile.write(piece)
+            progress["written"] += len(piece)
         written.set()
+
+    def written_after(seconds: float) -> int:
+        time.sleep(seconds)
+        return progress["written"]
 
     server.routes["/large"] = _Route(headers=[("Content-Type", "text/plain")], write=write)
     url = server.page("/", "<p>large</p>")
@@ -590,8 +600,16 @@ def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(
     with _open_page(session, url) as page:
         page.evaluate("window.pending = fetch('/large'); null")
         assert server.wait_for("/large")
-        assert not written.wait(1.0)
-        assert page.evaluate("pending.then(response => response.text()).then(text => text.length)", timeout=60) == size
+        # The server stops short of the end, and stays there, while no script reads.
+        held = written_after(2.0)
+        assert written_after(1.0) == held
+        assert not written.is_set()
+        assert (
+            page.evaluate(
+                "pending.then(response => response.arrayBuffer()).then(buffer => buffer.byteLength)", timeout=120
+            )
+            == len(piece) * pieces
+        )
         assert written.wait(_TIMEOUT_SECONDS)
 
 
