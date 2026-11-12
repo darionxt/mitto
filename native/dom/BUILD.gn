@@ -80,6 +80,12 @@ source_set("dom") {
     "markup_serializer.h",
     "memory_info.cc",
     "memory_info.h",
+    "navigator.cc",
+    "navigator.h",
+    "navigator_ua_data.cc",
+    "navigator_ua_data.h",
+    "network_information.cc",
+    "network_information.h",
     "node.cc",
     "node.h",
     "page_interfaces.cc",
@@ -92,6 +98,12 @@ source_set("dom") {
     "request.h",
     "response.cc",
     "response.h",
+    "screen.cc",
+    "screen.h",
+    "screen_orientation.cc",
+    "screen_orientation.h",
+    "script_values.cc",
+    "script_values.h",
     "selector_query.cc",
     "selector_query.h",
     "text.cc",
@@ -118,7 +130,10 @@ source_set("dom") {
       "$_generated_dir/v8_${interface.file}.h",
     ]
   }
-  public_deps = [ "//mitto/bindings" ]
+  public_deps = [
+    "//mitto:page_channel",
+    "//mitto/bindings",
+  ]
   deps = [
     "//base",
     "//mitto:header_rules",

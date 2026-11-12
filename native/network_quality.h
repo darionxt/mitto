@@ -10,6 +10,7 @@
 // Upstream: third_party/blink/renderer/platform/network/network_state_notifier.cc
 // Upstream: third_party/blink/renderer/platform/network/network_state_notifier.h
 // Upstream: third_party/blink/renderer/core/loader/frame_fetch_context.cc
+// Upstream: third_party/blink/renderer/modules/netinfo/network_information.cc
 
 #ifndef MITTO_NETWORK_QUALITY_H_
 #define MITTO_NETWORK_QUALITY_H_
@@ -65,6 +66,21 @@ bool IsNetworkQualityHint(std::string_view name);
 std::string GetNavigationNetworkQualityHint(const NetworkQuality& quality,
                                             std::string_view name,
                                             const GURL& url);
+
+// What the renderer process of the pages of `page_site` gives for the host of
+// `url`: NetworkStateNotifier::RoundRtt() and RoundMbps(), which a page of that
+// host reads in navigator.connection, and a subresource to it sends in its
+// hints.
+struct RendererNetworkQuality {
+  // In milliseconds.
+  uint32_t rtt = 0;
+  // In Mbps.
+  double downlink = 0;
+};
+RendererNetworkQuality GetRendererNetworkQuality(
+    const NetworkQuality& quality,
+    const net::SchemefulSite& page_site,
+    const GURL& url);
 
 // The value of the hint `name`, rtt or downlink, on a subresource that starts
 // at `url` from a page of `page_site`: what

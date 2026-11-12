@@ -318,7 +318,8 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   url_ = GURL(response.url);
   // The Session's base::TimeTicks, which the Page's clock shares.
   document_ = &runner_->CommitDocument(
-      url_, base::TimeTicks() + base::Microseconds(response.navigation_start));
+      url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
+      response.connection);
   document_->SetReadiness(Document::Readiness::kLoading);
   // What DocumentLoadTiming and the navigation's response keep, for
   // window.chrome. The response's start is when the Page hears of it.

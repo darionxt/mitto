@@ -1141,7 +1141,6 @@ PAGE_START: dict[str, Any] = {
     "time_zone": "America/New_York",
     "locale": "en-US",
     "processors": 8,
-    "memory": 8,
     "touch_points": 0,
     "work_area_x": 0,
     "work_area_y": 0,
@@ -1154,6 +1153,35 @@ PAGE_START: dict[str, Any] = {
     "window_height": 1032,
     "contrast_theme": "none",
     "inverted_colors": "none",
+    "memory": 8,
+    "screen_width": 1920,
+    "screen_height": 1080,
+    "scale": 1,
+    "viewport_width": 1920,
+    "viewport_height": 945,
+    "color_scheme": "light",
+    "reduced_motion": "no-preference",
+    "reduced_transparency": "no-preference",
+    "effective_type": "4g",
+    "navigator": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+        " Chrome/157.0.0.0 Safari/537.36",
+        "platform": "Win32",
+        "languages": "en-US,en",
+        "user_agent_data": {
+            "brands": [{"brand": "Chromium", "version": "157"}],
+            "full_version_list": [{"brand": "Chromium", "version": "157.0.8103.39"}],
+            "mobile": False,
+            "platform": "Windows",
+            "platform_version": "19.0.0",
+            "architecture": "x86",
+            "bitness": "64",
+            "model": "",
+            "ua_full_version": "157.0.8103.39",
+            "wow64": False,
+            "form_factors": ["Desktop"],
+        },
+    },
 }
 
 
@@ -1296,7 +1324,8 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
         pytest.param(blank_page_options(time_zone="Europe/Paris\u0000"), id="time-zone-with-nul"),
         pytest.param(blank_page_options(locale="de DE"), id="locale-with-space"),
         pytest.param(blank_page_options(locale="a" * 65), id="locale-too-long"),
-        pytest.param(blank_page_options(screen_width=1920), id="unknown-key-in-the-start"),
+        pytest.param(blank_page_options(display_width=1920), id="unknown-key-in-the-start"),
+        pytest.param(blank_page_options(connection={"rtt": 100, "downlink": 2.65}), id="connection-from-the-caller"),
         pytest.param(
             json.dumps({"version": _native.PAGE_OPTIONS_VERSION, "start": {**PAGE_START, "processors": None}}).encode(),
             id="processors-null",
@@ -1314,8 +1343,6 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
         pytest.param(blank_page_options(processors=65), id="too-many-processors"),
         pytest.param(blank_page_options(processors=8.5), id="processors-not-whole"),
         pytest.param(blank_page_options(processors="8"), id="processors-a-string"),
-        pytest.param(blank_page_options(memory=0), id="no-memory"),
-        pytest.param(blank_page_options(memory=1025), id="too-much-memory"),
         pytest.param(blank_page_options(touch_points=-1), id="touch-points-below-0"),
         pytest.param(blank_page_options(touch_points=257), id="too-many-touch-points"),
         pytest.param(blank_page_options(work_area_x=-1), id="work-area-left-of-the-display"),
@@ -1325,6 +1352,33 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
         pytest.param(blank_page_options(window_state="first"), id="unknown-window-state"),
         pytest.param(blank_page_options(contrast_theme="high-contrast"), id="unknown-contrast-theme"),
         pytest.param(blank_page_options(inverted_colors="reduce"), id="unknown-inverted-colors"),
+        pytest.param(blank_page_options(memory=6), id="memory-chrome-does-not-give"),
+        pytest.param(blank_page_options(scale=0), id="no-scale"),
+        pytest.param(blank_page_options(screen_height=0), id="screen-of-no-height"),
+        pytest.param(blank_page_options(reduced_motion="no"), id="unknown-reduced-motion"),
+        pytest.param(blank_page_options(effective_type="offline"), id="unknown-effective-type"),
+        pytest.param(
+            blank_page_options(navigator={**PAGE_START["navigator"], "user_agent": "a" * 4097}),
+            id="user-agent-too-long",
+        ),
+        pytest.param(
+            blank_page_options(
+                navigator={
+                    **PAGE_START["navigator"],
+                    "user_agent_data": {**PAGE_START["navigator"]["user_agent_data"], "brands": [{"brand": "A"}]},
+                }
+            ),
+            id="brand-without-a-version",
+        ),
+        pytest.param(
+            blank_page_options(
+                navigator={
+                    **PAGE_START["navigator"],
+                    "user_agent_data": {**PAGE_START["navigator"]["user_agent_data"], "mobile": "?0"},
+                }
+            ),
+            id="mobile-not-a-boolean",
+        ),
     ],
 )
 def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_handle: Any, options: bytes) -> None:
@@ -1342,11 +1396,12 @@ def test_page_open_refuses_invalid_options(native_library: ctypes.CDLL, session_
         {"work_area_x": 40, "work_area_width": 1880},
         {"processors": 64, "touch_points": 256},
         {"processors": 1, "touch_points": 10},
-        {"memory": 2},
-        {"memory": 32},
         {"contrast_theme": "night-sky", "inverted_colors": "inverted"},
         {"contrast_theme": "high-contrast-white"},
         {"time_zone": "Etc/GMT+12", "locale": "zh-Hans-CN"},
+        {"memory": 32, "scale": 1.25, "screen_width": 1536, "screen_height": 864},
+        {"color_scheme": "dark", "reduced_motion": "reduce", "reduced_transparency": "reduce", "effective_type": "3g"},
+        {"navigator": {**PAGE_START["navigator"], "languages": ""}},
     ],
     ids=str,
 )

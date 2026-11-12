@@ -6,6 +6,7 @@ closing can block for a moment, on the system's DNS settings, a cache on disk or
 
 import os
 from collections.abc import Buffer, Callable, Iterable, Sequence
+from fractions import Fraction
 from pathlib import Path
 from typing import cast
 
@@ -13,11 +14,13 @@ from mitto import _native
 from mitto._arguments import require_path, require_type
 from mitto._cookie_file import CookieFile, read_cookie_file, write_cookie_file
 from mitto._cookies import Cookies
-from mitto._machine import Machine, draw_noise_salts
+from mitto._machine import Machine, draw_noise_salts, effective_connection_type
 from mitto._native import MEMORY_CACHE, NativePage, NetworkQuality, PageRequestTemplate, PageStart, PrivateSettings
+from mitto._navigator import page_navigator
 from mitto._persona import RequestKind, load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
 from mitto._timeout import Timeout, to_timeout
+from mitto._window import screen_size
 
 __all__ = ["ABOUT_BLANK", "SessionState"]
 
@@ -78,8 +81,10 @@ class SessionState:
         self._persona = persona_data.with_machine(self.machine)
         # Each time the Session opens, for the Machine it claims, which may be the file's.
         salts = draw_noise_salts(self.machine)
+        # What Chrome's language setting gives the requests and a Page's navigator alike.
+        self._accept_language = self._persona.accept_language if accept_language is None else accept_language
         self.native = _native.Session(
-            accept_language=self._persona.accept_language if accept_language is None else accept_language,
+            accept_language=self._accept_language,
             user_agent=self._persona.user_agent,
             additional_trust_anchors=anchors,
             proxy=proxy,
@@ -109,8 +114,8 @@ class SessionState:
     def open_page(self, url: str) -> NativePage:
         """Open a Page that navigates to `url` through this Session, or nowhere for ABOUT_BLANK.
 
-        It starts with this Session's Machine, its time zone, processors, window and the rest of what a page reads, and the
-        locale of its Persona. Its requests send what this Session's Persona says each Request Kind sends, as a request of
+        It starts with this Session's Machine, its time zone, processors, window and the rest of what a page reads, the
+        locale, user agent and user agent client hints of its Persona, and the languages of its Accept-Language. Its requests send what this Session's Persona says each Request Kind sends, as a request of
         that kind does, and run no timers, as Chrome's have none, whatever this Session's default timeout says.
 
         Raises:
@@ -127,13 +132,16 @@ class SessionState:
         return self.native.open_page(start, url=url, requests=requests)
 
     def _page_start(self) -> PageStart:
-        """Return what a Page starts with: what this Session's Machine and Persona say of what a page reads."""
+        """Return what a Page starts with: what this Session's Machine, Persona and Accept-Language say of what a page
+        reads, worked out as its requests' client hints are."""
         machine = self.machine
+        screen_width, screen_height = screen_size(
+            machine.display_width, machine.display_height, Fraction(machine.scale)
+        )
         return PageStart(
             time_zone=machine.time_zone,
             locale=self._persona.locale,
             processors=machine.processors,
-            memory=machine.memory,
             touch_points=machine.touch_points,
             work_area_x=machine.work_area_x,
             work_area_y=machine.work_area_y,
@@ -146,6 +154,17 @@ class SessionState:
             window_height=machine.window_height,
             contrast_theme=machine.contrast_theme,
             inverted_colors=machine.inverted_colors,
+            memory=machine.memory,
+            screen_width=screen_width,
+            screen_height=screen_height,
+            scale=machine.scale,
+            viewport_width=machine.viewport_width,
+            viewport_height=machine.viewport_height,
+            color_scheme=machine.color_scheme,
+            reduced_motion=machine.reduced_motion,
+            reduced_transparency=machine.reduced_transparency,
+            effective_type=effective_connection_type(machine.round_trip_ms),
+            navigator=page_navigator(self._persona, self._accept_language, machine),
         )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:

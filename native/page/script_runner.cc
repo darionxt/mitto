@@ -128,6 +128,7 @@ std::optional<std::string> ScriptRunner::Start(
     base::RepeatingCallback<void(std::string why)> refuse,
     SessionCookieJar& cookie_jar) {
   send_ = std::move(send);
+  start_ = start;
   cookie_jar_ = &cookie_jar;
   cookie_jar_->SetSend(send_);
   requests_ = std::make_unique<PageRequests>(send_, std::move(refuse));
@@ -164,7 +165,7 @@ std::optional<std::string> ScriptRunner::Start(
   const v8::Local<v8::Context> context =
       NewContext(bindings::PerIsolateData::From(isolate_)->time_origin());
   context_.Reset(isolate_, context);
-  AttachWindow(context);
+  AttachWindow(context, start_.connection);
   base::CurrentThread::Get()->AddTaskObserver(this);
   return std::nullopt;
 }
@@ -184,13 +185,15 @@ v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin) {
       });
 }
 
-void ScriptRunner::AttachWindow(v8::Local<v8::Context> context) {
+void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
+                                const PageConnection& connection) {
   const v8::Context::Scope context_scope(context);
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   Window& window = Window::Current();
   window.SetTimers(timers_.get());
   window.SetFetcher(fetcher_.get());
+  window.SetStart(start_, connection);
 }
 
 void ScriptRunner::WillProcessTask(const base::PendingTask& pending_task,
@@ -315,7 +318,8 @@ void ScriptRunner::PostTask(base::OnceClosure task) {
 }
 
 Document& ScriptRunner::CommitDocument(const GURL& url,
-                                       base::TimeTicks navigation_start) {
+                                       base::TimeTicks navigation_start,
+                                       const PageConnection& connection) {
   const v8::HandleScope handle_scope(isolate_);
   for (const uint64_t call : waiting_calls_) {
     settled_.push_back(FailureOf(call, std::string(kContextDestroyed)));
@@ -346,7 +350,7 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
   MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
   const v8::Local<v8::Context> context = NewContext(time_origin);
   context_.Reset(isolate_, context);
-  AttachWindow(context);
+  AttachWindow(context, connection);
   const v8::Context::Scope context_scope(context);
   Document* const document = Document::CreateHTML();
   document->SetUrl(base::UTF8ToUTF16(url.spec()));

@@ -808,13 +808,23 @@ static int Cookies(const char* url) {
 // What a Page starts with, as a Session's Machine and Persona say it.
 static const char kPageOptions[] =
     "{\"version\": 3, \"start\": {\"time_zone\": \"America/New_York\", "
-    "\"locale\": \"en-US\", \"processors\": 8, \"memory\": 8, "
-    "\"touch_points\": 0, \"work_area_x\": 0, \"work_area_y\": 0, "
-    "\"work_area_width\": 1920, "
+    "\"locale\": \"en-US\", \"processors\": 8, \"touch_points\": 0, "
+    "\"work_area_x\": 0, \"work_area_y\": 0, \"work_area_width\": 1920, "
     "\"work_area_height\": 1032, \"window_state\": \"maximised\", "
     "\"window_x\": 0, \"window_y\": 0, \"window_width\": 1920, "
     "\"window_height\": 1032, \"contrast_theme\": \"none\", "
-    "\"inverted_colors\": \"none\"}}";
+    "\"inverted_colors\": \"none\", \"memory\": 8, "
+    "\"screen_width\": 1920, \"screen_height\": 1080, \"scale\": 1, "
+    "\"viewport_width\": 1920, \"viewport_height\": 945, "
+    "\"color_scheme\": \"light\", \"reduced_motion\": \"no-preference\", "
+    "\"reduced_transparency\": \"no-preference\", "
+    "\"effective_type\": \"4g\", \"navigator\": {\"user_agent\": "
+    "\"Mozilla/5.0\", \"platform\": \"Win32\", \"languages\": \"en-US,en\", "
+    "\"user_agent_data\": {\"brands\": [], \"full_version_list\": [], "
+    "\"mobile\": false, \"platform\": \"Windows\", "
+    "\"platform_version\": \"19.0.0\", \"architecture\": \"x86\", "
+    "\"bitness\": \"64\", \"model\": \"\", \"ua_full_version\": "
+    "\"157.0.8103.39\", \"wow64\": false, \"form_factors\": []}}}}";
 
 static MittoPage* g_page;
 static int64_t g_page_process;

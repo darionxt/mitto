@@ -5,11 +5,14 @@
 #include <limits>
 #include <optional>
 #include <utility>
+#include <vector>
 
+#include "base/bit_cast.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/numerics/byte_conversions.h"
 #include "base/strings/strcat.h"
@@ -27,6 +30,10 @@ constexpr std::string_view kLocaleKey = "locale";
 constexpr std::string_view kWindowStateKey = "window_state";
 constexpr std::string_view kContrastThemeKey = "contrast_theme";
 constexpr std::string_view kInvertedColorsKey = "inverted_colors";
+constexpr std::string_view kMemoryKey = "memory";
+constexpr std::string_view kScaleKey = "scale";
+constexpr std::string_view kNavigatorKey = "navigator";
+constexpr std::string_view kConnectionKey = "connection";
 
 constexpr std::string_view kMaximised = "maximised";
 constexpr std::string_view kNormal = "normal";
@@ -39,10 +46,52 @@ constexpr auto kContrastThemes = std::to_array<std::string_view>(
     {"none", "aquatic", "desert", "dusk", "night-sky", "high-contrast-1",
      "high-contrast-2", "high-contrast-black", "high-contrast-white"});
 
+// The settings of a start that take one of a few values, each a field of
+// PageStart, with the values it takes.
+struct StartSetting {
+  std::string_view key;
+  std::string PageStart::* field;
+  std::vector<std::string_view> values;
+};
+const std::vector<StartSetting>& StartSettings() {
+  static const base::NoDestructor<std::vector<StartSetting>> settings(
+      std::vector<StartSetting>{
+          {"color_scheme", &PageStart::color_scheme, {"light", "dark"}},
+          {"reduced_motion",
+           &PageStart::reduced_motion,
+           {"no-preference", "reduce"}},
+          {"reduced_transparency",
+           &PageStart::reduced_transparency,
+           {"no-preference", "reduce"}},
+          {"effective_type",
+           &PageStart::effective_type,
+           {"slow-2g", "2g", "3g", "4g"}},
+      });
+  return *settings;
+}
+
+// What Chrome on a desktop gives for the memory, in GiB.
+constexpr auto kMemorySizes = std::to_array<int>({2, 4, 8, 16, 32});
+
+// The scales of Windows' display settings run from 100% to 500%.
+constexpr double kLeastScale = 1;
+constexpr double kMostScale = 5;
+
 // Names of time zones, locales and settings are short and ASCII. Which time
 // zones and locales exist only the Page knows, because only it holds ICU's
 // whole data.
 constexpr size_t kMaxNameSize = 64;
+
+// The texts of the navigator: a user agent and the languages of Chrome's
+// setting are short in Chrome, and the other values shorter.
+constexpr size_t kMaxNavigatorTextSize = 4096;
+constexpr size_t kMaxUserAgentDataTextSize = 256;
+constexpr size_t kMaxUserAgentDataListSize = 32;
+
+// The most that a connection gives: Chrome caps the round trip at 3 seconds
+// and the throughput at 10 Mbps.
+constexpr uint32_t kMostRtt = 3000;
+constexpr double kMostDownlink = 10;
 
 // The names of a start, each a field of PageStart.
 struct StartName {
@@ -68,7 +117,6 @@ constexpr int kMost = std::numeric_limits<int>::max();
 constexpr int kLeast = std::numeric_limits<int>::min();
 constexpr auto kStartNumbers = std::to_array<StartNumber>({
     {"processors", &PageStart::processors, 1, 64},
-    {"memory", &PageStart::memory, 1, 1024},
     {"touch_points", &PageStart::touch_points, 0, 256},
     {"work_area_x", &PageStart::work_area_x, 0, kMost},
     {"work_area_y", &PageStart::work_area_y, 0, kMost},
@@ -78,6 +126,10 @@ constexpr auto kStartNumbers = std::to_array<StartNumber>({
     {"window_y", &PageStart::window_y, kLeast, kMost},
     {"window_width", &PageStart::window_width, 1, kMost},
     {"window_height", &PageStart::window_height, 1, kMost},
+    {"screen_width", &PageStart::screen_width, 1, kMost},
+    {"screen_height", &PageStart::screen_height, 1, kMost},
+    {"viewport_width", &PageStart::viewport_width, 1, kMost},
+    {"viewport_height", &PageStart::viewport_height, 1, kMost},
 });
 
 constexpr uint8_t kHasResult = 0;
@@ -177,26 +229,227 @@ bool IsProtocolName(std::string_view name) {
 
 bool IsStartKey(std::string_view key) {
   return key == kWindowStateKey || key == kInvertedColorsKey ||
+         key == kMemoryKey || key == kScaleKey || key == kNavigatorKey ||
          std::ranges::any_of(
              kStartNames,
              [key](const StartName& name) { return name.key == key; }) ||
-         std::ranges::any_of(kStartNumbers, [key](const StartNumber& number) {
-           return number.key == key;
-         });
+         std::ranges::any_of(
+             kStartNumbers,
+             [key](const StartNumber& number) { return number.key == key; }) ||
+         std::ranges::any_of(
+             StartSettings(),
+             [key](const StartSetting& setting) { return setting.key == key; });
 }
 
 std::string NotA(std::string_view key, std::string_view what) {
   return base::StrCat({"a start whose \"", key, "\" is not ", what});
 }
 
+// Whether `text` is UTF-8 of at most `most` bytes.
+bool IsTextOfAtMost(std::string_view text, size_t most) {
+  return text.size() <= most && IsText(text);
+}
+
+// Returns the text at `key` of `dict`, or nullopt if it is not text of at most
+// `most` bytes.
+std::optional<std::string> FindText(const base::DictValue& dict,
+                                    std::string_view key,
+                                    size_t most) {
+  const std::string* const value = dict.FindString(key);
+  if (!value || !IsTextOfAtMost(*value, most)) {
+    return std::nullopt;
+  }
+  return *value;
+}
+
+// Returns the brands of a list such as sec-ch-ua's, each {"brand", "version"},
+// or nullopt if `list` is not that.
+std::optional<std::vector<PageBrandVersion>> ReadBrands(
+    const base::ListValue* list) {
+  if (!list || list->size() > kMaxUserAgentDataListSize) {
+    return std::nullopt;
+  }
+  std::vector<PageBrandVersion> brands;
+  for (const base::Value& item : *list) {
+    if (!item.is_dict() || item.GetDict().size() != 2) {
+      return std::nullopt;
+    }
+    std::optional<std::string> brand =
+        FindText(item.GetDict(), "brand", kMaxUserAgentDataTextSize);
+    std::optional<std::string> version =
+        FindText(item.GetDict(), "version", kMaxUserAgentDataTextSize);
+    if (!brand || !version) {
+      return std::nullopt;
+    }
+    brands.push_back({*std::move(brand), *std::move(version)});
+  }
+  return brands;
+}
+
+base::ListValue WriteBrands(const std::vector<PageBrandVersion>& brands) {
+  base::ListValue list;
+  for (const PageBrandVersion& brand : brands) {
+    list.Append(base::DictValue()
+                    .Set("brand", brand.brand)
+                    .Set("version", brand.version));
+  }
+  return list;
+}
+
+// The texts of the user agent's data, each a field of PageUserAgentData.
+struct UserAgentDataText {
+  std::string_view key;
+  std::string PageUserAgentData::* field;
+};
+constexpr auto kUserAgentDataTexts = std::to_array<UserAgentDataText>({
+    {"platform", &PageUserAgentData::platform},
+    {"platform_version", &PageUserAgentData::platform_version},
+    {"architecture", &PageUserAgentData::architecture},
+    {"bitness", &PageUserAgentData::bitness},
+    {"model", &PageUserAgentData::model},
+    {"ua_full_version", &PageUserAgentData::ua_full_version},
+});
+
+// The keys of the user agent's data beside its texts.
+constexpr std::string_view kBrandsKey = "brands";
+constexpr std::string_view kFullVersionListKey = "full_version_list";
+constexpr std::string_view kMobileKey = "mobile";
+constexpr std::string_view kWow64Key = "wow64";
+constexpr std::string_view kFormFactorsKey = "form_factors";
+constexpr size_t kUserAgentDataKeys = kUserAgentDataTexts.size() + 5;
+
+std::optional<PageUserAgentData> ReadUserAgentData(
+    const base::DictValue* dict) {
+  if (!dict || dict->size() != kUserAgentDataKeys) {
+    return std::nullopt;
+  }
+  PageUserAgentData data;
+  for (const UserAgentDataText& text : kUserAgentDataTexts) {
+    std::optional<std::string> value =
+        FindText(*dict, text.key, kMaxUserAgentDataTextSize);
+    if (!value) {
+      return std::nullopt;
+    }
+    data.*text.field = *std::move(value);
+  }
+  std::optional<std::vector<PageBrandVersion>> brands =
+      ReadBrands(dict->FindList(kBrandsKey));
+  std::optional<std::vector<PageBrandVersion>> full_version_list =
+      ReadBrands(dict->FindList(kFullVersionListKey));
+  const std::optional<bool> mobile = dict->FindBool(kMobileKey);
+  const std::optional<bool> wow64 = dict->FindBool(kWow64Key);
+  const base::ListValue* const form_factors = dict->FindList(kFormFactorsKey);
+  if (!brands || !full_version_list || !mobile || !wow64 || !form_factors ||
+      form_factors->size() > kMaxUserAgentDataListSize) {
+    return std::nullopt;
+  }
+  for (const base::Value& form_factor : *form_factors) {
+    if (!form_factor.is_string() ||
+        !IsTextOfAtMost(form_factor.GetString(), kMaxUserAgentDataTextSize)) {
+      return std::nullopt;
+    }
+    data.form_factors.push_back(form_factor.GetString());
+  }
+  data.brands = *std::move(brands);
+  data.full_version_list = *std::move(full_version_list);
+  data.mobile = *mobile;
+  data.wow64 = *wow64;
+  return data;
+}
+
+base::DictValue WriteUserAgentData(const PageUserAgentData& data) {
+  base::DictValue dict;
+  for (const UserAgentDataText& text : kUserAgentDataTexts) {
+    dict.Set(text.key, data.*text.field);
+  }
+  base::ListValue form_factors;
+  for (const std::string& form_factor : data.form_factors) {
+    form_factors.Append(form_factor);
+  }
+  return std::move(dict)
+      .Set(kBrandsKey, WriteBrands(data.brands))
+      .Set(kFullVersionListKey, WriteBrands(data.full_version_list))
+      .Set(kMobileKey, data.mobile)
+      .Set(kWow64Key, data.wow64)
+      .Set(kFormFactorsKey, std::move(form_factors));
+}
+
+std::optional<PageNavigator> ReadNavigator(const base::DictValue* dict) {
+  if (!dict || dict->size() != 4) {
+    return std::nullopt;
+  }
+  PageNavigator navigator;
+  std::optional<std::string> user_agent =
+      FindText(*dict, "user_agent", kMaxNavigatorTextSize);
+  std::optional<std::string> platform =
+      FindText(*dict, "platform", kMaxUserAgentDataTextSize);
+  std::optional<std::string> languages =
+      FindText(*dict, "languages", kMaxNavigatorTextSize);
+  std::optional<PageUserAgentData> data =
+      ReadUserAgentData(dict->FindDict("user_agent_data"));
+  if (!user_agent || !platform || !languages || !data) {
+    return std::nullopt;
+  }
+  navigator.user_agent = *std::move(user_agent);
+  navigator.platform = *std::move(platform);
+  navigator.languages = *std::move(languages);
+  navigator.user_agent_data = *std::move(data);
+  return navigator;
+}
+
+base::DictValue WriteNavigator(const PageNavigator& navigator) {
+  return base::DictValue()
+      .Set("user_agent", navigator.user_agent)
+      .Set("platform", navigator.platform)
+      .Set("languages", navigator.languages)
+      .Set("user_agent_data", WriteUserAgentData(navigator.user_agent_data));
+}
+
+bool IsConnection(const PageConnection& connection) {
+  return connection.rtt <= kMostRtt && connection.rtt % 50 == 0 &&
+         connection.downlink >= 0 && connection.downlink <= kMostDownlink;
+}
+
+std::optional<PageConnection> ReadConnection(const base::DictValue* dict) {
+  if (!dict || dict->size() != 2) {
+    return std::nullopt;
+  }
+  const std::optional<int> rtt = dict->FindInt("rtt");
+  const std::optional<double> downlink = dict->FindDouble("downlink");
+  if (!rtt || !downlink || *rtt < 0) {
+    return std::nullopt;
+  }
+  const PageConnection connection = {.rtt = static_cast<uint32_t>(*rtt),
+                                     .downlink = *downlink};
+  if (!IsConnection(connection)) {
+    return std::nullopt;
+  }
+  return connection;
+}
+
+// What the library sends: the "start" option with the connection of
+// about:blank's document.
 base::expected<PageStart, std::string> ReadStartPayload(
     std::string_view payload) {
-  const std::optional<base::DictValue> dict =
+  std::optional<base::DictValue> dict =
       base::JSONReader::ReadDict(payload, base::JSON_PARSE_RFC);
   if (!dict) {
     return base::unexpected("a start that is not a JSON object");
   }
-  return ReadStart(*dict);
+  std::optional<base::Value> connection_value = dict->Extract(kConnectionKey);
+  const std::optional<PageConnection> connection =
+      ReadConnection(connection_value && connection_value->is_dict()
+                         ? &connection_value->GetDict()
+                         : nullptr);
+  if (!connection) {
+    return base::unexpected(
+        NotA(kConnectionKey, "an rtt and a downlink that Chrome gives"));
+  }
+  base::expected<PageStart, std::string> start = ReadStart(*dict);
+  if (start.has_value()) {
+    start->connection = *connection;
+  }
+  return start;
 }
 
 // Takes the next part of `bytes`, after its size as a 32-bit number, into
@@ -315,7 +568,7 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageResponseStarted, std::string> ReadResponseStarted(
     std::string_view bytes) {
-  if (bytes.size() < 24) {
+  if (bytes.size() < 36) {
     return base::unexpected(WrongSize("response", bytes.size()));
   }
   PageResponseStarted response;
@@ -327,13 +580,17 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   const uint8_t alpn = static_cast<uint8_t>(bytes[15]);
   response.navigation_start =
       static_cast<int64_t>(DecodeUint64(bytes.substr(16, 8)));
-  bytes.remove_prefix(24);
+  response.connection.rtt = DecodeUint32(bytes.substr(24, 4));
+  response.connection.downlink =
+      base::bit_cast<double>(DecodeUint64(bytes.substr(28, 8)));
+  bytes.remove_prefix(36);
   std::string_view url;
   std::string_view status_text;
   std::string_view connection_info;
   std::string_view alpn_negotiated_protocol;
   if (response.status < 0 || redirected > 1 || cors > 1 || spdy > 1 ||
-      alpn > 1 || !TakeSized(bytes, url) || !TakeSized(bytes, status_text) ||
+      alpn > 1 || !IsConnection(response.connection) ||
+      !TakeSized(bytes, url) || !TakeSized(bytes, status_text) ||
       !TakeSized(bytes, connection_info) ||
       !TakeSized(bytes, alpn_negotiated_protocol)) {
     return base::unexpected("a response that does not hold what it says");
@@ -402,6 +659,17 @@ PageResponseBody::PageResponseBody(PageResponseBody&&) = default;
 PageResponseBody& PageResponseBody::operator=(PageResponseBody&&) = default;
 PageResponseBody::~PageResponseBody() = default;
 
+PageUserAgentData::PageUserAgentData() = default;
+PageUserAgentData::PageUserAgentData(const PageUserAgentData&) = default;
+PageUserAgentData& PageUserAgentData::operator=(const PageUserAgentData&) =
+    default;
+PageUserAgentData::~PageUserAgentData() = default;
+
+PageNavigator::PageNavigator() = default;
+PageNavigator::PageNavigator(const PageNavigator&) = default;
+PageNavigator& PageNavigator::operator=(const PageNavigator&) = default;
+PageNavigator::~PageNavigator() = default;
+
 PageStart::PageStart() = default;
 PageStart::PageStart(const PageStart&) = default;
 PageStart& PageStart::operator=(const PageStart&) = default;
@@ -451,6 +719,16 @@ std::string EncodeStart(const PageStart& start) {
                                 : kNormal);
   dict.Set(kInvertedColorsKey,
            start.inverted_colors ? kInverted : kNotInverted);
+  for (const StartSetting& setting : StartSettings()) {
+    dict.Set(setting.key, start.*setting.field);
+  }
+  dict.Set(kMemoryKey, start.memory);
+  dict.Set(kScaleKey, start.scale);
+  dict.Set(kNavigatorKey, WriteNavigator(start.navigator));
+  dict.Set(kConnectionKey,
+           base::DictValue()
+               .Set("rtt", static_cast<int>(start.connection.rtt))
+               .Set("downlink", start.connection.downlink));
   return EncodeFrame(PageMessage::kStart, *base::WriteJson(dict));
 }
 
@@ -497,6 +775,39 @@ base::expected<PageStart, std::string> ReadStart(const base::DictValue& dict) {
         NotA(kInvertedColorsKey, "\"none\" or \"inverted\""));
   }
   start.inverted_colors = *inverted == kInverted;
+  for (const StartSetting& setting : StartSettings()) {
+    const std::string* const value = dict.FindString(setting.key);
+    if (!value ||
+        std::ranges::find(setting.values, *value) == setting.values.end()) {
+      std::string values;
+      for (const std::string_view allowed : setting.values) {
+        base::StrAppend(&values,
+                        {values.empty() ? "" : ", ", "\"", allowed, "\""});
+      }
+      return base::unexpected(
+          NotA(setting.key, base::StrCat({"one of ", values})));
+    }
+    start.*setting.field = *value;
+  }
+  const std::optional<int> memory = dict.FindInt(kMemoryKey);
+  if (!memory ||
+      std::ranges::find(kMemorySizes, *memory) == kMemorySizes.end()) {
+    return base::unexpected(NotA(kMemoryKey, "2, 4, 8, 16 or 32"));
+  }
+  start.memory = *memory;
+  // A whole number in JSON reads as an int, which FindDouble() takes too.
+  const std::optional<double> scale = dict.FindDouble(kScaleKey);
+  if (!scale || !(*scale >= kLeastScale && *scale <= kMostScale)) {
+    return base::unexpected(NotA(kScaleKey, "a number from 1 to 5"));
+  }
+  start.scale = *scale;
+  std::optional<PageNavigator> navigator =
+      ReadNavigator(dict.FindDict(kNavigatorKey));
+  if (!navigator) {
+    return base::unexpected(NotA(
+        kNavigatorKey, "a user agent, a platform, languages and their data"));
+  }
+  start.navigator = *std::move(navigator);
   return start;
 }
 
@@ -577,6 +888,8 @@ std::string EncodeResponseStarted(const PageResponseStarted& response) {
            std::string_view(&redirected, 1), std::string_view(&cors, 1),
            std::string_view(&spdy, 1), std::string_view(&alpn, 1),
            EncodeUint64(static_cast<uint64_t>(response.navigation_start)),
+           EncodeUint32(response.connection.rtt),
+           EncodeUint64(base::bit_cast<uint64_t>(response.connection.downlink)),
            EncodeUint32(static_cast<uint32_t>(response.url.size())),
            response.url,
            EncodeUint32(static_cast<uint32_t>(response.status_text.size())),

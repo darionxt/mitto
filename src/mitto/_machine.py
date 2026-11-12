@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal, Self, TypedDict, cast
 
 from mitto._arguments import require_type
-from mitto._window import Rect, maximised_viewport, normal_window_around, work_area
+from mitto._window import Rect, maximised_viewport, normal_window_around, screen_size, work_area
 
 __all__ = [
     "MACHINE_HINTS",
@@ -691,9 +691,7 @@ def _check_desktop(machine: Machine) -> None:
     The work area lies on the display, a maximised window is the work area, and the page area lies inside the window. A
     viewport can be as large as the display and no larger, as Chrome in full screen has it.
     """
-    scale = Fraction(machine.scale)
-    widest = math.ceil(machine.display_width / scale)
-    highest = math.ceil(machine.display_height / scale)
+    widest, highest = screen_size(machine.display_width, machine.display_height, Fraction(machine.scale))
     if machine.viewport_width > widest or machine.viewport_height > highest:
         raise ValueError(
             f"the viewport of {machine.viewport_width} by {machine.viewport_height} does not fit on a display of"

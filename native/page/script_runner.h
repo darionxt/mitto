@@ -49,7 +49,7 @@ bool GenerateEntropy(unsigned char* buffer, size_t size);
 
 // Whether a document at `url` is a secure context: the HTML Standard's
 // potentially trustworthy URL, as Chrome decides it with no allowlist.
-// Upstream: services/network/public/cpp/is_potentially_trustworthy.cc
+// Upstream: net/base/is_potentially_trustworthy.cc
 bool IsUrlPotentiallyTrustworthy(const GURL& url);
 
 // The main thread is the Page's event loop: each Session frame, each step of a
@@ -67,7 +67,8 @@ class ScriptRunner final : public base::TaskObserver {
   ~ScriptRunner() override;
 
   // Sets the time zone and the locale that ICU, and so V8, report, so that
-  // neither is read from the machine, and makes the context, about:blank's.
+  // neither is read from the machine, and makes the context, about:blank's,
+  // whose window reads the rest of `start`, as each later window does.
   // Returns why not, if ICU does not know one of them. What the Page sends from
   // then on goes through `send`, and what the Page refuses of what the Session
   // sends through `refuse`. Documents that the Session loads read and write
@@ -99,8 +100,11 @@ class ScriptRunner final : public base::TaskObserver {
   // place of the current one, and returns the document. Calls that wait for a
   // promise of the old context fail, as DevTools' do when a page navigates,
   // and the old window's timers and fetches stop. The new window's
-  // performance.timeOrigin is `navigation_start`.
-  Document& CommitDocument(const GURL& url, base::TimeTicks navigation_start);
+  // performance.timeOrigin is `navigation_start`, and its
+  // navigator.connection gives `connection`.
+  Document& CommitDocument(const GURL& url,
+                           base::TimeTicks navigation_start,
+                           const PageConnection& connection);
   // What window.chrome of the current window reads, which its document's
   // loading fills in.
   ChromeObjectData& chrome_object_data() { return *chrome_object_data_.back(); }
@@ -125,9 +129,11 @@ class ScriptRunner final : public base::TaskObserver {
   // Makes a window's context, whose time origin is `time_origin`, and what
   // Chrome's renderer adds to it.
   v8::Local<v8::Context> NewContext(base::TimeTicks time_origin);
-  // Gives the current context's window its timers and what its fetch() goes
-  // through.
-  void AttachWindow(v8::Local<v8::Context> context);
+  // Gives the current context's window its timers, what its fetch() goes
+  // through, and what it reads of the browser and the machine, with
+  // `connection` for its document.
+  void AttachWindow(v8::Local<v8::Context> context,
+                    const PageConnection& connection);
 
   // Returns `value`, the result of `call`, as JSON, or why it cannot be.
   PageEvaluated ResultOf(uint64_t call,
@@ -154,6 +160,8 @@ class ScriptRunner final : public base::TaskObserver {
   const raw_ptr<v8::Isolate> isolate_;
   SendFrame send_;
   std::unique_ptr<PageReporter> reporter_;
+  // What the Page started with, which each window reads.
+  PageStart start_;
   // The results of the calls that the current task has settled, which go to
   // the Session once the task's uncaught errors have.
   std::vector<PageEvaluated> settled_;
