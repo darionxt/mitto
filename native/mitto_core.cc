@@ -660,8 +660,10 @@ class RequestJob final : public net::URLRequest::Delegate,
       Finish(net::ERR_UPLOAD_STREAM_REWIND_NOT_SUPPORTED);
       return;
     }
-    if (!client_->AllowsResponse(
-            ResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED))) {
+    RequestEvent redirect = ResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED);
+    redirect.new_url = redirect_info.new_url.spec();
+    redirect.new_method = redirect_info.new_method;
+    if (!client_->AllowsResponse(redirect)) {
       Finish(net::ERR_FAILED);
       return;
     }

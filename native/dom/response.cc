@@ -198,6 +198,10 @@ void Response::AppendBody(std::string_view bytes) {
 }
 
 void Response::EndBody(int net_error) {
+  // A null body stays one, whenever the end comes.
+  if (body_state_ == BodyState::kNull) {
+    return;
+  }
   body_state_ = net_error == 0 ? BodyState::kComplete : BodyState::kFailed;
   if (reader_.IsEmpty()) {
     return;

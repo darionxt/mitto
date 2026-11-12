@@ -254,13 +254,16 @@ class PageHost final : public PageChannel::Delegate {
 
   // Starts a request numbered `number`, whose client is a Request that
   // `requests_` holds. Each response of a fetch from another origin, redirects
-  // included, has to pass the CORS check before the request goes on.
+  // included, has to pass the CORS check before the request goes on, and
+  // `unsafe_lines` says that the script set a line that a hop to another
+  // origin would need a CORS preflight for.
   void StartRequest(uint64_t number,
                     GURL url,
                     net::HttpRequestHeaders headers,
                     RequestOptions options,
                     std::optional<std::vector<char>> body,
-                    bool is_fetch);
+                    bool is_fetch,
+                    bool unsafe_lines);
 
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, const RequestEvent& event);
