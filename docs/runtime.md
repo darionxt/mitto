@@ -160,9 +160,54 @@ It runs in four steps, all in [`native/bindings/generate_bindings.py`](../native
 3. **Write.** For each interface that has a C++ class in the Runtime, [`cpp_writer.py`](../native/bindings/bindings_generator/cpp_writer.py) writes `v8_<interface>.h` and `.cc` into `out/runtime/gen/mitto/bindings`: a callback for each attribute, operation and constructor, and the function that installs them on the interface's templates in the order of the plan. It also writes the dictionaries and unions those use, the table of runtime-enabled features, and the function that puts the interface objects on a Page's global object, in the order of Chrome's `Window`. It converts values as Web IDL says, in the order of `bind_gen`'s callbacks: V8's signature check of the receiver, which throws "Illegal invocation"; then for a constructor that it is called with `new`; then the number of arguments; then each argument in turn ([`cpp_types.py`](../native/bindings/bindings_generator/cpp_types.py)). It handles only the types and extended attributes that those interfaces use, and refuses any other there, naming it: adding an interface may mean teaching it more.
 4. **List.** It writes `web_idl_listing.txt`, every interface and member that it planned, one per line, with the features and conditions each is behind. The release routine compares it between two Engine Releases ([releasing.md](releasing.md#2-check-out-the-new-engine-release)).
 
-The interfaces with a C++ class are those in [`native/bindings/interfaces.gni`](../native/bindings/interfaces.gni), and until M7 brings bindings for every interface (roadmap, M7), only those are exposed to a page. Each class is `mitto::<interface>` in [`native/dom`](../native/dom). A member whose behaviour the Runtime lacks is a **Known Gap**: its binding is installed as Chrome's is, so the shape matches, and it throws `TypeError: Not implemented.` when a page calls it, or, for an operation that returns a promise, gives a promise rejected with it. An entry there either lists its Known Gaps in `missing`, as `EventTarget` does for `when()`, whose `Observable` the Runtime does not have, or lists in `implemented` the members its class has, so that every other member is a Known Gap, as the DOM's large interfaces do. `get x` there names the getter of an attribute alone. The generator gives a reflected attribute of a string or a boolean, `[Reflect]` with no URL and no list of values, its behaviour itself, through the element's content attribute, and leaves an indexed or named property operation that is a Known Gap out, so that a page reads nothing through it.
+The interfaces with a C++ class are those in [`native/bindings/interfaces.gni`](../native/bindings/interfaces.gni), and until M7 brings bindings for every interface (roadmap, M7), only those are exposed to a page. Each class is `mitto::<interface>` in [`native/dom`](../native/dom). A member whose behaviour the Runtime lacks is a **Known Gap**: its binding is installed as Chrome's is, so the shape matches, and [What a Known Gap does](#what-a-known-gap-does) says what happens when a page calls it. An entry there either lists its Known Gaps in `missing`, as `EventTarget` does for `when()`, whose `Observable` the Runtime does not have, or lists in `implemented` the members its class has, so that every other member is a Known Gap, as the DOM's large interfaces do. `get x` there names the getter of an attribute alone. The generator gives a reflected attribute of a string or a boolean, `[Reflect]` with no URL and no list of values, its behaviour itself, through the element's content attribute, and leaves an indexed or named property operation that is a Known Gap out, so that a page reads nothing through it.
 
 For Chromium 157.0.8103.39, the generator reads the whole database in about a second, and the listing has 18,069 lines, about 1.1 MB.
+
+### What a Known Gap does
+
+Today a Known Gap checks its receiver and then throws `TypeError: Not implemented.`, or, for an operation that returns a promise, gives a promise rejected with it. Chrome never says that, so one caught error tells a page that it does not run in Chrome, and the page's script stops where Chrome's goes on. Once the generator writes bindings for every interface (roadmap, M7), a Known Gap does what the owner chose on 2026-11-12, in [#208](https://github.com/darionxt/mitto/issues/208), whose comment compares the options. In short, it does what Chrome's binding does up to the call into Blink, tells the Session, and gives its type's default:
+
+1. **Chrome's checks first.** In the order of `bind_gen`'s callbacks, with Chrome's messages, as the binding of a member with behaviour does, it:
+   - checks the receiver;
+   - for a constructor, checks that it is called with `new`;
+   - checks the number of arguments;
+   - resolves the overloads;
+   - converts each argument as Web IDL says.
+
+   For an operation that returns a promise, an error from any of these rejects the promise. So a wrong argument fails as it does in Chrome, and the page's own getters, iterators, `valueOf()` and `toString()` run as they run in Chrome. The converted arguments are thrown away: only the call into the Runtime's C++ is missing.
+2. **A report.** It tells the Session the first time a document reaches it after its arguments have converted. Chrome's use counters count a feature the same way, once for each document (`UseCounterImpl::Count()` in `third_party/blink/renderer/core/frame/use_counter_impl.cc`). A Known Gap inside a member's behaviour, such as a selector that needs more than simple selectors, reports the same way. The generator also marks each Known Gap in `web_idl_listing.txt`, so that each build writes all of them down, including those that no Parity Check sees.
+3. **Its type's default.**
+
+   | Member | What it does |
+   | --- | --- |
+   | Getter | Gives the value that its setter last stored on that object, or else its type's default |
+   | Setter | Stores the converted value for the getter |
+   | Operation | Returns its return type's default, a new object for an interface |
+   | Operation that returns a promise | Returns a promise resolved with the default of the promised type |
+   | Constructor | Returns an object of the interface with nothing behind it |
+
+   A type's default is:
+   - `null` for a nullable type;
+   - `false`, 0 or `""`;
+   - an empty array for a sequence or a frozen array;
+   - `undefined` for `any`;
+   - the first value of an enumeration;
+   - for an interface, an object of that interface with nothing behind it, whose members are Known Gaps too.
+
+   A getter gives the same such object each time on one receiver, unless the IDL says `[NewObject]`. An iterable, maplike or setlike declaration on an object with nothing behind it iterates over nothing.
+
+Some members follow other rules:
+
+- **Event handler attributes** are not Known Gaps. The generator gives them Chrome's behaviour, as it does for reflected attributes. The getter gives `null` until a handler is set. The setter stores any object, and turns anything else into `null` without throwing, as `JSEventHandler::CreateOrNull()` does. The handler then runs when the Runtime fires its event.
+- **The generator refuses by name** a Known Gap whose default would be unsafe or impossible:
+  - a member of `Crypto` or `SubtleCrypto`, whose default would be predictable random values or keys;
+  - an attribute or operation that gives an object of an interface that has a C++ class, whose class's members would find no object behind it.
+
+  Each of these needs behaviour, or an outcome written by hand. Until it has one, it keeps today's error.
+- **The members that pages call most** get behaviour, or Chrome's outcome for the Page's state, written by hand, unless the default already is Chrome's outcome. These are the members used on at least 1% of page loads, by Chrome Platform Status's use counters. Chrome's outcome is the one for a Machine that has granted no permission, has only the devices it claims, and has no user activation. For example, `navigator.permissions.query()` gives `"prompt"`, where the first value of `PermissionState` would say `"granted"`. Where Chrome waits for a person, the outcome may be a promise that never settles, as `getUserMedia()` waits at its prompt. A member written this way is no longer a Known Gap.
+
+The defaults keep a page's script running where Chrome's runs, and with it the requests the script makes. They are often Chrome's own values too. In a walk of a new page in Chrome 157, 85% of the getters within three steps of `window` gave their type's default, every event handler among them. A Parity Check therefore shows a Known Gap only where its default differs from Chrome's value.
 
 ### What the bindings run on
 
