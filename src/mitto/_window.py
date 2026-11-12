@@ -54,6 +54,8 @@ _WINDOW_MAX_DEFAULT_WIDTH = 1050
 _MIN_SCREEN_WIDTH_FOR_HALVING = 1600
 
 
+# ScreenWin gives a display's bounds and work area in device-independent pixels with gfx::ScaleToEnclosingRect().
+# Upstream: ui/display/win/screen_win.cc
 def screen_size(display_width: int, display_height: int, scale: Fraction) -> tuple[int, int]:
     """Return the size of a display in pixels at a scale, as a page's screen.width and screen.height read it.
 
