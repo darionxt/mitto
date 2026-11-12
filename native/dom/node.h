@@ -37,7 +37,9 @@ class ExceptionState;
 
 class Document;
 class Element;
+class HTMLCollection;
 class Node;
+class NodeList;
 
 // Nodes that C++ holds between allocations. A vector's buffer is not on the
 // C++ heap, where the collector would see its members, so each is persistent.
@@ -106,7 +108,14 @@ class Node : public EventTarget {
                      bindings::ExceptionState& exception_state);
   Node* RemoveChild(Node* child, bindings::ExceptionState& exception_state);
 
+  // The document's URL, as the base URL of a document without <base>.
+  std::u16string BaseURI() const;
+  // The same live list of the children on every read, as Blink keeps it.
+  NodeList* ChildNodes();
+
   // The members of ParentNode, ChildNode and NonDocumentTypeChildNode.
+  // The same live collection of the element children on every read.
+  HTMLCollection* Children();
   Element* FirstElementChild() const;
   Element* LastElementChild() const;
   uint32_t ChildElementCount() const;
@@ -210,6 +219,8 @@ class Node : public EventTarget {
   cppgc::Member<Node> previous_sibling_;
   cppgc::Member<Node> next_sibling_;
   cppgc::Member<Document> document_;
+  cppgc::Member<NodeList> child_nodes_;
+  cppgc::Member<HTMLCollection> children_;
 };
 
 }  // namespace mitto

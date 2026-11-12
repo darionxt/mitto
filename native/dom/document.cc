@@ -13,6 +13,7 @@
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/html_all_collection.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_element_factory.h"
@@ -20,6 +21,8 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace mitto {
 
@@ -109,6 +112,96 @@ const bindings::WrapperTypeInfo* Document::GetWrapperTypeInfo() const {
 void Document::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   visitor->Trace(window_);
+  visitor->Trace(images_);
+  visitor->Trace(embeds_);
+  visitor->Trace(links_);
+  visitor->Trace(forms_);
+  visitor->Trace(scripts_);
+  visitor->Trace(anchors_);
+  visitor->Trace(applets_);
+  visitor->Trace(all_);
+}
+
+mitto::Location* Document::Location() const {
+  return window_ ? window_->Location() : nullptr;
+}
+
+// SecurityOrigin::Domain(): the host, which an opaque origin lacks.
+std::u16string Document::Domain() const {
+  const url::Origin origin = url::Origin::Create(GURL(url_));
+  return origin.opaque() ? std::u16string() : base::UTF8ToUTF16(origin.host());
+}
+
+// Blink's setDesignMode(): "on" or "off" in any case, and nothing for others.
+void Document::SetDesignMode(const std::u16string& value) {
+  if (base::EqualsCaseInsensitiveASCII(value, u"on")) {
+    design_mode_ = true;
+  } else if (base::EqualsCaseInsensitiveASCII(value, u"off")) {
+    design_mode_ = false;
+  }
+}
+
+// Blink's ScrollingElementNoLayout(): the root element in standards mode, and
+// in quirks mode the body, which nothing lays out as a scroll container.
+Element* Document::ScrollingElement() const {
+  if (!InQuirksMode()) {
+    return DocumentElement();
+  }
+  HTMLElement* const body = Body();
+  return body && body->HasHTMLTagName(u"body") ? body : nullptr;
+}
+
+// With no element focused, the body, as Blink's Document::ActiveElement()
+// gives it.
+Element* Document::ActiveElement() const {
+  return Body();
+}
+
+mitto::CustomElementRegistry* Document::CustomElementRegistry() const {
+  return window_ ? window_->CustomElements() : nullptr;
+}
+
+HTMLCollection* Document::Collection(cppgc::Member<HTMLCollection>& cached,
+                                     HTMLCollection::Type type) {
+  if (!cached) {
+    cached = HTMLCollection::Create(this, type);
+  }
+  return cached.Get();
+}
+
+HTMLCollection* Document::Images() {
+  return Collection(images_, HTMLCollection::Type::kDocImages);
+}
+
+HTMLCollection* Document::Embeds() {
+  return Collection(embeds_, HTMLCollection::Type::kDocEmbeds);
+}
+
+HTMLCollection* Document::Links() {
+  return Collection(links_, HTMLCollection::Type::kDocLinks);
+}
+
+HTMLCollection* Document::Forms() {
+  return Collection(forms_, HTMLCollection::Type::kDocForms);
+}
+
+HTMLCollection* Document::Scripts() {
+  return Collection(scripts_, HTMLCollection::Type::kDocScripts);
+}
+
+HTMLCollection* Document::Anchors() {
+  return Collection(anchors_, HTMLCollection::Type::kDocAnchors);
+}
+
+HTMLCollection* Document::Applets() {
+  return Collection(applets_, HTMLCollection::Type::kDocApplets);
+}
+
+HTMLAllCollection* Document::All() {
+  if (!all_) {
+    all_ = HTMLAllCollection::Create(this);
+  }
+  return all_.Get();
 }
 
 // Blink's Document::cookie() and setCookie(), for a document that cookies are

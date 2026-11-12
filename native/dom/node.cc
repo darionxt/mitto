@@ -13,6 +13,8 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_collection.h"
+#include "mitto/dom/node_list.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
 
@@ -201,6 +203,26 @@ void Node::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(previous_sibling_);
   visitor->Trace(next_sibling_);
   visitor->Trace(document_);
+  visitor->Trace(child_nodes_);
+  visitor->Trace(children_);
+}
+
+std::u16string Node::BaseURI() const {
+  return GetDocument().UrlForBinding();
+}
+
+NodeList* Node::ChildNodes() {
+  if (!child_nodes_) {
+    child_nodes_ = NodeList::CreateChildNodes(this);
+  }
+  return child_nodes_.Get();
+}
+
+HTMLCollection* Node::Children() {
+  if (!children_) {
+    children_ = HTMLCollection::Create(this, HTMLCollection::Type::kChildren);
+  }
+  return children_.Get();
 }
 
 void Node::SetDocumentToSelf(Document* document) {

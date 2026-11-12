@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
+#include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
 #include "v8/include/cppgc/member.h"
 
@@ -24,10 +25,13 @@ namespace mitto {
 
 class Comment;
 class CookieJar;
+class CustomElementRegistry;
 class DocumentType;
 class Element;
+class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
+class Location;
 class Text;
 class Window;
 
@@ -70,9 +74,41 @@ class Document : public Node {
   HTMLElement* Body() const;
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
-  // A document of no browsing context has no location. The window's has one,
-  // which the Runtime lacks yet: a Known Gap.
-  bindings::ScriptWrappable* Location() const { return nullptr; }
+  // The window's location, and none for a document of no window.
+  mitto::Location* Location() const;
+  // The host of the document's origin, and nothing for an opaque one.
+  std::u16string Domain() const;
+  std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
+  void SetDesignMode(const std::u16string& value);
+  Element* ScrollingElement() const;
+  Element* ActiveElement() const;
+  // What a page of a tab in front reads, which a document of no window is
+  // not, as Blink's documents without a page say.
+  bool Hidden() const { return !window_; }
+  std::u16string VisibilityState() const {
+    return window_ ? u"visible" : u"hidden";
+  }
+  std::u16string VisibilityStateAsString() const { return VisibilityState(); }
+  // What a top-level page that permissions policy allows them reads, and a
+  // document of no window does not. It is never in full screen or in
+  // picture-in-picture.
+  bool FullscreenEnabled() const { return window_; }
+  bool PictureInPictureEnabled() const { return window_; }
+  Element* FullscreenElement() const { return nullptr; }
+  // An SVG document's root, which an HTML document lacks.
+  bindings::ScriptWrappable* RootElement() const { return nullptr; }
+  // The window's custom elements, and none for a document of no window.
+  mitto::CustomElementRegistry* CustomElementRegistry() const;
+  // The document's collections, each the same object on every read, as Blink
+  // caches them, plugins being embeds.
+  HTMLCollection* Images();
+  HTMLCollection* Embeds();
+  HTMLCollection* Links();
+  HTMLCollection* Forms();
+  HTMLCollection* Scripts();
+  HTMLCollection* Anchors();
+  HTMLCollection* Applets();
+  HTMLAllCollection* All();
   std::u16string Cookie(bindings::ExceptionState& exception_state) const;
   void SetCookie(const std::u16string& value,
                  bindings::ExceptionState& exception_state);
@@ -123,7 +159,11 @@ class Document : public Node {
  private:
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
 
+  HTMLCollection* Collection(cppgc::Member<HTMLCollection>& cached,
+                             HTMLCollection::Type type);
+
   const bool is_html_;
+  bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
   std::u16string url_ = u"about:blank";
   // A document that no parser is loading is complete, as Blink's starts.
@@ -131,6 +171,14 @@ class Document : public Node {
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   cppgc::Member<Window> window_;
+  cppgc::Member<HTMLCollection> images_;
+  cppgc::Member<HTMLCollection> embeds_;
+  cppgc::Member<HTMLCollection> links_;
+  cppgc::Member<HTMLCollection> forms_;
+  cppgc::Member<HTMLCollection> scripts_;
+  cppgc::Member<HTMLCollection> anchors_;
+  cppgc::Member<HTMLCollection> applets_;
+  cppgc::Member<HTMLAllCollection> all_;
 };
 
 }  // namespace mitto

@@ -72,6 +72,17 @@ v8::Local<v8::Array> FrozenArray(
   return array;
 }
 
+v8::Local<v8::Array> FrozenArrayOfStrings(
+    v8::Isolate* isolate,
+    const std::vector<std::u16string>& items) {
+  std::vector<v8::Local<v8::Value>> values;
+  values.reserve(items.size());
+  for (const std::u16string& item : items) {
+    values.push_back(bindings::ToV8String(isolate, item));
+  }
+  return FrozenArray(isolate, values);
+}
+
 v8::Local<v8::Object> PlainObject(
     v8::Isolate* isolate,
     const std::vector<std::pair<std::string_view, v8::Local<v8::Value>>>&
