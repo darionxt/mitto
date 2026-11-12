@@ -30,6 +30,7 @@ from tools.capture.script_normal_form import (
     Place,
     machine_values,
 )
+from tools.parity.script_gaps import same_json
 
 __all__ = ["NOISED", "PAGE_READS", "WORKED_OUT_IN_A_PAGE", "machine_misses"]
 
@@ -160,16 +161,9 @@ def machine_misses(record: dict[str, RecordValue], machine: Machine) -> Iterator
             continue
         read = PAGE_READS.get(place)
         if read is not None and place not in NOISED:
-            if not _same(value, read(machine)):
+            if not same_json(value, read(machine)):
                 yield place, THE_MACHINES, NOT_THE_MACHINES
             continue
         form = SCRIPT_FORMS[place]
         if not form.fits(value):
             yield place, f"<machine>: {form.description}", "<machine>: not of that form"
-
-
-def _same(value: RecordValue, expected: RecordValue) -> bool:
-    """Whether a record's value is the one expected, where JSON's true is no 1 and false no 0."""
-    if isinstance(value, bool) or isinstance(expected, bool):
-        return value is expected
-    return value == expected

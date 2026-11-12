@@ -24,6 +24,7 @@ __all__ = [
     "field_of",
     "loads_script_known_gaps",
     "place_kind",
+    "same_json",
     "script_differences",
 ]
 
@@ -140,6 +141,17 @@ def _shown(value: RecordValue) -> str:
     return _NOTHING if value is None else json.dumps(value, ensure_ascii=False)
 
 
+def same_json(baseline: RecordValue, mitto: RecordValue) -> bool:
+    """Whether two parts of a record are the same JSON, where true is not 1 and false is not 0, as they are in Python."""
+    if isinstance(baseline, bool) or isinstance(mitto, bool):
+        return baseline is mitto
+    if isinstance(baseline, list) and isinstance(mitto, list):
+        return len(baseline) == len(mitto) and all(map(same_json, baseline, mitto))
+    if isinstance(baseline, dict) and isinstance(mitto, dict):
+        return baseline.keys() == mitto.keys() and all(same_json(value, mitto[key]) for key, value in baseline.items())
+    return baseline == mitto
+
+
 def field_of(place: Place) -> str:
     """Return the field of a gap at a place of a record, as script_differences() names it."""
     if isinstance(place, Getter):
@@ -187,7 +199,7 @@ def script_differences(baseline: _Form, mitto: _Form) -> Iterator[ScriptDifferen
             yield ScriptDifference(path, _reach_kind(path, mitto_edges), None, _head(entry))
     yield from _values_differences(_dict(baseline.get("values")), _dict(mitto.get("values")))
     for key in _keys(baseline, mitto):
-        if key in ("objects", "values") or baseline.get(key) == mitto.get(key):
+        if key in ("objects", "values") or same_json(baseline.get(key), mitto.get(key)):
             continue
         kind = GapKind.BEHAVIOUR if key == "reports" else GapKind.SHAPE
         yield ScriptDifference(key, kind, baseline.get(key), mitto.get(key))
@@ -278,15 +290,15 @@ def _object_differences(
     path: str, baseline: _Entry, mitto: _Entry, edges: Mapping[str, _Edge]
 ) -> Iterator[ScriptDifference]:
     for key in _keys(baseline, mitto):
-        if key in ("path", *_LISTS) or baseline.get(key) == mitto.get(key):
+        if key in ("path", *_LISTS) or same_json(baseline.get(key), mitto.get(key)):
             continue
         yield ScriptDifference(f"{path} {key}", GapKind.SHAPE, baseline.get(key), mitto.get(key))
     holds_data = baseline.get("kind") == "instance" and baseline.get("tag") in _DATA_TAGS
     for section in _LISTS:
+        if same_json(baseline.get(section), mitto.get(section)):
+            continue
         baseline_items = _identified(_items(baseline, section))
         mitto_items = _identified(_items(mitto, section))
-        if baseline_items == mitto_items and list(baseline_items) == list(mitto_items):
-            continue
 
         def kind_of(name: str, section: str = section) -> GapKind:
             if section == "get":
@@ -297,7 +309,7 @@ def _object_differences(
 
         for name, item in baseline_items.items():
             other = mitto_items.get(name)
-            if other != item:
+            if other is None or not same_json(other, item):
                 yield ScriptDifference(
                     f"{path} {section} {name}",
                     kind_of(_key(name)),
@@ -366,7 +378,7 @@ def _moved(baseline: list[str], mitto: list[str]) -> tuple[RecordValue, RecordVa
 def _values_differences(baseline: dict[str, RecordValue], mitto: dict[str, RecordValue]) -> Iterator[ScriptDifference]:
     for key in _keys(baseline, mitto):
         baseline_entry, mitto_entry = baseline.get(key), mitto.get(key)
-        if baseline_entry == mitto_entry:
+        if same_json(baseline_entry, mitto_entry):
             continue
         if _is_value(baseline_entry) and _is_value(mitto_entry):
             yield from _value_differences(key, (), _dict(baseline_entry)["value"], _dict(mitto_entry)["value"])
@@ -382,7 +394,7 @@ def _is_value(entry: RecordValue) -> bool:
 def _value_differences(
     key: str, parts: tuple[str, ...], baseline: RecordValue, mitto: RecordValue
 ) -> Iterator[ScriptDifference]:
-    if baseline == mitto:
+    if same_json(baseline, mitto):
         return
     if isinstance(baseline, dict) and isinstance(mitto, dict):
         for part in _keys(baseline, mitto):

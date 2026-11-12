@@ -22,6 +22,7 @@ from tools.parity.script_gaps import (
     ScriptGap,
     field_of,
     loads_script_known_gaps,
+    same_json,
     script_differences,
 )
 from tools.parity.script_machine import NOISED, NOT_THE_MACHINES, PAGE_READS, THE_MACHINES, machine_misses
@@ -97,6 +98,25 @@ def test_a_changed_item_is_one_gap_of_its_kind(
             shown(item(page, path, section, key)),
         )
     ]
+
+
+def test_a_number_in_the_place_of_a_boolean_is_a_gap(chrome_157: Form, page: Form) -> None:
+    item(page, "navigator", "get", "webdriver")[1] = 0
+    key = 'new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions()'
+    page["values"][key]["value"]["hour12"] = 1
+
+    assert differences(chrome_157, page) == [
+        ("navigator get webdriver", GapKind.BEHAVIOUR, False, 0),
+        (f'values[{json.dumps(key)}]["hour12"]', GapKind.PERSONA, True, 1),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("baseline", "mitto", "same"),
+    [(False, 0, False), (True, 1, False), ([1, True], [1.0, True], True), ({"a": False}, {"a": 0}, False)],
+)
+def test_json_tells_a_boolean_from_a_number(baseline: RecordValue, mitto: RecordValue, same: bool) -> None:
+    assert same_json(baseline, mitto) is same
 
 
 def test_a_property_that_a_page_lacks_is_one_gap(chrome_157: Form, page: Form) -> None:
