@@ -29,6 +29,7 @@ from bindings_generator.cpp_types import Site, TypeMapper, header_of, union_name
 from bindings_generator.errors import UnhandledError
 from bindings_generator.extended_attributes import KNOWN, Role
 from bindings_generator.install_plan import Phase, Property, plan_interface
+from bindings_generator.known_gaps import KnownGaps
 from bindings_generator.model import (
     Argument,
     Attribute,
@@ -46,7 +47,10 @@ from bindings_generator.model import (
 )
 from bindings_generator.runtime_features import Feature
 from bindings_generator.table_writer import HEADER as TABLES_HEADER
-from bindings_generator.table_writer import Construct, write_tables
+from bindings_generator.table_writer import Construct, KnownGapContext, member_row, write_tables
+from bindings_generator.type_tables import HEADER as TYPES_HEADER
+from bindings_generator.type_tables import SOURCE as TYPES_SOURCE
+from bindings_generator.type_tables import TypeTables
 from bindings_generator.web_idl_reader import PAGE_GLOBAL_NAME, Definitions
 
 __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
@@ -218,6 +222,7 @@ class _InterfaceWriter:
         interface_object_parent: str | None,
         index: int,
         has_class: Callable[[str], bool],
+        context: KnownGapContext,
     ) -> None:
         self.interface = interface
         self.implemented = implemented
@@ -226,7 +231,9 @@ class _InterfaceWriter:
         self.interface_object_parent = interface_object_parent
         self.index = index
         self.has_class = has_class
+        self.context = context
         self.constructs: list[ExposedConstruct] = []
+        self.known_gap_rows: list[str] = []
         self.cls = f"mitto::{interface.name}"
         self.v8_class = f"V8{interface.name}"
         self.callbacks: list[str] = []
@@ -261,11 +268,13 @@ class _InterfaceWriter:
         ]
 
     def _promise_receiver(self) -> list[str]:
-        """An operation that returns a promise has no signature, and rejects for a receiver of another kind."""
+        """An operation that returns a promise has no signature, and rejects for a receiver of another kind: bind_gen's
+        make_check_receiver() throws in the call, so that the call's context goes in front of the message, and the
+        promise scope around it turns that into the rejection."""
         return [
             f"{self.cls}* const impl = ToWrappableOf<{self.cls}>(isolate, {self.v8_class}::kWrapperTypeInfo, info.This());",
             "if (!impl) {",
-            '  RejectWithTypeError(info, "Illegal invocation");',
+            '  ThrowTypeError(isolate, "Illegal invocation");',
             "  return;",
             "}",
         ]
@@ -351,26 +360,23 @@ class _InterfaceWriter:
         return name
 
     def _missing(self, name: str, has_receiver: bool = True, lenient: bool = False) -> str:
-        receiver = self._lenient_receiver() if lenient else self._receiver()
-        return self._add_callback(
-            name,
-            [
-                *(receiver if has_receiver else []),
-                self._exception_state(),
-                "exception_state.ThrowTypeError(ExceptionMessages::NotImplemented());",
-            ],
-        )
+        """A Known Gap's callback, which known_gap.h has for every member, with the member's MemberInfo as its data."""
+        return {
+            "AttributeGetCallback": "&KnownGapAttributeGetter",
+            "AttributeSetCallback": "&KnownGapAttributeSetter",
+        }.get(name[-len("AttributeGetCallback") :], "&KnownGapOperation")
 
     def _missing_promise(self, name: str, operation: str, has_receiver: bool) -> str:
-        # The error goes into the promise, so V8 adds no context to it: the message carries its own.
-        message = f"Failed to execute '{operation}' on '{self.interface.name}': Not implemented."
-        return self._add_callback(
-            name,
-            [
-                *(self._promise_receiver() if has_receiver else []),
-                f'RejectWithTypeError(info, "{message}");',
-            ],
-        )
+        return "&KnownGapPromiseOperation"
+
+    def _known_gap_data(self, property_: Property) -> str:
+        """The data of a property's Known Gap callbacks: its MemberInfo, in this file's table of them."""
+        row = member_row(self.interface, property_, self.context)
+        if row is None:
+            raise UnhandledError(f"{self.where(property_.name)}: a Known Gap without a member")
+        if row not in self.known_gap_rows:
+            self.known_gap_rows.append(row)
+        return f"DataOfMember(isolate, kKnownGapMembers[{self.known_gap_rows.index(row)}])"
 
     def _has_attribute_behaviour(self, attribute: Attribute, accessor: str | None) -> bool:
         """Whether the bindings have the behaviour of the attribute, or for `accessor` "get" its getter's."""
@@ -841,9 +847,12 @@ class _InterfaceWriter:
             side_effect = "v8::SideEffectType::kHasNoSideEffect"
             install = "InstallAttributeOnObject" if on_objects else "InstallAttribute"
             first = "isolate, context" if on_objects else "isolate"
+            data = ""
+            if getter.startswith("&KnownGap") or setter.startswith("&KnownGap"):
+                data = f", {self._known_gap_data(property_)}"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "
-                f"{setter}, {attributes}, {side_effect});"
+                f"{setter}, {attributes}, {side_effect}{data});"
             ]
         if isinstance(member, Constant):
             if on_objects:
@@ -857,9 +866,10 @@ class _InterfaceWriter:
             callback = self.operation(member)
             install = "InstallOperationOnObject" if on_objects else "InstallOperation"
             first = "isolate, context" if on_objects else "isolate"
+            data = f", {self._known_gap_data(property_)}" if callback.startswith("&KnownGap") else ""
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, {callback}, "
-                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+                f"{property_.length}, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect{data});"
             ]
         raise UnhandledError(f"{self.where(property_.name)}: the C++ writer does not install this kind of property")
 
@@ -984,11 +994,24 @@ class _InterfaceWriter:
         }
         lines = ["constexpr ExposedConstructInfo kExposedConstructs[] = {"]
         for construct in self.constructs:
+            operation, number, refused = "nullptr", "0", "false"
+            if construct.kind == "factory function":
+                group = self.context.factory_functions[construct.name]
+                operation = self.context.types.operation(group, f"factory function {construct.name}")
+                number = str(self.context.gaps.number())
+                refused = "true" if not self.context.gaps.object_is_safe(construct.target) else "false"
             lines.append(
                 f'    {{"{construct.name}", &V8{construct.target}::kWrapperTypeInfo, '
-                f"ExposedConstructInfo::Kind::{kinds[construct.kind]}, {construct.length}}},"
+                f"ExposedConstructInfo::Kind::{kinds[construct.kind]}, {construct.length}, {operation}, {number}, "
+                f"{refused}}},"
             )
         return [*lines, "};", ""]
+
+    def _known_gap_table(self) -> list[str]:
+        """The MemberInfo of each Known Gap, which its callbacks get as their data."""
+        if not self.known_gap_rows:
+            return []
+        return ["constexpr MemberInfo kKnownGapMembers[] = {", *self.known_gap_rows, "};", ""]
 
     def write(self) -> tuple[str, str]:
         interface = self.interface
@@ -1044,7 +1067,10 @@ class _InterfaceWriter:
             "mitto/bindings/exception_messages.h",
             "mitto/bindings/exception_state.h",
             "mitto/bindings/idl_member_installer.h",
+            f"mitto/bindings/{TYPES_HEADER}",
             "mitto/bindings/indexed_and_named_properties.h",
+            "mitto/bindings/interface_table.h",
+            "mitto/bindings/known_gap.h",
             "mitto/bindings/per_isolate_data.h",
             "mitto/bindings/runtime_feature_set.h",
             "mitto/bindings/runtime_features.h",
@@ -1093,6 +1119,7 @@ class _InterfaceWriter:
         for callback in self.callbacks:
             source += [callback, ""]
         source += self._construct_table()
+        source += self._known_gap_table()
         source += [*install, "", *context, "", "}  // namespace", ""]
         source += [
             f"const WrapperTypeInfo {self.v8_class}::kWrapperTypeInfo = {{",
@@ -1640,19 +1667,39 @@ def _check_named_members(name: str, interface: Interface, implemented: Implement
             raise UnhandledError(f"{name} has no member {member}")
 
 
+def _interfaces_in(idl_type: IdlType) -> list[str]:
+    """The interfaces that a type names, inside unions, sequences, records and promises too."""
+    if idl_type.kind is TypeKind.INTERFACE:
+        return [idl_type.name]
+    return [name for member in idl_type.members for name in _interfaces_in(member)]
+
+
 def _constructs_with_tables(definitions: Definitions, implemented: dict[str, ImplementedInterface]) -> list[str]:
-    """The constructs that get tables: each that the global object exposes, with or without an interface object, and
-    each ancestor of one, that has no C++ class, sorted by name."""
+    """The constructs that get tables, sorted by name: each that has no C++ class and that the global object exposes,
+    with or without an interface object, each ancestor of one, and each interface that their attributes and
+    operations give, such as StyleMedia, which has no [Exposed] and whose objects a page still gets, but not one
+    exposed only on other global objects, such as a worker's."""
     window = definitions.interfaces[PAGE_GLOBAL_NAME]
+    pending = [
+        name
+        for name in window.exposed_constructs
+        if definitions.interfaces[name].kind != "callback interface"
+        or definitions.interfaces[name].has_interface_object
+    ]
     names: set[str] = set()
-    for name in window.exposed_constructs:
-        interface = definitions.interfaces[name]
-        if interface.kind == "callback interface" and not interface.has_interface_object:
+    while pending:
+        name = pending.pop()
+        if name in names or name not in definitions.interfaces:
             continue
-        current: str | None = name
-        while current is not None:
-            names.add(current)
-            current = definitions.interfaces[current].parent
+        interface = definitions.interfaces[name]
+        if interface.exposure and not interface.is_exposed_on(PAGE_GLOBAL_NAME):
+            continue
+        names.add(name)
+        if interface.parent is not None:
+            pending.append(interface.parent)
+        given = [attribute.idl_type for attribute in interface.attributes]
+        given += [overload.return_type for group in interface.operation_groups for overload in group.overloads]
+        pending += [found for idl_type in given for found in _interfaces_in(idl_type)]
     return sorted(names - set(implemented))
 
 
@@ -1661,6 +1708,7 @@ def write_bindings(
     features: list[Feature],
     implemented: Iterable[ImplementedInterface],
     table_shards: int = 1,
+    marks: dict[tuple[str, str, str], str] | None = None,
 ) -> dict[str, str]:
     """Returns each file the bindings need, by its name in the output directory.
 
@@ -1669,6 +1717,7 @@ def write_bindings(
         features: the runtime-enabled features.
         implemented: the interfaces that have a C++ class.
         table_shards: how many files hold the tables of the constructs that have no class.
+        marks: filled with what the listing says of each property that has no behaviour (listing.write_listing()).
 
     Raises:
         UnhandledError: if an implemented interface uses anything the writer does not handle.
@@ -1686,6 +1735,35 @@ def write_bindings(
     with_tables = _constructs_with_tables(definitions, by_name)
     # Every construct with bindings has a number of its own, by name.
     indexes = {name: index for index, name in enumerate(sorted([*by_name, *with_tables]))}
+    named_classes: set[str] = set()
+
+    def info_of(name: str) -> str | None:
+        if name not in indexes:
+            return None
+        if name in by_name:
+            named_classes.add(name)
+        return f"&V8{name}::kWrapperTypeInfo"
+
+    context = KnownGapContext(
+        types=TypeTables(
+            definitions.dictionaries,
+            definitions.enumerations,
+            definitions.non_object_as_null_callbacks,
+            info_of,
+            condition_test,
+        ),
+        gaps=KnownGaps(
+            {name: interface.parent for name, interface in definitions.interfaces.items()},
+            by_name.__contains__,
+            indexes.__contains__,
+        ),
+        factory_functions={
+            group.name: group
+            for interface in definitions.interfaces.values()
+            for group in interface.legacy_factory_functions
+        },
+        marks={} if marks is None else marks,
+    )
     files: dict[str, str] = {}
     for name, interface in sorted(by_name.items()):
         writer = _InterfaceWriter(
@@ -1696,6 +1774,7 @@ def write_bindings(
             _interface_object_parent(name, definitions),
             indexes[name],
             by_name.__contains__,
+            context,
         )
         header, source = writer.write()
         base = f"v8_{file_name(name)}"
@@ -1707,7 +1786,9 @@ def write_bindings(
         )
         for name in with_tables
     ]
-    files.update(write_tables(constructs, table_shards, by_name.__contains__, condition_test))
+    files.update(write_tables(constructs, table_shards, by_name.__contains__, condition_test, context))
+    type_includes = {header_of(name) for name in named_classes} | {f"mitto/bindings/{TABLES_HEADER}"}
+    files[TYPES_HEADER], files[TYPES_SOURCE] = context.types.write(type_includes)
     files["dictionaries.h"], files["dictionaries.cc"] = _write_dictionaries(definitions, types)
     files["runtime_features.h"], files["runtime_features.cc"] = _write_features(features)
     files["interface_objects.h"], files["interface_objects.cc"] = _write_interface_objects(definitions, by_name)

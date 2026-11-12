@@ -7,6 +7,8 @@
 #ifndef MITTO_BINDINGS_PER_ISOLATE_DATA_H_
 #define MITTO_BINDINGS_PER_ISOLATE_DATA_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <memory>
 #include <string>
@@ -27,6 +29,7 @@
 namespace mitto::bindings {
 
 struct ExposedConstructInfo;
+class ScriptWrappable;
 
 class PerIsolateData {
  public:
@@ -50,6 +53,24 @@ class PerIsolateData {
   // console reports it.
   using ExceptionReporter =
       base::RepeatingCallback<void(v8::Local<v8::Value> exception)>;
+
+  // Tells the Session that a document reached a Known Gap, named as the
+  // listing names it, such as "Navigator.prototype.getBattery".
+  using KnownGapReporter = base::RepeatingCallback<void(std::string_view name)>;
+
+  // How the bindings make an object of an interface without a C++ class whose
+  // nearest ancestor with a class is EventTarget or Event: an object of that
+  // class whose wrapper is of `info`, which the DOM makes, since the bindings
+  // cannot see its classes.
+  struct ObjectHooks {
+    ScriptWrappable* (*create_event_target)(const WrapperTypeInfo& info) =
+        nullptr;
+    ScriptWrappable* (*create_event)(const WrapperTypeInfo& info,
+                                     const std::u16string& type,
+                                     bool bubbles,
+                                     bool cancelable,
+                                     bool composed) = nullptr;
+  };
 
   // A dictionary being converted, and the member it reads.
   struct DictionaryContext {
@@ -119,6 +140,27 @@ class PerIsolateData {
                    const WrapperTypeInfo& info,
                    v8::Local<v8::Value> value) const;
 
+  // Where the bindings report Known Gaps. Without one, they report nothing.
+  void SetKnownGapReporter(KnownGapReporter reporter) {
+    known_gap_reporter_ = std::move(reporter);
+  }
+
+  // Whether the Known Gap of `number` is reached for the first time in this
+  // document, which then remembers it, as Blink's UseCounter counts a feature
+  // once for each document.
+  bool FirstReachOfKnownGap(uint16_t number);
+  // Reports a Known Gap, once for each document.
+  void ReportKnownGap(uint16_t number, std::string_view name);
+  // Forgets the Known Gaps reported, for a new document.
+  void StartDocument() { reported_known_gaps_.clear(); }
+
+  // The private symbol under which an object keeps what the setter of the
+  // Known Gap of `number` stored, or the object its getter gave.
+  v8::Local<v8::Private> KnownGapPrivate(v8::Isolate* isolate, uint16_t number);
+
+  void SetObjectHooks(ObjectHooks hooks) { object_hooks_ = hooks; }
+  const ObjectHooks& object_hooks() const { return object_hooks_; }
+
   void SetDOMExceptionHooks(DOMExceptionHooks hooks) {
     dom_exception_hooks_ = hooks;
   }
@@ -144,6 +186,10 @@ class PerIsolateData {
   std::map<const ExposedConstructInfo*, v8::Eternal<v8::FunctionTemplate>>
       factory_function_templates_;
   DOMExceptionHooks dom_exception_hooks_;
+  KnownGapReporter known_gap_reporter_;
+  std::vector<bool> reported_known_gaps_;
+  std::vector<v8::Eternal<v8::Private>> known_gap_privates_;
+  ObjectHooks object_hooks_;
   std::vector<DictionaryContext> dictionary_contexts_;
 };
 

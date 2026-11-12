@@ -94,6 +94,8 @@ source_set("dom") {
     "network_information.h",
     "node.cc",
     "node.h",
+    "objects_behind.cc",
+    "objects_behind.h",
     "page_interfaces.cc",
     "page_interfaces.h",
     "performance.cc",

@@ -46,6 +46,10 @@ PROXIED_HTTP2 = "h2 through the proxy"
 PROXY = "proxy"
 """The port of the server's HTTP proxy. What comes through it counts as PROXIED_HTTP1 or PROXIED_HTTP2."""
 
+SCRIPT = "script"
+"""The route of the Script Fingerprint's pages: HTTP/1.1 over TLS on a port of its own, so that the records those pages
+post stay out of the wire's recordings."""
+
 type Json = bool | int | str | list[Json] | dict[str, Json] | None
 
 
