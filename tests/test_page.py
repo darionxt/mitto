@@ -25,6 +25,7 @@ from mitto import _native, _page
 from mitto._errors import PageEndedError, PageError, PageTimeoutError, ScriptError
 from mitto._native import ConsoleMessage, PageEnded, PageErrorCode, PageEvaluated, UncaughtError
 from mitto._page import KEPT_REPORTS, Page, PageRecord, outcome_of
+from mitto._persona import WINDOWS_PERSONAS, load_persona
 from mitto._timeout import to_seconds
 from tests.page_processes import process_is_gone, wait_until_gone
 
@@ -111,6 +112,41 @@ def test_a_page_reports_the_time_zone_of_its_machine_and_the_locale_of_its_perso
     machine = mitto.Machine.draw(seed=1) if time_zone is None else mitto.Machine.draw(seed=1, time_zone=time_zone)
     with mitto.Session(machine=machine) as session, _open_page(session) as page:
         assert page.evaluate(_TIME_ZONE_AND_LOCALE) == expected
+
+
+# Members of interfaces that the Runtime implements behind a runtime-enabled feature that differs between Chrome Releases,
+# or that a variations seed switches, by the feature.
+_MEMBERS_BEHIND = {
+    "NewHTMLSettingMethods": "'afterHTML' in CharacterData.prototype",
+    "AttributionReporting": "'attributionSrc' in HTMLScriptElement.prototype",
+    "HasUAVisualTransition": "'hasUAVisualTransition' in PopStateEvent.prototype",
+}
+
+
+def _engine_release_has(probe: str) -> bool:
+    """Return whether the Page program, with the Engine Release's stable features and nothing turned off, has it."""
+    library = _native.find_library()
+    assert library is not None
+    result = subprocess.run(
+        [library.with_name(_native.PAGE_PROGRAM_NAME), probe], capture_output=True, encoding="utf-8", check=True
+    )
+    return result.stdout.strip() == "true"
+
+
+@pytest.mark.parametrize("persona", sorted(WINDOWS_PERSONAS.values()))
+def test_a_page_has_what_its_personas_chrome_release_shipped_and_its_seed_left_on(
+    page_program: None, persona: str
+) -> None:
+    features = load_persona(persona).page_features
+    expected = {
+        feature: feature not in features.disable_blink_features
+        and (feature in features.enable_blink_features or _engine_release_has(probe))
+        for feature, probe in _MEMBERS_BEHIND.items()
+    }
+    with mitto.Session(persona=persona) as session, _open_page(session) as page:
+        found = page.evaluate(f"[{', '.join(_MEMBERS_BEHIND.values())}]")
+
+    assert dict(zip(_MEMBERS_BEHIND, found, strict=True)) == expected
 
 
 def test_scripts_share_one_context(page: Page) -> None:

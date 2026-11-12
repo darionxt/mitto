@@ -18,7 +18,6 @@ from mitto._native import (
     MEMORY_CACHE,
     NativePage,
     NetworkQuality,
-    PageFeatures,
     PageRequestTemplate,
     PageStart,
     PrivateSettings,
@@ -153,7 +152,7 @@ class SessionState:
             window_height=machine.window_height,
             contrast_theme=machine.contrast_theme,
             inverted_colors=machine.inverted_colors,
-            features=PageFeatures(),
+            features=self._persona.page_features,
         )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:

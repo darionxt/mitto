@@ -22,6 +22,7 @@ from tools.capture.recording import Json
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 
 __all__ = [
+    "PAGE_FEATURES_KEY",
     "PERSONAS_DIRECTORY",
     "PersonaDataError",
     "dumps_persona",
@@ -33,6 +34,9 @@ __all__ = [
 PERSONAS_DIRECTORY = Path(__file__).parents[2] / "src" / "mitto" / "personas"
 
 OPERATING_SYSTEM = "Windows"
+
+PAGE_FEATURES_KEY = "page_features"
+"""The key of a Persona's file that tools/release/page_features.py writes, and that this leaves as it is."""
 
 _BOUNDARY_PLACEHOLDER = "<boundary>"
 _RECORDED_BOUNDARY = re.compile(r"boundary=\S+")
@@ -182,13 +186,20 @@ def write_persona(
 ) -> Path:
     """Write the Persona's file of a Chrome Release from its Baselines, and return its path.
 
+    What a Page of the Persona starts with, which `python -m tools.release page-features` writes into the file, stays as
+    the file had it.
+
     Raises:
         PersonaDataError: See persona_data().
         BaselineError: A file under the Baselines directory is not a usable Baseline.
     """
-    text = dumps_persona(persona_data(release, load_baselines(baselines_directory)))
+    data = persona_data(release, load_baselines(baselines_directory))
     path = persona_path(release, personas_directory)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    if path.exists():
+        before = json.loads(path.read_text(encoding="utf-8"))
+        if PAGE_FEATURES_KEY in before:
+            data[PAGE_FEATURES_KEY] = before[PAGE_FEATURES_KEY]
+    path.write_text(dumps_persona(data), encoding="utf-8", newline="\n")
     return path
 
 
