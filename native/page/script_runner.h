@@ -48,7 +48,7 @@ bool GenerateEntropy(unsigned char* buffer, size_t size);
 
 // Whether a document at `url` is a secure context: the HTML Standard's
 // potentially trustworthy URL, as Chrome decides it with no allowlist.
-// Upstream: services/network/public/cpp/is_potentially_trustworthy.cc
+// Upstream: net/base/is_potentially_trustworthy.cc
 bool IsUrlPotentiallyTrustworthy(const GURL& url);
 
 // The main thread is the Page's event loop: each Session frame, each step of a
