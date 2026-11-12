@@ -76,6 +76,9 @@ def _assert_whole(record: dict[str, RecordValue]) -> None:
     assert objects[0]["path"] == "globalThis"
     assert "capped" not in record
     assert list(record) == ["format", "objects", "values", "reports"]
+    # The DOM's interface prototypes have Node.prototype on their chain, as nodes do, and are walked all the same.
+    paths = {entry["path"] for entry in objects if isinstance(entry, dict) and isinstance(entry["path"], str)}
+    assert {"Node.prototype", "Element.prototype", "HTMLElement.prototype", "Text.prototype"} <= paths
 
 
 def test_the_probe_runs_to_its_end_in_a_page_and_gives_the_same_record_twice(session: mitto.Session) -> None:

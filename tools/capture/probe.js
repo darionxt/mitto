@@ -76,12 +76,14 @@
 // and otherwise an array: ["undefined"], ["number", "NaN"], ["bigint", "1"],
 // ["symbol", "Symbol(x)"], ["object", path], ["function", name, length]
 // (with the source text when it is not the usual) for a function whose own
-// properties are only its usual `length` and `name`, ["node", nodeName] for a
-// node of the DOM other than the document, which the walk does not enter,
-// ["throws", message] for a getter that throws, and ["capped"]. An outcome is
-// ["throws", message], ["returns", typeof], or for a promise ["fulfils"],
-// ["rejects", message] or ["pending"], once the microtasks queued before have
-// run.
+// properties are only its usual `length` and `name`, and ["function", length]
+// for one among the own properties whose name is the one that its key gives
+// it, such as "item", "get length" or "[Symbol.iterator]". ["node", nodeName]
+// for a node of the DOM other than the document, which the walk does not
+// enter, ["throws", message] for a getter that throws, and ["capped"]. An
+// outcome is ["throws", message], ["returns", typeof], or for a promise
+// ["fulfils"], ["rejects", message] or ["pending"], once the microtasks queued
+// before have run.
 
 (async () => {
   "use strict";
@@ -325,10 +327,22 @@
     return text === `function ${name}() { [native code] }` ? null : text.slice(0, MAX_STRING);
   };
 
+  // The name that a function gets from the key it is defined under: the key
+  // for a method, "[Symbol.iterator]" for @@iterator, and with `prefix`, "get "
+  // or "set ", for an accessor's.
+  const nameFromKey = (key, prefix) => {
+    if (typeof key !== "symbol") {
+      return `${prefix}${key}`;
+    }
+    const description = key.description;
+    return typeof description === "string" ? `${prefix}[${description}]` : prefix.slice(0, -1);
+  };
+
   // A function whose own properties are only `length` and `name`, with their
   // usual attributes, and whose [[Prototype]] is Function.prototype, as almost
-  // every method and accessor is, is written where it is found.
-  const plainFunction = (fn) => {
+  // every method and accessor is, is written where it is found, without its
+  // name when that is `expectedName`.
+  const plainFunction = (fn, expectedName) => {
     try {
       if (getPrototypeOf(fn) !== FunctionPrototype) {
         return null;
@@ -344,7 +358,8 @@
           return null;
         }
       }
-      const encoded = ["function", name.value, length.value];
+      const encoded =
+        name.value === expectedName ? ["function", length.value] : ["function", name.value, length.value];
       const source = sourceIfUnusual(fn, name.value);
       if (source !== null) {
         append(encoded, source);
@@ -436,7 +451,7 @@
     return path;
   };
 
-  const encode = (value, path, asPrototype) => {
+  const encode = (value, path, asPrototype, expectedName) => {
     switch (typeof value) {
       case "undefined":
         // document.all is an object whose typeof is "undefined".
@@ -461,11 +476,14 @@
       return null;
     }
     if (typeof value === "function") {
-      const plain = plainFunction(value);
+      const plain = plainFunction(value, expectedName);
       if (plain !== null) {
         return plain;
       }
-    } else if (NodePrototype !== null && value !== theDocument) {
+    } else if (NodePrototype !== null && value !== theDocument && !asPrototype && !hasOwnConstructor(value)) {
+      // A node, but not the prototype of one of the DOM's interfaces, such as
+      // Element.prototype, which has Node.prototype on its chain too, and
+      // whose nodeName getter throws, so it is walked as an object.
       let isNode = false;
       try {
         isNode = apply(isPrototypeOf, NodePrototype, [value]);
@@ -473,9 +491,7 @@
       if (isNode) {
         try {
           return ["node", apply(nodeName, value, [])];
-        } catch (error) {
-          return ["node", ["throws", describeError(error)]];
-        }
+        } catch {}
       }
     }
     const reached = reach(value, path, asPrototype);
@@ -609,13 +625,13 @@
       const path = childPath(entry.path, key);
       if ("value" in descriptor) {
         const asPrototype = key === "prototype" && typeof object === "function";
-        append(own, [name, flagsOf(descriptor), encode(descriptor.value, path, asPrototype)]);
+        append(own, [name, flagsOf(descriptor), encode(descriptor.value, path, asPrototype, nameFromKey(key, ""))]);
       } else {
         append(own, [
           name,
           flagsOf(descriptor),
-          descriptor.get ? encode(descriptor.get, `get ${path}`, false) : null,
-          descriptor.set ? encode(descriptor.set, `set ${path}`, false) : null,
+          descriptor.get ? encode(descriptor.get, `get ${path}`, false, nameFromKey(key, "get ")) : null,
+          descriptor.set ? encode(descriptor.set, `set ${path}`, false, nameFromKey(key, "set ")) : null,
         ]);
       }
     }

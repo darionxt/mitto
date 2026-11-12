@@ -354,7 +354,7 @@ The record holds `format`, `objects` with one entry for each object in the order
 
 ### Its size
 
-In Chrome 157.0.8103.39 on the Windows machine, from a user data directory with the variations seed at an HTTPS page at `capture.test`, it reaches 1,983 objects in about 100 ms, and gives the same record twice in a row but for the values above. Its record takes about 1.3 MB as `dumps_record()` writes it, with each property, getter's value and check on a line of its own, so that two records differ by lines. That is within the 1.5 MB that a Baseline of the Script Fingerprint may take for each Chrome Release, which the owner chose on 2026-11-12, for the first Recording Case. Later Recording Cases keep only what differs from the first. In a Page today it reaches about 200 objects.
+In Chrome 157.0.8103.39 on the Windows machine, from a user data directory with the variations seed at an HTTPS page at `capture.test`, it reaches 2,150 objects in about 100 ms, and gives the same record twice in a row but for the values above. Its record takes about 1.3 MB as `dumps_record()` writes it, with each property, getter's value and check on a line of its own, so that two records differ by lines. That is within the 1.5 MB that a Baseline of the Script Fingerprint may take for each Chrome Release, which the owner chose on 2026-11-12, for the first Recording Case. Later Recording Cases keep only what differs from the first. In a Page today it reaches about 250 objects.
 
 [`tests/test_page_probe.py`](../tests/test_page_probe.py) runs it in a Page through a Session, and in the Page program, twice each, and checks that it runs to its end, leaves nothing in the console, and gives the same record but for the values that change from run to run.
 
