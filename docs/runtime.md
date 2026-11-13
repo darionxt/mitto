@@ -320,7 +320,6 @@ The defaults keep a page's script running where Chrome's runs, and with it the r
 | `Element`, `Document`: `getAnimations()` | 5.4% | Its default | `[]`: no animation runs without style |
 | `MediaSession`: `setActionHandler()`, `setPositionState()`, `metadata`, `playbackState` | 2.8% | Its default | Nothing that a page sees but the checks of its arguments, and what a setter stores |
 | `StorageManager`: `getDirectory()` | 2.5% | Its default | A `FileSystemDirectoryHandle` |
-| `Document`: `requestStorageAccess()` | 2.6% | Its default | It resolves with `undefined`, as Chrome's does for a top-level document on a secure page. Elsewhere Chrome rejects with a `NotAllowedError`, a gap until its second overload, which gives a `StorageAccessHandle`, has a class |
 | `Window`: `focus()` | 2.0% | Its default | Nothing that a top-level page sees |
 | `Document`: `webkitIsFullScreen`, `pictureInPictureElement`, `activeViewTransition` | 1.7% | Its default | `false` and `null`: nothing is fullscreen, in picture-in-picture or in a view transition |
 | `Scheduling`: `isInputPending()` | 1.6% | Its default | `false`: no input is pending until M9 |
@@ -348,11 +347,12 @@ The defaults keep a page's script running where Chrome's runs, and with it the r
 | `CanvasRenderingContext2D`, `OffscreenCanvasRenderingContext2D`: 6 members each; `OffscreenCanvas`: `new OffscreenCanvas()`, `transferToImageBitmap()` | 13.9% | Its default until M10 | Canvas 2D |
 | `BaseAudioContext`, `AudioContext`, `OfflineAudioContext`, `AudioNode`, `AudioBuffer`, `AudioParam`, `AnalyserNode`: 17 members | 8.4% | Its default until M10 | Web Audio |
 | `MediaCapabilities`: `decodingInfo()` | 5.7% | Its default until M10 | Whether a decoder is power-efficient reads the GPU that M10's Machine claims |
-| `CookieStoreManager`: `getSubscriptions()`, `subscribe()`, `unsubscribe()` | 11.1% | Its default | Service workers' behaviour, which the roadmap leaves out |
-| `RTCIceCandidate`: `candidate`; `RTCSessionDescription`: `sdp`; `RTCPeerConnection`: `addTransceiver()` | 3.6% | Its default | WebRTC, which the roadmap leaves out |
-| `Response`: `body`; `CompressionStream`, `DecompressionStream`, `TextEncoderStream`, `TextDecoderStream`: their constructors | 31.4% | Its default | Streams, which no milestone has yet |
-| `Document`: `evaluate()`; `XPathEvaluator`: `new XPathEvaluator()`, `createExpression()` | 4.5% | Its default | XPath, which no milestone has yet |
-| `URLPattern`: `new URLPattern()` | 2.9% | Its default | URL patterns, which no milestone has yet |
+| `CookieStoreManager`: `getSubscriptions()`, `subscribe()`, `unsubscribe()` | 11.1% | Its default until a milestone has it | Service workers' behaviour, which the roadmap leaves out |
+| `RTCIceCandidate`: `candidate`; `RTCSessionDescription`: `sdp`; `RTCPeerConnection`: `addTransceiver()` | 3.6% | Its default until a milestone has it | WebRTC, which the roadmap leaves out |
+| `Response`: `body`; `CompressionStream`, `DecompressionStream`, `TextEncoderStream`, `TextDecoderStream`: their constructors | 31.4% | Its default until a milestone has it | Streams, which no milestone has yet |
+| `Document`: `evaluate()`; `XPathEvaluator`: `new XPathEvaluator()`, `createExpression()` | 4.5% | Its default until a milestone has it | XPath, which no milestone has yet |
+| `URLPattern`: `new URLPattern()` | 2.9% | Its default until a milestone has it | URL patterns, which no milestone has yet |
+| `Document`: `requestStorageAccess()` | 2.6% | Its default until a milestone has it | It resolves with `undefined`, as Chrome's does for a top-level document on a secure page. Elsewhere Chrome rejects with a `NotAllowedError`, a gap until its second overload, which gives a `StorageAccessHandle`, has a class |
 | `HTMLCanvasElement`: `getContext()`, `toDataURL()`, `transferControlToOffscreen()` | 47.0% | Nothing | A `canvas` element is an `HTMLElement` until its class comes |
 | `HTMLImageElement`: `fetchPriority` | 44.9% | Nothing | An `img` element is an `HTMLElement` until its class comes |
 | `PerformanceEventTiming`: `interactionId` | 31.1% | Nothing | Its entries come from input |
