@@ -264,6 +264,9 @@ Machine(
     time_zone: str,
     processors: int,
     touch_points: int,
+    audio_input: bool,
+    video_input: bool,
+    audio_output: bool,
     seed: int | None = None,
 )
 ```
@@ -302,6 +305,9 @@ Sizes and places on the desktop are in device-independent pixels, which are the 
 | `time_zone` | `str` | The time zone, by the name that Chrome on Windows gives a page, such as `"America/New_York"`: the canonical name of a zone that Windows' time zone and region give, so `"Asia/Calcutta"` and not `"Asia/Kolkata"`, and `"UTC"` for UTC. [The time zone](persona.md#the-time-zone) says which, and why a draw gives `"America/New_York"` |
 | `processors` | `int` | The number of logical processors, from 1 to 64. `navigator.hardwareConcurrency` says it |
 | `touch_points` | `int` | How many touch points the touch screen takes, from 1 to 256, or 0 for none. `navigator.maxTouchPoints` says it |
+| `audio_input` | `bool` | Whether the computer has a microphone, or another device that records sound. `navigator.mediaDevices.enumerateDevices()` lists one `audioinput` for it |
+| `video_input` | `bool` | Whether it has a camera, which `enumerateDevices()` lists as one `videoinput` |
+| `audio_output` | `bool` | Whether it has speakers, headphones or another device that plays sound, which `enumerateDevices()` lists as one `audiooutput` |
 | `seed` | `int \| None` | What `draw()` drew it from, or `None` for one that a caller made |
 
 #### `Machine.draw()`
@@ -336,6 +342,9 @@ Machine.draw(
     time_zone: str | None = None,
     processors: int | None = None,
     touch_points: int | None = None,
+    audio_input: bool | None = None,
+    video_input: bool | None = None,
+    audio_output: bool | None = None,
 ) -> Self
 ```
 

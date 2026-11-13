@@ -135,7 +135,7 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 12
+_PROTOCOL_VERSION = 13
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -200,6 +200,7 @@ _DEFAULT_START: dict[str, object] = {
         "v8_flags": [],
         "deprecated_unload": {"enabled": False, "allow_list": None, "by_bucket": None},
     },
+    "media_devices": {"audio_input": True, "video_input": False, "audio_output": True},
 }
 
 
@@ -463,6 +464,62 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
     assert session.refusal() == 'the time zone "Mars/Olympus_Mons" is unknown'
 
 
+@pytest.mark.parametrize(("processors", "tier"), [(1, 1), (2, 2), (4, 2), (5, 3), (10, 3), (11, 4), (32, 4)])
+def test_cpu_performance_is_chromes_tier_of_the_machines_processors(
+    session: _Session, processors: int, tier: int
+) -> None:
+    # content::cpu_performance's GetTierFromCpuInfo() for an AMD or Intel CPU of none of the models it singles out.
+    session.start({**_DEFAULT_START, "processors": processors})
+
+    assert session.evaluate("[navigator.cpuPerformance, navigator.hardwareConcurrency]") == (
+        False,
+        json.dumps([tier, processors], separators=(",", ":")),
+    )
+
+
+_ENUMERATE_DEVICES = """(async () => {
+    const order = [];
+    const pending = navigator.mediaDevices.enumerateDevices();
+    pending.then(() => order.push("resolved"));
+    await Promise.resolve();
+    order.push("microtask");
+    const devices = await pending;
+    const again = await navigator.mediaDevices.enumerateDevices();
+    return [order, devices.map((device) => [Object.prototype.toString.call(device), device.toJSON()]),
+        devices.length === 0 || devices[0] !== again[0], navigator.mediaDevices === navigator.mediaDevices];
+})()"""
+
+
+def _device(kind: str) -> list[object]:
+    # What Chrome's browser gives a page that may not capture: no ID, group or label, and an InputDeviceInfo for a
+    # device that records.
+    interface = "MediaDeviceInfo" if kind == "audiooutput" else "InputDeviceInfo"
+    return [f"[object {interface}]", {"deviceId": "", "kind": kind, "label": "", "groupId": ""}]
+
+
+@pytest.mark.parametrize(
+    ("devices", "kinds"),
+    [
+        ({"audio_input": True, "video_input": False, "audio_output": True}, ["audioinput", "audiooutput"]),
+        ({"audio_input": True, "video_input": True, "audio_output": True}, ["audioinput", "videoinput", "audiooutput"]),
+        ({"audio_input": False, "video_input": True, "audio_output": False}, ["videoinput"]),
+        ({"audio_input": False, "video_input": False, "audio_output": False}, []),
+    ],
+    ids=str,
+)
+def test_enumerate_devices_lists_one_entry_of_each_kind_of_device_the_machine_has(
+    session: _Session, devices: dict[str, bool], kinds: list[str]
+) -> None:
+    # MediaDevicesManager: the first device of each kind, in the order of MediaDeviceType, from a task of its own, as
+    # new objects each time.
+    session.start({**_DEFAULT_START, "media_devices": devices})
+
+    assert session.evaluate(_ENUMERATE_DEVICES) == (
+        False,
+        json.dumps([["microtask", "resolved"], [_device(kind) for kind in kinds], True, True], separators=(",", ":")),
+    )
+
+
 def test_a_page_starts_with_the_features_and_v8_flags_of_its_start(session: _Session) -> None:
     session.start(
         _with_features(
@@ -532,6 +589,14 @@ def test_a_page_with_no_features_in_its_start_has_the_engine_releases(session: _
         ),
         (_with_features(v8_flags=["--a b"]), 'a start whose features\' "v8_flags" holds what is not a V8 flag'),
         (_with_features(disable_blink_features=["NoSuchFeature"]), "no runtime-enabled feature is named NoSuchFeature"),
+        (
+            {name: value for name, value in _DEFAULT_START.items() if name != "media_devices"},
+            'a start whose "media_devices" is not whether there is an audio input, a video input and an audio output',
+        ),
+        (
+            {**_DEFAULT_START, "media_devices": {"audio_input": 1, "video_input": False, "audio_output": True}},
+            'a start whose "media_devices" is not whether there is an audio input, a video input and an audio output',
+        ),
         (
             _with_features(deprecated_unload=None),
             'a start whose features\' "deprecated_unload" is not an object',

@@ -6,8 +6,11 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
+#include "mitto/dom/battery_manager.h"
 #include "mitto/dom/geolocation.h"
+#include "mitto/dom/keyboard.h"
 #include "mitto/dom/lock_manager.h"
+#include "mitto/dom/media_devices.h"
 #include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
 #include "mitto/dom/network_information.h"
@@ -60,6 +63,7 @@ Navigator::Navigator(const PageStart& start, const PageConnection& connection)
       memory_(start.memory),
       touch_points_(start.touch_points),
       connection_values_(connection),
+      media_devices_(start.media_devices),
       effective_type_(start.effective_type) {}
 
 Navigator::~Navigator() = default;
@@ -71,12 +75,15 @@ const bindings::WrapperTypeInfo* Navigator::GetWrapperTypeInfo() const {
 void Navigator::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(languages_array_);
+  visitor->Trace(battery_promise_);
   visitor->Trace(connection_);
   visitor->Trace(plugins_);
   visitor->Trace(mime_types_);
   visitor->Trace(permissions_);
   visitor->Trace(geolocation_);
   visitor->Trace(storage_);
+  visitor->Trace(keyboard_);
+  visitor->Trace(media_devices_object_);
   visitor->Trace(locks_);
 }
 
@@ -237,6 +244,54 @@ StorageManager* Navigator::Storage() {
 
 size_t Navigator::GeolocationTimerCount() const {
   return geolocation_ ? geolocation_->TimerCount() : 0;
+}
+
+// Upstream: third_party/blink/renderer/modules/battery/battery_manager.cc
+v8::Local<v8::Promise> Navigator::GetBattery() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (battery_promise_.IsEmpty()) {
+    v8::Local<v8::Promise::Resolver> resolver;
+    if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
+             .ToLocal(&resolver)) {
+      return v8::Local<v8::Promise>();
+    }
+    ResolveFromTask(isolate, resolver, BatteryManager::Create()->ToV8(isolate));
+    battery_promise_.Reset(isolate, resolver->GetPromise());
+  }
+  return battery_promise_.Get(isolate);
+}
+
+mitto::Keyboard* Navigator::Keyboard() {
+  if (!keyboard_) {
+    keyboard_ = mitto::Keyboard::Create();
+  }
+  return keyboard_.Get();
+}
+
+mitto::MediaDevices* Navigator::MediaDevices() {
+  if (!media_devices_object_) {
+    media_devices_object_ = mitto::MediaDevices::Create(media_devices_);
+  }
+  return media_devices_object_.Get();
+}
+
+// Upstream: content/browser/cpu_performance/cpu_performance.cc
+uint16_t Navigator::CpuPerformance() const {
+  // GetTierFromCpuInfo(): low, mid, high and ultra, by the logical
+  // processors.
+  if (processors_ <= 0) {
+    return 0;
+  }
+  if (processors_ <= 1) {
+    return 1;
+  }
+  if (processors_ <= 4) {
+    return 2;
+  }
+  if (processors_ <= 10) {
+    return 3;
+  }
+  return 4;
 }
 
 std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(

@@ -47,6 +47,18 @@ mitto_bindings_interfaces = [
     made_by_known_gaps = true
   },
   {
+    name = "BatteryManager"
+    file = "battery_manager"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onchargingchange",
+      "onchargingtimechange",
+      "ondischargingtimechange",
+      "onlevelchange",
+    ]
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -475,6 +487,28 @@ mitto_bindings_interfaces = [
     file = "idle_deadline"
   },
   {
+    name = "InputDeviceInfo"
+    file = "input_device_info"
+
+    # The capabilities of a device that a page may not capture.
+    missing = [ "getCapabilities" ]
+  },
+  {
+    name = "Keyboard"
+    file = "keyboard"
+
+    # Keyboard Lock needs full screen and a user's activation.
+    missing = [
+      "lock",
+      "unlock",
+    ]
+  },
+  {
+    name = "KeyboardLayoutMap"
+    file = "keyboard_layout_map"
+    implemented = [ "maplike" ]
+  },
+  {
     name = "Location"
     file = "location"
     made_by_known_gaps = true
@@ -500,6 +534,18 @@ mitto_bindings_interfaces = [
   {
     name = "LockManager"
     file = "lock_manager"
+  },
+  {
+    name = "MediaDeviceInfo"
+    file = "media_device_info"
+  },
+  {
+    name = "MediaDevices"
+    file = "media_devices"
+
+    # Capturing, its constraints and the device change event's handler, which
+    # the bindings run.
+    implemented = [ "enumerateDevices" ]
   },
   {
     name = "MediaSource"
@@ -582,6 +628,10 @@ mitto_bindings_interfaces = [
       "storage",
       "getGamepads",
       "locks",
+      "getBattery",
+      "cpuPerformance",
+      "keyboard",
+      "mediaDevices",
     ]
   },
   {

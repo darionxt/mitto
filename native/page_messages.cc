@@ -35,6 +35,10 @@ constexpr std::string_view kScaleKey = "scale";
 constexpr std::string_view kNavigatorKey = "navigator";
 constexpr std::string_view kConnectionKey = "connection";
 constexpr std::string_view kFeaturesKey = "features";
+constexpr std::string_view kMediaDevicesKey = "media_devices";
+constexpr std::string_view kAudioInputKey = "audio_input";
+constexpr std::string_view kVideoInputKey = "video_input";
+constexpr std::string_view kAudioOutputKey = "audio_output";
 constexpr std::string_view kEnableBlinkFeaturesKey = "enable_blink_features";
 constexpr std::string_view kDisableBlinkFeaturesKey = "disable_blink_features";
 constexpr std::string_view kV8FlagsKey = "v8_flags";
@@ -449,7 +453,7 @@ base::expected<PageFeatures, std::string> ReadFeatures(
 bool IsStartKey(std::string_view key) {
   return key == kWindowStateKey || key == kInvertedColorsKey ||
          key == kMemoryKey || key == kScaleKey || key == kNavigatorKey ||
-         key == kFeaturesKey ||
+         key == kFeaturesKey || key == kMediaDevicesKey ||
          std::ranges::any_of(
              kStartNames,
              [key](const StartName& name) { return name.key == key; }) ||
@@ -1194,6 +1198,11 @@ std::string EncodeStart(const PageStart& start) {
   features.Set(kDeprecatedUnloadKey,
                WriteDeprecatedUnload(start.features.deprecated_unload));
   dict.Set(kFeaturesKey, std::move(features));
+  dict.Set(kMediaDevicesKey,
+           base::DictValue()
+               .Set(kAudioInputKey, start.media_devices.audio_input)
+               .Set(kVideoInputKey, start.media_devices.video_input)
+               .Set(kAudioOutputKey, start.media_devices.audio_output));
   return EncodeFrame(PageMessage::kStart, *base::WriteJson(dict));
 }
 
@@ -1282,6 +1291,22 @@ base::expected<PageStart, std::string> ReadStart(const base::DictValue& dict) {
     return base::unexpected(std::move(read).error());
   }
   start.features = *std::move(read);
+  const base::DictValue* const devices = dict.FindDict(kMediaDevicesKey);
+  const std::optional<bool> audio_input =
+      devices ? devices->FindBool(kAudioInputKey) : std::nullopt;
+  const std::optional<bool> video_input =
+      devices ? devices->FindBool(kVideoInputKey) : std::nullopt;
+  const std::optional<bool> audio_output =
+      devices ? devices->FindBool(kAudioOutputKey) : std::nullopt;
+  if (!devices || devices->size() != 3u || !audio_input || !video_input ||
+      !audio_output) {
+    return base::unexpected(NotA(
+        kMediaDevicesKey,
+        "whether there is an audio input, a video input and an audio output"));
+  }
+  start.media_devices = {.audio_input = *audio_input,
+                         .video_input = *video_input,
+                         .audio_output = *audio_output};
   return start;
 }
 

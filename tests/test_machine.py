@@ -414,6 +414,12 @@ def test_draws_spread_over_the_table() -> None:
     assert len({(machine.display_width, machine.display_height, machine.scale) for machine in machines}) > 10
     assert len({machine.memory for machine in machines}) == 5
     assert {machine.color_scheme for machine in machines} == {"light", "dark"}
+    assert {(machine.audio_input, machine.video_input) for machine in machines} == {
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
+    }
     assert len({tuple(values_of(machine).values()) for machine in machines}) > 100
 
 
@@ -652,6 +658,21 @@ def test_each_value_a_draw_gives_a_page_is_one_chrome_on_windows_gives(seed: int
     assert machine.contrast_theme == "none"
     assert machine.inverted_colors == "none"
     assert machine.window_state in {"maximised", "normal"}
+    # The owner's weights: something that plays sound always, a microphone in 70% and a camera in 50%.
+    assert machine.audio_output
+
+
+def test_the_media_devices_are_drawn_on_their_own_at_the_owners_weights() -> None:
+    assert [without_weight(row) | {"weight": row["weight"]} for row in GROUPS["audio_input"]["rows"]] == [
+        {"audio_input": True, "weight": 700_000},
+        {"audio_input": False, "weight": 300_000},
+    ]
+    assert [row["weight"] for row in GROUPS["video_input"]["rows"]] == [500_000, 500_000]
+    assert [without_weight(row) for row in GROUPS["audio_output"]["rows"]] == [{"audio_output": True}]
+    # Fixing one leaves the others' draws as they were.
+    drawn = Machine.draw(seed=12)
+    camera = Machine.draw(seed=12, video_input=not drawn.video_input)
+    assert (camera.audio_input, camera.memory) == (drawn.audio_input, drawn.memory)
 
 
 def test_draws_spread_over_the_processors() -> None:
@@ -740,6 +761,8 @@ def test_a_desktop_that_does_not_fit_together_is_refused(changes: dict[str, Any]
         ("viewport_width", "1920", "viewport_width has to be a whole number, not str"),
         ("color_scheme", None, "color_scheme has to be text, not NoneType"),
         ("platform_version", 19, "platform_version has to be text, not int"),
+        ("audio_input", 1, "audio_input has to be True or False, not int"),
+        ("video_input", "yes", "video_input has to be True or False, not str"),
         ("seed", 1.5, "seed has to be a whole number, not float"),
     ],
     ids=str,

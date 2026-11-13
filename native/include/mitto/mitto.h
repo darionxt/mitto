@@ -802,9 +802,12 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //                            "disable_blink_features": ["CanvasDrawElement"],
 //                            "v8_flags": ["--sqrt_allocation_limits"],
 //                            "deprecated_unload": {
-//                                "enabled": true, "allow_list": [...],
+//                                "enabled": true, "allow_list": null,
 //                                "by_bucket": {"percent": 100,
-//                                              "bucket": null}}}},
+//                                              "bucket": null}}},
+//               "media_devices": {"audio_input": true,
+//                                 "video_input": false,
+//                                 "audio_output": true}},
 //     "url": "https://example.com/",
 //     "requests": {
 //       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
@@ -829,6 +832,11 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   - "processors" is the number of logical processors, from 1 to 64, and
 //     "touch_points" how many touch points the touch screen takes, from 0, for
 //     none, to 256.
+//   - "media_devices" is an object of "audio_input", "video_input" and
+//     "audio_output", each true or false, with no other key: whether the
+//     computer has a microphone, a camera and something that plays sound,
+//     which navigator.mediaDevices.enumerateDevices() lists one entry of each
+//     for.
 //   - "work_area_x", "work_area_y", "work_area_width" and "work_area_height" are
 //     the display less the taskbar. Its place is at least 0 and its size at
 //     least 1.

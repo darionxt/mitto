@@ -1188,6 +1188,7 @@ PAGE_START: dict[str, Any] = {
         "v8_flags": [],
         "deprecated_unload": {"enabled": False, "allow_list": None, "by_bucket": None},
     },
+    "media_devices": {"audio_input": True, "video_input": False, "audio_output": True},
 }
 
 
@@ -1400,6 +1401,9 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
             id="no-features",
         ),
         pytest.param(blank_page_options(features=[]), id="features-not-an-object"),
+        pytest.param(
+            blank_page_options(media_devices={"audio_input": True, "video_input": False}), id="two-media-devices"
+        ),
         pytest.param(blank_page_options(features=page_features(js_flags=[])), id="unknown-key-in-the-features"),
         pytest.param(
             blank_page_options(

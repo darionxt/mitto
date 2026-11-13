@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "base/hash/hash.h"
@@ -13,7 +15,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_permissions_policy.h"
-#include "mitto/string_hasher.h"
+#include "mitto/dom/string_hash_table_order.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "url/scheme_host_port.h"
@@ -216,37 +218,24 @@ constexpr PolicyFeature kPolicyFeatures[] = {
 constexpr std::string_view kMeasurementOnly = "web-share";
 constexpr std::string_view kUnload = "unload";
 
-// WTF's HashTable::CalculateCapacity(): the smallest power of two above
-// `size`, doubled.
-constexpr size_t CalculateCapacity(size_t size) {
-  for (size_t mask = size; mask; mask >>= 1) {
-    size |= mask;
-  }
-  return (size + 1) * 2;
-}
-
 // The features of the window's name map in the order that the map iterates
-// them: its buckets, each found by the name's hash and triangular probing.
+// them, which ReserveCapacityForSize() sized for every feature of the json5.
 std::vector<const PolicyFeature*> FeaturesInMapOrder(
     const bindings::RuntimeFeatureSet& features) {
-  constexpr size_t kCapacity = CalculateCapacity(kFeatureCount);
-  std::array<const PolicyFeature*, kCapacity> buckets{};
+  StringHashTableOrder table =
+      StringHashTableOrder::WithCapacityFor(kFeatureCount);
+  std::map<std::string_view, const PolicyFeature*> by_name;
   for (const PolicyFeature& feature : kPolicyFeatures) {
     if (feature.gate == Gate::kRuntimeFeature &&
         !features.IsEnabled(*feature.feature)) {
       continue;
     }
-    size_t index = HashString24(feature.name) & (kCapacity - 1);
-    for (size_t probe = 1; buckets[index]; ++probe) {
-      index = (index + probe) & (kCapacity - 1);
-    }
-    buckets[index] = &feature;
+    table.Insert(feature.name);
+    by_name.emplace(feature.name, &feature);
   }
   std::vector<const PolicyFeature*> ordered;
-  for (const PolicyFeature* feature : buckets) {
-    if (feature) {
-      ordered.push_back(feature);
-    }
+  for (const std::string& name : table.Keys()) {
+    ordered.push_back(by_name.at(name));
   }
   return ordered;
 }
