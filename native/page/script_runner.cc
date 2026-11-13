@@ -404,7 +404,9 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
 
 void ScriptRunner::RunClassicScript(std::u16string_view source,
                                     const GURL& url,
-                                    bool muted_errors) {
+                                    bool muted_errors,
+                                    int line_offset,
+                                    int column_offset) {
   // V8 holds no longer string, and a script that it cannot hold does not run.
   if (source.size() > static_cast<size_t>(v8::String::kMaxLength)) {
     return;
@@ -431,7 +433,8 @@ void ScriptRunner::RunClassicScript(std::u16string_view source,
            .ToLocal(&name)) {
     return;
   }
-  v8::ScriptOrigin origin = ClassicScriptOrigin(name, muted_errors);
+  v8::ScriptOrigin origin =
+      ClassicScriptOrigin(name, muted_errors, line_offset, column_offset);
   if (!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
       compiled->Run(context).IsEmpty()) {
     ReportScriptException(isolate_, try_catch);

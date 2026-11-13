@@ -412,7 +412,9 @@ bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
     return false;
   }
   if (!src) {
-    runner_->RunClassicScript(element.Text(), url_);
+    // Blink's ClassicScript: its errors count from where the parser found it.
+    runner_->RunClassicScript(element.Text(), url_, /*muted_errors=*/false,
+                              element.StartLine(), element.StartColumn());
     return false;
   }
   // The query is in the document's encoding.
