@@ -5,6 +5,7 @@
 // Upstream: third_party/blink/renderer/bindings/core/v8/to_v8_traits.h
 // Upstream: third_party/blink/renderer/bindings/core/v8/v8_object_builder.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/script_promise_resolver.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/callback_invoke_helper.cc
 
 #ifndef MITTO_DOM_SCRIPT_VALUES_H_
 #define MITTO_DOM_SCRIPT_VALUES_H_
@@ -61,6 +62,18 @@ void RejectWithDOMExceptionFromTask(v8::Isolate* isolate,
                                     v8::Local<v8::Promise::Resolver> resolver,
                                     std::string name,
                                     std::string message);
+
+// Calls `callback`, an object of the callback interface `interface_name`, with
+// what `make_argument` gives, from a task of its own, as Blink's
+// AsyncCallbackHelper does once an answer comes: the object itself if it is
+// callable, and otherwise its handleEvent(), in the object's context, unless
+// that context's window has gone by then. What the callback queued runs once
+// it returns, and what it throws is reported, as V8ScriptRunner does.
+void CallCallbackInterfaceFromTask(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> callback,
+    std::string interface_name,
+    base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_argument);
 
 }  // namespace mitto
 
