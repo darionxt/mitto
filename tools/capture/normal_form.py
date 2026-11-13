@@ -7,7 +7,7 @@ See docs/capture.md for what stays, what goes, and why.
 import contextlib
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 
 from tools.capture import http3
 from tools.capture.cases import CASES, PROXY_CONNECT, Case
@@ -110,18 +110,22 @@ class RecordingError(Exception):
     """A recording has no single normal form."""
 
 
-def normal_form(recording: Recording, cases: Iterable[Case] = CASES) -> dict[str, Json]:
+def normal_form(recording: Recording, cases: Iterable[Case] = CASES, ordered: Iterable[Case] = ()) -> dict[str, Json]:
     """Return the normal form of a recording, as JSON data.
 
     It holds what the connections that carried one of the cases have in common and, for each of those cases that was
-    recorded, its first request.
+    recorded, its first request. Over HTTP/2 and HTTP/3 it also holds, as "order", the names of the ordered cases that
+    were recorded, in the order the client opened their streams.
 
     Args:
         recording: What to write.
         cases: The Recording Cases to look for, in the order to list them. Other requests count for nothing.
+        ordered: Cases among them whose order to write down. Over HTTP/1.1 a client spreads them over connections, so
+            the order in which they arrive is not the client's, and the normal form leaves it out.
 
     Raises:
-        RecordingError: No connection carried one of the cases, or those that did do not look the same.
+        RecordingError: No connection carried one of the cases, those that did do not look the same, or the ordered
+            cases came over more than one connection of HTTP/2 or HTTP/3.
     """
     cases = tuple(cases)
     carriers = [
@@ -143,7 +147,23 @@ def normal_form(recording: Recording, cases: Iterable[Case] = CASES) -> dict[str
             requests[case.name] = _normal_request(*found, recording)
         elif _was_refused(recording, case):
             requests[case.name] = {"refused": True}
-    return {"format": FORMAT_VERSION, **connection_form, "requests": requests}
+    form: dict[str, Json] = {"format": FORMAT_VERSION, **connection_form, "requests": requests}
+    order = _order(carriers, ordered)
+    if order:
+        form["order"] = order
+    return form
+
+
+def _order(connections: Sequence[ConnectionRecord | QuicConnectionRecord], cases: Iterable[Case]) -> list[Json]:
+    """Return the names of the cases whose first requests came over HTTP/2 or HTTP/3, in the order of their streams."""
+    streams: list[tuple[int, int, str]] = []
+    for case in cases:
+        found = _first_request(connections, case)
+        if found is not None and isinstance(found[1], Http2Request | Http3Request):
+            streams.append((found[0].id, found[1].stream_id, case.name))
+    if len({connection for connection, _, _ in streams}) > 1:
+        raise RecordingError("the requests whose order counts came over more than one connection")
+    return [name for _, _, name in sorted(streams)]
 
 
 def dumps_normal_form(form: dict[str, Json]) -> str:

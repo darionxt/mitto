@@ -544,7 +544,7 @@ std::u16string Element::ReflectedURLAttribute(std::u16string_view name) const {
     return std::u16string();
   }
   const std::u16string_view stripped = StripHTMLSpaces(*value);
-  const GURL url = GetDocument().CompleteURL(stripped);
+  const GURL url = GetDocument().CompleteUrl(stripped);
   return url.is_valid() ? base::UTF8ToUTF16(url.spec())
                         : std::u16string(stripped);
 }

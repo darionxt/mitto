@@ -10,7 +10,7 @@ from hypothesis import strategies as st
 from pylsqpack import Encoder as PylsqpackEncoder
 
 from tests.capture import samples
-from tools.capture import http3
+from tools.capture import MAIN_CASES, http3
 from tools.capture.client_hello import ClientHelloAssembler
 from tools.capture.http2 import (
     DATA,
@@ -529,6 +529,49 @@ def test_connections_that_look_different_have_no_single_normal_form() -> None:
 
     with pytest.raises(RecordingError, match="connections 1 and 2"):
         normal_form(Recording(samples.HOST, samples.AUTHORITY, (first, second)))
+
+
+_FETCH, _SCRIPT, _IMAGE = MAIN_CASES[1:]
+
+
+def test_order_follows_the_streams_that_the_client_opened() -> None:
+    recording = _http2_recording(
+        samples.http2_request_frame("/script.js", stream_id=1),
+        samples.http2_request_frame("/fetch", stream_id=3),
+        samples.http2_request_frame("/image.png", stream_id=5),
+        samples.http2_request_frame("/fetch", stream_id=7),
+    )
+
+    form = normal_form(recording, MAIN_CASES, (_IMAGE, _FETCH, _SCRIPT))
+
+    assert list(form) == ["format", "protocol", "tls", "http2", "requests", "order"]
+    assert form["order"] == ["script", "fetch", "image"]
+    assert "order" not in normal_form(recording, MAIN_CASES)
+
+
+def test_order_leaves_out_what_was_not_recorded() -> None:
+    form = normal_form(_http2_recording(samples.http2_request_frame("/fetch")), MAIN_CASES, (_IMAGE, _FETCH))
+
+    assert form["order"] == ["fetch"]
+
+
+def test_http1_has_no_order_because_a_client_spreads_its_requests_over_connections() -> None:
+    form = normal_form(
+        http1_recording(b"GET /image.png HTTP/1.1\r\n\r\nGET /fetch HTTP/1.1\r\n\r\n"), MAIN_CASES, MAIN_CASES
+    )
+
+    assert "order" not in form
+
+
+def test_an_order_over_more_than_one_connection_is_nobodys() -> None:
+    hello = samples.client_hello_records([samples.server_name()])
+    first = samples.replay_connection(1, hello, "h2", samples.http2_stream(samples.http2_request_frame("/fetch")))
+    second = samples.replay_connection(2, hello, "h2", samples.http2_stream(samples.http2_request_frame("/image.png")))
+    recording = Recording(samples.HOST, samples.AUTHORITY, (first, second))
+
+    assert "order" not in normal_form(recording, MAIN_CASES)
+    with pytest.raises(RecordingError, match="more than one connection"):
+        normal_form(recording, MAIN_CASES, (_FETCH, _IMAGE))
 
 
 def test_dumped_form_is_stable_readable_json() -> None:

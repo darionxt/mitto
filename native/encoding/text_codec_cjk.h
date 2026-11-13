@@ -1,7 +1,7 @@
 // The Encoding Standard's CJK encodings, EUC-JP, ISO-2022-JP, Shift_JIS,
-// EUC-KR, GBK, gb18030 and Big5, as Blink's TextCodecCjk decodes them: the
-// Encoding Standard's decoders, over indexes built from ICU
-// (encoding_tables.h).
+// EUC-KR, GBK, gb18030 and Big5, as Blink's TextCodecCjk decodes and encodes
+// them: the Encoding Standard's decoders and encoders, over indexes built from
+// ICU (encoding_tables.h).
 //
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_cjk.h
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_cjk.cc
@@ -45,6 +45,8 @@ class TextCodecCjk final : public TextCodec {
                         FlushBehavior flush,
                         bool stop_on_error,
                         bool& saw_error) override;
+  std::string Encode(std::u16string_view text,
+                     UnencodableHandling handling) override;
 
  private:
   const Encoding encoding_;
