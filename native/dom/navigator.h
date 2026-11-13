@@ -11,6 +11,8 @@
 // Upstream: third_party/blink/renderer/core/frame/navigator_ua.cc
 // Upstream: third_party/blink/renderer/core/execution_context/navigator_base.cc
 // Upstream: third_party/blink/renderer/modules/plugins/navigator_plugins.cc
+// Upstream: third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
+// Upstream: device/gamepad/public/cpp/gamepads.h
 
 #ifndef MITTO_DOM_NAVIGATOR_H_
 #define MITTO_DOM_NAVIGATOR_H_
@@ -21,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/page_messages.h"
 #include "v8/include/cppgc/member.h"
@@ -31,10 +34,13 @@
 
 namespace mitto {
 
+class Geolocation;
 class MimeTypeArray;
 class NavigatorUAData;
 class NetworkInformation;
+class Permissions;
 class PluginArray;
+class StorageManager;
 
 class Navigator final : public bindings::ScriptWrappable {
  public:
@@ -78,6 +84,13 @@ class Navigator final : public bindings::ScriptWrappable {
   NavigatorUAData* UserAgentData() const;
   int32_t MaxTouchPoints() const;
   std::optional<std::u16string> DoNotTrack() const;
+  // [SameObject], each made the first time a page asks.
+  mitto::Permissions* Permissions();
+  mitto::Geolocation* Geolocation();
+  StorageManager* Storage();
+  // A new array each time, of kItemsLengthCap nulls: no gamepad is there.
+  std::vector<bindings::ScriptWrappable*> GetGamepads(
+      bindings::ExceptionState& exception_state) const;
 
  private:
   const PageNavigator navigator_;
@@ -93,6 +106,9 @@ class Navigator final : public bindings::ScriptWrappable {
   cppgc::Member<NetworkInformation> connection_;
   cppgc::Member<PluginArray> plugins_;
   cppgc::Member<MimeTypeArray> mime_types_;
+  cppgc::Member<mitto::Permissions> permissions_;
+  cppgc::Member<mitto::Geolocation> geolocation_;
+  cppgc::Member<StorageManager> storage_;
 };
 
 }  // namespace mitto

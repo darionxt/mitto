@@ -1198,6 +1198,71 @@ def test_notification_permission_is_denied_where_the_document_is_not_a_secure_co
     assert session.evaluate(script) == (False, '[false,"denied","returned","callback denied","resolved denied"]')
 
 
+def test_permissions_are_denied_where_the_document_is_not_a_secure_context(session: _Session) -> None:
+    # Chrome 157 gave the same at that URL: every permission context is restricted to secure origins, but the storage
+    # access grant's, which turns "denied" into "prompt". Storage is not exposed, and geolocation fails at once.
+    session.start()
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, b"<p>insecure</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+    names = [
+        "accelerometer",
+        "background-fetch",
+        "background-sync",
+        "camera",
+        "captured-surface-control",
+        "clipboard-read",
+        "clipboard-write",
+        "display-capture",
+        "geolocation",
+        "gyroscope",
+        "idle-detection",
+        "keyboard-lock",
+        "local-fonts",
+        "local-network",
+        "local-network-access",
+        "loopback-network",
+        "magnetometer",
+        "microphone",
+        "midi",
+        "notifications",
+        "payment-handler",
+        "periodic-background-sync",
+        "persistent-storage",
+        "pointer-lock",
+        "screen-wake-lock",
+        "storage-access",
+        "window-management",
+    ]
+    script = f"""(async () => {{
+        const states = {{}};
+        for (const name of {json.dumps(names)}) {{
+            const status = await navigator.permissions.query({{name}});
+            states[name] = status.state + "/" + status.name;
+        }}
+        const geolocation = await new Promise((resolve) => navigator.geolocation.getCurrentPosition(
+            () => resolve("position"), (error) => resolve(error.code + " " + error.message)));
+        return [JSON.stringify(states), await document.hasStorageAccess(), typeof navigator.storage,
+            navigator.getGamepads().length, geolocation];
+    }})()"""
+
+    assert session.evaluate(script) == (
+        False,
+        json.dumps(
+            [
+                '{"accelerometer":"denied/sensors","background-fetch":"denied/background_fetch","background-sync":"denied/background_sync","camera":"denied/video_capture","captured-surface-control":"denied/captured-surface-control","clipboard-read":"denied/clipboard_read","clipboard-write":"denied/clipboard_write","display-capture":"denied/display_capture","geolocation":"denied/geolocation","gyroscope":"denied/sensors","idle-detection":"denied/idle_detection","keyboard-lock":"denied/keyboard-lock","local-fonts":"denied/local_fonts","local-network":"denied/local-network","local-network-access":"denied/local-network-access","loopback-network":"denied/loopback-network","magnetometer":"denied/sensors","microphone":"denied/audio_capture","midi":"denied/midi","notifications":"denied/notifications","payment-handler":"denied/payment_handler","periodic-background-sync":"denied/periodic_background_sync","persistent-storage":"denied/durable_storage","pointer-lock":"denied/pointer-lock","screen-wake-lock":"denied/screen_wake_lock","storage-access":"prompt/storage-access","window-management":"denied/window-management"}',
+                False,
+                "undefined",
+                8,
+                "1 Only secure origins are allowed (see: https://goo.gl/Y0ZkNV).",
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+
 def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(session: _Session) -> None:
     session.start()
     document = "﻿<p id=text>café 𝄞</p>".encode()

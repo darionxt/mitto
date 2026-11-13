@@ -189,6 +189,7 @@ mitto_bindings_interfaces = [
       "applets",
       "all",
       "children",
+      "hasStorageAccess",
     ]
   },
   {
@@ -270,6 +271,14 @@ mitto_bindings_interfaces = [
     file = "font_face_set"
     made_by_known_gaps = true
     implemented = [ "status" ]
+  },
+  {
+    name = "Geolocation"
+    file = "geolocation"
+  },
+  {
+    name = "GeolocationPositionError"
+    file = "geolocation_position_error"
   },
   {
     name = "HTMLAllCollection"
@@ -510,6 +519,10 @@ mitto_bindings_interfaces = [
       "javaEnabled",
       "deviceMemory",
       "userAgentData",
+      "permissions",
+      "geolocation",
+      "storage",
+      "getGamepads",
     ]
   },
   {
@@ -671,6 +684,24 @@ mitto_bindings_interfaces = [
     file = "performance_timing_confidence"
   },
   {
+    name = "PermissionStatus"
+    file = "permission_status"
+
+    # The bindings run its event handler attribute.
+    missing = [ "onchange" ]
+  },
+  {
+    name = "Permissions"
+    file = "permissions"
+
+    # Requesting and revoking are behind a feature that is off for stable.
+    missing = [
+      "request",
+      "requestAll",
+      "revoke",
+    ]
+  },
+  {
     name = "Plugin"
     file = "plugin"
   },
@@ -745,6 +776,14 @@ mitto_bindings_interfaces = [
     missing = [
       "onchange",
     ]
+  },
+  {
+    name = "StorageManager"
+    file = "storage_manager"
+
+    # A file system of the origin's own is behind a feature that a later
+    # milestone gives behaviour.
+    missing = [ "getDirectory" ]
   },
   {
     name = "StyleMedia"
