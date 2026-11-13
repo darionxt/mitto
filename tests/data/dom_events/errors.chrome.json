@@ -393,6 +393,14 @@
   "number:7",
   true
  ],
+ [
+  "unhandledrejection",
+  "PromiseRejectionEvent",
+  true,
+  true,
+  "Error:handled by the listener",
+  true
+ ],
  "handler added",
  [
   "rejectionhandled",

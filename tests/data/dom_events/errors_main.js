@@ -15,6 +15,7 @@ Promise.reject(new Error('rejected'));
 Promise.reject(new Error('cancel me'));
 Promise.reject(new Error('handle later'));
 Promise.reject(7);
+Promise.reject(new Error('handled by the listener'));
 const p = Promise.reject(new Error('caught in time'));
 setTimeout(() => {}, 0);
 p.catch(() => {});

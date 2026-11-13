@@ -104,6 +104,18 @@ r.load_type = trace('load', {bubbles: true});
   const second = inner.dispatchEvent(e);
   r.redispatch = [first, second, nested, e.defaultPrevented];
 }
+// An event dispatched at a node and then at the window itself: Blink keeps the node's path, which composedPath() at
+// the window gives.
+{
+  const e = new Event('twice');
+  outer.dispatchEvent(e);
+  let path;
+  const f = ev => { path = ev.composedPath().map(name); };
+  window.addEventListener('twice', f);
+  window.dispatchEvent(e);
+  window.removeEventListener('twice', f);
+  r.window_after_node = path;
+}
 // Readiness events reach the window's capturing listeners.
 r.ready = [];
 window.addEventListener('readystatechange', e => r.ready.push('window capture readystatechange ' + document.readyState + ' ' + e.eventPhase + ' ' + name(e.target)), true);

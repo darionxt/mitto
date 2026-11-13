@@ -625,6 +625,13 @@
   "InvalidStateError: Failed to execute 'dispatchEvent' on 'EventTarget': The event is already being dispatched.",
   true
  ],
+ "window_after_node": [
+  "div#outer",
+  "body",
+  "html",
+  "document",
+  "window"
+ ],
  "ready": [
   "document load capture script",
   "window capture readystatechange interactive 1 document",

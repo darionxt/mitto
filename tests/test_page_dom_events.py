@@ -124,7 +124,8 @@ def test_events_take_chromes_path_and_order_through_a_document_to_the_window(
     # Capture from the window down, the target's capturing listeners then its others, bubbling back up to the window,
     # stopPropagation(), stopImmediatePropagation(), cancelBubble, returnValue, srcElement, composedPath() at each
     # target, once, a detached tree, passive listeners by default, window.event, a second dispatch, the document's
-    # readiness events at the window, and load, which stops at the document and has no target once it is done.
+    # readiness events at the window, load, which stops at the document and has no target once it is done, and an
+    # event dispatched at the window after a node, whose composedPath() there keeps the node's path, as in Chrome.
     result, uncaught = _run(session, server, "dispatch")
 
     assert result == _chrome("dispatch")
@@ -140,7 +141,8 @@ def test_uncaught_errors_and_rejections_reach_the_windows_listeners_and_then_the
 
     assert result == _chrome("errors")
     # What a listener canceled stays from the Session, as from Chrome's console, which still hears all of a script of
-    # another origin, and of an error thrown in an error listener, after the error that the listener ran for.
+    # another origin, of an error thrown in an error listener, after the error that the listener ran for, and of a
+    # rejection whose unhandledrejection listener handled the promise without canceling the event.
     assert uncaught == [
         "Uncaught TypeError: inline",
         "Uncaught TypeError: Cannot read properties of null (reading 'x')",
@@ -155,6 +157,7 @@ def test_uncaught_errors_and_rejections_reach_the_windows_listeners_and_then_the
         "Uncaught (in promise) Error: rejected",
         "Uncaught (in promise) Error: handle later",
         "Uncaught (in promise) 7",
+        "Uncaught (in promise) Error: handled by the listener",
         "Uncaught Error: nest",
         "Uncaught Error: thrown in an error listener",
     ]

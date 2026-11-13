@@ -14,6 +14,8 @@ window.addEventListener('error', e => log.push(['error capture', e.eventPhase]),
 window.addEventListener('unhandledrejection', e => {
   log.push(['unhandledrejection', e.constructor.name, e.cancelable, e.isTrusted, describe(e.reason), e.promise instanceof Promise]);
   if (String(e.reason).includes('cancel me')) e.preventDefault();
+  // A listener that handles the promise without canceling the event: the console still hears of it.
+  if (String(e.reason).includes('handled by the listener')) e.promise.catch(() => {});
   if (String(e.reason).includes('handle later')) setTimeout(() => { e.promise.catch(() => {}); log.push('handler added'); }, 0);
 });
 window.addEventListener('rejectionhandled', e => log.push(['rejectionhandled', e.cancelable, e.isTrusted, describe(e.reason)]));
