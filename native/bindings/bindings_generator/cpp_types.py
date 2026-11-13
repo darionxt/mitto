@@ -235,9 +235,6 @@ class TypeMapper:
             # FromV8ClampedInteger() converts the integers of 32 bits or fewer only.
             raise self._refuse(idl_type, where, "an argument")
         if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS:
-            if "Clamp" in idl_type.extended_attributes and idl_type.name in _64_BIT_INTEGERS:
-                # FromV8ClampedInteger() converts the integers of 32 bits or fewer only.
-                raise self._refuse(idl_type, where, "an argument")
             # Empty for null.
             return f"std::optional<{_INTEGERS[idl_type.name]}>" if idl_type.nullable else _INTEGERS[idl_type.name]
         if _is_enforce_range(idl_type):
