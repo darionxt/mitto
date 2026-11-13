@@ -30,8 +30,8 @@ from tools.capture.devtools import PageClicker
 from tools.capture.http1 import Http1Request
 from tools.capture.probe import RecordValue, dumps_record, read_record
 from tools.capture.recording import Json
-from tools.capture.script_normal_form import MACHINE_PLACES, machine_values, script_normal_form
-from tools.capture.script_page import SCRIPT_RUNS, ScriptRun
+from tools.capture.script_normal_form import machine_values, script_normal_form
+from tools.capture.script_page import DEDICATED_WORKER, SCRIPT_RUNS, ScriptRun
 
 _CHROME_ENV_VAR = "MITTO_CHROME"
 _PAGE_TIMEOUT_SECONDS = 60.0
@@ -537,7 +537,7 @@ def record_script_fingerprint(chrome: str, run: ScriptRun) -> dict[str, RecordVa
         for request in connection.requests
         if isinstance(request, Http1Request) and request.target == run.done_path
     ]
-    return script_normal_form(read_record(body.decode()), server.start_url(run))
+    return script_normal_form(read_record(body.decode()), server.start_url(run), run.machine_places)
 
 
 @pytest.mark.parametrize("run", SCRIPT_RUNS, ids=lambda run: run.name)
@@ -546,6 +546,8 @@ def test_two_records_of_a_script_fingerprint_have_the_same_normal_form(chrome: s
     second = record_script_fingerprint(chrome, run)
 
     assert dumps_record(first) == dumps_record(second)
-    assert [value for _, value in machine_values(first)] == ["<machine>"] * len(MACHINE_PLACES)
-    # A start with no debugging port, and with none of those that make a browser under automation.
-    assert getters_of(first, "navigator")["webdriver"] is False
+    assert [value for _, value in machine_values(first, run.machine_places)] == ["<machine>"] * len(run.machine_places)
+    # A start with no debugging port, and with none of those that make a browser under automation. A worker's navigator
+    # has no webdriver.
+    if run != DEDICATED_WORKER:
+        assert getters_of(first, "navigator")["webdriver"] is False
