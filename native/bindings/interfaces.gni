@@ -780,6 +780,24 @@ mitto_bindings_interfaces = [
     file = "pop_state_event"
   },
   {
+    name = "PresentationAvailability"
+    file = "presentation_availability"
+
+    # The bindings run its event handler attribute.
+    missing = [ "onchange" ]
+  },
+  {
+    name = "PresentationRequest"
+    file = "presentation_request"
+
+    # Starting a presentation needs a user's activation. The bindings run its
+    # event handler attribute.
+    missing = [
+      "start",
+      "onconnectionavailable",
+    ]
+  },
+  {
     name = "PressureObserver"
     file = "pressure_observer"
     made_by_known_gaps = true

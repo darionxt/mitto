@@ -390,6 +390,29 @@ _TRUSTED_TYPES_AS_CHROME = {
 }
 
 
+# The Presentation API as Chrome answers a page whose browser finds no display to present to, from Chrome 157 at
+# http://127.0.0.1: the constructor's checks of its URLs, an availability that stays false, and no presentation to
+# reconnect to.
+_PRESENTATION_AS_CHROME = {
+    "PresentationRequest": (
+        "try { const p = new PresentationRequest('https://a.test/'); const a = await Promise.race([p.getAvailability(), new Promise(r => setTimeout(() => r('pending'), 1000))]); return [typeof a === 'object' ? 'value ' + a.value : a, a === await p.getAvailability()].join(); } catch (e) { return 'threw ' + e; }",
+        "value: value false,true",
+    ),
+    "PresentationRequest reconnect": (
+        "try { await new PresentationRequest('https://a.test/').reconnect('x'); return 'resolved'; } catch (e) { return 'rejected ' + e; }",
+        "value: rejected NotFoundError: Route not found",
+    ),
+    "PresentationRequest bad URL": (
+        "try { new PresentationRequest('http://[x'); return 'made'; } catch (e) { return 'threw ' + e; }",
+        "value: threw SyntaxError: Failed to construct 'PresentationRequest': 'http://[x' can't be resolved to a valid URL.",
+    ),
+    "PresentationRequest no scheme": (
+        "try { new PresentationRequest('ftp://a.test/'); return 'made'; } catch (e) { return 'threw ' + e; }",
+        "value: threw NotSupportedError: Failed to construct 'PresentationRequest': An empty sequence of URLs is not supported.",
+    ),
+}
+
+
 # Permissions, gamepads and storage as Chrome answers a profile that has granted and stored nothing, on a secure page,
 # from Chrome 157 at http://127.0.0.1, which is one.
 _PERMISSIONS_AS_CHROME = {
@@ -555,6 +578,23 @@ def test_an_event_handler_takes_a_trusted_script_on_any_element_of_the_three_nam
     assert _evaluate(program, script) == (
         'value: ["TrustedScript","TrustedScript",null,"TrustedScript","TrustedScriptURL",null]'
     )
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"), list(_PRESENTATION_AS_CHROME.values()), ids=list(_PRESENTATION_AS_CHROME)
+)
+def test_presentation_answers_as_chrome_does(program: Path, script: str, expected: str) -> None:
+    assert _evaluate(program, script) == expected
+
+
+def test_a_presentation_request_takes_a_list_of_urls_and_resolves_them_against_the_document(program: Path) -> None:
+    # Web IDL's overload resolution: an iterable object is the sequence, anything else the string. A URL of a scheme
+    # that Chrome cannot present is left out, and only a list with none left is refused.
+    script = """const made = (urls) => { try { new PresentationRequest(urls); return "made"; } catch (e) { return e.name; } };
+        return JSON.stringify([made(["ftp://a.test/", "https://a.test/"]), made(new Set(["cast:app"])),
+            made({toString: () => "https://a.test/"}), made([]), made({[Symbol.iterator]: 1})])"""
+
+    assert _evaluate(program, script) == 'value: ["made","made","made","NotSupportedError","TypeError"]'
 
 
 @pytest.mark.parametrize(
