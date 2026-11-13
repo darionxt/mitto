@@ -11,18 +11,10 @@ HTMLAreaElement* HTMLAreaElement::Create(Document& document) {
 }
 
 HTMLAreaElement::HTMLAreaElement(Document& document)
-    : HTMLElement(document, u"area") {}
+    : HTMLAnchorElementBase(document, u"area") {}
 
 const bindings::WrapperTypeInfo* HTMLAreaElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLAreaElement::kWrapperTypeInfo;
-}
-
-std::u16string HTMLAreaElement::Href() const {
-  return ReflectedURLAttribute(u"href");
-}
-
-void HTMLAreaElement::SetHref(const std::u16string& value) {
-  SetAttributeWithoutValidation(u"href", value);
 }
 
 }  // namespace mitto

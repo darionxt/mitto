@@ -417,12 +417,36 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLAnchorElement"
     file = "html_anchor_element"
-    implemented = [ "href" ]
+    implemented = [
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+    ]
   },
   {
     name = "HTMLAreaElement"
     file = "html_area_element"
-    implemented = [ "href" ]
+    implemented = [
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+    ]
   },
   {
     name = "HTMLAudioElement"
