@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
@@ -23,6 +24,8 @@
 #include "base/threading/thread.h"
 #include "base/types/expected.h"
 #include "build/build_config.h"
+#include "mitto/dom/broadcast_channel_service.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "mitto/page_channel.h"
@@ -68,10 +71,18 @@ class SessionLink final : public PageChannel::Delegate
 #endif
 {
  public:
+  // What the Session sends goes to the main thread on the queue of its task
+  // type: the start on the queue of what belongs to no frame, a script to
+  // evaluate on the inspector's, as DevTools' Runtime.evaluate, and each part
+  // of a response on the loading queue, as Blink's URLLoader hands it over.
   SessionLink(scoped_refptr<base::SingleThreadTaskRunner> main_thread,
+              scoped_refptr<base::SingleThreadTaskRunner> inspector,
+              scoped_refptr<base::SingleThreadTaskRunner> networking,
               StartV8Callback start_v8,
               SessionCookieJar& cookie_jar)
       : main_thread_(std::move(main_thread)),
+        inspector_(std::move(inspector)),
+        networking_(std::move(networking)),
         start_v8_(std::move(start_v8)),
         cookie_jar_(cookie_jar) {}
 
@@ -155,10 +166,10 @@ class SessionLink final : public PageChannel::Delegate
           Refuse("a script came before the start");
           return;
         }
-        main_thread_->PostTask(
-            FROM_HERE, base::BindOnce(&SessionLink::EvaluateOnMainThread,
-                                      base::Unretained(this), frame->call,
-                                      std::move(frame->script)));
+        inspector_->PostTask(FROM_HERE,
+                             base::BindOnce(&SessionLink::EvaluateOnMainThread,
+                                            base::Unretained(this), frame->call,
+                                            std::move(frame->script)));
         return;
       case PageMessage::kResponseStarted:
       case PageMessage::kResponseBody:
@@ -167,7 +178,7 @@ class SessionLink final : public PageChannel::Delegate
           Refuse("a response came before the start");
           return;
         }
-        main_thread_->PostTask(
+        networking_->PostTask(
             FROM_HERE,
             base::BindOnce(&SessionLink::ResponseOnMainThread,
                            base::Unretained(this), *std::move(frame)));
@@ -204,6 +215,16 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreChange:
         cookie_jar_->CookieStoreChanged(std::move(frame->cookie_store_change));
         return;
+      case PageMessage::kBroadcastReceived:
+        if (!started_) {
+          Refuse("a broadcast came before the start");
+          return;
+        }
+        main_thread_->PostTask(
+            FROM_HERE, base::BindOnce(&SessionLink::BroadcastOnMainThread,
+                                      base::Unretained(this),
+                                      std::move(frame->broadcast)));
+        return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
       case PageMessage::kConsole:
@@ -218,6 +239,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreGet:
       case PageMessage::kCookieStoreSet:
       case PageMessage::kCookieStoreListen:
+      case PageMessage::kBroadcast:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -268,6 +290,20 @@ class SessionLink final : public PageChannel::Delegate
       return;
     }
     (*isolate)->SetOOMErrorHandler(&OnOutOfMemory);
+    // What the Page's BroadcastChannels send to the Session's other Pages. A
+    // message too large for a frame stays in the Page.
+    BroadcastChannelService::Get().SetSessionSender(base::BindRepeating(
+        [](SendFrame send, const std::string& name, bool locked,
+           std::vector<uint8_t> data) {
+          PageBroadcast broadcast;
+          broadcast.name = name;
+          broadcast.locked = locked;
+          broadcast.data.assign(data.begin(), data.end());
+          if (BroadcastFits(broadcast)) {
+            send.Run(EncodeBroadcast(PageMessage::kBroadcast, broadcast));
+          }
+        },
+        send));
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
@@ -282,6 +318,15 @@ class SessionLink final : public PageChannel::Delegate
     if (runner_) {
       runner_->Evaluate(call, script);
     }
+  }
+
+  void BroadcastOnMainThread(PageBroadcast broadcast) {
+    if (!runner_) {
+      return;
+    }
+    BroadcastChannelService::Get().OnSessionMessage(
+        broadcast.name, broadcast.locked,
+        std::vector<uint8_t>(broadcast.data.begin(), broadcast.data.end()));
   }
 
   void ResponseOnMainThread(FrameFromSession frame) {
@@ -344,6 +389,8 @@ class SessionLink final : public PageChannel::Delegate
 #endif
 
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
+  const scoped_refptr<base::SingleThreadTaskRunner> inspector_;
+  const scoped_refptr<base::SingleThreadTaskRunner> networking_;
   // These are the main thread's. The runner lives from the start until the
   // process ends.
   StartV8Callback start_v8_;
@@ -398,11 +445,16 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
           base::Thread::Options(base::MessagePumpType::IO, 0))) {
     return;
   }
+  // The Page program makes the event loop first.
+  EventLoop* const event_loop = EventLoop::Get();
+  CHECK(event_loop);
   // Never destroyed: the process ends while the I/O thread uses it.
   SessionLink* const link =
       std::make_unique<SessionLink>(
           base::SingleThreadTaskRunner::GetCurrentDefault(),
-          std::move(start_v8), cookie_jar)
+          event_loop->TaskRunner(TaskType::kInternalInspector),
+          event_loop->TaskRunner(TaskType::kNetworking), std::move(start_v8),
+          cookie_jar)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),

@@ -458,6 +458,16 @@
     const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
     return [r.name, r.prefix, r.value, e.attributes[0].name].join("|");
   });
+  // Blink orders an attribute's node by its qualified name, which keeps the old prefix in the element's attributes.
+  run("attr position other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "1");
+    e.setAttributeNS("urn:x", "p:b", "2");
+    const qa = document.createAttributeNS("urn:x", "q:a");
+    e.setAttributeNodeNS(qa);
+    const pb = e.getAttributeNodeNS("urn:x", "b");
+    return [qa.compareDocumentPosition(pb), pb.compareDocumentPosition(qa), e.getAttributeNames().join(" ")].join("|");
+  });
   run("removeAttributeNode", () => {
     const e = document.createElement("div");
     e.setAttribute("title", "a");
@@ -784,8 +794,7 @@
   run("translate", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.translate]; p.setAttribute("translate", "NO"); out.push(c.translate); c.setAttribute("translate", ""); out.push(c.translate); c.setAttribute("translate", "maybe"); out.push(c.translate); c.translate = true; out.push(c.getAttribute("translate")); const s = document.createElementNS(SVG, "g"); s.setAttribute("translate", "no"); const h = document.createElement("b"); s.appendChild(h); out.push(h.translate); return out.join(","); });
   run("draggable", () => { const out = [document.createElement("div").draggable, document.createElement("img").draggable, document.createElement("a").draggable]; const a = document.createElement("a"); a.href = "x"; out.push(a.draggable); a.setAttribute("draggable", "FALSE"); out.push(a.draggable); const i = document.createElement("img"); i.setAttribute("draggable", "false"); out.push(i.draggable); const d = document.createElement("div"); d.setAttribute("draggable", "True"); out.push(d.draggable); d.draggable = false; out.push(d.getAttribute("draggable")); return out.join(","); });
   run("spellcheck", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.spellcheck]; p.setAttribute("spellcheck", "false"); out.push(c.spellcheck); c.setAttribute("spellcheck", ""); out.push(c.spellcheck); c.setAttribute("spellcheck", "x"); out.push(c.spellcheck); c.spellcheck = true; out.push(c.getAttribute("spellcheck")); return out.join(","); });
-  // A password input's spellcheck is off by default. Blink's HasBeenPasswordField() stays true once the type was
-  // password; the case leaves that out until the input sees its attributes change.
+  // A password input's spellcheck is off by default.
   run("spellcheck password", () => {
     const d = document.createElement("div");
     d.setAttribute("spellcheck", "true");
@@ -803,6 +812,35 @@
     p.setAttribute("type", "password");
     p.appendChild(inner);
     out.push(inner.spellcheck);
+    return out.join(",");
+  });
+  // Blink's HasBeenPasswordField(): off while it stays a text field after being a password one, and a copy has only
+  // the type it has.
+  run("spellcheck password sticky", () => {
+    const i = document.createElement("input");
+    i.setAttribute("type", "password");
+    i.type = "text";
+    const out = [i.spellcheck];
+    i.setAttribute("type", "search");
+    out.push(i.spellcheck);
+    i.removeAttribute("type");
+    out.push(i.spellcheck, i.cloneNode().spellcheck);
+    i.setAttribute("type", "checkbox");
+    out.push(i.spellcheck);
+    i.setAttribute("type", "text");
+    out.push(i.spellcheck);
+    const p = document.createElement("input");
+    p.type = "Password";
+    out.push(p.cloneNode().spellcheck);
+    const d = document.createElement("div");
+    d.innerHTML = "<input type=password>";
+    const q = d.firstChild;
+    q.type = "email";
+    out.push(q.spellcheck);
+    q.setAttribute("type", "date");
+    out.push(q.spellcheck);
+    q.type = "number";
+    out.push(q.spellcheck);
     return out.join(",");
   });
   run("contentEditable", () => { const e = document.createElement("div"); const out = [e.contentEditable]; for (const v of ["", "TRUE", "false", "plaintext-only", "x"]) { e.setAttribute("contenteditable", v); out.push(e.contentEditable); } e.contentEditable = "PlainText-Only"; out.push(e.getAttribute("contenteditable")); e.contentEditable = "inherit"; out.push(e.hasAttribute("contenteditable")); return out.join(","); });
@@ -995,6 +1033,7 @@
   });
   run("table thead wrong", () => { document.createElement("table").tHead = document.createElement("tbody"); });
   run("table tfoot wrong", () => { document.createElement("table").tFoot = document.createElement("thead"); });
+  run("table caption wrong type", () => { document.createElement("table").caption = document.createElement("div"); });
   run("table tfoot", () => {
     const t = tableOf("<tbody><tr></tr></tbody>");
     const f = t.createTFoot();

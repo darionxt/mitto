@@ -25,6 +25,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "mitto/dom/event_loop.h"
 #include "v8/include/v8-forward.h"
 
 namespace mitto {
@@ -39,6 +40,8 @@ struct TimerSchedule {
   // Whether it runs on time, rather than when the thread wakes up anyway soon
   // after.
   bool precise = false;
+  // The task type of its task, by its nesting level and delay.
+  TaskType task_type = TaskType::kJavascriptTimerImmediate;
 };
 
 // The schedule of a timer set with `timeout` while a timer of `nesting_level`

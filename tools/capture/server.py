@@ -690,7 +690,7 @@ def _page_responder(endpoint: _Endpoint) -> Responder:
         if done is not None:
             done.set()
         if endpoint.route == SCRIPT:
-            return respond_on_script_route(request)
+            return respond_on_script_route(endpoint.port, request)
         return respond_on(endpoint.scheme, endpoint.port, request)
 
     return answer

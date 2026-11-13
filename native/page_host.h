@@ -36,6 +36,7 @@
 #include "net/cookies/cookie_partition_key.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace net {
 class CookieStore;
@@ -43,6 +44,7 @@ class CookieStore;
 
 namespace mitto {
 
+class PageHost;
 class ReadyRequests;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
@@ -110,6 +112,13 @@ class PageNetwork {
   // The Session's network estimate and salts, or null for a Session that has
   // none.
   virtual const NetworkQuality* GetNetworkQuality() const = 0;
+
+  // Hands a BroadcastChannel message of the Page `from`, whose document is of
+  // `origin`, to each other Page of the Session, as Chrome's browser process
+  // hands it to the renderers of other tabs.
+  virtual void BroadcastFromPage(const PageHost& from,
+                                 const url::Origin& origin,
+                                 const PageBroadcast& broadcast) = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -246,6 +255,12 @@ class PageHost final : public PageChannel::Delegate {
 
   const scoped_refptr<PageProcess>& process() const { return process_; }
 
+  // Sends the Page a BroadcastChannel message of another Page of the Session
+  // whose document is of `origin`, if the Page's document is of that origin
+  // too: the storage key of the top-level document, the only one a Page has.
+  void DeliverBroadcast(const url::Origin& origin,
+                        const PageBroadcast& broadcast);
+
   base::WeakPtr<PageHost> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
  private:
@@ -266,6 +281,10 @@ class PageHost final : public PageChannel::Delegate {
   void OnCookieStoreGet(PageCookieStoreGet get);
   void OnCookieStoreSet(PageCookieStoreSet set);
   void OnCookieStoreListen(bool listen);
+  // A message of one of the document's BroadcastChannels, for the Session's
+  // other Pages of the document's origin, which the library takes from the
+  // document it loaded, not from the Page.
+  void OnBroadcast(const PageBroadcast& broadcast);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.

@@ -239,7 +239,8 @@ void Geolocation::Fire(GeoNotifier* notifier) {
     if (error_callback->Call(context, v8::Undefined(isolate), 1, &argument)
             .IsEmpty() &&
         try_catch.HasCaught()) {
-      bindings::ReportException(isolate, try_catch.Exception());
+      bindings::ReportException(isolate, try_catch.Exception(),
+                                try_catch.Message());
     }
   }
   if (fatal || notifier->watch_id() == 0) {

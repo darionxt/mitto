@@ -17,15 +17,6 @@
 
 namespace mitto {
 
-class HTMLBaseElement final : public HTMLElement {
- public:
-  static HTMLBaseElement* Create(Document& document);
-
-  explicit HTMLBaseElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
 class HTMLButtonElement final : public HTMLElement {
  public:
   static HTMLButtonElement* Create(Document& document);
@@ -168,16 +159,6 @@ class HTMLIFrameElement final : public HTMLElement {
   DOMTokenList* Sandbox() {
     return EnsureTokenList(u"sandbox", DOMTokenList::SupportedTokens::kSandbox);
   }
-};
-
-class HTMLInputElement final : public HTMLElement {
- public:
-  static HTMLInputElement* Create(Document& document);
-
-  explicit HTMLInputElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLLabelElement final : public HTMLElement {

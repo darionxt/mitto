@@ -1,0 +1,463 @@
+[
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught TypeError: inline",
+  "BASE/errors.html",
+  2,
+  1,
+  "TypeError:inline"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught TypeError: inline",
+  "BASE/errors.html",
+  2,
+  1,
+  "TypeError:inline",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught TypeError: Cannot read properties of null (reading 'x')",
+  "BASE/errors_null.js",
+  2,
+  8,
+  "TypeError:Cannot read properties of null (reading 'x')"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught TypeError: Cannot read properties of null (reading 'x')",
+  "BASE/errors_null.js",
+  2,
+  8,
+  "TypeError:Cannot read properties of null (reading 'x')",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught a string",
+  "BASE/errors_string.js",
+  1,
+  1,
+  "string:a string"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught a string",
+  "BASE/errors_string.js",
+  1,
+  1,
+  "string:a string",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught Error: cancel me",
+  "BASE/errors_cancel.js",
+  2,
+  1,
+  "Error:cancel me"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught Error: cancel me",
+  "BASE/errors_cancel.js",
+  2,
+  1,
+  "Error:cancel me",
+  true
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught URIError: from a file",
+  "BASE/errors_file.js",
+  3,
+  3,
+  "URIError:from a file"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught URIError: from a file",
+  "BASE/errors_file.js",
+  3,
+  3,
+  "URIError:from a file",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Script error.",
+  "",
+  0,
+  0,
+  "null"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Script error.",
+  "",
+  0,
+  0,
+  "null",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught TypeError: Cannot read properties of null (reading 'inline')",
+  "BASE/errors.html",
+  13,
+  12,
+  "TypeError:Cannot read properties of null (reading 'inline')"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught TypeError: Cannot read properties of null (reading 'inline')",
+  "BASE/errors.html",
+  13,
+  12,
+  "TypeError:Cannot read properties of null (reading 'inline')",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught RangeError: from a listener",
+  "BASE/errors_main.js",
+  1,
+  48,
+  "RangeError:from a listener"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught RangeError: from a listener",
+  "BASE/errors_main.js",
+  1,
+  48,
+  "RangeError:from a listener",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ "after ping",
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught Error: reported",
+  "BASE/errors_main.js",
+  5,
+  13,
+  "Error:reported"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught Error: reported",
+  "BASE/errors_main.js",
+  5,
+  13,
+  "Error:reported",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "Uncaught 42",
+  "BASE/errors_main.js",
+  6,
+  1,
+  "number:42"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught 42",
+  "BASE/errors_main.js",
+  6,
+  1,
+  "number:42",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ "after reportError",
+ [
+  "ErrorEvent",
+  "undefined",
+  "undefined",
+  "null",
+  "undefined",
+  "m",
+  "f",
+  1,
+  2,
+  false,
+  false,
+  "",
+  0
+ ],
+ [
+  "PromiseRejectionEvent",
+  true,
+  "string:why",
+  true,
+  "undefined",
+  false,
+  "TypeError: Failed to construct 'PromiseRejectionEvent': Failed to read the 'promise' property from 'PromiseRejectionEventInit': Required member is undefined."
+ ],
+ [
+  "onerror",
+  true,
+  5,
+  "dispatched",
+  "here",
+  7,
+  8,
+  "number:9"
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  false,
+  false,
+  2,
+  true,
+  "dispatched",
+  "here",
+  7,
+  8,
+  "number:9",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "body onerror",
+  5
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught EvalError: from a microtask",
+  "BASE/errors_main.js",
+  8,
+  24,
+  "EvalError:from a microtask",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "body onerror",
+  5
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught SyntaxError: from a timer",
+  "BASE/errors_main.js",
+  4,
+  20,
+  "SyntaxError:from a timer",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ],
+ [
+  "unhandledrejection",
+  "PromiseRejectionEvent",
+  true,
+  true,
+  "Error:rejected",
+  true
+ ],
+ [
+  "unhandledrejection",
+  "PromiseRejectionEvent",
+  true,
+  true,
+  "Error:cancel me",
+  true
+ ],
+ [
+  "unhandledrejection",
+  "PromiseRejectionEvent",
+  true,
+  true,
+  "Error:handle later",
+  true
+ ],
+ [
+  "unhandledrejection",
+  "PromiseRejectionEvent",
+  true,
+  true,
+  "number:7",
+  true
+ ],
+ [
+  "unhandledrejection",
+  "PromiseRejectionEvent",
+  true,
+  true,
+  "Error:handled by the listener",
+  true
+ ],
+ "handler added",
+ [
+  "rejectionhandled",
+  false,
+  true,
+  "Error:handle later"
+ ],
+ [
+  "body onerror",
+  5
+ ],
+ [
+  "error listener",
+  "ErrorEvent",
+  false,
+  true,
+  true,
+  2,
+  true,
+  "Uncaught Error: nest",
+  "BASE/errors_main.js",
+  13,
+  20,
+  "Error:nest",
+  false
+ ],
+ [
+  "error capture",
+  2
+ ]
+]

@@ -103,7 +103,7 @@ From the same build on the macOS or the Linux machine, check [ICU's data](buildi
 
 On the Windows machine, [record Baselines](baselines.md) of every Chrome Release in the new Supported Window: the Engine Release [installed](baselines.md#install-chrome), and the older ones [unpacked](baselines.md#an-older-chrome-release), each at the build that the update server gives. [Check and commit](baselines.md#check-and-commit) them, update [where each Chrome Release comes from](baselines.md#where-each-chrome-release-comes-from), and write down what the recording found under its Chrome Release on that page.
 
-Each session records the Script Fingerprint's Baselines too, `RELEASE/script/page.json`, as [baselines.md](baselines.md#the-script-fingerprint) says, with no step of its own. They take the place of what the Runtime's tests compared with Chrome until M7. The [Parity Checks of the Script Fingerprint](parity.md#the-script-fingerprint) in [step 9](#9-the-known-gaps-list) compare a Page of each Persona with them, so a difference that a new Chrome brought shows there: a change that the Runtime must follow, in a class or in the generator, or a gap to keep. Say which in the run's pull request.
+Each session records the Script Fingerprint's Baselines too, as [baselines.md](baselines.md#the-script-fingerprint) says, with no step of its own: `RELEASE/script/page.json` for a top-level page, and for its frames and its worker `same_origin_frame.json`, `srcdoc_frame.json`, `cross_site_frame.json` and `worker.json`, which keep what differs from `page.json` and go with it. Each of those must stay within [its budget](capture.md#what-a-later-case-keeps), which a test holds it to. They take the place of what the Runtime's tests compared with Chrome until M7. The [Parity Checks of the Script Fingerprint](parity.md#the-script-fingerprint) in [step 9](#9-the-known-gaps-list) compare a Page of each Persona with them, so a difference that a new Chrome brought shows there: a change that the Runtime must follow, in a class or in the generator, or a gap to keep. Say which in the run's pull request.
 
 Each session also records [what a document requests](capture.md#documents) beside the main Request Kinds, `RELEASE/documents/http1.json`, `http2.json` and `http3.json`, with no step of its own. The wire's Parity Checks do not replay those cases yet, so until they do, read the diff of these files against those of the run before in the run's pull request: a line that moved is a change in what Chrome sends for a Request Kind that M8's pages make, and `order` is the order of a document's requests on the wire.
 
@@ -180,6 +180,14 @@ The statistics' diff shows which shares moved, and the table's what that does to
 If a source does not answer, or answers in a form the script does not read, such as a CSV of another month or JSON without its shares, the script says which and why, exits with an error and changes none of the files. The table then stays as it was for this run: say so in the run's pull request. A form that has changed for good is a change to [`tools/release/machine_sources.py`](../tools/release/machine_sources.py) and to the answers saved in `tests/release/data`, which `tests/release` checks it with, and no network.
 
 `--saved` writes the table from the statistics as they are and fetches nothing, such as after a change to an owner's weight. It leaves the time zones as they are.
+
+The refresh rate has no source that the table can take, and keeps [the owner's weights](persona.md#how-common-each-one-is), in the shape of GLAM's shares. Compare them with what GLAM gives for the newest version of Firefox that it has, on Windows:
+
+```bash
+curl -s https://glam.telemetry.mozilla.org/api/v1/data/ -H 'Content-Type: application/json' -d '{"query": {"channel": "release", "os": "Windows", "process": "parent", "probe": "gfx_target_frame_rate", "product": "fog", "aggregationLevel": "version", "app_id": "release", "ping_type": "metrics"}}'
+```
+
+Each version has an entry for each kind of aggregation. The one whose `client_agg_type` is `max` counts each client once, by the highest rate it reported, and its `histogram` gives each bucket's share, by the bucket's lower end, such as `56.53` for 60 Hz. If the shares have moved by more than a point, bring the owner new weights for `_REFRESH_RATES` in [`tools/release/machines.py`](../tools/release/machines.py), and say so in the run's pull request.
 
 ### 8. Drop the oldest Chrome Release
 

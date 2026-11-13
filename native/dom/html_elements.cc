@@ -1,7 +1,6 @@
 #include "mitto/dom/html_elements.h"
 
 #include "mitto/bindings/script_wrappable.h"
-#include "mitto/bindings/v8_html_base_element.h"
 #include "mitto/bindings/v8_html_button_element.h"
 #include "mitto/bindings/v8_html_camera_element.h"
 #include "mitto/bindings/v8_html_credential_element.h"
@@ -21,7 +20,6 @@
 #include "mitto/bindings/v8_html_geolocation_element.h"
 #include "mitto/bindings/v8_html_hr_element.h"
 #include "mitto/bindings/v8_html_iframe_element.h"
-#include "mitto/bindings/v8_html_input_element.h"
 #include "mitto/bindings/v8_html_install_element.h"
 #include "mitto/bindings/v8_html_label_element.h"
 #include "mitto/bindings/v8_html_legend_element.h"
@@ -57,18 +55,6 @@
 #include "mitto/bindings/v8_html_video_element.h"
 
 namespace mitto {
-
-// static
-HTMLBaseElement* HTMLBaseElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<HTMLBaseElement>(document);
-}
-
-HTMLBaseElement::HTMLBaseElement(Document& document)
-    : HTMLElement(document, u"base") {}
-
-const bindings::WrapperTypeInfo* HTMLBaseElement::GetWrapperTypeInfo() const {
-  return &bindings::V8HTMLBaseElement::kWrapperTypeInfo;
-}
 
 // static
 HTMLButtonElement* HTMLButtonElement::Create(Document& document) {
@@ -264,22 +250,6 @@ const bindings::WrapperTypeInfo* HTMLIFrameElement::GetWrapperTypeInfo() const {
 }
 
 int32_t HTMLIFrameElement::DefaultTabIndex() const {
-  return 0;
-}
-
-// static
-HTMLInputElement* HTMLInputElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<HTMLInputElement>(document);
-}
-
-HTMLInputElement::HTMLInputElement(Document& document)
-    : HTMLElement(document, u"input") {}
-
-const bindings::WrapperTypeInfo* HTMLInputElement::GetWrapperTypeInfo() const {
-  return &bindings::V8HTMLInputElement::kWrapperTypeInfo;
-}
-
-int32_t HTMLInputElement::DefaultTabIndex() const {
   return 0;
 }
 

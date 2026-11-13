@@ -49,6 +49,18 @@ mitto_bindings_interfaces = [
     missing = [ "onabort" ]
   },
   {
+    name = "AbstractRange"
+    file = "abstract_range"
+    made_by_known_gaps = true
+    implemented = [
+      "startContainer",
+      "endContainer",
+      "startOffset",
+      "endOffset",
+      "collapsed",
+    ]
+  },
+  {
     name = "Attr"
     file = "attr"
   },
@@ -67,6 +79,17 @@ mitto_bindings_interfaces = [
       "onchargingtimechange",
       "ondischargingtimechange",
       "onlevelchange",
+    ]
+  },
+  {
+    name = "BroadcastChannel"
+    file = "broadcast_channel"
+
+    # onmessage and onmessageerror run as every event handler attribute does.
+    implemented = [
+      "name",
+      "postMessage",
+      "close",
     ]
   },
   {
@@ -246,9 +269,17 @@ mitto_bindings_interfaces = [
       "getElementById",
       "adoptNode",
       "importNode",
+      "getElementsByClassName",
+      "getElementsByName",
+      "getElementsByTagName",
+      "getElementsByTagNameNS",
       "prepend",
       "querySelector",
+      "querySelectorAll",
       "replaceChildren",
+      "createRange",
+      "createNodeIterator",
+      "createTreeWalker",
       "get domain",
       "designMode",
       "scrollingElement",
@@ -292,6 +323,7 @@ mitto_bindings_interfaces = [
       "getElementById",
       "prepend",
       "querySelector",
+      "querySelectorAll",
       "replaceChildren",
     ]
   },
@@ -338,6 +370,9 @@ mitto_bindings_interfaces = [
       "getAttributeNames",
       "getAttributeNode",
       "getAttributeNodeNS",
+      "getElementsByClassName",
+      "getElementsByTagName",
+      "getElementsByTagNameNS",
       "hasAttribute",
       "hasAttributeNS",
       "hasAttributes",
@@ -347,6 +382,7 @@ mitto_bindings_interfaces = [
       "matches",
       "prepend",
       "querySelector",
+      "querySelectorAll",
       "remove",
       "removeAttribute",
       "removeAttributeNS",
@@ -377,6 +413,10 @@ mitto_bindings_interfaces = [
       "remove",
       "getParent",
     ]
+  },
+  {
+    name = "ErrorEvent"
+    file = "error_event"
   },
   {
     name = "Event"
@@ -414,11 +454,12 @@ mitto_bindings_interfaces = [
     file = "html_all_collection"
     made_by_known_gaps = true
 
-    # Its named getter, namedItem() and item() give a union of HTMLCollection and
-    # Element, which the C++ writer does not return yet.
     implemented = [
       "length",
       "indexed getter",
+      "named getter",
+      "namedItem",
+      "item",
     ]
   },
   {
@@ -470,8 +511,7 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLBaseElement"
     file = "html_base_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [ "href" ]
   },
   {
     name = "HTMLBodyElement"
@@ -569,6 +609,7 @@ mitto_bindings_interfaces = [
       "contentEditable",
       "isContentEditable",
       "tabIndex",
+      "click",
       "dataset",
     ]
   },
@@ -663,8 +704,11 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLInputElement"
     file = "html_input_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [
+      "checked",
+      "indeterminate",
+      "type",
+    ]
   },
   {
     name = "HTMLInstallElement"
@@ -1110,12 +1154,40 @@ mitto_bindings_interfaces = [
     file = "memory_info"
   },
   {
+    name = "MessageChannel"
+    file = "message_channel"
+  },
+  {
+    name = "MessageEvent"
+    file = "message_event"
+  },
+  {
+    name = "MessagePort"
+    file = "message_port"
+
+    # onmessage and onmessageerror run as every event handler attribute does,
+    # and setting either starts the port (MessagePort::ListenersChanged()).
+    implemented = [
+      "postMessage",
+      "start",
+      "close",
+    ]
+  },
+  {
     name = "MimeType"
     file = "mime_type"
   },
   {
     name = "MimeTypeArray"
     file = "mime_type_array"
+  },
+  {
+    name = "MutationObserver"
+    file = "mutation_observer"
+  },
+  {
+    name = "MutationRecord"
+    file = "mutation_record"
   },
   {
     name = "NamedNodeMap"
@@ -1253,6 +1325,10 @@ mitto_bindings_interfaces = [
     file = "media_query_list_event"
   },
   {
+    name = "NodeIterator"
+    file = "node_iterator"
+  },
+  {
     name = "NodeList"
     file = "node_list"
     made_by_known_gaps = true
@@ -1261,6 +1337,11 @@ mitto_bindings_interfaces = [
       "item",
       "indexed getter",
     ]
+  },
+  {
+    name = "NodeRange"
+    file = "node_range"
+    made_by_known_gaps = true
   },
   {
     name = "Notification"
@@ -1414,6 +1495,10 @@ mitto_bindings_interfaces = [
     implemented = [ "knownSources" ]
   },
   {
+    name = "PromiseRejectionEvent"
+    file = "promise_rejection_event"
+  },
+  {
     name = "PushManager"
     file = "push_manager"
     made_by_known_gaps = true
@@ -1422,6 +1507,18 @@ mitto_bindings_interfaces = [
   {
     name = "QuotaExceededError"
     file = "quota_exceeded_error"
+  },
+  {
+    name = "Range"
+    file = "range"
+    made_by_known_gaps = true
+
+    # Its geometry, and expand(), which needs it, are M9's.
+    missing = [
+      "getClientRects",
+      "getBoundingClientRect",
+      "expand",
+    ]
   },
   {
     name = "Request"
@@ -1917,6 +2014,11 @@ mitto_bindings_interfaces = [
     missing = [ "getDirectory" ]
   },
   {
+    name = "StaticRange"
+    file = "static_range"
+    made_by_known_gaps = true
+  },
+  {
     name = "StyleMedia"
     file = "style_media"
     made_by_known_gaps = true
@@ -1959,6 +2061,10 @@ mitto_bindings_interfaces = [
     file = "text_encoder"
   },
   {
+    name = "TreeWalker"
+    file = "tree_walker"
+  },
+  {
     name = "TrustedTypePolicyFactory"
     file = "trusted_type_policy_factory"
     made_by_known_gaps = true
@@ -1969,6 +2075,11 @@ mitto_bindings_interfaces = [
       "isScriptURL",
       "getAttributeType",
     ]
+  },
+  {
+    name = "UserActivation"
+    file = "user_activation"
+    made_by_known_gaps = true
   },
   {
     name = "Viewport"
@@ -2054,9 +2165,16 @@ mitto_bindings_interfaces = [
       "btoa",
       "requestIdleCallback",
       "cancelIdleCallback",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "webkitRequestAnimationFrame",
+      "webkitCancelAnimationFrame",
       "event",
       "scheduler",
       "cookieStore",
+      "structuredClone",
+      "postMessage",
+      "reportError",
     ]
   },
   {

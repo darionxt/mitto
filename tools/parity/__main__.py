@@ -48,6 +48,9 @@ def _write_script_list(baselines: Path) -> int:
     known_gaps.write_text(dumps_known_gaps(found), encoding="utf-8")
     print(f"Wrote {len(found)} gaps to {known_gaps}: {len(changes.unlisted)} new, {len(changes.gone)} gone.")
     print("\n".join(_script_counts(loaded, found)))
+    skipped = list(dict.fromkeys(baseline.case for baseline in loaded if not baseline.in_a_page))
+    if skipped:
+        print(f"Skipped, since a Page has no frames and no workers yet: {', '.join(skipped)}")
     return 0
 
 
