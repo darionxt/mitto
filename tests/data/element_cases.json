@@ -681,6 +681,7 @@
   "area href": "string:http://e.com/x|http://e.com/x||||false",
   "table elements": "string:TH||||false|false",
   "canvas": "string:[object HTMLCanvasElement]|300|150|300|20|300|7",
+  "canvas large attribute": "string:300|2147483647|150",
   "media preload": "string:metadata,none,auto,auto,metadata,metadata,Q,metadata,auto",
   "Image undefined": "string:<img>|<img>",
   "video": "string:[object HTMLVideoElement]||false|false|false|false|false|false|metadata|null|",
