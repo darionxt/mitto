@@ -169,3 +169,33 @@ def _evaluate(url: str, script: str) -> Any:
 def test_web_locks_queue_steal_and_abort_as_chrome_s(blank_page: str) -> None:
     # A grant lands after a timer set beside its request, as Chrome's comes over Mojo.
     assert _evaluate(blank_page, _LOCKS) == _LOCKS_EXPECTED
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_waiting_request_keeps_a_signal_that_only_it_holds(blank_page: str) -> None:
+    # The signal of AbortSignal.any() is held only by the request, which keeps it while it waits, as Blink's abort
+    # handle does, so that collections in between do not lose its abort. Chrome 157 rejects the request.
+    script = """
+      (async () => {
+        let release;
+        await new Promise((granted) => navigator.locks.request('held', () => {
+          granted();
+          return new Promise((r) => { release = r; });
+        }));
+        const controller = new AbortController();
+        const waiting = navigator.locks.request('held', {signal: AbortSignal.any([controller.signal])}, () => 'ran')
+            .then((v) => 'fulfilled ' + v, (e) => 'rejected ' + e.name);
+        // Enough garbage for the collector to run a few times.
+        for (let i = 0; i < 40; i++) {
+          const a = [];
+          for (let j = 0; j < 200000; j++) a.push({j, s: 'x' + j});
+        }
+        await new Promise((r) => setTimeout(r, 50));
+        controller.abort();
+        const result = await Promise.race([waiting, new Promise((r) => setTimeout(() => r('still pending'), 500))]);
+        release();
+        return result;
+      })()
+    """
+
+    assert _evaluate(blank_page, script) == "rejected AbortError"

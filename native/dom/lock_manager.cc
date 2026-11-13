@@ -160,6 +160,20 @@ class LockManager::LockRequest final
   void Trace(cppgc::Visitor* visitor) const {
     visitor->Trace(callback_);
     visitor->Trace(resolver_);
+    visitor->Trace(signal_);
+    visitor->Trace(abort_algorithm_);
+  }
+
+  // LockRequestImpl's abort handle: while the request waits, it keeps its
+  // signal and the algorithm that aborts it, so that a signal that only the
+  // request holds, such as one of AbortSignal.any(), still aborts it.
+  void SetAbortHandle(AbortSignal* signal, AbortSignal::Algorithm* algorithm) {
+    signal_ = signal;
+    abort_algorithm_ = algorithm;
+  }
+  void ClearAbortHandle() {
+    signal_.Clear();
+    abort_algorithm_.Clear();
   }
 
   v8::Local<v8::Function> callback(v8::Isolate* isolate) const {
@@ -179,6 +193,8 @@ class LockManager::LockRequest final
   const std::u16string name_;
   const LockService::Mode mode_;
   int64_t lock_id_ = 0;
+  cppgc::Member<AbortSignal> signal_;
+  cppgc::Member<AbortSignal::Algorithm> abort_algorithm_;
 };
 
 // The abort algorithm of a request with a signal: LockRequestImpl::Abort().
@@ -375,8 +391,10 @@ void LockManager::RequestImpl(LockRequest* request,
       connection_, origin_, client_id_, base::UTF16ToUTF8(request->name()),
       request->mode(), wait));
   if (signal) {
-    signal->AddAlgorithm(
-        bindings::MakeGarbageCollected<AbortRequest>(this, request, signal));
+    AbortRequest* const algorithm =
+        bindings::MakeGarbageCollected<AbortRequest>(this, request, signal);
+    signal->AddAlgorithm(algorithm);
+    request->SetAbortHandle(signal, algorithm);
   }
 }
 
@@ -389,6 +407,10 @@ LockManager::LockRequest* LockManager::TakePendingRequest(int64_t lock_id) {
     found = request;
     return true;
   });
+  // Granted, failed or aborted, it no longer needs its signal.
+  if (found) {
+    found->ClearAbortHandle();
+  }
   return found;
 }
 
