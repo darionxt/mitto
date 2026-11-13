@@ -14,6 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/animation_frame_controller.h"
@@ -52,6 +53,7 @@
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-object.h"
+#include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-primitive.h"
 #include "v8/include/v8-promise.h"
 
@@ -343,6 +345,17 @@ DocumentLoadTiming& Window::GetDocumentLoadTiming() {
   return *document_load_timing_;
 }
 
+Window* Window::ToWindow() {
+  return this;
+}
+
+void Window::ReportError(v8::Local<v8::Value> e) {
+  // WindowOrWorkerGlobalScope::reportError():
+  // V8ScriptRunner::ReportException(), with V8's message of `e`, which says
+  // where an error was made, and else where reportError() was called.
+  bindings::ReportException(v8::Isolate::GetCurrent(), e);
+}
+
 void Window::AddConsoleMessage(ConsoleLevel level, std::string text) {
   if (console_sink_) {
     console_sink_.Run(level, std::move(text));
@@ -429,7 +442,39 @@ size_t Window::TimerCount() const {
 
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
 void Window::QueueMicrotask(v8::Local<v8::Function> callback) {
-  v8::Isolate::GetCurrent()->EnqueueMicrotask(callback);
+  // Blink queues a microtask of its own, which calls the callback and reports
+  // what it throws with where it was thrown, where V8's own microtask of a
+  // function would report where an error was made.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  isolate->EnqueueMicrotask(&RunQueuedMicrotask,
+                            new v8::Global<v8::Function>(isolate, callback));
+}
+
+// static
+void Window::RunQueuedMicrotask(void* data) {
+  // V8VoidFunction::InvokeAndReportException(), with undefined for `this`.
+  const std::unique_ptr<v8::Global<v8::Function>> held(
+      static_cast<v8::Global<v8::Function>*>(data));
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::HandleScope handle_scope(isolate);
+  const v8::Local<v8::Function> callback = held->Get(isolate);
+  v8::Local<v8::Context> context;
+  if (!callback->GetCreationContext(isolate).ToLocal(&context)) {
+    return;
+  }
+  const v8::Context::Scope context_scope(context);
+  // Not once the window's context has gone.
+  Window* const window =
+      bindings::V8Window::ToWrappable(isolate, context->Global());
+  if (!window || !window->HasContext()) {
+    return;
+  }
+  const v8::TryCatch try_catch(isolate);
+  if (callback->Call(context, v8::Undefined(isolate), 0, nullptr).IsEmpty() &&
+      try_catch.HasCaught() && try_catch.CanContinue()) {
+    bindings::ReportException(isolate, try_catch.Exception(),
+                              try_catch.Message());
+  }
 }
 
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc

@@ -1,6 +1,7 @@
 // The DOM's NodeList: a node's childNodes, a live view of its children, as
-// Blink's ChildNodeList reads them on each access. RadioNodeList, which has no
-// class, inherits from it, so it is not final.
+// Blink's ChildNodeList reads them on each access, or a list that does not
+// change, as Blink's StaticNodeList, such as a MutationRecord's addedNodes.
+// RadioNodeList, which has no class, inherits from it, so it is not final.
 //
 // Upstream: third_party/blink/renderer/core/dom/child_node_list.cc
 // Upstream: third_party/blink/renderer/core/dom/node_list.h
@@ -10,7 +11,10 @@
 
 #include <stdint.h>
 
+#include <vector>
+
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/heap_vector.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
 
@@ -22,6 +26,8 @@ class NodeList : public bindings::ScriptWrappable {
  public:
   // The children of `root`.
   static NodeList* CreateChildNodes(Node* root);
+  // `nodes`, which the list keeps as they are.
+  static NodeList* CreateStatic(const std::vector<Node*>& nodes);
   // An empty one, for a Known Gap that gives one.
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);
@@ -38,6 +44,8 @@ class NodeList : public bindings::ScriptWrappable {
 
  private:
   cppgc::Member<Node> root_;
+  bool is_static_ = false;
+  HeapVector<Node> static_nodes_;
 };
 
 }  // namespace mitto

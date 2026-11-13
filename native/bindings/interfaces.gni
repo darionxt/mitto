@@ -372,6 +372,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "ErrorEvent"
+    file = "error_event"
+  },
+  {
     name = "Event"
     file = "event"
   },
@@ -550,7 +554,10 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLElement"
     file = "html_element"
-    implemented = [ "autocapitalize" ]
+    implemented = [
+      "autocapitalize",
+      "click",
+    ]
   },
   {
     name = "HTMLEmbedElement"
@@ -1054,6 +1061,14 @@ mitto_bindings_interfaces = [
     file = "mime_type_array"
   },
   {
+    name = "MutationObserver"
+    file = "mutation_observer"
+  },
+  {
+    name = "MutationRecord"
+    file = "mutation_record"
+  },
+  {
     name = "NamedNodeMap"
     file = "named_node_map"
   },
@@ -1348,6 +1363,10 @@ mitto_bindings_interfaces = [
     file = "pressure_observer"
     made_by_known_gaps = true
     implemented = [ "knownSources" ]
+  },
+  {
+    name = "PromiseRejectionEvent"
+    file = "promise_rejection_event"
   },
   {
     name = "PushManager"
@@ -1992,6 +2011,7 @@ mitto_bindings_interfaces = [
       "event",
       "scheduler",
       "cookieStore",
+      "reportError",
     ]
   },
   {

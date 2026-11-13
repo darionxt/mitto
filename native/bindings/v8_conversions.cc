@@ -659,22 +659,48 @@ ExceptionToRejectPromiseScope::~ExceptionToRejectPromiseScope() {
   info_->GetReturnValue().Set(resolver->GetPromise());
 }
 
+bool FromV8Promise(v8::Isolate* isolate,
+                   v8::Local<v8::Value> value,
+                   v8::Local<v8::Promise>* promise) {
+  if (value->IsPromise()) {
+    *promise = value.As<v8::Promise>();
+    return true;
+  }
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Promise::Resolver> resolver;
+  if (!v8::Promise::Resolver::New(context).ToLocal(&resolver) ||
+      resolver->Resolve(context, value).IsNothing()) {
+    return false;
+  }
+  *promise = resolver->GetPromise();
+  return true;
+}
+
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception) {
+  ReportException(isolate, exception, v8::Local<v8::Message>());
+}
+
+void ReportException(v8::Isolate* isolate,
+                     v8::Local<v8::Value> exception,
+                     v8::Local<v8::Message> message) {
   const PerIsolateData::ExceptionReporter& reporter =
       PerIsolateData::From(isolate)->exception_reporter();
   if (reporter) {
-    reporter.Run(exception);
+    if (message.IsEmpty()) {
+      message = v8::Exception::CreateMessage(isolate, exception);
+    }
+    reporter.Run(exception, message);
     return;
   }
   const v8::TryCatch try_catch(isolate);
   v8::Local<v8::String> text;
-  std::string message = "exception";
+  std::string description = "exception";
   if (exception->ToString(isolate->GetCurrentContext()).ToLocal(&text)) {
     const v8::String::Utf8Value utf8(isolate, text);
     // SAFETY: Utf8Value holds length() bytes at *utf8.
-    message.assign(UNSAFE_BUFFERS(std::string_view(*utf8, utf8.length())));
+    description.assign(UNSAFE_BUFFERS(std::string_view(*utf8, utf8.length())));
   }
-  fprintf(stderr, "Uncaught %s\n", message.c_str());
+  fprintf(stderr, "Uncaught %s\n", description.c_str());
 }
 
 }  // namespace mitto::bindings
