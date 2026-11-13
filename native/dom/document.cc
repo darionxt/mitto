@@ -354,18 +354,20 @@ std::u16string Document::CharacterSet() const {
 void Document::SetEncoding(std::string_view encoding,
                            bool detected_heuristically) {
   DCHECK(!encoding.empty());
-  // The first title element in tree order, as Blink keeps its title element.
+  // The loader sets the encoding after each piece of the body, so the tree is
+  // searched only when windows-1252 gives way to another.
   Element* title_element = nullptr;
-  for (Node* node = FirstChild(); node; node = node->NextInTree(this)) {
-    if (node->IsElementNode() &&
-        static_cast<Element*>(node)->HasHTMLTagName(u"title")) {
-      title_element = static_cast<Element*>(node);
-      break;
+  if (encoding_ != encoding && encoding_ == kWindows1252EncodingName) {
+    // The first title element in tree order, as Blink keeps its title element.
+    for (Node* node = FirstChild(); node; node = node->NextInTree(this)) {
+      if (node->IsElementNode() &&
+          static_cast<Element*>(node)->HasHTMLTagName(u"title")) {
+        title_element = static_cast<Element*>(node);
+        break;
+      }
     }
   }
-  if (title_element && encoding_ != encoding &&
-      !title_element->FirstElementChild() &&
-      encoding_ == kWindows1252EncodingName) {
+  if (title_element && !title_element->FirstElementChild()) {
     const std::u16string text = title_element->DescendantTextContent();
     if (std::ranges::all_of(text, [](char16_t c) { return c <= 0xFF; })) {
       std::string original_bytes(text.begin(), text.end());
