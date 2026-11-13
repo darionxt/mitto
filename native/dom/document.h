@@ -205,6 +205,8 @@ class Document : public Node {
   // time one asks, and the document itself for such a document, as Blink's
   // EnsureTemplateDocument().
   Document& EnsureTemplateDocument();
+  // Whether it is another document's template document.
+  bool IsTemplateDocument() const { return template_document_host_; }
 
   // The URLs a document resolves, as Blink's Document has them.
   //
