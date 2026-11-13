@@ -509,6 +509,24 @@ def test_crypto_does_what_chrome_does(program: Path, script: str, expected: str)
     assert _evaluate(program, script) == expected
 
 
+def test_get_battery_gives_a_desktop_with_no_battery(program: Path) -> None:
+    # BatteryStatus's defaults, which Chrome's device service gives for a computer that Windows reports on AC power
+    # with no battery: the same promise each time, which resolves from a task of its own.
+    script = """const order = [];
+        const promise = navigator.getBattery();
+        promise.then(() => order.push("resolved"));
+        await Promise.resolve();
+        order.push("microtask");
+        const battery = await promise;
+        return JSON.stringify([order, promise === navigator.getBattery(), battery.charging, battery.chargingTime,
+            String(battery.dischargingTime), battery.level, Object.prototype.toString.call(battery),
+            battery instanceof EventTarget])"""
+
+    assert _evaluate(program, script) == (
+        'value: [["microtask","resolved"],true,true,0,"Infinity",1,"[object BatteryManager]",true]'
+    )
+
+
 def test_random_values_differ_from_call_to_call(program: Path) -> None:
     script = (
         "const seen = new Set(); for (let i = 0; i < 64; i++) { "

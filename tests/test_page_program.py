@@ -463,6 +463,19 @@ def test_a_page_refuses_a_time_zone_that_icu_does_not_know(session: _Session) ->
     assert session.refusal() == 'the time zone "Mars/Olympus_Mons" is unknown'
 
 
+@pytest.mark.parametrize(("processors", "tier"), [(1, 1), (2, 2), (4, 2), (5, 3), (10, 3), (11, 4), (32, 4)])
+def test_cpu_performance_is_chromes_tier_of_the_machines_processors(
+    session: _Session, processors: int, tier: int
+) -> None:
+    # content::cpu_performance's GetTierFromCpuInfo() for an AMD or Intel CPU of none of the models it singles out.
+    session.start({**_DEFAULT_START, "processors": processors})
+
+    assert session.evaluate("[navigator.cpuPerformance, navigator.hardwareConcurrency]") == (
+        False,
+        json.dumps([tier, processors], separators=(",", ":")),
+    )
+
+
 def test_a_page_starts_with_the_features_and_v8_flags_of_its_start(session: _Session) -> None:
     session.start(
         _with_features(

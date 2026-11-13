@@ -31,6 +31,7 @@
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-promise.h"
 #include "v8/include/v8-traced-handle.h"
 
 namespace mitto {
@@ -97,6 +98,13 @@ class Navigator final : public bindings::ScriptWrappable {
   // A new array each time, of kItemsLengthCap nulls: no gamepad is there.
   std::vector<bindings::ScriptWrappable*> GetGamepads(
       bindings::ExceptionState& exception_state) const;
+  // The same promise each time, which resolves from a task of its own with
+  // the BatteryManager once the device service gives its first reading.
+  v8::Local<v8::Promise> GetBattery();
+  // NavigatorCPUPerformance: Chrome's tier of the processors, from their
+  // number, as content::cpu_performance gives it for an AMD or Intel CPU of
+  // none of the models it singles out.
+  uint16_t CpuPerformance() const;
 
  private:
   const PageNavigator navigator_;
@@ -109,6 +117,7 @@ class Navigator final : public bindings::ScriptWrappable {
   const PageConnection connection_values_;
   const std::string effective_type_;
   v8::TracedReference<v8::Array> languages_array_;
+  v8::TracedReference<v8::Promise> battery_promise_;
   cppgc::Member<NetworkInformation> connection_;
   cppgc::Member<PluginArray> plugins_;
   cppgc::Member<MimeTypeArray> mime_types_;

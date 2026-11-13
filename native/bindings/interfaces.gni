@@ -47,6 +47,18 @@ mitto_bindings_interfaces = [
     made_by_known_gaps = true
   },
   {
+    name = "BatteryManager"
+    file = "battery_manager"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onchargingchange",
+      "onchargingtimechange",
+      "ondischargingtimechange",
+      "onlevelchange",
+    ]
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -582,6 +594,8 @@ mitto_bindings_interfaces = [
       "storage",
       "getGamepads",
       "locks",
+      "getBattery",
+      "cpuPerformance",
     ]
   },
   {

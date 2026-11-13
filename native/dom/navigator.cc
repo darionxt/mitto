@@ -6,6 +6,7 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
+#include "mitto/dom/battery_manager.h"
 #include "mitto/dom/geolocation.h"
 #include "mitto/dom/lock_manager.h"
 #include "mitto/dom/mime_type_array.h"
@@ -71,6 +72,7 @@ const bindings::WrapperTypeInfo* Navigator::GetWrapperTypeInfo() const {
 void Navigator::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(languages_array_);
+  visitor->Trace(battery_promise_);
   visitor->Trace(connection_);
   visitor->Trace(plugins_);
   visitor->Trace(mime_types_);
@@ -237,6 +239,40 @@ StorageManager* Navigator::Storage() {
 
 size_t Navigator::GeolocationTimerCount() const {
   return geolocation_ ? geolocation_->TimerCount() : 0;
+}
+
+// Upstream: third_party/blink/renderer/modules/battery/battery_manager.cc
+v8::Local<v8::Promise> Navigator::GetBattery() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (battery_promise_.IsEmpty()) {
+    v8::Local<v8::Promise::Resolver> resolver;
+    if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
+             .ToLocal(&resolver)) {
+      return v8::Local<v8::Promise>();
+    }
+    ResolveFromTask(isolate, resolver, BatteryManager::Create()->ToV8(isolate));
+    battery_promise_.Reset(isolate, resolver->GetPromise());
+  }
+  return battery_promise_.Get(isolate);
+}
+
+// Upstream: content/browser/cpu_performance/cpu_performance.cc
+uint16_t Navigator::CpuPerformance() const {
+  // GetTierFromCpuInfo(): low, mid, high and ultra, by the logical
+  // processors.
+  if (processors_ <= 0) {
+    return 0;
+  }
+  if (processors_ <= 1) {
+    return 1;
+  }
+  if (processors_ <= 4) {
+    return 2;
+  }
+  if (processors_ <= 10) {
+    return 3;
+  }
+  return 4;
 }
 
 std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(

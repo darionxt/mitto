@@ -12,6 +12,8 @@ source_set("dom") {
     "abort_signal.h",
     "bar_prop.cc",
     "bar_prop.h",
+    "battery_manager.cc",
+    "battery_manager.h",
     "character_data.cc",
     "character_data.h",
     "comment.cc",
