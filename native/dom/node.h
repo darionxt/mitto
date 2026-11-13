@@ -165,6 +165,9 @@ class Node : public EventTarget {
   // The topmost ancestor, or this node.
   Node& TreeRoot() const;
   bool IsInclusiveAncestorOf(const Node& node) const;
+  // The same, going from a template's contents to the template: the DOM
+  // standard's host-including inclusive ancestor, which insertion checks.
+  bool IsHostIncludingInclusiveAncestorOf(const Node& node) const;
   // The next node in tree order that is `stay_within` or inside it, or null.
   Node* NextInTree(const Node* stay_within) const;
   // The same, past this node's children.

@@ -280,6 +280,27 @@
     doc.appendChild(t);
     return [t.ownerDocument === doc, t.content.ownerDocument !== before, t.content.ownerDocument === doc, t.content.firstChild.ownerDocument === t.content.ownerDocument, t.content.ownerDocument instanceof HTMLDocument].join("|");
   });
+  run("template contents hold no template ancestor", () => {
+    const t = document.createElement("template");
+    let own = "none";
+    try { t.content.appendChild(t); } catch (e) { own = e.name; }
+    const t2 = document.createElement("template");
+    const d = document.createElement("div");
+    d.appendChild(t2);
+    let outer = "none";
+    try { t2.content.append(d); } catch (e) { outer = e.name + ": " + e.message; }
+    return [own, outer, t.content.childNodes.length].join("|");
+  });
+  run("outerHTML in a fragment", () => {
+    const f = document.createDocumentFragment();
+    const e = document.createElement("i");
+    f.appendChild(e);
+    e.outerHTML = "<b>x</b>y<p>z</p>";
+    const t = document.createElement("template");
+    t.innerHTML = "<p>a</p>";
+    t.content.firstChild.outerHTML = "<em>z</em>w";
+    return [[...f.childNodes].map((n) => n.nodeName).join(","), t.innerHTML].join("|");
+  });
   run("template content setter", () => { const t = document.createElement("template"); t.content = 1; return t.content; });
   run("template shadowRootMode", () => { const t = document.createElement("template"); const a = t.shadowRootMode; t.setAttribute("shadowrootmode", "OPEN"); const b = t.shadowRootMode; t.shadowRootMode = "x"; return [a, b, t.getAttribute("shadowrootmode"), t.shadowRootMode].join("|"); });
   run("svg in html serialize", () => {
