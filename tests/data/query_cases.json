@@ -2909,6 +2909,33 @@
    {
     "threw": "Error: x"
    },
+   [
+    "B",
+    true,
+    "B",
+    true,
+    false,
+    [
+     "B",
+     false
+    ],
+    [
+     "B",
+     false
+    ]
+   ],
+   [
+    "B",
+    false,
+    "A",
+    false,
+    true,
+    null,
+    [
+     "A",
+     false
+    ]
+   ],
    "div",
    false,
    "i,u",

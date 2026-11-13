@@ -449,6 +449,25 @@
   top.lastChild.remove();
   walking.push(tail.referenceNode.nodeName, tail.pointerBeforeReferenceNode, walk(tail, "previousNode"));
   walking.push(outcome(() => document.createNodeIterator(top, 1, () => { throw new Error("x"); }).nextNode()));
+  // The pointer before the root's last subtree, which goes: Blink finds no
+  // node after it outside the subtree and leaves the pointer where it was.
+  const last_subtree = (pointer_moves) => {
+    const host = fixture("<div><a></a><b><i></i></b></div>").firstChild;
+    const each = document.createNodeIterator(host, NodeFilter.SHOW_ELEMENT);
+    walk(each, "nextNode", 3);
+    if (pointer_moves) {
+      each.previousNode();
+    }
+    const before = [each.referenceNode.nodeName, each.pointerBeforeReferenceNode];
+    host.querySelector("b").remove();
+    const after = [each.referenceNode.nodeName, each.pointerBeforeReferenceNode, each.referenceNode.isConnected];
+    const next = each.nextNode();
+    const previous = each.previousNode();
+    host.parentNode.remove();
+    return [...before, ...after, next && [next.nodeName, next.isConnected],
+      previous && [previous.nodeName, previous.isConnected]];
+  };
+  walking.push(outcome(() => last_subtree(true)), outcome(() => last_subtree(false)));
   // An iterator and a range whose tree moves to another document.
   const elsewhere = new Document();
   const moving = document.createElement("div");
