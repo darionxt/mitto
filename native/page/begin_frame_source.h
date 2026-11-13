@@ -4,15 +4,16 @@
 //
 // A frame that is asked for while frames are not coming is a missed one, as
 // Viz sends a compositor that starts to observe it: it begins at once, with the
-// time of the last vsync. While they come, each frame begins at the next
-// vsync, and they stop coming at the vsync after a frame that asked for no
-// other. Each frame runs as a task of the compositor's queue, which waits
-// behind a frame that has not run yet, so a busy main thread runs a frame late
-// with the time of the vsync it was sent for. The queue has the normal
-// priority, and a very high one once a task ends 100 milliseconds or more
-// after the last frame, until the next frame, as Blink keeps rendering from
-// starving. The idle periods end as a frame begins, and a short one lasts
-// until the next vsync after it, until long ones start again once frames stop.
+// time of the last vsync. While they come, each frame begins with the first
+// BeginFrame that reaches the compositor after the last frame ended, and they
+// stop coming with the next one after a frame that asked for no other. Each
+// frame runs as a task of the compositor's queue, which waits behind a frame
+// that has not run yet, so a busy main thread runs a frame late with the time
+// of the vsync it was sent for. The queue has the normal priority, and a very
+// high one once a task ends 100 milliseconds or more after the last frame,
+// until the next frame, as Blink keeps rendering from starving. The idle
+// periods end as a frame begins, and a short one lasts until the next vsync
+// after it, until long ones start again once frames stop.
 //
 // Upstream: ui/gl/vsync_provider_win.cc
 // Upstream: ui/gl/vsync_thread_win.cc
@@ -75,6 +76,9 @@ class BeginFrameSource final : public base::TaskObserver {
   // The vsync at or before `time`, and the first one after it.
   base::TimeTicks LastVSyncAtOrBefore(base::TimeTicks time) const;
   base::TimeTicks NextVSyncAfter(base::TimeTicks time) const;
+  // The vsync of the first BeginFrame after the last frame's that reaches the
+  // compositor after `time`.
+  base::TimeTicks NextBeginFrameAfter(base::TimeTicks time) const;
   // Posts the next frame, for the vsync at `frame_time`, to arrive at
   // `arrival`.
   void PostFrame(base::TimeTicks frame_time, base::TimeTicks arrival);

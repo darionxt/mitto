@@ -75,6 +75,15 @@ base::TimeTicks BeginFrameSource::NextVSyncAfter(base::TimeTicks time) const {
   return next == time ? time + vsync_interval_ : next;
 }
 
+// A BeginFrame reaches the renderer's compositor about as long after its vsync
+// as a frame takes to start, and the compositor sends a main frame with the
+// first BeginFrame that reaches it once the last main frame has ended. So a
+// display whose period is shorter than that still gets a frame at each vsync.
+base::TimeTicks BeginFrameSource::NextBeginFrameAfter(
+    base::TimeTicks time) const {
+  return NextVSyncAfter(std::max(time - kBeginFrameLatency, last_frame_time_));
+}
+
 void BeginFrameSource::RequestBeginFrame(
     EventLoop::BeginFrameCallback begin_frame) {
   requests_.push_back(std::move(begin_frame));
@@ -87,7 +96,7 @@ void BeginFrameSource::RequestBeginFrame(
   const base::TimeTicks now = base::TimeTicks::Now();
   if (observing_) {
     // A BeginFrame comes at each vsync, and the next sends a main frame.
-    const base::TimeTicks frame_time = NextVSyncAfter(now);
+    const base::TimeTicks frame_time = NextBeginFrameAfter(now);
     PostFrame(frame_time, frame_time + kBeginFrameLatency);
     return;
   }
@@ -102,7 +111,7 @@ void BeginFrameSource::RequestBeginFrame(
     PostFrame(missed, arrival);
     return;
   }
-  const base::TimeTicks frame_time = NextVSyncAfter(now);
+  const base::TimeTicks frame_time = NextBeginFrameAfter(now);
   PostFrame(frame_time, frame_time + kBeginFrameLatency);
 }
 
@@ -133,19 +142,21 @@ void BeginFrameSource::BeginFrame(base::TimeTicks frame_time) {
   }
   in_frame_ = false;
   const base::TimeTicks now = base::TimeTicks::Now();
-  const base::TimeTicks next_vsync = NextVSyncAfter(now);
+  const base::TimeTicks next_begin_frame = NextBeginFrameAfter(now);
   if (!requests_.empty()) {
-    // cc sends the next main frame with the first BeginFrame after this one
-    // ends, and DidCommitFrameToCompositor() starts a short idle period until
-    // the next frame is expected.
-    PostFrame(next_vsync, next_vsync + kBeginFrameLatency);
+    // The next main frame goes with the next BeginFrame, and
+    // DidCommitFrameToCompositor() starts a short idle period until the next
+    // frame is expected.
+    PostFrame(next_begin_frame, next_begin_frame + kBeginFrameLatency);
     if (now < estimated_next_frame_begin) {
       idle_helper_->StartShortIdlePeriod(now, estimated_next_frame_begin);
     }
     return;
   }
   // ProxyMain::MaybeIdleMainThread(): no main frame is expected until the next
-  // vsync, and BeginFrames stop then, with BeginFrameNotExpectedSoon().
+  // vsync, and BeginFrames stop with the next BeginFrame, which finds none
+  // asked for, with BeginFrameNotExpectedSoon().
+  const base::TimeTicks next_vsync = NextVSyncAfter(now);
   if (now < next_vsync) {
     idle_helper_->StartShortIdlePeriod(now, next_vsync);
   }
@@ -153,7 +164,7 @@ void BeginFrameSource::BeginFrame(base::TimeTicks frame_time) {
                                        weak_factory_.GetWeakPtr()));
   compositor_queue_->task_runner()->PostDelayedTask(
       FROM_HERE, stop_observing_.callback(),
-      next_vsync + kBeginFrameLatency - now);
+      next_begin_frame + kBeginFrameLatency - now);
 }
 
 void BeginFrameSource::StopObservingIfIdle() {

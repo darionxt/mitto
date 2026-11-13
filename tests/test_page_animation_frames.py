@@ -31,6 +31,9 @@ _DEFAULT_REFRESH_RATE = 60
 # How far the clamping of 100 microseconds can take a time from the one it coarsens, either way.
 _CLAMPING_MS = 0.1
 
+# How late a busy runner can wake a task: a period shorter than this can miss vsyncs.
+_BUSY_RUNNER_MS = 4
+
 
 @pytest.fixture(scope="module")
 def program() -> Path:
@@ -228,7 +231,7 @@ def page_program(native_library: Any, both_apis: str) -> None:
         pytest.skip("no Page program beside the library")
 
 
-@pytest.fixture(params=[60, 75, 144, 165, 240])
+@pytest.fixture(params=[60, 75, 144, 165, 240, 1000])
 def machine_page(request: pytest.FixtureRequest, page_program: None) -> Iterator[tuple[mitto.Machine, Page]]:
     machine = mitto.Machine.draw(seed=4, refresh_rate=request.param)
     with mitto.Session(machine=machine) as session, session._open_page("about:blank") as page:  # pyright: ignore[reportPrivateUsage]
@@ -242,5 +245,10 @@ def test_frames_come_at_the_machines_refresh_rate(machine_page: tuple[mitto.Mach
     differences = [later - earlier for earlier, later in itertools.pairwise(times)]
 
     assert all(_is_whole_periods(difference, period) for difference in differences), differences
-    assert abs(statistics.median(differences) - period) < 2 * _CLAMPING_MS
     assert all(round(time * 10) / 10 == time for time in times)
+    # Even a display faster than a frame takes to start gets a frame at a vsync after the last.
+    assert min(differences) < period + 2 * _CLAMPING_MS
+    # A busy runner wakes a task late by about a millisecond now and then, which makes a period of one millisecond
+    # miss vsyncs, as a busy Chrome would. Slower displays get a frame at most vsyncs.
+    if period >= _BUSY_RUNNER_MS:
+        assert abs(statistics.median(differences) - period) < 2 * _CLAMPING_MS
