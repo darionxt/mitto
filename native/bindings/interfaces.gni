@@ -436,6 +436,7 @@ mitto_bindings_interfaces = [
       "pathname",
       "search",
       "hash",
+      "relList",
     ]
   },
   {
@@ -453,6 +454,7 @@ mitto_bindings_interfaces = [
       "pathname",
       "search",
       "hash",
+      "relList",
     ]
   },
   {
@@ -598,7 +600,9 @@ mitto_bindings_interfaces = [
     name = "HTMLFormElement"
     file = "html_form_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "relList",
+    ]
   },
   {
     name = "HTMLFrameElement"
@@ -643,7 +647,9 @@ mitto_bindings_interfaces = [
     name = "HTMLIFrameElement"
     file = "html_iframe_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "sandbox",
+    ]
   },
   {
     name = "HTMLImageElement"
@@ -686,7 +692,11 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLLinkElement"
     file = "html_link_element"
-    implemented = []
+    implemented = [
+      "relList",
+      "sizes",
+      "blocking",
+    ]
   },
   {
     name = "HTMLLoginElement"
@@ -864,7 +874,9 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLStyleElement"
     file = "html_style_element"
-    implemented = []
+    implemented = [
+      "blocking",
+    ]
   },
   {
     name = "HTMLSubMenuElement"
@@ -1442,7 +1454,9 @@ mitto_bindings_interfaces = [
     name = "SVGAElement"
     file = "svg_a_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "relList",
+    ]
   },
   {
     name = "SVGAnimateElement"

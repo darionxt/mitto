@@ -1121,5 +1121,51 @@
   });
   run("cell cellIndex in table", () => { const t = tableOf("<tr><th></th><td id=x></td></tr>"); return t.querySelector("#x").cellIndex; });
   run("table reflected", () => { const t = document.createElement("table"); t.bgColor = null; t.cellPadding = 3; return [t.getAttribute("bgcolor"), t.cellPadding, t.border, document.createElement("td").scope].join("|"); });
+  // Token lists of element classes.
+  run("relList link", () => {
+    const l = document.createElement("link");
+    const r = l.relList;
+    r.add("stylesheet", "icon");
+    const out = [r === l.relList, l.getAttribute("rel"), r.length];
+    for (const t of ["preload", "PRELOAD", "modulepreload", "noopener", "monetization", "compression-dictionary", "allowed-alt-sxg", "prerender", "expect", ""]) out.push(r.supports(t));
+    l.relList = "a b";
+    out.push(l.rel, String(l.relList));
+    return out.join(",");
+  });
+  run("relList anchors", () => {
+    const out = [];
+    for (const [ns, name] of [[HTML, "a"], [HTML, "area"], [HTML, "form"], [SVG, "a"]]) {
+      const e = document.createElementNS(ns, name);
+      const r = e.relList;
+      out.push(name + ":" + [r.supports("noopener"), r.supports("NoReferrer"), r.supports("opener"), r.supports("stylesheet"), r === e.relList].join("/"));
+      r.toggle("noopener");
+      out.push(e.getAttribute("rel"));
+    }
+    return out.join(",");
+  });
+  run("relList math a", () => "relList" in document.createElementNS(MATHML, "a"));
+  run("link sizes", () => { const l = document.createElement("link"); l.sizes.add("16x16", "32x32"); return [l.getAttribute("sizes"), l.sizes === l.sizes, l.sizes.value].join("|"); });
+  run("link sizes supports", () => document.createElement("link").sizes.supports("16x16"));
+  run("blocking", () => {
+    const out = [];
+    for (const name of ["link", "style"]) {
+      const e = document.createElement(name);
+      out.push([e.blocking.supports("render"), e.blocking.supports("RENDER"), e.blocking.supports("full-frame-rate"), e.blocking === e.blocking].join("/"));
+      e.blocking.add("render");
+      out.push(e.getAttribute("blocking"));
+    }
+    return out.join(",");
+  });
+  run("iframe sandbox", () => {
+    const f = document.createElement("iframe");
+    const s = f.sandbox;
+    const out = [s === f.sandbox, s.length];
+    for (const t of ["allow-scripts", "ALLOW-SAME-ORIGIN", "allow-same-site-none-cookies", "allow-top-navigation-to-custom-protocols", "allow-storage-access-by-user-activation", "allow-presentation", "allow-everything"]) out.push(s.supports(t));
+    f.sandbox = " allow-forms  allow-forms allow-popups ";
+    out.push(s.length, s.value, f.getAttribute("sandbox"));
+    s.remove("allow-forms");
+    out.push(f.getAttribute("sandbox"));
+    return out.join(",");
+  });
   return JSON.stringify(cases, null, 1);
 })()
