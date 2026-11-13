@@ -184,14 +184,21 @@ bool HTMLElement::Spellcheck() const {
   for (const Element* element = this; element;
        element = element->ParentElement()) {
     const std::u16string* value = element->FindAttribute(u"spellcheck");
-    if (!value) {
-      continue;
-    }
-    if (value->empty() || base::EqualsCaseInsensitiveASCII(*value, u"true")) {
+    if (value &&
+        (value->empty() || base::EqualsCaseInsensitiveASCII(*value, u"true"))) {
       return true;
     }
-    if (base::EqualsCaseInsensitiveASCII(*value, u"false")) {
+    if (value && base::EqualsCaseInsensitiveASCII(*value, u"false")) {
       return false;
+    }
+    // The default state: off in a password field. Blink asks whether the
+    // input has ever been one, HasBeenPasswordField(); this reads the type it
+    // has now, until the input sees its attributes change.
+    if (element->HasHTMLTagName(u"input")) {
+      const std::u16string* type = element->FindAttribute(u"type");
+      if (type && base::EqualsCaseInsensitiveASCII(*type, u"password")) {
+        return false;
+      }
     }
   }
   return true;

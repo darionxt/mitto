@@ -680,6 +680,18 @@
   });
   run("anchor reflected", () => { const a = document.createElement("a"); a.target = "_blank"; a.download = "f"; a.rel = "noopener"; a.hreflang = "en"; a.type = "t"; a.referrerPolicy = "NO-REFERRER"; a.ping = " http://p "; return [a.target, a.download, a.rel, a.hreflang, a.type, a.referrerPolicy, a.ping, a.name, a.coords, a.charset, a.rev, a.shape, a.getAttributeNames().join(" ")].join("|"); });
   run("area href", () => { const a = blank.createElementNS(HTML, "area"); a.href = "http://e.com/x"; return [a.href, String(a), a.alt, a.coords, a.shape, a.noHref].join("|"); });
+  // A link's href that does not resolve is the attribute as it is, where a reflected URL loses its spaces.
+  run("href invalid spaces", () => {
+    const a = document.createElement("a");
+    a.setAttribute("href", " http://[bad ");
+    const area = document.createElement("area");
+    area.setAttribute("href", "\t http://[bad \n");
+    const link = document.createElement("link");
+    link.setAttribute("href", " http://[bad ");
+    const img = document.createElement("img");
+    img.setAttribute("src", " http://[bad ");
+    return JSON.stringify([a.href, String(a), area.href, link.href, img.src]);
+  });
   run("table elements", () => { const t = document.createElement("td"); t.colSpan; return [document.createElement("th").tagName, t.abbr, t.headers, t.align, t.noWrap, document.createElement("col").span === undefined].join("|"); });
   run("canvas", () => { const c = document.createElement("canvas"); const out = [c, c.width, c.height]; c.setAttribute("width", "-5"); out.push(c.width); c.setAttribute("width", " 20px"); out.push(c.width); c.width = 3000000000; out.push(c.getAttribute("width")); c.height = 7; out.push(c.height); return out.join("|"); });
   run("canvas large attribute", () => { const c = document.createElement("canvas"); c.setAttribute("width", "3000000000"); c.setAttribute("height", "2147483647"); const out = [c.width, c.height]; c.setAttribute("height", "2147483648"); out.push(c.height); return out.join("|"); });
@@ -772,6 +784,27 @@
   run("translate", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.translate]; p.setAttribute("translate", "NO"); out.push(c.translate); c.setAttribute("translate", ""); out.push(c.translate); c.setAttribute("translate", "maybe"); out.push(c.translate); c.translate = true; out.push(c.getAttribute("translate")); const s = document.createElementNS(SVG, "g"); s.setAttribute("translate", "no"); const h = document.createElement("b"); s.appendChild(h); out.push(h.translate); return out.join(","); });
   run("draggable", () => { const out = [document.createElement("div").draggable, document.createElement("img").draggable, document.createElement("a").draggable]; const a = document.createElement("a"); a.href = "x"; out.push(a.draggable); a.setAttribute("draggable", "FALSE"); out.push(a.draggable); const i = document.createElement("img"); i.setAttribute("draggable", "false"); out.push(i.draggable); const d = document.createElement("div"); d.setAttribute("draggable", "True"); out.push(d.draggable); d.draggable = false; out.push(d.getAttribute("draggable")); return out.join(","); });
   run("spellcheck", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.spellcheck]; p.setAttribute("spellcheck", "false"); out.push(c.spellcheck); c.setAttribute("spellcheck", ""); out.push(c.spellcheck); c.setAttribute("spellcheck", "x"); out.push(c.spellcheck); c.spellcheck = true; out.push(c.getAttribute("spellcheck")); return out.join(","); });
+  // A password input's spellcheck is off by default. Blink's HasBeenPasswordField() stays true once the type was
+  // password; the case leaves that out until the input sees its attributes change.
+  run("spellcheck password", () => {
+    const d = document.createElement("div");
+    d.setAttribute("spellcheck", "true");
+    const i = d.appendChild(document.createElement("input"));
+    i.setAttribute("type", "password");
+    const out = [i.spellcheck];
+    const j = document.createElement("input");
+    j.setAttribute("type", "PASSWORD");
+    out.push(j.spellcheck);
+    j.setAttribute("spellcheck", "true");
+    out.push(j.spellcheck);
+    out.push(document.createElement("input").spellcheck);
+    const inner = document.createElement("span");
+    const p = document.createElement("input");
+    p.setAttribute("type", "password");
+    p.appendChild(inner);
+    out.push(inner.spellcheck);
+    return out.join(",");
+  });
   run("contentEditable", () => { const e = document.createElement("div"); const out = [e.contentEditable]; for (const v of ["", "TRUE", "false", "plaintext-only", "x"]) { e.setAttribute("contenteditable", v); out.push(e.contentEditable); } e.contentEditable = "PlainText-Only"; out.push(e.getAttribute("contenteditable")); e.contentEditable = "inherit"; out.push(e.hasAttribute("contenteditable")); return out.join(","); });
   run("contentEditable bad", () => { document.createElement("div").contentEditable = "yes"; });
   run("isContentEditable", () => {
