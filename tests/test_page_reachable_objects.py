@@ -524,15 +524,15 @@ def _paths(record: dict[str, RecordValue]) -> set[str]:
 
 
 def test_the_probe_reaches_in_a_page_every_object_it_reaches_in_chrome(session: mitto.Session, page_url: str) -> None:
-    # #215's measure, against the Baseline of the Engine Release. crypto.subtle waits for #222's Crypto, which keeps
-    # SubtleCrypto refused. #213's Parity Checks compare everything else of each object.
+    # #215's measure, against the Baseline of the Engine Release. #213's Parity Checks compare everything else of each
+    # object.
     release = (_REPOSITORY / "tools/workspace/chromium_tag").read_text().split(".")[0]
     baseline = read_record((_REPOSITORY / f"tests/baselines/{release}/script/page.json").read_text(encoding="utf-8"))
 
     with _open_page(session, page_url) as page:
         record = read_record(page.evaluate(probe_script(), timeout=_TIMEOUT_SECONDS * 2))
 
-    assert (_paths(baseline) - _paths(record), _paths(record) - _paths(baseline)) == ({"crypto.subtle"}, set())
+    assert (_paths(baseline) - _paths(record), _paths(record) - _paths(baseline)) == (set(), set())
 
 
 def test_notification_and_performance_observer_give_their_static_values(program: Path) -> None:

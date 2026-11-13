@@ -205,6 +205,14 @@ bool IterateRecord(
     std::string_view type_name,
     base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each);
 
+// The checks of NativeValueTraits<NotShared<T>> once `view` is a view of the
+// type that `type_name` names, such as "ArrayBufferView": its buffer may be
+// neither shared nor resizable. Throws a TypeError for one that is, and
+// returns false then.
+bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
+                                   std::string_view type_name,
+                                   ExceptionState& exception_state);
+
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);
 
@@ -216,6 +224,9 @@ v8::Local<v8::Value> ToV8NullableByteString(
     const std::optional<std::string>& bytes);
 v8::Local<v8::Value> ToV8ByteStringArray(v8::Isolate* isolate,
                                          const std::vector<std::string>& texts);
+// The number, or null.
+v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
+                                        std::optional<double> number);
 // The string, or null.
 v8::Local<v8::Value> ToV8NullableString(
     v8::Isolate* isolate,

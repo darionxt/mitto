@@ -280,7 +280,13 @@ class TypeMapper:
         idl_type = self.reduce(idl_type)
         kind = idl_type.kind
         # The class gives null as a value of its own for a nullable frozen array.
-        nullable_ok = kind in (TypeKind.INTERFACE, TypeKind.ANY, TypeKind.STRING, TypeKind.FROZEN_ARRAY)
+        nullable_ok = kind in (
+            TypeKind.INTERFACE,
+            TypeKind.ANY,
+            TypeKind.STRING,
+            TypeKind.FROZEN_ARRAY,
+            TypeKind.FLOATING_POINT,
+        )
         if idl_type.nullable and not nullable_ok:
             raise self._refuse(idl_type, where, "a return value")
         if kind is TypeKind.UNDEFINED:
@@ -290,7 +296,8 @@ class TypeMapper:
         if kind is TypeKind.INTEGER:
             return _INTEGERS[idl_type.name]
         if kind is TypeKind.FLOATING_POINT:
-            return "float" if idl_type.name.endswith("float") else "double"
+            cpp_type = "float" if idl_type.name.endswith("float") else "double"
+            return f"std::optional<{cpp_type}>" if idl_type.nullable else cpp_type
         if kind is TypeKind.STRING and idl_type.name in ("DOMString", "USVString"):
             return "std::optional<std::u16string>" if idl_type.nullable else "std::u16string"
         if kind is TypeKind.STRING and idl_type.name == "ByteString":
@@ -350,6 +357,8 @@ class TypeMapper:
                 return f"v8::Integer::NewFromUnsigned(isolate, {expression})"
             return f"v8::Integer::New(isolate, {expression})"
         if kind is TypeKind.FLOATING_POINT:
+            if idl_type.nullable:
+                return f"ToV8NullableNumber(isolate, {expression})"
             return f"v8::Number::New(isolate, {expression})"
         if kind is TypeKind.STRING and idl_type.name == "ByteString":
             if idl_type.nullable:

@@ -234,6 +234,14 @@ bool FromV8ByteSpan(v8::Local<v8::Value> value,
   return true;
 }
 
+v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
+                                        std::optional<double> number) {
+  if (!number) {
+    return v8::Null(isolate);
+  }
+  return v8::Number::New(isolate, *number);
+}
+
 v8::Local<v8::Value> ToV8NullableString(
     v8::Isolate* isolate,
     const std::optional<std::u16string>& text) {
