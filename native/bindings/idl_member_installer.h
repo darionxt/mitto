@@ -168,6 +168,9 @@ struct ExposedConstructInfo {
   uint16_t number;
   // Whether the factory function keeps today's error, as a refused Known Gap.
   bool refused;
+  // The callback of a factory function that has its behaviour, which the
+  // bindings of its interface's class write, or null for a Known Gap.
+  v8::FunctionCallback callback = nullptr;
 };
 
 // Puts the property on a global object's template, or on a context's global

@@ -275,6 +275,24 @@ def _special_cases() -> list[Case]:
     french = _FRENCH.encode("cp1252")
     ascii_document = _html(b"", b"<p id=t>plain ASCII text</p>")
     cases = [
+        # A link's URL encodes its query in the document's encoding, as a script's does.
+        Case(
+            "link-query",
+            "text/html; charset=windows-1252",
+            (
+                _html(
+                    b"",
+                    b'<a id=l href="http://www.example.test/x' + _QUERY + b'"></a>'
+                    b'<script src="/script/link-query/0"></script>',
+                ),
+            ),
+            (
+                Script(
+                    "text/javascript",
+                    b'const l = document.getElementById("l"); self.r = {href: l.href, search: l.search};',
+                ),
+            ),
+        ),
         # A byte order mark wins over what the response says.
         Case(
             "bom-UTF-8",

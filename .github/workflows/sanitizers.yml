@@ -3,6 +3,8 @@ name: Sanitizers
 # Not a required check, because it does not run on every pull request.
 on:
   pull_request:
+    # ready_for_review starts the run when a draft is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - .github/workflows/sanitizers.yml
       - native/**
@@ -69,6 +71,9 @@ concurrency:
 jobs:
   native:
     name: Native core, ${{ matrix.config }}
+    # A draft pull request skips the sanitizers and the fuzz targets: they run once it is marked ready for review, and
+    # on every push to main.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     # From nothing, as in the nightly run, the Runtime takes 63 to 85 minutes to build, and the library under a
     # sanitizer 17 to 26.

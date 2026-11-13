@@ -683,6 +683,22 @@
     "text": null,
     "title": "811c9dc5/0"
   },
+  "link-query": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [
+      "http://www.example.test/script/link-query/0"
+    ],
+    "scripts": {
+      "href": "6b48b5ce/78",
+      "search": "82a458ac/53"
+    },
+    "text": null,
+    "title": "f10c3da3/1"
+  },
   "meta-Big5": {
     "charset": [
       "Big5",

@@ -95,7 +95,8 @@ void CallCallbackInterface(v8::Isolate* isolate,
              ->Get(context,
                    bindings::ToV8StringFromUtf8(isolate, "handleEvent"))
              .ToLocal(&value)) {
-      bindings::ReportException(isolate, try_catch.Exception());
+      bindings::ReportException(isolate, try_catch.Exception(),
+                                try_catch.Message());
       return;
     }
     if (!value->IsFunction()) {
@@ -113,7 +114,8 @@ void CallCallbackInterface(v8::Isolate* isolate,
   }
   if (function->Call(context, receiver, 1, &argument).IsEmpty() &&
       try_catch.HasCaught()) {
-    bindings::ReportException(isolate, try_catch.Exception());
+    bindings::ReportException(isolate, try_catch.Exception(),
+                              try_catch.Message());
   }
 }
 

@@ -407,9 +407,9 @@ void PutForwards(const v8::FunctionCallbackInfo<v8::Value>& info,
     return;
   }
   if (!target->IsObject()) {
+    // bind_gen's message, which names no attribute.
     ExceptionState exception_state(isolate);
-    exception_state.ThrowTypeError(
-        base::StrCat({"The attribute '", member.name, "' is not an object."}));
+    exception_state.ThrowTypeError("The attribute value is not an object");
     return;
   }
   std::ignore = target.As<v8::Object>()->Set(
@@ -838,6 +838,65 @@ v8::Maybe<bool> NextItemOfList(v8::Local<v8::Context> context,
 }
 
 }  // namespace
+
+bool InitializeEventOfInterface(v8::Isolate* isolate,
+                                v8::Local<v8::Object> event,
+                                const WrapperTypeInfo& interface,
+                                v8::Local<v8::Object> init) {
+  const InterfaceTable* const table = interface.table;
+  if (!table || !table->constructor_operation) {
+    return true;
+  }
+  for (const OverloadInfo& overload : table->constructor_operation->overloads) {
+    if (overload.arguments.size() > 1 &&
+        overload.arguments[1].type->kind == IdlTypeKind::kDictionary) {
+      return InitializeEventAttributes(isolate, event, interface,
+                                       *overload.arguments[1].type->dictionary,
+                                       init);
+    }
+  }
+  return true;
+}
+
+bool SetEventOfInterfaceAttribute(v8::Isolate* isolate,
+                                  ScriptWrappable& event,
+                                  std::string_view name,
+                                  v8::Local<v8::Value> value) {
+  PerIsolateData& data = *PerIsolateData::From(isolate);
+  const MemberInfo* const attribute =
+      KnownGapAttribute(data, *event.GetWrapperTypeInfo(), name);
+  if (!attribute) {
+    return false;
+  }
+  return event.ToV8(isolate)
+      ->SetPrivate(isolate->GetCurrentContext(),
+                   data.KnownGapPrivate(isolate, attribute->number), value)
+      .FromMaybe(false);
+}
+
+v8::Local<v8::Value> EventOfInterfaceAttribute(v8::Isolate* isolate,
+                                               ScriptWrappable& event,
+                                               std::string_view name) {
+  PerIsolateData& data = *PerIsolateData::From(isolate);
+  const MemberInfo* const attribute =
+      KnownGapAttribute(data, *event.GetWrapperTypeInfo(), name);
+  if (!attribute) {
+    return v8::Undefined(isolate);
+  }
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const v8::Local<v8::Object> wrapper = event.ToV8(isolate);
+  const v8::Local<v8::Private> key =
+      data.KnownGapPrivate(isolate, attribute->number);
+  v8::Local<v8::Value> value;
+  if (wrapper->HasPrivate(context, key).FromMaybe(false) &&
+      wrapper->GetPrivate(context, key).ToLocal(&value)) {
+    return value;
+  }
+  if (DefaultOf(isolate, context, *attribute->type).ToLocal(&value)) {
+    return value;
+  }
+  return v8::Undefined(isolate);
+}
 
 v8::MaybeLocal<v8::Value> NewIteratorOverList(
     v8::Local<v8::Context> context,

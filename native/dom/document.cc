@@ -5,6 +5,7 @@
 
 #include "base/check.h"
 #include "base/containers/span.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -15,6 +16,8 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
 #include "mitto/dom/attached_traversals.h"
+#include "mitto/dom/attr.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
@@ -385,10 +388,6 @@ void Document::SetEncoding(std::string_view encoding,
   encoding_detected_heuristically_ = detected_heuristically;
 }
 
-GURL Document::CompleteUrl(std::u16string_view url) const {
-  return ResolveUrlWithEncoding(GURL(base::UTF16ToUTF8(url_)), url, encoding_);
-}
-
 void Document::SetTitle(const std::u16string& title) {
   Element* const root = DocumentElement();
   if (!root || !root->IsHTMLElement()) {
@@ -411,7 +410,9 @@ void Document::SetTitle(const std::u16string& title) {
         CreateElement(html_names::kXhtmlNamespace, std::nullopt, u"title");
     head->ParserAppendChild(title_element);
   }
-  // HTMLTitleElement's text setter: replace all with one Text node.
+  // HTMLTitleElement's text setter: replace all with one Text node, one
+  // record for observers.
+  const ChildListMutationScope mutation(*title_element);
   title_element->RemoveChildren();
   if (!title.empty()) {
     title_element->ParserAppendChild(Text::Create(*this, title));
@@ -453,6 +454,45 @@ Comment* Document::CreateComment(const std::u16string& data) {
 
 Text* Document::CreateTextNode(const std::u16string& data) {
   return Text::Create(*this, data);
+}
+
+Attr* Document::CreateAttribute(const std::u16string& local_name,
+                                bindings::ExceptionState& exception_state) {
+  if (!IsValidAttributeLocalName(local_name)) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The localName provided ('",
+                      base::UTF16ToUTF8(local_name),
+                      "') contains an invalid character."}));
+    return nullptr;
+  }
+  return Attr::Create(
+      *this,
+      QualifiedName{.local_name =
+                        is_html_ ? base::ToLowerASCII(local_name) : local_name},
+      std::u16string());
+}
+
+Attr* Document::CreateAttributeNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    bindings::ExceptionState& exception_state) {
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kAttribute,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  return Attr::Create(*this, *name, std::u16string());
 }
 
 DocumentFragment* Document::CreateDocumentFragment() {
@@ -627,6 +667,72 @@ uint16_t Document::GetNodeType() const {
 
 std::u16string Document::NodeName() const {
   return u"#document";
+}
+
+void Document::SetUrl(std::u16string url) {
+  url_ = std::move(url);
+  UpdateBaseUrl();
+}
+
+const GURL& Document::BaseUrl() const {
+  static const base::NoDestructor<GURL> kBlank("about:blank");
+  return base_url_.is_empty() ? *kBlank : base_url_;
+}
+
+GURL Document::CompleteUrl(std::u16string_view url) const {
+  // A document with no base URL resolves only an absolute URL, whose query is
+  // still in the document's encoding.
+  return ResolveUrlWithEncoding(base_url_, url, encoding_);
+}
+
+void Document::ProcessBaseElement() {
+  // The first href of a base element of the HTML namespace, in tree order.
+  const std::u16string* href = nullptr;
+  for (Node* node = FirstChild(); node && !href;
+       node = node->NextInTree(this)) {
+    if (node->IsElementNode()) {
+      const auto& element = static_cast<const Element&>(*node);
+      if (element.HasHTMLTagName(u"base")) {
+        href = element.FindAttribute(u"href");
+      }
+    }
+  }
+  GURL base_element_url;
+  if (href) {
+    const std::u16string_view stripped =
+        base::TrimString(*href, u" \t\n\f\r", base::TRIM_ALL);
+    if (!stripped.empty()) {
+      base_element_url = FallbackBaseUrl().Resolve(stripped);
+      // A URL that is not valid keeps what it was given, as a KURL does.
+      if (!base_element_url.is_valid()) {
+        base_element_url = GURL(stripped);
+      }
+    }
+  }
+  const bool data_or_javascript = base_element_url.SchemeIs("data") ||
+                                  base_element_url.SchemeIs("javascript");
+  if (data_or_javascript && window_) {
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"'", base_element_url.scheme(),
+                      "' URLs may not be used as base URLs for a document."}));
+  }
+  if (base_element_url == base_element_url_) {
+    return;
+  }
+  // The HTML Standard's frozen base URL: the fallback base URL for a URL of
+  // data or javascript, or for a document whose scripts cannot run.
+  base_element_url_ =
+      !data_or_javascript && window_ ? base_element_url : FallbackBaseUrl();
+  UpdateBaseUrl();
+}
+
+void Document::UpdateBaseUrl() {
+  base_url_ =
+      !base_element_url_.is_empty() ? base_element_url_ : FallbackBaseUrl();
+  if (!base_url_.is_valid()) {
+    base_url_ = GURL();
+  }
 }
 
 }  // namespace mitto

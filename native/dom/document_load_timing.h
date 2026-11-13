@@ -104,6 +104,9 @@ class DocumentLoadTiming final
   // of the wall clock, coarsened as every time that a page reads is, in whole
   // milliseconds since the Unix epoch, or 0 for one that has not come.
   uint64_t ToIntegerMilliseconds(base::TimeTicks time) const;
+  // DocumentLoadTiming::MonotonicTimeToPseudoWallTime(): `time` as a time of
+  // the wall clock, since the Unix epoch, as precise as base::TimeTicks.
+  base::TimeDelta MonotonicTimeToPseudoWallTime(base::TimeTicks time) const;
 
   // DocumentLoadTiming.
   base::TimeTicks navigation_start;

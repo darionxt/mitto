@@ -102,6 +102,8 @@ This needs a native library, and it runs the same comparison as the tests. It al
 
 The Parity Checks of M7 compare what a page sees in a **Page** with what it saw in real Chrome: the Normal Form of what [the probe](runtime.md#the-probe) records, against the Baselines in `tests/baselines/RELEASE/script/`, which [baselines.md](baselines.md#the-script-fingerprint) records.
 
+M8 adds [Recording Cases](capture.md#its-recording-cases) in a frame of the page's origin, a `srcdoc` frame, a frame of another site and a dedicated worker. Each of their files keeps [what differs](capture.md#what-a-later-case-keeps) from `page.json` of the same Chrome Release, and a check makes the case's Normal Form again from the two, so that it compares a Page's whole Normal Form in that case, as for the top-level page. A Page has no frames and no workers yet, so a check skips these cases, and `tools.parity --script` says which it skipped, until a Page has frames ([#285](https://github.com/darionxt/mitto/issues/285)) and dedicated workers ([#289](https://github.com/darionxt/mitto/issues/289)) and those set `in_a_page` of the case's run in [`script_page.py`](../tools/capture/script_page.py). A case with no Baselines yet, as these have none until [#266](https://github.com/darionxt/mitto/issues/266) records them, has no check.
+
 ### Run them
 
 They need a native library with the Page program beside it, as a wheel holds them, or as `out/mitto` and `out/runtime` of a build give them once both files are in one directory ([building.md](building.md#build-the-runtime)). `uv run pytest tests/parity` runs them with the wire's checks, and skips them without a Page program. CI's native job runs them on every **Host**, from the installed wheel, through `mitto.Session` and through a `mitto.AsyncSession` in its place, as it runs the wire's.
@@ -112,7 +114,7 @@ For each Baseline, it:
 
 1. starts a [capture server](capture.md);
 2. creates a new `mitto.Session` with the **Persona** of the Baseline's **Chrome Release** and a **Machine** drawn for it, as the wire's checks do, which accepts the server's private certificate and finds the case pages' names through `_settings`, as Chrome was told to;
-3. opens a Page on the Recording Case's page, `/script/page` at the case pages' name, through the private `Session._open_page()`, as a caller's Page loads a page. That page runs in the Page as it ran in Chrome: once it has loaded, it runs the probe in a timer through an indirect eval, and posts the record to the server with `fetch()`. So nothing reaches into the Page from outside while the probe walks;
+3. opens a Page on the Recording Case's top-level page, such as `/script/page` at the case pages' name, through the private `Session._open_page()`, as a caller's Page loads a page. That page runs in the Page as it ran in Chrome: once it has loaded, it runs the probe in a timer through an indirect eval, or has its frame or worker run it, and posts the record to the server with `fetch()`. So nothing reaches into the Page from outside while the probe walks;
 4. takes the [Normal Form](capture.md#the-normal-form-of-a-script-fingerprint) of the posted record, and compares it with the Baseline;
 5. holds each value that both hide as `<machine>` to the Page's Machine, as [below](#the-machines-values).
 
@@ -147,7 +149,7 @@ Each gap has a kind, which says who closes it. The exit of M7 has Known Gaps for
 
 | Kind | Which gaps |
 | --- | --- |
-| `machine` | A place that the Normal Form hides as `<machine>` (`MACHINE_PLACES` in [`script_normal_form.py`](../tools/capture/script_normal_form.py)), in either comparison |
+| `machine` | A place that the Normal Form hides as `<machine>` where the case's probe runs (`MACHINE_PLACES` in [`script_normal_form.py`](../tools/capture/script_normal_form.py), and in a frame or a worker its own places), in either comparison. A frame's own viewport, such as its `innerWidth`, is behaviour |
 | `persona` | A place that the Persona decides (`PERSONA_PLACES` in [`script_gaps.py`](../tools/parity/script_gaps.py)): `navigator`'s `userAgent`, `appVersion`, `platform`, `language` and `languages`, `navigator.userAgentData`'s `brands`, `mobile` and `platform`, the high entropy values, and what follows the locale in Intl and `toLocaleString()` |
 | `behaviour` | Any other value that a getter or the third step gave, an index of an object that a getter gave or what an array or a plain object that a getter gave holds, an object that the walk reached through a getter, and the reports |
 | `shape` | Everything else: the own properties of interface objects, prototypes and the platform's objects, their flags, names, lengths and order, prototypes, tags, the outcome of a constructor without `new` and of the checks, and an object that the walk reached through own properties and prototypes alone |
@@ -160,6 +162,8 @@ A value at a place that the Normal Form hides compares as `<machine>` on both si
 
 - At a place that a Page reads from its start message, such as `innerWidth` or the time zone of `Intl.DateTimeFormat`, it must be what Chrome gives for that Machine (`PAGE_READS`), which is what `tests/test_machine.py` holds to [the forms](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint) of real Chrome's values.
 - At a place whose value has the renderer's noise on it, `rtt` and `downlink` of `navigator.connection`, and at one that a Page works out by Chrome's own code (`WORKED_OUT_IN_A_PAGE`), such as the heap limit or the strings of a date, it must have the form that real Chrome's values have there.
+
+In a frame or a worker, the check holds only the places of the machine there to the Machine: a frame's `outerWidth` is the Machine's window, and its `innerWidth` its element's, which the Normal Form keeps and compares.
 
 A value that misses is a gap of the kind `machine`, in the field of its place, whose values say only `<machine>: the Machine's` and `<machine>: not the Machine's`, or the form and `<machine>: not of that form`, so that no drawn value reaches the list.
 

@@ -120,6 +120,9 @@ _TOUCH_POINTS = {0: 100}
 _AUDIO_INPUTS = {True: 70, False: 30}
 _VIDEO_INPUTS = {True: 50, False: 50}
 _AUDIO_OUTPUTS = {True: 100}
+# The refresh rate of the primary display, in hertz, at which Chrome begins frames: the shape of what Firefox's telemetry
+# finds on Windows, which comes with no licence, without 30 and 50 Hz, which remote desktops and virtual machines give.
+_REFRESH_RATES = {60: 84, 144: 5, 120: 3, 165: 3, 75: 2, 240: 2, 100: 1}
 # The time zone of each locale that a Persona has: one, so that Sessions that leave through one address claim one zone, as
 # the computers of a household or an office do, and the largest zone of the United States, where that is least seen.
 _TIME_ZONES = {"en-US": {"America/New_York": 100}}
@@ -246,6 +249,7 @@ def table_data(statistics: Statistics = STATISTICS) -> dict[str, Any]:
             "audio_input": {"source": _OWNER, "rows": _rows("audio_input", _AUDIO_INPUTS)},
             "video_input": {"source": _OWNER, "rows": _rows("video_input", _VIDEO_INPUTS)},
             "audio_output": {"source": _OWNER, "rows": _rows("audio_output", _AUDIO_OUTPUTS)},
+            "refresh_rate": {"source": _OWNER, "rows": _rows("refresh_rate", _REFRESH_RATES)},
         },
     }
 

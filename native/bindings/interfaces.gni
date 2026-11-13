@@ -10,8 +10,8 @@
 # - `missing` names them, and the class has every other member.
 # - `implemented` names the members the class has, and every other member is a
 #   Known Gap. "get x" names the getter of attribute x alone. The generator
-#   writes a reflected attribute of a string or a boolean itself, so it needs
-#   no name. "indexed getter" and "named getter" name those operations. An
+#   writes a reflected attribute of a string, a boolean, a long, an unsigned
+#   long or a URL itself, so it needs no name. "indexed getter" and "named getter" name those operations. An
 #   indexed or named property operation that is a Known Gap is not installed
 #   at all.
 #
@@ -28,6 +28,9 @@
 # `header` names the file in native/dom whose header declares the class, when
 # it is not `file`, as svg_elements.h declares the classes of SVG that have
 # nothing of their own yet.
+#
+# A [LegacyFactoryFunction], such as Image, is named by its name, and its
+# behaviour is the class's static CreateForJSConstructor().
 #
 # "maplike" or "setlike" in `implemented` gives a read-only declaration of
 # that kind its behaviour: the bindings write its members, which read the
@@ -56,6 +59,10 @@ mitto_bindings_interfaces = [
       "endOffset",
       "collapsed",
     ]
+  },
+  {
+    name = "Attr"
+    file = "attr"
   },
   {
     name = "BarProp"
@@ -144,6 +151,23 @@ mitto_bindings_interfaces = [
     file = "custom_event"
   },
   {
+    name = "DOMTokenList"
+    file = "dom_token_list"
+    made_by_known_gaps = true
+    implemented = [
+      "length",
+      "value",
+      "add",
+      "contains",
+      "item",
+      "remove",
+      "replace",
+      "supports",
+      "toggle",
+      "indexed getter",
+    ]
+  },
+  {
     name = "DOMException"
     file = "dom_exception"
   },
@@ -220,6 +244,8 @@ mitto_bindings_interfaces = [
       "lastElementChild",
       "childElementCount",
       "append",
+      "createAttribute",
+      "createAttributeNS",
       "createComment",
       "createDocumentFragment",
       "createElement",
@@ -325,6 +351,8 @@ mitto_bindings_interfaces = [
       "getAttribute",
       "getAttributeNS",
       "getAttributeNames",
+      "getAttributeNode",
+      "getAttributeNodeNS",
       "getElementsByClassName",
       "getElementsByTagName",
       "getElementsByTagNameNS",
@@ -340,13 +368,19 @@ mitto_bindings_interfaces = [
       "remove",
       "removeAttribute",
       "removeAttributeNS",
+      "removeAttributeNode",
       "replaceChildren",
       "replaceWith",
       "setAttribute",
       "setAttributeNS",
+      "setAttributeNode",
+      "setAttributeNodeNS",
       "toggleAttribute",
       "webkitMatchesSelector",
       "children",
+      "attributes",
+      "classList",
+      "part",
     ]
   },
   {
@@ -361,6 +395,10 @@ mitto_bindings_interfaces = [
       "remove",
       "getParent",
     ]
+  },
+  {
+    name = "ErrorEvent"
+    file = "error_event"
   },
   {
     name = "Event"
@@ -407,9 +445,53 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "HTMLAnchorElement"
+    file = "html_anchor_element"
+    implemented = [
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+    ]
+  },
+  {
+    name = "HTMLAreaElement"
+    file = "html_area_element"
+    implemented = [
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+    ]
+  },
+  {
+    name = "HTMLAudioElement"
+    file = "html_audio_element"
+    implemented = [ "Audio" ]
+  },
+  {
     name = "HTMLBRElement"
     file = "html_br_element"
     implemented = []
+  },
+  {
+    name = "HTMLBaseElement"
+    file = "html_base_element"
+    implemented = [ "href" ]
   },
   {
     name = "HTMLBodyElement"
@@ -417,9 +499,71 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLButtonElement"
+    file = "html_button_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLCameraElement"
+    file = "html_camera_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLCanvasElement"
+    file = "html_canvas_element"
+    implemented = [
+      "width",
+      "height",
+    ]
+  },
+  {
     name = "HTMLCollection"
     file = "html_collection"
     made_by_known_gaps = true
+  },
+  {
+    name = "HTMLCredentialElement"
+    file = "html_credential_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLDListElement"
+    file = "html_dlist_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLDataElement"
+    file = "html_data_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLDataListElement"
+    file = "html_data_list_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLDetailsElement"
+    file = "html_details_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLDialogElement"
+    file = "html_dialog_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLDirectoryElement"
+    file = "html_directory_element"
+    header = "html_elements"
+    implemented = []
   },
   {
     name = "HTMLDivElement"
@@ -436,7 +580,64 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLElement"
     file = "html_element"
-    implemented = [ "autocapitalize" ]
+    implemented = [
+      "autocapitalize",
+      "click",
+    ]
+  },
+  {
+    name = "HTMLEmbedElement"
+    file = "html_embed_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLFencedFrameElement"
+    file = "html_fenced_frame_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLFieldSetElement"
+    file = "html_field_set_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLFontElement"
+    file = "html_font_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLFormElement"
+    file = "html_form_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLFrameElement"
+    file = "html_frame_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLFrameSetElement"
+    file = "html_frame_set_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLGeolocationElement"
+    file = "html_geolocation_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLHRElement"
+    file = "html_hr_element"
+    header = "html_elements"
+    implemented = []
   },
   {
     name = "HTMLHeadElement"
@@ -454,8 +655,47 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLIFrameElement"
+    file = "html_iframe_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLImageElement"
+    file = "html_image_element"
+    implemented = [
+      "width",
+      "height",
+      "Image",
+    ]
+  },
+  {
+    name = "HTMLInputElement"
+    file = "html_input_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLInstallElement"
+    file = "html_install_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
     name = "HTMLLIElement"
     file = "html_li_element"
+    implemented = []
+  },
+  {
+    name = "HTMLLabelElement"
+    file = "html_label_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLLegendElement"
+    file = "html_legend_element"
+    header = "html_elements"
     implemented = []
   },
   {
@@ -464,8 +704,73 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLLoginElement"
+    file = "html_login_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMapElement"
+    file = "html_map_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMarqueeElement"
+    file = "html_marquee_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMediaElement"
+    file = "html_media_element"
+    implemented = [ "preload" ]
+  },
+  {
+    name = "HTMLMenuBarElement"
+    file = "html_menu_bar_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMenuElement"
+    file = "html_menu_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMenuItemElement"
+    file = "html_menu_item_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMenuListElement"
+    file = "html_menu_list_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
     name = "HTMLMetaElement"
     file = "html_meta_element"
+    implemented = []
+  },
+  {
+    name = "HTMLMeterElement"
+    file = "html_meter_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLMicrophoneElement"
+    file = "html_microphone_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLModElement"
+    file = "html_mod_element"
+    header = "html_elements"
     implemented = []
   },
   {
@@ -474,8 +779,50 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLObjectElement"
+    file = "html_object_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLOptGroupElement"
+    file = "html_opt_group_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLOptionElement"
+    file = "html_option_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLOutputElement"
+    file = "html_output_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
     name = "HTMLParagraphElement"
     file = "html_paragraph_element"
+    implemented = []
+  },
+  {
+    name = "HTMLParamElement"
+    file = "html_param_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLPersistentWidgetElement"
+    file = "html_persistent_widget_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLPictureElement"
+    file = "html_picture_element"
+    header = "html_elements"
     implemented = []
   },
   {
@@ -484,9 +831,45 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLProgressElement"
+    file = "html_progress_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLQuoteElement"
+    file = "html_quote_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
     name = "HTMLScriptElement"
     file = "html_script_element"
     implemented = [ "text" ]
+  },
+  {
+    name = "HTMLSelectElement"
+    file = "html_select_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLSelectedContentElement"
+    file = "html_selected_content_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLSlotElement"
+    file = "html_slot_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLSourceElement"
+    file = "html_source_element"
+    header = "html_elements"
+    implemented = []
   },
   {
     name = "HTMLSpanElement"
@@ -499,14 +882,74 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLSubMenuElement"
+    file = "html_sub_menu_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTableCaptionElement"
+    file = "html_table_caption_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTableCellElement"
+    file = "html_table_cell_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTableColElement"
+    file = "html_table_col_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTableElement"
+    file = "html_table_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTableRowElement"
+    file = "html_table_row_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTableSectionElement"
+    file = "html_table_section_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
     name = "HTMLTemplateElement"
     file = "html_template_element"
     implemented = [ "content" ]
   },
   {
+    name = "HTMLTextAreaElement"
+    file = "html_text_area_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLTimeElement"
+    file = "html_time_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
     name = "HTMLTitleElement"
     file = "html_title_element"
     implemented = [ "text" ]
+  },
+  {
+    name = "HTMLTrackElement"
+    file = "html_track_element"
+    header = "html_elements"
+    implemented = []
   },
   {
     name = "HTMLUListElement"
@@ -516,6 +959,18 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLUnknownElement"
     file = "html_unknown_element"
+    implemented = []
+  },
+  {
+    name = "HTMLUserMediaElement"
+    file = "html_user_media_element"
+    header = "html_elements"
+    implemented = []
+  },
+  {
+    name = "HTMLVideoElement"
+    file = "html_video_element"
+    header = "html_elements"
     implemented = []
   },
   {
@@ -630,6 +1085,18 @@ mitto_bindings_interfaces = [
   {
     name = "MimeTypeArray"
     file = "mime_type_array"
+  },
+  {
+    name = "MutationObserver"
+    file = "mutation_observer"
+  },
+  {
+    name = "MutationRecord"
+    file = "mutation_record"
+  },
+  {
+    name = "NamedNodeMap"
+    file = "named_node_map"
   },
   {
     name = "Navigation"
@@ -931,6 +1398,10 @@ mitto_bindings_interfaces = [
     file = "pressure_observer"
     made_by_known_gaps = true
     implemented = [ "knownSources" ]
+  },
+  {
+    name = "PromiseRejectionEvent"
+    file = "promise_rejection_event"
   },
   {
     name = "PushManager"
@@ -1589,9 +2060,14 @@ mitto_bindings_interfaces = [
       "btoa",
       "requestIdleCallback",
       "cancelIdleCallback",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "webkitRequestAnimationFrame",
+      "webkitCancelAnimationFrame",
       "event",
       "scheduler",
       "cookieStore",
+      "reportError",
     ]
   },
   {

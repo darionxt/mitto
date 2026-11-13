@@ -1,9 +1,10 @@
 // The DOM's NodeList: a node's childNodes, a live view of its children, as
-// Blink's ChildNodeList reads them on each access; the static list that
-// querySelectorAll() gives, as Blink's StaticNodeList; and the live list of
-// getElementsByName(), as Blink's NameNodeList, which keeps the elements it
-// found until a tree changes (dom_tree_version.h). RadioNodeList, which has
-// no class, inherits from it, so it is not final.
+// Blink's ChildNodeList reads them on each access; a list that does not
+// change, as Blink's StaticNodeList, which querySelectorAll() and a
+// MutationRecord's addedNodes give; and the live list of getElementsByName(),
+// as Blink's NameNodeList, which keeps the elements it found until a tree
+// changes (dom_tree_version.h). RadioNodeList, which has no class, inherits
+// from it, so it is not final.
 //
 // Upstream: third_party/blink/renderer/core/dom/child_node_list.cc
 // Upstream: third_party/blink/renderer/core/dom/node_list.h

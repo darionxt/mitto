@@ -1,7 +1,8 @@
 // The HTML Standard's Window, a Page's global object, with `window`, `self`,
-// `document`, `performance`, the timers, queueMicrotask(), fetch(), atob() and
-// btoa(), `navigator`, `screen` and `crypto`, and the window's place and size
-// as the Session's Machine has them; its other members are Known Gaps.
+// `document`, `performance`, the timers, animation frame callbacks,
+// queueMicrotask(), fetch(), atob() and btoa(), `navigator`, `screen` and
+// `crypto`, and the window's place and size as the Session's Machine has them;
+// its other members are Known Gaps.
 //
 // A context's global object and its global proxy both wrap the Window, as in
 // Blink, so that a call whose receiver is either finds it. The window's
@@ -37,6 +38,7 @@
 
 namespace mitto {
 
+class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
 class CookieStore;
@@ -151,6 +153,10 @@ class Window final : public WindowProperties {
   uint32_t RequestIdleCallback(v8::Local<v8::Function> callback,
                                const bindings::IdleRequestOptions& options);
   void CancelIdleCallback(uint32_t handle);
+  int32_t RequestAnimationFrame(v8::Local<v8::Function> callback);
+  int32_t WebkitRequestAnimationFrame(v8::Local<v8::Function> callback);
+  // webkitCancelAnimationFrame() too.
+  void CancelAnimationFrame(int32_t handle);
   // The event that a listener of the window's context is called for, or
   // undefined outside one.
   v8::Local<v8::Value> Event() const;
@@ -159,6 +165,12 @@ class Window final : public WindowProperties {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // Reports `e` as an error that a script left uncaught: the window's error
+  // event, then the console, as Blink's WindowOrWorkerGlobalScope does.
+  void ReportError(v8::Local<v8::Value> e);
+
+  // EventTarget:
+  Window* ToWindow() override;
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -184,6 +196,13 @@ class Window final : public WindowProperties {
   void SetIdleTasks(IdleTaskController* idle_tasks) { idle_tasks_ = idle_tasks; }
   // How many idle callbacks wait.
   size_t IdleCallbackCount() const;
+  // The animation frame callbacks of the window's context, which go with it,
+  // as its timers do.
+  void SetAnimationFrames(AnimationFrameController* animation_frames) {
+    animation_frames_ = animation_frames;
+  }
+  // How many animation frame callbacks wait for a frame.
+  size_t AnimationFrameCallbackCount() const;
   // How many scheduler.postTask() callbacks and scheduler.yield()
   // continuations wait.
   size_t ScheduledTaskCount() const;
@@ -226,6 +245,9 @@ class Window final : public WindowProperties {
   void AddConsoleMessage(ConsoleLevel level, std::string text);
 
  private:
+  // Runs a callback that queueMicrotask() queued, from its microtask.
+  static void RunQueuedMicrotask(void* data);
+
   // The window's bars, each an object of its own, as Blink's are.
   enum BarKind : size_t {
     kLocationbar,
@@ -267,6 +289,7 @@ class Window final : public WindowProperties {
   std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
+  raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
 };
 
 }  // namespace mitto

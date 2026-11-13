@@ -1,0 +1,644 @@
+{
+ "bubbles": [
+  [
+   "window",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "capture",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "bubble",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "window",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "after",
+   true,
+   0,
+   "span#inner",
+   "null",
+   0,
+   false,
+   false,
+   true
+  ]
+ ],
+ "no_bubbles": [
+  [
+   "window",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "capture",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "bubble",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "after",
+   true,
+   0,
+   "span#inner",
+   "null",
+   0,
+   false,
+   false,
+   true
+  ]
+ ],
+ "stop_at_body_capture": [
+  [
+   "window",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "after",
+   true,
+   0,
+   "span#inner",
+   "null",
+   0,
+   false,
+   false,
+   true
+  ]
+ ],
+ "stop_immediate_at_target": [
+  [
+   "window",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "capture",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "after",
+   true,
+   0,
+   "span#inner",
+   "null",
+   0,
+   false,
+   false,
+   true
+  ]
+ ],
+ "cancel_bubble_at_outer": [
+  [
+   "window",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "capture",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "bubble",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "after",
+   true,
+   0,
+   "span#inner",
+   "null",
+   0,
+   false,
+   false,
+   true
+  ]
+ ],
+ "return_value": [
+  [
+   "window",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "capture",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "span#inner",
+   "bubble",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "div#outer",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "body",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "html",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "document",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "window",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document window"
+  ],
+  [
+   "after",
+   false,
+   0,
+   "span#inner",
+   "null",
+   0,
+   false,
+   true,
+   false
+  ]
+ ],
+ "load_type": [
+  [
+   "document",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "html",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "body",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "div#outer",
+   "capture",
+   1,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "span#inner",
+   "capture",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "span#inner",
+   "bubble",
+   2,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "div#outer",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "body",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "html",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "document",
+   "bubble",
+   3,
+   "span#inner",
+   "span#inner",
+   "span#inner div#outer body html document"
+  ],
+  [
+   "after",
+   true,
+   0,
+   "null",
+   "null",
+   0,
+   false,
+   false,
+   true
+  ]
+ ],
+ "at_target_order": [
+  "capture 1",
+  "capture 2",
+  "bubble 1",
+  "bubble 2"
+ ],
+ "once": [
+  "inner",
+  "once",
+  "added at outer",
+  "added at outer"
+ ],
+ "detached": [
+  3,
+  "b section"
+ ],
+ "passive": [
+  "window wheel false",
+  "window mousewheel false",
+  "window touchstart false",
+  "window touchmove false",
+  "window touchend true",
+  "window click true",
+  "document wheel false",
+  "document mousewheel false",
+  "document touchstart false",
+  "document touchmove false",
+  "document touchend true",
+  "document click true",
+  "html wheel false",
+  "html mousewheel false",
+  "html touchstart false",
+  "html touchmove false",
+  "html touchend true",
+  "html click true",
+  "body wheel false",
+  "body mousewheel false",
+  "body touchstart false",
+  "body touchmove false",
+  "body touchend true",
+  "body click true",
+  "outer wheel true",
+  "outer mousewheel true",
+  "outer touchstart true",
+  "outer touchmove true",
+  "outer touchend true",
+  "outer click true",
+  "window wheel passive:false true",
+  "outer q passive:true false"
+ ],
+ "window_event": [
+  [
+   true,
+   false
+  ],
+  true
+ ],
+ "redispatch": [
+  false,
+  false,
+  "InvalidStateError: Failed to execute 'dispatchEvent' on 'EventTarget': The event is already being dispatched.",
+  true
+ ],
+ "window_after_node": [
+  "div#outer",
+  "body",
+  "html",
+  "document",
+  "window"
+ ],
+ "ready": [
+  "document load capture script",
+  "window capture readystatechange interactive 1 document",
+  "document DOMContentLoaded 2",
+  "window DOMContentLoaded 3 document document window",
+  "window capture readystatechange complete 1 document",
+  "window load 2 document [window]",
+  "after load 2 window document"
+ ]
+}

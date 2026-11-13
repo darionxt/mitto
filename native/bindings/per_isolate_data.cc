@@ -42,6 +42,12 @@ PerIsolateData* PerIsolateData::From(v8::Isolate* isolate) {
   return data;
 }
 
+// static
+const RuntimeFeatureSet* PerIsolateData::FeaturesOf(v8::Isolate* isolate) {
+  auto* const data = static_cast<PerIsolateData*>(isolate->GetData(kDataSlot));
+  return data ? &data->features_ : nullptr;
+}
+
 PerIsolateData::PerIsolateData(v8::Isolate* isolate, RuntimeFeatureSet features)
     : isolate_(isolate),
       features_(std::move(features)),
@@ -94,7 +100,8 @@ v8::Local<v8::FunctionTemplate> PerIsolateData::FactoryFunctionTemplate(
   }
   const v8::Local<v8::FunctionTemplate> function_template =
       v8::FunctionTemplate::New(
-          isolate, &KnownGapFactoryFunction,
+          isolate,
+          construct.callback ? construct.callback : &KnownGapFactoryFunction,
           v8::External::New(isolate,
                             const_cast<ExposedConstructInfo*>(&construct),
                             kExposedConstructInfoTag),

@@ -204,6 +204,18 @@
       "rows": [
         {"audio_output": true, "weight": 1000000}
       ]
+    },
+    "refresh_rate": {
+      "source": "The owner of mitto, where no public source has weights",
+      "rows": [
+        {"refresh_rate": 60, "weight": 840000},
+        {"refresh_rate": 144, "weight": 50000},
+        {"refresh_rate": 120, "weight": 30000},
+        {"refresh_rate": 165, "weight": 30000},
+        {"refresh_rate": 75, "weight": 20000},
+        {"refresh_rate": 240, "weight": 20000},
+        {"refresh_rate": 100, "weight": 10000}
+      ]
     }
   }
 }

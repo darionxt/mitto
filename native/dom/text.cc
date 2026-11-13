@@ -37,23 +37,24 @@ Text* Text::SplitText(uint32_t offset,
                       " is larger than the Text node's length."}));
     return nullptr;
   }
-  // The DOM standard's "split a Text node": the new node goes in after this
-  // one, the live ranges past the offset move into it, then the data goes.
+  // Blink's order: the data goes, which the observers hear of first, the new
+  // node goes in after this one, and then the live ranges past the offset
+  // move into it, as the DOM standard's "split a Text node" moves them.
   Text* const next = Create(GetDocument(), Data().substr(offset));
-  const uint32_t length = Length();
-  if (Node* const parent = ParentNode()) {
-    if (Node* const sibling = NextSibling()) {
-      parent->ParserInsertBefore(next, *sibling);
-    } else {
-      parent->ParserAppendChild(next);
-    }
-    if (AttachedTraversals* const traversals =
-            GetDocument().ExistingTraversals()) {
-      traversals->DidSplitText(*this, *next, offset);
-    }
-    SetDataWithoutUpdate(Data().substr(0, offset));
+  Node* const parent = ParentNode();
+  if (!parent) {
+    DeleteData(offset, Length() - offset, exception_state);
+    return next;
+  }
+  SetDataWithoutUpdate(Data().substr(0, offset));
+  if (Node* const sibling = NextSibling()) {
+    parent->ParserInsertBefore(next, *sibling);
   } else {
-    DeleteData(offset, length - offset, exception_state);
+    parent->ParserAppendChild(next);
+  }
+  if (AttachedTraversals* const traversals =
+          GetDocument().ExistingTraversals()) {
+    traversals->DidSplitText(*this, *next, offset);
   }
   return next;
 }

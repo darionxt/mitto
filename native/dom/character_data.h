@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/function_ref.h"
 #include "mitto/dom/node.h"
 
 namespace mitto {
@@ -44,19 +45,24 @@ class CharacterData : public Node {
   void SetNodeValue(const std::optional<std::u16string>& value,
                     bindings::ExceptionState& exception_state) override;
 
-  // Sets the data without moving the live ranges in it, for splitText() and
-  // normalize(), which move them themselves.
-  void SetDataWithoutUpdate(const std::u16string& data) { data_ = data; }
+  // Sets the data, which the observers hear of, without moving the live ranges
+  // in it, for splitText() and normalize(), which move them themselves, as
+  // Blink's SetDataWithoutUpdate() and DidModifyData() do.
+  void SetDataWithoutUpdate(const std::u16string& data);
 
  protected:
   CharacterData(Document& document, const std::u16string& data);
 
  private:
   // The DOM standard's "replace data", with `count` already cut to what the
-  // data holds after `offset`: the live ranges in the node move.
+  // data holds after `offset`: the observers hear of it and the live ranges in
+  // the node move.
   void ReplaceDataInternal(uint32_t offset,
                            uint32_t count,
                            const std::u16string& data);
+  // Makes `change` to the data, and queues a record of it for the observers
+  // that it concerns.
+  void ModifyData(base::FunctionRef<void(std::u16string& data)> change);
 
   std::u16string data_;
 };

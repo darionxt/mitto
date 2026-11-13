@@ -35,8 +35,10 @@
 #include "v8/include/v8-function-callback.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-message.h"
 #include "v8/include/v8-object.h"
 #include "v8/include/v8-primitive.h"
+#include "v8/include/v8-promise.h"
 #include "v8/include/v8-value.h"
 
 namespace mitto::bindings {
@@ -388,10 +390,22 @@ T* ReceiverOf(const v8::FunctionCallbackInfo<v8::Value>& info,
   return object;
 }
 
+// Converts `value` to a Promise<T> as Blink's NativeValueTraits<IDLPromise<T>>
+// do: a promise as it is, and anything else to a new promise resolved with
+// it. Returns false if that threw.
+bool FromV8Promise(v8::Isolate* isolate,
+                   v8::Local<v8::Value> value,
+                   v8::Local<v8::Promise>* promise);
+
 // Reports an exception that a page's callback threw and nothing caught, as
-// Chrome reports it to the console: through the isolate's exception reporter,
-// or on standard error if it has none.
+// Blink's V8ScriptRunner::ReportException() does: through the isolate's
+// exception reporter, which fires the window's error event and tells the
+// console, or on standard error if it has none. Without `message`, V8 makes
+// one from the exception, which says where an error was made.
 void ReportException(v8::Isolate* isolate, v8::Local<v8::Value> exception);
+void ReportException(v8::Isolate* isolate,
+                     v8::Local<v8::Value> exception,
+                     v8::Local<v8::Message> message);
 
 // What a binding call that returns a promise does with an error thrown before
 // it returns: the call gives a promise rejected with it, as Web IDL says,
