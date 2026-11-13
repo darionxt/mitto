@@ -1,11 +1,12 @@
 #include "mitto/dom/html_input_element.h"
 
+#include <algorithm>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "base/containers/contains.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "mitto/bindings/known_gap.h"
@@ -199,8 +200,10 @@ void HTMLInputElement::UpdateHasBeenPasswordField() {
       u"email", u"number", u"password", u"search", u"tel", u"text", u"url",
   };
   const std::u16string type = Type();
-  has_been_password_field_ = base::Contains(kTextFieldTypes, type) &&
-                             (has_been_password_field_ || type == u"password");
+  const bool text_field =
+      std::ranges::find(kTextFieldTypes, type) != std::end(kTextFieldTypes);
+  has_been_password_field_ =
+      text_field && (has_been_password_field_ || type == u"password");
 }
 
 HTMLInputElement::CheckableType HTMLInputElement::GetCheckableType() const {
