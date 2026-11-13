@@ -59,7 +59,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
-#include "base/task/single_thread_task_executor.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_observer.h"
 #include "base/types/expected.h"
@@ -70,8 +69,10 @@
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
+#include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/chrome_object.h"
+#include "mitto/page/page_scheduler.h"
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_platform.h"
 #include "mitto/page/script_runner.h"
@@ -294,8 +295,7 @@ void StartV8(PageV8& v8,
 
 // Ends what StartV8() started, if it did. V8's tasks that wait on the main
 // thread go while the isolate still lives.
-void StopV8(PageV8& v8,
-            std::unique_ptr<base::SingleThreadTaskExecutor> main_thread) {
+void StopV8(PageV8& v8, std::unique_ptr<mitto::PageScheduler> main_thread) {
   if (!v8.isolate) {
     return;
   }
@@ -353,7 +353,8 @@ class CommandLineLoop final : public base::TaskObserver {
   void DidProcessTask(const base::PendingTask& pending_task) override {
     const v8::HandleScope handle_scope(isolate_);
     v8::MicrotasksScope::PerformCheckpoint(isolate_);
-    if (mitto::Window::Current().TimerCount() == 0) {
+    if (mitto::Window::Current().TimerCount() == 0 &&
+        mitto::Window::Current().IdleCallbackCount() == 0) {
       run_loop_->QuitWhenIdle();
     }
   }
@@ -385,6 +386,8 @@ bool RunScript(v8::Isolate* isolate,
   const v8::Context::Scope context_scope(context);
   mitto::DOMTimerCoordinator timers(isolate, context);
   mitto::Window::Current().SetTimers(&timers);
+  mitto::IdleTaskController idle_tasks(isolate, context);
+  mitto::Window::Current().SetIdleTasks(&idle_tasks);
   mitto::Window::Current().SetDocumentLoadTiming(chrome_data.load_timing.Get());
   isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
                                             v8::Isolate::kMessageError);
@@ -425,6 +428,7 @@ bool RunScript(v8::Isolate* isolate,
           isolate, source, &result, &exception, &threw));
   run_loop.Run();
   mitto::Window::Current().SetTimers(nullptr);
+  mitto::Window::Current().SetIdleTasks(nullptr);
   chrome_data.detached = true;
 
   const v8::TryCatch try_catch(isolate);
@@ -554,9 +558,9 @@ int main(int argc, char** argv) {
   udata_setCommonData(mitto_icu_data, &status);
   CHECK(U_SUCCESS(status));
 
-  // The main thread's task executor is the Page's event loop, which V8's own
-  // tasks for the main thread join, as Chrome's renderers have it.
-  auto main_thread = std::make_unique<base::SingleThreadTaskExecutor>();
+  // The main thread's scheduler is the Page's event loop, which V8's own tasks
+  // for the main thread join, as Chrome's renderers have it.
+  auto main_thread = std::make_unique<mitto::PageScheduler>();
 
   PageV8 v8;
   bool finished = false;

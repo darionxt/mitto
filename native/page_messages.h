@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 10;
+inline constexpr uint32_t kPageProtocolVersion = 11;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -135,6 +135,24 @@ enum class PageMessage : uint32_t {
   // Known Gap, such as "URL.prototype.href", in UTF-8, the first time the
   // document reaches it.
   kKnownGap = 18,
+  // To the Session: a question of the document's CookieStore, as
+  // PageCookieStoreGet says. kCookieStoreCookies answers it.
+  kCookieStoreGet = 19,
+  // To the Session: a cookie for the document's CookieStore to store, as
+  // PageCookieStoreSet says. kCookieStoreStored answers it.
+  kCookieStoreSet = 20,
+  // To the Session: a byte, 1 for the document's CookieStore to hear of each
+  // change to the document's cookies, and 0 to stop.
+  kCookieStoreListen = 21,
+  // To the Page: the cookies that a kCookieStoreGet asked for, as
+  // PageCookieStoreCookies says.
+  kCookieStoreCookies = 22,
+  // To the Page: the number of a kCookieStoreSet, as a 64-bit number, and a
+  // byte, 1 if the cookie was stored and 0 if not.
+  kCookieStoreStored = 23,
+  // To the Page, while the CookieStore listens: a change to the document's
+  // cookies, as PageCookieStoreChange says.
+  kCookieStoreChange = 24,
 };
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
@@ -484,6 +502,86 @@ struct PageResponseEnded {
   int64_t completion_time = 0;
 };
 
+// CookieSameSite's values, and none for a cookie whose same-site mode is
+// unspecified.
+enum class PageCookieSameSite : uint8_t {
+  kNone = 0,
+  kStrict = 1,
+  kLax = 2,
+  kNoRestriction = 3,
+};
+
+// A cookie as the CookieStore hands it to a page, a CookieListItem: the
+// cookie's own fields, its same-site mode as its access says, and when it
+// expires, in microseconds since the Unix epoch, for one that does.
+struct PageCookie {
+  PageCookie();
+  PageCookie(const PageCookie&);
+  PageCookie& operator=(const PageCookie&);
+  PageCookie(PageCookie&&);
+  PageCookie& operator=(PageCookie&&);
+  ~PageCookie();
+
+  std::string name;
+  std::string value;
+  // As the cookie holds it: with a leading dot for a domain cookie.
+  std::string domain;
+  std::string path;
+  std::optional<int64_t> expires;
+  bool secure = false;
+  PageCookieSameSite same_site = PageCookieSameSite::kNone;
+  bool partitioned = false;
+};
+
+// A question of a CookieStore: the cookies of the document named `name`, or
+// all of them.
+struct PageCookieStoreGet {
+  uint64_t question = 0;
+  bool all = false;
+  std::string name;
+};
+
+// A cookie that a CookieStore sets, as Blink's ToCookieParams() gives it to
+// RestrictedCookieManager: always secure and never HttpOnly.
+struct PageCookieStoreSet {
+  PageCookieStoreSet();
+  PageCookieStoreSet(PageCookieStoreSet&&);
+  PageCookieStoreSet& operator=(PageCookieStoreSet&&);
+  ~PageCookieStoreSet();
+
+  uint64_t question = 0;
+  std::string name;
+  std::string value;
+  // Empty for a host cookie, and otherwise with a leading dot.
+  std::string domain;
+  std::string path;
+  // When it expires, a base::Time in microseconds since the Windows epoch: 0
+  // for a session cookie, and the earliest time for one already expired.
+  int64_t expiry = 0;
+  // Strict, lax or no restriction.
+  PageCookieSameSite same_site = PageCookieSameSite::kStrict;
+  bool partitioned = false;
+};
+
+// The answer to a PageCookieStoreGet, in the order of the Session's cookie
+// store.
+struct PageCookieStoreCookies {
+  PageCookieStoreCookies();
+  PageCookieStoreCookies(PageCookieStoreCookies&&);
+  PageCookieStoreCookies& operator=(PageCookieStoreCookies&&);
+  ~PageCookieStoreCookies();
+
+  uint64_t question = 0;
+  std::vector<PageCookie> cookies;
+};
+
+// A change to the document's cookies that a CookieStore hears of: a cookie
+// that was set, or one that went, whose value and expiry it does not hand on.
+struct PageCookieStoreChange {
+  bool deleted = false;
+  PageCookie cookie;
+};
+
 // A frame from a Page, once checked. Which fields it uses depends on `type`.
 struct FrameFromPage {
   FrameFromPage();
@@ -514,6 +612,12 @@ struct FrameFromPage {
   std::string cookie_line;
   // kCancel.
   uint64_t cancelled = 0;
+  // kCookieStoreGet.
+  PageCookieStoreGet cookie_store_get;
+  // kCookieStoreSet.
+  PageCookieStoreSet cookie_store_set;
+  // kCookieStoreListen.
+  bool cookie_store_listen = false;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -543,6 +647,14 @@ struct FrameFromSession {
   // kCookies: the number of the question, and the line.
   uint64_t cookies_answer = 0;
   std::string cookies;
+  // kCookieStoreCookies.
+  PageCookieStoreCookies cookie_store_cookies;
+  // kCookieStoreStored: the number of the question, and whether the cookie
+  // was stored.
+  uint64_t cookie_store_stored_answer = 0;
+  bool cookie_store_stored = false;
+  // kCookieStoreChange.
+  PageCookieStoreChange cookie_store_change;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -582,6 +694,16 @@ std::string EncodeResponseBody(uint64_t number, std::string_view bytes);
 std::string EncodeResponseEnded(const PageResponseEnded& ended);
 // `line` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeCookies(uint64_t answer, std::string_view line);
+// The name fits in a frame.
+std::string EncodeCookieStoreGet(const PageCookieStoreGet& get);
+// The cookie fits in a frame.
+std::string EncodeCookieStoreSet(const PageCookieStoreSet& set);
+std::string EncodeCookieStoreListen(bool listen);
+// The cookies fit in a frame.
+std::string EncodeCookieStoreCookies(const PageCookieStoreCookies& cookies);
+std::string EncodeCookieStoreStored(uint64_t answer, bool stored);
+// The cookie fits in a frame.
+std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

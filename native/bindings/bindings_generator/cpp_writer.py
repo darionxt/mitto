@@ -692,9 +692,11 @@ class _InterfaceWriter:
             )
         ]
 
-    def _overloads_by_type(self, overloads: list[Operation], where: str) -> tuple[int, Operation, Operation] | None:
-        """For two overloads that take the same arguments but one, which is a callback function in one and a string in
-        the other, as setTimeout() has: that argument's index and the two overloads, the callback function's first."""
+    def _overloads_by_type(self, overloads: list[Operation], where: str) -> tuple[str, Operation, Operation] | None:
+        """For two overloads that take the same arguments but one, which is a string in one and a callback function, as
+        setTimeout() has, or a dictionary, as CookieStore's get() has, in the other: the test of Web IDL's overload
+        resolution that chooses the other overload for the value given there, and the two overloads, the one that the
+        test chooses first."""
         if len(overloads) != 2:
             return None
         first, second = overloads
@@ -709,11 +711,19 @@ class _InterfaceWriter:
             return None
         index = differing[0]
         kinds = {self.types.reduce(overload.arguments[index].idl_type).kind for overload in overloads}
-        if kinds != {TypeKind.CALLBACK_FUNCTION, TypeKind.STRING}:
+        if kinds == {TypeKind.CALLBACK_FUNCTION, TypeKind.STRING}:
+            # A callable value chooses the callback function, and anything else the string, which every value
+            # converts to.
+            chosen_kind, test = TypeKind.CALLBACK_FUNCTION, f"info[{index}]->IsFunction()"
+        elif kinds == {TypeKind.DICTIONARY, TypeKind.STRING}:
+            # undefined, null and any object choose the dictionary, and anything else the string.
+            chosen_kind = TypeKind.DICTIONARY
+            test = f"info[{index}]->IsUndefined() || info[{index}]->IsNull() || info[{index}]->IsObject()"
+        else:
             return None
-        if self.types.reduce(first.arguments[index].idl_type).kind is TypeKind.CALLBACK_FUNCTION:
-            return index, first, second
-        return index, second, first
+        if self.types.reduce(first.arguments[index].idl_type).kind is chosen_kind:
+            return test, first, second
+        return test, second, first
 
     def _call(self, operation: Operation, where: str, check_length: bool) -> list[str]:
         """The statements that convert an operation's arguments, call the class and set the result."""
@@ -747,25 +757,28 @@ class _InterfaceWriter:
                 return self._missing_promise(name, group.name, has_receiver=not group.is_static)
             return self._missing(name, has_receiver=not group.is_static)
         body: list[str] = []
+        overloads = self._reachable_overloads(group)
+        if not overloads:
+            raise UnhandledError(f"{where}: no overload of {group.name}() can be called")
+        # What goes after the check of how many arguments the call has, for overloads.
+        deferred_receiver: list[str] = []
         if self.returns_promise(group):
-            if len(group.overloads) != 1:
-                raise UnhandledError(f"{where}: the C++ writer does not handle overloads that return a promise")
             # Web IDL: an error before the operation returns rejects the promise it returns.
             body.append("ExceptionToRejectPromiseScope reject_promise_scope(info);")
-            if not group.is_static:
+            if not group.is_static and len(overloads) > 1:
+                # bind_gen's overload dispatcher counts the arguments before the overload checks its receiver.
+                deferred_receiver = self._promise_receiver()
+            elif not group.is_static:
                 body += self._promise_receiver()
         elif not group.is_static:
             body += self._receiver()
         body.append(self._exception_state())
-        overloads = self._reachable_overloads(group)
-        if not overloads:
-            raise UnhandledError(f"{where}: no overload of {group.name}() can be called")
         if len(overloads) == 1:
             body += self._call(overloads[0], where, check_length=True)
             return self._add_callback(name, body)
         by_type = self._overloads_by_type(overloads, where)
         if by_type is not None:
-            index, function_overload, other_overload = by_type
+            test, chosen_overload, other_overload = by_type
             required = min(
                 sum(1 for argument in overload.arguments if not argument.is_optional and not argument.is_variadic)
                 for overload in overloads
@@ -777,10 +790,10 @@ class _InterfaceWriter:
                     "  return;",
                     "}",
                 ]
-            # Web IDL's overload resolution at the distinguishing argument: a callable value chooses the callback
-            # function, and anything else the string, which every value converts to.
-            body += [f"if (info[{index}]->IsFunction()) {{"]
-            body += _indent(self._call(function_overload, where, check_length=False))
+            body += deferred_receiver
+            # Web IDL's overload resolution at the distinguishing argument.
+            body += [f"if ({test}) {{"]
+            body += _indent(self._call(chosen_overload, where, check_length=False))
             body += ["  return;", "}"]
             body += self._call(other_overload, where, check_length=False)
             return self._add_callback(name, body)
@@ -800,6 +813,7 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
+        body += deferred_receiver
         for overload in ordered[:-1]:
             body += [f"if (info.Length() >= {len(overload.arguments)}) {{"]
             body += _indent(self._call(overload, where, check_length=False))

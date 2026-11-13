@@ -32,6 +32,7 @@
 #include "mitto/request_options.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_change_dispatcher.h"
 #include "net/cookies/cookie_partition_key.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
@@ -260,6 +261,11 @@ class PageHost final : public PageChannel::Delegate {
   void OnGetCookies(uint64_t question);
   void OnSetCookie(const std::string& line);
   void OnCancel(uint64_t number);
+  // What the document's CookieStore asks, as Chrome's RestrictedCookieManager
+  // answers it, always for the document that the Session loaded.
+  void OnCookieStoreGet(PageCookieStoreGet get);
+  void OnCookieStoreSet(PageCookieStoreSet set);
+  void OnCookieStoreListen(bool listen);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -296,6 +302,10 @@ class PageHost final : public PageChannel::Delegate {
   void SendCookies(uint64_t question,
                    const net::CookieAccessResultList& cookies,
                    const net::CookieAccessResultList& excluded);
+  void SendCookieStoreCookies(const PageCookieStoreGet& get,
+                              const net::CookieAccessResultList& cookies,
+                              const net::CookieAccessResultList& excluded);
+  void OnCookieStoreChange(const net::CookieChangeInfo& change);
 
   // Whether the Page's document can have cookies, which only one that the
   // Session loaded over HTTP or HTTPS can.
@@ -337,6 +347,8 @@ class PageHost final : public PageChannel::Delegate {
   // the Initiator of the Page's requests, and whose cookies document.cookie
   // reads and writes. Empty until one has loaded.
   GURL document_url_;
+  // While the document's CookieStore listens: what tells it of each change.
+  std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

@@ -35,7 +35,9 @@ _INTEGERS = {
 
 # The integer types whose conversion from a JavaScript value the writer handles: ToInt32 or ToUint32 and then, for the
 # narrower ones, the low bits, which is what Web IDL's ConvertToInt() gives without [EnforceRange] or [Clamp].
-_CONVERTED_INTEGERS = frozenset({"byte", "octet", "short", "unsigned short", "long", "unsigned long"})
+_CONVERTED_INTEGERS = frozenset(
+    {"byte", "octet", "short", "unsigned short", "long", "unsigned long", "long long", "unsigned long long"}
+)
 
 # The integer types that a page reads as a Number rather than a V8 Integer, which holds 32 bits.
 _64_BIT_INTEGERS = frozenset({"long long", "unsigned long long"})
@@ -229,12 +231,15 @@ class TypeMapper:
         kind = idl_type.kind
         if kind is TypeKind.BOOLEAN and not idl_type.nullable:
             return "bool"
-        if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS and not idl_type.nullable:
-            return _INTEGERS[idl_type.name]
+        if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS:
+            # Empty for null.
+            return f"std::optional<{_INTEGERS[idl_type.name]}>" if idl_type.nullable else _INTEGERS[idl_type.name]
         if _is_enforce_range(idl_type):
             return _INTEGERS[idl_type.name]
-        if kind is TypeKind.FLOATING_POINT and not idl_type.nullable:
-            return "float" if idl_type.name.endswith("float") else "double"
+        if kind is TypeKind.FLOATING_POINT:
+            cpp_type = "float" if idl_type.name.endswith("float") else "double"
+            # Empty for null.
+            return f"std::optional<{cpp_type}>" if idl_type.nullable else cpp_type
         if kind is TypeKind.STRING and idl_type.name in ("DOMString", "USVString"):
             if idl_type.nullable:
                 return "const std::optional<std::u16string>&"
@@ -472,6 +477,19 @@ class TypeMapper:
                 f"  {site.fail}",
                 "}",
             ]
+        if kind is TypeKind.INTEGER and idl_type.nullable:
+            # Web IDL: null and undefined convert to null, and anything else as the type does.
+            element = cpp_type.removeprefix("std::optional<").removesuffix(">")
+            return [
+                f"{cpp_type} {target};",
+                f"if (!{value}->IsNullOrUndefined()) {{",
+                f"  {element} {target}_value;",
+                f"  if (!FromV8Integer(isolate, {value}, &{target}_value)) {{",
+                f"    {site.fail}",
+                "  }",
+                f"  {target} = {target}_value;",
+                "}",
+            ]
         if kind is TypeKind.INTEGER:
             return [
                 f"{cpp_type} {target};",
@@ -571,13 +589,23 @@ class TypeMapper:
         if kind is TypeKind.FLOATING_POINT:
             restricted = "false" if idl_type.name.startswith("unrestricted") else "true"
             name = idl_type.name.removeprefix("unrestricted ")
-            return [
+            convert = [
                 f"double {target}_double;",
                 f'if (!FromV8Double(isolate, {value}, {restricted}, "{name}", &{target}_double)) {{',
                 f"  {site.fail}",
                 "}",
-                f"const {cpp_type} {target} = static_cast<{cpp_type}>({target}_double);",
             ]
+            if idl_type.nullable:
+                # Web IDL: null and undefined convert to null, and anything else as the type does.
+                element = cpp_type.removeprefix("std::optional<").removesuffix(">")
+                return [
+                    f"{cpp_type} {target};",
+                    f"if (!{value}->IsNullOrUndefined()) {{",
+                    *["  " + line for line in convert],
+                    f"  {target} = static_cast<{element}>({target}_double);",
+                    "}",
+                ]
+            return [*convert, f"const {cpp_type} {target} = static_cast<{cpp_type}>({target}_double);"]
         if kind is TypeKind.ANY:
             return [f"const v8::Local<v8::Value> {target} = {value};"]
         if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES and not idl_type.nullable:
@@ -653,7 +681,7 @@ class TypeMapper:
             return "u" + literal
         if kind is TypeKind.STRING and literal.startswith('"'):
             return literal if idl_type.name == "ByteString" else "u" + literal
-        if kind is TypeKind.STRING and idl_type.nullable and literal == "null":
+        if kind in (TypeKind.STRING, TypeKind.FLOATING_POINT) and idl_type.nullable and literal == "null":
             return "std::nullopt"
         if kind is TypeKind.DICTIONARY and literal == "{}":
             return f"{idl_type.name}()"

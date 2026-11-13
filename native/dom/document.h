@@ -148,6 +148,7 @@ class Document : public Node {
   // document that has a window and no jar has an opaque origin, as about:blank
   // has in a new tab, and its cookie attribute throws.
   void SetCookieJar(CookieJar* cookie_jar) { cookie_jar_ = cookie_jar; }
+  CookieJar* GetCookieJar() const { return cookie_jar_; }
   Readiness GetReadiness() const { return readiness_; }
   // Sets the readiness, and fires readystatechange at the document for
   // interactive and complete, as Blink's Document::SetReadyState() does.

@@ -174,7 +174,7 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kKnownGap);
+         type <= static_cast<uint32_t>(PageMessage::kCookieStoreChange);
 }
 
 bool IsRequestKind(uint8_t kind) {
@@ -663,6 +663,166 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   return request;
 }
 
+bool IsSameSite(uint8_t same_site) {
+  return same_site <= static_cast<uint8_t>(PageCookieSameSite::kNoRestriction);
+}
+
+std::string EncodeSized(std::string_view part) {
+  return base::StrCat({EncodeUint32(static_cast<uint32_t>(part.size())), part});
+}
+
+// A cookie: a byte of flags, 1 if it is secure, 2 if it is partitioned and 4
+// if it expires, a byte of its same-site mode, when it expires, 0 if it does
+// not, then its name, value, domain and path, each after its size.
+std::string EncodeCookie(const PageCookie& cookie) {
+  const char flags =
+      static_cast<char>((cookie.secure ? 1 : 0) | (cookie.partitioned ? 2 : 0) |
+                        (cookie.expires ? 4 : 0));
+  const char same_site = static_cast<char>(cookie.same_site);
+  return base::StrCat({std::string_view(&flags, 1),
+                       std::string_view(&same_site, 1),
+                       EncodeInt64(cookie.expires.value_or(0)),
+                       EncodeSized(cookie.name), EncodeSized(cookie.value),
+                       EncodeSized(cookie.domain), EncodeSized(cookie.path)});
+}
+
+// Takes a cookie from the front of `bytes`. A cookie of the Session's store
+// may hold any bytes, which the Page reads as UTF-8 as Blink does.
+std::optional<PageCookie> TakeCookie(std::string_view& bytes) {
+  if (bytes.size() < 10) {
+    return std::nullopt;
+  }
+  const uint8_t flags = static_cast<uint8_t>(bytes[0]);
+  const uint8_t same_site = static_cast<uint8_t>(bytes[1]);
+  if (flags > 7 || !IsSameSite(same_site)) {
+    return std::nullopt;
+  }
+  PageCookie cookie;
+  cookie.secure = flags & 1;
+  cookie.partitioned = flags & 2;
+  const int64_t expires = DecodeInt64(bytes.substr(2, 8));
+  if (flags & 4) {
+    cookie.expires = expires;
+  } else if (expires != 0) {
+    return std::nullopt;
+  }
+  cookie.same_site = static_cast<PageCookieSameSite>(same_site);
+  bytes.remove_prefix(10);
+  std::string_view name;
+  std::string_view value;
+  std::string_view domain;
+  std::string_view path;
+  if (!TakeSized(bytes, name) || !TakeSized(bytes, value) ||
+      !TakeSized(bytes, domain) || !TakeSized(bytes, path)) {
+    return std::nullopt;
+  }
+  cookie.name = std::string(name);
+  cookie.value = std::string(value);
+  cookie.domain = std::string(domain);
+  cookie.path = std::string(path);
+  return cookie;
+}
+
+// A question of a CookieStore: its number, a byte, 1 for all cookies and 0
+// for those of a name, and the name, empty for all.
+base::expected<PageCookieStoreGet, std::string> ReadCookieStoreGet(
+    std::string_view payload) {
+  if (payload.size() < 9) {
+    return base::unexpected(WrongSize("CookieStore question", payload.size()));
+  }
+  PageCookieStoreGet get;
+  get.question = DecodeUint64(payload.substr(0, 8));
+  const uint8_t all = static_cast<uint8_t>(payload[8]);
+  const std::string_view name = payload.substr(9);
+  if (all > 1 || (all == 1 && !name.empty()) || !IsText(name)) {
+    return base::unexpected("a question of a CookieStore that is not valid");
+  }
+  get.all = all == 1;
+  get.name = std::string(name);
+  return get;
+}
+
+// A cookie that a CookieStore sets: the number of the question, when the
+// cookie expires, a byte of its same-site mode and one that is 1 if it is
+// partitioned, then its name, value, domain, each after its size, and path.
+base::expected<PageCookieStoreSet, std::string> ReadCookieStoreSet(
+    std::string_view payload) {
+  constexpr std::string_view kNotValid =
+      "a cookie of a CookieStore that is not valid";
+  if (payload.size() < 18) {
+    return base::unexpected(WrongSize("CookieStore cookie", payload.size()));
+  }
+  PageCookieStoreSet set;
+  set.question = DecodeUint64(payload.substr(0, 8));
+  set.expiry = DecodeInt64(payload.substr(8, 8));
+  const uint8_t same_site = static_cast<uint8_t>(payload[16]);
+  const uint8_t partitioned = static_cast<uint8_t>(payload[17]);
+  if (same_site == static_cast<uint8_t>(PageCookieSameSite::kNone) ||
+      !IsSameSite(same_site) || partitioned > 1) {
+    return base::unexpected(std::string(kNotValid));
+  }
+  set.same_site = static_cast<PageCookieSameSite>(same_site);
+  set.partitioned = partitioned == 1;
+  std::string_view bytes = payload.substr(18);
+  std::string_view name;
+  std::string_view value;
+  std::string_view domain;
+  if (!TakeSized(bytes, name) || !TakeSized(bytes, value) ||
+      !TakeSized(bytes, domain) || !IsText(name) || !IsText(value) ||
+      !IsText(domain) || !IsText(bytes)) {
+    return base::unexpected(std::string(kNotValid));
+  }
+  set.name = std::string(name);
+  set.value = std::string(value);
+  set.domain = std::string(domain);
+  set.path = std::string(bytes);
+  return set;
+}
+
+base::expected<PageCookieStoreCookies, std::string> ReadCookieStoreCookies(
+    std::string_view payload) {
+  if (payload.size() < 12) {
+    return base::unexpected(
+        WrongSize("list of CookieStore cookies", payload.size()));
+  }
+  PageCookieStoreCookies cookies;
+  cookies.question = DecodeUint64(payload.substr(0, 8));
+  const uint32_t count = DecodeUint32(payload.substr(8, 4));
+  std::string_view bytes = payload.substr(12);
+  // Each cookie takes at least 26 bytes, which bounds what to reserve.
+  if (count > bytes.size() / 26) {
+    return base::unexpected("cookies of a CookieStore that are not valid");
+  }
+  cookies.cookies.reserve(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    std::optional<PageCookie> cookie = TakeCookie(bytes);
+    if (!cookie) {
+      return base::unexpected("cookies of a CookieStore that are not valid");
+    }
+    cookies.cookies.push_back(*std::move(cookie));
+  }
+  if (!bytes.empty()) {
+    return base::unexpected("cookies of a CookieStore that are not valid");
+  }
+  return cookies;
+}
+
+base::expected<PageCookieStoreChange, std::string> ReadCookieStoreChange(
+    std::string_view payload) {
+  if (payload.empty() || static_cast<uint8_t>(payload[0]) > 1) {
+    return base::unexpected("a change of cookies that is not valid");
+  }
+  PageCookieStoreChange change;
+  change.deleted = payload[0] == 1;
+  std::string_view bytes = payload.substr(1);
+  std::optional<PageCookie> cookie = TakeCookie(bytes);
+  if (!cookie || !bytes.empty()) {
+    return base::unexpected("a change of cookies that is not valid");
+  }
+  change.cookie = *std::move(cookie);
+  return change;
+}
+
 base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
   if (payload.size() != 12) {
     return base::unexpected(WrongSize("credit", payload.size()));
@@ -808,6 +968,26 @@ PageResponseStarted::PageResponseStarted(PageResponseStarted&&) = default;
 PageResponseStarted& PageResponseStarted::operator=(PageResponseStarted&&) =
     default;
 PageResponseStarted::~PageResponseStarted() = default;
+
+PageCookie::PageCookie() = default;
+PageCookie::PageCookie(const PageCookie&) = default;
+PageCookie& PageCookie::operator=(const PageCookie&) = default;
+PageCookie::PageCookie(PageCookie&&) = default;
+PageCookie& PageCookie::operator=(PageCookie&&) = default;
+PageCookie::~PageCookie() = default;
+
+PageCookieStoreSet::PageCookieStoreSet() = default;
+PageCookieStoreSet::PageCookieStoreSet(PageCookieStoreSet&&) = default;
+PageCookieStoreSet& PageCookieStoreSet::operator=(PageCookieStoreSet&&) =
+    default;
+PageCookieStoreSet::~PageCookieStoreSet() = default;
+
+PageCookieStoreCookies::PageCookieStoreCookies() = default;
+PageCookieStoreCookies::PageCookieStoreCookies(PageCookieStoreCookies&&) =
+    default;
+PageCookieStoreCookies& PageCookieStoreCookies::operator=(
+    PageCookieStoreCookies&&) = default;
+PageCookieStoreCookies::~PageCookieStoreCookies() = default;
 
 PageResponseBody::PageResponseBody() = default;
 PageResponseBody::PageResponseBody(PageResponseBody&&) = default;
@@ -1124,6 +1304,55 @@ std::string EncodeCookies(uint64_t answer, std::string_view line) {
                      base::StrCat({EncodeUint64(answer), line}));
 }
 
+std::string EncodeCookieStoreGet(const PageCookieStoreGet& get) {
+  const char all = get.all ? 1 : 0;
+  return EncodeFrame(PageMessage::kCookieStoreGet,
+                     base::StrCat({EncodeUint64(get.question),
+                                   std::string_view(&all, 1), get.name}));
+}
+
+std::string EncodeCookieStoreSet(const PageCookieStoreSet& set) {
+  const char same_site = static_cast<char>(set.same_site);
+  const char partitioned = set.partitioned ? 1 : 0;
+  return EncodeFrame(
+      PageMessage::kCookieStoreSet,
+      base::StrCat({EncodeUint64(set.question), EncodeInt64(set.expiry),
+                    std::string_view(&same_site, 1),
+                    std::string_view(&partitioned, 1), EncodeSized(set.name),
+                    EncodeSized(set.value), EncodeSized(set.domain),
+                    set.path}));
+}
+
+std::string EncodeCookieStoreListen(bool listen) {
+  const char byte = listen ? 1 : 0;
+  return EncodeFrame(PageMessage::kCookieStoreListen,
+                     std::string_view(&byte, 1));
+}
+
+std::string EncodeCookieStoreCookies(const PageCookieStoreCookies& cookies) {
+  std::string payload = base::StrCat(
+      {EncodeUint64(cookies.question),
+       EncodeUint32(static_cast<uint32_t>(cookies.cookies.size()))});
+  for (const PageCookie& cookie : cookies.cookies) {
+    payload += EncodeCookie(cookie);
+  }
+  return EncodeFrame(PageMessage::kCookieStoreCookies, payload);
+}
+
+std::string EncodeCookieStoreStored(uint64_t answer, bool stored) {
+  const char byte = stored ? 1 : 0;
+  return EncodeFrame(
+      PageMessage::kCookieStoreStored,
+      base::StrCat({EncodeUint64(answer), std::string_view(&byte, 1)}));
+}
+
+std::string EncodeCookieStoreChange(const PageCookieStoreChange& change) {
+  const char deleted = change.deleted ? 1 : 0;
+  return EncodeFrame(PageMessage::kCookieStoreChange,
+                     base::StrCat({std::string_view(&deleted, 1),
+                                   EncodeCookie(change.cookie)}));
+}
+
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     uint32_t type,
     std::string payload) {
@@ -1237,12 +1466,39 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.known_gap = std::move(payload);
       return frame;
+    case PageMessage::kCookieStoreGet: {
+      base::expected<PageCookieStoreGet, std::string> get =
+          ReadCookieStoreGet(payload);
+      if (!get.has_value()) {
+        return base::unexpected(std::move(get).error());
+      }
+      frame.cookie_store_get = *std::move(get);
+      return frame;
+    }
+    case PageMessage::kCookieStoreSet: {
+      base::expected<PageCookieStoreSet, std::string> set =
+          ReadCookieStoreSet(payload);
+      if (!set.has_value()) {
+        return base::unexpected(std::move(set).error());
+      }
+      frame.cookie_store_set = *std::move(set);
+      return frame;
+    }
+    case PageMessage::kCookieStoreListen:
+      if (payload.size() != 1 || static_cast<uint8_t>(payload[0]) > 1) {
+        return base::unexpected("a CookieStore's listening that is not valid");
+      }
+      frame.cookie_store_listen = payload[0] == 1;
+      return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
     case PageMessage::kResponseBody:
     case PageMessage::kResponseEnded:
     case PageMessage::kCookies:
+    case PageMessage::kCookieStoreCookies:
+    case PageMessage::kCookieStoreStored:
+    case PageMessage::kCookieStoreChange:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -1328,6 +1584,33 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.cookies_answer = DecodeUint64(std::string_view(payload));
       frame.cookies = payload.substr(8);
       return frame;
+    case PageMessage::kCookieStoreCookies: {
+      base::expected<PageCookieStoreCookies, std::string> cookies =
+          ReadCookieStoreCookies(payload);
+      if (!cookies.has_value()) {
+        return base::unexpected(std::move(cookies).error());
+      }
+      frame.cookie_store_cookies = *std::move(cookies);
+      return frame;
+    }
+    case PageMessage::kCookieStoreStored:
+      if (payload.size() != 9 || static_cast<uint8_t>(payload[8]) > 1) {
+        return base::unexpected(
+            WrongSize("CookieStore answer", payload.size()));
+      }
+      frame.cookie_store_stored_answer =
+          DecodeUint64(std::string_view(payload).substr(0, 8));
+      frame.cookie_store_stored = payload[8] == 1;
+      return frame;
+    case PageMessage::kCookieStoreChange: {
+      base::expected<PageCookieStoreChange, std::string> change =
+          ReadCookieStoreChange(payload);
+      if (!change.has_value()) {
+        return base::unexpected(std::move(change).error());
+      }
+      frame.cookie_store_change = *std::move(change);
+      return frame;
+    }
     case PageMessage::kEvaluated:
     case PageMessage::kConsole:
     case PageMessage::kUncaughtError:
@@ -1338,6 +1621,9 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kLoaded:
     case PageMessage::kCancel:
     case PageMessage::kKnownGap:
+    case PageMessage::kCookieStoreGet:
+    case PageMessage::kCookieStoreSet:
+    case PageMessage::kCookieStoreListen:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

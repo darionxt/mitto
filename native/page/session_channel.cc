@@ -181,6 +181,29 @@ class SessionLink final : public PageChannel::Delegate
                                ", which no script waits for"}));
         }
         return;
+      case PageMessage::kCookieStoreCookies: {
+        const uint64_t question = frame->cookie_store_cookies.question;
+        if (!cookie_jar_->AnswerCookieStoreGet(
+                std::move(frame->cookie_store_cookies))) {
+          Refuse(base::StrCat({"cookies for CookieStore question ",
+                               base::NumberToString(question),
+                               ", which no script waits for"}));
+        }
+        return;
+      }
+      case PageMessage::kCookieStoreStored:
+        if (!cookie_jar_->AnswerCookieStoreSet(
+                frame->cookie_store_stored_answer,
+                frame->cookie_store_stored)) {
+          Refuse(base::StrCat(
+              {"an answer for CookieStore question ",
+               base::NumberToString(frame->cookie_store_stored_answer),
+               ", which no script waits for"}));
+        }
+        return;
+      case PageMessage::kCookieStoreChange:
+        cookie_jar_->CookieStoreChanged(std::move(frame->cookie_store_change));
+        return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
       case PageMessage::kConsole:
@@ -192,6 +215,9 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kLoaded:
       case PageMessage::kCancel:
       case PageMessage::kKnownGap:
+      case PageMessage::kCookieStoreGet:
+      case PageMessage::kCookieStoreSet:
+      case PageMessage::kCookieStoreListen:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

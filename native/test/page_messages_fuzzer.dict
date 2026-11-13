@@ -13,6 +13,9 @@
 "\x0c\x00\x00\x00"
 "\x11\x00\x00\x00"
 "\x12\x00\x00\x00"
+"\x13\x00\x00\x00"
+"\x14\x00\x00\x00"
+"\x15\x00\x00\x00"
 "\x09\x00\x00\x00\x05\x00\x00\x00"
 "\x00\x00\x00\x01"
 # What a result holds.
@@ -39,3 +42,12 @@
 "\x11\x00\x00\x00"
 # What document.cookie may be set to.
 "a=b; HttpOnly"
+# What a CookieStore asks: a number, a byte that is 1 for all cookies, and a
+# name; a cookie to set, with an expiry, a same-site byte from 1 to 3, a
+# partitioned byte, then a name, a value and a domain, each after its size, and
+# a path; whether to listen.
+"\x00"
+"\x03"
+"__Host-"
+".example.com"
+"/"

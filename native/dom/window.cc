@@ -16,6 +16,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/bar_prop.h"
+#include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
 #include "mitto/dom/crypto.h"
 #include "mitto/dom/custom_element_registry.h"
@@ -25,7 +26,9 @@
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/event.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
 #include "mitto/dom/navigation.h"
@@ -105,7 +108,36 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(navigation_);
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
+  visitor->Trace(cookie_store_);
+  visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
+}
+
+// WindowIdleTasks::requestIdleCallback(): 0 once the context has gone.
+uint32_t Window::RequestIdleCallback(
+    v8::Local<v8::Function> callback,
+    const bindings::IdleRequestOptions& options) {
+  return idle_tasks_ ? idle_tasks_->RequestIdleCallback(callback, options.timeout)
+                     : 0;
+}
+
+void Window::CancelIdleCallback(uint32_t handle) {
+  if (idle_tasks_) {
+    idle_tasks_->CancelIdleCallback(handle);
+  }
+}
+
+size_t Window::IdleCallbackCount() const {
+  return idle_tasks_ ? idle_tasks_->size() : 0;
+}
+
+// LocalDOMWindow::event(): the current event, or undefined.
+v8::Local<v8::Value> Window::Event() const {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!current_event_) {
+    return v8::Undefined(isolate);
+  }
+  return current_event_->ToV8(isolate);
 }
 
 v8::Local<v8::Value> Window::OpenerForBindings() const {
@@ -202,6 +234,14 @@ mitto::Crypto* Window::Crypto() {
     crypto_ = mitto::Crypto::Create();
   }
   return crypto_.Get();
+}
+
+// GlobalCookieStore::cookieStore(): the window's supplement.
+mitto::CookieStore* Window::CookieStore() {
+  if (!cookie_store_) {
+    cookie_store_ = bindings::MakeGarbageCollected<mitto::CookieStore>(this);
+  }
+  return cookie_store_.Get();
 }
 
 CustomElementRegistry* Window::CustomElements() {
@@ -310,12 +350,22 @@ void Window::SetTimers(DOMTimerCoordinator* timers) {
   if (timers) {
     return;
   }
-  // The context goes, and with it the signals' timers.
+  // The context goes, and with it the signals' timers and what else goes
+  // with it.
   std::map<uint64_t, base::OnceClosure> signal_timers;
   signal_timers.swap(signal_timers_);
   for (auto& [id, cancel] : signal_timers) {
     std::move(cancel).Run();
   }
+  std::vector<base::OnceClosure> callbacks;
+  callbacks.swap(context_destroyed_callbacks_);
+  for (base::OnceClosure& callback : callbacks) {
+    std::move(callback).Run();
+  }
+}
+
+void Window::AddContextDestroyedCallback(base::OnceClosure callback) {
+  context_destroyed_callbacks_.push_back(std::move(callback));
 }
 
 uint64_t Window::AddSignalTimer(base::OnceClosure cancel) {

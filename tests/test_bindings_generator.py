@@ -253,10 +253,25 @@ def test_it_refuses_a_feature_it_cannot_read(entry: dict[str, object], message: 
 def test_the_cpp_writer_refuses_a_type_it_cannot_convert_and_names_it() -> None:
     types = TypeMapper(frozenset({"Event"}), frozenset())
 
-    with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type long long$"):
-        types.argument_type(IdlType(TypeKind.INTEGER, "long long"), "argument x of Thing.f")
+    with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type boolean\?$"):
+        types.argument_type(IdlType(TypeKind.BOOLEAN, "boolean", nullable=True), "argument x of Thing.f")
     with pytest.raises(UnhandledError, match=r"of type boolean\?$"):
         types.return_type(IdlType(TypeKind.BOOLEAN, "boolean", nullable=True), "attribute Thing.on")
+
+
+def test_64_bit_and_nullable_numbers_convert_with_null_for_null_and_undefined() -> None:
+    # CookieInit's expires and maxAge.
+    types = TypeMapper(frozenset({"Event"}), frozenset())
+    nullable_double = IdlType(TypeKind.FLOATING_POINT, "double", nullable=True)
+    nullable_long_long = IdlType(TypeKind.INTEGER, "long long", nullable=True)
+
+    assert types.argument_type(IdlType(TypeKind.INTEGER, "long long"), "x") == "int64_t"
+    assert types.argument_type(nullable_double, "x") == "std::optional<double>"
+    assert types.argument_type(nullable_long_long, "x") == "std::optional<int64_t>"
+    assert types.default_value(nullable_double, "null", "x") == "std::nullopt"
+    converted = "\n".join(types.from_v8(nullable_long_long, "info[0]", "value", Site(fail="return;"), "x"))
+    assert "if (!info[0]->IsNullOrUndefined()) {" in converted
+    assert "FromV8Integer(isolate, info[0], &value_value)" in converted
 
 
 def test_a_class_can_give_null_for_an_interface_without_a_class_whatever_the_idl_says() -> None:
@@ -819,7 +834,9 @@ def _collection(*specials: str, unenumerable: bool = True) -> Interface:
     )
 
 
-def _bindings_of(interface: Interface, implemented: ImplementedInterface) -> str:
+def _bindings_of(
+    interface: Interface, implemented: ImplementedInterface, dictionaries: dict[str, Dictionary] | None = None
+) -> str:
     """The bindings that the C++ writer gives the interface, beside a Window that exposes it."""
     window = _interface(
         name="Window",
@@ -829,9 +846,63 @@ def _bindings_of(interface: Interface, implemented: ImplementedInterface) -> str
         exposed_constructs=("Thing", "Window"),
         exposed=tuple(ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Thing", "Window")),
     )
-    definitions = Definitions({"Thing": interface, "Window": window}, {}, {}, {}, frozenset())
+    definitions = Definitions({"Thing": interface, "Window": window}, dictionaries or {}, {}, {}, frozenset())
     files = write_bindings(definitions, [], [implemented, ImplementedInterface("Window", "mitto/dom/window.h")])
     return files["v8_thing.cc"]
+
+
+def test_overloads_that_return_promises_choose_a_dictionary_for_undefined_null_and_objects() -> None:
+    # CookieStore's get(): a string or optional options, and an error in either rejects the promise.
+    promise = IdlType(TypeKind.PROMISE, "Promise", members=(IdlType(TypeKind.ANY, "any"),))
+    by_name = Operation(
+        "get",
+        (Argument("name", IdlType(TypeKind.STRING, "USVString"), False, False, None),),
+        promise,
+        False,
+        _extended("RaisesException"),
+        ALWAYS,
+    )
+    by_options = Operation(
+        "get",
+        (Argument("options", IdlType(TypeKind.DICTIONARY, "Options"), True, False, "{}"),),
+        promise,
+        False,
+        _extended("RaisesException"),
+        ALWAYS,
+    )
+    member = DictionaryMember("name", IdlType(TypeKind.STRING, "USVString"), False, None, ExtendedAttributes(), ALWAYS)
+    interface = _interface(
+        operation_groups=(OperationGroup("get", (by_name, by_options), False, 0, ExtendedAttributes(), ALWAYS),)
+    )
+
+    source = _bindings_of(
+        interface,
+        ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("get",)),
+        {"Options": Dictionary("Options", None, (member,), ExtendedAttributes())},
+    )
+
+    assert "ExceptionToRejectPromiseScope reject_promise_scope(info);" in source
+    assert "if (info[0]->IsUndefined() || info[0]->IsNull() || info[0]->IsObject()) {" in source
+    assert "info.Length() <" not in source
+
+
+def test_overloads_that_return_promises_count_the_arguments_before_checking_the_receiver() -> None:
+    # As CookieStore's set() and delete(): a call of too few arguments on another object rejects for the arguments.
+    promise = IdlType(TypeKind.PROMISE, "Promise", members=(IdlType(TypeKind.ANY, "any"),))
+    name = Argument("name", IdlType(TypeKind.STRING, "DOMString"), False, False, None)
+    flag = Argument("flag", BOOLEAN, False, False, None)
+    overloads = (
+        Operation("request", (name,), promise, False, ExtendedAttributes(), ALWAYS),
+        Operation("request", (name, flag), promise, False, ExtendedAttributes(), ALWAYS),
+    )
+    interface = _interface(
+        operation_groups=(OperationGroup("request", overloads, False, 1, ExtendedAttributes(), ALWAYS),)
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("request",)))
+
+    body = source[source.index("void RequestOperationCallback") :]
+    assert body.index("if (info.Length() < 1) {") < body.index("Illegal invocation")
 
 
 def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() -> None:

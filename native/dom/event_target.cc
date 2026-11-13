@@ -10,8 +10,10 @@
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_event_target.h"
+#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/window.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -479,6 +481,14 @@ bool EventTarget::FireEventListeners(Event* event) {
   }
   const v8::Local<v8::Value> current_target = ToV8(isolate);
   const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
+  // JSBasedEventListener::Invoke(): while a listener runs, its window's
+  // current event is the event, which window.event gives, and then what it
+  // was before. A Page has no shadow tree that would keep it from the window.
+  Window* const window =
+      isolate->InContext()
+          ? bindings::V8Window::ToWrappable(
+                isolate, isolate->GetCurrentContext()->Global())
+          : nullptr;
   for (const cppgc::Persistent<EventListenerEntry>& entry : entries) {
     if (entry->removed() || entry->type() != event->Type()) {
       continue;
@@ -490,12 +500,20 @@ bool EventTarget::FireEventListeners(Event* event) {
       RemoveEntry(entry.Get());
     }
     event->SetInPassiveListener(entry->passive());
+    const cppgc::Persistent<Event> previous_event(
+        window ? window->CurrentEvent() : nullptr);
+    if (window) {
+      window->SetCurrentEvent(event);
+    }
     if (entry->attribute_handler()) {
       CallAttributeHandler(isolate, entry->callback(isolate), current_target,
                            event_wrapper, event);
     } else {
       CallListener(isolate, entry->callback(isolate), current_target,
                    event_wrapper);
+    }
+    if (window) {
+      window->SetCurrentEvent(previous_event.Get());
     }
     event->SetInPassiveListener(false);
   }

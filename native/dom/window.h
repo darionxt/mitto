@@ -39,13 +39,16 @@ namespace mitto {
 
 class BarProp;
 class CrashReportContext;
+class CookieStore;
 class Crypto;
 class CustomElementRegistry;
 class DOMTimerCoordinator;
 class Document;
 class DocumentLoadTiming;
 class Fetcher;
+class Event;
 class History;
+class IdleTaskController;
 class Location;
 class MediaQueryList;
 class Navigation;
@@ -137,7 +140,15 @@ class Window final : public WindowProperties {
   mitto::StyleMedia* StyleMedia();
   mitto::Navigation* Navigation();
   CustomElementRegistry* CustomElements();
+  uint32_t RequestIdleCallback(v8::Local<v8::Function> callback,
+                               const bindings::IdleRequestOptions& options);
+  void CancelIdleCallback(uint32_t handle);
+  // The event that a listener of the window's context is called for, or
+  // undefined outside one.
+  v8::Local<v8::Value> Event() const;
   mitto::Crypto* Crypto();
+  // The window's cookie store, made the first time.
+  mitto::CookieStore* CookieStore();
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -157,6 +168,15 @@ class Window final : public WindowProperties {
   size_t TimerCount() const;
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
+  // The idle callbacks of the window's context, which go with it, as its
+  // timers do.
+  void SetIdleTasks(IdleTaskController* idle_tasks) { idle_tasks_ = idle_tasks; }
+  // How many idle callbacks wait.
+  size_t IdleCallbackCount() const;
+  // The HTML Standard's current event of the window, which a dispatch sets
+  // while it calls a listener.
+  mitto::Event* CurrentEvent() const { return current_event_.Get(); }
+  void SetCurrentEvent(mitto::Event* event) { current_event_ = event; }
   // Whether the Page still runs the window's context: it gives the window its
   // timers until the context goes.
   bool HasContext() const { return timers_ != nullptr; }
@@ -166,6 +186,11 @@ class Window final : public WindowProperties {
   // ContextDestroyed() cancels the signal's task.
   uint64_t AddSignalTimer(base::OnceClosure cancel);
   void RemoveSignalTimer(uint64_t id);
+  // What else goes with the context, such as the locks of a LockManager:
+  // `callback` runs once the Page lets the context go, as Blink's
+  // ExecutionContextLifecycleObserver::ContextDestroyed() does. It counts
+  // among no timers.
+  void AddContextDestroyedCallback(base::OnceClosure callback);
   // What the window reads of the browser and the machine, from the Page's
   // start, and what navigator.connection gives its document. Without them, as
   // in the Page program given a script, it reads what a default PageStart
@@ -215,14 +240,18 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Navigation> navigation_;
   cppgc::Member<CustomElementRegistry> custom_elements_;
   cppgc::Member<mitto::Crypto> crypto_;
+  cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
+  cppgc::Member<mitto::Event> current_event_;
   PageStart start_;
   PageConnection connection_;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
+  std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;
+  raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
 };
 
 }  // namespace mitto

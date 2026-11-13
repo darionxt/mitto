@@ -1,4 +1,5 @@
-"""Tests of a Page's event loop: tasks, microtasks, timers and the coarsened clocks, in the Page program.
+"""Tests of a Page's event loop: tasks, microtasks, timers, idle callbacks, window.event and the coarsened clocks, in the
+Page program.
 
 These run where MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_document.py does. The program runs a script
 from standard input, which keeps long scripts and any text intact on every Host, then its event loop until no task or
@@ -289,6 +290,191 @@ def test_the_timers_and_queue_microtask_check_their_arguments_as_chrome_does(pro
         0,
         1,
     ]
+
+
+def test_idle_callbacks_run_when_nothing_else_is_ready_as_chrome_runs_them(program: Path) -> None:
+    # What Chrome 157 gave for this script once its page had loaded, when it has long idle periods as a Page does. The
+    # callback with a timeout runs as a task of its own while a busy idle callback holds the idle period up.
+    script = """
+      new Promise((resolve) => {
+        const error = (f) => { try { f(); return null; } catch (e) { return `${e.name}: ${e.message}`; } };
+        const out = {};
+        out.errors = {
+          noArgs: error(() => requestIdleCallback()),
+          notFunction: error(() => requestIdleCallback(5)),
+          badOptions: error(() => requestIdleCallback(() => {}, 5)),
+          cancelNoArgs: error(() => cancelIdleCallback()),
+          construct: error(() => new IdleDeadline()),
+        };
+        out.cancels = [cancelIdleCallback(0), cancelIdleCallback(-1), cancelIdleCallback(123456)];
+        const order = [];
+        const first = requestIdleCallback(function (deadline) {
+          order.push('idle');
+          out.first = {
+            thisIsWindow: this === window,
+            didTimeout: deadline.didTimeout,
+            remaining: deadline.timeRemaining() > 0 && deadline.timeRemaining() <= 50,
+            tag: Object.prototype.toString.call(deadline),
+            own: Object.getOwnPropertyNames(deadline),
+            args: arguments.length,
+          };
+          requestIdleCallback((d) => {
+            order.push('nested');
+            const s = performance.now();
+            while (performance.now() - s < 5) {}
+            out.after = [d.didTimeout, d.timeRemaining() >= 0];
+            const timed = requestIdleCallback((d2) => {
+              order.push('timeout');
+              out.timeout = [d2.didTimeout, d2.timeRemaining()];
+              out.order = order;
+              resolve(out);
+            }, {timeout: 1});
+            out.timedId = timed > first;
+            const busy = performance.now();
+            while (performance.now() - busy < 20) {}
+          });
+        });
+        const cancelled = requestIdleCallback(() => order.push('cancelled'));
+        cancelIdleCallback(cancelled);
+        out.ids = [first, cancelled - first];
+        setTimeout(() => order.push('timer'), 0);
+      })
+    """
+
+    assert _evaluate(program, script) == {
+        "errors": {
+            "noArgs": "TypeError: Failed to execute 'requestIdleCallback' on 'Window': 1 argument required, but only 0 "
+            "present.",
+            "notFunction": "TypeError: Failed to execute 'requestIdleCallback' on 'Window': parameter 1 is not of type "
+            "'Function'.",
+            "badOptions": "TypeError: Failed to execute 'requestIdleCallback' on 'Window': The provided value is not of "
+            "type 'IdleRequestOptions'.",
+            "cancelNoArgs": "TypeError: Failed to execute 'cancelIdleCallback' on 'Window': 1 argument required, but only "
+            "0 present.",
+            "construct": "TypeError: Failed to construct 'IdleDeadline': Illegal constructor",
+        },
+        "cancels": [None, None, None],
+        "ids": [1, 1],
+        "first": {
+            "thisIsWindow": True,
+            "didTimeout": False,
+            "remaining": True,
+            "tag": "[object IdleDeadline]",
+            "own": [],
+            "args": 1,
+        },
+        "after": [False, True],
+        "timedId": True,
+        "timeout": [True, 0],
+        "order": ["timer", "idle", "nested", "timeout"],
+    }
+
+
+def test_idle_callbacks_share_an_idle_period_that_ends_before_the_next_timer(program: Path) -> None:
+    # Those posted before an idle period started share its end; one posted in it waits for the next, which starts when
+    # it ends. A period lasts until the next timer is due, and at most 50 milliseconds. Chrome 157 gave all true.
+    shared = """
+      new Promise((resolve) => {
+        const out = {};
+        let first;
+        requestIdleCallback((d) => {
+          first = d.timeRemaining();
+          const start = performance.now();
+          while (performance.now() - start < 5) {}
+        });
+        requestIdleCallback((d) => {
+          const second = d.timeRemaining();
+          out.sharesThePeriod = second > 0 && second <= first - 4;
+          const posted = performance.now();
+          requestIdleCallback((d2) => {
+            out.waitsForTheNextPeriod = performance.now() - posted >= second - 1 && d2.timeRemaining() > 30;
+            resolve(out);
+          });
+        });
+      })
+    """
+    timers = """
+      new Promise((resolve) => {
+        const out = {};
+        setTimeout(() => {
+          setTimeout(() => {}, 20);
+          requestIdleCallback((d) => {
+            out.nearTimer = d.timeRemaining() > 0 && d.timeRemaining() <= 20;
+            setTimeout(() => {}, 200);
+            requestIdleCallback((d2) => {
+              out.farTimer = d2.timeRemaining() > 20 && d2.timeRemaining() <= 50;
+              resolve(out);
+            });
+          });
+        }, 0);
+      })
+    """
+
+    assert _evaluate(program, shared) == {"sharesThePeriod": True, "waitsForTheNextPeriod": True}
+    assert _evaluate(program, timers) == {"nearTimer": True, "farTimer": True}
+
+
+def test_what_an_idle_callback_throws_is_reported_and_the_loop_goes_on(program: Path) -> None:
+    script = """
+      requestIdleCallback(() => { throw new Error("from an idle callback"); });
+      new Promise(resolve => requestIdleCallback(() => resolve("went on")))
+    """
+    result = _run(program, script)
+
+    assert (result.returncode, result.stdout, result.stderr) == (
+        0,
+        "went on\n",
+        "Uncaught Error: from an idle callback\n",
+    )
+
+
+def test_window_event_is_the_event_being_dispatched_as_in_chrome(program: Path) -> None:
+    script = """
+      new Promise((resolve) => {
+        const out = {};
+        const d = Object.getOwnPropertyDescriptor(window, 'event');
+        out.descriptor = [typeof d.get, typeof d.set, d.enumerable, d.configurable, d.get.name, d.set.name,
+                          d.get.length, d.set.length];
+        out.before = window.event === undefined;
+        const target = new EventTarget();
+        const seen = [];
+        target.addEventListener('outer', (e) => {
+          seen.push(['outer', window.event === e]);
+          target.dispatchEvent(new Event('inner'));
+          seen.push(['outer again', window.event === e]);
+        });
+        target.addEventListener('inner', (e) => {
+          seen.push(['inner', window.event === e, window.event.type]);
+          throw new Error('ignored');
+        });
+        target.addEventListener('outer', {handleEvent(e) { seen.push(['object', window.event === e]); }});
+        target.dispatchEvent(new Event('outer'));
+        out.seen = seen;
+        out.after = window.event === undefined;
+        const div = document.createElement('div');
+        div.onclick = (e) => { out.click = [window.event === e, event === e]; };
+        div.dispatchEvent(new Event('click'));
+        Promise.resolve().then(() => { out.microtask = window.event; });
+        setTimeout(() => {
+          out.timer = window.event === undefined;
+          window.event = 5;
+          out.replaced = [window.event, Object.getOwnPropertyDescriptor(window, 'event').value, 'event' in window];
+          resolve(out);
+        }, 0);
+      })
+    """
+    result = _run(program, f"Promise.resolve(({script})).then(value => JSON.stringify(value))")
+
+    assert (result.returncode, result.stderr) == (0, "Uncaught Error: ignored\n")
+    assert json.loads(result.stdout) == {
+        "descriptor": ["function", "function", True, True, "get event", "set event", 0, 1],
+        "before": True,
+        "seen": [["outer", True], ["inner", True, "inner"], ["outer again", True], ["object", True]],
+        "after": True,
+        "click": [True, True],
+        "timer": True,
+        "replaced": [5, 5, True],
+    }
 
 
 def test_fetch_fails_on_the_command_line_which_has_no_session(program: Path) -> None:

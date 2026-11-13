@@ -71,6 +71,22 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "CookieChangeEvent"
+    file = "cookie_change_event"
+  },
+  {
+    name = "CookieStore"
+    file = "cookie_store"
+
+    # onchange runs as every event handler attribute does.
+    implemented = [
+      "get",
+      "getAll",
+      "set",
+      "delete",
+    ]
+  },
+  {
     name = "CrashReportContext"
     file = "crash_report_context"
     made_by_known_gaps = true
@@ -414,6 +430,10 @@ mitto_bindings_interfaces = [
       "length",
       "state",
     ]
+  },
+  {
+    name = "IdleDeadline"
+    file = "idle_deadline"
   },
   {
     name = "Location"
@@ -875,6 +895,10 @@ mitto_bindings_interfaces = [
       "crypto",
       "atob",
       "btoa",
+      "requestIdleCallback",
+      "cancelIdleCallback",
+      "event",
+      "cookieStore",
     ]
   },
   {
