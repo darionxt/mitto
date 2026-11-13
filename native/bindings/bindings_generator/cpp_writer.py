@@ -97,6 +97,8 @@ WRITTEN = frozenset(
         "LegacyWindowAlias",
         "NewObject",
         "NoAllocDirectCall",
+        # A Page's window has one context, which is the node's own.
+        "NodeWrapInOwnContext",
         "NotEnumerable",
         "PutForwards",
         "RaisesException",
@@ -434,6 +436,16 @@ class _InterfaceWriter:
         lines.append("}")
         self.callbacks.append("\n".join(lines))
         return name
+
+    def _stringifier(self) -> str:
+        """A stringifier operation's toString(), which gives the class's ToString(), as Blink's gives its stringifier
+        operation's."""
+        if self.interface.stringifier:
+            raise UnhandledError(
+                f"interface {self.interface.name}: the C++ writer does not handle a stringifier attribute"
+            )
+        body = [*self._receiver(), "info.GetReturnValue().Set(ToV8String(isolate, impl->ToString()));"]
+        return self._add_callback("StringifierCallback", body)
 
     def _missing(self, name: str, has_receiver: bool = True, lenient: bool = False) -> str:
         """A Known Gap's callback, which known_gap.h has for every member, with the member's MemberInfo as its data."""
@@ -979,7 +991,11 @@ class _InterfaceWriter:
             return_type, call = self._getter_call(named, "name")
             reduced = self.types.reduce(return_type)
             # Blink's test of whether the class has the named property: what its getter gives says so.
-            if reduced.kind is TypeKind.INTERFACE or (reduced.kind is TypeKind.STRING and reduced.nullable):
+            if (
+                reduced.kind is TypeKind.INTERFACE
+                or (reduced.kind is TypeKind.STRING and reduced.nullable)
+                or (reduced.kind is TypeKind.UNION and reduced.nullable)
+            ):
                 not_found = "!result"
             elif reduced.kind in (TypeKind.ANY, TypeKind.OBJECT):
                 not_found = "result.IsEmpty()"
@@ -1118,6 +1134,13 @@ class _InterfaceWriter:
                 f"  static constexpr const char* kUnscopablePropertyNames[] = {{{names}}};",
                 "  InstallUnscopablePropertyNames(isolate, context, prototype_object, kUnscopablePropertyNames);",
                 "}",
+            ]
+        if member is None and property_.name == "toString" and self.interface.stringifier is not None:
+            install = "InstallOperationOnObject" if on_objects else "InstallOperation"
+            first = "isolate, context" if on_objects else "isolate"
+            return [
+                f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
+                f"{self._stringifier()}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
             ]
         self._check_member(property_)
         if isinstance(member, Attribute):
