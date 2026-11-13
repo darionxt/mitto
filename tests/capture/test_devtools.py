@@ -21,10 +21,12 @@ pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExce
 
 
 class FakeChrome:
-    """Answers /json/list, takes commands on its one page, and notes them. Each command also gets an event first."""
+    """Answers /json/list, takes commands on its one page, and notes them. Each command also gets an event first, and
+    its answer is that the expression came to has_next."""
 
-    def __init__(self, targets: list[dict[str, str]] | None = None) -> None:
+    def __init__(self, targets: list[dict[str, str]] | None = None, *, has_next: bool = True) -> None:
         self.commands: list[dict[str, Any]] = []
+        self.has_next = has_next
         self.server: Server = serve(self._serve_page, "127.0.0.1", 0, process_request=self._serve_list)
         self.port: int = self.server.socket.getsockname()[1]
         self.targets = targets
@@ -46,7 +48,8 @@ class FakeChrome:
             command = json.loads(message)
             self.commands.append(command)
             connection.send(json.dumps({"method": "Some.event"}))
-            connection.send(json.dumps({"id": command["id"], "result": {}}))
+            value = {"type": "boolean", "value": self.has_next}
+            connection.send(json.dumps({"id": command["id"], "result": {"result": value}}))
 
 
 @pytest.fixture
@@ -69,10 +72,25 @@ def test_clicks_with_a_user_gesture_and_keeps_at_it(tmp_path: Path, fake_chrome:
     with PageClicker(tmp_path):
         wait_for(lambda: len(fake_chrome.commands) >= 2, "no second command")
 
-    command = fake_chrome.commands[0]
-    assert command["method"] == "Runtime.evaluate"
-    assert command["params"]["userGesture"] is True
-    assert 'getElementById("next")' in command["params"]["expression"]
+    check, click = fake_chrome.commands[:2]
+    assert check["method"] == click["method"] == "Runtime.evaluate"
+    assert check["params"]["userGesture"] is False
+    assert click["params"]["userGesture"] is True
+    assert 'getElementById("next")' in check["params"]["expression"]
+    assert "next.click()" in click["params"]["expression"]
+
+
+def test_gives_no_user_gesture_to_a_page_with_nothing_to_click(tmp_path: Path) -> None:
+    """A gesture lasts, and would count for a navigation that the page's own script starts."""
+    chrome = FakeChrome(has_next=False)
+    try:
+        (tmp_path / "DevToolsActivePort").write_text(f"{chrome.port}\n/devtools/browser/x\n", encoding="utf-8")
+        with PageClicker(tmp_path):
+            wait_for(lambda: len(chrome.commands) >= 3, "no third command")
+    finally:
+        chrome.close()
+
+    assert {command["params"]["userGesture"] for command in chrome.commands} == {False}
 
 
 def test_waits_for_chrome_to_say_where_its_port_is(tmp_path: Path, fake_chrome: FakeChrome) -> None:

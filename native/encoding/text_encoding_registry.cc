@@ -85,6 +85,26 @@ std::string CanonicalTextEncodingName(std::u16string_view label) {
   return it == registry.names.end() ? std::string() : it->second;
 }
 
+std::string CanonicalTextEncodingName(std::string_view label) {
+  if (label.empty() || label.size() > kMaxEncodingNameLength ||
+      !base::IsStringASCII(label)) {
+    return std::string();
+  }
+  const Registry& registry = GetRegistry();
+  const auto it = registry.names.find(base::ToLowerASCII(label));
+  return it == registry.names.end() ? std::string() : it->second;
+}
+
+bool IsNonByteBasedEncoding(std::string_view canonical_name) {
+  return canonical_name == kUtf16LittleEndianEncodingName ||
+         canonical_name == kUtf16BigEndianEncodingName;
+}
+
+std::string_view ClosestByteBasedEquivalent(std::string_view canonical_name) {
+  return IsNonByteBasedEncoding(canonical_name) ? kUtf8EncodingName
+                                                : canonical_name;
+}
+
 std::unique_ptr<TextCodec> NewTextCodec(std::string_view canonical_name) {
   const Registry& registry = GetRegistry();
   const auto it = registry.codecs.find(canonical_name);

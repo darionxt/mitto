@@ -1,5 +1,6 @@
 #include "mitto/encoding/encoding_tables.h"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -28,6 +29,19 @@ Converter OpenConverter(const char* name) {
     return nullptr;
   }
   return converter;
+}
+
+// Encodes `input` with `converter`, flushing, into `output`, and returns how
+// many bytes it wrote.
+size_t EncodeWithIcu(UConverter* converter,
+                     base::span<const char16_t> input,
+                     base::span<char> output,
+                     UErrorCode& error) {
+  const char16_t* source = input.data();
+  char* target = output.data();
+  ucnv_fromUnicode(converter, &target, base::to_address(output.end()), &source,
+                   base::to_address(input.end()), nullptr, true, &error);
+  return static_cast<size_t>(target - output.data());
 }
 
 // Decodes `input` with `converter`, flushing, into `output`, and returns how
@@ -153,6 +167,29 @@ constexpr std::pair<size_t, char16_t> kGb18030_2022Differences[] = {
     {23788, 0x9fb6}, {23789, 0x9fb7}, {23795, 0x9fb8}, {23812, 0x9fb9},
     {23829, 0x9fba}, {23845, 0x9fbb}};
 
+// The converter that index-big5 comes from: big5-html is the one that follows
+// the Encoding Standard in Chromium's ICU, as Blink tries first.
+Converter OpenBig5Converter() {
+  for (const char* name : {"big5-html", "Big5-HKSCS", "ibm-1375", "Big5"}) {
+    if (Converter converter = OpenConverter(name)) {
+      return converter;
+    }
+  }
+  return nullptr;
+}
+
+// `index` by code point, with a code point's pointers in order, as Blink's
+// stable sort leaves them.
+PointerIndex ReverseIndex(const CodePointIndex& index) {
+  PointerIndex result;
+  result.reserve(index.size());
+  for (const auto& [pointer, code_point] : index) {
+    result.emplace_back(code_point, pointer);
+  }
+  std::ranges::stable_sort(result, {}, &std::pair<char16_t, uint16_t>::first);
+  return result;
+}
+
 // The 94 by 94 table of EUC-JP, after `prefix` (none, or 0x8F for JIS X
 // 0212), as ICU decodes it, below `limit` pointers.
 CodePointIndex EucJpIndex(std::optional<uint8_t> prefix, uint16_t limit) {
@@ -256,15 +293,7 @@ const std::vector<char16_t>& Gb18030Table() {
 const std::vector<int32_t>& Big5Table() {
   static const base::NoDestructor<std::vector<int32_t>> table([] {
     std::vector<int32_t> result(19782, 0);
-    // big5-html is the one that follows the Encoding Standard in Chromium's
-    // ICU, as Blink tries first.
-    Converter converter;
-    for (const char* name : {"big5-html", "Big5-HKSCS", "ibm-1375", "Big5"}) {
-      converter = OpenConverter(name);
-      if (converter) {
-        break;
-      }
-    }
+    Converter converter = OpenBig5Converter();
     DCHECK(converter);
     for (int lead = 0x81; lead <= 0xFE; ++lead) {
       for (int byte = 0x40; byte <= 0xFE; ++byte) {
@@ -292,6 +321,91 @@ const std::vector<int32_t>& Big5Table() {
     return result;
   }());
   return *table;
+}
+
+const PointerIndex& Jis0208EncodeIndex() {
+  static const base::NoDestructor<PointerIndex> index(
+      ReverseIndex(Jis0208Index()));
+  return *index;
+}
+
+const PointerIndex& EucKrEncodeIndex() {
+  static const base::NoDestructor<PointerIndex> index([] {
+    PointerIndex result = ReverseIndex(EucKrIndex());
+    DCHECK(std::ranges::adjacent_find(result, {},
+                                      &std::pair<char16_t, uint16_t>::first) ==
+           result.end());
+    return result;
+  }());
+  return *index;
+}
+
+const PointerIndex& Gb18030EncodeIndex() {
+  static const base::NoDestructor<PointerIndex> index([] {
+    const std::vector<char16_t>& table = Gb18030Table();
+    PointerIndex result;
+    result.reserve(table.size());
+    for (size_t pointer = 0; pointer < table.size(); ++pointer) {
+      result.emplace_back(table[pointer], static_cast<uint16_t>(pointer));
+    }
+    std::ranges::stable_sort(result, {}, &std::pair<char16_t, uint16_t>::first);
+    return result;
+  }());
+  return *index;
+}
+
+const Big5PointerIndex& Big5EncodeIndex() {
+  static const base::NoDestructor<Big5PointerIndex> index([] {
+    const std::vector<int32_t>& table = Big5Table();
+    // The converter that Big5Table() decodes with. index-big5 has many code
+    // points at more than one pointer, and its encoder gives the one that the
+    // Encoding Standard encodes with, which turning the table around would
+    // not.
+    Converter converter = OpenBig5Converter();
+    DCHECK(converter);
+    Big5PointerIndex result;
+    for (size_t i = 0; i < table.size(); ++i) {
+      const int32_t code_point = table[i];
+      if (code_point == 0) {
+        continue;
+      }
+      std::array<char16_t, 2> input = {0, 0};
+      size_t input_length = 0;
+      if (U_IS_BMP(code_point)) {
+        input[input_length++] = static_cast<char16_t>(code_point);
+      } else {
+        input[input_length++] = U16_LEAD(code_point);
+        input[input_length++] = U16_TRAIL(code_point);
+      }
+      std::array<char, 4> output = {0, 0, 0, 0};
+      UErrorCode error = U_ZERO_ERROR;
+      ucnv_resetFromUnicode(converter.get());
+      const size_t length =
+          EncodeWithIcu(converter.get(), base::span(input).first(input_length),
+                        output, error);
+      if (U_FAILURE(error) || length != 2) {
+        continue;
+      }
+      const auto lead = static_cast<uint8_t>(output[0]);
+      const auto byte = static_cast<uint8_t>(output[1]);
+      if (lead < 0x81 || lead > 0xFE ||
+          !((byte >= 0x40 && byte <= 0x7E) || (byte >= 0xA1 && byte <= 0xFE))) {
+        continue;
+      }
+      const size_t pointer =
+          (lead - 0x81) * 157 + (byte - (byte < 0x7F ? 0x40 : 0x62));
+      // Only the pointer that the encoder gives, so that each code point
+      // comes once.
+      if (pointer == i) {
+        result.emplace_back(code_point, static_cast<uint16_t>(pointer));
+      }
+    }
+    // Blink fills the rest of a fixed array with entries that no code point
+    // finds, which a vector does without.
+    std::ranges::stable_sort(result, {}, &std::pair<int32_t, uint16_t>::first);
+    return result;
+  }());
+  return *index;
 }
 
 }  // namespace mitto
