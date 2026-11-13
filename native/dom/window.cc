@@ -108,6 +108,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
   visitor->Trace(current_event_);
+  visitor->Trace(document_load_timing_);
 }
 
 // WindowIdleTasks::requestIdleCallback(): 0 once the context has gone.
@@ -135,7 +136,6 @@ v8::Local<v8::Value> Window::Event() const {
     return v8::Undefined(isolate);
   }
   return current_event_->ToV8(isolate);
-  visitor->Trace(document_load_timing_);
 }
 
 v8::Local<v8::Value> Window::OpenerForBindings() const {
