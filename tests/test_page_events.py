@@ -8,6 +8,7 @@ checked from below, since a busy runner can make any timer late.
 """
 
 import json
+import math
 import os
 import subprocess
 import time
@@ -19,6 +20,9 @@ import pytest
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 60
 _SCRIPT_THREW = 1
+
+# How far the clamping of 100 microseconds can take a time from the one it coarsens, either way.
+_CLAMPING_MS = 0.1
 
 
 @pytest.fixture(scope="module")
@@ -370,24 +374,37 @@ def test_idle_callbacks_run_when_nothing_else_is_ready_as_chrome_runs_them(progr
     }
 
 
+def _idle_period_end(read: list[float]) -> tuple[float, float]:
+    """Return the earliest and the latest that an idle period can end, from what one of its callbacks read in turn:
+    performance.now(), timeRemaining() and performance.now() again.
+
+    A busy runner can stop the Page between any two reads, and hold a callback up past its period's end, when it has no
+    time left, which says only that the period had ended.
+    """
+    before, remaining, after = read
+    if remaining > 0:
+        return before + remaining - 2 * _CLAMPING_MS, after + remaining + 2 * _CLAMPING_MS
+    return -math.inf, after + 2 * _CLAMPING_MS
+
+
 def test_idle_callbacks_share_an_idle_period_that_ends_before_the_next_timer(program: Path) -> None:
     # Those posted before an idle period started share its end; one posted in it waits for the next, which starts when
-    # it ends. A period lasts until the next timer is due, and at most 50 milliseconds. Chrome 157 gave all true.
+    # it ends. A period lasts until the next timer is due, and at most 50 milliseconds. Chrome 157 gave all of this.
+    # The periods' ends are what is checked, not the time left: a busy runner can hold a callback up well into its
+    # period, or start a period so late that the next timer cuts it short.
     shared = """
       new Promise((resolve) => {
+        const read = (d) => [performance.now(), d.timeRemaining(), performance.now()];
         const out = {};
-        let first;
         requestIdleCallback((d) => {
-          first = d.timeRemaining();
+          out.first = read(d);
           const start = performance.now();
           while (performance.now() - start < 5) {}
         });
         requestIdleCallback((d) => {
-          const second = d.timeRemaining();
-          out.sharesThePeriod = second > 0 && second <= first - 4;
-          const posted = performance.now();
+          out.second = read(d);
           requestIdleCallback((d2) => {
-            out.waitsForTheNextPeriod = performance.now() - posted >= second - 1 && d2.timeRemaining() > 30;
+            out.next = read(d2);
             resolve(out);
           });
         });
@@ -395,14 +412,17 @@ def test_idle_callbacks_share_an_idle_period_that_ends_before_the_next_timer(pro
     """
     timers = """
       new Promise((resolve) => {
+        const read = (d) => [performance.now(), d.timeRemaining(), performance.now()];
         const out = {};
         setTimeout(() => {
+          const before = performance.now();
           setTimeout(() => {}, 20);
+          out.nearTimer = [before + 20, performance.now() + 20];
           requestIdleCallback((d) => {
-            out.nearTimer = d.timeRemaining() > 0 && d.timeRemaining() <= 20;
+            out.near = read(d);
             setTimeout(() => {}, 200);
             requestIdleCallback((d2) => {
-              out.farTimer = d2.timeRemaining() > 20 && d2.timeRemaining() <= 50;
+              out.far = read(d2);
               resolve(out);
             });
           });
@@ -410,8 +430,23 @@ def test_idle_callbacks_share_an_idle_period_that_ends_before_the_next_timer(pro
       })
     """
 
-    assert _evaluate(program, shared) == {"sharesThePeriod": True, "waitsForTheNextPeriod": True}
-    assert _evaluate(program, timers) == {"nearTimer": True, "farTimer": True}
+    out = _evaluate(program, shared)
+    first, second, following = (_idle_period_end(out[key]) for key in ("first", "second", "next"))
+    # The second shares the first's end, unless the first was held up past it, which starts a new period. The third
+    # runs once that end has passed, in a period that lasts well beyond it.
+    assert (first[0] <= second[1] and second[0] <= first[1]) or out["second"][0] + _CLAMPING_MS >= first[0], out
+    assert out["next"][0] + _CLAMPING_MS >= second[0], out
+    assert following[1] - second[0] > 30, out
+    assert out["next"][1] <= 50, out
+
+    out = _evaluate(program, timers)
+    near, far = (_idle_period_end(out[key]) for key in ("near", "far"))
+    soonest_due, latest_due = out["nearTimer"]
+    # A period that starts before the timer is due ends by it, so one whose callback ran before then did. The next,
+    # with no timer due for 200 milliseconds, lasts longer.
+    assert out["near"][0] + _CLAMPING_MS >= soonest_due or near[0] <= latest_due + _CLAMPING_MS, out
+    assert far[1] - near[0] > 20, out
+    assert out["far"][1] <= 50, out
 
 
 def test_what_an_idle_callback_throws_is_reported_and_the_loop_goes_on(program: Path) -> None:

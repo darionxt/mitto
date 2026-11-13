@@ -4,14 +4,19 @@
 
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
+#include "base/location.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/error_reporting.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-exception.h"
@@ -25,6 +30,10 @@ constexpr int kContextGroupId = 1;
 
 // The one PageReporter, which V8's callback for rejected promises reaches.
 PageReporter* g_reporter = nullptr;
+
+// Blink's kMaxReportedHandlersPendingResolution: how many reported rejections
+// a handler that comes later still finds.
+constexpr size_t kMaxReportedRejections = 1000;
 
 // Returns `view`, which holds Latin-1 or UTF-16, in UTF-8. A lone surrogate
 // becomes U+FFFD.
@@ -114,8 +123,10 @@ void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
 
 void PageReporter::ContextDestroyed(v8::Local<v8::Context> context) {
   inspector_->contextDestroyed(context);
-  // A rejection in that context no longer has a console to go to.
+  // A rejection in that context no longer has a console or a window to go
+  // to.
   rejections_.clear();
+  reported_rejections_.clear();
 }
 
 std::vector<PageReporter::Rejection> PageReporter::TakeUnhandledRejections() {
@@ -129,20 +140,84 @@ void PageReporter::ReportUnhandledRejections(
     std::vector<Rejection> rejections) {
   const v8::HandleScope handle_scope(isolate_);
   const v8::Context::Scope context_scope(context);
+  // Blink's RejectedPromises::ProcessQueueNow(): forget the reported ones that
+  // were collected, then report each that still has no handler.
+  std::erase_if(reported_rejections_, [](const Rejection& rejection) {
+    return rejection.promise.IsEmpty();
+  });
   for (Rejection& rejection : rejections) {
-    // A handler added since then, also by the caller that evaluated it, takes
-    // it.
-    if (rejection.promise.Get(isolate_)->HasHandler()) {
+    if (rejection.promise.IsEmpty()) {
       continue;
     }
-    // Writing it out runs its String(), which may reject more, for next time.
-    send_.Run(EncodeUncaughtError(
-        DescribeUncaught(isolate_, context, rejection.reason.Get(isolate_),
-                         "Uncaught (in promise) ", kMaxPayloadSize)));
+    const v8::Local<v8::Promise> promise = rejection.promise.Get(isolate_);
+    // A handler added since then, also by the caller that evaluated it, takes
+    // it.
+    if (promise->HasHandler()) {
+      continue;
+    }
+    const v8::Local<v8::Value> reason = rejection.reason.Get(isolate_);
+    bool to_session = true;
+    if (rejection.fires_events) {
+      to_session = DispatchUnhandledRejection(isolate_, promise, reason);
+    }
+    if (to_session) {
+      // Writing it out runs its String(), which may reject more, for next
+      // time.
+      send_.Run(EncodeUncaughtError(DescribeUncaught(isolate_, context, reason,
+                                                     "Uncaught (in promise) ",
+                                                     kMaxPayloadSize)));
+    }
+    rejection.reported_to_session = to_session;
+    rejection.promise.SetWeak();
+    rejection.reason.SetWeak();
+    reported_rejections_.push_back(std::move(rejection));
+    if (reported_rejections_.size() > kMaxReportedRejections) {
+      reported_rejections_.erase(
+          reported_rejections_.begin(),
+          reported_rejections_.begin() + kMaxReportedRejections / 10);
+    }
   }
 }
 
-void PageReporter::ReportException(v8::Local<v8::Value> exception) {
+void PageReporter::HandlerAdded(v8::Local<v8::Promise> promise) {
+  for (auto it = rejections_.begin(); it != rejections_.end(); ++it) {
+    if (!it->promise.IsEmpty() && it->promise == promise) {
+      rejections_.erase(it);
+      return;
+    }
+  }
+  for (auto it = reported_rejections_.begin(); it != reported_rejections_.end();
+       ++it) {
+    if (it->promise.IsEmpty() || it->promise != promise) {
+      continue;
+    }
+    Rejection rejection = std::move(*it);
+    reported_rejections_.erase(it);
+    rejection.promise.ClearWeak();
+    rejection.reason.ClearWeak();
+    // The reporter lives as long as the Page's isolate.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&PageReporter::Revoke, base::Unretained(this),
+                                  std::move(rejection)));
+    return;
+  }
+}
+
+void PageReporter::Revoke(Rejection rejection) {
+  // A rejection of a context that has gone fires nothing, and neither does
+  // one whose promise or reason was collected meanwhile.
+  if (context_.IsEmpty() || rejection.promise.IsEmpty() ||
+      rejection.reason.IsEmpty() || !rejection.fires_events) {
+    return;
+  }
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Context::Scope context_scope(context_.Get(isolate_));
+  DispatchRejectionHandled(isolate_, rejection.promise.Get(isolate_),
+                           rejection.reason.Get(isolate_));
+}
+
+void PageReporter::ReportException(v8::Local<v8::Value> exception,
+                                   v8::Local<v8::Message> message) {
   const v8::HandleScope handle_scope(isolate_);
   v8::Local<v8::Context> context = isolate_->GetCurrentContext();
   if (context.IsEmpty()) {
@@ -152,8 +227,15 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception) {
     context = context_.Get(isolate_);
   }
   const v8::Context::Scope context_scope(context);
-  send_.Run(EncodeUncaughtError(DescribeUncaught(
-      isolate_, context, exception, "Uncaught ", kMaxPayloadSize)));
+  if (message.IsEmpty()) {
+    message = v8::Exception::CreateMessage(isolate_, exception);
+  }
+  ReportUncaughtError(
+      isolate_, message, exception,
+      [this, context](v8::Local<v8::Value> uncaught) {
+        send_.Run(EncodeUncaughtError(DescribeUncaught(
+            isolate_, context, uncaught, "Uncaught ", kMaxPayloadSize)));
+      });
 }
 
 v8::MaybeLocal<v8::Value> PageReporter::memoryInfo(
@@ -182,19 +264,30 @@ void PageReporter::consoleAPIMessage(int context_group_id,
 void PageReporter::OnMessage(v8::Local<v8::Message> message,
                              v8::Local<v8::Value> exception) {
   if (g_reporter) {
-    g_reporter->ReportException(exception);
+    g_reporter->ReportException(exception, message);
   }
 }
 
 // static
 void PageReporter::OnPromiseReject(v8::PromiseRejectMessage message) {
-  if (!g_reporter || message.GetEvent() != v8::kPromiseRejectWithNoHandler) {
+  if (!g_reporter) {
+    return;
+  }
+  // Blink's PromiseRejectHandler().
+  if (message.GetEvent() == v8::kPromiseHandlerAddedAfterReject) {
+    g_reporter->HandlerAdded(message.GetPromise());
+    return;
+  }
+  if (message.GetEvent() != v8::kPromiseRejectWithNoHandler) {
     return;
   }
   v8::Isolate* const isolate = g_reporter->isolate_;
+  const v8::HandleScope handle_scope(isolate);
   Rejection rejection;
   rejection.promise.Reset(isolate, message.GetPromise());
   rejection.reason.Reset(isolate, message.GetValue());
+  // Decided now, while the script that rejected it may still be on the stack.
+  rejection.fires_events = RejectionFiresEvents(isolate, message.GetValue());
   g_reporter->rejections_.push_back(std::move(rejection));
 }
 

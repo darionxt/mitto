@@ -54,6 +54,8 @@ embedded_data("v8_snapshot") {
 
 executable("mitto_page") {
   sources = [
+    "begin_frame_source.cc",
+    "begin_frame_source.h",
     "chrome_object.cc",
     "chrome_object.h",
     "document_loader.cc",
@@ -94,6 +96,7 @@ executable("mitto_page") {
     "//base",
     "//mitto:page_channel",
     "//mitto/dom",
+    "//mitto/encoding",
     "//third_party/icu",
     "//url",
     "//v8",

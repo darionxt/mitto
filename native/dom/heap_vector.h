@@ -5,7 +5,9 @@
 // reallocate meanwhile (event_target.h). Each change that needs more room makes
 // a larger buffer and leaves the old one to the collector.
 //
-// It lives in an object on the heap, which traces it.
+// It lives in an object on the heap, which traces it. A WeakHeapVector holds
+// its items weakly, as Blink's HeapVector of WeakMembers: an item that only it
+// holds reads as null once the collector has taken it.
 
 #ifndef MITTO_DOM_HEAP_VECTOR_H_
 #define MITTO_DOM_HEAP_VECTOR_H_
@@ -27,7 +29,7 @@
 
 namespace mitto {
 
-template <typename T>
+template <typename T, typename Item = cppgc::Member<T>>
 class HeapVector {
  public:
   HeapVector() = default;
@@ -104,7 +106,7 @@ class HeapVector {
     explicit Buffer(size_t capacity) : capacity_(capacity) {
       for (size_t i = 0; i < capacity_; ++i) {
         // SAFETY: AdditionalBytes made room for `capacity_` Members.
-        new (UNSAFE_BUFFERS(items() + i)) cppgc::Member<T>();
+        new (UNSAFE_BUFFERS(items() + i)) Item();
       }
     }
 
@@ -128,9 +130,9 @@ class HeapVector {
     }
 
    private:
-    cppgc::Member<T>* items() const {
+    Item* items() const {
       // SAFETY: the Members follow the object.
-      return reinterpret_cast<cppgc::Member<T>*>(UNSAFE_BUFFERS(
+      return reinterpret_cast<Item*>(UNSAFE_BUFFERS(
           reinterpret_cast<char*>(const_cast<Buffer*>(this)) + sizeof(Buffer)));
     }
 
@@ -145,8 +147,7 @@ class HeapVector {
     const size_t new_capacity = std::max<size_t>(needed, capacity * 2 + 4);
     Buffer* const larger = cppgc::MakeGarbageCollected<Buffer>(
         v8::Isolate::GetCurrent()->GetCppHeap()->GetAllocationHandle(),
-        cppgc::AdditionalBytes(new_capacity * sizeof(cppgc::Member<T>)),
-        new_capacity);
+        cppgc::AdditionalBytes(new_capacity * sizeof(Item)), new_capacity);
     for (size_t i = 0; i < size_; ++i) {
       larger->set(i, buffer_->at(i));
     }
@@ -156,6 +157,9 @@ class HeapVector {
   cppgc::Member<Buffer> buffer_;
   size_t size_ = 0;
 };
+
+template <typename T>
+using WeakHeapVector = HeapVector<T, cppgc::WeakMember<T>>;
 
 }  // namespace mitto
 

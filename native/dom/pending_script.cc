@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
@@ -15,9 +16,13 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/error_reporting.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/window.h"
+#include "mitto/encoding/content_type.h"
+#include "mitto/encoding/text_resource_decoder.h"
+#include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "v8/include/cppgc/persistent.h"
@@ -73,18 +78,6 @@ bool IsNosniff(std::string_view headers) {
       base::TrimString(first, " \t", base::TRIM_ALL), "nosniff");
 }
 
-// The body of a script as UTF-8, with a byte order mark dropped, and each
-// byte sequence that is not UTF-8 as U+FFFD. Charsets of scripts are a Known
-// Gap.
-std::u16string DecodeScriptSource(std::string_view bytes) {
-  if (bytes.starts_with("\xEF\xBB\xBF")) {
-    bytes.remove_prefix(3);
-  }
-  std::u16string source;
-  base::UTF8ToUTF16(bytes.data(), bytes.size(), &source);
-  return source;
-}
-
 // ClassicScript::RunScript() in the current context: compiles and runs
 // `source` as a classic script named `source_url`, reports what it throws as
 // an uncaught error, and runs the microtasks that it queued once it returns,
@@ -117,16 +110,13 @@ void RunClassicScript(std::u16string_view source,
            .ToLocal(&name)) {
     return;
   }
-  // A script of another origin that came without CORS has its errors muted,
-  // as V8ScriptRunner gives its origin.
-  v8::ScriptOrigin origin(name, start_line, start_column,
-                          /*resource_is_shared_cross_origin=*/
-                          !muted_errors);
+  // A script of another origin that came without CORS has its errors muted.
+  v8::ScriptOrigin origin =
+      ClassicScriptOrigin(name, muted_errors, start_line, start_column);
   v8::Local<v8::Script> compiled;
-  if ((!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
-       compiled->Run(context).IsEmpty()) &&
-      try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate, try_catch.Exception());
+  if (!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
+      compiled->Run(context).IsEmpty()) {
+    ReportScriptException(isolate, try_catch);
   }
 }
 
@@ -241,10 +231,12 @@ PendingScript* PendingScript::CreateInline(HTMLScriptElement& element,
 PendingScript* PendingScript::Fetch(HTMLScriptElement& element,
                                     const GURL& url,
                                     IntegrityMetadataSet integrity,
+                                    std::string encoding,
                                     bool render_blocking) {
   PendingScript* const script = bindings::MakeGarbageCollected<PendingScript>(
       element, /*is_external=*/true);
   script->integrity_ = std::move(integrity);
+  script->encoding_ = std::move(encoding);
   script->StartFetch(url, render_blocking);
   return script;
 }
@@ -352,7 +344,13 @@ void PendingScript::NotifyFinished(int net_error,
     AdvanceReadyState(State::kErrorOccurred);
     return;
   }
-  source_ = DecodeScriptSource(body);
+  // ScriptResource's decoder.
+  const std::unique_ptr<TextResourceDecoder> decoder =
+      BuildClassicScriptDecoder(
+          encoding_,
+          GetMimeTypeAndCharset(HeaderField(headers, "content-type")).charset);
+  source_ = decoder->Decode(base::as_byte_span(body));
+  source_ += decoder->Flush();
   source_url_ = response_url;
   muted_errors_ = opaque;
   AdvanceReadyState(State::kReady);

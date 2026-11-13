@@ -2,11 +2,12 @@
 // main thread with Blink's eleven task priorities. A page's tasks go to the
 // queues that Blink's frame scheduler makes for the traits of each task type,
 // each at the priority that it gives them, beside the queues of
-// scheduler.postTask(), V8's queue, the compositor's, a default queue for
-// what belongs to no frame, a control queue before them all and an idle queue
-// after them, whose idle periods start as soon as the Page runs, as Blink's
-// do once a page expects no frames. Tasks run in the order of their queues'
-// priorities, and in the order they were ready among queues of one priority.
+// scheduler.postTask(), V8's queue, the compositor's, where frames begin at
+// the display's refresh rate, a default queue for what belongs to no frame, a
+// control queue before them all and an idle queue after them, whose idle
+// periods start as soon as the Page runs, as Blink's do once a page expects no
+// frames. Tasks run in the order of their queues' priorities, and in the order
+// they were ready among queues of one priority.
 //
 // Upstream: third_party/blink/renderer/platform/scheduler/common/task_priority.cc
 // Upstream: third_party/blink/renderer/platform/scheduler/main_thread/main_thread_scheduler_impl.cc
@@ -25,6 +26,7 @@
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/page/begin_frame_source.h"
 #include "mitto/page/idle_helper.h"
 
 namespace mitto {
@@ -72,6 +74,8 @@ class PageScheduler final : public EventLoop {
       TaskType type) override;
   scoped_refptr<base::SingleThreadTaskRunner> TaskRunner(Queue queue) override;
   void PostIdleTask(const base::Location& from_here, IdleTask task) override;
+  void RequestBeginFrame(BeginFrameCallback begin_frame) override;
+  void SetRefreshRate(int hertz) override;
 
  private:
   static constexpr size_t kWebSchedulingQueueCount =
@@ -91,6 +95,7 @@ class PageScheduler final : public EventLoop {
   base::sequence_manager::TaskQueue::Handle control_queue_;
   base::sequence_manager::TaskQueue::Handle idle_queue_;
   std::unique_ptr<IdleHelper> idle_helper_;
+  std::unique_ptr<BeginFrameSource> begin_frame_source_;
 };
 
 }  // namespace mitto

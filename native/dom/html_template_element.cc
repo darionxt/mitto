@@ -28,6 +28,7 @@ void HTMLTemplateElement::Trace(cppgc::Visitor* visitor) const {
 DocumentFragment* HTMLTemplateElement::Content() const {
   if (!content_) {
     content_ = DocumentFragment::Create(GetDocument().EnsureTemplateDocument());
+    content_->SetHost(const_cast<HTMLTemplateElement*>(this));
   }
   return content_.Get();
 }
@@ -47,6 +48,7 @@ void HTMLTemplateElement::CloningSteps(Node& copy, bool deep) const {
 }
 
 void HTMLTemplateElement::DidMoveToNewDocument(Document& old_document) {
+  HTMLElement::DidMoveToNewDocument(old_document);
   // The HTML Standard's adopting steps: the contents move to the template
   // document of the new document.
   if (content_) {

@@ -2,6 +2,7 @@
 
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_title_element.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/text.h"
 
 namespace mitto {
@@ -19,7 +20,8 @@ const bindings::WrapperTypeInfo* HTMLTitleElement::GetWrapperTypeInfo() const {
 }
 
 void HTMLTitleElement::SetText(const std::u16string& text) {
-  // The DOM standard's "string replace all".
+  // The DOM standard's "string replace all", one record for observers.
+  const ChildListMutationScope mutation(*this);
   RemoveChildren();
   if (!text.empty()) {
     ParserAppendChild(mitto::Text::Create(GetDocument(), text));

@@ -172,12 +172,12 @@ def test_a_known_gap_checks_and_converts_as_chrome_does(program: Path, script: s
             "return document.implementation === document.implementation", "value: true", id="the same object each time"
         ),
         pytest.param(
-            "const c = new MessageChannel(); return c.port1 === c.port1 && c.port1 instanceof MessagePort",
+            "const q = new DOMQuad(); return q.p1 === q.p1 && q.p1 instanceof DOMPoint",
             "value: true",
             id="the same object on one receiver",
         ),
         pytest.param(
-            "return new MessageChannel().port1 !== new MessageChannel().port1",
+            "return new DOMQuad().p1 !== new DOMQuad().p1",
             "value: true",
             id="another object on another receiver",
         ),

@@ -1,8 +1,10 @@
 // Loads the Page's document from the response of the navigation that its
 // Session makes when the Page opens, on the Page program's main thread: a new
-// context for it, the HTML parser fed as the body arrives, the scripts that
-// the parser runs, and the document's readiness with DOMContentLoaded and
-// load, as Blink's HTMLDocumentParser and HTMLParserScriptRunner have them.
+// context for it, the HTML parser fed as the body arrives, decoded with the
+// encoding that Chrome works out for it (text_resource_decoder_builder.h), the
+// scripts that the parser runs, and the document's readiness with
+// DOMContentLoaded and load, as Blink's HTMLDocumentParser and
+// HTMLParserScriptRunner have them.
 //
 // The parser takes the body from tasks of the networking task source, and
 // yields after a budget of time, as Chrome's does. It runs an inline script
@@ -41,25 +43,7 @@ class HTMLScriptElement;
 class HtmlDocumentParser;
 class PendingScript;
 class ScriptRunner;
-
-// Decodes UTF-8 that arrives in pieces, as the Encoding Standard's UTF-8
-// decode does: a byte order mark at the start goes, and each byte sequence
-// that is not UTF-8 becomes U+FFFD. A sequence cut between two pieces waits
-// for the rest.
-// Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_utf8.cc
-class Utf8StreamDecoder {
- public:
-  Utf8StreamDecoder();
-  ~Utf8StreamDecoder();
-
-  std::u16string Decode(std::string_view bytes);
-  // What is left at the end of the stream.
-  std::u16string Flush();
-
- private:
-  std::string pending_;
-  bool started_ = false;
-};
+class TextResourceDecoder;
 
 class DocumentLoader final : public PageRequests::Client {
  public:
@@ -77,6 +61,10 @@ class DocumentLoader final : public PageRequests::Client {
   void OnResponseEnded(int net_error) override;
 
  private:
+  // Gives the parser what the decoder decoded, after the document has taken
+  // the decoder's encoding.
+  void AppendDecoded(std::u16string text);
+
   // HTMLDocumentParser::SchedulePumpTokenizer(): the parser goes on from a
   // task of the networking task source.
   void SchedulePumpTokenizer();
@@ -125,7 +113,9 @@ class DocumentLoader final : public PageRequests::Client {
   // How many bytes of the body have come, as decoded as the Page gets them.
   uint64_t body_bytes_ = 0;
   std::unique_ptr<HtmlDocumentParser> parser_;
-  Utf8StreamDecoder decoder_;
+  // Decodes the body as Blink's TextResourceDecoder does, with the encoding
+  // that the response, the document or Chrome's detector gives.
+  std::unique_ptr<TextResourceDecoder> decoder_;
   // Pieces of the body that have arrived and wait for the parser. The
   // Session has no credit for them until the parser takes them.
   base::circular_deque<std::string> waiting_body_;

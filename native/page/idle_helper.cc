@@ -85,6 +85,12 @@ void IdleHelper::EnableLongIdlePeriod() {
   }
 }
 
+void IdleHelper::StartShortIdlePeriod(base::TimeTicks now,
+                                      base::TimeTicks idle_period_deadline) {
+  StartIdlePeriod(IdlePeriodState::kInShortIdlePeriod, now,
+                  idle_period_deadline);
+}
+
 void IdleHelper::StartIdlePeriod(IdlePeriodState new_state,
                                  base::TimeTicks now,
                                  base::TimeTicks idle_period_deadline) {
@@ -127,9 +133,13 @@ void IdleHelper::DidProcessTask(const base::PendingTask& pending_task) {
   DCHECK(IsInIdlePeriod());
   if (idle_period_state_ != IdlePeriodState::kInLongIdlePeriodPaused &&
       base::TimeTicks::Now() >= idle_period_deadline_) {
-    // If the idle period deadline has now been reached, trigger a new long
-    // idle period.
-    EnableLongIdlePeriod();
+    // If the idle period deadline has now been reached, either end the idle
+    // period or trigger a new long-idle period.
+    if (IsInLongIdlePeriod()) {
+      EnableLongIdlePeriod();
+    } else {
+      EndIdlePeriod();
+    }
   }
 }
 

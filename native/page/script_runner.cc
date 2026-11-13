@@ -18,6 +18,7 @@
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
@@ -156,6 +157,8 @@ std::optional<std::string> ScriptRunner::Start(
     return base::StrCat({"the locale \"", start.locale, "\" cannot be set"});
   }
   icu::TimeZone::adoptDefault(time_zone.release());
+  // The frames begin at the vsyncs of the Machine's display.
+  EventLoop::Get()->SetRefreshRate(start.refresh_rate);
   isolate_->DateTimeConfigurationChangeNotification(
       v8::Isolate::TimeZoneDetection::kSkip);
   isolate_->LocaleConfigurationChangeNotification();
@@ -200,11 +203,14 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   const v8::Context::Scope context_scope(context);
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
+  animation_frames_ =
+      std::make_unique<AnimationFrameController>(isolate_, context);
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   window_tasks_ = std::make_unique<WindowTasks>(isolate_, context);
   Window& window = Window::Current();
   window.SetTimers(timers_.get());
   window.SetIdleTasks(idle_tasks_.get());
+  window.SetAnimationFrames(animation_frames_.get());
   window.SetFetcher(fetcher_.get());
   window.SetTasks(window_tasks_.get());
   window.SetStart(start_, connection);
@@ -246,11 +252,18 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::String> source;
     v8::Local<v8::Script> compiled;
+    // As DevTools' EvaluateGlobal() compiles what it evaluates: with no name,
+    // and errors that the window's error listeners see as they are.
+    v8::ScriptOrigin origin(
+        v8::String::Empty(isolate_), /*resource_line_offset=*/0,
+        /*resource_column_offset=*/0,
+        /*resource_is_shared_cross_origin=*/true, /*script_id=*/-1,
+        /*source_map_url=*/v8::Local<v8::Value>(), /*resource_is_opaque=*/true);
     if (!v8::String::NewFromUtf8(isolate_, script.data(),
                                  v8::NewStringType::kNormal,
                                  base::checked_cast<int>(script.size()))
              .ToLocal(&source) ||
-        !v8::Script::Compile(context, source).ToLocal(&compiled) ||
+        !v8::Script::Compile(context, source, &origin).ToLocal(&compiled) ||
         !compiled->Run(context).ToLocal(&result)) {
       evaluated = FailureOf(call, Failure(isolate_, context, try_catch));
     }
@@ -354,11 +367,13 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
     const v8::Context::Scope old_scope(context_.Get(isolate_));
     Window::Current().SetTimers(nullptr);
     Window::Current().SetIdleTasks(nullptr);
+    Window::Current().SetAnimationFrames(nullptr);
     Window::Current().SetFetcher(nullptr);
     Window::Current().SetTasks(nullptr);
   }
   timers_.reset();
   idle_tasks_.reset();
+  animation_frames_.reset();
   fetcher_.reset();
   window_tasks_.reset();
   reporter_->ContextDestroyed(context_.Get(isolate_));

@@ -1,5 +1,10 @@
 #include "mitto/dom/document.h"
 
+#include <algorithm>
+#include <variant>
+
+#include "base/check.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
@@ -11,6 +16,9 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
+#include "mitto/dom/attached_traversals.h"
+#include "mitto/dom/attr.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
@@ -26,14 +34,21 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/mathml_element.h"
+#include "mitto/dom/node_iterator.h"
+#include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/qualified_name.h"
+#include "mitto/dom/range.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
 #include "mitto/dom/text.h"
+#include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
+#include "mitto/encoding/text_codec.h"
+#include "mitto/encoding/text_encoding_registry.h"
+#include "mitto/encoding/url_with_encoding.h"
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -48,6 +63,20 @@ void ThrowInvalidTagName(const std::u16string& name,
       "InvalidCharacterError",
       base::StrCat({"The tag name provided ('", base::UTF16ToUTF8(name),
                     "') is not a valid name."}));
+}
+
+// Gives `element` the is value of createElement()'s or createElementNS()'s
+// options. With no custom element definitions, that leaves an HTML element
+// undefined. A string in place of the options gives none, as Blink's
+// FlattenCreateElementOptions().
+void SetIsValueFromOptions(
+    Element& element,
+    const bindings::DOMStringOrElementCreationOptions& options) {
+  const auto* const dictionary =
+      std::get_if<bindings::ElementCreationOptions>(&options);
+  if (dictionary && dictionary->is) {
+    element.SetIsValue(*dictionary->is);
+  }
 }
 
 bool IsAsciiWhitespace(char16_t c) {
@@ -110,6 +139,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   current_script_stack_.Trace(visitor);
   visitor->Trace(template_document_);
   visitor->Trace(template_document_host_);
+  visitor->Trace(traversals_);
 }
 
 mitto::Location* Document::Location() const {
@@ -325,6 +355,45 @@ std::u16string Document::Title() const {
   return std::u16string();
 }
 
+std::u16string Document::CharacterSet() const {
+  return base::ASCIIToUTF16(encoding_);
+}
+
+void Document::SetEncoding(std::string_view encoding,
+                           bool detected_heuristically) {
+  DCHECK(!encoding.empty());
+  // The loader sets the encoding after each piece of the body, so the tree is
+  // searched only when windows-1252 gives way to another.
+  Element* title_element = nullptr;
+  if (encoding_ != encoding && encoding_ == kWindows1252EncodingName) {
+    // The first title element in tree order, as Blink keeps its title element.
+    for (Node* node = FirstChild(); node; node = node->NextInTree(this)) {
+      if (node->IsElementNode() &&
+          static_cast<Element*>(node)->HasHTMLTagName(u"title")) {
+        title_element = static_cast<Element*>(node);
+        break;
+      }
+    }
+  }
+  if (title_element && !title_element->FirstElementChild()) {
+    const std::u16string text = title_element->DescendantTextContent();
+    if (std::ranges::all_of(text, [](char16_t c) { return c <= 0xFF; })) {
+      std::string original_bytes(text.begin(), text.end());
+      bool saw_error = false;
+      const std::u16string decoded = NewTextCodec(encoding)->Decode(
+          base::as_byte_span(original_bytes), FlushBehavior::kDataEof,
+          /*stop_on_error=*/false, saw_error);
+      // textContent's setter: one Text node, or none for an empty string.
+      title_element->RemoveChildren();
+      if (!decoded.empty()) {
+        title_element->ParserAppendChild(Text::Create(*this, decoded));
+      }
+    }
+  }
+  encoding_ = std::string(encoding);
+  encoding_detected_heuristically_ = detected_heuristically;
+}
+
 void Document::SetTitle(const std::u16string& title) {
   Element* const root = DocumentElement();
   if (!root || !root->IsHTMLElement()) {
@@ -347,7 +416,9 @@ void Document::SetTitle(const std::u16string& title) {
         CreateElement(html_names::kXhtmlNamespace, std::nullopt, u"title");
     head->ParserAppendChild(title_element);
   }
-  // HTMLTitleElement's text setter: replace all with one Text node.
+  // HTMLTitleElement's text setter: replace all with one Text node, one
+  // record for observers.
+  const ChildListMutationScope mutation(*title_element);
   title_element->RemoveChildren();
   if (!title.empty()) {
     title_element->ParserAppendChild(Text::Create(*this, title));
@@ -389,6 +460,45 @@ Comment* Document::CreateComment(const std::u16string& data) {
 
 Text* Document::CreateTextNode(const std::u16string& data) {
   return Text::Create(*this, data);
+}
+
+Attr* Document::CreateAttribute(const std::u16string& local_name,
+                                bindings::ExceptionState& exception_state) {
+  if (!IsValidAttributeLocalName(local_name)) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The localName provided ('",
+                      base::UTF16ToUTF8(local_name),
+                      "') contains an invalid character."}));
+    return nullptr;
+  }
+  return Attr::Create(
+      *this,
+      QualifiedName{.local_name =
+                        is_html_ ? base::ToLowerASCII(local_name) : local_name},
+      std::u16string());
+}
+
+Attr* Document::CreateAttributeNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    bindings::ExceptionState& exception_state) {
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kAttribute,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  return Attr::Create(*this, *name, std::u16string());
 }
 
 DocumentFragment* Document::CreateDocumentFragment() {
@@ -438,14 +548,15 @@ Element* Document::CreateElementNS(
                       base::UTF16ToUTF8(qualified_name), "')."}));
     return nullptr;
   }
-  // The options name a custom element registry or a customized built-in
-  // element, which need definitions that the Runtime, without custom
-  // elements, never has. Blink then checks the whole name.
+  // Blink then checks the whole name.
   if (!IsValidElementLocalName(qualified_name)) {
     ThrowInvalidTagName(qualified_name, exception_state);
     return nullptr;
   }
-  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+  Element* const element =
+      CreateElement(name->namespace_uri, name->prefix, name->local_name);
+  SetIsValueFromOptions(*element, options);
+  return element;
 }
 
 Element* Document::CreateElementForBinding(
@@ -465,9 +576,57 @@ Element* Document::CreateElementForBinding(
     const std::u16string& local_name,
     const bindings::DOMStringOrElementCreationOptions& options,
     bindings::ExceptionState& exception_state) {
-  // Its `is` names a customized built-in element, which needs a definition
-  // that the Runtime, without custom elements, never has.
-  return CreateElementForBinding(local_name, exception_state);
+  Element* const element = CreateElementForBinding(local_name, exception_state);
+  if (element) {
+    SetIsValueFromOptions(*element, options);
+  }
+  return element;
+}
+
+Node* Document::ImportNode(Node* node,
+                           const bindings::BooleanOrImportNodeOptions& options,
+                           bindings::ExceptionState& exception_state) {
+  // Blink's importNode(): a boolean says whether to copy the subtree, and
+  // options say so unless they ask for the node alone. A custom element
+  // registry, which the Runtime has none of, changes nothing.
+  bool deep = false;
+  if (const bool* subtree = std::get_if<bool>(&options)) {
+    deep = *subtree;
+  } else {
+    deep = !std::get<bindings::ImportNodeOptions>(options).self_only;
+  }
+  if (node->IsDocumentNode()) {
+    exception_state.ThrowDOMException(
+        "NotSupportedError",
+        "The node provided is a document, which may not be imported.");
+    return nullptr;
+  }
+  return node->Clone(*this, deep);
+}
+
+Node* Document::AdoptNode(Node* node,
+                          bindings::ExceptionState& exception_state) {
+  // Blink's adoptNode().
+  if (node->IsDocumentNode()) {
+    exception_state.ThrowDOMException(
+        "NotSupportedError", base::StrCat({"The node provided is of type '",
+                                           base::UTF16ToUTF8(node->NodeName()),
+                                           "', which may not be adopted."}));
+    return nullptr;
+  }
+  if (node->GetNodeType() == kAttributeNode) {
+    Attr* const attr = static_cast<Attr*>(node);
+    if (Element* const owner = attr->OwnerElement()) {
+      owner->RemoveAttributeNode(attr, exception_state);
+    }
+  } else if (Node* const parent = node->ParentNode()) {
+    parent->RemoveChild(node, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+  }
+  node->SetTreeDocument(*this);
+  return node;
 }
 
 Element* Document::GetElementById(const std::u16string& id) const {
@@ -485,6 +644,33 @@ Element* Document::GetElementById(const std::u16string& id) const {
     }
   }
   return nullptr;
+}
+
+NodeList* Document::GetElementsByName(const std::u16string& name) {
+  return EnsureNodeLists().NameNodeList(*this, name);
+}
+
+Range* Document::CreateRange() {
+  return Range::Create(*this);
+}
+
+NodeIterator* Document::CreateNodeIterator(Node* root,
+                                           uint32_t what_to_show,
+                                           v8::Local<v8::Object> filter) {
+  return NodeIterator::Create(root, what_to_show, filter);
+}
+
+TreeWalker* Document::CreateTreeWalker(Node* root,
+                                       uint32_t what_to_show,
+                                       v8::Local<v8::Object> filter) {
+  return TreeWalker::Create(root, what_to_show, filter);
+}
+
+AttachedTraversals& Document::Traversals() {
+  if (!traversals_) {
+    traversals_ = bindings::MakeGarbageCollected<AttachedTraversals>();
+  }
+  return *traversals_;
 }
 
 Element* Document::CreateElement(
@@ -521,6 +707,9 @@ Document& Document::EnsureTemplateDocument() {
 Node* Document::CloneWithoutChildren(Document& document) const {
   Document* const copy = is_html_ ? CreateHTML() : Create();
   copy->SetCompatibilityMode(compat_mode_);
+  // Blink's CloneDataFromDocument() copies the encoding too.
+  copy->encoding_ = encoding_;
+  copy->encoding_detected_heuristically_ = encoding_detected_heuristically_;
   return copy;
 }
 
@@ -543,8 +732,9 @@ const GURL& Document::BaseUrl() const {
 }
 
 GURL Document::CompleteUrl(std::u16string_view url) const {
-  // A document with no base URL resolves only an absolute URL.
-  return base_url_.is_valid() ? base_url_.Resolve(url) : GURL(url);
+  // A document with no base URL resolves only an absolute URL, whose query is
+  // still in the document's encoding.
+  return ResolveUrlWithEncoding(base_url_, url, encoding_);
 }
 
 void Document::ProcessBaseElement() {

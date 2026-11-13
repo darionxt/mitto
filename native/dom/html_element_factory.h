@@ -5,6 +5,7 @@
 #define MITTO_DOM_HTML_ELEMENT_FACTORY_H_
 
 #include <string>
+#include <string_view>
 
 namespace mitto {
 
@@ -22,6 +23,11 @@ HTMLElement* CreateHTMLElement(Document& document,
 // Whether the HTML Standard knows `local_name` as the name of an HTML element,
 // whatever its interface.
 bool IsKnownHTMLElementName(const std::u16string& local_name);
+
+// Whether `name` is a valid custom element name, as Blink's
+// CustomElement::IsValidName() checks it, with the HTML Standard's valid
+// element local name in place of its old PCENChar production.
+bool IsValidCustomElementName(std::u16string_view name);
 
 }  // namespace mitto
 

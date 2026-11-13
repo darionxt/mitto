@@ -5,13 +5,15 @@
 #include <initializer_list>
 #include <iterator>
 #include <optional>
+#include <string>
 #include <utility>
 
-#include "base/check.h"
+#include "base/check_op.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "mitto/encoding/encoding_tables.h"
+#include "third_party/icu/source/common/unicode/utf16.h"
 
 namespace mitto {
 
@@ -53,6 +55,7 @@ constexpr std::array<const char*, 8> kSupportedCanonicalNames = {
 
 constexpr char16_t kYenSign = 0x00A5;
 constexpr char16_t kOverline = 0x203E;
+constexpr char16_t kMinusSign = 0x2212;
 
 bool IsAscii(uint8_t byte) {
   return byte < 0x80;
@@ -127,6 +130,408 @@ std::optional<int32_t> IndexGb18030RangesCodePoint(uint32_t pointer) {
   DCHECK(upper_bound != kGb18030Ranges.begin());
   const auto& [offset, code_point_offset] = *std::prev(upper_bound);
   return code_point_offset + static_cast<int32_t>(pointer - offset);
+}
+
+// https://encoding.spec.whatwg.org/#index-gb18030-ranges-pointer
+uint32_t Gb18030RangesPointer(UChar32 code_point) {
+  if (code_point == 0xE7C7) {
+    return 7457;
+  }
+  const auto upper_bound = std::ranges::upper_bound(
+      kGb18030Ranges, code_point, {}, &std::pair<uint32_t, int32_t>::second);
+  DCHECK(upper_bound != kGb18030Ranges.begin());
+  const auto& [pointer_offset, offset] = *std::prev(upper_bound);
+  return pointer_offset + static_cast<uint32_t>(code_point - offset);
+}
+
+bool IsAsciiCodePoint(UChar32 code_point) {
+  return code_point >= 0 && code_point < 0x80;
+}
+
+void AppendByte(std::string& result, uint32_t byte) {
+  result.push_back(static_cast<char>(byte));
+}
+
+void AppendUnencodableReplacement(UChar32 code_point,
+                                  UnencodableHandling handling,
+                                  std::string& result) {
+  result.append(TextCodec::GetUnencodableReplacement(code_point, handling));
+}
+
+// Calls `encode` with each code point of `text`, and with a lone surrogate as
+// it is, as Blink's CodePointIterator gives them.
+template <typename Function>
+void ForEachCodePoint(std::u16string_view text, Function encode) {
+  const size_t length = text.size();
+  size_t i = 0;
+  while (i < length) {
+    UChar32 code_point;
+    U16_NEXT(text, i, length, code_point);
+    encode(code_point);
+  }
+}
+
+// https://encoding.spec.whatwg.org/#euc-jp-encoder
+std::string EncodeEucJp(std::u16string_view text,
+                        UnencodableHandling handling) {
+  std::string result;
+  result.reserve(text.size());
+  ForEachCodePoint(text, [&](UChar32 code_point) {
+    if (IsAsciiCodePoint(code_point)) {
+      AppendByte(result, code_point);
+      return;
+    }
+    if (code_point == kYenSign) {
+      AppendByte(result, 0x5C);
+      return;
+    }
+    if (code_point == kOverline) {
+      AppendByte(result, 0x7E);
+      return;
+    }
+    if (code_point >= 0xFF61 && code_point <= 0xFF9F) {
+      AppendByte(result, 0x8E);
+      AppendByte(result, code_point - 0xFF61 + 0xA1);
+      return;
+    }
+    if (code_point == kMinusSign) {
+      code_point = 0xFF0D;
+    }
+    const std::optional<uint16_t> pointer =
+        FindPointer(Jis0208EncodeIndex(), code_point);
+    if (!pointer) {
+      AppendUnencodableReplacement(code_point, handling, result);
+      return;
+    }
+    AppendByte(result, *pointer / 94 + 0xA1);
+    AppendByte(result, *pointer % 94 + 0xA1);
+  });
+  return result;
+}
+
+// https://encoding.spec.whatwg.org/#iso-2022-jp-encoder
+class Iso2022JpEncoder {
+ public:
+  static std::string Encode(std::u16string_view text,
+                            UnencodableHandling handling) {
+    Iso2022JpEncoder encoder(handling, text.size());
+    ForEachCodePoint(
+        text, [&](UChar32 code_point) { encoder.ParseCodePoint(code_point); });
+    return encoder.Finalize();
+  }
+
+ private:
+  enum class State : uint8_t { kAscii, kRoman, kJis0208 };
+
+  // https://encoding.spec.whatwg.org/index-iso-2022-jp-katakana.txt
+  static constexpr std::array<char16_t, 63> kIso2022JpKatakana = {
+      0x3002, 0x300C, 0x300D, 0x3001, 0x30FB, 0x30F2, 0x30A1, 0x30A3, 0x30A5,
+      0x30A7, 0x30A9, 0x30E3, 0x30E5, 0x30E7, 0x30C3, 0x30FC, 0x30A2, 0x30A4,
+      0x30A6, 0x30A8, 0x30AA, 0x30AB, 0x30AD, 0x30AF, 0x30B1, 0x30B3, 0x30B5,
+      0x30B7, 0x30B9, 0x30BB, 0x30BD, 0x30BF, 0x30C1, 0x30C4, 0x30C6, 0x30C8,
+      0x30CA, 0x30CB, 0x30CC, 0x30CD, 0x30CE, 0x30CF, 0x30D2, 0x30D5, 0x30D8,
+      0x30DB, 0x30DE, 0x30DF, 0x30E0, 0x30E1, 0x30E2, 0x30E4, 0x30E6, 0x30E8,
+      0x30E9, 0x30EA, 0x30EB, 0x30EC, 0x30ED, 0x30EF, 0x30F3, 0x309B, 0x309C};
+  static_assert(kIso2022JpKatakana.size() == 0xFF9F - 0xFF61 + 1);
+
+  Iso2022JpEncoder(UnencodableHandling handling, size_t length)
+      : handling_(handling) {
+    result_.reserve(length);
+  }
+
+  void ChangeStateToAscii() {
+    result_.append("\x1B\x28\x42");
+    state_ = State::kAscii;
+  }
+
+  void ChangeStateToRoman() {
+    result_.append("\x1B\x28\x4A");
+    state_ = State::kRoman;
+  }
+
+  void ChangeStateToJis0208() {
+    result_.append("\x1B\x24\x42");
+    state_ = State::kJis0208;
+  }
+
+  void ParseCodePoint(UChar32 code_point) {
+    if ((state_ == State::kAscii || state_ == State::kRoman) &&
+        (code_point == 0x000E || code_point == 0x000F ||
+         code_point == 0x001B)) {
+      StatefulUnencodableHandler(kReplacementCharacter);
+      return;
+    }
+    if (state_ == State::kAscii && IsAsciiCodePoint(code_point)) {
+      AppendByte(result_, code_point);
+      return;
+    }
+    if (state_ == State::kRoman) {
+      if (IsAsciiCodePoint(code_point) && code_point != 0x005C &&
+          code_point != 0x007E) {
+        AppendByte(result_, code_point);
+        return;
+      }
+      if (code_point == kYenSign) {
+        AppendByte(result_, 0x5C);
+        return;
+      }
+      if (code_point == kOverline) {
+        AppendByte(result_, 0x7E);
+        return;
+      }
+    }
+    if (IsAsciiCodePoint(code_point) && state_ != State::kAscii) {
+      ChangeStateToAscii();
+      ParseCodePoint(code_point);
+      return;
+    }
+    if ((code_point == kYenSign || code_point == kOverline) &&
+        state_ != State::kRoman) {
+      ChangeStateToRoman();
+      ParseCodePoint(code_point);
+      return;
+    }
+    if (code_point == kMinusSign) {
+      code_point = 0xFF0D;
+    }
+    if (code_point >= 0xFF61 && code_point <= 0xFF9F) {
+      code_point = kIso2022JpKatakana[static_cast<size_t>(code_point - 0xFF61)];
+    }
+    const std::optional<uint16_t> pointer =
+        FindPointer(Jis0208EncodeIndex(), code_point);
+    if (!pointer) {
+      StatefulUnencodableHandler(code_point);
+      return;
+    }
+    if (state_ != State::kJis0208) {
+      ChangeStateToJis0208();
+      ParseCodePoint(code_point);
+      return;
+    }
+    AppendByte(result_, *pointer / 94 + 0x21);
+    AppendByte(result_, *pointer % 94 + 0x21);
+  }
+
+  std::string Finalize() {
+    if (state_ != State::kAscii) {
+      ChangeStateToAscii();
+    }
+    return std::move(result_);
+  }
+
+  // Goes back to ASCII from JIS X 0208, so that the replacement's ASCII
+  // characters read as themselves.
+  void StatefulUnencodableHandler(UChar32 code_point) {
+    if (state_ == State::kJis0208) {
+      ChangeStateToAscii();
+    }
+    AppendUnencodableReplacement(code_point, handling_, result_);
+  }
+
+  const UnencodableHandling handling_;
+  State state_ = State::kAscii;
+  std::string result_;
+};
+
+// https://encoding.spec.whatwg.org/#shift_jis-encoder
+std::string EncodeShiftJis(std::u16string_view text,
+                           UnencodableHandling handling) {
+  std::string result;
+  result.reserve(text.size());
+  ForEachCodePoint(text, [&](UChar32 code_point) {
+    if (IsAsciiCodePoint(code_point) || code_point == 0x0080) {
+      AppendByte(result, code_point);
+      return;
+    }
+    if (code_point == kYenSign) {
+      AppendByte(result, 0x5C);
+      return;
+    }
+    if (code_point == kOverline) {
+      AppendByte(result, 0x7E);
+      return;
+    }
+    if (code_point >= 0xFF61 && code_point <= 0xFF9F) {
+      AppendByte(result, code_point - 0xFF61 + 0xA1);
+      return;
+    }
+    if (code_point == kMinusSign) {
+      code_point = 0xFF0D;
+    }
+    const base::span<const std::pair<char16_t, uint16_t>> pointers =
+        FindPointers(Jis0208EncodeIndex(), code_point);
+    if (pointers.empty()) {
+      AppendUnencodableReplacement(code_point, handling, result);
+      return;
+    }
+    DCHECK_LE(pointers.size(), 3u);
+    for (const auto& entry : pointers) {
+      const uint16_t pointer = entry.second;
+      // The index Shift_JIS pointer leaves out pointers 8272 to 8835. Blink
+      // writes nothing for a code point that has only those, as this does.
+      if (pointer >= 8272 && pointer <= 8835) {
+        continue;
+      }
+      const uint32_t lead = pointer / 188;
+      const uint32_t lead_offset = lead < 0x1F ? 0x81 : 0xC1;
+      const uint32_t trail = pointer % 188;
+      const uint32_t offset = trail < 0x3F ? 0x40 : 0x41;
+      AppendByte(result, lead + lead_offset);
+      AppendByte(result, trail + offset);
+      break;
+    }
+  });
+  return result;
+}
+
+// https://encoding.spec.whatwg.org/#euc-kr-encoder
+std::string EncodeEucKr(std::u16string_view text,
+                        UnencodableHandling handling) {
+  std::string result;
+  result.reserve(text.size());
+  ForEachCodePoint(text, [&](UChar32 code_point) {
+    if (IsAsciiCodePoint(code_point)) {
+      AppendByte(result, code_point);
+      return;
+    }
+    const std::optional<uint16_t> pointer =
+        FindPointer(EucKrEncodeIndex(), code_point);
+    if (!pointer) {
+      AppendUnencodableReplacement(code_point, handling, result);
+      return;
+    }
+    AppendByte(result, *pointer / 190 + 0x81);
+    AppendByte(result, *pointer % 190 + 0x41);
+  });
+  return result;
+}
+
+// Code points that gb18030 encodes with two bytes that decode to other code
+// points since GB18030-2022, as Blink has them
+// (https://unicode-org.atlassian.net/browse/ICU-22357). The index by code point
+// no longer has them, and the four-byte ranges would take them otherwise.
+std::optional<uint16_t> Gb18030AsymmetricEncode(UChar32 code_point) {
+  switch (code_point) {
+    case 0xE81E:
+      return 0xFE59;
+    case 0xE826:
+      return 0xFE61;
+    case 0xE82B:
+      return 0xFE66;
+    case 0xE82C:
+      return 0xFE67;
+    case 0xE832:
+      return 0xFE6D;
+    case 0xE843:
+      return 0xFE7E;
+    case 0xE854:
+      return 0xFE90;
+    case 0xE864:
+      return 0xFEA0;
+    case 0xE78D:
+      return 0xA6D9;
+    case 0xE78F:
+      return 0xA6DB;
+    case 0xE78E:
+      return 0xA6DA;
+    case 0xE790:
+      return 0xA6DC;
+    case 0xE791:
+      return 0xA6DD;
+    case 0xE792:
+      return 0xA6DE;
+    case 0xE793:
+      return 0xA6DF;
+    case 0xE794:
+      return 0xA6EC;
+    case 0xE795:
+      return 0xA6ED;
+    case 0xE796:
+      return 0xA6F3;
+  }
+  return std::nullopt;
+}
+
+// https://encoding.spec.whatwg.org/#gb18030-encoder, which GBK encodes with
+// too, without the four-byte sequences.
+enum class IsGbk : bool { kNo, kYes };
+std::string EncodeGbShared(std::u16string_view text,
+                           UnencodableHandling handling,
+                           IsGbk is_gbk) {
+  std::string result;
+  result.reserve(text.size());
+  ForEachCodePoint(text, [&](UChar32 code_point) {
+    if (IsAsciiCodePoint(code_point)) {
+      AppendByte(result, code_point);
+      return;
+    }
+    if (code_point == 0xE5E5) {
+      AppendUnencodableReplacement(code_point, handling, result);
+      return;
+    }
+    if (is_gbk == IsGbk::kYes && code_point == 0x20AC) {
+      AppendByte(result, 0x80);
+      return;
+    }
+    if (const std::optional<uint16_t> encoded =
+            Gb18030AsymmetricEncode(code_point)) {
+      AppendByte(result, *encoded >> 8);
+      AppendByte(result, *encoded & 0xFF);
+      return;
+    }
+    if (const std::optional<uint16_t> pointer =
+            FindPointer(Gb18030EncodeIndex(), code_point)) {
+      const uint32_t lead = *pointer / 190 + 0x81;
+      const uint32_t trail = *pointer % 190;
+      const uint32_t offset = trail < 0x3F ? 0x40 : 0x41;
+      AppendByte(result, lead);
+      AppendByte(result, trail + offset);
+      return;
+    }
+    if (is_gbk == IsGbk::kYes) {
+      AppendUnencodableReplacement(code_point, handling, result);
+      return;
+    }
+    uint32_t pointer = Gb18030RangesPointer(code_point);
+    const uint32_t byte1 = pointer / (10 * 126 * 10);
+    pointer = pointer % (10 * 126 * 10);
+    const uint32_t byte2 = pointer / (10 * 126);
+    pointer = pointer % (10 * 126);
+    const uint32_t byte3 = pointer / 10;
+    const uint32_t byte4 = pointer % 10;
+    AppendByte(result, byte1 + 0x81);
+    AppendByte(result, byte2 + 0x30);
+    AppendByte(result, byte3 + 0x81);
+    AppendByte(result, byte4 + 0x30);
+  });
+  return result;
+}
+
+// https://encoding.spec.whatwg.org/#big5-encoder
+std::string EncodeBig5(std::u16string_view text, UnencodableHandling handling) {
+  std::string result;
+  result.reserve(text.size());
+  ForEachCodePoint(text, [&](UChar32 code_point) {
+    if (IsAsciiCodePoint(code_point)) {
+      AppendByte(result, code_point);
+      return;
+    }
+    // Blink takes U+224C as a code point that Big5 lacks, as the Encoding
+    // Standard's encoder does.
+    if (code_point == 0x224C) {
+      AppendUnencodableReplacement(code_point, handling, result);
+      return;
+    }
+    if (const std::optional<uint16_t> pointer =
+            FindPointer(Big5EncodeIndex(), code_point)) {
+      AppendByte(result, *pointer / 157 + 0x81);
+      const uint32_t trail = *pointer % 157;
+      AppendByte(result, trail + (trail < 0x3F ? 0x40 : 0x62));
+      return;
+    }
+    AppendUnencodableReplacement(code_point, handling, result);
+  });
+  return result;
 }
 
 // https://encoding.spec.whatwg.org/#euc-jp-decoder
@@ -767,6 +1172,27 @@ std::u16string TextCodecCjk::Decode(base::span<const uint8_t> data,
     }
   }
   return decoder_->Decode(data, flush, stop_on_error, saw_error);
+}
+
+std::string TextCodecCjk::Encode(std::u16string_view text,
+                                 UnencodableHandling handling) {
+  switch (encoding_) {
+    case Encoding::kEucJp:
+      return EncodeEucJp(text, handling);
+    case Encoding::kShiftJis:
+      return EncodeShiftJis(text, handling);
+    case Encoding::kIso2022Jp:
+      return Iso2022JpEncoder::Encode(text, handling);
+    case Encoding::kEucKr:
+      return EncodeEucKr(text, handling);
+    case Encoding::kGbk:
+      return EncodeGbShared(text, handling, IsGbk::kYes);
+    case Encoding::kGb18030:
+      return EncodeGbShared(text, handling, IsGbk::kNo);
+    case Encoding::kBig5:
+      return EncodeBig5(text, handling);
+  }
+  NOTREACHED();
 }
 
 }  // namespace mitto

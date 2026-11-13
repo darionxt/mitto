@@ -37,9 +37,13 @@ class ExceptionState;
 
 class Document;
 class Element;
+class Event;
+class EventDispatchHandlingState;
 class HTMLCollection;
 class Node;
 class NodeList;
+class NodeListsNodeData;
+class NodeMutationObserverData;
 
 // Nodes that C++ holds between allocations. A vector's buffer is not on the
 // C++ heap, where the collector would see its members, so each is persistent.
@@ -142,6 +146,19 @@ class Node : public EventTarget {
   void Remove(bindings::ExceptionState& exception_state);
   Element* QuerySelector(const std::u16string& selectors,
                          bindings::ExceptionState& exception_state);
+  // A static list of what matches, as Blink's StaticNodeList.
+  NodeList* QuerySelectorAll(const std::u16string& selectors,
+                             bindings::ExceptionState& exception_state);
+
+  // The members of Document and Element that give live collections of the
+  // elements under the node, the same while a page keeps one.
+  HTMLCollection* GetElementsByTagName(const std::u16string& qualified_name);
+  HTMLCollection* GetElementsByTagNameNS(
+      const std::optional<std::u16string>& namespace_uri,
+      const std::u16string& local_name);
+  HTMLCollection* GetElementsByClassName(const std::u16string& class_names);
+  // The cache of those collections.
+  NodeListsNodeData& EnsureNodeLists();
 
   // What the DOM and the parser use.
 
@@ -165,6 +182,9 @@ class Node : public EventTarget {
   // The topmost ancestor, or this node.
   Node& TreeRoot() const;
   bool IsInclusiveAncestorOf(const Node& node) const;
+  // The same, going from a template's contents to the template: the DOM
+  // standard's host-including inclusive ancestor, which insertion checks.
+  bool IsHostIncludingInclusiveAncestorOf(const Node& node) const;
   // The next node in tree order that is `stay_within` or inside it, or null.
   Node* NextInTree(const Node* stay_within) const;
   // The same, past this node's children.
@@ -186,8 +206,51 @@ class Node : public EventTarget {
   // Takes out every child.
   void RemoveChildren();
 
+  // The DOM standard's "ensure pre-insertion validity" of `node` before
+  // `next`, with Blink's checks and messages, as Range's insertNode() runs it.
+  bool EnsurePreInsertionValidity(
+      Node* node,
+      const Node* next,
+      bindings::ExceptionState& exception_state) const;
+
   // A copy of this node, in `document`, with its children if `deep`.
   Node* Clone(Document& document, bool deep) const;
+
+  // EventTarget:
+  Node* ToNode() override;
+
+  // A click's activation behaviour, as Blink's Node splits the DOM
+  // Standard's hooks (event_dispatcher.h): whether the node has any, its
+  // legacy-pre-activation behaviour before the listeners run, which may hand
+  // the rest a state, such as a checkbox's before it toggled, then what runs
+  // before DOMActivate, which may mark the click as handled, and what runs
+  // after it. A canceled click still runs the part before DOMActivate, which
+  // reverts what legacy-pre-activation behaviour did.
+  virtual bool HasActivationBehavior() const;
+  virtual EventDispatchHandlingState* LegacyPreActivationBehavior(Event& event);
+  virtual void RunActivationBehaviorBeforeDOMActivate(
+      Event& event,
+      EventDispatchHandlingState* state) {}
+  virtual void RunActivationBehavior(Event& event,
+                                     EventDispatchHandlingState* state) {}
+  // Whether it is a form control that is disabled, which gets no simulated
+  // click.
+  virtual bool IsDisabledFormControl() const;
+  // What runs once nothing canceled a trusted event or a click at this node
+  // or below it, as Blink's Node::DefaultEventHandler(): a click at its
+  // target fires DOMActivate there, and one that a listener cancels marks
+  // the click as handled.
+  virtual void DefaultEventHandler(Event& event);
+  // Fires the click of the HTML Standard's click(), as Blink's
+  // DispatchSimulatedClick() does for a script.
+  void DispatchSimulatedClick();
+
+  // The registrations of the MutationObservers that observe the node
+  // (mutation_observer.h), null until the first.
+  NodeMutationObserverData* MutationObserverData() const {
+    return mutation_observer_data_.Get();
+  }
+  NodeMutationObserverData& EnsureMutationObserverData();
 
   // Gives this node and those inside it `document` as their node document,
   // and runs DidMoveToNewDocument() on each that moves, as Blink's
@@ -246,6 +309,9 @@ class Node : public EventTarget {
   // `old_document`, as Blink's Node::DidMoveToNewDocument().
   virtual void DidMoveToNewDocument(Document& old_document) {}
 
+  // EventTarget: through the tree.
+  DispatchEventResult DispatchEventInternal(Event* event) override;
+
  private:
   // The DOM standard's "ensure pre-insertion validity" with Blink's checks
   // and messages, for `nodes` inserted before `next` or in place of
@@ -293,6 +359,8 @@ class Node : public EventTarget {
   cppgc::Member<Document> document_;
   cppgc::Member<NodeList> child_nodes_;
   cppgc::Member<HTMLCollection> children_;
+  cppgc::Member<NodeListsNodeData> node_lists_;
+  cppgc::Member<NodeMutationObserverData> mutation_observer_data_;
 };
 
 }  // namespace mitto

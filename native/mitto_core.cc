@@ -154,6 +154,9 @@ struct MittoSession final : public mitto::PageNetwork {
       std::optional<std::vector<char>> body) override;
   net::CookieStore& cookie_store() override;
   const mitto::NetworkQuality* GetNetworkQuality() const override;
+  void BroadcastFromPage(const mitto::PageHost& from,
+                         const url::Origin& origin,
+                         const mitto::PageBroadcast& broadcast) override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -843,6 +846,16 @@ net::CookieStore& MittoSession::cookie_store() {
 
 const mitto::NetworkQuality* MittoSession::GetNetworkQuality() const {
   return base::OptionalToPtr(network_quality);
+}
+
+void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
+                                     const url::Origin& origin,
+                                     const mitto::PageBroadcast& broadcast) {
+  for (const std::unique_ptr<mitto::PageHost>& page : pages) {
+    if (page.get() != &from) {
+      page->DeliverBroadcast(origin, broadcast);
+    }
+  }
 }
 
 namespace mitto {

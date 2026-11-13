@@ -1,5 +1,6 @@
 #include "mitto/dom/script_loader.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "mitto/dom/subresource_integrity.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
+#include "mitto/encoding/text_encoding_registry.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 
@@ -242,6 +244,14 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
       }
     }
   }
+  // Steps 21 and 22: the encoding that the charset attribute names, with no
+  // white space trimmed, or else the node document's.
+  const std::optional<std::u16string> charset =
+      element_->GetAttribute(u"charset");
+  std::string encoding = charset ? CanonicalTextEncodingName(*charset) : "";
+  if (encoding.empty()) {
+    encoding = element_document.Encoding();
+  }
   const bool potentially_render_blocking =
       element_->IsPotentiallyRenderBlocking();
 
@@ -282,7 +292,8 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         return nullptr;
       case ScriptTypeAtPrepare::kClassic:
         prepared_pending_script_ = PendingScript::Fetch(
-            *element_, url, std::move(integrity), potentially_render_blocking);
+            *element_, url, std::move(integrity), std::move(encoding),
+            potentially_render_blocking);
         break;
     }
   } else {

@@ -22,8 +22,13 @@
 // 3. The values that the Persona and the Machine decide beyond what the getters
 //    give: the high entropy values, matchMedia() for each media feature that
 //    Blink names, Intl's resolved options, the time zone through Date over a
-//    year, the permission states and the permissions policy's lists.
+//    year, the permission states and the permissions policy's lists. A worker
+//    has no matchMedia() and no permissions policy.
 // 4. What the walk itself made the page report, through a ReportingObserver.
+//
+// It runs in a window, top-level or a frame's, and in a dedicated worker, and
+// the walk stays in its own realm, so that a frame's walk does not enter its
+// parent's window.
 //
 // It calls no other function, so nothing that asks a person, opens something,
 // or follows the machine beyond the values above, such as fonts, canvas, WebGL,
@@ -80,10 +85,12 @@
 // for one among the own properties whose name is the one that its key gives
 // it, such as "item", "get length" or "[Symbol.iterator]". ["node", nodeName]
 // for a node of the DOM other than the document, which the walk does not
-// enter, ["throws", message] for a getter that throws, and ["capped"]. An
-// outcome is ["throws", message], ["returns", typeof], or for a promise
-// ["fulfils"], ["rejects", message] or ["pending"], once the microtasks queued
-// before have run.
+// enter, also one of another document, ["foreign", tag] for an object of
+// another realm, such as the window of a frame's parent of the same origin,
+// which the walk does not enter either, ["throws", message] for a getter that
+// throws, and ["capped"]. An outcome is ["throws", message], ["returns",
+// typeof], or for a promise ["fulfils"], ["rejects", message] or ["pending"],
+// once the microtasks queued before have run.
 
 (async () => {
   "use strict";
@@ -395,10 +402,12 @@
     }
   };
 
+  // A window has a document, and a worker has none.
   let theDocument = null;
   try {
     theDocument = typeof document === "object" ? document : null;
   } catch {}
+  const inAWindow = theDocument !== null;
   let nodeName = null;
   let NodePrototype = null;
   try {
@@ -422,6 +431,23 @@
   }
 
   // Step 1: the walk.
+
+  // Whether an object belongs to another realm, such as the window of a
+  // frame's parent and all that it holds: the last object on its prototype
+  // chain is another realm's Object.prototype. An object with no prototype is
+  // taken as this realm's, and so is a window of another origin, which gives
+  // none, so that the walk reads the few members that it shows.
+  const ofAnotherRealm = (object) => {
+    let last = object;
+    try {
+      for (let next = getPrototypeOf(object); next !== null; next = getPrototypeOf(next)) {
+        last = next;
+      }
+    } catch {
+      return false;
+    }
+    return last !== ObjectPrototype && last !== object;
+  };
 
   const found = new SafeMap();
   const objects = [];
@@ -474,6 +500,17 @@
     }
     if (value === null) {
       return null;
+    }
+    if (apply(mapGet, found, [value]) === undefined && ofAnotherRealm(value)) {
+      // A node of another document, such as a frame's element in its
+      // parent, which this realm's getter reads, or the window of another
+      // frame of the same origin, which the walk does not enter.
+      if (nodeName !== null) {
+        try {
+          return ["node", apply(nodeName, value, [])];
+        } catch {}
+      }
+      return ["foreign", tagOf(value)];
     }
     if (typeof value === "function") {
       const plain = plainFunction(value, expectedName);
@@ -883,51 +920,55 @@
     navigator.userAgentData.getHighEntropyValues(HIGH_ENTROPY_HINTS),
   );
 
-  values["matchMedia(): the media text of each feature"] = check(() => {
-    const result = {};
-    for (const feature of MEDIA_FEATURES) {
-      result[feature] = matchMedia(`(${feature})`).media;
-    }
-    return result;
-  });
-  values["matchMedia(): the keywords that match"] = check(() => {
-    const result = {};
-    for (const [feature, keywords] of MEDIA_KEYWORDS) {
-      const matching = [];
-      for (const keyword of keywords) {
-        if (matches(`(${feature}: ${keyword})`)) {
-          append(matching, keyword);
-        }
+  // matchMedia() and the permissions policy are a window's: a worker has
+  // neither.
+  if (inAWindow) {
+    values["matchMedia(): the media text of each feature"] = check(() => {
+      const result = {};
+      for (const feature of MEDIA_FEATURES) {
+        result[feature] = matchMedia(`(${feature})`).media;
       }
-      result[feature] = matching;
-    }
-    return result;
-  });
-  values["matchMedia(): the integers that match"] = check(() => {
-    const result = {};
-    for (const [feature, largest] of MEDIA_INTEGERS) {
-      const matching = [];
-      for (let value = 0; value <= largest; value++) {
-        if (matches(`(${feature}: ${value})`)) {
-          append(matching, value);
+      return result;
+    });
+    values["matchMedia(): the keywords that match"] = check(() => {
+      const result = {};
+      for (const [feature, keywords] of MEDIA_KEYWORDS) {
+        const matching = [];
+        for (const keyword of keywords) {
+          if (matches(`(${feature}: ${keyword})`)) {
+            append(matching, keyword);
+          }
         }
+        result[feature] = matching;
       }
-      result[feature] = matching;
-    }
-    return result;
-  });
-  values["matchMedia(): what agrees with the window and the screen"] = check(() => ({
-    "width = innerWidth": matches(`(width: ${innerWidth}px)`),
-    "height = innerHeight": matches(`(height: ${innerHeight}px)`),
-    "aspect-ratio = innerWidth / innerHeight": matches(`(aspect-ratio: ${innerWidth} / ${innerHeight})`),
-    "device-width = screen.width": matches(`(device-width: ${screen.width}px)`),
-    "device-height = screen.height": matches(`(device-height: ${screen.height}px)`),
-    "device-aspect-ratio = screen.width / screen.height": matches(
-      `(device-aspect-ratio: ${screen.width} / ${screen.height})`,
-    ),
-    "resolution = devicePixelRatio": matches(`(resolution: ${devicePixelRatio}dppx)`),
-    "-webkit-device-pixel-ratio = devicePixelRatio": matches(`(-webkit-device-pixel-ratio: ${devicePixelRatio})`),
-  }));
+      return result;
+    });
+    values["matchMedia(): the integers that match"] = check(() => {
+      const result = {};
+      for (const [feature, largest] of MEDIA_INTEGERS) {
+        const matching = [];
+        for (let value = 0; value <= largest; value++) {
+          if (matches(`(${feature}: ${value})`)) {
+            append(matching, value);
+          }
+        }
+        result[feature] = matching;
+      }
+      return result;
+    });
+    values["matchMedia(): what agrees with the window and the screen"] = check(() => ({
+      "width = innerWidth": matches(`(width: ${innerWidth}px)`),
+      "height = innerHeight": matches(`(height: ${innerHeight}px)`),
+      "aspect-ratio = innerWidth / innerHeight": matches(`(aspect-ratio: ${innerWidth} / ${innerHeight})`),
+      "device-width = screen.width": matches(`(device-width: ${screen.width}px)`),
+      "device-height = screen.height": matches(`(device-height: ${screen.height}px)`),
+      "device-aspect-ratio = screen.width / screen.height": matches(
+        `(device-aspect-ratio: ${screen.width} / ${screen.height})`,
+      ),
+      "resolution = devicePixelRatio": matches(`(resolution: ${devicePixelRatio}dppx)`),
+      "-webkit-device-pixel-ratio = devicePixelRatio": matches(`(-webkit-device-pixel-ratio: ${devicePixelRatio})`),
+    }));
+  }
 
   const resolved = (make) => check(() => make().resolvedOptions());
   values["new Intl.DateTimeFormat().resolvedOptions()"] = resolved(() => new Intl.DateTimeFormat());
@@ -992,8 +1033,10 @@
     }
     values["navigator.permissions.query(): the state of each"] = { value: states };
   }
-  values["document.featurePolicy.allowedFeatures()"] = check(() => document.featurePolicy.allowedFeatures());
-  values["document.featurePolicy.features()"] = check(() => document.featurePolicy.features());
+  if (inAWindow) {
+    values["document.featurePolicy.allowedFeatures()"] = check(() => document.featurePolicy.allowedFeatures());
+    values["document.featurePolicy.features()"] = check(() => document.featurePolicy.features());
+  }
 
   // Step 4: what the page reported.
 

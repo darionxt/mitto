@@ -941,6 +941,10 @@ class HtmlTreeBuilder {
         element->SetAttributeWithoutValidation(attribute.name, attribute.value);
       }
     }
+    // The token's is attribute gives the element its is value.
+    if (const std::u16string* const is = element->FindAttribute(u"is")) {
+      element->SetIsValue(*is);
+    }
     return element;
   }
 

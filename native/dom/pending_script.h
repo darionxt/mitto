@@ -65,11 +65,13 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
                                      int start_line,
                                      int start_column);
   // `element`'s script at `url`, which this fetches through its window's
-  // Fetcher, as a script that blocks rendering if `render_blocking`, and
-  // checks against `integrity`.
+  // Fetcher, as a script that blocks rendering if `render_blocking`, checks
+  // against `integrity`, and decodes as `encoding` unless its response or a
+  // byte order mark names another.
   static PendingScript* Fetch(HTMLScriptElement& element,
                               const GURL& url,
                               IntegrityMetadataSet integrity,
+                              std::string encoding,
                               bool render_blocking);
 
   PendingScript(HTMLScriptElement& element, bool is_external);
@@ -138,6 +140,7 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
   bool muted_errors_ = false;
   GURL fetch_url_;
   IntegrityMetadataSet integrity_;
+  std::string encoding_;
 };
 
 }  // namespace mitto

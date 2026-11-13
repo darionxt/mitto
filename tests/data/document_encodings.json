@@ -1,0 +1,2267 @@
+{
+  "bom-UTF-16BE": {
+    "charset": [
+      "UTF-16BE",
+      "UTF-16BE",
+      "UTF-16BE"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "7a12bf78/6",
+    "title": "f10c3da3/1"
+  },
+  "bom-UTF-16LE": {
+    "charset": [
+      "UTF-16LE",
+      "UTF-16LE",
+      "UTF-16LE"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "7a12bf78/6",
+    "title": "f10c3da3/1"
+  },
+  "bom-UTF-8": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5e230d/4",
+    "title": "f10c3da3/1"
+  },
+  "charset-of-star": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2c562ae7/16",
+    "title": "f10c3da3/1"
+  },
+  "css-charset": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "header-Big5": {
+    "charset": [
+      "Big5",
+      "Big5",
+      "Big5"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-Big5/0?q=%26%23233%3B%A3%E1%A4%E9%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "6d486921/9"
+    },
+    "text": "6d486921/9",
+    "title": "f10c3da3/1"
+  },
+  "header-EUC-JP": {
+    "charset": [
+      "EUC-JP",
+      "EUC-JP",
+      "EUC-JP"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-EUC-JP/0?q=%26%23233%3B%26%238364%3B%C6%FC%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "65718500/6"
+    },
+    "text": "65718500/6",
+    "title": "f10c3da3/1"
+  },
+  "header-EUC-KR": {
+    "charset": [
+      "EUC-KR",
+      "EUC-KR",
+      "EUC-KR"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-EUC-KR/0?q=%26%23233%3B%A2%E6%EC%ED%C7%D1%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "b813a247/5"
+    },
+    "text": "b813a247/5",
+    "title": "f10c3da3/1"
+  },
+  "header-GBK": {
+    "charset": [
+      "GBK",
+      "GBK",
+      "GBK"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-GBK/0?q=%A8%A6%80%C8%D5%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "89560e99/6"
+    },
+    "text": "89560e99/6",
+    "title": "f10c3da3/1"
+  },
+  "header-IBM866": {
+    "charset": [
+      "IBM866",
+      "IBM866",
+      "IBM866"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-IBM866/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "b6127f9d/128"
+    },
+    "text": "b6127f9d/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-2022-JP": {
+    "charset": [
+      "ISO-2022-JP",
+      "ISO-2022-JP",
+      "ISO-2022-JP"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-2022-JP/0?q=%26%23233%3B%26%238364%3B%1B$BF|%1B(B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "314f46c4/6"
+    },
+    "text": "314f46c4/6",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-10": {
+    "charset": [
+      "ISO-8859-10",
+      "ISO-8859-10",
+      "ISO-8859-10"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-10/0?q=%E9%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "cc84c1ae/128"
+    },
+    "text": "cc84c1ae/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-13": {
+    "charset": [
+      "ISO-8859-13",
+      "ISO-8859-13",
+      "ISO-8859-13"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-13/0?q=%E9%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "b5c3c3cc/128"
+    },
+    "text": "b5c3c3cc/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-14": {
+    "charset": [
+      "ISO-8859-14",
+      "ISO-8859-14",
+      "ISO-8859-14"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-14/0?q=%E9%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "9b7c78e4/128"
+    },
+    "text": "9b7c78e4/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-15": {
+    "charset": [
+      "ISO-8859-15",
+      "ISO-8859-15",
+      "ISO-8859-15"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-15/0?q=%E9%A4%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "f9979ba7/128"
+    },
+    "text": "f9979ba7/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-16": {
+    "charset": [
+      "ISO-8859-16",
+      "ISO-8859-16",
+      "ISO-8859-16"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-16/0?q=%E9%A4%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "c5ddb6cb/128"
+    },
+    "text": "c5ddb6cb/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-2": {
+    "charset": [
+      "ISO-8859-2",
+      "ISO-8859-2",
+      "ISO-8859-2"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-2/0?q=%E9%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "cce0d88e/128"
+    },
+    "text": "cce0d88e/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-3": {
+    "charset": [
+      "ISO-8859-3",
+      "ISO-8859-3",
+      "ISO-8859-3"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-3/0?q=%E9%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "2783bcc4/128"
+    },
+    "text": "2783bcc4/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-4": {
+    "charset": [
+      "ISO-8859-4",
+      "ISO-8859-4",
+      "ISO-8859-4"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-4/0?q=%E9%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "dc9a39a1/128"
+    },
+    "text": "dc9a39a1/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-5": {
+    "charset": [
+      "ISO-8859-5",
+      "ISO-8859-5",
+      "ISO-8859-5"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-5/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "729a02e1/128"
+    },
+    "text": "729a02e1/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-6": {
+    "charset": [
+      "ISO-8859-6",
+      "ISO-8859-6",
+      "ISO-8859-6"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-6/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "2230a179/128"
+    },
+    "text": "2230a179/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-7": {
+    "charset": [
+      "ISO-8859-7",
+      "ISO-8859-7",
+      "ISO-8859-7"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-7/0?q=%26%23233%3B%A4%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "c26e21ff/128"
+    },
+    "text": "c26e21ff/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-8": {
+    "charset": [
+      "ISO-8859-8",
+      "ISO-8859-8",
+      "ISO-8859-8"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-8/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "343557b4/128"
+    },
+    "text": "343557b4/128",
+    "title": "f10c3da3/1"
+  },
+  "header-ISO-8859-8-I": {
+    "charset": [
+      "ISO-8859-8-I",
+      "ISO-8859-8-I",
+      "ISO-8859-8-I"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-ISO-8859-8-I/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "343557b4/128"
+    },
+    "text": "343557b4/128",
+    "title": "f10c3da3/1"
+  },
+  "header-KOI8-R": {
+    "charset": [
+      "KOI8-R",
+      "KOI8-R",
+      "KOI8-R"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-KOI8-R/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "65636b29/128"
+    },
+    "text": "65636b29/128",
+    "title": "f10c3da3/1"
+  },
+  "header-KOI8-U": {
+    "charset": [
+      "KOI8-U",
+      "KOI8-U",
+      "KOI8-U"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-KOI8-U/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "5ad963c7/128"
+    },
+    "text": "5ad963c7/128",
+    "title": "f10c3da3/1"
+  },
+  "header-Shift_JIS": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-Shift_JIS/0?q=%26%23233%3B%26%238364%3B%93%FA%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "5f5bf7c5/8"
+    },
+    "text": "5f5bf7c5/8",
+    "title": "f10c3da3/1"
+  },
+  "header-UTF-16BE": {
+    "charset": [
+      "UTF-16BE",
+      "UTF-16BE",
+      "UTF-16BE"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-UTF-16BE/0?q=%C3%A9%E2%82%AC%E6%97%A5%ED%95%9C%F0%9F%98%80x"
+    ],
+    "scripts": {
+      "doc": "7a12bf78/6"
+    },
+    "text": "7a12bf78/6",
+    "title": "f10c3da3/1"
+  },
+  "header-UTF-16LE": {
+    "charset": [
+      "UTF-16LE",
+      "UTF-16LE",
+      "UTF-16LE"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-UTF-16LE/0?q=%C3%A9%E2%82%AC%E6%97%A5%ED%95%9C%F0%9F%98%80x"
+    ],
+    "scripts": {
+      "doc": "7a12bf78/6"
+    },
+    "text": "7a12bf78/6",
+    "title": "f10c3da3/1"
+  },
+  "header-UTF-8": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-UTF-8/0?q=%C3%A9%E2%82%AC%E6%97%A5%ED%95%9C%F0%9F%98%80x"
+    ],
+    "scripts": {
+      "doc": "b834c77d/7"
+    },
+    "text": "b834c77d/7",
+    "title": "f10c3da3/1"
+  },
+  "header-gb18030": {
+    "charset": [
+      "gb18030",
+      "gb18030",
+      "gb18030"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-gb18030/0?q=%A8%A6%A2%E3%C8%D5%836%843%949%FC6x"
+    ],
+    "scripts": {
+      "doc": "9be2fb8a/7"
+    },
+    "text": "9be2fb8a/7",
+    "title": "f10c3da3/1"
+  },
+  "header-macintosh": {
+    "charset": [
+      "macintosh",
+      "macintosh",
+      "macintosh"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-macintosh/0?q=%8E%DB%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "d25a3108/128"
+    },
+    "text": "d25a3108/128",
+    "title": "f10c3da3/1"
+  },
+  "header-over-meta": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "59355e69/65",
+    "title": "f10c3da3/1"
+  },
+  "header-replacement": {
+    "charset": [
+      "replacement",
+      "replacement",
+      "replacement"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "header-windows-1250": {
+    "charset": [
+      "windows-1250",
+      "windows-1250",
+      "windows-1250"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1250/0?q=%E9%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "c1cdbb25/128"
+    },
+    "text": "c1cdbb25/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1251": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1251/0?q=%26%23233%3B%88%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "5f973fdd/128"
+    },
+    "text": "5f973fdd/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1252": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1252/0?q=%E9%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "3c3a672f/128"
+    },
+    "text": "3c3a672f/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1253": {
+    "charset": [
+      "windows-1253",
+      "windows-1253",
+      "windows-1253"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1253/0?q=%26%23233%3B%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "ea18bd6b/128"
+    },
+    "text": "ea18bd6b/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1254": {
+    "charset": [
+      "windows-1254",
+      "windows-1254",
+      "windows-1254"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1254/0?q=%E9%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "a898787/128"
+    },
+    "text": "a898787/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1255": {
+    "charset": [
+      "windows-1255",
+      "windows-1255",
+      "windows-1255"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1255/0?q=%26%23233%3B%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "90aa0e8f/128"
+    },
+    "text": "90aa0e8f/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1256": {
+    "charset": [
+      "windows-1256",
+      "windows-1256",
+      "windows-1256"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1256/0?q=%E9%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "c50737a0/128"
+    },
+    "text": "c50737a0/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1257": {
+    "charset": [
+      "windows-1257",
+      "windows-1257",
+      "windows-1257"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1257/0?q=%E9%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "ff19a984/128"
+    },
+    "text": "ff19a984/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-1258": {
+    "charset": [
+      "windows-1258",
+      "windows-1258",
+      "windows-1258"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-1258/0?q=%E9%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "338e41f6/128"
+    },
+    "text": "338e41f6/128",
+    "title": "f10c3da3/1"
+  },
+  "header-windows-874": {
+    "charset": [
+      "windows-874",
+      "windows-874",
+      "windows-874"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-windows-874/0?q=%26%23233%3B%80%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "4b4e7351/128"
+    },
+    "text": "4b4e7351/128",
+    "title": "f10c3da3/1"
+  },
+  "header-with-spaces": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2c562ae7/16",
+    "title": "f10c3da3/1"
+  },
+  "header-x-mac-cyrillic": {
+    "charset": [
+      "x-mac-cyrillic",
+      "x-mac-cyrillic",
+      "x-mac-cyrillic"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-x-mac-cyrillic/0?q=%26%23233%3B%FF%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "bc757b62/128"
+    },
+    "text": "bc757b62/128",
+    "title": "f10c3da3/1"
+  },
+  "header-x-user-defined": {
+    "charset": [
+      "x-user-defined",
+      "x-user-defined",
+      "x-user-defined"
+    ],
+    "requests": [
+      "http://www.example.test/script/header-x-user-defined/0?q=%26%23233%3B%26%238364%3B%26%2326085%3B%26%2354620%3B%26%23128512%3Bx"
+    ],
+    "scripts": {
+      "doc": "74a22845/128"
+    },
+    "text": "74a22845/128",
+    "title": "f10c3da3/1"
+  },
+  "json": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "link-query": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [
+      "http://www.example.test/script/link-query/0"
+    ],
+    "scripts": {
+      "href": "6b48b5ce/78",
+      "search": "82a458ac/53"
+    },
+    "text": null,
+    "title": "f10c3da3/1"
+  },
+  "meta-Big5": {
+    "charset": [
+      "Big5",
+      "Big5",
+      "Big5"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "6d486921/9",
+    "title": "f10c3da3/1"
+  },
+  "meta-EUC-JP": {
+    "charset": [
+      "EUC-JP",
+      "EUC-JP",
+      "EUC-JP"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "65718500/6",
+    "title": "f10c3da3/1"
+  },
+  "meta-EUC-KR": {
+    "charset": [
+      "EUC-KR",
+      "EUC-KR",
+      "EUC-KR"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b813a247/5",
+    "title": "f10c3da3/1"
+  },
+  "meta-GBK": {
+    "charset": [
+      "GBK",
+      "GBK",
+      "GBK"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "89560e99/6",
+    "title": "f10c3da3/1"
+  },
+  "meta-IBM866": {
+    "charset": [
+      "IBM866",
+      "IBM866",
+      "IBM866"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b6127f9d/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-2022-JP": {
+    "charset": [
+      "ISO-2022-JP",
+      "ISO-2022-JP",
+      "ISO-2022-JP"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "314f46c4/6",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-10": {
+    "charset": [
+      "ISO-8859-10",
+      "ISO-8859-10",
+      "ISO-8859-10"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "cc84c1ae/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-13": {
+    "charset": [
+      "ISO-8859-13",
+      "ISO-8859-13",
+      "ISO-8859-13"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b5c3c3cc/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-14": {
+    "charset": [
+      "ISO-8859-14",
+      "ISO-8859-14",
+      "ISO-8859-14"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "9b7c78e4/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-15": {
+    "charset": [
+      "ISO-8859-15",
+      "ISO-8859-15",
+      "ISO-8859-15"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "f9979ba7/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-16": {
+    "charset": [
+      "ISO-8859-16",
+      "ISO-8859-16",
+      "ISO-8859-16"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5ddb6cb/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-2": {
+    "charset": [
+      "ISO-8859-2",
+      "ISO-8859-2",
+      "ISO-8859-2"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "cce0d88e/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-3": {
+    "charset": [
+      "ISO-8859-3",
+      "ISO-8859-3",
+      "ISO-8859-3"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2783bcc4/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-4": {
+    "charset": [
+      "ISO-8859-4",
+      "ISO-8859-4",
+      "ISO-8859-4"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "dc9a39a1/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-5": {
+    "charset": [
+      "ISO-8859-5",
+      "ISO-8859-5",
+      "ISO-8859-5"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "729a02e1/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-6": {
+    "charset": [
+      "ISO-8859-6",
+      "ISO-8859-6",
+      "ISO-8859-6"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2230a179/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-7": {
+    "charset": [
+      "ISO-8859-7",
+      "ISO-8859-7",
+      "ISO-8859-7"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c26e21ff/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-8": {
+    "charset": [
+      "ISO-8859-8",
+      "ISO-8859-8",
+      "ISO-8859-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "343557b4/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-ISO-8859-8-I": {
+    "charset": [
+      "ISO-8859-8-I",
+      "ISO-8859-8-I",
+      "ISO-8859-8-I"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "343557b4/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-KOI8-R": {
+    "charset": [
+      "KOI8-R",
+      "KOI8-R",
+      "KOI8-R"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "65636b29/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-KOI8-U": {
+    "charset": [
+      "KOI8-U",
+      "KOI8-U",
+      "KOI8-U"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5ad963c7/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-Shift_JIS": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5f5bf7c5/8",
+    "title": "f10c3da3/1"
+  },
+  "meta-UTF-16BE": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5e230d/4",
+    "title": "f10c3da3/1"
+  },
+  "meta-UTF-16LE": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5e230d/4",
+    "title": "f10c3da3/1"
+  },
+  "meta-UTF-8": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b834c77d/7",
+    "title": "f10c3da3/1"
+  },
+  "meta-after-1024-bytes-in-body": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "76665a65/276",
+    "title": "f10c3da3/1"
+  },
+  "meta-after-1024-bytes-in-head": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d8cccd85/260",
+    "title": "f10c3da3/1"
+  },
+  "meta-gb18030": {
+    "charset": [
+      "gb18030",
+      "gb18030",
+      "gb18030"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "9be2fb8a/7",
+    "title": "f10c3da3/1"
+  },
+  "meta-in-first-1024-bytes-in-body": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d8cccd85/260",
+    "title": "f10c3da3/1"
+  },
+  "meta-in-later-piece": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "59355e69/65",
+    "title": "f10c3da3/1"
+  },
+  "meta-in-noscript": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d8cccd85/260",
+    "title": "f10c3da3/1"
+  },
+  "meta-in-script": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "76665a65/276",
+    "title": "f10c3da3/1"
+  },
+  "meta-in-title": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "76665a65/276",
+    "title": "acb78060/24"
+  },
+  "meta-macintosh": {
+    "charset": [
+      "macintosh",
+      "macintosh",
+      "macintosh"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d25a3108/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-replacement": {
+    "charset": [
+      "replacement",
+      "replacement",
+      "replacement"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "meta-windows-1250": {
+    "charset": [
+      "windows-1250",
+      "windows-1250",
+      "windows-1250"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c1cdbb25/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1251": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5f973fdd/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1252": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "3c3a672f/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1253": {
+    "charset": [
+      "windows-1253",
+      "windows-1253",
+      "windows-1253"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "ea18bd6b/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1254": {
+    "charset": [
+      "windows-1254",
+      "windows-1254",
+      "windows-1254"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "a898787/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1255": {
+    "charset": [
+      "windows-1255",
+      "windows-1255",
+      "windows-1255"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "90aa0e8f/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1256": {
+    "charset": [
+      "windows-1256",
+      "windows-1256",
+      "windows-1256"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c50737a0/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1257": {
+    "charset": [
+      "windows-1257",
+      "windows-1257",
+      "windows-1257"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "ff19a984/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-1258": {
+    "charset": [
+      "windows-1258",
+      "windows-1258",
+      "windows-1258"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "338e41f6/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-windows-874": {
+    "charset": [
+      "windows-874",
+      "windows-874",
+      "windows-874"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "4b4e7351/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-with-spaces": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d8cccd85/260",
+    "title": "f10c3da3/1"
+  },
+  "meta-x-mac-cyrillic": {
+    "charset": [
+      "x-mac-cyrillic",
+      "x-mac-cyrillic",
+      "x-mac-cyrillic"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "bc757b62/128",
+    "title": "f10c3da3/1"
+  },
+  "meta-x-user-defined": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "3c3a672f/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-Big5": {
+    "charset": [
+      "Big5",
+      "Big5",
+      "Big5"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "6d486921/9",
+    "title": "f10c3da3/1"
+  },
+  "pragma-EUC-JP": {
+    "charset": [
+      "EUC-JP",
+      "EUC-JP",
+      "EUC-JP"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "65718500/6",
+    "title": "f10c3da3/1"
+  },
+  "pragma-EUC-KR": {
+    "charset": [
+      "EUC-KR",
+      "EUC-KR",
+      "EUC-KR"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b813a247/5",
+    "title": "f10c3da3/1"
+  },
+  "pragma-GBK": {
+    "charset": [
+      "GBK",
+      "GBK",
+      "GBK"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "89560e99/6",
+    "title": "f10c3da3/1"
+  },
+  "pragma-IBM866": {
+    "charset": [
+      "IBM866",
+      "IBM866",
+      "IBM866"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b6127f9d/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-2022-JP": {
+    "charset": [
+      "ISO-2022-JP",
+      "ISO-2022-JP",
+      "ISO-2022-JP"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "314f46c4/6",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-10": {
+    "charset": [
+      "ISO-8859-10",
+      "ISO-8859-10",
+      "ISO-8859-10"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "cc84c1ae/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-13": {
+    "charset": [
+      "ISO-8859-13",
+      "ISO-8859-13",
+      "ISO-8859-13"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b5c3c3cc/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-14": {
+    "charset": [
+      "ISO-8859-14",
+      "ISO-8859-14",
+      "ISO-8859-14"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "9b7c78e4/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-15": {
+    "charset": [
+      "ISO-8859-15",
+      "ISO-8859-15",
+      "ISO-8859-15"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "f9979ba7/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-16": {
+    "charset": [
+      "ISO-8859-16",
+      "ISO-8859-16",
+      "ISO-8859-16"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5ddb6cb/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-2": {
+    "charset": [
+      "ISO-8859-2",
+      "ISO-8859-2",
+      "ISO-8859-2"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "cce0d88e/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-3": {
+    "charset": [
+      "ISO-8859-3",
+      "ISO-8859-3",
+      "ISO-8859-3"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2783bcc4/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-4": {
+    "charset": [
+      "ISO-8859-4",
+      "ISO-8859-4",
+      "ISO-8859-4"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "dc9a39a1/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-5": {
+    "charset": [
+      "ISO-8859-5",
+      "ISO-8859-5",
+      "ISO-8859-5"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "729a02e1/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-6": {
+    "charset": [
+      "ISO-8859-6",
+      "ISO-8859-6",
+      "ISO-8859-6"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2230a179/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-7": {
+    "charset": [
+      "ISO-8859-7",
+      "ISO-8859-7",
+      "ISO-8859-7"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c26e21ff/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-8": {
+    "charset": [
+      "ISO-8859-8",
+      "ISO-8859-8",
+      "ISO-8859-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "343557b4/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-ISO-8859-8-I": {
+    "charset": [
+      "ISO-8859-8-I",
+      "ISO-8859-8-I",
+      "ISO-8859-8-I"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "343557b4/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-KOI8-R": {
+    "charset": [
+      "KOI8-R",
+      "KOI8-R",
+      "KOI8-R"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "65636b29/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-KOI8-U": {
+    "charset": [
+      "KOI8-U",
+      "KOI8-U",
+      "KOI8-U"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5ad963c7/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-Shift_JIS": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5f5bf7c5/8",
+    "title": "f10c3da3/1"
+  },
+  "pragma-UTF-16BE": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5e230d/4",
+    "title": "f10c3da3/1"
+  },
+  "pragma-UTF-16LE": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c5e230d/4",
+    "title": "f10c3da3/1"
+  },
+  "pragma-UTF-8": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "b834c77d/7",
+    "title": "f10c3da3/1"
+  },
+  "pragma-gb18030": {
+    "charset": [
+      "gb18030",
+      "gb18030",
+      "gb18030"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "9be2fb8a/7",
+    "title": "f10c3da3/1"
+  },
+  "pragma-macintosh": {
+    "charset": [
+      "macintosh",
+      "macintosh",
+      "macintosh"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d25a3108/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-quoted": {
+    "charset": [
+      "EUC-JP",
+      "EUC-JP",
+      "EUC-JP"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5406374e/3",
+    "title": "f10c3da3/1"
+  },
+  "pragma-replacement": {
+    "charset": [
+      "replacement",
+      "replacement",
+      "replacement"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "pragma-windows-1250": {
+    "charset": [
+      "windows-1250",
+      "windows-1250",
+      "windows-1250"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c1cdbb25/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1251": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5f973fdd/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1252": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "3c3a672f/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1253": {
+    "charset": [
+      "windows-1253",
+      "windows-1253",
+      "windows-1253"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "ea18bd6b/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1254": {
+    "charset": [
+      "windows-1254",
+      "windows-1254",
+      "windows-1254"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "a898787/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1255": {
+    "charset": [
+      "windows-1255",
+      "windows-1255",
+      "windows-1255"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "90aa0e8f/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1256": {
+    "charset": [
+      "windows-1256",
+      "windows-1256",
+      "windows-1256"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "c50737a0/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1257": {
+    "charset": [
+      "windows-1257",
+      "windows-1257",
+      "windows-1257"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "ff19a984/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-1258": {
+    "charset": [
+      "windows-1258",
+      "windows-1258",
+      "windows-1258"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "338e41f6/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-windows-874": {
+    "charset": [
+      "windows-874",
+      "windows-874",
+      "windows-874"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "4b4e7351/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-without-http-equiv": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "76665a65/276",
+    "title": "f10c3da3/1"
+  },
+  "pragma-x-mac-cyrillic": {
+    "charset": [
+      "x-mac-cyrillic",
+      "x-mac-cyrillic",
+      "x-mac-cyrillic"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "bc757b62/128",
+    "title": "f10c3da3/1"
+  },
+  "pragma-x-user-defined": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "3c3a672f/128",
+    "title": "f10c3da3/1"
+  },
+  "quoted-header": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2c562ae7/16",
+    "title": "f10c3da3/1"
+  },
+  "same-type-again": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2c562ae7/16",
+    "title": "f10c3da3/1"
+  },
+  "script-precedence": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [
+      "http://www.example.test/script/script-precedence/0",
+      "http://www.example.test/script/script-precedence/1",
+      "http://www.example.test/script/script-precedence/2",
+      "http://www.example.test/script/script-precedence/3",
+      "http://www.example.test/script/script-precedence/4",
+      "http://www.example.test/script/script-precedence/5",
+      "http://www.example.test/script/script-precedence/6",
+      "http://www.example.test/script/script-precedence/7",
+      "http://www.example.test/script/script-precedence/8",
+      "http://www.example.test/script/script-precedence/9"
+    ],
+    "scripts": {
+      "attribute": "5fc33377/65",
+      "attribute-empty": "59355e69/65",
+      "attribute-unknown": "59355e69/65",
+      "attribute-with-spaces": "59355e69/65",
+      "bom-over-header": "13062729/1",
+      "bom-utf-16le": "7a12bf78/6",
+      "header-over-attribute": "32a4accd/65",
+      "header-unknown": "5fc33377/65",
+      "header-utf-16": "7a12bf78/6",
+      "inherit": "59355e69/65"
+    },
+    "text": null,
+    "title": "f10c3da3/1"
+  },
+  "scripts-attribute": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [
+      "http://www.example.test/script/scripts-attribute/0",
+      "http://www.example.test/script/scripts-attribute/1",
+      "http://www.example.test/script/scripts-attribute/2",
+      "http://www.example.test/script/scripts-attribute/3",
+      "http://www.example.test/script/scripts-attribute/4",
+      "http://www.example.test/script/scripts-attribute/5",
+      "http://www.example.test/script/scripts-attribute/6",
+      "http://www.example.test/script/scripts-attribute/7",
+      "http://www.example.test/script/scripts-attribute/8",
+      "http://www.example.test/script/scripts-attribute/9",
+      "http://www.example.test/script/scripts-attribute/10",
+      "http://www.example.test/script/scripts-attribute/11",
+      "http://www.example.test/script/scripts-attribute/12",
+      "http://www.example.test/script/scripts-attribute/13",
+      "http://www.example.test/script/scripts-attribute/14",
+      "http://www.example.test/script/scripts-attribute/15",
+      "http://www.example.test/script/scripts-attribute/16",
+      "http://www.example.test/script/scripts-attribute/17",
+      "http://www.example.test/script/scripts-attribute/18",
+      "http://www.example.test/script/scripts-attribute/19",
+      "http://www.example.test/script/scripts-attribute/20",
+      "http://www.example.test/script/scripts-attribute/21",
+      "http://www.example.test/script/scripts-attribute/22",
+      "http://www.example.test/script/scripts-attribute/23",
+      "http://www.example.test/script/scripts-attribute/24",
+      "http://www.example.test/script/scripts-attribute/25",
+      "http://www.example.test/script/scripts-attribute/26",
+      "http://www.example.test/script/scripts-attribute/27",
+      "http://www.example.test/script/scripts-attribute/28",
+      "http://www.example.test/script/scripts-attribute/29",
+      "http://www.example.test/script/scripts-attribute/30",
+      "http://www.example.test/script/scripts-attribute/31",
+      "http://www.example.test/script/scripts-attribute/32",
+      "http://www.example.test/script/scripts-attribute/33",
+      "http://www.example.test/script/scripts-attribute/34",
+      "http://www.example.test/script/scripts-attribute/35",
+      "http://www.example.test/script/scripts-attribute/36",
+      "http://www.example.test/script/scripts-attribute/37",
+      "http://www.example.test/script/scripts-attribute/38",
+      "http://www.example.test/script/scripts-attribute/39"
+    ],
+    "scripts": {
+      "Big5": "6d486921/9",
+      "EUC-JP": "65718500/6",
+      "EUC-KR": "b813a247/5",
+      "GBK": "89560e99/6",
+      "IBM866": "b6127f9d/128",
+      "ISO-2022-JP": "314f46c4/6",
+      "ISO-8859-10": "cc84c1ae/128",
+      "ISO-8859-13": "b5c3c3cc/128",
+      "ISO-8859-14": "9b7c78e4/128",
+      "ISO-8859-15": "f9979ba7/128",
+      "ISO-8859-16": "c5ddb6cb/128",
+      "ISO-8859-2": "cce0d88e/128",
+      "ISO-8859-3": "2783bcc4/128",
+      "ISO-8859-4": "dc9a39a1/128",
+      "ISO-8859-5": "729a02e1/128",
+      "ISO-8859-6": "2230a179/128",
+      "ISO-8859-7": "c26e21ff/128",
+      "ISO-8859-8": "343557b4/128",
+      "ISO-8859-8-I": "343557b4/128",
+      "KOI8-R": "65636b29/128",
+      "KOI8-U": "5ad963c7/128",
+      "Shift_JIS": "5f5bf7c5/8",
+      "UTF-16BE": "7a12bf78/6",
+      "UTF-16LE": "7a12bf78/6",
+      "UTF-8": "b834c77d/7",
+      "gb18030": "9be2fb8a/7",
+      "macintosh": "d25a3108/128",
+      "windows-1250": "c1cdbb25/128",
+      "windows-1251": "5f973fdd/128",
+      "windows-1252": "3c3a672f/128",
+      "windows-1253": "ea18bd6b/128",
+      "windows-1254": "a898787/128",
+      "windows-1255": "90aa0e8f/128",
+      "windows-1256": "c50737a0/128",
+      "windows-1257": "ff19a984/128",
+      "windows-1258": "338e41f6/128",
+      "windows-874": "4b4e7351/128",
+      "x-mac-cyrillic": "bc757b62/128",
+      "x-user-defined": "74a22845/128"
+    },
+    "text": null,
+    "title": "f10c3da3/1"
+  },
+  "scripts-header": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [
+      "http://www.example.test/script/scripts-header/0",
+      "http://www.example.test/script/scripts-header/1",
+      "http://www.example.test/script/scripts-header/2",
+      "http://www.example.test/script/scripts-header/3",
+      "http://www.example.test/script/scripts-header/4",
+      "http://www.example.test/script/scripts-header/5",
+      "http://www.example.test/script/scripts-header/6",
+      "http://www.example.test/script/scripts-header/7",
+      "http://www.example.test/script/scripts-header/8",
+      "http://www.example.test/script/scripts-header/9",
+      "http://www.example.test/script/scripts-header/10",
+      "http://www.example.test/script/scripts-header/11",
+      "http://www.example.test/script/scripts-header/12",
+      "http://www.example.test/script/scripts-header/13",
+      "http://www.example.test/script/scripts-header/14",
+      "http://www.example.test/script/scripts-header/15",
+      "http://www.example.test/script/scripts-header/16",
+      "http://www.example.test/script/scripts-header/17",
+      "http://www.example.test/script/scripts-header/18",
+      "http://www.example.test/script/scripts-header/19",
+      "http://www.example.test/script/scripts-header/20",
+      "http://www.example.test/script/scripts-header/21",
+      "http://www.example.test/script/scripts-header/22",
+      "http://www.example.test/script/scripts-header/23",
+      "http://www.example.test/script/scripts-header/24",
+      "http://www.example.test/script/scripts-header/25",
+      "http://www.example.test/script/scripts-header/26",
+      "http://www.example.test/script/scripts-header/27",
+      "http://www.example.test/script/scripts-header/28",
+      "http://www.example.test/script/scripts-header/29",
+      "http://www.example.test/script/scripts-header/30",
+      "http://www.example.test/script/scripts-header/31",
+      "http://www.example.test/script/scripts-header/32",
+      "http://www.example.test/script/scripts-header/33",
+      "http://www.example.test/script/scripts-header/34",
+      "http://www.example.test/script/scripts-header/35",
+      "http://www.example.test/script/scripts-header/36",
+      "http://www.example.test/script/scripts-header/37",
+      "http://www.example.test/script/scripts-header/38",
+      "http://www.example.test/script/scripts-header/39"
+    ],
+    "scripts": {
+      "Big5": "6d486921/9",
+      "EUC-JP": "65718500/6",
+      "EUC-KR": "b813a247/5",
+      "GBK": "89560e99/6",
+      "IBM866": "b6127f9d/128",
+      "ISO-2022-JP": "314f46c4/6",
+      "ISO-8859-10": "cc84c1ae/128",
+      "ISO-8859-13": "b5c3c3cc/128",
+      "ISO-8859-14": "9b7c78e4/128",
+      "ISO-8859-15": "f9979ba7/128",
+      "ISO-8859-16": "c5ddb6cb/128",
+      "ISO-8859-2": "cce0d88e/128",
+      "ISO-8859-3": "2783bcc4/128",
+      "ISO-8859-4": "dc9a39a1/128",
+      "ISO-8859-5": "729a02e1/128",
+      "ISO-8859-6": "2230a179/128",
+      "ISO-8859-7": "c26e21ff/128",
+      "ISO-8859-8": "343557b4/128",
+      "ISO-8859-8-I": "343557b4/128",
+      "KOI8-R": "65636b29/128",
+      "KOI8-U": "5ad963c7/128",
+      "Shift_JIS": "5f5bf7c5/8",
+      "UTF-16BE": "7a12bf78/6",
+      "UTF-16LE": "7a12bf78/6",
+      "UTF-8": "b834c77d/7",
+      "gb18030": "9be2fb8a/7",
+      "macintosh": "d25a3108/128",
+      "windows-1250": "c1cdbb25/128",
+      "windows-1251": "5f973fdd/128",
+      "windows-1252": "3c3a672f/128",
+      "windows-1253": "ea18bd6b/128",
+      "windows-1254": "a898787/128",
+      "windows-1255": "90aa0e8f/128",
+      "windows-1256": "c50737a0/128",
+      "windows-1257": "ff19a984/128",
+      "windows-1258": "338e41f6/128",
+      "windows-874": "4b4e7351/128",
+      "x-mac-cyrillic": "bc757b62/128",
+      "x-user-defined": "74a22845/128"
+    },
+    "text": null,
+    "title": "f10c3da3/1"
+  },
+  "text-plain-meta": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "title-decodes-again": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "59355e69/65",
+    "title": "b95a808a/3"
+  },
+  "two-content-types": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2c562ae7/16",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-Big5": {
+    "charset": [
+      "Big5",
+      "Big5",
+      "Big5"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "a682b36d/92",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-EUC-JP": {
+    "charset": [
+      "EUC-JP",
+      "EUC-JP",
+      "EUC-JP"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "e6b697a7/118",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-EUC-KR": {
+    "charset": [
+      "EUC-KR",
+      "EUC-KR",
+      "EUC-KR"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "575d80ff/138",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-GBK": {
+    "charset": [
+      "GBK",
+      "GBK",
+      "GBK"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "ee186195/98",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-ISO-2022-JP": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "75ff5725/100",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-KOI8-R": {
+    "charset": [
+      "KOI8-R",
+      "KOI8-R",
+      "KOI8-R"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "1d88fc11/260",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-Shift_JIS": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "e6b697a7/118",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-UTF-8": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5ea3f49d/650",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-UTF-8-jp": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "998f2404/203",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-ascii": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "2c562ae7/16",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-empty": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "undeclared-empty-ru": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "undeclared-pieces": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "130f39f5/236",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-script": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [
+      "http://www.example.test/script/undeclared-script/0?q=%93%FA"
+    ],
+    "scripts": {
+      "doc": "5406374e/3"
+    },
+    "text": "e6b697a7/118",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-text-plain-Shift_JIS": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": null,
+    "title": "811c9dc5/0"
+  },
+  "undeclared-windows-1251": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "1d88fc11/260",
+    "title": "f10c3da3/1"
+  },
+  "undeclared-windows-1252": {
+    "charset": [
+      "windows-1252",
+      "windows-1252",
+      "windows-1252"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "76665a65/276",
+    "title": "f10c3da3/1"
+  },
+  "unknown-header-then-meta": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d8cccd85/260",
+    "title": "f10c3da3/1"
+  },
+  "unknown-meta-then-meta": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "d8cccd85/260",
+    "title": "f10c3da3/1"
+  },
+  "url-parts": {
+    "charset": [
+      "windows-1251",
+      "windows-1251",
+      "windows-1251"
+    ],
+    "requests": [
+      "http://www.example.test/script/url-parts/%D0%96/0?%C6%E9%20"
+    ],
+    "scripts": {},
+    "text": null,
+    "title": "f10c3da3/1"
+  },
+  "utf-16le-without-bom": {
+    "charset": [
+      "UTF-16LE",
+      "UTF-16LE",
+      "UTF-16LE"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "fd0c5087/1",
+    "title": "f10c3da3/1"
+  },
+  "xml-declaration-in-html": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5406374e/3",
+    "title": "f10c3da3/1"
+  },
+  "xml-declaration-then-meta": {
+    "charset": [
+      "EUC-KR",
+      "EUC-KR",
+      "EUC-KR"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "9bcbdd02/3",
+    "title": "f10c3da3/1"
+  },
+  "xml-declaration-utf-16": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "fdca1138/2",
+    "title": "f10c3da3/1"
+  },
+  "xml-declaration-x-user-defined": {
+    "charset": [
+      "x-user-defined",
+      "x-user-defined",
+      "x-user-defined"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "74a22845/128",
+    "title": "f10c3da3/1"
+  },
+  "xml-declared": {
+    "charset": [
+      "Shift_JIS",
+      "Shift_JIS",
+      "Shift_JIS"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "5406374e/3",
+    "title": "811c9dc5/0"
+  },
+  "xml-undeclared": {
+    "charset": [
+      "UTF-8",
+      "UTF-8",
+      "UTF-8"
+    ],
+    "requests": [],
+    "scripts": {},
+    "text": "fdca1138/2",
+    "title": "811c9dc5/0"
+  }
+}

@@ -21,10 +21,15 @@
 #include <vector>
 
 #include "base/containers/span.h"
+#include "mitto/dom/heap_vector.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/qualified_name.h"
 
 namespace mitto {
+
+class Attr;
+class DOMTokenList;
+class NamedNodeMap;
 
 class Element : public Node {
  public:
@@ -47,6 +52,7 @@ class Element : public Node {
   ~Element() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
   const std::optional<std::u16string>& NamespaceURI() const {
@@ -78,6 +84,18 @@ class Element : public Node {
   bool HasAttribute(const std::u16string& name) const;
   bool HasAttributeNS(const std::optional<std::u16string>& namespace_uri,
                       const std::u16string& local_name) const;
+  // The same NamedNodeMap and DOMTokenLists on every read.
+  NamedNodeMap* AttributesForBindings();
+  DOMTokenList* ClassList();
+  DOMTokenList* Part();
+  Attr* GetAttributeNode(const std::u16string& name);
+  Attr* GetAttributeNodeNS(const std::optional<std::u16string>& namespace_uri,
+                           const std::u16string& local_name);
+  Attr* SetAttributeNode(Attr* attr, bindings::ExceptionState& exception_state);
+  Attr* SetAttributeNodeNS(Attr* attr,
+                           bindings::ExceptionState& exception_state);
+  Attr* RemoveAttributeNode(Attr* attr,
+                            bindings::ExceptionState& exception_state);
   bool HasAttributes() const { return !attributes_.empty(); }
   std::u16string InnerHTML() const;
   void SetInnerHTML(const std::u16string& html,
@@ -95,6 +113,16 @@ class Element : public Node {
   void InsertAdjacentText(const std::u16string& where,
                           const std::u16string& data,
                           bindings::ExceptionState& exception_state);
+  void InsertAdjacentHTML(const std::u16string& position,
+                          const std::u16string& text,
+                          bindings::ExceptionState& exception_state);
+  // HTMLOrForeignElement's tabIndex: the attribute's integer, or else the
+  // element's default, as Blink's Element::tabIndex() reads it.
+  int32_t TabIndex() const;
+  void SetTabIndex(int32_t value);
+  // Blink's DefaultTabIndex(): 0 for an element that the HTML Standard
+  // makes focusable, such as a link or a form control, and -1 otherwise.
+  virtual int32_t DefaultTabIndex() const;
 
   // What the bindings call for a reflected attribute: the content attribute
   // `name`, which is lower case.
@@ -114,10 +142,28 @@ class Element : public Node {
       std::optional<std::u16string_view> invalid_default,
       std::optional<std::u16string_view> empty_default,
       bool nullable) const;
-  // A nullable one, which null removes.
+  // A nullable one, which gives null when the content attribute is missing
+  // and which null removes.
+  std::optional<std::u16string> ReflectedNullableStringAttribute(
+      std::u16string_view name) const;
   void SetReflectedNullableStringAttribute(
       std::u16string_view name,
       const std::optional<std::u16string>& value);
+  // One of a URL, Blink's GetURLAttribute(): the content attribute without
+  // its leading and trailing HTML spaces, resolved against the document's
+  // base URL, or as it is if it does not resolve, and "" when it is missing.
+  std::u16string ReflectedURLAttribute(std::u16string_view name) const;
+  // One of a long, Blink's GetIntegralAttribute() and SetIntegralAttribute():
+  // the HTML Standard's rules for parsing integers, and 0 for a content
+  // attribute that is missing or does not parse.
+  int32_t ReflectedIntegerAttribute(std::u16string_view name) const;
+  void SetReflectedIntegerAttribute(std::u16string_view name, int32_t value);
+  // One of an unsigned long, Blink's GetUnsignedIntegralAttribute() and
+  // SetUnsignedIntegralAttribute(): a negative value reads as 0, and a value
+  // above 2147483647 is set as 0.
+  uint32_t ReflectedUnsignedIntegerAttribute(std::u16string_view name) const;
+  void SetReflectedUnsignedIntegerAttribute(std::u16string_view name,
+                                            uint32_t value);
 
   // Node's.
   uint16_t GetNodeType() const override;
@@ -129,6 +175,11 @@ class Element : public Node {
   // through the factory of its namespace, that prefix, as Blink's
   // SetTagNameForCreateElementNS() does.
   void SetPrefixForCreateElementNS(const std::optional<std::u16string>& prefix);
+  // The is value the element was made with, from createElement()'s options or
+  // the parser's is attribute, which later changes to that attribute leave
+  // alone, as Blink's IsValue().
+  const std::optional<std::u16string>& IsValue() const { return is_value_; }
+  void SetIsValue(const std::u16string& is_value) { is_value_ = is_value; }
   const std::vector<Attribute>& attributes() const { return attributes_; }
   // The value of the attribute of no namespace whose local name is `name`, or
   // null, as Blink's FastGetAttribute() reads an HTML attribute.
@@ -146,6 +197,15 @@ class Element : public Node {
                                      const std::u16string& value);
   // Removes the attribute of `name`'s local name and namespace, if any.
   void RemoveAttribute(const QualifiedName& name);
+  // The node of the attribute of `name`'s local name and namespace, the same
+  // one for as long as the attribute is there, as Blink's EnsureAttr().
+  Attr* EnsureAttr(const QualifiedName& name);
+  // Removes the attribute that `name` or the qualified name `name` finds, and
+  // gives its node, which keeps its value, or null if there is none, as
+  // Blink's DetachAttribute() does for removeNamedItemNS() and
+  // removeNamedItem().
+  Attr* DetachAttribute(const QualifiedName& name);
+  Attr* DetachAttributeByQualifiedName(const std::u16string& name);
   // The DOM standard's "locate a namespace prefix" and "locate a namespace",
   // as Blink's Element::LocateNamespacePrefix() and Node::lookupNamespaceURI()
   // run them on an element.
@@ -168,6 +228,9 @@ class Element : public Node {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+  // The nodes of its attributes move with it, as Blink's
+  // Element::DidMoveToNewDocument() adopts them.
+  void DidMoveToNewDocument(Document& old_document) override;
 
  private:
   // The DOM standard: an HTML element of an HTML document matches attribute
@@ -188,7 +251,13 @@ class Element : public Node {
   void AppendAttributeInternal(const QualifiedName& name,
                                const std::u16string& value);
   void SetAttributeValueInternal(size_t index, const std::u16string& value);
+  // Detaches the attribute's node too, which keeps its value.
   void RemoveAttributeInternal(size_t index);
+  // The node of the attribute of `name`'s local name and namespace, if any.
+  Attr* AttrIfExists(const QualifiedName& name) const;
+  // Blink's DetachAttribute(): the node of the attribute at `index`, made if
+  // there is none, after the attribute goes.
+  Attr* DetachAttributeAt(size_t index);
   // Blink's InsertAdjacent(): inserts `node` where `where` says, and returns
   // it, or null if it went nowhere.
   Node* InsertAdjacent(const std::u16string& where,
@@ -202,6 +271,13 @@ class Element : public Node {
 
   QualifiedName tag_name_;
   std::vector<Attribute> attributes_;
+  std::optional<std::u16string> is_value_;
+  // The nodes of the attributes that a page has asked for, as Blink's
+  // AttrNodeList.
+  HeapVector<Attr> attr_nodes_;
+  cppgc::Member<NamedNodeMap> attribute_map_;
+  cppgc::Member<DOMTokenList> class_list_;
+  cppgc::Member<DOMTokenList> part_;
 };
 
 }  // namespace mitto

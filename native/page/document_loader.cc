@@ -1,11 +1,10 @@
 #include "mitto/page/document_loader.h"
 
-#include <algorithm>
-#include <optional>
-#include <string_view>
+#include <memory>
 #include <utility>
 
 #include "base/check.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
@@ -22,6 +21,10 @@
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/script_loader.h"
 #include "mitto/dom/window.h"
+#include "mitto/encoding/content_type.h"
+#include "mitto/encoding/text_resource_decoder.h"
+#include "mitto/encoding/text_resource_decoder_builder.h"
+#include "mitto/header_rules.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
 #include "v8/include/v8-isolate.h"
@@ -42,60 +45,7 @@ void PerformMicrotaskCheckpoint() {
   v8::MicrotasksScope::PerformCheckpoint(v8::Isolate::GetCurrent());
 }
 
-// How many bytes at the end of `bytes` start a UTF-8 sequence that has not
-// ended yet.
-size_t IncompleteTail(std::string_view bytes) {
-  const size_t look = std::min<size_t>(bytes.size(), 3);
-  for (size_t back = 1; back <= look; ++back) {
-    const uint8_t byte = static_cast<uint8_t>(bytes[bytes.size() - back]);
-    if ((byte & 0xC0) == 0x80) {
-      // A continuation byte: look further back for its lead.
-      continue;
-    }
-    const size_t length = (byte & 0xE0) == 0xC0   ? 2
-                          : (byte & 0xF0) == 0xE0 ? 3
-                          : (byte & 0xF8) == 0xF0 ? 4
-                                                  : 1;
-    return length > back ? back : 0;
-  }
-  return 0;
-}
-
 }  // namespace
-
-Utf8StreamDecoder::Utf8StreamDecoder() = default;
-Utf8StreamDecoder::~Utf8StreamDecoder() = default;
-
-std::u16string Utf8StreamDecoder::Decode(std::string_view bytes) {
-  pending_.append(bytes);
-  std::string_view complete = pending_;
-  if (!started_) {
-    // The byte order mark, once three bytes have come to tell.
-    if (complete.size() < 3 &&
-        std::string_view("\xEF\xBB\xBF").starts_with(complete)) {
-      return std::u16string();
-    }
-    started_ = true;
-    if (complete.starts_with("\xEF\xBB\xBF")) {
-      complete.remove_prefix(3);
-    }
-  }
-  const size_t tail = IncompleteTail(complete);
-  std::u16string text;
-  base::UTF8ToUTF16(complete.data(), complete.size() - tail, &text);
-  pending_ = std::string(complete.substr(complete.size() - tail));
-  return text;
-}
-
-std::u16string Utf8StreamDecoder::Flush() {
-  // A sequence that the stream cut off is not UTF-8, also one that began as a
-  // byte order mark.
-  std::u16string text;
-  base::UTF8ToUTF16(pending_.data(), pending_.size(), &text);
-  pending_.clear();
-  started_ = true;
-  return text;
-}
 
 DocumentLoader::DocumentLoader(ScriptRunner& runner,
                                PageRequests& requests,
@@ -156,10 +106,29 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       base::Time::FromString(last_modified.c_str(), &last_modified_time)) {
     document_->SetLastModified(last_modified_time);
   }
+  // The decoder that DocumentLoader makes at commit, for a top-level
+  // document of a browser in the Persona's locale. A response with no MIME
+  // type is HTML here, as the parser reads it, where Chrome's network service
+  // sniffs one.
+  const MimeTypeAndCharset content_type =
+      GetMimeTypeAndCharset(HeaderField(response.headers, "content-type"));
+  decoder_ = BuildTextResourceDecoder(
+      url_,
+      content_type.mime_type.empty() ? "text/html" : content_type.mime_type,
+      content_type.charset, document_->DefaultView()->Start().locale,
+      /*parent=*/nullptr);
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
   // The load event waits for what the document's scripts hold back.
   document_->SetCheckCompleted(base::BindRepeating(
       &DocumentLoader::CheckCompleted, weak_factory_.GetWeakPtr()));
+}
+
+void DocumentLoader::AppendDecoded(std::u16string text) {
+  // The document's encoding is the decoder's after each piece, as
+  // DecodedDataDocumentParser::UpdateDocument() sets it.
+  document_->SetEncoding(decoder_->encoding(),
+                         decoder_->EncodingWasDetectedHeuristically());
+  parser_->Append(text);
 }
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
@@ -250,7 +219,7 @@ bool DocumentLoader::PumpTokenizer() {
     if (!waiting_body_.empty()) {
       const std::string bytes = std::move(waiting_body_.front());
       waiting_body_.pop_front();
-      parser_->Append(decoder_.Decode(bytes));
+      AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
       requests_->TookBody(kNavigationRequest, bytes.size());
       if (should_yield()) {
         return true;
@@ -258,7 +227,7 @@ bool DocumentLoader::PumpTokenizer() {
       continue;
     }
     if (body_ended_ && !parser_finished_) {
-      parser_->Append(decoder_.Flush());
+      AppendDecoded(decoder_->Flush());
       parser_->Finish();
       parser_finished_ = true;
       // The parser may still reach scripts before the end.

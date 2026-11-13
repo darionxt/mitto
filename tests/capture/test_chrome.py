@@ -30,8 +30,8 @@ from tools.capture.devtools import PageClicker
 from tools.capture.http1 import Http1Request
 from tools.capture.probe import RecordValue, dumps_record, read_record
 from tools.capture.recording import Json
-from tools.capture.script_normal_form import MACHINE_PLACES, machine_values, script_normal_form
-from tools.capture.script_page import SCRIPT_RUNS, ScriptRun
+from tools.capture.script_normal_form import machine_values, script_normal_form
+from tools.capture.script_page import DEDICATED_WORKER, SCRIPT_RUNS, ScriptRun
 
 _CHROME_ENV_VAR = "MITTO_CHROME"
 _PAGE_TIMEOUT_SECONDS = 60.0
@@ -115,6 +115,7 @@ _DOCUMENT_SITE_MODE_AND_DESTINATION = {
     "worker_import_scripts": ("same-origin", *_NO_CORS_SCRIPT),
     "worker_fetch": ("same-origin", *_CORS),
     "worker_module": ("same-origin", *_WORKER),
+    "worker_blob_fetch": ("same-origin", *_CORS),
     "beacon_text": ("same-origin", *_BEACON),
     "beacon_blob": ("same-origin", *_BEACON),
     "beacon_form_data": ("same-origin", *_BEACON),
@@ -138,6 +139,9 @@ _DOCUMENT_SITE_MODE_AND_DESTINATION = {
     "frame_script": ("same-origin", *_NO_CORS_SCRIPT),
     "frame_image": ("same-origin", *_NO_CORS_IMAGE),
     "frame_fetch": ("same-origin", *_CORS),
+    # The page's origin again, which the frame of the other site asks for.
+    "frame_nested": ("cross-site", *_FRAME),
+    "frame_nested_fetch": ("same-origin", *_CORS),
     "document_style": ("same-origin", *_NO_CORS_STYLE),
     "document_preload_style": ("same-origin", *_NO_CORS_STYLE),
     "document_preload_script": ("same-origin", *_NO_CORS_SCRIPT),
@@ -373,6 +377,43 @@ def test_real_chrome_sends_what_the_document_cases_carry(chrome: str, name: str)
     assert headers_of(form, "navigation_history_back")["cookie"] == "mitto=1"
 
 
+def header_names(form: dict[str, Json], case: str) -> list[str]:
+    """Return the names of a request's headers in the order sent, in lower case and without pseudo-headers."""
+    lines = request_of(form, case)["headers"]
+    assert isinstance(lines, list)
+    return [str(line).partition(": ")[0].lower() for line in lines if not str(line).startswith(":")]
+
+
+@pytest.mark.parametrize("name", _DOCUMENT_RUNS)
+def test_a_worker_s_requests_carry_no_client_hints_and_the_browser_asks_for_its_script(chrome: str, name: str) -> None:
+    form = recorded(chrome, name)
+
+    # A window's request has those sent by default, and a worker's none.
+    assert "sec-ch-ua" in header_names(form, "xhr_get")
+    for case in ("worker", "worker_module", "worker_import_scripts", "worker_fetch", "worker_blob_fetch"):
+        assert not [header for header in header_names(form, case) if header.startswith("sec-ch-")], case
+    # The browser makes the request for a worker's script, and puts User-Agent where its own requests have it.
+    for case in ("worker", "worker_module"):
+        names = header_names(form, case)
+        assert names.index("referer") < names.index("user-agent"), case
+    names = header_names(form, "worker_fetch")
+    assert names.index("user-agent") < names.index("referer")
+    # A blob: URL is no referrer.
+    assert "referer" not in header_names(form, "worker_blob_fetch")
+    assert headers_of(form, "worker_fetch")["referer"] == "<origin>/case/worker"
+
+
+@pytest.mark.parametrize("name", _DOCUMENT_RUNS)
+def test_a_frame_of_the_page_s_site_under_another_site_gets_only_third_party_cookies(chrome: str, name: str) -> None:
+    form = recorded(chrome, name)
+
+    for case in ("frame_nested", "frame_nested_fetch"):
+        headers = headers_of(form, case)
+        assert headers["cookie"] == "none=1", case
+        assert headers["sec-fetch-storage-access"] == "active", case
+    assert headers_of(form, "frame_nested")["referer"] == "<cross-site-origin>/"
+
+
 @pytest.mark.parametrize("name", _DOCUMENT_RUNS)
 def test_the_order_of_what_the_document_asks_for_is_chrome_s_over_one_connection(chrome: str, name: str) -> None:
     form = recorded(chrome, name)
@@ -537,7 +578,7 @@ def record_script_fingerprint(chrome: str, run: ScriptRun) -> dict[str, RecordVa
         for request in connection.requests
         if isinstance(request, Http1Request) and request.target == run.done_path
     ]
-    return script_normal_form(read_record(body.decode()), server.start_url(run))
+    return script_normal_form(read_record(body.decode()), server.start_url(run), run.machine_places)
 
 
 @pytest.mark.parametrize("run", SCRIPT_RUNS, ids=lambda run: run.name)
@@ -546,6 +587,8 @@ def test_two_records_of_a_script_fingerprint_have_the_same_normal_form(chrome: s
     second = record_script_fingerprint(chrome, run)
 
     assert dumps_record(first) == dumps_record(second)
-    assert [value for _, value in machine_values(first)] == ["<machine>"] * len(MACHINE_PLACES)
-    # A start with no debugging port, and with none of those that make a browser under automation.
-    assert getters_of(first, "navigator")["webdriver"] is False
+    assert [value for _, value in machine_values(first, run.machine_places)] == ["<machine>"] * len(run.machine_places)
+    # A start with no debugging port, and with none of those that make a browser under automation. A worker's navigator
+    # has no webdriver.
+    if run != DEDICATED_WORKER:
+        assert getters_of(first, "navigator")["webdriver"] is False

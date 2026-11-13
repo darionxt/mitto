@@ -303,7 +303,8 @@ void DOMTimerCoordinator::Execute(const Action& action) {
     }
   }
   if (try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate_, try_catch.Exception());
+    bindings::ReportException(isolate_, try_catch.Exception(),
+                              try_catch.Message());
   }
 }
 
