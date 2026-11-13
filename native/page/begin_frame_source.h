@@ -15,6 +15,10 @@
 // periods end as a frame begins, and a short one lasts until the next vsync
 // after it, until long ones start again once frames stop.
 //
+// Chrome's renderer hears of each BeginFrame over IPC. The Page wakes for one
+// with a precise timer instead, and on Windows asks for timers of a
+// millisecond while frames come, since the default there is 15.6.
+//
 // Upstream: ui/gl/vsync_provider_win.cc
 // Upstream: ui/gl/vsync_thread_win.cc
 // Upstream: components/viz/service/frame_sinks/external_begin_frame_source_win.cc
@@ -29,13 +33,12 @@
 
 #include <vector>
 
-#include "base/cancelable_callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/task/sequence_manager/sequence_manager.h"
 #include "base/task/sequence_manager/task_queue.h"
 #include "base/task/task_observer.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "mitto/dom/event_loop.h"
 
 namespace mitto {
@@ -83,6 +86,8 @@ class BeginFrameSource final : public base::TaskObserver {
   // `arrival`.
   void PostFrame(base::TimeTicks frame_time, base::TimeTicks arrival);
   void BeginFrame(base::TimeTicks frame_time);
+  // Starts or stops frames coming at each vsync.
+  void SetObserving(bool observing);
   // At the vsync after a frame that asked for no other.
   void StopObservingIfIdle();
 
@@ -107,8 +112,10 @@ class BeginFrameSource final : public base::TaskObserver {
   base::TimeTicks last_frame_end_;
   bool current_task_is_frame_ = false;
   bool rendering_starved_ = false;
-  base::CancelableOnceClosure stop_observing_;
-  base::WeakPtrFactory<BeginFrameSource> weak_factory_{this};
+  // What wakes the main thread for the next frame, and for the BeginFrame that
+  // stops them, each on the compositor's queue.
+  base::DeadlineTimer frame_timer_;
+  base::DeadlineTimer stop_observing_timer_;
 };
 
 }  // namespace mitto

@@ -9,6 +9,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "base/task/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "mitto/page/idle_helper.h"
 
 namespace mitto {
@@ -45,12 +46,27 @@ BeginFrameSource::BeginFrameSource(
       priorities_(priorities),
       idle_helper_(idle_helper) {
   compositor_queue_->SetQueuePriority(priorities_.normal);
+  frame_timer_.SetTaskRunner(compositor_queue_->task_runner());
+  stop_observing_timer_.SetTaskRunner(compositor_queue_->task_runner());
   sequence_manager_->AddTaskObserver(this);
   SetRefreshRate(kDefaultRefreshRate);
 }
 
 BeginFrameSource::~BeginFrameSource() {
+  SetObserving(false);
   sequence_manager_->RemoveTaskObserver(this);
+}
+
+void BeginFrameSource::SetObserving(bool observing) {
+  if (observing_ == observing) {
+    return;
+  }
+  observing_ = observing;
+#if BUILDFLAG(IS_WIN)
+  // A precise timer then wakes within a millisecond, where it would wait for
+  // the next tick of Windows' default timer.
+  base::Time::EnableHighResolutionTimer(observing);
+#endif
 }
 
 void BeginFrameSource::SetRefreshRate(int hertz) {
@@ -95,7 +111,7 @@ void BeginFrameSource::RequestBeginFrame(
   if (frame_posted_ || in_frame_) {
     return;
   }
-  stop_observing_.Cancel();
+  stop_observing_timer_.Stop();
   const base::TimeTicks now = base::TimeTicks::Now();
   if (observing_) {
     // A BeginFrame comes at each vsync, and the next sends a main frame.
@@ -107,7 +123,7 @@ void BeginFrameSource::RequestBeginFrame(
   // ExternalBeginFrameSourceWin::GetMissedBeginFrameArgs() gives the time of
   // the last vsync, and only once for each vsync. cc's Scheduler takes it,
   // unless its deadline, the next vsync, has passed by the time it arrives.
-  observing_ = true;
+  SetObserving(true);
   const base::TimeTicks arrival = now + kMissedBeginFrameLatency;
   const base::TimeTicks missed = LastVSyncAtOrBefore(now);
   if (missed > last_frame_time_ && missed + vsync_interval_ >= arrival) {
@@ -121,11 +137,10 @@ void BeginFrameSource::RequestBeginFrame(
 void BeginFrameSource::PostFrame(base::TimeTicks frame_time,
                                  base::TimeTicks arrival) {
   frame_posted_ = true;
-  compositor_queue_->task_runner()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(&BeginFrameSource::BeginFrame, weak_factory_.GetWeakPtr(),
-                     frame_time),
-      std::max(base::TimeDelta(), arrival - base::TimeTicks::Now()));
+  frame_timer_.Start(FROM_HERE, arrival,
+                     base::BindOnce(&BeginFrameSource::BeginFrame,
+                                    base::Unretained(this), frame_time),
+                     base::subtle::DelayPolicy::kPrecise);
 }
 
 void BeginFrameSource::BeginFrame(base::TimeTicks frame_time) {
@@ -163,18 +178,18 @@ void BeginFrameSource::BeginFrame(base::TimeTicks frame_time) {
   if (now < next_vsync) {
     idle_helper_->StartShortIdlePeriod(now, next_vsync);
   }
-  stop_observing_.Reset(base::BindOnce(&BeginFrameSource::StopObservingIfIdle,
-                                       weak_factory_.GetWeakPtr()));
-  compositor_queue_->task_runner()->PostDelayedTask(
-      FROM_HERE, stop_observing_.callback(),
-      next_begin_frame + kBeginFrameLatency - now);
+  stop_observing_timer_.Start(
+      FROM_HERE, next_begin_frame + kBeginFrameLatency,
+      base::BindOnce(&BeginFrameSource::StopObservingIfIdle,
+                     base::Unretained(this)),
+      base::subtle::DelayPolicy::kPrecise);
 }
 
 void BeginFrameSource::StopObservingIfIdle() {
   if (frame_posted_ || !requests_.empty()) {
     return;
   }
-  observing_ = false;
+  SetObserving(false);
   idle_helper_->EnableLongIdlePeriod();
 }
 
