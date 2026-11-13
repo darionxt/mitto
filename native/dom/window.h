@@ -159,6 +159,19 @@ class Window final : public WindowProperties {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // window_messaging.cc: a structured clone of `value`, and a message to the
+  // window itself, which frames will extend to other windows.
+  v8::Local<v8::Value> StructuredClone(
+      v8::Local<v8::Value> value,
+      const bindings::StructuredSerializeOptions& options,
+      bindings::ExceptionState& exception_state);
+  void PostMessage(v8::Local<v8::Value> message,
+                   const std::u16string& target_origin,
+                   const std::vector<v8::Local<v8::Object>>& transfer,
+                   bindings::ExceptionState& exception_state);
+  void PostMessage(v8::Local<v8::Value> message,
+                   const bindings::WindowPostMessageOptions& options,
+                   bindings::ExceptionState& exception_state);
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }

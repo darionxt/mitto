@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 13;
+inline constexpr uint32_t kPageProtocolVersion = 14;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -153,6 +153,13 @@ enum class PageMessage : uint32_t {
   // To the Page, while the CookieStore listens: a change to the document's
   // cookies, as PageCookieStoreChange says.
   kCookieStoreChange = 24,
+  // To the Session: a message of one of the document's BroadcastChannels, as
+  // PageBroadcast says, for the Session's other Pages whose documents are of
+  // the same origin.
+  kBroadcast = 25,
+  // To the Page: a message of a BroadcastChannel of another Page of the
+  // Session whose document is of the same origin, as PageBroadcast says.
+  kBroadcastReceived = 26,
 };
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
@@ -619,6 +626,26 @@ struct PageCookieStoreChange {
   PageCookie cookie;
 };
 
+// A message of a BroadcastChannel, as Chrome's browser process passes it
+// between tabs: the channel's name, whether the message is locked to the
+// agent cluster of the Page that sent it, as one that holds a WebAssembly
+// module is, and the bytes of the message as SerializedScriptValue writes
+// them, which the Session does not read. Its payload is the name after its
+// size as a 32-bit number, the byte, and then the bytes, which are the rest.
+struct PageBroadcast {
+  PageBroadcast();
+  PageBroadcast(const PageBroadcast&);
+  PageBroadcast& operator=(const PageBroadcast&);
+  PageBroadcast(PageBroadcast&&);
+  PageBroadcast& operator=(PageBroadcast&&);
+  ~PageBroadcast();
+
+  // In UTF-8.
+  std::string name;
+  bool locked = false;
+  std::string data;
+};
+
 // A frame from a Page, once checked. Which fields it uses depends on `type`.
 struct FrameFromPage {
   FrameFromPage();
@@ -655,6 +682,8 @@ struct FrameFromPage {
   PageCookieStoreSet cookie_store_set;
   // kCookieStoreListen.
   bool cookie_store_listen = false;
+  // kBroadcast.
+  PageBroadcast broadcast;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -692,6 +721,8 @@ struct FrameFromSession {
   bool cookie_store_stored = false;
   // kCookieStoreChange.
   PageCookieStoreChange cookie_store_change;
+  // kBroadcastReceived.
+  PageBroadcast broadcast;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -741,6 +772,10 @@ std::string EncodeCookieStoreCookies(const PageCookieStoreCookies& cookies);
 std::string EncodeCookieStoreStored(uint64_t answer, bool stored);
 // The cookie fits in a frame.
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
+// Whether a broadcast fits in a frame.
+bool BroadcastFits(const PageBroadcast& broadcast);
+// The broadcast fits in a frame. `type` is kBroadcast or kBroadcastReceived.
+std::string EncodeBroadcast(PageMessage type, const PageBroadcast& broadcast);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

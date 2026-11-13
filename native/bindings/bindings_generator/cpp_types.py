@@ -728,6 +728,15 @@ class TypeMapper:
                 return f"{union_name(idl_type)}({dictionary.name}())"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
+        if (
+            kind is TypeKind.INTERFACE
+            and idl_type.nullable
+            and literal == "null"
+            and idl_type.name in self._implemented
+        ):
+            # No object, as MessageEventInit's source has by default.
+            self.used_interfaces.add(idl_type.name)
+            return "nullptr"
         if kind is TypeKind.CALLBACK_FUNCTION and idl_type.nullable and literal == "null":
             # Empty for null, as a nullable callback that a page gave as null converts.
             return "v8::Local<v8::Function>()"

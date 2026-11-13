@@ -1,0 +1,1160 @@
+{
+ "chrome": "157.0.8103.51",
+ "record": {
+  "values": {
+   "primitives": [
+    "Array",
+    9,
+    {
+     "0": "undefined",
+     "1": null,
+     "2": true,
+     "3": 1.5,
+     "4": "-0",
+     "5": "NaN",
+     "6": "-Infinity",
+     "7": "12345678901234567890n",
+     "8": "hé😀"
+    }
+   ],
+   "loneSurrogate": [
+    3,
+    55296
+   ],
+   "boxed": [
+    "Array",
+    4,
+    {
+     "0": [
+      "Number",
+      3
+     ],
+     "1": [
+      "String",
+      "ab"
+     ],
+     "2": [
+      "Boolean",
+      false
+     ],
+     "3": [
+      "BigInt",
+      "5n"
+     ]
+    }
+   ],
+   "date": [
+    "Date",
+    1700000000123
+   ],
+   "invalidDate": [
+    "Date",
+    null
+   ],
+   "regexp": [
+    "RegExp",
+    "a+b",
+    "gimsy",
+    0
+   ],
+   "map": [
+    "Map",
+    [
+     [
+      1,
+      [
+       "Object",
+       {
+        "a": 1
+       }
+      ]
+     ],
+     [
+      "k",
+      [
+       "Array",
+       1,
+       {
+        "0": 2
+       }
+      ]
+     ]
+    ]
+   ],
+   "set": [
+    "Set",
+    [
+     1,
+     "a",
+     [
+      "Object",
+      {
+       "b": 2
+      }
+     ]
+    ]
+   ],
+   "sparse": [
+    "Array",
+    3,
+    {
+     "0": 1,
+     "2": 3,
+     "extra": "x"
+    }
+   ],
+   "nested": [
+    "Object",
+    {
+     "a": [
+      "Object",
+      {
+       "b": [
+        "Object",
+        {
+         "c": [
+          "Array",
+          2,
+          {
+           "0": 1,
+           "1": [
+            "Object",
+            {
+             "d": 2
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "nullPrototype": [
+    "Object",
+    {
+     "x": 1
+    }
+   ],
+   "classInstance": [
+    "Object",
+    {
+     "v": 1
+    }
+   ],
+   "getter": [
+    "Object",
+    {
+     "a": "got"
+    }
+   ],
+   "nonEnumerable": [
+    "Object",
+    {
+     "k": 1
+    }
+   ],
+   "symbolKey": [
+    "Object",
+    {
+     "k": 2
+    }
+   ],
+   "cyclic": [
+    "Object",
+    {
+     "name": "c",
+     "self": "ref 0",
+     "list": [
+      "Array",
+      2,
+      {
+       "0": "ref 0",
+       "1": "ref 0"
+      }
+     ]
+    }
+   ],
+   "arrayBuffer": [
+    "ArrayBuffer",
+    3,
+    false,
+    3,
+    [
+     1,
+     2,
+     3
+    ]
+   ],
+   "resizable": [
+    "ArrayBuffer",
+    4,
+    true,
+    16,
+    [
+     0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "views": [
+    "Array",
+    5,
+    {
+     "0": [
+      "Uint8Array",
+      1,
+      3,
+      [
+       "ArrayBuffer",
+       8,
+       false,
+       8,
+       [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+       ]
+      ]
+     ],
+     "1": [
+      "Float64Array",
+      0,
+      8,
+      "ref 2"
+     ],
+     "2": [
+      "DataView",
+      2,
+      4,
+      "ref 2"
+     ],
+     "3": [
+      "BigInt64Array",
+      0,
+      8,
+      [
+       "ArrayBuffer",
+       8,
+       false,
+       8,
+       [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+       ]
+      ]
+     ],
+     "4": [
+      "Uint8ClampedArray",
+      0,
+      1,
+      [
+       "ArrayBuffer",
+       1,
+       false,
+       1,
+       [
+        255
+       ]
+      ]
+     ]
+    }
+   ],
+   "float16": [
+    "Float16Array",
+    0,
+    2,
+    [
+     "ArrayBuffer",
+     2,
+     false,
+     2,
+     [
+      0,
+      62
+     ]
+    ]
+   ],
+   "errors": [
+    "Array",
+    10,
+    {
+     "0": [
+      "Error",
+      "Error",
+      "m",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "1": [
+      "TypeError",
+      "TypeError",
+      "t",
+      [
+       "Object",
+       {
+        "c": 1
+       }
+      ],
+      [
+       "cause",
+       "message"
+      ],
+      "string"
+     ],
+     "2": [
+      "RangeError",
+      "RangeError",
+      "r",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "3": [
+      "SyntaxError",
+      "SyntaxError",
+      "s",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "4": [
+      "ReferenceError",
+      "ReferenceError",
+      "f",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "5": [
+      "EvalError",
+      "EvalError",
+      "e",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "6": [
+      "URIError",
+      "URIError",
+      "u",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "7": [
+      "Error",
+      "Error",
+      "r",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "8": [
+      "Error",
+      "Error",
+      "a",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ],
+     "9": [
+      "Error",
+      "Error",
+      "5",
+      "no cause",
+      [
+       "message"
+      ],
+      "string"
+     ]
+    }
+   ],
+   "domException": [
+    "Array",
+    3,
+    {
+     "0": [
+      "DOMException",
+      "NotFoundError",
+      "msg",
+      8,
+      [],
+      "undefined"
+     ],
+     "1": [
+      "DOMException",
+      "Custom",
+      "m",
+      0,
+      [],
+      "undefined"
+     ],
+     "2": [
+      "DOMException",
+      "Error",
+      "",
+      0,
+      [],
+      "undefined"
+     ]
+    }
+   ],
+   "domRect": [
+    "Array",
+    2,
+    {
+     "0": [
+      "DOMRect",
+      1,
+      2,
+      3,
+      4
+     ],
+     "1": [
+      "DOMRectReadOnly",
+      1,
+      2,
+      "NaN",
+      -4
+     ]
+    }
+   ],
+   "quotaExceeded": [
+    "QuotaExceededError",
+    "QuotaExceededError",
+    "q",
+    22,
+    5,
+    10,
+    null,
+    null
+   ],
+   "wasmModule": [
+    "[object WebAssembly.Module]",
+    false,
+    true
+   ]
+  },
+  "otherInterfaces": {
+   "domPoint": [
+    "[object DOMPoint]",
+    false
+   ],
+   "domPointReadOnly": [
+    "[object DOMPointReadOnly]",
+    false
+   ],
+   "domMatrix": [
+    "[object DOMMatrix]",
+    false
+   ],
+   "domQuad": [
+    "[object DOMQuad]",
+    false
+   ],
+   "imageData": [
+    "[object ImageData]",
+    false
+   ],
+   "blob": [
+    "[object Blob]",
+    false
+   ],
+   "file": [
+    "[object File]",
+    false
+   ]
+  },
+  "refused": {
+   "arrow": "DataCloneError: Failed to execute 'structuredClone' on 'Window': () => {} could not be cloned.",
+   "named": "DataCloneError: Failed to execute 'structuredClone' on 'Window': function named() {} could not be cloned.",
+   "klass": "DataCloneError: Failed to execute 'structuredClone' on 'Window': class K {} could not be cloned.",
+   "symbol": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Symbol(x) could not be cloned.",
+   "weakMap": "DataCloneError: Failed to execute 'structuredClone' on 'Window': #<WeakMap> could not be cloned.",
+   "weakSet": "DataCloneError: Failed to execute 'structuredClone' on 'Window': #<WeakSet> could not be cloned.",
+   "weakRef": "DataCloneError: Failed to execute 'structuredClone' on 'Window': #<WeakRef> could not be cloned.",
+   "promise": "DataCloneError: Failed to execute 'structuredClone' on 'Window': #<Promise> could not be cloned.",
+   "proxy": "DataCloneError: Failed to execute 'structuredClone' on 'Window': #<Object> could not be cloned.",
+   "generator": "DataCloneError: Failed to execute 'structuredClone' on 'Window': [object Generator] could not be cloned.",
+   "inObject": "DataCloneError: Failed to execute 'structuredClone' on 'Window': () => 1 could not be cloned.",
+   "inMap": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Symbol(Symbol.iterator) could not be cloned.",
+   "document": "DataCloneError: Failed to execute 'structuredClone' on 'Window': HTMLDocument object could not be cloned.",
+   "window": "DataCloneError: Failed to execute 'structuredClone' on 'Window': #<Window> could not be cloned.",
+   "element": "DataCloneError: Failed to execute 'structuredClone' on 'Window': HTMLDivElement object could not be cloned.",
+   "text": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Text object could not be cloned.",
+   "event": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Event object could not be cloned.",
+   "abortSignal": "DataCloneError: Failed to execute 'structuredClone' on 'Window': AbortSignal object could not be cloned.",
+   "headers": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Headers object could not be cloned.",
+   "response": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Response object could not be cloned.",
+   "location": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Location object could not be cloned.",
+   "navigator": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Navigator object could not be cloned.",
+   "textEncoder": "DataCloneError: Failed to execute 'structuredClone' on 'Window': TextEncoder object could not be cloned.",
+   "messagePort": "DataCloneError: Failed to execute 'structuredClone' on 'Window': A MessagePort could not be cloned because it was not transferred.",
+   "messageChannel": "DataCloneError: Failed to execute 'structuredClone' on 'Window': MessageChannel object could not be cloned.",
+   "broadcastChannel": "DataCloneError: Failed to execute 'structuredClone' on 'Window': BroadcastChannel object could not be cloned.",
+   "getterThrows": "RangeError: boom",
+   "detached": "DataCloneError: Failed to execute 'structuredClone' on 'Window': An ArrayBuffer is detached and could not be cloned.",
+   "sharedArrayBuffer": "DataCloneError: Failed to execute 'structuredClone' on 'Window': SharedArrayBuffer transfer requires self.crossOriginIsolated.",
+   "sharedInObject": "DataCloneError: Failed to execute 'structuredClone' on 'Window': SharedArrayBuffer transfer requires self.crossOriginIsolated."
+  },
+  "transfer": {
+   "arrayBuffer": [
+    0,
+    true,
+    false,
+    [
+     "ArrayBuffer",
+     3,
+     false,
+     3,
+     [
+      1,
+      2,
+      3
+     ]
+    ]
+   ],
+   "view": [
+    0,
+    [
+     "Uint8Array",
+     1,
+     2,
+     [
+      "ArrayBuffer",
+      4,
+      false,
+      4,
+      [
+       1,
+       2,
+       3,
+       4
+      ]
+     ]
+    ]
+   ],
+   "resizable": [
+    true,
+    true,
+    true,
+    16
+   ],
+   "notInValue": [
+    1,
+    true
+   ],
+   "errors": {
+    "nullValue": "TypeError: Failed to execute 'structuredClone' on 'Window': Failed to read the 'transfer' property from 'StructuredSerializeOptions': Failed to convert value to 'object'.",
+    "number": "TypeError: Failed to execute 'structuredClone' on 'Window': Failed to read the 'transfer' property from 'StructuredSerializeOptions': Failed to convert value to 'object'.",
+    "plainObject": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Value at index 0 does not have a transferable type.",
+    "duplicate": "DataCloneError: Failed to execute 'structuredClone' on 'Window': ArrayBuffer at index 2 is a duplicate of an earlier ArrayBuffer.",
+    "detached": "DataCloneError: Failed to execute 'structuredClone' on 'Window': ArrayBuffer at index 1 is already detached.",
+    "notIterable": "TypeError: Failed to execute 'structuredClone' on 'Window': Failed to read the 'transfer' property from 'StructuredSerializeOptions': The object must have a callable @@iterator property.",
+    "string": "TypeError: Failed to execute 'structuredClone' on 'Window': Failed to read the 'transfer' property from 'StructuredSerializeOptions': The provided value cannot be converted to a sequence.",
+    "options": "TypeError: Failed to execute 'structuredClone' on 'Window': The provided value is not of type 'StructuredSerializeOptions'.",
+    "nullOptions": 1,
+    "sharedArrayBuffer": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Value at index 0 does not have a transferable type.",
+    "wasmMemory": "TypeError: Failed to execute 'structuredClone' on 'Window': ArrayBuffer at index 0 is not detachable and could not be transferred.",
+    "duplicatePort": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Message port at index 1 is a duplicate of an earlier port.",
+    "getterBeforeDetached": [
+     "DataCloneError: Failed to execute 'structuredClone' on 'Window': ArrayBuffer at index 0 is already detached.",
+     [
+      "got"
+     ]
+    ],
+    "detachedAfterBadValue": [
+     "DataCloneError: Failed to execute 'structuredClone' on 'Window': () => {} could not be cloned.",
+     false
+    ],
+    "detachedBeforeSharedError": [
+     "DataCloneError: Failed to execute 'structuredClone' on 'Window': SharedArrayBuffer transfer requires self.crossOriginIsolated.",
+     true
+    ],
+    "transferredTwice": "DataCloneError: Failed to execute 'structuredClone' on 'Window': Port at index 0 is already neutered."
+   },
+   "port": [
+    true,
+    false,
+    "ok",
+    "through the copy"
+   ]
+  },
+  "windowPostMessage": {
+   "basic": [
+    [
+     "MessageEvent",
+     "message",
+     [
+      "Object",
+      {
+       "a": [
+        "Array",
+        1,
+        {
+         "0": 1
+        }
+       ]
+      }
+     ],
+     "ORIGIN",
+     true,
+     "",
+     0,
+     true,
+     true,
+     false,
+     false,
+     false,
+     true,
+     true,
+     null
+    ]
+   ],
+   "origin": [
+    "ok",
+    [
+     [
+      "MessageEvent",
+      "message",
+      [
+       "Object",
+       {
+        "v": "origin"
+       }
+      ],
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ]
+    ]
+   ],
+   "slash": [
+    "ok",
+    [
+     [
+      "MessageEvent",
+      "message",
+      "slash",
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ]
+    ]
+   ],
+   "otherHost": [
+    "ok",
+    []
+   ],
+   "otherPort": [
+    "ok",
+    []
+   ],
+   "trailingPath": [
+    "ok",
+    [
+     [
+      "MessageEvent",
+      "message",
+      "path",
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ]
+    ]
+   ],
+   "errors": {
+    "noArguments": "TypeError: Failed to execute 'postMessage' on 'Window': 1 argument required, but only 0 present.",
+    "invalidOrigin": "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'foo' in a call to 'postMessage'.",
+    "emptyOrigin": "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin '' in a call to 'postMessage'.",
+    "dataUrlOrigin": "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'data:,x' in a call to 'postMessage'.",
+    "cloneBeforeOrigin": "DataCloneError: Failed to execute 'postMessage' on 'Window': () => {} could not be cloned.",
+    "stringTransfer": "TypeError: Failed to execute 'postMessage' on 'Window': The provided value cannot be converted to a sequence.",
+    "delegateStar": "NotAllowedError: Failed to execute 'postMessage' on 'Window': Delegation to target origin '*' is not allowed.",
+    "delegateUnknown": "NotSupportedError: Failed to execute 'postMessage' on 'Window': Delegation of 'foo' is not supported.",
+    "delegateNoActivation": "NotAllowedError: Failed to execute 'postMessage' on 'Window': Delegation is not allowed without transient user activation."
+   },
+   "afterErrors": [],
+   "detachedBeforeOrigin": [
+    "SyntaxError: Failed to execute 'postMessage' on 'Window': Invalid target origin 'foo' in a call to 'postMessage'.",
+    true
+   ],
+   "optionForms": [
+    [
+     [
+      "MessageEvent",
+      "message",
+      "options",
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ],
+     [
+      "MessageEvent",
+      "message",
+      "undefined options",
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ],
+     [
+      "MessageEvent",
+      "message",
+      "null options",
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ],
+     [
+      "MessageEvent",
+      "message",
+      "activation",
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      [
+       "UserActivation",
+       false,
+       false
+      ]
+     ],
+     [
+      "MessageEvent",
+      "message",
+      [
+       "Object",
+       {
+        "buffer": [
+         "ArrayBuffer",
+         1,
+         false,
+         1,
+         [
+          7
+         ]
+        ]
+       }
+      ],
+      "ORIGIN",
+      true,
+      "",
+      0,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+     ]
+    ],
+    true
+   ],
+   "port": [
+    1,
+    true,
+    false,
+    "reply"
+   ],
+   "order": [
+    "microtask",
+    "message 1",
+    "timeout",
+    "message 2"
+   ],
+   "handler": [
+    "handler",
+    true
+   ]
+  },
+  "messageChannel": {
+   "shape": [
+    true,
+    true,
+    "[object MessagePort]",
+    true,
+    [
+     "close",
+     "constructor",
+     "onmessage",
+     "onmessageerror",
+     "postMessage",
+     "start"
+    ],
+    [
+     "constructor",
+     "port1",
+     "port2"
+    ],
+    0,
+    "TypeError: Failed to construct 'MessageChannel': Please use the 'new' operator, this DOM object constructor cannot be called as a function.",
+    "TypeError: Failed to construct 'MessagePort': Illegal constructor",
+    null,
+    null,
+    false
+   ],
+   "start": [
+    [],
+    [
+     "before start"
+    ]
+   ],
+   "event": [
+    "MessageEvent",
+    "message",
+    [
+     "Object",
+     {
+      "x": 1
+     }
+    ],
+    "",
+    null,
+    "",
+    0,
+    true,
+    true,
+    false,
+    false,
+    true,
+    false,
+    null
+   ],
+   "onmessageerrorStarts": true,
+   "order": [
+    "message 1",
+    "microtask 1",
+    "timeout",
+    "message 2",
+    "microtask 2",
+    "message 3",
+    "microtask 3"
+   ],
+   "orderAcrossQueues": [
+    "timeout A",
+    "start 1",
+    "timeout B",
+    "other 1",
+    "window 1",
+    "window 2",
+    "start 2",
+    "start 3",
+    "other 2"
+   ],
+   "closeSender": [
+    [
+     "sent before close"
+    ],
+    "ok",
+    "ok"
+   ],
+   "closeReceiver": [],
+   "errors": {
+    "clone": "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': () => {} could not be cloned.",
+    "sourcePort": "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': Port at index 0 contains the source port.",
+    "sourcePortInOptions": "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': Port at index 0 contains the source port.",
+    "noArguments": "TypeError: Failed to execute 'postMessage' on 'MessagePort': 1 argument required, but only 0 present.",
+    "number": "TypeError: Failed to execute 'postMessage' on 'MessagePort': Overload resolution failed.",
+    "string": "TypeError: Failed to execute 'postMessage' on 'MessagePort': Overload resolution failed.",
+    "nullTransfer": "ok",
+    "nullInList": "TypeError: Failed to execute 'postMessage' on 'MessagePort': Failed to convert value to 'object'."
+   },
+   "transferredPort": [
+    [
+     "queued before the transfer",
+     "sent after the transfer"
+    ],
+    "ok"
+   ],
+   "userActivation": [
+    [
+     1,
+     [
+      "UserActivation",
+      false,
+      false
+     ]
+    ],
+    [
+     2,
+     null
+    ]
+   ]
+  },
+  "messageEvent": {
+   "plain": [
+    null,
+    "",
+    "",
+    null,
+    0,
+    true,
+    null,
+    false,
+    false
+   ],
+   "full": [
+    true,
+    "o",
+    "id",
+    true,
+    1,
+    true,
+    true,
+    true,
+    true
+   ],
+   "portSource": true,
+   "undefinedData": null,
+   "errors": {
+    "noArguments": "TypeError: Failed to construct 'MessageEvent': 1 argument required, but only 0 present.",
+    "call": "TypeError: Failed to construct 'MessageEvent': Please use the 'new' operator, this DOM object constructor cannot be called as a function.",
+    "eventTargetSource": "TypeError: Failed to construct 'MessageEvent': The optional 'source' property is neither a Window nor MessagePort.",
+    "documentSource": "TypeError: Failed to construct 'MessageEvent': The optional 'source' property is neither a Window nor MessagePort.",
+    "objectSource": "TypeError: Failed to construct 'MessageEvent': Failed to read the 'source' property from 'MessageEventInit': Failed to convert value to 'EventTarget'.",
+    "badPorts": "TypeError: Failed to construct 'MessageEvent': Failed to read the 'ports' property from 'MessageEventInit': Failed to convert value to 'MessagePort'.",
+    "portsNotIterable": "TypeError: Failed to construct 'MessageEvent': Failed to read the 'ports' property from 'MessageEventInit': The provided value cannot be converted to a sequence.",
+    "badActivation": "TypeError: Failed to construct 'MessageEvent': Failed to read the 'userActivation' property from 'MessageEventInit': Failed to convert value to 'UserActivation'."
+   },
+   "shape": [
+    "constructor",
+    "data",
+    "initMessageEvent",
+    "lastEventId",
+    "origin",
+    "ports",
+    "source",
+    "userActivation"
+   ],
+   "init": [
+    "y",
+    true,
+    true,
+    5,
+    "o",
+    "id",
+    true,
+    1,
+    true
+   ],
+   "initDefaults": [
+    "z",
+    false,
+    null,
+    "",
+    "",
+    null,
+    0
+   ],
+   "initNoArguments": "TypeError: Failed to execute 'initMessageEvent' on 'MessageEvent': 1 argument required, but only 0 present.",
+   "activation": [
+    true,
+    "[object UserActivation]",
+    false,
+    false
+   ],
+   "initDuringDispatch": [
+    "t",
+    "old data"
+   ]
+  },
+  "broadcastChannel": {
+   "shape": [
+    [
+     "close",
+     "constructor",
+     "name",
+     "onmessage",
+     "onmessageerror",
+     "postMessage"
+    ],
+    "TypeError: Failed to construct 'BroadcastChannel': 1 argument required, but only 0 present.",
+    "TypeError: Failed to construct 'BroadcastChannel': Please use the 'new' operator, this DOM object constructor cannot be called as a function.",
+    [
+     "5",
+     "null",
+     null,
+     null
+    ]
+   ],
+   "delivery": [
+    [
+     "b",
+     [
+      "Object",
+      {
+       "x": [
+        "Array",
+        1,
+        {
+         "0": 1
+        }
+       ]
+      }
+     ],
+     "ORIGIN",
+     null,
+     "",
+     0,
+     true,
+     "MessageEvent",
+     true
+    ],
+    [
+     "c",
+     [
+      "Object",
+      {
+       "x": [
+        "Array",
+        1,
+        {
+         "0": 1
+        }
+       ]
+      }
+     ],
+     "ORIGIN",
+     null,
+     "",
+     0,
+     true,
+     "MessageEvent",
+     true
+    ]
+   ],
+   "afterClose": [
+    [
+     "a",
+     "after b closed",
+     "ORIGIN",
+     null,
+     "",
+     0,
+     true,
+     "MessageEvent",
+     true
+    ],
+    [
+     "late",
+     "after b closed"
+    ]
+   ],
+   "closedBeforeDelivery": [
+    [
+     "late",
+     "to close"
+    ]
+   ],
+   "errors": {
+    "closed": "InvalidStateError: Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed",
+    "closedClone": "InvalidStateError: Failed to execute 'postMessage' on 'BroadcastChannel': Channel is closed",
+    "clone": "DataCloneError: Failed to execute 'postMessage' on 'BroadcastChannel': () => {} could not be cloned.",
+    "noArguments": "TypeError: Failed to execute 'postMessage' on 'BroadcastChannel': 1 argument required, but only 0 present.",
+    "sharedArrayBuffer": "DataCloneError: Failed to execute 'postMessage' on 'BroadcastChannel': SharedArrayBuffer transfer requires self.crossOriginIsolated."
+   },
+   "order": [
+    "timeout",
+    "message 1",
+    "message 2"
+   ],
+   "wasmModule": [
+    "[object Null]"
+   ]
+  }
+ }
+}
