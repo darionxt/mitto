@@ -1,5 +1,5 @@
-"""Tests of a Page's event loop: tasks, microtasks, timers, idle callbacks, window.event and the coarsened clocks, in the
-Page program.
+"""Tests of a Page's event loop: tasks, microtasks, timers, idle callbacks, the scheduler, window.event and the coarsened
+clocks, in the Page program.
 
 These run where MITTO_PAGE_PROGRAM names the Page program, as tests/test_page_document.py does. The program runs a script
 from standard input, which keeps long scripts and any text intact on every Host, then its event loop until no task or
@@ -475,6 +475,182 @@ def test_window_event_is_the_event_being_dispatched_as_in_chrome(program: Path) 
         "timer": True,
         "replaced": [5, 5, True],
     }
+
+
+def test_scheduler_runs_tasks_by_priority_and_yield_inherits_as_chrome_does(program: Path) -> None:
+    # What Chrome 157 gave once its page had loaded. A yield() continues before the tasks of its priority, which it
+    # inherits from a postTask() callback and from an idle callback, whose priority is background, but not from a
+    # timer.
+    script = """
+      new Promise(async (resolve) => {
+        const out = {};
+        const error = async (f) => { try { await f(); return 'none'; } catch (e) { return `${e?.name}: ${e?.message ?? e}`; } };
+        out.shape = [typeof scheduler, Object.prototype.toString.call(scheduler), scheduler === window.scheduler,
+          Object.getOwnPropertyNames(Scheduler.prototype).sort()];
+        out.errors = {
+          noArgs: await error(() => scheduler.postTask()),
+          notFunction: await error(() => scheduler.postTask(5)),
+          badPriority: await error(() => scheduler.postTask(() => {}, {priority: 'x'})),
+          badDelay: await error(() => scheduler.postTask(() => {}, {delay: -1})),
+          aborted: await error(() => scheduler.postTask(() => 'ran', {signal: AbortSignal.abort('why')})),
+          construct: await error(() => new Scheduler()),
+        };
+        // Priority order: tasks posted in one task run by priority, FIFO within one.
+        const order = [];
+        const all = [
+          scheduler.postTask(() => order.push('bg1'), {priority: 'background'}),
+          scheduler.postTask(() => order.push('uv1')),
+          scheduler.postTask(() => order.push('ub1'), {priority: 'user-blocking'}),
+          scheduler.postTask(() => order.push('uv2'), {priority: 'user-visible'}),
+          scheduler.postTask(() => order.push('ub2'), {priority: 'user-blocking'}),
+          scheduler.postTask(() => order.push('bg2'), {priority: 'background'}),
+        ];
+        setTimeout(() => order.push('timeout0'), 0);
+        queueMicrotask(() => order.push('micro'));
+        await Promise.all(all);
+        await new Promise(r => setTimeout(r, 5));
+        out.order = order;
+        // Values and errors.
+        out.value = await scheduler.postTask(() => 42);
+        out.thrown = await error(() => scheduler.postTask(() => { throw new RangeError('in task'); }));
+        out.thisArgs = await scheduler.postTask(function () { return [this === undefined, this === window, arguments.length]; });
+        // Abort before running, and while running async.
+        const c1 = new AbortController();
+        const p1 = scheduler.postTask(() => 'ran', {signal: c1.signal});
+        c1.abort();
+        out.abortedBefore = await error(() => p1);
+        const c2 = new TaskController({priority: 'background'});
+        const p2 = scheduler.postTask(async () => { await new Promise(r => setTimeout(r, 5)); return 'finished'; }, {signal: c2.signal});
+        setTimeout(() => c2.abort(), 1);
+        out.abortedAsync = await p2.then(v => v, e => `${e.name}`);
+        // Delay.
+        const t0 = performance.now();
+        await scheduler.postTask(() => {}, {delay: 20});
+        out.delayed = performance.now() - t0 >= 19;
+        // yield: continuation before same-priority tasks; inheritance.
+        const yorder = [];
+        await scheduler.postTask(async () => {
+          scheduler.postTask(() => yorder.push('uv task'));
+          scheduler.postTask(() => yorder.push('bg task'), {priority: 'background'});
+          await scheduler.yield();
+          yorder.push('after yield (uv)');
+        });
+        await new Promise(r => setTimeout(r, 5));
+        out.yieldOrder = yorder;
+        const inherit = [];
+        await scheduler.postTask(async () => {
+          scheduler.postTask(() => inherit.push('uv task'));
+          await scheduler.yield();
+          inherit.push('bg continuation');
+        }, {priority: 'background'});
+        await new Promise(r => setTimeout(r, 5));
+        out.inheritBackground = inherit;
+        // Inheritance through a timer and through await of another promise.
+        const viaTimer = [];
+        await new Promise((done) => {
+          scheduler.postTask(() => {
+            setTimeout(async () => {
+              scheduler.postTask(() => viaTimer.push('uv task'));
+              await scheduler.yield();
+              viaTimer.push('continuation');
+              done();
+            }, 0);
+          }, {priority: 'background'});
+        });
+        await new Promise(r => setTimeout(r, 5));
+        out.viaTimer = viaTimer;
+        const viaIdle = [];
+        await new Promise((done) => {
+          scheduler.postTask(() => {
+            requestIdleCallback(async () => {
+              scheduler.postTask(() => viaIdle.push('uv task'));
+              await scheduler.yield();
+              viaIdle.push('continuation');
+              done();
+            });
+          }, {priority: 'background'});
+        });
+        await new Promise(r => setTimeout(r, 5));
+        out.viaIdle = viaIdle;
+        // yield outside a task: user-visible continuation; vs a timeout.
+        const top = [];
+        setTimeout(() => top.push('timeout0'), 0);
+        scheduler.postTask(() => top.push('uv task'));
+        await scheduler.yield();
+        top.push('continuation');
+        await new Promise(r => setTimeout(r, 5));
+        out.topLevelYield = top;
+        // yield inherits the abort signal.
+        const c3 = new AbortController();
+        out.yieldAborted = await scheduler.postTask(async () => {
+          c3.abort();
+          try { await scheduler.yield(); return 'resumed'; } catch (e) { return e.name; }
+        }, {signal: c3.signal}).then(v => v, e => 'task rejected ' + e.name);
+        resolve(out);
+      })
+    """
+
+    assert _evaluate(program, script) == {
+        "shape": ["object", "[object Scheduler]", True, ["constructor", "postTask", "yield"]],
+        "errors": {
+            "noArgs": "TypeError: Failed to execute 'postTask' on 'Scheduler': 1 argument required, but only "
+            "0 present.",
+            "notFunction": "TypeError: Failed to execute 'postTask' on 'Scheduler': parameter 1 is not of "
+            "type 'Function'.",
+            "badPriority": "TypeError: Failed to execute 'postTask' on 'Scheduler': Failed to read the "
+            "'priority' property from 'SchedulerPostTaskOptions': The provided value 'x' is "
+            "not a valid enum value of type TaskPriority.",
+            "badDelay": "TypeError: Failed to execute 'postTask' on 'Scheduler': Failed to read the 'delay' "
+            "property from 'SchedulerPostTaskOptions': Value is outside the 'unsigned long long' "
+            "value range.",
+            "aborted": "undefined: why",
+            "construct": "TypeError: Failed to construct 'Scheduler': Illegal constructor",
+        },
+        "order": ["micro", "ub1", "ub2", "uv1", "uv2", "timeout0", "bg1", "bg2"],
+        "value": 42,
+        "thrown": "RangeError: in task",
+        "thisArgs": [False, True, 0],
+        "abortedBefore": "AbortError: signal is aborted without reason",
+        "abortedAsync": "finished",
+        "delayed": True,
+        "yieldOrder": ["after yield (uv)", "uv task", "bg task"],
+        "inheritBackground": ["uv task", "bg continuation"],
+        "viaTimer": ["continuation", "uv task"],
+        "viaIdle": ["uv task", "continuation"],
+        "topLevelYield": ["continuation", "timeout0", "uv task"],
+        "yieldAborted": "task rejected AbortError",
+    }
+
+
+def test_a_timer_without_delay_runs_before_a_task_posted_after_it(program: Path) -> None:
+    # Blink posts a timer of no delay as an immediate task, which keeps its place among the tasks posted with it.
+    script = """
+      new Promise((resolve) => {
+        const order = [];
+        setTimeout(() => order.push('timer'), 0);
+        scheduler.postTask(() => order.push('user-visible task'));
+        setTimeout(() => order.push('second timer'), 0);
+        setTimeout(() => resolve(order), 10);
+      })
+    """
+
+    assert _evaluate(program, script) == ["timer", "user-visible task", "second timer"]
+
+
+def test_a_delayed_task_that_its_signal_aborted_keeps_the_command_line_waiting_no_longer(program: Path) -> None:
+    # Blink cancels the queued task of an aborted postTask(), so nothing waits for its delay.
+    script = """
+      (() => {
+        const controller = new AbortController();
+        const task = scheduler.postTask(() => 'ran', {delay: 60000, signal: controller.signal});
+        controller.abort();
+        return task.catch((error) => error.name);
+      })()
+    """
+    started = time.monotonic()
+
+    assert _evaluate(program, script) == "AbortError"
+    assert time.monotonic() - started < _TIMEOUT_SECONDS / 2
 
 
 def test_fetch_fails_on_the_command_line_which_has_no_session(program: Path) -> None:

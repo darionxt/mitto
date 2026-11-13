@@ -23,10 +23,10 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/event.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
-#include "mitto/dom/event.h"
 #include "mitto/dom/history.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
@@ -35,6 +35,7 @@
 #include "mitto/dom/navigator.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/request.h"
+#include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
@@ -108,6 +109,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(navigation_);
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
+  visitor->Trace(scheduler_);
   visitor->Trace(cookie_store_);
   visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
@@ -129,6 +131,10 @@ void Window::CancelIdleCallback(uint32_t handle) {
 
 size_t Window::IdleCallbackCount() const {
   return idle_tasks_ ? idle_tasks_->size() : 0;
+}
+
+size_t Window::ScheduledTaskCount() const {
+  return scheduler_ ? scheduler_->pending_tasks() : 0;
 }
 
 // LocalDOMWindow::event(): the current event, or undefined.
@@ -242,6 +248,14 @@ mitto::CookieStore* Window::CookieStore() {
     cookie_store_ = bindings::MakeGarbageCollected<mitto::CookieStore>(this);
   }
   return cookie_store_.Get();
+}
+
+// DOMScheduler::scheduler(): the window's supplement.
+mitto::Scheduler* Window::Scheduler() {
+  if (!scheduler_) {
+    scheduler_ = bindings::MakeGarbageCollected<mitto::Scheduler>(this);
+  }
+  return scheduler_.Get();
 }
 
 CustomElementRegistry* Window::CustomElements() {

@@ -37,6 +37,7 @@ namespace mitto {
 
 class Geolocation;
 class MimeTypeArray;
+class LockManager;
 class NavigatorUAData;
 class NetworkInformation;
 class Permissions;
@@ -83,6 +84,8 @@ class Navigator final : public bindings::ScriptWrappable {
   float DeviceMemory() const;
   // A new object each time, as Blink makes one.
   NavigatorUAData* UserAgentData() const;
+  // The window's Web Locks, made the first time.
+  mitto::LockManager* Locks();
   int32_t MaxTouchPoints() const;
   std::optional<std::u16string> DoNotTrack() const;
   // [SameObject], each made the first time a page asks.
@@ -112,6 +115,7 @@ class Navigator final : public bindings::ScriptWrappable {
   cppgc::Member<mitto::Permissions> permissions_;
   cppgc::Member<mitto::Geolocation> geolocation_;
   cppgc::Member<StorageManager> storage_;
+  cppgc::Member<mitto::LockManager> locks_;
 };
 
 }  // namespace mitto

@@ -464,6 +464,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Lock"
+    file = "lock"
+  },
+  {
+    name = "LockManager"
+    file = "lock_manager"
+  },
+  {
     name = "MediaSource"
     file = "media_source"
     made_by_known_gaps = true
@@ -543,6 +551,7 @@ mitto_bindings_interfaces = [
       "geolocation",
       "storage",
       "getGamepads",
+      "locks",
     ]
   },
   {
@@ -780,6 +789,16 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Scheduler"
+    file = "scheduler"
+
+    # asyncData is behind UnexposedTaskIds, a test feature.
+    implemented = [
+      "postTask",
+      "yield",
+    ]
+  },
+  {
     name = "Screen"
     file = "screen"
 
@@ -937,6 +956,7 @@ mitto_bindings_interfaces = [
       "requestIdleCallback",
       "cancelIdleCallback",
       "event",
+      "scheduler",
       "cookieStore",
     ]
   },

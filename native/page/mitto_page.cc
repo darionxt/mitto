@@ -354,7 +354,8 @@ class CommandLineLoop final : public base::TaskObserver {
     const v8::HandleScope handle_scope(isolate_);
     v8::MicrotasksScope::PerformCheckpoint(isolate_);
     if (mitto::Window::Current().TimerCount() == 0 &&
-        mitto::Window::Current().IdleCallbackCount() == 0) {
+        mitto::Window::Current().IdleCallbackCount() == 0 &&
+        mitto::Window::Current().ScheduledTaskCount() == 0) {
       run_loop_->QuitWhenIdle();
     }
   }

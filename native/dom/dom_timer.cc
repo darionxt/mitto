@@ -1,5 +1,6 @@
 #include "mitto/dom/dom_timer.h"
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -89,7 +90,12 @@ class DOMTimerCoordinator::DOMTimer {
     if (!single_shot) {
       repeat_interval_ = schedule.delay;
     }
-    next_fire_time_ = base::TimeTicks::Now() + schedule.delay;
+    // TimerBase::Start(): no delay is a null time, for which the task is an
+    // immediate one, ordered with the tasks posted beside it, not a delayed
+    // one ordered once its time comes.
+    next_fire_time_ = schedule.delay.is_zero()
+                          ? base::TimeTicks()
+                          : base::TimeTicks::Now() + schedule.delay;
     Arm();
   }
 
@@ -114,7 +120,7 @@ class DOMTimerCoordinator::DOMTimer {
       // from now, so that a late wake-up does not run it twice to catch up.
       const base::TimeTicks now = base::TimeTicks::Now();
       if (repeat_interval_->is_zero()) {
-        next_fire_time_ = now;
+        next_fire_time_ = base::TimeTicks();
       } else {
         next_fire_time_ =
             (now + *repeat_interval_ / 20)
@@ -123,7 +129,12 @@ class DOMTimerCoordinator::DOMTimer {
       nesting_level_ = base::ClampAdd(nesting_level_, 1);
       const base::TimeDelta interval =
           RepeatIntervalAt(nesting_level_, *repeat_interval_);
-      next_fire_time_ += interval - *repeat_interval_;
+      // DOMTimer::Fired() and TimerBase::AugmentRepeatInterval(): a clamped
+      // interval moves the next run on, but not before now.
+      if (interval != *repeat_interval_) {
+        next_fire_time_ =
+            std::max(now, next_fire_time_ + (interval - *repeat_interval_));
+      }
       repeat_interval_ = interval;
       Arm();
       // The action may clear this timer, which then waits in `clearing_`.
