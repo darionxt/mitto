@@ -95,6 +95,8 @@ class MutationObserver final : public bindings::ScriptWrappable {
  private:
   v8::TracedReference<v8::Function> callback_;
   HeapVector<MutationRecord> records_;
+  // What the last takeRecords() took, until the next.
+  HeapVector<MutationRecord> taken_records_;
   HeapVector<MutationObserverRegistration> registrations_;
   // The order of the observers' deliveries: the order they were made in.
   const uint32_t priority_;

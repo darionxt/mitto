@@ -123,6 +123,7 @@ void MutationObserver::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(callback_);
   records_.Trace(visitor);
+  taken_records_.Trace(visitor);
   registrations_.Trace(visitor);
 }
 
@@ -218,9 +219,14 @@ void MutationObserver::Disconnect() {
 }
 
 std::vector<MutationRecord*> MutationObserver::TakeRecords() {
-  std::vector<MutationRecord*> records = records_.ToVector();
+  // The bindings make the records' wrappers once this returns, which can run
+  // the collector, so the records stay traced until the next take.
+  taken_records_.clear();
+  for (MutationRecord* record : records_.ToVector()) {
+    taken_records_.push_back(record);
+  }
   records_.clear();
-  return records;
+  return taken_records_.ToVector();
 }
 
 void MutationObserver::ObservationStarted(
@@ -274,13 +280,19 @@ void MutationObserver::Deliver() {
   if (records_.empty()) {
     return;
   }
-  const std::vector<MutationRecord*> records = records_.ToVector();
+  // Held while their wrappers are made, which can run the collector, since
+  // nothing else holds them once they are taken.
+  std::vector<cppgc::Persistent<MutationRecord>> records;
+  records.reserve(records_.size());
+  for (MutationRecord* record : records_.ToVector()) {
+    records.emplace_back(record);
+  }
   records_.clear();
   // The DOM Standard: the callback with the records and the observer, and
   // the observer as `this`; what it throws is reported.
   std::vector<v8::Local<v8::Value>> wrappers;
   wrappers.reserve(records.size());
-  for (MutationRecord* record : records) {
+  for (const cppgc::Persistent<MutationRecord>& record : records) {
     wrappers.push_back(record->ToV8(isolate));
   }
   const v8::Local<v8::Value> observer = ToV8(isolate);
