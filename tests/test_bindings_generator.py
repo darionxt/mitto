@@ -1440,3 +1440,38 @@ def test_a_promise_attribute_that_is_a_known_gap_has_no_signature() -> None:
     lines = [line for line in source.splitlines() if "InstallAttribute(" in line]
     assert "v8::Local<v8::Signature>()" in next(line for line in lines if '"ready"' in line)
     assert 'signature, "on"' in next(line for line in lines if '"on"' in line)
+
+
+def test_a_class_returns_a_nullable_callback_interface_and_a_nullable_union_of_classes() -> None:
+    # TreeWalker's filter, and HTMLAllCollection's item(), which gives an Element or an HTMLCollection.
+    types = TypeMapper(frozenset({"Element", "HTMLCollection"}), frozenset())
+    filter_type = IdlType(TypeKind.CALLBACK_INTERFACE, "NodeFilter", nullable=True)
+    union = IdlType(
+        TypeKind.UNION,
+        "(HTMLCollection or Element)",
+        nullable=True,
+        members=(IdlType(TypeKind.INTERFACE, "HTMLCollection"), IdlType(TypeKind.INTERFACE, "Element")),
+    )
+
+    assert types.return_type(filter_type, "x") == "v8::Local<v8::Object>"
+    assert types.to_v8(filter_type, "value") == "ToV8NullableObject(isolate, value)"
+    assert types.return_type(union, "x") == "bindings::ScriptWrappable*"
+    assert types.to_v8(union, "value") == "ToV8(isolate, value)"
+
+
+def test_a_stringifier_operation_calls_the_classs_to_string() -> None:
+    source = _bindings_of(_interface(stringifier=""), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert "info.GetReturnValue().Set(ToV8String(isolate, impl->ToString()));" in source
+    assert '"toString", kInterfaceName, StringifierCallback, 0, v8::DontDelete' not in source
+    assert '"toString", kInterfaceName, StringifierCallback, 0, v8::None' in source
+
+
+def test_an_attribute_setter_throws_blinks_message_for_a_value_that_is_no_object_of_its_interface() -> None:
+    # TreeWalker's currentNode: NativeValueTraitsInterfaceNotOfType() without an argument index.
+    node = IdlType(TypeKind.INTERFACE, "Thing")
+    current = Attribute("current", node, False, False, _extended("NodeWrapInOwnContext"), ALWAYS)
+    source = _bindings_of(_interface(attributes=(current,)), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert 'ExceptionMessages::FailedToConvertJSValue("Thing")' in source
+    assert "impl->SetCurrent(" in source

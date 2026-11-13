@@ -11,18 +11,21 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/interfaces_without_class.h"
 #include "mitto/bindings/known_gap.h"
+#include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
+#include "mitto/dom/dom_tree_version.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_dispatcher.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/mutation_observer.h"
 #include "mitto/dom/node_list.h"
+#include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/objects_behind.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
@@ -166,6 +169,18 @@ bool DocumentCanAcceptChildren(const Document& document,
   return true;
 }
 
+// Blink's NodeTraversal::NextPostOrder() with nothing to stay within.
+Node* NextInPostOrder(const Node& node) {
+  Node* next = node.NextSibling();
+  if (!next) {
+    return node.ParentNode();
+  }
+  while (Node* const first_child = next->FirstChild()) {
+    next = first_child;
+  }
+  return next;
+}
+
 bool AreEqualNodes(const Node& a, const Node& b) {
   if (a.GetNodeType() != b.GetNodeType()) {
     return false;
@@ -246,6 +261,7 @@ void Node::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
   visitor->Trace(child_nodes_);
   visitor->Trace(children_);
+  visitor->Trace(node_lists_);
   visitor->Trace(mutation_observer_data_);
 }
 
@@ -335,35 +351,39 @@ Node* Node::GetRootNode(const bindings::GetRootNodeOptions& options) {
 }
 
 void Node::Normalize() {
-  // Blink's Node::normalize(): merge each Text node with the Text nodes that
-  // follow it, and drop the empty ones.
-  Node* node = FirstChild();
-  while (node) {
+  // Blink's Node::normalize(), in post-order: each empty Text node goes, and
+  // each other one takes in the Text nodes that follow it, which go.
+  Node* node = this;
+  while (Node* const first_child = node->FirstChild()) {
+    node = first_child;
+  }
+  while (node && node != this) {
     if (!node->IsTextNode()) {
-      node = node->NextInTree(this);
+      node = NextInPostOrder(*node);
       continue;
     }
-    auto* text = static_cast<Text*>(node);
-    Node* next = text->NextSibling();
-    while (next && next->IsTextNode()) {
-      Node* const after = next->NextSibling();
-      // Blink's Text::MergeNextSiblingNodesIfPossible() takes an empty one
-      // out without changing this node's data, which an observer would hear
-      // of.
-      if (const std::u16string& data = static_cast<Text*>(next)->Data();
-          !data.empty()) {
-        text->AppendData(data);
-      }
-      next->ParentNode()->ParserRemoveChild(*next);
-      next = after;
-    }
+    auto* const text = static_cast<Text*>(node);
     if (text->Data().empty()) {
-      Node* const following = text->NextInTreeSkippingChildren(this);
+      node = NextInPostOrder(*text);
       text->ParentNode()->ParserRemoveChild(*text);
-      node = following;
       continue;
     }
-    node = text->NextInTree(this);
+    while (Node* const next = text->NextSibling()) {
+      if (!next->IsTextNode()) {
+        break;
+      }
+      auto* const next_text = static_cast<Text*>(next);
+      if (!next_text->Data().empty()) {
+        const uint32_t offset = text->Length();
+        text->SetDataWithoutUpdate(text->Data() + next_text->Data());
+        if (AttachedTraversals* const traversals =
+                GetDocument().ExistingTraversals()) {
+          traversals->DidMergeText(*text, *next_text, offset);
+        }
+      }
+      next_text->ParentNode()->ParserRemoveChild(*next_text);
+    }
+    node = NextInPostOrder(*text);
   }
 }
 
@@ -572,6 +592,14 @@ bool Node::EnsurePreInsertionValidity(
     }
   }
   return true;
+}
+
+bool Node::EnsurePreInsertionValidity(
+    Node* node,
+    const Node* next,
+    bindings::ExceptionState& exception_state) const {
+  return EnsurePreInsertionValidity(NodeVector{node}, next, nullptr,
+                                    exception_state);
 }
 
 void Node::InsertNodes(const NodeVector& nodes, Node* next) {
@@ -929,11 +957,54 @@ void Node::Remove(bindings::ExceptionState& exception_state) {
 Element* Node::QuerySelector(const std::u16string& selectors,
                              bindings::ExceptionState& exception_state) {
   const std::optional<SelectorQuery> query =
-      SelectorQuery::Parse(selectors, exception_state);
+      SelectorQuery::Parse(selectors, *this, exception_state);
   if (!query) {
     return nullptr;
   }
   return query->QueryFirst(*this);
+}
+
+NodeList* Node::QuerySelectorAll(const std::u16string& selectors,
+                                 bindings::ExceptionState& exception_state) {
+  const std::optional<SelectorQuery> query =
+      SelectorQuery::Parse(selectors, *this, exception_state);
+  if (!query) {
+    return nullptr;
+  }
+  const NodeVector found = query->QueryAll(*this);
+  std::vector<Node*> nodes;
+  nodes.reserve(found.size());
+  for (const cppgc::Persistent<Node>& node : found) {
+    nodes.push_back(node.Get());
+  }
+  return NodeList::CreateStatic(nodes);
+}
+
+HTMLCollection* Node::GetElementsByTagName(
+    const std::u16string& qualified_name) {
+  return EnsureNodeLists().TagCollection(*this, qualified_name);
+}
+
+HTMLCollection* Node::GetElementsByTagNameNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& local_name) {
+  // Blink's ContainerNode::getElementsByTagNameNS(): "" is no namespace.
+  return EnsureNodeLists().TagCollectionNS(
+      *this,
+      namespace_uri && namespace_uri->empty() ? std::nullopt : namespace_uri,
+      local_name);
+}
+
+HTMLCollection* Node::GetElementsByClassName(
+    const std::u16string& class_names) {
+  return EnsureNodeLists().ClassCollection(*this, class_names);
+}
+
+NodeListsNodeData& Node::EnsureNodeLists() {
+  if (!node_lists_) {
+    node_lists_ = bindings::MakeGarbageCollected<NodeListsNodeData>();
+  }
+  return *node_lists_;
 }
 
 Node& Node::TreeRoot() const {
@@ -1020,6 +1091,10 @@ void Node::SetTreeDocument(Document& document) {
   for (Node* node = this; node; node = node->NextInTree(this)) {
     node->DidMoveToNewDocument(*old_document);
   }
+  if (AttachedTraversals* const traversals =
+          old_document->ExistingTraversals()) {
+    traversals->DidMoveTreeToNewDocument(*this, document);
+  }
 }
 
 Node::InsertionNotificationRequest Node::InsertedInto(Node& insertion_point) {
@@ -1028,6 +1103,7 @@ Node::InsertionNotificationRequest Node::InsertedInto(Node& insertion_point) {
 
 void Node::LinkChild(Node& child, Node* next) {
   CHECK(!child.ParentNode());
+  IncrementDomTreeVersion();
   if (!IsDocumentNode()) {
     child.SetTreeDocument(GetDocument());
   } else {
@@ -1042,21 +1118,30 @@ void Node::LinkChild(Node& child, Node* next) {
       first_child_ = &child;
     }
     last_child_ = &child;
-    return;
-  }
-  CHECK_EQ(next->ParentNode(), this);
-  child.next_sibling_ = next;
-  child.previous_sibling_ = next->previous_sibling_;
-  if (next->previous_sibling_) {
-    next->previous_sibling_->next_sibling_ = &child;
   } else {
-    first_child_ = &child;
+    CHECK_EQ(next->ParentNode(), this);
+    child.next_sibling_ = next;
+    child.previous_sibling_ = next->previous_sibling_;
+    if (next->previous_sibling_) {
+      next->previous_sibling_->next_sibling_ = &child;
+    } else {
+      first_child_ = &child;
+    }
+    next->previous_sibling_ = &child;
   }
-  next->previous_sibling_ = &child;
+  if (AttachedTraversals* const traversals =
+          child.GetDocument().ExistingTraversals()) {
+    traversals->DidInsertNode(child);
+  }
 }
 
 void Node::UnlinkChild(Node& child) {
   CHECK_EQ(child.ParentNode(), this);
+  IncrementDomTreeVersion();
+  if (AttachedTraversals* const traversals =
+          GetDocument().ExistingTraversals()) {
+    traversals->NodeWillBeRemoved(child);
+  }
   if (child.previous_sibling_) {
     child.previous_sibling_->next_sibling_ = child.next_sibling_;
   } else {

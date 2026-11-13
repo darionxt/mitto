@@ -290,6 +290,14 @@ v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
   return v8::Number::New(isolate, *number);
 }
 
+v8::Local<v8::Value> ToV8NullableObject(v8::Isolate* isolate,
+                                        v8::Local<v8::Object> object) {
+  if (object.IsEmpty()) {
+    return v8::Null(isolate);
+  }
+  return object;
+}
+
 v8::Local<v8::Value> ToV8NullableString(
     v8::Isolate* isolate,
     const std::optional<std::u16string>& text) {

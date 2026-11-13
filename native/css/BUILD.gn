@@ -1,5 +1,6 @@
-# The Runtime's CSS: CSS Syntax's tokenizer and Media Queries, which
-# matchMedia() parses and evaluates. Nothing here goes into the library, whose
+# The Runtime's CSS: CSS Syntax's tokenizer, Media Queries, which
+# matchMedia() parses and evaluates, and the selectors that querySelector()
+# and the like parse. Nothing here goes into the library, whose
 # exports and size stay as they are: a Page runs in a process of its own.
 
 import("//build/config/sanitizers/sanitizers.gni")
@@ -8,6 +9,9 @@ source_set("parser") {
   sources = [
     "css_math_expression.cc",
     "css_math_expression.h",
+    "css_selector.h",
+    "css_selector_parser.cc",
+    "css_selector_parser.h",
     "css_serialization.cc",
     "css_serialization.h",
     "css_token.cc",
@@ -49,13 +53,24 @@ if (use_libfuzzer) {
       "//base",
     ]
   }
+
+  fuzzer_test("css_selector_fuzzer") {
+    sources = [ "//mitto/test/css_selector_fuzzer.cc" ]
+    deps = [
+      ":parser",
+      "//base",
+    ]
+  }
 }
 
 group("css") {
   testonly = use_libfuzzer
   deps = [ ":media_query_test" ]
   if (use_libfuzzer) {
-    deps += [ ":media_query_fuzzer" ]
+    deps += [
+      ":css_selector_fuzzer",
+      ":media_query_fuzzer",
+    ]
   }
 }
 
