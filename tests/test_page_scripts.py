@@ -475,6 +475,16 @@ _CASES["cross_site_async"] = _Case(
 )
 
 
+class _BacklogServer(QuietServer):
+    """A local server that queues as many connections as a page opens at once.
+
+    A case such as `integrity` opens a connection for each of some twenty scripts, and socketserver's backlog of five
+    refuses the rest on a busy macOS runner, which a script reports as an error.
+    """
+
+    request_queue_size = 128
+
+
 class _ScriptServer:
     """A local server for one case at a time, which records the path of each request it gets, in order.
 
@@ -501,7 +511,7 @@ class _ScriptServer:
             def log_message(self, format: str, *args: Any) -> None:
                 pass
 
-        self._server = QuietServer(("127.0.0.1", 0), Handler)
+        self._server = _BacklogServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def url(self, path: str = "/") -> str:
