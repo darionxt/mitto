@@ -12,8 +12,10 @@ arguments; then each argument in turn. Each failure throws the message that Blin
 the context that ExceptionState adds, such as "Failed to execute 'x' on 'Y': ".
 
 A member whose behaviour the Runtime does not have yet is a Known Gap: it is installed as Chrome installs it, and its
-callback throws. A reflected attribute of a string or a boolean, [Reflect] without a URL or a list of values, has its
-behaviour from the writer itself, which reads and writes the content attribute through the element.
+callback throws. A reflected attribute, [Reflect], of a string, a nullable string, a boolean, a long or an unsigned long,
+or of a URL, or one that [ReflectOnly] limits to its keywords, has its behaviour from the writer itself, which reads
+and writes the content attribute through the element, as bind_gen's _make_reflect_accessor_func_name() names the
+element's accessors.
 """
 
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
@@ -22,6 +24,7 @@ behaviour from the writer itself, which reads and writes the content attribute t
 # Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/codegen_expr.py
 
 import dataclasses
+import enum
 from collections.abc import Callable, Iterable
 
 from bindings_generator.cpp_names import file_name, function_name, member_name
@@ -112,6 +115,7 @@ WRITTEN = frozenset(
         "SecureContext",
         "Serializable",
         "Transferable",
+        "URL",
         "Unscopable",
         "V8EnableIndexOf",
         "V8EnableIterableToList",
@@ -128,9 +132,6 @@ _ARRAY_INTRINSICS = {
     "values": "v8::kArrayProto_values",
     "forEach": "v8::kArrayProto_forEach",
 }
-
-# What makes a reflected attribute's behaviour more than reading and writing its content attribute.
-_REFLECT_BEYOND_CONTENT = ("URL",)
 
 # What limits a reflected attribute to its keywords, which bind_gen's make_reflect_process_keyword_state() follows.
 _REFLECT_KEYWORDS = ("ReflectOnly", "ReflectMissing", "ReflectInvalid", "ReflectEmpty")
@@ -251,24 +252,110 @@ def reflected_keywords(attribute: Attribute) -> Keywords | None:
     )
 
 
-def reflected_attribute(attribute: Attribute) -> str | None:
-    """The content attribute that the writer reflects for `attribute` itself, or None: a string or a boolean, or a
-    string that [ReflectOnly] limits to its keywords, which may be nullable."""
+class ReflectionKind(enum.Enum):
+    """How the writer reads and writes a reflected attribute's content attribute: through which of the element's
+    accessors, as bind_gen's _make_reflect_accessor_func_name() picks Blink's."""
+
+    BOOLEAN = ("ReflectedBooleanAttribute", "SetReflectedBooleanAttribute")
+    STRING = ("ReflectedStringAttribute", "SetReflectedStringAttribute")
+    NULLABLE_STRING = ("ReflectedNullableStringAttribute", "SetReflectedNullableStringAttribute")
+    URL = ("ReflectedURLAttribute", "SetReflectedStringAttribute")
+    INTEGER = ("ReflectedIntegerAttribute", "SetReflectedIntegerAttribute")
+    UNSIGNED_INTEGER = ("ReflectedUnsignedIntegerAttribute", "SetReflectedUnsignedIntegerAttribute")
+    KEYWORDS = ("ReflectedKeywordAttribute", "SetReflectedStringAttribute")
+    NULLABLE_KEYWORDS = ("ReflectedKeywordAttribute", "SetReflectedNullableStringAttribute")
+
+    def __init__(self, getter: str, setter: str) -> None:
+        self.getter = getter
+        self.setter = setter
+
+
+# The string types that a reflected attribute can have, and the annotation on them that the writer converts.
+_REFLECTED_STRINGS = ("DOMString", "USVString")
+_REFLECTED_ANNOTATIONS = ("LegacyNullToEmptyString",)
+
+
+def reflection_kind(attribute: Attribute) -> ReflectionKind | None:
+    """How the writer reflects `attribute` itself, or None if it does not: an Element, a list of values that
+    [ReflectOnly] does not give, or a type annotation other than [LegacyNullToEmptyString] stay with the class."""
     extended = attribute.extended_attributes
-    if "Reflect" not in extended or any(key in extended for key in _REFLECT_BEYOND_CONTENT):
+    if "Reflect" not in extended:
         return None
     keywords = reflected_keywords(attribute)
     if keywords is None and any(key in extended for key in _REFLECT_KEYWORDS):
         return None
     idl_type = attribute.idl_type
-    if (idl_type.nullable and keywords is None) or idl_type.extended_attributes.entries:
+    if any(key not in _REFLECTED_ANNOTATIONS for key, _ in idl_type.extended_attributes.entries):
         return None
-    if keywords is not None and not (idl_type.kind is TypeKind.STRING and idl_type.name == "DOMString"):
+    is_string = idl_type.kind is TypeKind.STRING and idl_type.name in _REFLECTED_STRINGS
+    if keywords is not None:
+        if not (is_string and idl_type.name == "DOMString"):
+            return None
+        return ReflectionKind.NULLABLE_KEYWORDS if idl_type.nullable else ReflectionKind.KEYWORDS
+    if "URL" in extended:
+        return ReflectionKind.URL if is_string and not idl_type.nullable else None
+    if is_string:
+        return ReflectionKind.NULLABLE_STRING if idl_type.nullable else ReflectionKind.STRING
+    if idl_type.nullable:
         return None
-    if not ((idl_type.kind is TypeKind.STRING and idl_type.name == "DOMString") or idl_type.kind is TypeKind.BOOLEAN):
+    if idl_type.kind is TypeKind.BOOLEAN:
+        return ReflectionKind.BOOLEAN
+    if idl_type.kind is TypeKind.INTEGER and idl_type.name == "long":
+        return ReflectionKind.INTEGER
+    if idl_type.kind is TypeKind.INTEGER and idl_type.name == "unsigned long":
+        return ReflectionKind.UNSIGNED_INTEGER
+    return None
+
+
+def reflected_attribute(attribute: Attribute) -> str | None:
+    """The content attribute that the writer reflects for `attribute` itself, or None (reflection_kind())."""
+    if reflection_kind(attribute) is None:
         return None
     # Blink's IDL files write a content attribute's "-" as "_", as in Reflect=http_equiv.
-    return (extended.value_of("Reflect") or attribute.name.lower()).replace("_", "-")
+    return (attribute.extended_attributes.value_of("Reflect") or attribute.name.lower()).replace("_", "-")
+
+
+# The extended attributes beside [CEReactions] and [Reflect] with which bind_gen's optimize_element_cereactions_reflect()
+# still shares a reflected attribute's setter.
+_SHARED_REFLECT_SETTER_KEYS = frozenset(
+    {
+        "Affects",
+        "CrossOriginIsolated",
+        "DeprecateAs",
+        "Exposed",
+        "InjectionMitigated",
+        "IsolatedContext",
+        "LogActivity",
+        "LogAllWorlds",
+        "Measure",
+        "MeasureAs",
+        "ReflectEmpty",
+        "ReflectInvalid",
+        "ReflectMissing",
+        "ReflectOnly",
+        "RuntimeCallStatsCounter",
+        "RuntimeEnabled",
+        "SecureContext",
+        "URL",
+        "Unscopable",
+    }
+)
+
+
+def checks_setter_arguments(attribute: Attribute, of_element: bool) -> bool:
+    """Whether a reflected attribute's setter throws when it is called with no argument, as the setter that bind_gen's
+    optimize_element_cereactions_reflect() shares does: one of an element's interface, with [CEReactions] and [Reflect]
+    and nothing else that has a side effect, of a boolean or a DOMString, nullable or with [LegacyNullToEmptyString].
+    Every other setter converts the missing argument as undefined, since bind_gen leaves the check out to save size."""
+    extended = attribute.extended_attributes
+    if not of_element or "CEReactions" not in extended or "Reflect" not in extended:
+        return False
+    if any(key not in _SHARED_REFLECT_SETTER_KEYS | {"CEReactions", "Reflect"} for key, _ in extended.entries):
+        return False
+    idl_type = attribute.idl_type
+    if idl_type.kind is TypeKind.BOOLEAN:
+        return not idl_type.nullable
+    return idl_type.kind is TypeKind.STRING and idl_type.name == "DOMString"
 
 
 def _string_or_nullopt(value: str | None) -> str:
@@ -454,6 +541,15 @@ class _InterfaceWriter:
             self.known_gap_rows.append(row)
         return f"DataOfMember(isolate, kKnownGapMembers[{self.known_gap_rows.index(row)}])"
 
+    def _is_element(self) -> bool:
+        """Whether the interface is Element or inherits from it."""
+        name: str | None = self.interface.name
+        while name is not None:
+            if name == "Element":
+                return True
+            name = self.context.interfaces[name].parent
+        return False
+
     def _has_attribute_behaviour(self, attribute: Attribute, accessor: str | None) -> bool:
         """Whether the bindings have the behaviour of the attribute, or for `accessor` "get" its getter's."""
         if reflected_attribute(attribute) is not None:
@@ -560,6 +656,8 @@ class _InterfaceWriter:
         if attribute.is_static:
             return self._static_attribute_getter(name, attribute, where)
         if reflected is not None:
+            kind = reflection_kind(attribute)
+            assert kind is not None
             keywords = reflected_keywords(attribute)
             if keywords is not None:
                 # bind_gen's make_reflect_process_keyword_state().
@@ -575,10 +673,7 @@ class _InterfaceWriter:
                         f"{_string_or_nullopt(keywords.invalid)}, {_string_or_nullopt(keywords.empty)}, {nullable})));",
                     ],
                 )
-            if attribute.idl_type.kind is TypeKind.BOOLEAN:
-                call = f'impl->ReflectedBooleanAttribute(u"{reflected}")'
-            else:
-                call = f'impl->ReflectedStringAttribute(u"{reflected}")'
+            call = f'impl->{kind.getter}(u"{reflected}")'
             return self._add_callback(
                 name, [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
             )
@@ -664,15 +759,18 @@ class _InterfaceWriter:
             raise UnhandledError(f"{where}: the C++ writer does not handle setters of read-only attributes")
         site = Site(fail="return;")
         body = [*self._receiver(), self._exception_state()]
+        if reflected is not None and checks_setter_arguments(attribute, self._is_element()):
+            body += [
+                "if (info.Length() < 1) {",
+                "  exception_state.ThrowTypeError(ExceptionMessages::NotEnoughArguments(1, info.Length()));",
+                "  return;",
+                "}",
+            ]
         body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
         if reflected is not None:
-            if attribute.idl_type.kind is TypeKind.BOOLEAN:
-                setter = "SetReflectedBooleanAttribute"
-            elif attribute.idl_type.nullable:
-                setter = "SetReflectedNullableStringAttribute"
-            else:
-                setter = "SetReflectedStringAttribute"
-            body.append(f'impl->{setter}(u"{reflected}", value);')
+            kind = reflection_kind(attribute)
+            assert kind is not None
+            body.append(f'impl->{kind.setter}(u"{reflected}", value);')
             return self._add_callback(name, body)
         cpp_name = self.method_name(attribute)
         raises = extended.values_of("RaisesException")

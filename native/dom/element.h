@@ -114,10 +114,28 @@ class Element : public Node {
       std::optional<std::u16string_view> invalid_default,
       std::optional<std::u16string_view> empty_default,
       bool nullable) const;
-  // A nullable one, which null removes.
+  // A nullable one, which gives null when the content attribute is missing
+  // and which null removes.
+  std::optional<std::u16string> ReflectedNullableStringAttribute(
+      std::u16string_view name) const;
   void SetReflectedNullableStringAttribute(
       std::u16string_view name,
       const std::optional<std::u16string>& value);
+  // One of a URL, Blink's GetURLAttribute(): the content attribute without
+  // its leading and trailing HTML spaces, resolved against the document's
+  // base URL, or as it is if it does not resolve, and "" when it is missing.
+  std::u16string ReflectedURLAttribute(std::u16string_view name) const;
+  // One of a long, Blink's GetIntegralAttribute() and SetIntegralAttribute():
+  // the HTML Standard's rules for parsing integers, and 0 for a content
+  // attribute that is missing or does not parse.
+  int32_t ReflectedIntegerAttribute(std::u16string_view name) const;
+  void SetReflectedIntegerAttribute(std::u16string_view name, int32_t value);
+  // One of an unsigned long, Blink's GetUnsignedIntegralAttribute() and
+  // SetUnsignedIntegralAttribute(): a negative value reads as 0, and a value
+  // above 2147483647 is set as 0.
+  uint32_t ReflectedUnsignedIntegerAttribute(std::u16string_view name) const;
+  void SetReflectedUnsignedIntegerAttribute(std::u16string_view name,
+                                            uint32_t value);
 
   // Node's.
   uint16_t GetNodeType() const override;

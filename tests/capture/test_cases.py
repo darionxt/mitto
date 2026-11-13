@@ -43,7 +43,7 @@ from tools.capture import (
 from tools.capture.cases import HINTS_ASKED, HOST_NAMES, PROXY_CONNECT, START_PATH, respond_on
 from tools.capture.page import KIND_PATHS, RequestKind
 from tools.capture.recording import ConnectionRecord, Json
-from tools.capture.script_page import RECORD_PATH, SCRIPT_RUNS
+from tools.capture.script_page import SCRIPT_RUNS
 
 _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
@@ -705,13 +705,14 @@ def _go_through_run(entry: dict[str, str], proxy_port: int) -> None:
 
 
 def _post_a_record(entry: dict[str, str]) -> None:
-    """Do what the page of a Script Fingerprint does once the probe has finished: post a record."""
+    """Do what the page or worker of a Script Fingerprint does once the probe has finished: post a record."""
+    (run,) = [run for run in SCRIPT_RUNS if run.name == entry["name"]]
     address = urlsplit(entry["url"])
     assert address.hostname is not None
     assert address.port is not None
     record = b'{"format": 1, "objects": [], "values": {}, "reports": []}'
     with connect(address.port, offered=("http/1.1",), host=address.hostname) as sock:
-        http1_exchange(sock, "POST", RECORD_PATH, authority=address.netloc, body=record)
+        http1_exchange(sock, "POST", run.done_path, authority=address.netloc, body=record)
 
 
 def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> None:
@@ -761,7 +762,7 @@ def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> Non
 
     # The Script Fingerprint first, from a user data directory that has only had its seed.
     assert [entry["name"] for entry in entries] == [run.name for run in (*SCRIPT_RUNS, *RECORDING_RUNS)]
-    assert [entry["fingerprint"] for entry in entries] == ["script"] + ["wire"] * len(RECORDING_RUNS)
+    assert [entry["fingerprint"] for entry in entries] == ["script"] * len(SCRIPT_RUNS) + ["wire"] * len(RECORDING_RUNS)
     assert all(entry["flags"] for entry in entries)
     assert all(entry["label"] for entry in entries)
     assert '--host-resolver-rules="MAP capture.test 127.0.0.1,' in output
