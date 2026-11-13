@@ -2,6 +2,7 @@
 
 #include <array>
 #include <deque>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -9,6 +10,7 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
+#include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/bindings/exception_state.h"
@@ -37,9 +39,15 @@ TransferableMessage::~TransferableMessage() = default;
 // its main thread.
 class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
  public:
-  Pipe() = default;
+  Pipe() { All().insert(this); }
   Pipe(const Pipe&) = delete;
   Pipe& operator=(const Pipe&) = delete;
+
+  // Every pipe of the Page.
+  static std::set<Pipe*>& All() {
+    static base::NoDestructor<std::set<Pipe*>> pipes;
+    return *pipes;
+  }
 
   // Runs the trap that `side` armed, if it has one.
   void Notify(int side) {
@@ -48,18 +56,83 @@ class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
     }
   }
 
+  // Marks where the ends that `message` carries wait: in the queue of `side`.
+  void MarkQueued(const TransferableMessage& message, int side) {
+    for (const MessagePortChannel& port : message.ports) {
+      if (port.pipe_) {
+        port.pipe_->queued_in_[port.side_] = {this, side};
+      }
+    }
+  }
+
+  static void MarkTaken(const TransferableMessage& message) {
+    for (const MessagePortChannel& port : message.ports) {
+      if (port.pipe_) {
+        port.pipe_->queued_in_[port.side_] = {nullptr, 0};
+      }
+    }
+  }
+
+  // The ends that nothing can read again: those that wait in the queue of an
+  // end that nothing can read, as one sent through its own pipe, or two sent
+  // each through the other's pipe, do. An end that no queue holds, which a
+  // port holds or a message carries on its way, can be read, and so can the
+  // ends that wait in its queue. What comes to an end that nothing can read
+  // goes, and its other end never hears that it went, as with mojo handles
+  // that travel in a cycle of pipes.
+  static void DropUnreachable() {
+    std::set<std::pair<Pipe*, int>> reachable;
+    std::vector<std::pair<Pipe*, int>> pending;
+    for (Pipe* const pipe : All()) {
+      for (int side = 0; side < 2; ++side) {
+        if (pipe->IsOpen(side) && !pipe->queued_in_[side].first) {
+          pending.emplace_back(pipe, side);
+        }
+      }
+    }
+    while (!pending.empty()) {
+      const auto [pipe, side] = pending.back();
+      pending.pop_back();
+      if (!reachable.insert({pipe, side}).second) {
+        continue;
+      }
+      for (const TransferableMessage& message : pipe->queues_[side]) {
+        for (const MessagePortChannel& port : message.ports) {
+          if (port.pipe_ && port.pipe_->IsOpen(port.side_)) {
+            pending.emplace_back(port.pipe_.get(), port.side_);
+          }
+        }
+      }
+    }
+    // Their queues go only once every pipe has been looked at, since letting
+    // go of them may free pipes.
+    std::vector<std::deque<TransferableMessage>> dropped;
+    for (Pipe* const pipe : All()) {
+      for (int side = 0; side < 2; ++side) {
+        if (pipe->IsOpen(side) && !reachable.contains({pipe, side})) {
+          pipe->unreachable_[side] = true;
+          pipe->traps_[side].Reset();
+          dropped.emplace_back().swap(pipe->queues_[side]);
+        }
+      }
+    }
+  }
+
+  bool IsOpen(int side) const { return !closed_[side] && !unreachable_[side]; }
+
   std::array<std::deque<TransferableMessage>, 2> queues_;
   std::array<bool, 2> closed_ = {false, false};
-  // An end that went inside a message sent through this pipe to that end
-  // itself, which nothing can read again: what comes to it goes, and the
-  // other end never hears that it went, as with a mojo handle sent through
-  // its own pipe.
+  // Whether nothing can read the end of a side again.
   std::array<bool, 2> unreachable_ = {false, false};
   std::array<base::OnceClosure, 2> traps_;
+  // Where the end of each side waits, if a message that is queued carries it:
+  // the pipe and the side whose queue holds that message.
+  std::array<std::pair<Pipe*, int>, 2> queued_in_ = {
+      {{nullptr, 0}, {nullptr, 0}}};
 
  private:
   friend class base::RefCounted<Pipe>;
-  ~Pipe() = default;
+  ~Pipe() { All().erase(this); }
 };
 
 // static
@@ -95,23 +168,17 @@ void MessagePortChannel::Send(TransferableMessage message) {
     return;
   }
   const int peer = 1 - side_;
-  // A message that carries the other end could only be read by that end,
-  // which travels inside it, and would hold the pipe that holds it.
-  for (MessagePortChannel& port : message.ports) {
-    if (port.pipe_ == pipe_ && port.side_ == peer) {
-      pipe_->unreachable_[peer] = true;
-      // Let go of it without closing it.
-      port.pipe_ = nullptr;
-      std::deque<TransferableMessage> unread;
-      unread.swap(pipe_->queues_[peer]);
-    }
-  }
-  if (pipe_->closed_[peer] || pipe_->unreachable_[peer]) {
+  if (!pipe_->IsOpen(peer)) {
     // Dropped, and with it the ends it carried.
     return;
   }
+  const bool carries_ends = !message.ports.empty();
+  pipe_->MarkQueued(message, peer);
   pipe_->queues_[peer].push_back(std::move(message));
   pipe_->Notify(peer);
+  if (carries_ends) {
+    Pipe::DropUnreachable();
+  }
 }
 
 std::optional<TransferableMessage> MessagePortChannel::Take() {
@@ -120,6 +187,7 @@ std::optional<TransferableMessage> MessagePortChannel::Take() {
   }
   TransferableMessage message = std::move(pipe_->queues_[side_].front());
   pipe_->queues_[side_].pop_front();
+  Pipe::MarkTaken(message);
   return message;
 }
 
@@ -144,6 +212,10 @@ void MessagePortChannel::Close() {
     return;
   }
   const scoped_refptr<Pipe> pipe = std::move(pipe_);
+  // An end that nothing can read goes without its other end hearing of it.
+  if (pipe->unreachable_[side_]) {
+    return;
+  }
   pipe->closed_[side_] = true;
   pipe->traps_[side_].Reset();
   // What waited here goes, closing the ends that it carried, which may reach

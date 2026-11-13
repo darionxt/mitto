@@ -501,6 +501,19 @@
     out.messageChannel.peerThroughItsOwnPipe = [...soon, outcome(() => port1.postMessage(() => {}))];
   }
   {
+    const a = new MessageChannel();
+    const b = new MessageChannel();
+    a.port1.start();
+    b.port2.start();
+    a.port1.postMessage("carrying b's first port", [b.port1]);
+    b.port2.postMessage("carrying a's second port", [a.port2]);
+    await tick(20);
+    out.messageChannel.endsInACycle = [outcome(() => a.port1.postMessage(() => {})),
+      outcome(() => b.port2.postMessage(() => {}))];
+    a.port1.close();
+    b.port2.close();
+  }
+  {
     const { port1 } = new MessageChannel();
     out.messageChannel.errors = {
       clone: outcome(() => port1.postMessage(() => {})),

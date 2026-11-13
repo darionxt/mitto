@@ -8,8 +8,9 @@
 // for each message that waits, at the back of the queue. A port that closes
 // drops what it has not read, and its peer closes itself once it has read the
 // rest. A transferred port takes its end, and the messages waiting there, to
-// the new port. A port sent through its own pipe to its peer can never be read,
-// and its peer never hears that it went. A port stays alive while it has
+// the new port. A port whose end travels in a cycle of pipes, as one sent
+// through its own pipe to its peer does, can never be read, and its peer never
+// hears that it went. A port stays alive while it has
 // started and is entangled, and closes when its window's context goes.
 //
 // Upstream: third_party/blink/renderer/core/messaging/message_port.h
