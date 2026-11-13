@@ -168,6 +168,10 @@ source_set("dom") {
     "style_media.h",
     "text.cc",
     "text.h",
+    "text_decoder.cc",
+    "text_decoder.h",
+    "text_encoder.cc",
+    "text_encoder.h",
     "time_clamper.cc",
     "time_clamper.h",
     "trusted_type_policy_factory.cc",
@@ -197,6 +201,7 @@ source_set("dom") {
   deps = [
     "//base",
     "//mitto:header_rules",
+    "//mitto/encoding",
     "//mitto/html:tokenizer",
     "//third_party/icu",
     "//url",

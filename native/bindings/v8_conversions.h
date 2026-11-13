@@ -5,6 +5,7 @@
 // Upstream: third_party/blink/renderer/bindings/core/v8/to_v8_traits.h
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/script_iterator.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_buffer_sources.cc
 
 #ifndef MITTO_BINDINGS_V8_CONVERSIONS_H_
 #define MITTO_BINDINGS_V8_CONVERSIONS_H_
@@ -24,6 +25,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/wrapper_type_info.h"
+#include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function-callback.h"
@@ -85,6 +87,23 @@ bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
   }
   return true;
 }
+
+// Checks a view that converted to `type_name`, such as "Uint8Array", as
+// NativeValueTraits<NotShared<T>> does: its buffer must be neither shared nor
+// resizable. Throws a TypeError and returns false if it is.
+bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
+                                   std::string_view type_name,
+                                   ExceptionState& exception_state);
+
+// Converts the argument at `argument_index` of a [PassAsSpan] BufferSource to
+// its bytes, as Blink's NativeValueTraits of PassAsSpan do: an ArrayBuffer or
+// a view on one that is neither shared nor resizable, and no larger than
+// Blink takes. The bytes stay where they are while no script runs. Throws and
+// returns false for anything else.
+bool FromV8ByteSpan(v8::Local<v8::Value> value,
+                    int argument_index,
+                    ExceptionState& exception_state,
+                    base::span<const uint8_t>* result);
 
 // Converts `value` to a double or float, by ToNumber(). For one that is not
 // unrestricted, `restricted`, throws a TypeError naming `type_name` for a value

@@ -43,6 +43,43 @@ _64_BIT_INTEGERS = frozenset({"long long", "unsigned long long"})
 # The conversion annotations on a type that the writer follows.
 _ANNOTATIONS = frozenset({"LegacyNullToEmptyString"})
 
+# The views that the writer converts as Blink's NotShared<T> does, each held by V8's class of its name: one whose buffer
+# is neither shared nor resizable.
+_VIEW_TYPES = frozenset(
+    {
+        "ArrayBufferView",
+        "BigInt64Array",
+        "BigUint64Array",
+        "DataView",
+        "Float16Array",
+        "Float32Array",
+        "Float64Array",
+        "Int16Array",
+        "Int32Array",
+        "Int8Array",
+        "Uint16Array",
+        "Uint32Array",
+        "Uint8Array",
+        "Uint8ClampedArray",
+    }
+)
+
+# The buffer sources that a [PassAsSpan] union may hold, as BufferSource does.
+_SPAN_MEMBERS = frozenset({"ArrayBuffer", "ArrayBufferView"})
+
+
+def _is_byte_span(idl_type: IdlType) -> bool:
+    """Whether the type is a [PassAsSpan] BufferSource, which a class takes as its bytes."""
+    return (
+        idl_type.kind is TypeKind.UNION
+        and not idl_type.nullable
+        and [key for key, _ in idl_type.extended_attributes.entries] == ["PassAsSpan"]
+        and all(
+            member.kind is TypeKind.BUFFER_SOURCE and member.name in _SPAN_MEMBERS and not member.nullable
+            for member in idl_type.members
+        )
+    )
+
 
 def _union_member_name(member: IdlType) -> str:
     if member.kind is TypeKind.SEQUENCE:
@@ -162,6 +199,8 @@ class TypeMapper:
         return UnhandledError(f"{where}: the C++ writer does not handle {use} of type {idl_type.syntax}")
 
     def _check_annotations(self, idl_type: IdlType, where: str) -> None:
+        if _is_byte_span(idl_type):
+            return
         for key, _ in idl_type.extended_attributes.entries:
             if key not in _ANNOTATIONS or idl_type.kind is not TypeKind.STRING:
                 raise UnhandledError(f"{where}: the C++ writer does not handle [{key}] on the type {idl_type.syntax}")
@@ -199,6 +238,13 @@ class TypeMapper:
             return f"mitto::{idl_type.name}*"
         if kind is TypeKind.CALLBACK_INTERFACE:
             return "v8::Local<v8::Object>"
+        if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES and not idl_type.nullable:
+            # A view whose buffer is neither shared nor resizable, as NotShared<T> holds one.
+            return f"v8::Local<v8::{idl_type.name}>"
+        if _is_byte_span(idl_type):
+            # The bytes of an ArrayBuffer or a view, as [PassAsSpan] gives them to Blink's class, valid while no script
+            # runs.
+            return "base::span<const uint8_t>"
         if kind is TypeKind.CALLBACK_FUNCTION:
             # Empty for null, when the type is nullable.
             return "v8::Local<v8::Function>"
@@ -251,6 +297,13 @@ class TypeMapper:
         if kind is TypeKind.OBJECT:
             # The class makes the object, as Blink's class makes a ScriptObject.
             return "v8::Local<v8::Object>"
+        if kind is TypeKind.DICTIONARY:
+            # The class makes the object, with the members that it has, in the order of Blink's ToV8 of the dictionary:
+            # the inherited ones first, each dictionary's in order of their names.
+            return "v8::Local<v8::Object>"
+        if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES:
+            # The view, which the class makes or took, as Blink returns a NotShared<T>.
+            return f"v8::Local<v8::{idl_type.name}>"
         if kind is TypeKind.ENUMERATION:
             # The value as a page sees it, one of the enumeration's strings, where Blink returns its V8 enum class.
             return "std::u16string"
@@ -298,7 +351,13 @@ class TypeMapper:
             if idl_type.nullable:
                 return f"ToV8NullableString(isolate, {expression})"
             return f"ToV8String(isolate, {expression})"
-        if kind in (TypeKind.PROMISE, TypeKind.FROZEN_ARRAY, TypeKind.OBJECT):
+        if kind in (
+            TypeKind.PROMISE,
+            TypeKind.FROZEN_ARRAY,
+            TypeKind.OBJECT,
+            TypeKind.DICTIONARY,
+            TypeKind.BUFFER_SOURCE,
+        ):
             return expression
         if kind is TypeKind.ENUMERATION:
             return f"ToV8String(isolate, {expression})"
@@ -477,6 +536,28 @@ class TypeMapper:
             ]
         if kind is TypeKind.ANY:
             return [f"const v8::Local<v8::Value> {target} = {value};"]
+        if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES and not idl_type.nullable:
+            # NativeValueTraits<NotShared<T>>: a view of the type, then neither shared nor resizable.
+            return [
+                f"if (!{value}->Is{idl_type.name}()) {{",
+                f"  exception_state.ThrowTypeError({site.not_of_type(idl_type.name)});",
+                f"  {site.fail}",
+                "}",
+                f"const v8::Local<v8::{idl_type.name}> {target} = {value}.As<v8::{idl_type.name}>();",
+                f'if (!CheckArrayBufferViewNotShared({target}, "{idl_type.name}", exception_state)) {{',
+                f"  {site.fail}",
+                "}",
+            ]
+        if _is_byte_span(idl_type):
+            # [PassAsSpan] applies to an argument alone.
+            if site.argument_index is None:
+                raise self._refuse(idl_type, where, "a value")
+            return [
+                f"base::span<const uint8_t> {target};",
+                f"if (!FromV8ByteSpan({value}, {site.argument_index}, exception_state, &{target})) {{",
+                f"  {site.fail}",
+                "}",
+            ]
         if kind is TypeKind.INTERFACE:
             check = f"!{target}"
             if idl_type.nullable:

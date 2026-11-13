@@ -1294,6 +1294,7 @@ class _InterfaceWriter:
         ]
         source += [f'#include "{path}"' for path in sorted(includes - {f"mitto/bindings/{base}.h"})]
         source += [
+            '#include "v8/include/v8-array-buffer.h"',
             '#include "v8/include/v8-container.h"',
             '#include "v8/include/v8-context.h"',
             '#include "v8/include/v8-exception.h"',
@@ -1302,6 +1303,7 @@ class _InterfaceWriter:
             '#include "v8/include/v8-object.h"',
             '#include "v8/include/v8-primitive.h"',
             '#include "v8/include/v8-template.h"',
+            '#include "v8/include/v8-typed-array.h"',
             "",
             "namespace mitto::bindings {",
             "",

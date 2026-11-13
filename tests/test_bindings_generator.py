@@ -400,6 +400,38 @@ def test_the_cpp_types_of_what_navigator_returns() -> None:
     assert types.to_v8(IdlType(TypeKind.INTEGER, "unsigned long"), "x") == "v8::Integer::NewFromUnsigned(isolate, x)"
 
 
+def test_the_cpp_types_of_what_text_encoder_and_text_decoder_take_and_give() -> None:
+    types = TypeMapper(frozenset(), frozenset({"TextEncoderEncodeIntoResult"}))
+    uint8_array = IdlType(TypeKind.BUFFER_SOURCE, "Uint8Array")
+    buffer_source = IdlType(
+        TypeKind.UNION,
+        "ArrayBufferView or ArrayBuffer",
+        members=(IdlType(TypeKind.BUFFER_SOURCE, "ArrayBufferView"), IdlType(TypeKind.BUFFER_SOURCE, "ArrayBuffer")),
+        extended_attributes=_extended("PassAsSpan"),
+    )
+    dictionary = IdlType(TypeKind.DICTIONARY, "TextEncoderEncodeIntoResult")
+
+    # A view, which the class may write into, and the bytes of a [PassAsSpan] BufferSource.
+    assert types.argument_type(uint8_array, "a") == "v8::Local<v8::Uint8Array>"
+    assert types.return_type(uint8_array, "a") == "v8::Local<v8::Uint8Array>"
+    assert types.argument_type(buffer_source, "a") == "base::span<const uint8_t>"
+    view = "\n".join(types.from_v8(uint8_array, "info[1]", "view", Site(fail="return;", argument_index=1), "a"))
+    assert "if (!info[1]->IsUint8Array()) {" in view
+    assert 'ExceptionMessages::ArgumentNotOfType(1, "Uint8Array")' in view
+    assert 'CheckArrayBufferViewNotShared(view, "Uint8Array", exception_state)' in view
+    span = types.from_v8(buffer_source, "info[0]", "bytes", Site(fail="return;", argument_index=0), "a")
+    assert "FromV8ByteSpan(info[0], 0, exception_state, &bytes)" in span[1]
+    # The class makes a dictionary's object, and returns it as it is.
+    assert types.return_type(dictionary, "a") == "v8::Local<v8::Object>"
+    assert types.to_v8(dictionary, "result") == "result"
+    # [PassAsSpan] goes with an argument alone, and with no other annotation.
+    with pytest.raises(UnhandledError, match="does not handle a value of type"):
+        types.from_v8(buffer_source, "value", "bytes", Site(fail="return false;", dictionary="D", member="m"), "a")
+    shared = dataclasses.replace(buffer_source, extended_attributes=_extended("PassAsSpan", "AllowShared"))
+    with pytest.raises(UnhandledError, match=r"does not handle \[PassAsSpan\]"):
+        types.argument_type(shared, "a")
+
+
 def test_an_enumeration_converts_only_to_its_strings() -> None:
     types = TypeMapper(frozenset(), frozenset(), {"RequestMode": ("navigate", "cors")})
     lines = types.from_v8(IdlType(TypeKind.ENUMERATION, "RequestMode"), "value", "mode", Site(fail="return;"), "a")

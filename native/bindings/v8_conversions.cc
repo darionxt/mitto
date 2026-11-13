@@ -12,6 +12,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
+#include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -94,6 +95,94 @@ bool FromV8NullableUSVString(v8::Isolate* isolate,
     return false;
   }
   *result = std::move(string);
+  return true;
+}
+
+bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
+                                   std::string_view type_name,
+                                   ExceptionState& exception_state) {
+  // A view that V8 keeps on its heap has no buffer of its own yet, and so is
+  // neither shared nor resizable.
+  if (!view->HasBuffer()) {
+    return true;
+  }
+  const v8::Local<v8::ArrayBuffer> buffer = view->Buffer();
+  if (buffer->GetBackingStore()->IsShared()) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"The provided ", type_name, " value must not be shared."}));
+    return false;
+  }
+  if (buffer->IsResizableByUserJavaScript()) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"The provided ", type_name, " value must not be resizable."}));
+    return false;
+  }
+  return true;
+}
+
+namespace {
+
+// The bytes of `buffer` from `offset`, `length` of them.
+base::span<const uint8_t> BytesOf(v8::Local<v8::ArrayBuffer> buffer,
+                                  size_t offset,
+                                  size_t length) {
+  if (!length) {
+    return {};
+  }
+  // SAFETY: V8 gives the buffer's data and its length in bytes, and a view's
+  // bytes lie within its buffer.
+  return UNSAFE_BUFFERS(base::span(static_cast<const uint8_t*>(buffer->Data()),
+                                   buffer->ByteLength()))
+      .subspan(offset, length);
+}
+
+}  // namespace
+
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.cc
+bool FromV8ByteSpan(v8::Local<v8::Value> value,
+                    int argument_index,
+                    ExceptionState& exception_state,
+                    base::span<const uint8_t>* result) {
+  constexpr char kResizable[] =
+      "The provided ArrayBuffer value must not be resizable";
+  if (value->IsArrayBuffer()) {
+    const v8::Local<v8::ArrayBuffer> buffer = value.As<v8::ArrayBuffer>();
+    if (buffer->IsResizableByUserJavaScript()) {
+      exception_state.ThrowTypeError(kResizable);
+      return false;
+    }
+    *result = BytesOf(buffer, 0, buffer->ByteLength());
+  } else if (value->IsArrayBufferView()) {
+    const v8::Local<v8::ArrayBufferView> view = value.As<v8::ArrayBufferView>();
+    // Blink copies the bytes of a view that V8 keeps on its heap, which moves;
+    // asking for its buffer moves them off the heap instead, which a page
+    // cannot see.
+    const v8::Local<v8::ArrayBuffer> buffer = view->Buffer();
+    if (buffer->IsResizableByUserJavaScript()) {
+      exception_state.ThrowTypeError(kResizable);
+      return false;
+    }
+    if (buffer->GetBackingStore()->IsShared()) {
+      exception_state.ThrowTypeError(
+          "The provided ArrayBufferView value must not be shared.");
+      return false;
+    }
+    *result = BytesOf(buffer, view->ByteOffset(), view->ByteLength());
+  } else {
+    exception_state.ThrowTypeError(
+        ExceptionMessages::ArgumentNotOfType(argument_index, "ArrayBuffer"));
+    return false;
+  }
+  // partition_alloc::MaxAllocationSize(), the most that Blink takes: 2 GiB
+  // less a super page of 2 MiB.
+  constexpr size_t kMaxAllocationSize = (size_t{1} << 31) - (size_t{1} << 21);
+  if (result->size() > kMaxAllocationSize) {
+    exception_state.ThrowRangeError(
+        "The ArrayBuffer/ArrayBufferView size exceeds the supported range.");
+    *result = {};
+    return false;
+  }
   return true;
 }
 
