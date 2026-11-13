@@ -157,14 +157,14 @@ void DumpNode(const Node& node, int depth, std::vector<std::string>& lines) {
       std::vector<Element::Attribute> attributes = element.attributes();
       std::sort(attributes.begin(), attributes.end(),
                 [](const Element::Attribute& a, const Element::Attribute& b) {
-                  return a.name < b.name;
+                  return a.name.ToString() < b.name.ToString();
                 });
       const std::string attribute_indent =
           "| " + std::string((depth + 1) * 2, ' ');
       for (const Element::Attribute& attribute : attributes) {
-        lines.push_back(
-            base::StrCat({attribute_indent, base::UTF16ToUTF8(attribute.name),
-                          "=\"", base::UTF16ToUTF8(attribute.value), "\""}));
+        lines.push_back(base::StrCat(
+            {attribute_indent, base::UTF16ToUTF8(attribute.name.ToString()),
+             "=\"", base::UTF16ToUTF8(attribute.value), "\""}));
       }
       break;
     }

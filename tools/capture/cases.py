@@ -181,6 +181,7 @@ _WORKER = _case("worker")
 _WORKER_IMPORT_SCRIPTS = _case("worker_import_scripts")
 _WORKER_FETCH = _case("worker_fetch")
 _WORKER_MODULE = _case("worker_module")
+_WORKER_BLOB_FETCH = _case("worker_blob_fetch")
 _BEACON_TEXT = _case("beacon_text")
 _BEACON_BLOB = _case("beacon_blob")
 _BEACON_FORM_DATA = _case("beacon_form_data")
@@ -203,6 +204,9 @@ _FRAME_CROSS_SITE = _case("frame_cross_site")
 _FRAME_SCRIPT = _case("frame_script")
 _FRAME_IMAGE = _case("frame_image")
 _FRAME_FETCH = _case("frame_fetch")
+# A frame of the page's origin inside the frame of the other site, and its request to its own origin.
+_FRAME_NESTED = _case("frame_nested")
+_FRAME_NESTED_FETCH = _case("frame_nested_fetch")
 _DOCUMENT_STYLE = _case("document_style")
 _DOCUMENT_PRELOAD_STYLE = _case("document_preload_style")
 _DOCUMENT_PRELOAD_SCRIPT = _case("document_preload_script")
@@ -355,6 +359,7 @@ DOCUMENT_CASES = (
     _WORKER_IMPORT_SCRIPTS,
     _WORKER_FETCH,
     _WORKER_MODULE,
+    _WORKER_BLOB_FETCH,
     _BEACON_TEXT,
     _BEACON_BLOB,
     _BEACON_FORM_DATA,
@@ -376,6 +381,8 @@ DOCUMENT_CASES = (
     _FRAME_SCRIPT,
     _FRAME_IMAGE,
     _FRAME_FETCH,
+    _FRAME_NESTED,
+    _FRAME_NESTED_FETCH,
     *_DOCUMENT_ORDERED,
     _FAVICON,
     _FORM_GET,
@@ -924,6 +931,10 @@ _DOCUMENTS_START_SCRIPT = """
       await xhr("POST", urls.xhr_post_text_sync, "text body", false);
       await workerAnswered(urls.worker);
       await workerAnswered(urls.worker_module, {type: "module"});
+      // A worker from a blob: URL, whose fetch() has no URL of the worker to name.
+      const blobSource = `fetch("${location.origin}${urls.worker_blob_fetch}")
+        .then((response) => response.text()).then(() => postMessage("done"));`;
+      await workerAnswered(URL.createObjectURL(new Blob([blobSource], {type: "text/javascript"})));
       const fields = new FormData();
       fields.append("name", "mitto");
       const queued = [
@@ -963,16 +974,46 @@ fetch("{_WORKER_FETCH.path}").then((response) => response.text()).then(() => pos
 _WORKER_MODULE_SOURCE = """postMessage("done");
 """
 
-# The frame of another site asks for what a frame's own document asks for, and then tells the page.
-_CROSS_SITE_FRAME = f"""<script src="{_FRAME_SCRIPT.path}"></script>
+
+def _report_failure_in_frame() -> str:
+    return f'.catch((error) => fetch("{_FAILED_PREFIX}" + encodeURIComponent(error)))'
+
+
+def _cross_site_frame(page: str) -> bytes:
+    """Return the frame of another site, which asks for what a frame's own document asks for, holds a frame of the
+    page's origin, and tells the page once that frame has told it."""
+    return _document(f"""<script>
+  const nested = new Promise((resolve) => addEventListener("message", resolve, {{once: true}}));
+</script>
+<script src="{_FRAME_SCRIPT.path}"></script>
 <img src="{_FRAME_IMAGE.path}" width="1" height="1" alt="">
+<iframe src="{page}{_FRAME_NESTED.path}"></iframe>
 <script>
   fetch("{_FRAME_FETCH.path}")
     .then((response) => response.text())
+    .then(() => nested)
     .then(() => parent.postMessage("framed", "*"))
-    .catch((error) => fetch("{_FAILED_PREFIX}" + encodeURIComponent(error)));
+    {_report_failure_in_frame()};
+</script>
+""")
+
+
+# A frame of the page's site under one of another site is a third party's, as the other site is. Chrome says whether a
+# request has storage access only when its credentials mode is "include".
+_NESTED_FRAME = f"""<script>
+  fetch("{_FRAME_NESTED_FETCH.path}", {{credentials: "include"}})
+    .then((response) => response.text())
+    .then(() => parent.postMessage("nested", "*"))
+    {_report_failure_in_frame()};
 </script>
 """
+
+# Cookies of each SameSite for the requests of the nested frame alone. Only one that allows a third party goes there.
+_NESTED_FRAME_COOKIES = tuple(
+    ("Set-Cookie", f"{same_site.lower()}=1; Path={case.path}; Secure; SameSite={same_site}")
+    for case in (_FRAME_NESTED, _FRAME_NESTED_FETCH)
+    for same_site in ("Strict", "Lax", "None")
+)
 
 # Chrome asks for /favicon.ico after a load, if it asks at all, so the page gives it time before it says that it did
 # not, which counts only if Chrome did not.
@@ -1024,6 +1065,7 @@ def _documents_start_page(same_site: str, cross_site: str) -> Response:
         "xhr_post_text_sync": _XHR_POST_TEXT_SYNC.path,
         "worker": _WORKER.path,
         "worker_module": _WORKER_MODULE.path,
+        "worker_blob_fetch": _WORKER_BLOB_FETCH.path,
         "beacon_text": _BEACON_TEXT.path,
         "beacon_blob": _BEACON_BLOB.path,
         "beacon_form_data": _BEACON_FORM_DATA.path,
@@ -1136,6 +1178,7 @@ def _document_responses(
         _WORKER_IMPORT_SCRIPTS.path: script,
         _WORKER_FETCH.path: text,
         _WORKER_MODULE.path: _case_response(_JAVASCRIPT, _WORKER_MODULE_SOURCE.encode()),
+        _WORKER_BLOB_FETCH.path: text,
         _BEACON_TEXT.path: text,
         _BEACON_BLOB.path: text,
         _BEACON_FORM_DATA.path: text,
@@ -1172,13 +1215,16 @@ def _document_responses(
             f'<iframe src="{cross_site}{_FRAME_CROSS_SITE.path}"></iframe>',
             _link(_DOCUMENT_PATH),
             script='\n  addEventListener("load", () => { framed.then(showNext).catch(report); });\n',
+            headers=_NESTED_FRAME_COOKIES,
         ),
         _FRAME_SAME_ORIGIN.path: frame,
         _FRAME_SAME_SITE.path: frame,
-        _FRAME_CROSS_SITE.path: _case_response(_HTML, _document(_CROSS_SITE_FRAME)),
+        _FRAME_CROSS_SITE.path: _case_response(_HTML, _cross_site_frame(page)),
         _FRAME_SCRIPT.path: script,
         _FRAME_IMAGE.path: image,
         _FRAME_FETCH.path: text,
+        _FRAME_NESTED.path: _case_response(_HTML, _document(_NESTED_FRAME)),
+        _FRAME_NESTED_FETCH.path: text,
         _DOCUMENT_PATH: _document_page(),
         _DOCUMENT_STYLE.path: style,
         _DOCUMENT_PRELOAD_STYLE.path: style,
