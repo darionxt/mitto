@@ -233,7 +233,8 @@ void CompleteInstallState(ChromeObjectData* data,
   std::ignore =
       callback.Get(isolate)->Call(context, context->Global(), 1, &state);
   if (try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate, try_catch.Exception());
+    bindings::ReportException(isolate, try_catch.Exception(),
+                              try_catch.Message());
   }
 }
 

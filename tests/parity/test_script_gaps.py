@@ -12,7 +12,8 @@ import pytest
 from mitto import Machine
 from mitto._persona import WINDOWS_PERSONAS
 from tools.capture.probe import RecordValue
-from tools.capture.script_normal_form import MACHINE_PLACES, Computed, Getter
+from tools.capture.script_delta import dumps_script_delta, script_delta
+from tools.capture.script_normal_form import FRAME_MACHINE_PLACES, MACHINE_PLACES, Computed, Getter
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError, dumps_known_gaps, mismatches
 from tools.parity.script import ScriptBaseline, ScriptRecording, find_script_gaps, load_script_baselines
 from tools.parity.script_gaps import (
@@ -22,6 +23,7 @@ from tools.parity.script_gaps import (
     ScriptGap,
     field_of,
     loads_script_known_gaps,
+    place_kind,
     same_json,
     script_differences,
 )
@@ -310,6 +312,80 @@ def test_a_check_compares_the_normal_form_and_the_values_of_the_machine() -> Non
     assert (
         ScriptGap("157", "page", GapKind.MACHINE, "navigator get deviceMemory", THE_MACHINES, NOT_THE_MACHINES) in gaps
     )
+
+
+def test_a_case_that_a_page_cannot_run_yet_is_skipped() -> None:
+    machine = Machine.draw(seed=7)
+    empty: Form = {"format": 1, "objects": [], "values": {}, "reports": []}
+    baselines = [ScriptBaseline("157", case, empty) for case in ("page", "same_origin_frame", "worker")]
+    recorded: list[str] = []
+
+    def recorder(baseline: ScriptBaseline) -> ScriptRecording:
+        recorded.append(baseline.case)
+        return ScriptRecording("https://capture.test/script/page", copy.deepcopy(empty), machine)
+
+    find_script_gaps(baselines, recorder)
+
+    assert recorded == ["page"]
+    assert [baseline.in_a_page for baseline in baselines] == [True, False, False]
+
+
+def test_a_frames_own_viewport_is_behaviour_and_the_rest_of_the_machine_is_the_machines() -> None:
+    inner_width = Getter("globalThis", "innerWidth")
+    outer_width = Getter("globalThis", "outerWidth")
+
+    assert place_kind(inner_width) == GapKind.MACHINE
+    assert place_kind(inner_width, FRAME_MACHINE_PLACES) == GapKind.BEHAVIOUR
+    assert place_kind(outer_width, FRAME_MACHINE_PLACES) == GapKind.MACHINE
+    baseline: Form = {"format": 1, "objects": [{"path": "globalThis", "get": [["innerWidth", 300]]}], "values": {}}
+    frame: Form = {"format": 1, "objects": [{"path": "globalThis", "get": [["innerWidth", 0]]}], "values": {}}
+    assert [d.kind for d in script_differences(baseline, frame, FRAME_MACHINE_PLACES)] == [GapKind.BEHAVIOUR]
+
+
+def write_157(directory: Any, cases: dict[str, Form]) -> None:
+    """Write Chrome 157's top-level page and, for each later case, what of its form differs from the page's."""
+    (directory / "157" / "script").mkdir(parents=True)
+    first = json.loads((BASELINES_DIRECTORY / "157" / "script" / "page.json").read_text(encoding="utf-8"))
+    (directory / "157" / "script" / "page.json").write_text(json.dumps(first), encoding="utf-8")
+    for case, form in cases.items():
+        text = dumps_script_delta(script_delta(first, form, "page"))
+        (directory / "157" / "script" / f"{case}.json").write_text(text, encoding="utf-8")
+
+
+def test_the_baseline_of_a_later_case_is_made_from_the_first_and_what_differs(tmp_path: Any, chrome_157: Form) -> None:
+    frame = copy.deepcopy(chrome_157)
+    item(frame, "globalThis", "get", "innerWidth")[1] = 300
+    worker = copy.deepcopy(chrome_157)
+    item(worker, "globalThis", "get", "innerWidth")[1] = 1
+    write_157(tmp_path, {"worker": worker, "same_origin_frame": frame})
+
+    baselines = load_script_baselines(tmp_path)
+
+    assert [(baseline.release, baseline.case) for baseline in baselines] == [
+        ("157", "page"),
+        ("157", "same_origin_frame"),
+        ("157", "worker"),
+    ]
+    assert baselines[0].form == chrome_157
+    assert item(baselines[1].form, "globalThis", "get", "innerWidth") == ["innerWidth", 300]
+    assert list(script_differences(frame, baselines[1].form)) == []
+    assert list(script_differences(worker, baselines[2].form)) == []
+
+
+def test_a_later_case_needs_the_first_beside_it_and_must_differ_from_it(tmp_path: Any, chrome_157: Form) -> None:
+    write_157(tmp_path, {"worker": chrome_157})
+    delta = json.loads((tmp_path / "157" / "script" / "worker.json").read_text())
+    (tmp_path / "157" / "script" / "worker.json").write_text(json.dumps({**delta, "differs from": "worker"}))
+    with pytest.raises(BaselineError, match="it differs from worker"):
+        load_script_baselines(tmp_path)
+
+    (tmp_path / "157" / "script" / "worker.json").write_text(json.dumps({**delta, "gone": ["no such object"]}))
+    with pytest.raises(BaselineError, match="no object at no such object"):
+        load_script_baselines(tmp_path)
+
+    (tmp_path / "157" / "script" / "page.json").unlink()
+    with pytest.raises(BaselineError, match="which is not beside them"):
+        load_script_baselines(tmp_path)
 
 
 def test_baselines_of_an_unknown_case_or_not_of_the_probe_are_refused(tmp_path: Any) -> None:

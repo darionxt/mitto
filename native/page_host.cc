@@ -1277,6 +1277,28 @@ void PageHost::OnCookieStoreChange(const net::CookieChangeInfo& change) {
   channel_->Send(EncodeCookieStoreChange(page_change));
 }
 
+void PageHost::OnBroadcast(const PageBroadcast& broadcast) {
+  // Only a document of an origin that is not opaque sends one: one of an
+  // opaque origin shares its channels with no other.
+  const url::Origin origin = url::Origin::Create(document_url_);
+  if (!DocumentHasCookies() || origin.opaque()) {
+    Refuse(
+        "a broadcast from a Page with no document of an origin that "
+        "another can share");
+    return;
+  }
+  network_->BroadcastFromPage(*this, origin, broadcast);
+}
+
+void PageHost::DeliverBroadcast(const url::Origin& origin,
+                                const PageBroadcast& broadcast) {
+  if (!channel_ || ended_ || refused_by_library_ || !DocumentHasCookies() ||
+      !url::Origin::Create(document_url_).IsSameOriginWith(origin)) {
+    return;
+  }
+  channel_->Send(EncodeBroadcast(PageMessage::kBroadcastReceived, broadcast));
+}
+
 void PageHost::Evaluate(uint64_t call, std::string script) {
   if (ended_) {
     events_->PushCallAfterEnd(call);
@@ -1405,6 +1427,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCookieStoreListen:
       OnCookieStoreListen(frame->cookie_store_listen);
       return;
+    case PageMessage::kBroadcast:
+      OnBroadcast(frame->broadcast);
+      return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1414,6 +1439,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCookieStoreCookies:
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
+    case PageMessage::kBroadcastReceived:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }
