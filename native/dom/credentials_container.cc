@@ -686,7 +686,6 @@ void CredentialsContainer::GetPublicKey(
 void CredentialsContainer::GetOtp(v8::Isolate* isolate,
                                   v8::Local<v8::Promise::Resolver> resolver,
                                   AbortSignal* signal) {
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   // WebOTPService::Receive() cancels the request it held.
   if (Request* const previous = otp_request_.Get()) {
     otp_request_.Clear();
@@ -696,33 +695,35 @@ void CredentialsContainer::GetOtp(v8::Isolate* isolate,
   Request* const request = Wait(isolate, resolver, signal, RequestKind::kOtp);
   otp_request_ = request;
   // FetchRemoteSms() finds no phone to forward a text, kCrossDeviceFailure,
-  // which leaves the rejection to the service's timer, for privacy. The
-  // command line's event loop does not wait for the browser's timer.
-  PostAnswer(isolate, context,
-             base::BindOnce(
-                 [](cppgc::WeakPersistent<CredentialsContainer> container,
-                    cppgc::Persistent<Request> request, v8::Isolate* isolate,
-                    v8::Local<v8::Context> context) {
-                   if (container) {
-                     container->OtpTimedOut(request.Get());
-                   }
-                 },
-                 cppgc::WeakPersistent<CredentialsContainer>(this),
-                 cppgc::Persistent<Request>(request)),
-             kOtpTimeout);
+  // which leaves the rejection to the service's timer, for privacy. The timer
+  // holds the request weakly, so a request that an abort or a later one ends
+  // goes. The command line's event loop does not wait for the browser's timer.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](v8::Isolate* isolate,
+             cppgc::WeakPersistent<CredentialsContainer> container,
+             cppgc::WeakPersistent<Request> request) {
+            if (container && request) {
+              const v8::HandleScope handle_scope(isolate);
+              container->OtpTimedOut(request.Get());
+            }
+          },
+          base::Unretained(isolate),
+          cppgc::WeakPersistent<CredentialsContainer>(this),
+          cppgc::WeakPersistent<Request>(request)),
+      kOtpTimeout);
 }
 
 void CredentialsContainer::OtpTimedOut(Request* request) {
   if (otp_request_ != request) {
     return;
   }
+  // WebOTPService::OnTimeout() completes the request that the service holds,
+  // whose answer comes from a task of its own.
   otp_request_.Clear();
-  request->set_answered();
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  std::ignore = request->resolver(isolate)->Reject(
-      isolate->GetCurrentContext(),
-      NewDOMException(isolate, "InvalidStateError",
-                      "OTP retrieval timed out."));
+  Refuse(request, "InvalidStateError", "OTP retrieval timed out.",
+         /*abort_reason_first=*/false);
 }
 
 void CredentialsContainer::GetIdentity(

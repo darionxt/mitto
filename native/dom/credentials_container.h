@@ -114,7 +114,8 @@ class CredentialsContainer final : public bindings::ScriptWrappable {
   // The signal of a request that the browser has not answered aborted: Blink
   // tells the browser, which drops what that tells it to.
   void Abort(Request* request);
-  // WebOTPService::OnTimeout(): the browser gives up on `request`.
+  // WebOTPService::OnTimeout(), four minutes after `request` came: the
+  // browser gives up on it if it still holds it.
   void OtpTimedOut(Request* request);
 
   // Whether the browser's CredentialManagerImpl has a request whose answer

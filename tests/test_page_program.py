@@ -1647,9 +1647,10 @@ def test_an_abort_cancels_the_webauthn_request_that_the_browser_holds(session: _
     )
 
 
-def test_a_signal_lets_go_of_the_credential_requests_that_have_their_answer(session: _Session) -> None:
+def test_credential_requests_that_have_their_answer_go(session: _Session) -> None:
     # Blink's ScopedAbortState takes a request's algorithm off its signal once the browser has answered, so a signal
-    # that outlives its requests, such as a page's one controller, holds none of them, nor their promises.
+    # that outlives its requests, such as a page's one controller, holds none of them, nor their promises. WebOTP's
+    # timer holds none either: a request that a later one cancels, or that an abort ends, goes before it fires.
     session.start(_with_features(v8_flags=["--expose-gc"]))
     _load_policy_page(session, "http://127.0.0.1:8722/")
     script = """(async () => {
@@ -1661,7 +1662,16 @@ def test_a_signal_lets_go_of_the_credential_requests_that_have_their_answer(sess
             await promise.catch(() => {});
             return ref;
         };
-        const refs = [new WeakRef({}), await refused(), await refused(), await refused()];
+        const otp = async () => {
+            const cancelled = navigator.credentials.get({otp: {transport: ["sms"]}});
+            const otpController = new AbortController();
+            const aborted = navigator.credentials.get({otp: {transport: ["sms"]}, signal: otpController.signal});
+            otpController.abort();
+            const refs = [new WeakRef(cancelled), new WeakRef(aborted)];
+            await Promise.allSettled([cancelled, aborted]);
+            return refs;
+        };
+        const refs = [new WeakRef({}), await refused(), await refused(), await refused(), ...await otp()];
         for (let i = 0; i < 2; i++) {
             await new Promise((resolve) => setTimeout(resolve, 0));
             gc();
@@ -1669,7 +1679,7 @@ def test_a_signal_lets_go_of_the_credential_requests_that_have_their_answer(sess
         return [refs.map((ref) => ref.deref() === undefined), controller.signal.aborted];
     })()"""
 
-    assert session.evaluate(script) == (False, json.dumps([[True, True, True, True], False], separators=(",", ":")))
+    assert session.evaluate(script) == (False, json.dumps([[True] * 6, False], separators=(",", ":")))
 
 
 def test_credentials_get_refuses_an_opaque_origin(session: _Session) -> None:
