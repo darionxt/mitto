@@ -2518,6 +2518,78 @@
    true,
    true
   ],
+  "pattern and :invalid": [
+   [
+    "a)|(?:b",
+    "c",
+    false
+   ],
+   [
+    "a)|(?:b",
+    "a",
+    false
+   ],
+   [
+    "a)(b",
+    "x",
+    false
+   ],
+   [
+    "(",
+    "x",
+    false
+   ],
+   [
+    "[",
+    "x",
+    false
+   ],
+   [
+    "[a-z]+",
+    "123",
+    true
+   ],
+   [
+    "a|b",
+    "ab",
+    true
+   ],
+   [
+    "a|b",
+    "b",
+    false
+   ],
+   [
+    "\\p{L}+",
+    "é",
+    false
+   ],
+   [
+    "[\\w--\\d]+",
+    "a1",
+    true
+   ],
+   [
+    "[\\w--\\d]+",
+    "ab",
+    false
+   ],
+   [
+    "[(]",
+    "(",
+    false
+   ],
+   [
+    "a{2}",
+    "aa",
+    false
+   ],
+   [
+    "(?<n>a)\\k<n>",
+    "aa",
+    false
+   ]
+  ],
   ":defined and is": [
    true,
    false,

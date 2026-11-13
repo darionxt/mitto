@@ -961,9 +961,20 @@ v8::MaybeLocal<v8::String> ToV8String(v8::Isolate* isolate,
       v8::NewStringType::kNormal, static_cast<int>(text.size()));
 }
 
+v8::MaybeLocal<v8::RegExp> CompileWithFlagV(v8::Isolate* isolate,
+                                            v8::Local<v8::Context> context,
+                                            std::u16string_view source) {
+  v8::Local<v8::String> source_string;
+  if (!ToV8String(isolate, source).ToLocal(&source_string)) {
+    return {};
+  }
+  return v8::RegExp::New(context, source_string, v8::RegExp::kUnicodeSets);
+}
+
 // Whether `value` does not match all of `pattern`, compiled with the v
-// flag, as Blink's BaseTextInputType::PatternMismatch() checks it. A pattern
-// that does not compile matches anything.
+// flag, as Blink's BaseTextInputType::PatternMismatchPerValue() checks it. A
+// pattern that does not compile on its own matches anything, even when the
+// anchors around it would make one that does.
 bool MismatchesPattern(std::u16string_view pattern, std::u16string_view value) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   if (!isolate || !isolate->InContext()) {
@@ -971,16 +982,16 @@ bool MismatchesPattern(std::u16string_view pattern, std::u16string_view value) {
   }
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   const v8::TryCatch try_catch(isolate);
+  if (CompileWithFlagV(isolate, context, pattern).IsEmpty()) {
+    return false;
+  }
   std::u16string source = u"^(?:";
   source += pattern;
   source += u")$";
-  v8::Local<v8::String> source_string;
   v8::Local<v8::RegExp> regexp;
   v8::Local<v8::String> value_string;
   v8::Local<v8::Value> match;
-  if (!ToV8String(isolate, source).ToLocal(&source_string) ||
-      !v8::RegExp::New(context, source_string, v8::RegExp::kUnicodeSets)
-           .ToLocal(&regexp) ||
+  if (!CompileWithFlagV(isolate, context, source).ToLocal(&regexp) ||
       !ToV8String(isolate, value).ToLocal(&value_string) ||
       !regexp->Exec(context, value_string).ToLocal(&match)) {
     return false;

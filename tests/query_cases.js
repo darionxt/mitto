@@ -206,6 +206,22 @@
     return holder.firstChild;
   };
   const html = "http://www.w3.org/1999/xhtml";
+  // A pattern that does not compile on its own sets no constraint, even when
+  // the anchors around it would make one that does.
+  record["pattern and :invalid"] = [
+    ["a)|(?:b", "c"], ["a)|(?:b", "a"], ["a)(b", "x"], ["(", "x"], ["[", "x"], ["[a-z]+", "123"],
+    ["a|b", "ab"], ["a|b", "b"], ["\\p{L}+", "\u00e9"], ["[\\w--\\d]+", "a1"], ["[\\w--\\d]+", "ab"],
+    ["[(]", "("], ["a{2}", "aa"], ["(?<n>a)\\k<n>", "aa"],
+  ].map(([pattern, value]) => [
+    pattern,
+    value,
+    outcome(() => {
+      const input = document.createElement("input");
+      input.setAttribute("pattern", pattern);
+      input.setAttribute("value", value);
+      return input.matches(":invalid");
+    }),
+  ]);
   record[":defined and is"] = [
     outcome(() => {
       const element = document.createElement("div");
