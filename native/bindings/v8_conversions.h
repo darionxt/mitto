@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -150,6 +151,30 @@ bool FromV8IntegerEnforceRange(v8::Isolate* isolate,
     return false;
   }
   *result = static_cast<T>(number);
+  return true;
+}
+
+// The same with [Clamp], as Blink's ToSmallerInt() and kin do it: ToNumber(),
+// 0 for NaN, and otherwise the number within the type's range, truncated, as
+// Blink's ClampTo() gives it.
+template <typename T>
+bool FromV8ClampedInteger(v8::Isolate* isolate,
+                          v8::Local<v8::Value> value,
+                          T* result)
+  requires(std::is_integral_v<T> && sizeof(T) <= 4)
+{
+  double number;
+  if (!value->NumberValue(isolate->GetCurrentContext()).To(&number)) {
+    return false;
+  }
+  if (std::isnan(number)) {
+    *result = 0;
+    return true;
+  }
+  number =
+      std::clamp(number, static_cast<double>(std::numeric_limits<T>::min()),
+                 static_cast<double>(std::numeric_limits<T>::max()));
+  *result = static_cast<T>(std::trunc(number));
   return true;
 }
 

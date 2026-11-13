@@ -20,6 +20,7 @@
 #include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/script_values.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
@@ -270,6 +271,20 @@ std::u16string Document::ReadyState() const {
       return u"complete";
   }
   NOTREACHED();
+}
+
+v8::Local<v8::Promise> Document::HasStorageAccess() const {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  v8::Local<v8::Promise::Resolver> resolver;
+  if (!v8::Promise::Resolver::New(isolate->GetCurrentContext())
+           .ToLocal(&resolver)) {
+    return v8::Local<v8::Promise>();
+  }
+  // Blink answers false outside a secure context, and otherwise whether the
+  // document's cookies are enabled, which they are in a new profile.
+  const bool access = window_ && window_->IsSecureContextForBindings();
+  ResolveFromTask(isolate, resolver, v8::Boolean::New(isolate, access));
+  return resolver->GetPromise();
 }
 
 void Document::SetReadiness(Readiness readiness) {

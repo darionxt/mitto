@@ -387,6 +387,33 @@ def test_the_writer_reflects_strings_and_booleans_itself(
     assert reflected_attribute(attribute) == expected
 
 
+def test_the_cpp_types_of_what_permissions_and_geolocation_take() -> None:
+    types = TypeMapper(frozenset(), frozenset())
+    descriptor = IdlType(TypeKind.OBJECT, "object")
+    timeout = IdlType(TypeKind.INTEGER, "unsigned long", extended_attributes=ExtendedAttributes((("Clamp", ()),)))
+    gamepads = IdlType(
+        TypeKind.SEQUENCE, "sequence<Gamepad?>", members=(IdlType(TypeKind.INTERFACE, "Gamepad", nullable=True),)
+    )
+    error_callback = IdlType(TypeKind.CALLBACK_FUNCTION, "PositionErrorCallback", nullable=True)
+
+    # NativeValueTraits<IDLObject>: an object, or a TypeError.
+    assert types.argument_type(descriptor, "a") == "v8::Local<v8::Object>"
+    assert types.from_v8(descriptor, "value", "permission", Site(fail="return;", argument_index=0), "a")[:2] == [
+        "if (!value->IsObject()) {",
+        '  exception_state.ThrowTypeError(ExceptionMessages::ArgumentNotOfType(0, "object"));',
+    ]
+    # [Clamp] converts as Blink's ToSmallerInt() and kin do with it.
+    assert types.argument_type(timeout, "a") == "uint32_t"
+    assert "if (!FromV8ClampedInteger(isolate, value, &timeout)) {" in types.from_v8(
+        timeout, "value", "timeout", Site(fail="return;", dictionary="PositionOptions", member="timeout"), "a"
+    )
+    assert types.default_value(timeout, "0xFFFFFFFF", "a") == "0xFFFFFFFF"
+    # A list of objects or nulls, as navigator.getGamepads() gives with no gamepad.
+    assert types.return_type(gamepads, "a") == "std::vector<bindings::ScriptWrappable*>"
+    assert types.to_v8(gamepads, "x") == "ToV8Array(isolate, x)"
+    assert types.default_value(error_callback, "null", "a") == "v8::Local<v8::Function>()"
+
+
 def test_a_nullable_reflected_attribute_needs_its_keywords() -> None:
     def attribute(*keys: tuple[str, tuple[str, ...]]) -> Attribute:
         idl_type = IdlType(TypeKind.STRING, "DOMString", nullable=True)
@@ -487,7 +514,8 @@ def test_an_enforce_range_integer_and_an_item_of_a_sequence_convert_as_blinks_do
     # An item has NativeValue()'s message, as AbortSignal.any([{}]) throws in Chrome.
     items = "\n".join(types.from_v8(signals, "info[0]", "list", Site(fail="return;", argument_index=0), "a"))
     assert 'ExceptionMessages::FailedToConvertJSValue("AbortSignal")' in items
-    with pytest.raises(UnhandledError, match=r"does not handle \[Clamp\]"):
+    # [Clamp] converts the integers of 32 bits or fewer only, so a 64-bit one with it is refused.
+    with pytest.raises(UnhandledError, match=r"does not handle an argument of type unsigned long long"):
         types.argument_type(dataclasses.replace(milliseconds, extended_attributes=_extended("Clamp")), "a")
 
 

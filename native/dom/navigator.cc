@@ -6,11 +6,14 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
+#include "mitto/dom/geolocation.h"
 #include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
 #include "mitto/dom/network_information.h"
+#include "mitto/dom/permissions.h"
 #include "mitto/dom/plugin_array.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/storage_manager.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
@@ -69,6 +72,9 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(connection_);
   visitor->Trace(plugins_);
   visitor->Trace(mime_types_);
+  visitor->Trace(permissions_);
+  visitor->Trace(geolocation_);
+  visitor->Trace(storage_);
 }
 
 uint64_t Navigator::HardwareConcurrency() const {
@@ -193,6 +199,39 @@ int32_t Navigator::MaxTouchPoints() const {
 std::optional<std::u16string> Navigator::DoNotTrack() const {
   // Chrome's setting that sends DNT is off by default.
   return std::nullopt;
+}
+
+mitto::Permissions* Navigator::Permissions() {
+  if (!permissions_) {
+    permissions_ = mitto::Permissions::Create();
+  }
+  return permissions_.Get();
+}
+
+mitto::Geolocation* Navigator::Geolocation() {
+  if (!geolocation_) {
+    geolocation_ = mitto::Geolocation::Create();
+  }
+  return geolocation_.Get();
+}
+
+StorageManager* Navigator::Storage() {
+  if (!storage_) {
+    storage_ = StorageManager::Create();
+  }
+  return storage_.Get();
+}
+
+size_t Navigator::GeolocationTimerCount() const {
+  return geolocation_ ? geolocation_->TimerCount() : 0;
+}
+
+std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
+    bindings::ExceptionState& exception_state) const {
+  // device::Gamepads::kItemsLengthCap. The "gamepad" policy allows any page
+  // that a Session opens, so nothing throws.
+  constexpr size_t kItemsLengthCap = 8;
+  return std::vector<bindings::ScriptWrappable*>(kItemsLengthCap, nullptr);
 }
 
 }  // namespace mitto

@@ -164,7 +164,8 @@ class Window final : public WindowProperties {
   // is never run, and its ID is 0, as Chrome gives in a destroyed context.
   // Setting none stops the timers of AbortSignal.timeout() too.
   void SetTimers(DOMTimerCoordinator* timers);
-  // How many timers are set, those of AbortSignal.timeout() among them.
+  // How many timers are set, those of AbortSignal.timeout() and the timeouts
+  // of geolocation's requests among them.
   size_t TimerCount() const;
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
