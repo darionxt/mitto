@@ -93,6 +93,7 @@ class Document : public Node {
   // The host of the document's origin, and nothing for an opaque one.
   std::u16string Domain() const;
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
+  bool InDesignMode() const { return design_mode_; }
   void SetDesignMode(const std::u16string& value);
   Element* ScrollingElement() const;
   Element* ActiveElement() const;

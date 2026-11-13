@@ -2616,6 +2616,28 @@
     false
    ]
   ],
+  "design mode": [
+   [
+    false,
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+   ],
+   [
+    true,
+    false,
+    true,
+    true,
+    false,
+    false,
+    false,
+    false
+   ]
+  ],
   ":defined and is": [
    true,
    false,

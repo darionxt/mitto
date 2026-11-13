@@ -1141,20 +1141,24 @@ bool HasInvalidControl(const Element& container) {
   return false;
 }
 
-// D8: whether a node is editable or an editing host.
+// D8: whether a node is editable or an editing host. In design mode, every
+// connected HTML element is, whatever its contenteditable says.
 bool IsEditableOrEditingHost(const Node& node) {
   if (node.IsElementNode()) {
     const auto& element = static_cast<const Element&>(node);
     if (element.IsHTMLElement()) {
-      if (const std::u16string* value =
-              element.FindAttribute(u"contenteditable")) {
-        const std::u16string lower = base::ToLowerASCII(*value);
-        if (lower.empty() || lower == u"true" || lower == u"plaintext-only") {
-          return true;
-        }
-        if (lower == u"false") {
-          return false;
-        }
+      const std::u16string* const value =
+          element.FindAttribute(u"contenteditable");
+      const std::u16string lower =
+          value ? base::ToLowerASCII(*value) : std::u16string(u"inherit");
+      if (lower.empty() || lower == u"true" || lower == u"plaintext-only") {
+        return true;
+      }
+      if (element.GetDocument().InDesignMode() && element.IsConnected()) {
+        return true;
+      }
+      if (lower == u"false") {
+        return false;
       }
     }
   }

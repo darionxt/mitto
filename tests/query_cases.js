@@ -239,6 +239,21 @@
     holder.remove();
     return result;
   }));
+  // Design mode makes every connected HTML element editable.
+  record["design mode"] = (() => {
+    const holder = fixture('<div contenteditable=false id=dm1><span id=dm2>x</span></div>' +
+      '<svg id=dm3><g id=dm4></g></svg><input readonly id=dm5>');
+    const detached = document.createElement("div");
+    const ids = ["dm1", "dm2", "dm3", "dm4", "dm5"];
+    const state = () => [document.body.matches(":read-write"), document.body.matches(":read-only"),
+      ...ids.map((id) => document.getElementById(id).matches(":read-write")), detached.matches(":read-write")];
+    const off = state();
+    document.designMode = "on";
+    const on = state();
+    document.designMode = "off";
+    holder.remove();
+    return [off, on];
+  })();
   record[":defined and is"] = [
     outcome(() => {
       const element = document.createElement("div");
