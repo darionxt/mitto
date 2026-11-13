@@ -15,7 +15,10 @@ namespace mitto {
 class Window;
 
 // Runs `task` from a later task of the Page's event loop, at the normal
-// priority of the HTML Standard's task sources, in `window`'s context.
+// priority of the HTML Standard's task sources, in `window`'s context. Blink
+// posts window.postMessage()'s and MessagePort's tasks on
+// TaskType::kPostedMessage, which they move to once the event loop has Blink's
+// task types (#270).
 void PostWindowTask(Window* window, base::OnceClosure task);
 
 // Runs `run` now in `window`'s context, with a microtask checkpoint after it,

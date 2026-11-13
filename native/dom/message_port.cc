@@ -348,7 +348,9 @@ void MessagePort::WaitToReadMore() {
 }
 
 // SimpleWatcher's task, which runs Connector::OnWatcherHandleReady(), or, when
-// `counted`, Connector::PostDispatchNextMessageFromPipe()'s.
+// `counted`, Connector::PostDispatchNextMessageFromPipe()'s. Blink's port reads
+// on TaskType::kPostedMessage, where this moves once the event loop has
+// Blink's task types (#270).
 // static
 void MessagePort::PostReadTask(cppgc::WeakPersistent<MessagePort> port,
                                uint64_t generation,
