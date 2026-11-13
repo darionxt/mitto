@@ -106,7 +106,7 @@
       <a href=/x id=a1>link</a><a id=a2 name=n>anchor</a><area href=/y><img usemap=#m alt=""><img alt="">
       <link href=/z rel=stylesheet>
       <ul><li>1</li><li class=a>2</li><li>3</li><li class=a>4</li><li>5</li></ul>
-      <bdi>שלום</bdi><span dir=auto>abc</span><span dir=auto>שלום abc</span><span dir=ltr>x<span>y</span></span>
+      <bdi>\u05e9\u05dc\u05d5\u05dd</bdi><span dir=auto>abc</span><span dir=auto>\u05e9\u05dc\u05d5\u05dd abc</span><span dir=ltr>x<span>y</span></span>
       <custom-thing></custom-thing><div is=x-y></div><foo-></foo->
       <details open><summary>s</summary></details><dialog open></dialog><dialog></dialog>
       <progress></progress><progress value=1></progress>

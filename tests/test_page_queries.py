@@ -39,7 +39,7 @@ def record() -> dict[str, Any]:
     if not path:
         pytest.skip(f"no Page program; set {_PROGRAM_ENV_VAR} to run this test")
     result = subprocess.run(
-        [path, f"--html={_PAGE}", _CASES.read_text()],
+        [path, f"--html={_PAGE}", _CASES.read_text(encoding="utf-8")],
         capture_output=True,
         encoding="utf-8",
         timeout=_TIMEOUT_SECONDS,
@@ -51,7 +51,7 @@ def record() -> dict[str, Any]:
 
 
 def _as_chrome() -> dict[str, Any]:
-    cases: dict[str, Any] = json.loads(_AS_CHROME.read_text())["cases"]
+    cases: dict[str, Any] = json.loads(_AS_CHROME.read_text(encoding="utf-8"))["cases"]
     return cases
 
 
