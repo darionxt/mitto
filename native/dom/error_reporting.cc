@@ -158,6 +158,21 @@ bool DispatchUnhandledRejection(v8::Isolate* isolate,
   return window->DispatchEvent(event.Get());
 }
 
+v8::ScriptOrigin ClassicScriptOrigin(v8::Local<v8::Value> name,
+                                     bool muted_errors) {
+  return v8::ScriptOrigin(name, /*resource_line_offset=*/0,
+                          /*resource_column_offset=*/0,
+                          /*resource_is_shared_cross_origin=*/!muted_errors);
+}
+
+void ReportScriptException(v8::Isolate* isolate,
+                           const v8::TryCatch& try_catch) {
+  if (try_catch.HasCaught() && try_catch.CanContinue()) {
+    bindings::ReportException(isolate, try_catch.Exception(),
+                              try_catch.Message());
+  }
+}
+
 void DispatchRejectionHandled(v8::Isolate* isolate,
                               v8::Local<v8::Promise> promise,
                               v8::Local<v8::Value> reason) {

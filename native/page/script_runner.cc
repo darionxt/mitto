@@ -20,6 +20,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/error_reporting.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
@@ -420,15 +421,10 @@ void ScriptRunner::RunClassicScript(std::u16string_view source,
            .ToLocal(&name)) {
     return;
   }
-  // Blink's ClassicScript::CreateScriptOrigin(): shared cross-origin unless
-  // its errors are muted, which V8's messages of its errors then say.
-  v8::ScriptOrigin origin(name, /*resource_line_offset=*/0,
-                          /*resource_column_offset=*/0,
-                          /*resource_is_shared_cross_origin=*/!muted_errors);
-  if ((!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
-       compiled->Run(context).IsEmpty()) &&
-      try_catch.HasCaught() && try_catch.CanContinue()) {
-    reporter_->ReportException(try_catch.Exception(), try_catch.Message());
+  v8::ScriptOrigin origin = ClassicScriptOrigin(name, muted_errors);
+  if (!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
+      compiled->Run(context).IsEmpty()) {
+    ReportScriptException(isolate_, try_catch);
   }
 }
 

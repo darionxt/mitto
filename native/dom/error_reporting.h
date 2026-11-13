@@ -20,6 +20,7 @@
 #define MITTO_DOM_ERROR_REPORTING_H_
 
 #include "base/functional/function_ref.h"
+#include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-message.h"
@@ -54,6 +55,20 @@ bool RejectionFiresEvents(v8::Isolate* isolate, v8::Local<v8::Value> reason);
 bool DispatchUnhandledRejection(v8::Isolate* isolate,
                                 v8::Local<v8::Promise> promise,
                                 v8::Local<v8::Value> reason);
+
+// The ScriptOrigin to compile a classic script from the URL `name` with, as
+// Blink's ClassicScript::CreateScriptOrigin() makes it: shared cross-origin,
+// so that the window's error listeners see its errors as they are, unless
+// its errors are `muted`, as for a script of another origin whose response
+// had opaque tainting.
+v8::ScriptOrigin ClassicScriptOrigin(v8::Local<v8::Value> name,
+                                     bool muted_errors);
+
+// Reports what a script that the Runtime ran threw, which `try_catch`
+// caught, as an error that nothing caught: the window's error event, then the
+// console, with V8's message of it, which says where it was thrown. Nothing
+// for one that ends the script's execution.
+void ReportScriptException(v8::Isolate* isolate, const v8::TryCatch& try_catch);
 
 // Fires rejectionhandled at the window of the current context, once a handler
 // has come for `promise` after its unhandledrejection.
