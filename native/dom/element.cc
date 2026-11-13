@@ -691,8 +691,14 @@ void Element::SetOuterHTML(const std::u16string& html,
         "This element's parent is a Document, which may not be modified.");
     return;
   }
-  const NodeVector nodes =
-      ParseFragment(html, static_cast<Element&>(*parent), exception_state);
+  // A fragment's child parses in a new body element, as Blink's
+  // setOuterHTML() and the HTML Standard have it.
+  const cppgc::Persistent<Element> context(
+      parent->IsElementNode()
+          ? static_cast<Element*>(parent)
+          : GetDocument().CreateElement(html_names::kXhtmlNamespace,
+                                        std::nullopt, u"body"));
+  const NodeVector nodes = ParseFragment(html, *context, exception_state);
   if (exception_state.HadException()) {
     return;
   }

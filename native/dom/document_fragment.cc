@@ -24,6 +24,11 @@ const bindings::WrapperTypeInfo* DocumentFragment::GetWrapperTypeInfo() const {
   return &bindings::V8DocumentFragment::kWrapperTypeInfo;
 }
 
+void DocumentFragment::Trace(cppgc::Visitor* visitor) const {
+  Node::Trace(visitor);
+  visitor->Trace(host_);
+}
+
 Element* DocumentFragment::GetElementById(const std::u16string& id) const {
   if (id.empty()) {
     return nullptr;

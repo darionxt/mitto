@@ -28,6 +28,7 @@ void HTMLTemplateElement::Trace(cppgc::Visitor* visitor) const {
 DocumentFragment* HTMLTemplateElement::Content() const {
   if (!content_) {
     content_ = DocumentFragment::Create(GetDocument().EnsureTemplateDocument());
+    content_->SetHost(const_cast<HTMLTemplateElement*>(this));
   }
   return content_.Get();
 }
