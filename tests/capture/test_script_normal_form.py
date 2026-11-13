@@ -8,14 +8,21 @@ from pathlib import Path
 import pytest
 
 from tools.capture.probe import RecordValue, dumps_record, read_record
+from tools.capture.script_delta import dumps_script_delta, read_script_delta, with_script_delta
 from tools.capture.script_normal_form import (
+    CROSS_SITE_HOST_PLACEHOLDER,
     DATE_STRINGS,
     DATE_TIME_FORMAT,
+    FRAME_MACHINE_PLACES,
     MACHINE_PLACES,
+    MEDIA_AGREEMENT,
+    MEDIA_KEYWORDS,
     PORT_PLACEHOLDER,
     RUN_PLACEHOLDER,
     RUN_PLACES,
+    SAME_SITE_HOST_PLACEHOLDER,
     TIME_ZONE_OFFSETS,
+    WORKER_MACHINE_PLACES,
     Computed,
     Getter,
     Place,
@@ -25,11 +32,10 @@ from tools.capture.script_normal_form import (
     read_script_raw_record,
     script_normal_form,
 )
-from tools.capture.script_page import SCRIPT_DIRECTORY
+from tools.capture.script_page import SCRIPT_DIRECTORY, SCRIPT_RUNS, TOP_LEVEL_PAGE
 from tools.parity import BASELINES_DIRECTORY, load_baselines
 
 _PAGE_URL = "https://capture.test:8448/script/page"
-_BASELINE_BUDGET_BYTES = 1_500_000
 
 
 def record_of(values: dict[Place, RecordValue], *, kept: bool = True) -> dict[str, RecordValue]:
@@ -237,7 +243,7 @@ def test_the_pages_origin_name_and_port_go_behind_placeholders() -> None:
 def test_a_longer_name_or_port_is_not_the_pages() -> None:
     record = record_of(
         {
-            Getter("a", "same_site"): "https://same-site.capture.test:8448/x",
+            Getter("a", "other_origin_of_the_site"): "https://other.capture.test:8448/x",
             Getter("a", "other_port"): "https://capture.test:84480/x",
             Getter("a", "longer_name"): "capture.tests",
             Getter("a", "in_a_sentence"): "Failed to reach capture.test:8448.",
@@ -245,11 +251,104 @@ def test_a_longer_name_or_port_is_not_the_pages() -> None:
     )
 
     assert getters_of(script_normal_form(record, _PAGE_URL), "a") == {
-        "same_site": "https://same-site.capture.test:8448/x",
+        "other_origin_of_the_site": "https://other.capture.test:8448/x",
         "other_port": "https://<host>:84480/x",
         "longer_name": "capture.tests",
         "in_a_sentence": "Failed to reach <authority>.",
         "kept": "a value of Chrome's",
+    }
+
+
+def test_the_other_origin_of_the_site_and_the_other_site_have_placeholders_of_their_own() -> None:
+    record = record_of(
+        {
+            Getter("location", "href"): "https://cross-site.test:8448/script/cross-site-frame/frame",
+            Getter("location", "host"): "cross-site.test:8448",
+            Getter("location", "hostname"): "cross-site.test",
+            Getter("location", "port"): "8448",
+            Getter("document", "referrer"): "https://capture.test:8448/",
+            Getter("document", "domain"): "cross-site.test",
+            Getter("a", "same_site"): "https://same-site.capture.test:8448/x",
+            Getter("a", "same_site_host"): "same-site.capture.test",
+        }
+    )
+
+    form = script_normal_form(record, _PAGE_URL)
+
+    assert getters_of(form, "location") == {
+        "href": "<cross-site-origin>/script/cross-site-frame/frame",
+        "host": "<cross-site-authority>",
+        "hostname": CROSS_SITE_HOST_PLACEHOLDER,
+        "port": PORT_PLACEHOLDER,
+        "kept": "a value of Chrome's",
+    }
+    assert getters_of(form, "document") == {
+        "referrer": "<origin>/",
+        "domain": CROSS_SITE_HOST_PLACEHOLDER,
+        "kept": "a value of Chrome's",
+    }
+    assert getters_of(form, "a") == {
+        "same_site": "<same-site-origin>/x",
+        "same_site_host": SAME_SITE_HOST_PLACEHOLDER,
+        "kept": "a value of Chrome's",
+    }
+
+
+# Where the probe runs
+
+
+def test_a_frame_keeps_its_own_viewport_and_hides_the_rest_of_the_machine() -> None:
+    record = machine_record(1)
+
+    form = script_normal_form(record, _PAGE_URL, FRAME_MACHINE_PLACES)
+
+    kept = {str(place) for place in MACHINE_PLACES if place not in FRAME_MACHINE_PLACES}
+    assert kept == {
+        "globalThis.innerWidth",
+        "globalThis.innerHeight",
+        "visualViewport.width",
+        "visualViewport.height",
+        'viewport.segments["0"].width',
+        'viewport.segments["0"].height',
+        'viewport.segments["0"].right',
+        'viewport.segments["0"].bottom',
+        f'{MEDIA_KEYWORDS}["orientation"]',
+        f'{MEDIA_AGREEMENT}["width = innerWidth"]',
+        f'{MEDIA_AGREEMENT}["height = innerHeight"]',
+        f'{MEDIA_AGREEMENT}["aspect-ratio = innerWidth / innerHeight"]',
+    }
+    assert getters_of(form, "globalThis")["innerWidth"] == "value 1 of globalThis.innerWidth"
+    assert getters_of(form, "globalThis")["outerWidth"] == "<machine>"
+    assert [value for _, value in machine_values(form, FRAME_MACHINE_PLACES)] == ["<machine>"] * len(
+        FRAME_MACHINE_PLACES
+    )
+
+
+def test_a_worker_has_the_processors_the_memory_the_network_windows_and_the_time_zone_of_the_machine() -> None:
+    paths = {place.path if isinstance(place, Getter) else place.key for place in WORKER_MACHINE_PLACES}
+
+    assert paths == {
+        "navigator",
+        "navigator.connection",
+        "navigator.userAgentData.getHighEntropyValues()",
+        DATE_TIME_FORMAT,
+        'new Intl.DateTimeFormat(undefined, {hour: "numeric"}).resolvedOptions()',
+        TIME_ZONE_OFFSETS,
+        DATE_STRINGS,
+    }
+    assert set(WORKER_MACHINE_PLACES) < set(MACHINE_PLACES)
+    assert Getter("navigator", "maxTouchPoints") not in WORKER_MACHINE_PLACES
+
+
+def test_each_run_hides_the_places_of_the_machine_where_its_probe_runs() -> None:
+    places = {run.case: run.machine_places for run in SCRIPT_RUNS}
+
+    assert places == {
+        "page": MACHINE_PLACES,
+        "same_origin_frame": FRAME_MACHINE_PLACES,
+        "srcdoc_frame": FRAME_MACHINE_PLACES,
+        "cross_site_frame": FRAME_MACHINE_PLACES,
+        "worker": WORKER_MACHINE_PLACES,
     }
 
 
@@ -340,6 +439,21 @@ def test_a_value_of_the_machine_that_another_place_holds_shows() -> None:
     assert shown == ["document.body get x", "Intl calls f", 'values["offsets"]["value"]']
 
 
+def test_a_place_whose_value_the_case_decides_is_not_looked_in() -> None:
+    raw = record_of({Getter("globalThis", "screenY"): 150, Computed(MEDIA_KEYWORDS, ("orientation",)): ["portrait"]})
+    form = record_of(
+        {
+            Getter("globalThis", "screenY"): "<machine>",
+            Getter("globalThis", "innerHeight"): 150,
+            Computed(MEDIA_KEYWORDS, ("orientation",)): "<machine>",
+        }
+    )
+    places = (Getter("globalThis", "screenY"), Computed(MEDIA_KEYWORDS, ("orientation",)))
+
+    assert machine_values_shown(raw, form, places) == (1, ["globalThis get innerHeight"])
+    assert machine_values_shown(raw, form, places, (Getter("globalThis", "innerHeight"),)) == (1, [])
+
+
 def test_what_shows_is_named_by_its_place_and_never_by_its_value() -> None:
     raw = leaky_record()
     form = record_of({Getter("screen", "availWidth"): 1371})
@@ -382,14 +496,35 @@ def test_the_wires_parity_checks_do_not_read_a_baseline_of_a_script_fingerprint(
 
 
 _SCRIPT_BASELINES = sorted(BASELINES_DIRECTORY.glob(f"*/{SCRIPT_DIRECTORY}/*.json"))
+_RUNS = {run.case: run for run in SCRIPT_RUNS}
+
+
+def test_the_budgets_are_the_owners() -> None:
+    budgets = {run.case: run.budget for run in SCRIPT_RUNS}
+
+    assert budgets == {
+        "page": 1_500_000,
+        "same_origin_frame": 50_000,
+        "srcdoc_frame": 50_000,
+        "cross_site_frame": 50_000,
+        "worker": 250_000,
+    }
 
 
 @pytest.mark.parametrize("path", _SCRIPT_BASELINES, ids=lambda path: path.relative_to(BASELINES_DIRECTORY).as_posix())
 def test_each_baseline_of_a_script_fingerprint_is_a_normal_form_within_its_budget(path: Path) -> None:
+    """The first case's file is its Normal Form, and a later case's what of its Normal Form differs from the first's."""
     text = path.read_text(encoding="utf-8")
-    form = read_record(text)
+    run = _RUNS[path.stem]
+    if run == TOP_LEVEL_PAGE:
+        form = read_record(text)
+        assert dumps_record(form) == text
+    else:
+        delta = read_script_delta(text)
+        assert dumps_script_delta(delta) == text
+        form = with_script_delta(read_record(path.with_name(f"{TOP_LEVEL_PAGE.case}.json").read_text()), delta)
 
-    assert len(text.encode()) <= _BASELINE_BUDGET_BYTES
-    assert dumps_record(form) == text
-    assert all(value == "<machine>" for _, value in machine_values(form))
+    assert len(text.encode()) <= run.budget
+    assert all(value == "<machine>" for _, value in machine_values(form, run.machine_places))
     assert "capture.test" not in text
+    assert "cross-site.test" not in text

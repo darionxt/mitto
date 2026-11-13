@@ -10,8 +10,8 @@
 # - `missing` names them, and the class has every other member.
 # - `implemented` names the members the class has, and every other member is a
 #   Known Gap. "get x" names the getter of attribute x alone. The generator
-#   writes a reflected attribute of a string or a boolean itself, so it needs
-#   no name. "indexed getter" and "named getter" name those operations. An
+#   writes a reflected attribute of a string, a boolean, a long, an unsigned
+#   long or a URL itself, so it needs no name. "indexed getter" and "named getter" name those operations. An
 #   indexed or named property operation that is a Known Gap is not installed
 #   at all.
 #
