@@ -123,12 +123,20 @@ void AppendElement(std::u16string& markup, const Element& element) {
   const std::u16string tag_name = element.TagQName().ToString();
   markup += u'<';
   markup += tag_name;
-  for (const Element::Attribute& attribute : element.attributes()) {
+  const auto append_attribute = [&markup](std::u16string_view name,
+                                          const std::u16string& value) {
     markup += u' ';
-    markup += SerializedAttributeName(attribute.name);
+    markup += name;
     markup += u"=\"";
-    AppendEscaped(markup, attribute.value, /*in_attribute=*/true);
+    AppendEscaped(markup, value, /*in_attribute=*/true);
     markup += u'"';
+  };
+  // The is value the element was made with, when no is attribute says it.
+  if (element.IsValue() && !element.FindAttribute(u"is")) {
+    append_attribute(u"is", *element.IsValue());
+  }
+  for (const Element::Attribute& attribute : element.attributes()) {
+    append_attribute(SerializedAttributeName(attribute.name), attribute.value);
   }
   markup += u'>';
   if (IsVoidElement(element)) {

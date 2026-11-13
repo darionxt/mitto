@@ -2518,6 +2518,26 @@
    true,
    true
   ],
+  ":defined and is": [
+   true,
+   false,
+   false,
+   false,
+   true,
+   false,
+   false,
+   true,
+   true,
+   true,
+   false,
+   false,
+   true,
+   false,
+   [
+    null,
+    "<div is=\"x-y\"></div>"
+   ]
+  ],
   "collections": [
    9,
    true,

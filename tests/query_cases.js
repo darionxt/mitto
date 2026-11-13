@@ -198,6 +198,42 @@
     outcome(() => document.createElement("div").matches(":nth-child(1)")),
     outcome(() => document.documentElement.matches(":first-child")),
   ];
+  // :defined follows the is value an element was made with, not its is
+  // attribute now.
+  const parsed = (html) => {
+    const holder = document.createElement("div");
+    holder.innerHTML = html;
+    return holder.firstChild;
+  };
+  const html = "http://www.w3.org/1999/xhtml";
+  record[":defined and is"] = [
+    outcome(() => {
+      const element = document.createElement("div");
+      element.setAttribute("is", "x-y");
+      return element.matches(":defined");
+    }),
+    outcome(() => parsed('<div is="x-y"></div>').matches(":defined")),
+    outcome(() => {
+      const element = parsed('<div is="x-y"></div>');
+      element.removeAttribute("is");
+      return element.matches(":defined");
+    }),
+    outcome(() => parsed('<div is="x-y"></div>').cloneNode().matches(":defined")),
+    outcome(() => parsed('<svg is="x-y"></svg>').matches(":defined")),
+    outcome(() => document.createElement("div", { is: "x-y" }).matches(":defined")),
+    outcome(() => document.createElement("div", { is: "" }).matches(":defined")),
+    outcome(() => document.createElement("div", { is: undefined }).matches(":defined")),
+    outcome(() => document.createElement("div", "x-y").matches(":defined")),
+    outcome(() => document.createElement("div", {}).matches(":defined")),
+    outcome(() => document.createElement("div", { is: "x-y" }).cloneNode().matches(":defined")),
+    outcome(() => document.createElementNS(html, "div", { is: "x-y" }).matches(":defined")),
+    outcome(() => document.createElementNS("http://www.w3.org/2000/svg", "g", { is: "x-y" }).matches(":defined")),
+    outcome(() => document.createElement("x-y").matches(":defined")),
+    outcome(() => {
+      const element = document.createElement("div", { is: "x-y" });
+      return [element.getAttribute("is"), element.outerHTML];
+    }),
+  ];
 
   // The collections, live, the same object while kept.
   const collections = [];

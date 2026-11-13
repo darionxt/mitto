@@ -1,6 +1,7 @@
 #include "mitto/dom/document.h"
 
 #include <algorithm>
+#include <variant>
 
 #include "base/check.h"
 #include "base/containers/span.h"
@@ -55,6 +56,20 @@ void ThrowInvalidTagName(const std::u16string& name,
       "InvalidCharacterError",
       base::StrCat({"The tag name provided ('", base::UTF16ToUTF8(name),
                     "') is not a valid name."}));
+}
+
+// Gives `element` the is value of createElement()'s or createElementNS()'s
+// options. With no custom element definitions, that leaves an HTML element
+// undefined. A string in place of the options gives none, as Blink's
+// FlattenCreateElementOptions().
+void SetIsValueFromOptions(
+    Element& element,
+    const bindings::DOMStringOrElementCreationOptions& options) {
+  const auto* const dictionary =
+      std::get_if<bindings::ElementCreationOptions>(&options);
+  if (dictionary && dictionary->is) {
+    element.SetIsValue(*dictionary->is);
+  }
 }
 
 bool IsAsciiWhitespace(char16_t c) {
@@ -487,14 +502,15 @@ Element* Document::CreateElementNS(
                       base::UTF16ToUTF8(qualified_name), "')."}));
     return nullptr;
   }
-  // The options name a custom element registry or a customized built-in
-  // element, which need definitions that the Runtime, without custom
-  // elements, never has. Blink then checks the whole name.
+  // Blink then checks the whole name.
   if (!IsValidElementLocalName(qualified_name)) {
     ThrowInvalidTagName(qualified_name, exception_state);
     return nullptr;
   }
-  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+  Element* const element =
+      CreateElement(name->namespace_uri, name->prefix, name->local_name);
+  SetIsValueFromOptions(*element, options);
+  return element;
 }
 
 Element* Document::CreateElementForBinding(
@@ -514,9 +530,11 @@ Element* Document::CreateElementForBinding(
     const std::u16string& local_name,
     const bindings::DOMStringOrElementCreationOptions& options,
     bindings::ExceptionState& exception_state) {
-  // Its `is` names a customized built-in element, which needs a definition
-  // that the Runtime, without custom elements, never has.
-  return CreateElementForBinding(local_name, exception_state);
+  Element* const element = CreateElementForBinding(local_name, exception_state);
+  if (element) {
+    SetIsValueFromOptions(*element, options);
+  }
+  return element;
 }
 
 Element* Document::GetElementById(const std::u16string& id) const {

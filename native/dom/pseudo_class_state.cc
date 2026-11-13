@@ -1452,10 +1452,9 @@ bool IsDefined(const Element& element) {
   if (!element.IsHTMLElement()) {
     return true;
   }
-  // With no definitions, an element of a custom element name or with an is
-  // value stays undefined, as the parser makes it.
-  return !IsValidCustomElementName(element.LocalName()) &&
-         !HasAttribute(element, u"is");
+  // With no definitions, an element made with a custom element name or an is
+  // value stays undefined, whatever its is attribute says later.
+  return !IsValidCustomElementName(element.LocalName()) && !element.IsValue();
 }
 
 bool IsOpen(const Element& element) {

@@ -543,6 +543,7 @@ Node* Element::CloneWithoutChildren(Document& document) const {
   Element* const copy = document.CreateElement(
       tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);
   copy->attributes_ = attributes_;
+  copy->is_value_ = is_value_;
   return copy;
 }
 
