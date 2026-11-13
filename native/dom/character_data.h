@@ -22,12 +22,12 @@ class CharacterData : public Node {
 
   // The members of the interface.
   const std::u16string& Data() const { return data_; }
-  void SetData(const std::u16string& data) { data_ = data; }
+  void SetData(const std::u16string& data);
   uint32_t Length() const { return static_cast<uint32_t>(data_.size()); }
   std::u16string SubstringData(uint32_t offset,
                                uint32_t count,
                                bindings::ExceptionState& exception_state) const;
-  void AppendData(const std::u16string& data) { data_ += data; }
+  void AppendData(const std::u16string& data);
   void InsertData(uint32_t offset,
                   const std::u16string& data,
                   bindings::ExceptionState& exception_state);
@@ -48,6 +48,9 @@ class CharacterData : public Node {
   CharacterData(Document& document, const std::u16string& data);
 
  private:
+  // Queues a record of the change from `old_data` for observers.
+  void DidModifyData(const std::u16string& old_data);
+
   std::u16string data_;
 };
 

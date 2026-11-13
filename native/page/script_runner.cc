@@ -242,11 +242,18 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::String> source;
     v8::Local<v8::Script> compiled;
+    // As DevTools' EvaluateGlobal() compiles what it evaluates: with no name,
+    // and errors that the window's error listeners see as they are.
+    v8::ScriptOrigin origin(
+        v8::String::Empty(isolate_), /*resource_line_offset=*/0,
+        /*resource_column_offset=*/0,
+        /*resource_is_shared_cross_origin=*/true, /*script_id=*/-1,
+        /*source_map_url=*/v8::Local<v8::Value>(), /*resource_is_opaque=*/true);
     if (!v8::String::NewFromUtf8(isolate_, script.data(),
                                  v8::NewStringType::kNormal,
                                  base::checked_cast<int>(script.size()))
              .ToLocal(&source) ||
-        !v8::Script::Compile(context, source).ToLocal(&compiled) ||
+        !v8::Script::Compile(context, source, &origin).ToLocal(&compiled) ||
         !compiled->Run(context).ToLocal(&result)) {
       evaluated = FailureOf(call, Failure(isolate_, context, try_catch));
     }
@@ -385,7 +392,8 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
 }
 
 void ScriptRunner::RunClassicScript(std::u16string_view source,
-                                    const GURL& url) {
+                                    const GURL& url,
+                                    bool muted_errors) {
   // V8 holds no longer string, and a script that it cannot hold does not run.
   if (source.size() > static_cast<size_t>(v8::String::kMaxLength)) {
     return;
@@ -412,11 +420,15 @@ void ScriptRunner::RunClassicScript(std::u16string_view source,
            .ToLocal(&name)) {
     return;
   }
-  v8::ScriptOrigin origin(name);
+  // Blink's ClassicScript::CreateScriptOrigin(): shared cross-origin unless
+  // its errors are muted, which V8's messages of its errors then say.
+  v8::ScriptOrigin origin(name, /*resource_line_offset=*/0,
+                          /*resource_column_offset=*/0,
+                          /*resource_is_shared_cross_origin=*/!muted_errors);
   if ((!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
        compiled->Run(context).IsEmpty()) &&
       try_catch.HasCaught() && try_catch.CanContinue()) {
-    reporter_->ReportException(try_catch.Exception());
+    reporter_->ReportException(try_catch.Exception(), try_catch.Message());
   }
 }
 

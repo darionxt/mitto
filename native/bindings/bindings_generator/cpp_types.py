@@ -261,6 +261,9 @@ class TypeMapper:
             return f"mitto::{idl_type.name}*"
         if kind is TypeKind.CALLBACK_INTERFACE or (kind is TypeKind.OBJECT and not idl_type.nullable):
             return "v8::Local<v8::Object>"
+        if kind is TypeKind.PROMISE and not idl_type.nullable:
+            # The promise itself, or one resolved with the value, as Blink's NativeValueTraits<IDLPromise<T>> give.
+            return "v8::Local<v8::Promise>"
         if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES and not idl_type.nullable:
             # A view whose buffer is neither shared nor resizable, as NotShared<T> holds one.
             return f"v8::Local<v8::{idl_type.name}>"
@@ -667,6 +670,13 @@ class TypeMapper:
                 f"  {site.fail}",
                 "}",
                 f"const v8::Local<v8::Object> {target} = {value}.As<v8::Object>();",
+            ]
+        if kind is TypeKind.PROMISE:
+            return [
+                f"v8::Local<v8::Promise> {target};",
+                f"if (!FromV8Promise(isolate, {value}, &{target})) {{",
+                f"  {site.fail}",
+                "}",
             ]
         if kind is TypeKind.CALLBACK_INTERFACE:
             lines = [

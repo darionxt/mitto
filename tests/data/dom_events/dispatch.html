@@ -1,0 +1,120 @@
+<!doctype html><html><head><title>dispatch</title></head><body><div id=outer><span id=inner>text</span></div>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const name = t => t === window ? 'window' : t === document ? 'document' : t && t.nodeType === 1 ? t.localName + (t.id ? '#' + t.id : '') : String(t);
+const r = {};
+const inner = document.getElementById('inner'), outer = document.getElementById('outer');
+const targets = [window, document, document.documentElement, document.body, outer, inner];
+function trace(type, init, setup) {
+  const log = [];
+  const listeners = [];
+  for (const t of targets) {
+    for (const capture of [true, false]) {
+      const f = e => {
+        log.push([name(e.currentTarget), capture ? 'capture' : 'bubble', e.eventPhase, name(e.target), name(e.srcElement), e.composedPath().map(name).join(' ')]);
+        if (setup) setup(e, t, capture, log);
+      };
+      t.addEventListener(type, f, capture);
+      listeners.push([t, f, capture]);
+    }
+  }
+  const e = new Event(type, init);
+  const ret = inner.dispatchEvent(e);
+  for (const [t, f, c] of listeners) t.removeEventListener(type, f, c);
+  log.push(['after', ret, e.eventPhase, name(e.target), name(e.currentTarget), e.composedPath().length, e.cancelBubble, e.defaultPrevented, e.returnValue]);
+  return log;
+}
+r.bubbles = trace('x', {bubbles: true});
+r.no_bubbles = trace('x', {bubbles: false});
+r.stop_at_body_capture = trace('x', {bubbles: true}, (e, t, c) => { if (t === document.body && c) e.stopPropagation(); });
+r.stop_immediate_at_target = trace('x', {bubbles: true}, (e, t, c) => { if (t === inner && c) e.stopImmediatePropagation(); });
+r.cancel_bubble_at_outer = trace('x', {bubbles: true}, (e, t, c) => { if (t === outer && !c) e.cancelBubble = true; });
+r.return_value = trace('x', {bubbles: true, cancelable: true}, (e, t, c) => { if (t === document && !c) e.returnValue = false; });
+r.load_type = trace('load', {bubbles: true});
+// The target's listeners: capture ones first, then the others, each in the order added.
+{
+  const log = [];
+  inner.addEventListener('y', () => log.push('bubble 1'));
+  inner.addEventListener('y', () => log.push('capture 1'), true);
+  inner.addEventListener('y', () => log.push('bubble 2'));
+  inner.addEventListener('y', () => log.push('capture 2'), {capture: true});
+  inner.dispatchEvent(new Event('y'));
+  r.at_target_order = log;
+}
+// once, and a listener added during dispatch at another target runs.
+{
+  const log = [];
+  outer.addEventListener('z', () => log.push('once'), {once: true});
+  inner.addEventListener('z', () => { log.push('inner'); outer.addEventListener('z', () => log.push('added at outer')); }, {once: true});
+  inner.dispatchEvent(new Event('z', {bubbles: true}));
+  inner.dispatchEvent(new Event('z', {bubbles: true}));
+  r.once = log;
+}
+// A detached tree's path stops at its root.
+{
+  const root = document.createElement('section'), leaf = document.createElement('b');
+  root.appendChild(leaf);
+  let path;
+  root.addEventListener('d', e => { path = [e.eventPhase, e.composedPath().map(name).join(' ')]; });
+  leaf.dispatchEvent(new Event('d', {bubbles: true}));
+  r.detached = path;
+}
+// Passive by default: wheel and touch listeners of the window, the document, html and body.
+{
+  const out = [];
+  for (const [label, t] of [['window', window], ['document', document], ['html', document.documentElement], ['body', document.body], ['outer', outer]]) {
+    for (const type of ['wheel', 'mousewheel', 'touchstart', 'touchmove', 'touchend', 'click']) {
+      let prevented;
+      const f = e => { e.preventDefault(); prevented = e.defaultPrevented; };
+      t.addEventListener(type, f);
+      const e = new Event(type, {cancelable: true});
+      t.dispatchEvent(e);
+      t.removeEventListener(type, f);
+      out.push(label + ' ' + type + ' ' + prevented);
+    }
+  }
+  const g = e => { e.preventDefault(); };
+  window.addEventListener('wheel', g, {passive: false});
+  const e2 = new Event('wheel', {cancelable: true});
+  window.dispatchEvent(e2);
+  out.push('window wheel passive:false ' + e2.defaultPrevented);
+  window.removeEventListener('wheel', g, {passive: false});
+  const h = e => { e.preventDefault(); };
+  outer.addEventListener('q', h, {passive: true});
+  const e3 = new Event('q', {cancelable: true});
+  outer.dispatchEvent(e3);
+  out.push('outer q passive:true ' + e3.defaultPrevented);
+  r.passive = out;
+}
+// window.event while listeners run, and isTrusted.
+{
+  const log = [];
+  const f = e => log.push([window.event === e, e.isTrusted]);
+  document.body.addEventListener('w', f);
+  document.body.dispatchEvent(new Event('w'));
+  log.push(window.event === undefined);
+  r.window_event = log;
+}
+// A second dispatch of the same event, and dispatching it while it is dispatched.
+{
+  const e = new Event('again', {bubbles: true, cancelable: true});
+  let nested;
+  outer.addEventListener('again', ev => { try { inner.dispatchEvent(ev); nested = 'no throw'; } catch (x) { nested = x.name + ': ' + x.message; } ev.preventDefault(); });
+  const first = inner.dispatchEvent(e);
+  const second = inner.dispatchEvent(e);
+  r.redispatch = [first, second, nested, e.defaultPrevented];
+}
+// Readiness events reach the window's capturing listeners.
+r.ready = [];
+window.addEventListener('readystatechange', e => r.ready.push('window capture readystatechange ' + document.readyState + ' ' + e.eventPhase + ' ' + name(e.target)), true);
+window.addEventListener('readystatechange', e => r.ready.push('window bubble readystatechange'));
+window.addEventListener('DOMContentLoaded', e => r.ready.push('window DOMContentLoaded ' + e.eventPhase + ' ' + name(e.target) + ' ' + e.composedPath().map(name).join(' ')));
+document.addEventListener('DOMContentLoaded', e => r.ready.push('document DOMContentLoaded ' + e.eventPhase));
+window.addEventListener('load', e => {
+  r.ready.push('window load ' + e.eventPhase + ' ' + name(e.target) + ' [' + e.composedPath().map(name).join(' ') + ']');
+  setTimeout(() => { r.ready.push('after load ' + e.eventPhase + ' ' + name(e.currentTarget) + ' ' + name(e.target)); done(r); }, 0);
+});
+document.addEventListener('load', e => r.ready.push('document load capture ' + name(e.target)), true);
+</script>
+<script src=dispatch_child.js></script>
+</body></html>

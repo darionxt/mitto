@@ -12,7 +12,11 @@
 #include "mitto/bindings/v8_event_target.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/document.h"
+#include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/html_element.h"
+#include "mitto/dom/node.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
@@ -30,7 +34,7 @@ namespace {
 // The DOM standard's "flatten" of addEventListener()'s options.
 struct FlatOptions {
   bool capture = false;
-  bool passive = false;
+  std::optional<bool> passive;
   bool once = false;
 };
 
@@ -47,12 +51,51 @@ FlatOptions Flatten(
   const auto& dictionary =
       std::get<bindings::AddEventListenerOptions>(*options);
   flat.capture = dictionary.capture;
-  // Without `passive`, a listener is not passive. The DOM standard makes some
-  // listeners of a window, a document or a body passive by default, which no
-  // target of the Runtime is yet.
-  flat.passive = dictionary.passive.value_or(false);
+  flat.passive = dictionary.passive;
   flat.once = dictionary.once;
   return flat;
+}
+
+bool IsTouchScrollBlockingEvent(std::u16string_view type) {
+  return type == u"touchstart" || type == u"touchmove";
+}
+
+bool IsWheelScrollBlockingEvent(std::u16string_view type) {
+  return type == u"mousewheel" || type == u"wheel";
+}
+
+// Blink's EventPassiveMode().
+Event::PassiveMode PassiveModeOf(const EventListenerEntry& entry) {
+  if (!entry.passive()) {
+    return entry.passive_specified() ? Event::PassiveMode::kNotPassive
+                                     : Event::PassiveMode::kNotPassiveDefault;
+  }
+  if (entry.passive_forced_for_document_target()) {
+    return Event::PassiveMode::kPassiveForcedDocumentLevel;
+  }
+  return entry.passive_specified() ? Event::PassiveMode::kPassive
+                                   : Event::PassiveMode::kPassiveDefault;
+}
+
+// Blink's RegisteredEventListener::ShouldFire(): at the target, the capturing
+// listeners while the dispatch captures and the others while it bubbles, and
+// elsewhere those of the phase. A target that is not a node runs all of them
+// at its target phase.
+bool ShouldFire(const EventListenerEntry& entry, const Event& event) {
+  if (event.FireOnlyCaptureListenersAtTarget()) {
+    return entry.capture();
+  }
+  if (event.FireOnlyNonCaptureListenersAtTarget()) {
+    return !entry.capture();
+  }
+  switch (static_cast<Event::Phase>(event.EventPhase())) {
+    case Event::Phase::kCapturing:
+      return entry.capture();
+    case Event::Phase::kBubbling:
+      return !entry.capture();
+    default:
+      return true;
+  }
 }
 
 // The signal of addEventListener()'s options, if they have one.
@@ -164,7 +207,10 @@ void CallListener(v8::Isolate* isolate,
              ->Get(context,
                    v8::String::NewFromUtf8Literal(isolate, "handleEvent"))
              .ToLocal(&handle_event)) {
-      bindings::ReportException(isolate, try_catch.Exception());
+      if (try_catch.CanContinue()) {
+        bindings::ReportException(isolate, try_catch.Exception(),
+                                  try_catch.Message());
+      }
       return;
     }
     if (!handle_event->IsFunction()) {
@@ -172,7 +218,8 @@ void CallListener(v8::Isolate* isolate,
                                "Failed to execute 'handleEvent' on "
                                "'EventListener': The provided callback is not "
                                "callable.");
-      bindings::ReportException(isolate, try_catch.Exception());
+      bindings::ReportException(isolate, try_catch.Exception(),
+                                try_catch.Message());
       return;
     }
     function = handle_event.As<v8::Function>();
@@ -180,40 +227,70 @@ void CallListener(v8::Isolate* isolate,
   }
   v8::Local<v8::Value> arguments[] = {event};
   if (function->Call(context, receiver, 1, arguments).IsEmpty() &&
-      try_catch.HasCaught()) {
-    bindings::ReportException(isolate, try_catch.Exception());
+      try_catch.HasCaught() && try_catch.CanContinue()) {
+    // Where it was thrown, as Blink's verbose TryCatch hands V8's message of
+    // it to the window's error event.
+    bindings::ReportException(isolate, try_catch.Exception(),
+                              try_catch.Message());
   }
 }
 
 // Runs an event handler attribute's handler, as Blink's
 // JSEventHandler::InvokeInternal() does: nothing for one that cannot be
-// called, which a page can set; the current target for `this` and the event
-// for its argument; and a return value of false cancels the event. Chrome's
-// special handling of an ErrorEvent at a window and of beforeunload concerns
-// events that the Runtime does not fire yet.
+// called, which a page can set; the current target for `this`; and for an
+// ErrorEvent of type error at a window, the HTML Standard's special error
+// event handling: five arguments, the event's message, filename, lineno, colno
+// and error, and a return value of true cancels the event. For any other
+// event, the event is its argument, and a return value of false cancels it.
+// Chrome's special handling of beforeunload concerns an event that the
+// Runtime does not fire yet.
 void CallAttributeHandler(v8::Isolate* isolate,
                           v8::Local<v8::Object> handler,
-                          v8::Local<v8::Value> current_target,
+                          EventTarget& current_target,
+                          v8::Local<v8::Value> current_target_wrapper,
                           v8::Local<v8::Value> event_wrapper,
                           Event* event) {
   if (!handler->IsFunction()) {
     return;
   }
+  const bool special_error_event_handling = event->IsErrorEvent() &&
+                                            event->Type() == u"error" &&
+                                            current_target.ToWindow();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   const v8::MicrotasksScope microtasks_scope(
       context, v8::MicrotasksScope::kRunMicrotasks);
   const v8::TryCatch try_catch(isolate);
-  v8::Local<v8::Value> arguments[] = {event_wrapper};
   v8::Local<v8::Value> result;
-  if (!handler.As<v8::Function>()
-           ->Call(context, current_target, 1, arguments)
-           .ToLocal(&result)) {
-    if (try_catch.HasCaught()) {
-      bindings::ReportException(isolate, try_catch.Exception());
+  bool called = false;
+  if (special_error_event_handling) {
+    auto* const error_event = static_cast<ErrorEvent*>(event);
+    v8::Local<v8::Value> arguments[] = {
+        bindings::ToV8String(isolate, error_event->Message()),
+        bindings::ToV8String(isolate, error_event->Filename()),
+        v8::Integer::NewFromUnsigned(isolate, error_event->Lineno()),
+        v8::Integer::NewFromUnsigned(isolate, error_event->Colno()),
+        error_event->Error()};
+    called = handler.As<v8::Function>()
+                 ->Call(context, current_target_wrapper, 5, arguments)
+                 .ToLocal(&result);
+  } else {
+    v8::Local<v8::Value> arguments[] = {event_wrapper};
+    called = handler.As<v8::Function>()
+                 ->Call(context, current_target_wrapper, 1, arguments)
+                 .ToLocal(&result);
+  }
+  if (!called) {
+    if (try_catch.HasCaught() && try_catch.CanContinue()) {
+      bindings::ReportException(isolate, try_catch.Exception(),
+                                try_catch.Message());
     }
     return;
   }
-  if (result->IsFalse()) {
+  if (!result->IsBoolean()) {
+    return;
+  }
+  const bool value = result.As<v8::Boolean>()->Value();
+  if (special_error_event_handling ? value : !value) {
     event->PreventDefault();
   }
 }
@@ -226,13 +303,17 @@ EventListenerEntry::EventListenerEntry(v8::Isolate* isolate,
                                        bool capture,
                                        bool passive,
                                        bool once,
-                                       bool attribute_handler)
+                                       bool attribute_handler,
+                                       bool passive_specified,
+                                       bool passive_forced_for_document_target)
     : type_(type),
       callback_(isolate, callback),
       capture_(capture),
       passive_(passive),
       once_(once),
-      attribute_handler_(attribute_handler) {}
+      attribute_handler_(attribute_handler),
+      passive_specified_(passive_specified),
+      passive_forced_for_document_target_(passive_forced_for_document_target) {}
 
 EventListenerEntry::~EventListenerEntry() = default;
 
@@ -272,6 +353,17 @@ void EventTarget::AddEventListener(
   if (listener.IsEmpty()) {
     return;
   }
+  // Blink's SetDefaultAddEventListenerOptions(): a touch or wheel listener of
+  // a window, a document, its root element or its body that does not say
+  // `passive` is passive, so that it cannot block scrolling.
+  bool passive = flat.passive.value_or(false);
+  bool passive_forced = false;
+  if (!flat.passive &&
+      (IsTouchScrollBlockingEvent(type) || IsWheelScrollBlockingEvent(type)) &&
+      IsTopLevelNode()) {
+    passive = true;
+    passive_forced = true;
+  }
   // A signal that has aborted adds nothing, as in Blink before anything else.
   AbortSignal* const signal = SignalOf(options);
   if (signal && signal->Aborted()) {
@@ -292,8 +384,9 @@ void EventTarget::AddEventListener(
   }
   EventListenerEntry* const entry =
       bindings::MakeGarbageCollected<EventListenerEntry>(
-          v8::Isolate::GetCurrent(), type, listener, flat.capture, flat.passive,
-          flat.once);
+          v8::Isolate::GetCurrent(), type, listener, flat.capture, passive,
+          flat.once, /*attribute_handler=*/false,
+          /*passive_specified=*/flat.passive.has_value(), passive_forced);
   if (last_listener_) {
     last_listener_->set_next(entry);
   } else {
@@ -433,6 +526,27 @@ void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
   ListenersChanged(type);
 }
 
+Node* EventTarget::ToNode() {
+  return nullptr;
+}
+
+Window* EventTarget::ToWindow() {
+  return nullptr;
+}
+
+bool EventTarget::IsTopLevelNode() {
+  if (ToWindow()) {
+    return true;
+  }
+  Node* const node = ToNode();
+  if (!node) {
+    return false;
+  }
+  Document& document = node->GetDocument();
+  return node->IsDocumentNode() || document.DocumentElement() == node ||
+         document.Body() == node;
+}
+
 bool EventTarget::DispatchEventForBindings(
     Event* event,
     bindings::ExceptionState& exception_state) {
@@ -442,19 +556,31 @@ bool EventTarget::DispatchEventForBindings(
     return false;
   }
   event->SetTrusted(false);
-  return DispatchEvent(event);
+  // Whether a listener canceled it, not whether a default event handler
+  // handled it.
+  return DispatchEventInternal(event) !=
+         DispatchEventResult::kCanceledByEventHandler;
 }
 
 bool EventTarget::DispatchEvent(Event* event) {
-  return DispatchEventWithTarget(event, this);
+  return DispatchEventWithResult(event) == DispatchEventResult::kNotCanceled;
 }
 
-bool EventTarget::DispatchEventWithTarget(Event* event, EventTarget* target) {
+DispatchEventResult EventTarget::DispatchEventWithResult(Event* event) {
+  return DispatchEventInternal(event);
+}
+
+DispatchEventResult EventTarget::DispatchEventInternal(Event* event) {
   // Blink's EventTarget::DispatchEventInternal().
-  event->SetTarget(target);
+  event->SetTarget(this);
   event->SetCurrentTarget(this);
   event->SetPhase(Event::Phase::kAtTarget);
-  const bool canceled = FireEventListeners(event);
+  // A target that never had a listener has no EventTargetData in Blink, and
+  // its dispatch counts as not canceled, even for an event canceled before.
+  const DispatchEventResult result =
+      has_event_target_data_
+          ? (FireEventListeners(event), GetDispatchEventResult(*event))
+          : DispatchEventResult::kNotCanceled;
   if (bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
           ->features()
           .IsEnabled(
@@ -462,62 +588,98 @@ bool EventTarget::DispatchEventWithTarget(Event* event, EventTarget* target) {
     event->SetCurrentTarget(nullptr);
   }
   event->SetPhase(Event::Phase::kNone);
-  return !canceled;
+  return result;
+}
+
+bool EventTarget::DispatchEventWithTarget(Event* event, EventTarget* target) {
+  // Blink's LocalDOMWindow::DispatchEvent(), which leaves the current target
+  // and the phase as they are.
+  event->SetTarget(target);
+  event->SetCurrentTarget(this);
+  event->SetPhase(Event::Phase::kAtTarget);
+  if (!has_event_target_data_) {
+    return true;
+  }
+  FireEventListeners(event);
+  return GetDispatchEventResult(*event) == DispatchEventResult::kNotCanceled;
+}
+
+// static
+DispatchEventResult EventTarget::GetDispatchEventResult(const Event& event) {
+  if (event.DefaultPrevented()) {
+    return DispatchEventResult::kCanceledByEventHandler;
+  }
+  if (event.DefaultHandled()) {
+    return DispatchEventResult::kCanceledByDefaultEventHandler;
+  }
+  return DispatchEventResult::kNotCanceled;
 }
 
 bool EventTarget::FireEventListeners(Event* event) {
-  // A target that never had a listener has no EventTargetData in Blink, and
-  // its dispatch counts as not canceled, even for an event canceled before.
   if (!has_event_target_data_) {
     return false;
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  // Don't reenter V8 once its execution is terminating.
+  if (isolate->IsExecutionTerminating()) {
+    return false;
+  }
   // A copy, so that listeners that a listener adds wait for the next event,
   // and Persistent, so that the collector keeps them while scripts run.
   std::vector<cppgc::Persistent<EventListenerEntry>> entries;
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
-    entries.emplace_back(entry);
+    if (entry->type() == event->Type()) {
+      entries.emplace_back(entry);
+    }
+  }
+  if (entries.empty()) {
+    return false;
   }
   const v8::Local<v8::Value> current_target = ToV8(isolate);
   const v8::Local<v8::Value> event_wrapper = event->ToV8(isolate);
   // JSBasedEventListener::Invoke(): while a listener runs, its window's
-  // current event is the event, which window.event gives, and then what it
-  // was before. A Page has no shadow tree that would keep it from the window.
+  // current event is the event, which window.event gives, unless the listener
+  // is in a shadow tree, and then what it was before.
   Window* const window =
       isolate->InContext()
           ? bindings::V8Window::ToWrappable(
                 isolate, isolate->GetCurrentContext()->Global())
           : nullptr;
+  bool fired = false;
   for (const cppgc::Persistent<EventListenerEntry>& entry : entries) {
-    if (entry->removed() || entry->type() != event->Type()) {
-      continue;
-    }
     if (event->ImmediatePropagationStopped()) {
       break;
+    }
+    if (entry->removed() || !ShouldFire(*entry, *event)) {
+      continue;
     }
     if (entry->once()) {
       RemoveEntry(entry.Get());
     }
-    event->SetInPassiveListener(entry->passive());
+    event->SetHandlingPassive(PassiveModeOf(*entry));
     const cppgc::Persistent<Event> previous_event(
         window ? window->CurrentEvent() : nullptr);
-    if (window) {
+    if (window && !event->InvocationTargetInShadowTree()) {
       window->SetCurrentEvent(event);
     }
     if (entry->attribute_handler()) {
-      CallAttributeHandler(isolate, entry->callback(isolate), current_target,
-                           event_wrapper, event);
+      CallAttributeHandler(isolate, entry->callback(isolate), *this,
+                           current_target, event_wrapper, event);
     } else {
       CallListener(isolate, entry->callback(isolate), current_target,
                    event_wrapper);
     }
+    fired = true;
     if (window) {
       window->SetCurrentEvent(previous_event.Get());
     }
-    event->SetInPassiveListener(false);
+    event->SetHandlingPassive(Event::PassiveMode::kNotPassive);
+    if (isolate->IsExecutionTerminating()) {
+      break;
+    }
   }
-  return event->DefaultPrevented();
+  return fired;
 }
 
 }  // namespace mitto

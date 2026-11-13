@@ -82,7 +82,8 @@ v8::Local<v8::Promise> Notification::RequestPermission(
                       ->Call(context, v8::Undefined(isolate), 1, &argument)
                       .IsEmpty() &&
                   try_catch.HasCaught()) {
-                bindings::ReportException(isolate, try_catch.Exception());
+                bindings::ReportException(isolate, try_catch.Exception(),
+                                          try_catch.Message());
               }
             }
             return denied;

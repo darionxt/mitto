@@ -653,6 +653,22 @@ def test_a_callback_function_argument_throws_chromes_message_for_a_value_that_is
     assert 'ExceptionMessages::ArgumentNotOfType(0, "Function")' in "\n".join(lines)
 
 
+def test_a_promise_argument_is_the_promise_or_one_resolved_with_the_value() -> None:
+    # PromiseRejectionEventInit's promise, as Blink's NativeValueTraits<IDLPromise<T>> convert it.
+    types = TypeMapper(frozenset(), frozenset())
+    promise = IdlType(TypeKind.PROMISE, "Promise<any>", members=(IdlType(TypeKind.ANY, "any"),))
+
+    lines = types.from_v8(promise, "value", "converted", Site(fail="return false;", dictionary="Init"), "a")
+
+    assert types.argument_type(promise, "a") == "v8::Local<v8::Promise>"
+    assert lines == [
+        "v8::Local<v8::Promise> converted;",
+        "if (!FromV8Promise(isolate, value, &converted)) {",
+        "  return false;",
+        "}",
+    ]
+
+
 def _window(*constructs: ExposedConstruct) -> Interface:
     return _interface(
         name="Window",

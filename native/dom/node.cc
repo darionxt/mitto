@@ -9,14 +9,26 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/interfaces_without_class.h"
+#include "mitto/bindings/known_gap.h"
 #include "mitto/dom/character_data.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/event.h"
+#include "mitto/dom/event_dispatcher.h"
 #include "mitto/dom/html_collection.h"
+#include "mitto/dom/mutation_observer.h"
 #include "mitto/dom/node_list.h"
+#include "mitto/dom/objects_behind.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
+#include "mitto/dom/window.h"
+#include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-object.h"
+#include "v8/include/v8-primitive.h"
 
 namespace mitto {
 
@@ -205,6 +217,15 @@ void Node::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
   visitor->Trace(child_nodes_);
   visitor->Trace(children_);
+  visitor->Trace(mutation_observer_data_);
+}
+
+NodeMutationObserverData& Node::EnsureMutationObserverData() {
+  if (!mutation_observer_data_) {
+    mutation_observer_data_ =
+        bindings::MakeGarbageCollected<NodeMutationObserverData>();
+  }
+  return *mutation_observer_data_;
 }
 
 std::u16string Node::BaseURI() const {
@@ -271,7 +292,8 @@ void Node::SetTextContentForBinding(const std::optional<std::u16string>& value,
     SetNodeValue(value, exception_state);
     return;
   }
-  // The DOM standard's "string replace all".
+  // The DOM standard's "string replace all", one record for observers.
+  const ChildListMutationScope mutation(*this);
   RemoveChildren();
   if (value && !value->empty()) {
     ParserAppendChild(Text::Create(GetDocument(), *value));
@@ -405,10 +427,15 @@ bool Node::EnsurePreInsertionValidity(
 }
 
 void Node::InsertNodes(const NodeVector& nodes, Node* next) {
+  // As Blink's ContainerNode::InsertBefore(): each node leaves its parent
+  // first, with a record of its own, then they come in under one.
   for (const cppgc::Persistent<Node>& node : nodes) {
     if (Node* const parent = node->ParentNode()) {
       parent->ParserRemoveChild(*node);
     }
+  }
+  const ChildListMutationScope mutation(*this);
+  for (const cppgc::Persistent<Node>& node : nodes) {
     if (next) {
       ParserInsertBefore(node.Get(), *next);
     } else {
@@ -473,6 +500,8 @@ Node* Node::ReplaceChild(Node* node,
   if (Node* const parent = node->ParentNode()) {
     parent->ParserRemoveChild(*node);
   }
+  // The child that goes and the node that comes are one record.
+  const ChildListMutationScope mutation(*this);
   if (child->ParentNode() == this) {
     ParserRemoveChild(*child);
   }
@@ -641,6 +670,7 @@ void Node::ReplaceChildren(const std::vector<bindings::NodeOrDOMString>& nodes,
                                   exception_state)) {
     return;
   }
+  const ChildListMutationScope mutation(*this);
   RemoveChildren();
   InsertNodes(converted, nullptr);
 }
@@ -718,6 +748,7 @@ void Node::ReplaceWith(const std::vector<bindings::NodeOrDOMString>& nodes,
     }
   }
   const cppgc::Persistent<Node> self(this);
+  const ChildListMutationScope mutation(*parent);
   if (ParentNode() == parent) {
     parent->ParserRemoveChild(*this);
   }
@@ -821,6 +852,7 @@ void Node::ParserAppendChild(Node* child) {
     first_child_ = child;
   }
   last_child_ = child;
+  ChildListMutationScope(*this).ChildAdded(*child);
 }
 
 void Node::ParserInsertBefore(Node* child, Node& next) {
@@ -840,10 +872,14 @@ void Node::ParserInsertBefore(Node* child, Node& next) {
     first_child_ = child;
   }
   next.previous_sibling_ = child;
+  ChildListMutationScope(*this).ChildAdded(*child);
 }
 
 void Node::ParserRemoveChild(Node& child) {
   CHECK_EQ(child.ParentNode(), this);
+  // Blink's ContainerNode::WillRemoveChild().
+  ChildListMutationScope(*this).WillRemoveChild(child);
+  NotifyMutationObserversNodeWillDetach(child);
   if (child.previous_sibling_) {
     child.previous_sibling_->next_sibling_ = child.next_sibling_;
   } else {
@@ -860,8 +896,83 @@ void Node::ParserRemoveChild(Node& child) {
 }
 
 void Node::RemoveChildren() {
+  // One record for all of them, as Blink's WillRemoveChildren() makes.
+  const ChildListMutationScope mutation(*this);
   while (Node* const child = FirstChild()) {
     ParserRemoveChild(*child);
+  }
+}
+
+Node* Node::ToNode() {
+  return this;
+}
+
+bool Node::HasActivationBehavior() const {
+  return false;
+}
+
+EventDispatchHandlingState* Node::LegacyPreActivationBehavior(Event& event) {
+  return nullptr;
+}
+
+bool Node::IsDisabledFormControl() const {
+  return false;
+}
+
+DispatchEventResult Node::DispatchEventInternal(Event* event) {
+  return EventDispatcher::DispatchEvent(*this, *event);
+}
+
+void Node::DispatchSimulatedClick() {
+  EventDispatcher::DispatchSimulatedClick(*this);
+}
+
+void Node::DefaultEventHandler(Event& event) {
+  if (event.Target() != this || event.Type() != u"click") {
+    return;
+  }
+  // Blink's DispatchDOMActivateEvent(): a UIEvent that bubbles as the click
+  // does, so that it runs no activation behaviour of an ancestor where the
+  // click would not, with the click's detail, which a simulated click leaves
+  // at 0. Canceling it marks the click as handled, which runs no activation
+  // behaviour.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  bindings::EventInit init;
+  init.bubbles = event.Bubbles();
+  init.cancelable = true;
+  init.composed = event.Composed();
+  const cppgc::Persistent<Event> activate(CreateEventOfInterface(
+      bindings::V8UIEvent::kWrapperTypeInfo, u"DOMActivate", init));
+  activate->SetUnderlyingEvent(&event);
+  activate->SetTrusted(true);
+  if (!IsConnected()) {
+    activate->SetCopyEventPathFromUnderlyingEvent();
+  }
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const v8::Local<v8::Object> dictionary = v8::Object::New(isolate);
+  Window* const window = GetDocument().DefaultView();
+  const v8::Local<v8::Value> wrapper = activate->ToV8(isolate);
+  if (wrapper->IsObject() &&
+      dictionary
+          ->Set(context, v8::String::NewFromUtf8Literal(isolate, "view"),
+                window ? window->ToV8(isolate)
+                       : v8::Null(isolate).As<v8::Value>())
+          .IsJust() &&
+      dictionary
+          ->Set(context, v8::String::NewFromUtf8Literal(isolate, "detail"),
+                bindings::EventOfInterfaceAttribute(isolate, event, "detail"))
+          .IsJust()) {
+    bindings::InitializeEventOfInterface(isolate, wrapper.As<v8::Object>(),
+                                         bindings::V8UIEvent::kWrapperTypeInfo,
+                                         dictionary);
+  }
+  // UIEvent has no class, so its isTrusted is a Known Gap's, which gives
+  // what is stored for it.
+  bindings::SetEventOfInterfaceAttribute(isolate, *activate, "isTrusted",
+                                         v8::True(isolate));
+  if (EventDispatcher::DispatchEvent(*this, *activate) !=
+      DispatchEventResult::kNotCanceled) {
+    event.SetDefaultHandled();
   }
 }
 

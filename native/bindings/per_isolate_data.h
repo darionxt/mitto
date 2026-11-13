@@ -49,10 +49,13 @@ class PerIsolateData {
                         std::string_view property_name) = nullptr;
   };
 
-  // Reports an exception that a page's callback threw and nothing caught, as a
-  // console reports it.
+  // Reports an exception that a page's callback threw and nothing caught, as
+  // Blink's V8Initializer::MessageHandlerInMainThread() does: the window's
+  // error event, and then the console. `message` is V8's message of it, which
+  // says where it was thrown.
   using ExceptionReporter =
-      base::RepeatingCallback<void(v8::Local<v8::Value> exception)>;
+      base::RepeatingCallback<void(v8::Local<v8::Value> exception,
+                                   v8::Local<v8::Message> message)>;
 
   // Tells the Session that a document reached a Known Gap, named as the
   // listing names it, such as "Navigator.prototype.getBattery".

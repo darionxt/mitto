@@ -9,6 +9,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_type.h"
@@ -362,7 +363,9 @@ void Document::SetTitle(const std::u16string& title) {
         CreateElement(html_names::kXhtmlNamespace, std::nullopt, u"title");
     head->ParserAppendChild(title_element);
   }
-  // HTMLTitleElement's text setter: replace all with one Text node.
+  // HTMLTitleElement's text setter: replace all with one Text node, one
+  // record for observers.
+  const ChildListMutationScope mutation(*title_element);
   title_element->RemoveChildren();
   if (!title.empty()) {
     title_element->ParserAppendChild(Text::Create(*this, title));

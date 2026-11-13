@@ -1,8 +1,11 @@
 #include "mitto/dom/character_data.h"
 
+#include <utility>
+
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/mutation_observer.h"
 
 namespace mitto {
 
@@ -46,6 +49,18 @@ std::u16string CharacterData::SubstringData(
   return data_.substr(offset, real_count);
 }
 
+void CharacterData::SetData(const std::u16string& data) {
+  const std::u16string old_data = std::move(data_);
+  data_ = data;
+  DidModifyData(old_data);
+}
+
+void CharacterData::AppendData(const std::u16string& data) {
+  const std::u16string old_data = data_;
+  data_ += data;
+  DidModifyData(old_data);
+}
+
 void CharacterData::InsertData(uint32_t offset,
                                const std::u16string& data,
                                bindings::ExceptionState& exception_state) {
@@ -53,7 +68,9 @@ void CharacterData::InsertData(uint32_t offset,
   if (!ValidateOffsetCount(offset, 0, Length(), real_count, exception_state)) {
     return;
   }
+  const std::u16string old_data = data_;
   data_.insert(offset, data);
+  DidModifyData(old_data);
 }
 
 void CharacterData::DeleteData(uint32_t offset,
@@ -64,7 +81,9 @@ void CharacterData::DeleteData(uint32_t offset,
                            exception_state)) {
     return;
   }
+  const std::u16string old_data = data_;
   data_.erase(offset, real_count);
+  DidModifyData(old_data);
 }
 
 void CharacterData::ReplaceData(uint32_t offset,
@@ -76,12 +95,19 @@ void CharacterData::ReplaceData(uint32_t offset,
                            exception_state)) {
     return;
   }
+  const std::u16string old_data = data_;
   data_.replace(offset, real_count, data);
+  DidModifyData(old_data);
 }
 
 void CharacterData::SetNodeValue(const std::optional<std::u16string>& value,
                                  bindings::ExceptionState& exception_state) {
-  data_ = value.value_or(std::u16string());
+  SetData(value.value_or(std::u16string()));
+}
+
+void CharacterData::DidModifyData(const std::u16string& old_data) {
+  // Blink's CharacterData::DidModifyData(): a record for observers.
+  EnqueueCharacterDataMutation(*this, old_data);
 }
 
 std::optional<std::u16string> CharacterData::NodeValue() const {

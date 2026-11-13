@@ -1,0 +1,65 @@
+<!doctype html><html><head><title>mutations</title></head><body><div id=root><p id=a>A</p><p id=b>B</p></div>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const name = n => n === null ? null : n === document ? 'document' : n.nodeType === 1 ? n.localName + (n.id ? '#' + n.id : '') : n.nodeType === 3 ? '"' + n.data + '"' : n.nodeName;
+const describe = rs => rs.map(m => [m.type, name(m.target), [...m.addedNodes].map(name), [...m.removedNodes].map(name), name(m.previousSibling), name(m.nextSibling), m.attributeName, m.attributeNamespace, m.oldValue]);
+const r = {};
+const root = document.getElementById('root');
+const a = document.getElementById('a'), b = document.getElementById('b');
+const log = [];
+// Two observers: one with old values and a subtree, one without; records shared where neither wants old values.
+const o1 = new MutationObserver((records, observer) => { log.push(['o1', observer === o1, this === window, describe(records)]); });
+const o2 = new MutationObserver(function (records, observer) { log.push(['o2', this === o2, describe(records)]); });
+o2.observe(root, {childList: true, attributes: true, characterData: true});
+o1.observe(root, {childList: true, subtree: true, attributeOldValue: true, characterDataOldValue: true});
+const c = document.createElement('p'); c.id = 'c';
+root.appendChild(c);
+root.insertBefore(document.createTextNode('t'), a);
+a.setAttribute('title', 'one');
+a.setAttribute('title', 'two');
+root.setAttribute('class', 'x');
+a.firstChild.data = 'AA';
+a.firstChild.appendData('!');
+root.appendChild(a);  // moves a to the end: removal then insertion
+b.replaceWith('x', 'y');
+root.replaceChildren(a, c);
+a.textContent = 'new';
+a.innerHTML = '<i>1</i><i>2</i>';
+const gone = a.firstChild;
+a.removeChild(gone);
+gone.setAttribute('id', 'gone');  // a subtree observer follows a node that left
+Promise.resolve().then(() => log.push('promise before delivery?'));
+log.push(['takeRecords o2', describe(o2.takeRecords())]);
+queueMicrotask(() => {
+  log.push('microtask after');
+  // After delivery, the transient registration has gone.
+  gone.setAttribute('id', 'gone2');
+  log.push(['takeRecords o1 after', describe(o1.takeRecords())]);
+  o1.disconnect();
+  root.appendChild(document.createElement('hr'));
+  log.push(['after disconnect', describe(o1.takeRecords())]);
+  r.log = log;
+  // Errors.
+  const errors = [];
+  for (const init of [{}, {attributeOldValue: true, attributes: false}, {attributeFilter: ['x'], attributes: false}, {characterDataOldValue: true, characterData: false}, {subtree: true}]) {
+    try { new MutationObserver(() => {}).observe(root, init); errors.push('ok'); } catch (x) { errors.push(x.name + ': ' + x.message); }
+  }
+  try { new MutationObserver(5); } catch (x) { errors.push(x.name + ': ' + x.message); }
+  try { new MutationObserver(() => {}).observe({}); } catch (x) { errors.push(x.name + ': ' + x.message); }
+  r.errors = errors;
+  // Attribute filter, implied attributes, and the same record for observers without old values.
+  const shared = [];
+  const s1 = new MutationObserver(rs => { shared.push(rs[0]); });
+  const s2 = new MutationObserver(rs => { shared.push(rs[0]); finish(); });
+  s1.observe(c, {attributeFilter: ['data-x']});
+  s2.observe(c, {attributes: true});
+  c.setAttribute('data-y', '1');
+  c.setAttribute('data-x', '2');
+  function finish() {
+    r.shared = [shared.length, shared[0] === shared[1], shared[0].attributeName, shared[1].attributeName, shared[0].addedNodes === shared[0].addedNodes, shared[0].addedNodes.length];
+    r.window_alias = [typeof WebKitMutationObserver, WebKitMutationObserver === MutationObserver];
+    done(r);
+  }
+});
+</script>
+</body></html>

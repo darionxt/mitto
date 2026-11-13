@@ -8,10 +8,12 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_element.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/markup_serializer.h"
+#include "mitto/dom/mutation_observer.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
 
@@ -121,10 +123,14 @@ void Element::SetAttributeWithoutValidation(std::u16string_view name,
                                             const std::u16string& value) {
   for (Attribute& attribute : attributes_) {
     if (attribute.name == name) {
+      // Blink's WillModifyAttribute(): a record for observers, also when the
+      // value stays the same.
+      EnqueueAttributeMutation(*this, attribute.name, attribute.value);
       attribute.value = value;
       return;
     }
   }
+  EnqueueAttributeMutation(*this, std::u16string(name), std::nullopt);
   attributes_.push_back({std::u16string(name), value});
 }
 
@@ -145,6 +151,7 @@ void Element::RemoveAttribute(const std::u16string& name) {
                                     return attribute.name == lookup;
                                   });
   if (found != attributes_.end()) {
+    EnqueueAttributeMutation(*this, found->name, found->value);
     attributes_.erase(found);
   }
 }
@@ -245,6 +252,7 @@ void Element::SetReflectedBooleanAttribute(std::u16string_view name,
       attributes_.begin(), attributes_.end(),
       [name](const Attribute& attribute) { return attribute.name == name; });
   if (found != attributes_.end()) {
+    EnqueueAttributeMutation(*this, found->name, found->value);
     attributes_.erase(found);
   }
 }
@@ -275,6 +283,8 @@ void Element::SetInnerHTML(const std::u16string& html,
   if (exception_state.HadException()) {
     return;
   }
+  // One record for observers, as Blink's ReplaceChildrenWithFragment().
+  const ChildListMutationScope mutation(*this);
   RemoveChildren();
   for (const cppgc::Persistent<Node>& node : nodes) {
     ParserAppendChild(node.Get());
@@ -300,6 +310,8 @@ void Element::SetOuterHTML(const std::u16string& html,
   }
   const cppgc::Persistent<Element> self(this);
   Node* const next = NextSibling();
+  // One record for observers, as Blink's ReplaceChild() of the fragment.
+  const ChildListMutationScope mutation(*parent);
   parent->ParserRemoveChild(*this);
   for (const cppgc::Persistent<Node>& node : nodes) {
     if (next && next->ParentNode() == parent) {
