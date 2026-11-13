@@ -887,7 +887,7 @@ def test_overloads_that_return_promises_choose_a_dictionary_for_undefined_null_a
 
 
 def test_overloads_that_return_promises_count_the_arguments_before_checking_the_receiver() -> None:
-    # LockManager's request(): Chrome rejects a call of no arguments on another object for the arguments.
+    # As CookieStore's set() and delete(): a call of too few arguments on another object rejects for the arguments.
     promise = IdlType(TypeKind.PROMISE, "Promise", members=(IdlType(TypeKind.ANY, "any"),))
     name = Argument("name", IdlType(TypeKind.STRING, "DOMString"), False, False, None)
     flag = Argument("flag", BOOLEAN, False, False, None)
