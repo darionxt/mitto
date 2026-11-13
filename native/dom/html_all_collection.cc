@@ -113,7 +113,7 @@ std::vector<std::u16string> HTMLAllCollection::NamedPropertyEnumerator() const {
     }
     const auto& element = static_cast<const Element&>(*node);
     add(element.FindAttribute(u"id"));
-    if (element.IsHTMLElement()) {
+    if (IsAllNamedElement(element)) {
       add(element.FindAttribute(u"name"));
     }
   }

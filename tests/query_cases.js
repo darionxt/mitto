@@ -294,6 +294,27 @@
     outcome(() => "r" in named_all),
     outcome(() => named_all.r && named_all.r.length),
   ];
+  // Only an all-named element gives document.all a name by its name
+  // attribute, when looked up and when listed.
+  const all_names = fixture(
+    '<div name="all_div"></div><img name="all_img"><span id="all_span" name="all_span_name"></span>' +
+      '<form name="all_form"></form><p id="all_p" name="all_img"></p>',
+  );
+  const all_svg = document.createElementNS("http://www.w3.org/2000/svg", "a");
+  all_svg.setAttribute("name", "all_svg");
+  all_names.append(all_svg);
+  const listed = Reflect.ownKeys(named_all);
+  record["document.all"].push(
+    ...["all_div", "all_img", "all_span", "all_span_name", "all_form", "all_p", "all_svg"].map((name) => [
+      name,
+      listed.includes(name),
+      name in named_all,
+      Object.getOwnPropertyDescriptor(named_all, name) !== undefined,
+      listed.filter((key) => key === name).length,
+    ]),
+    outcome(() => named_all.all_img && named_all.all_img.length),
+  );
+  all_names.remove();
 
   // Range.
   const ranges = [];

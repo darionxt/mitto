@@ -47,8 +47,8 @@ std::vector<std::u16string> SplitClasses(std::u16string_view text,
   return classes;
 }
 
-// Whether document.all names an element of this kind by its name attribute,
-// as the HTML Standard's "all-named elements" are.
+}  // namespace
+
 bool IsAllNamedElement(const Element& element) {
   for (const std::u16string_view name :
        {u"a", u"button", u"embed", u"form", u"frame", u"frameset", u"iframe",
@@ -59,8 +59,6 @@ bool IsAllNamedElement(const Element& element) {
   }
   return false;
 }
-
-}  // namespace
 
 // static
 HTMLCollection* HTMLCollection::Create(Node* root, Type type) {

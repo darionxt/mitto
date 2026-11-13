@@ -34,6 +34,11 @@ namespace mitto {
 class Element;
 class Node;
 
+// Whether document.all names an element of this kind by its name attribute,
+// as the HTML Standard's "all-named elements" are, and Blink's
+// NameShouldBeVisibleInDocumentAll().
+bool IsAllNamedElement(const Element& element);
+
 class HTMLCollection : public bindings::ScriptWrappable {
  public:
   // The kinds of collection, as Blink's CollectionType has them.

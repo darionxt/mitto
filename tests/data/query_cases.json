@@ -2655,7 +2655,57 @@
    "p3",
    true,
    true,
-   3
+   3,
+   [
+    "all_div",
+    false,
+    false,
+    false,
+    0
+   ],
+   [
+    "all_img",
+    true,
+    true,
+    true,
+    1
+   ],
+   [
+    "all_span",
+    true,
+    true,
+    true,
+    1
+   ],
+   [
+    "all_span_name",
+    false,
+    false,
+    false,
+    0
+   ],
+   [
+    "all_form",
+    true,
+    true,
+    true,
+    1
+   ],
+   [
+    "all_p",
+    true,
+    true,
+    true,
+    1
+   ],
+   [
+    "all_svg",
+    false,
+    false,
+    false,
+    0
+   ],
+   null
   ],
   "ranges": [
    "detached@0-detached@0",
