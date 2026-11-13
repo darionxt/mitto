@@ -912,3 +912,16 @@ def test_the_cookie_of_the_traversal_back_is_set_for_its_page_alone_and_cleared(
     assert _answer_to("/case/history-cookie-clear")["Set-Cookie"] == (
         "mitto=; Max-Age=0; Path=/case/navigation-history-back"
     )
+
+
+def test_the_frames_page_sets_a_cookie_of_each_same_site_for_the_nested_frame_alone() -> None:
+    answer = respond_on("https", 8443, _Head("/case/documents-frames"))
+
+    cookies = [value for name, value in answer.headers if name == "Set-Cookie"]
+    assert cookies == [
+        f"{same_site.lower()}=1; Path=/case/{path}; Secure; SameSite={same_site}"
+        for path in ("frame-nested", "frame-nested-fetch")
+        for same_site in ("Strict", "Lax", "None")
+    ]
+    frame = respond_on("https", 8443, _Head("/case/frame-cross-site")).body.decode()
+    assert f'<iframe src="{_PAGE_ORIGIN}/case/frame-nested"></iframe>' in frame
