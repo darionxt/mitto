@@ -558,7 +558,7 @@ def test_a_page_with_no_features_in_its_start_has_the_engine_releases(session: _
         ({**_DEFAULT_START, "inverted_colors": True}, 'a start whose "inverted_colors" is not "none" or "inverted"'),
         ({**_DEFAULT_START, "memory": 12}, 'a start whose "memory" is not 2, 4, 8, 16 or 32'),
         ({**_DEFAULT_START, "scale": 0.5}, 'a start whose "scale" is not a number from 1 to 5'),
-        ({**_DEFAULT_START, "refresh_rate": 0}, 'a start whose "refresh_rate" is not a whole number from 1 to 1000'),
+        ({**_DEFAULT_START, "refresh_rate": 23}, 'a start whose "refresh_rate" is not a whole number from 24 to 1000'),
         (
             {**_DEFAULT_START, "viewport_height": 0},
             'a start whose "viewport_height" is not a whole number from 1 to 2147483647',

@@ -17,6 +17,9 @@ namespace {
 // What a refresh rate of none would give: BeginFrameArgs::DefaultInterval()'s
 // 60 frames a second.
 constexpr int kDefaultRefreshRate = 60;
+// What a Machine's display can have. The period of the slowest is shorter than
+// the longest idle period, so a short idle period never outlasts a long one.
+constexpr int kLeastRefreshRate = 24;
 constexpr int kMostRefreshRate = 1000;
 
 // How long after its vsync a frame's callbacks start on an idle main thread,
@@ -51,7 +54,7 @@ BeginFrameSource::~BeginFrameSource() {
 }
 
 void BeginFrameSource::SetRefreshRate(int hertz) {
-  CHECK_GE(hertz, 1);
+  CHECK_GE(hertz, kLeastRefreshRate);
   CHECK_LE(hertz, kMostRefreshRate);
   // TryGetVsyncIntervalFromDisplayConfig(): the period in whole microseconds.
   vsync_interval_ = base::Microseconds(base::ClampRound<int64_t>(

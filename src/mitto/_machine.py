@@ -134,8 +134,10 @@ _MOST_PROCESSORS = 64
 _MOST_TOUCH_POINTS = 256
 
 # Chrome begins a frame at each vsync of the primary display, a period that it works out from the refresh rate that
-# QueryDisplayConfig gives. A Machine holds a whole number of hertz, up to this.
+# QueryDisplayConfig gives. A Machine holds a whole number of hertz, from the 24 of displays for films, whose period is
+# shorter than the longest idle period that a page expects, 50 milliseconds, to 1000.
 # Upstream: ui/gl/vsync_provider_win.cc
+_LEAST_REFRESH_RATE = 24
 _MOST_REFRESH_RATE = 1000
 
 # Chrome holds the throughput as 32 bits of kbps, and nothing larger is a round trip either.
@@ -706,7 +708,7 @@ _CHECKS: dict[str, Callable[[str, object], None]] = {
     "display_width": _check_whole_number_from(1),
     "display_height": _check_whole_number_from(1),
     "scale": _check_scale,
-    "refresh_rate": _check_whole_number_from(1, _MOST_REFRESH_RATE),
+    "refresh_rate": _check_whole_number_from(_LEAST_REFRESH_RATE, _MOST_REFRESH_RATE),
     "work_area_x": _check_whole_number_from(0),
     "work_area_y": _check_whole_number_from(0),
     "work_area_width": _check_whole_number_from(1),

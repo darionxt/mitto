@@ -63,7 +63,7 @@ class BeginFrameSource final : public base::TaskObserver {
 
   ~BeginFrameSource() override;
 
-  // Sets the display's refresh rate, from 1 to 1000 hertz.
+  // Sets the display's refresh rate, from 24 to 1000 hertz.
   void SetRefreshRate(int hertz);
   void RequestBeginFrame(EventLoop::BeginFrameCallback begin_frame);
 

@@ -1114,7 +1114,7 @@ class PageStart:
         screen_width: The width of the primary display.
         screen_height: The height of the primary display.
         scale: The display's scale, such as 1.25, which devicePixelRatio gives.
-        refresh_rate: The display's refresh rate in hertz, from 1 to 1000, at which the Page begins frames and runs its
+        refresh_rate: The display's refresh rate in hertz, from 24 to 1000, at which the Page begins frames and runs its
             animation frame callbacks.
         viewport_width: The width of the window's page area.
         viewport_height: The height of the window's page area.

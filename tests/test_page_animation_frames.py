@@ -231,7 +231,7 @@ def page_program(native_library: Any, both_apis: str) -> None:
         pytest.skip("no Page program beside the library")
 
 
-@pytest.fixture(params=[60, 75, 144, 165, 240, 1000])
+@pytest.fixture(params=[24, 60, 75, 144, 165, 240, 1000])
 def machine_page(request: pytest.FixtureRequest, page_program: None) -> Iterator[tuple[mitto.Machine, Page]]:
     machine = mitto.Machine.draw(seed=4, refresh_rate=request.param)
     with mitto.Session(machine=machine) as session, session._open_page("about:blank") as page:  # pyright: ignore[reportPrivateUsage]

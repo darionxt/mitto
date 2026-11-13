@@ -284,7 +284,7 @@ Sizes and places on the desktop are in device-independent pixels, which are the 
 | `display_width` | `int` | The width of the primary display, in pixels |
 | `display_height` | `int` | The height of the primary display, in pixels |
 | `scale` | `float` | The scale in Windows' display settings, such as 1.25 for 125%: 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5 or 5. `dpr` says it |
-| `refresh_rate` | `int` | The refresh rate of the primary display in hertz, such as 60 or 144, from 1 to 1000. Chrome begins a frame at each of its vsyncs, so a page can measure it from the times that `requestAnimationFrame()` gives its callbacks |
+| `refresh_rate` | `int` | The refresh rate of the primary display in hertz, such as 60 or 144, from 24 to 1000. Chrome begins a frame at each of its vsyncs, so a page can measure it from the times that `requestAnimationFrame()` gives its callbacks |
 | `work_area_x` | `int` | Where the work area starts from the left, which is the display less the taskbar: 0 with the taskbar at the bottom. At least 0 |
 | `work_area_y` | `int` | Where the work area starts from the top: 0 with the taskbar at the bottom. At least 0 |
 | `work_area_width` | `int` | The width of the work area, which lies on the display |

@@ -1367,7 +1367,7 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
         pytest.param(blank_page_options(inverted_colors="reduce"), id="unknown-inverted-colors"),
         pytest.param(blank_page_options(memory=6), id="memory-chrome-does-not-give"),
         pytest.param(blank_page_options(scale=0), id="no-scale"),
-        pytest.param(blank_page_options(refresh_rate=0), id="no-refresh-rate"),
+        pytest.param(blank_page_options(refresh_rate=23), id="refresh-rate-below-24"),
         pytest.param(blank_page_options(refresh_rate=1001), id="refresh-rate-beyond-1000"),
         pytest.param(blank_page_options(refresh_rate=59.94), id="refresh-rate-not-whole"),
         pytest.param(blank_page_options(screen_height=0), id="screen-of-no-height"),

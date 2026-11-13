@@ -851,7 +851,7 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   - "memory" is what Chrome makes of the memory, 2, 4, 8, 16 or 32 GiB, from
 //     which the Page's V8 also works out its heap's limits.
 //   - "screen_width" and "screen_height" are the primary display, "scale" its
-//     scale, from 1 to 5, "refresh_rate" its refresh rate in hertz, from 1 to
+//     scale, from 1 to 5, "refresh_rate" its refresh rate in hertz, from 24 to
 //     1000, at which the Page begins frames, and "viewport_width" and
 //     "viewport_height" the window's page area. Each size is at least 1.
 //   - "color_scheme" is "light" or "dark", "reduced_motion" and
