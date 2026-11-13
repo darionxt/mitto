@@ -165,7 +165,7 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
 2. It starts the capture server, `uv run python -m tools.capture --out recordings\a --click-in USER_DATA_DIRECTORY`, which writes the address and flags of [each run](capture.md#recording-cases) to `runs.json`.
 3. For each run, it starts Chrome again with its flags and its address, in the order of that list. The first is the page of [the Script Fingerprint](#the-script-fingerprint), then come the wire's. The server clicks what the case pages ask to have clicked, through the debugging port. The script waits until the server has written that run's files, when the page says "Recorded". It reads `chrome://version/?show-variations-cmd` in a new tab of that same Chrome, and closes Chrome. After the Script Fingerprint's page, it stops the session if the directory drew a group other than `Default` of a study that changes what a page sees, `$PageStudies` in the script. The server exits after the last.
 4. It checks that every client's address is loopback, that `Accept-Language` is `en-US` and the Script Fingerprint's `navigator.language` too, that Chrome lists active variations, and that Chrome's version did not change.
-5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run of the wire, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities. The script's `$NetworkNames` is the exact list. Each run also gets a line for each of [the two features Chrome turns on in its own code](#features-on-in-chromes-own-code). The Script Fingerprint's run gets the group of each of `$PageStudies`, or `none` where the seed does not hold it.
+5. It writes `chrome.txt`: the product and its build, the system, the flags, the seed's serial number and, for each run of the wire, the network-related part of that page. That part is the field trials and features whose names have to do with connections, protocols, DNS, headers or priorities, or with what decides the requests of [documents](capture.md#documents), such as keepalive requests, CORS, the back/forward cache and dedicated workers. The script's `$NetworkNames` is the exact list. Each run also gets a line for each of [the two features Chrome turns on in its own code](#features-on-in-chromes-own-code). The Script Fingerprint's run gets the group of each of `$PageStudies`, or `none` where the seed does not hold it.
 
 | Flag | On | Why |
 |---|---|---|
@@ -184,11 +184,11 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
 
 ## Check and commit
 
-1. Record a second session, with new paths, and compare the normal forms where you have Git, such as with `git diff --no-index recordings/a/http1.json recordings/b/http1.json` and the same for each file in `cases` and for `script/page.json`. They should be identical. If they are not, find the cause and write it under the Chrome Release below. `chrome.txt` will differ, as Chrome 157 shows below.
+1. Record a second session, with new paths, and compare the normal forms where you have Git, such as with `git diff --no-index recordings/a/http1.json recordings/b/http1.json` and the same for each file in `cases` and `documents` and for `script/page.json`. They should be identical. If they are not, find the cause and write it under the Chrome Release below. `chrome.txt` will differ, as Chrome 157 shows below.
 2. Check that the files hold nothing personal. A normal form has placeholders for the host and no paths. `chrome.txt` has no paths, and the script leaves the page's command line and profile path out. Search both for the machine's name, the user's name and anything like a path or an address, in place of `NAME` here:
 
    ```bash
-   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?,client_hints_*}.json recordings/a/script/page.json recordings/a/chrome.txt
+   grep -n -i -E 'NAME|[a-z]:\\|/users/|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:' recordings/a/http?.json recordings/a/cases/{http?,plain_http,proxy_http?,client_hints_*}.json recordings/a/documents/http?.json recordings/a/script/page.json recordings/a/chrome.txt
    ```
 
 3. On the Windows machine, check that each value the normal form hides as `<machine>` has [the form a Session's has](capture.md#the-form-of-a-hidden-value), on the wire and in [the Script Fingerprint](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint), and that none of this machine's values shows in the Script Fingerprint's Normal Form. Each directory should say `pass`. It prints no value, but the raw recordings it reads hold this machine's own, so they stay on it:
@@ -197,7 +197,7 @@ It takes about a minute and a half, and ends with `Done:` or with an error. Wind
    uv run python -m tools.capture.machine_forms recordings\a recordings\b
    ```
 
-4. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`, and `script/page.json` to `tests/baselines/RELEASE/script/`, where the wire's Parity Checks do not look. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
+4. Copy `http1.json`, `http2.json`, `http3.json` and `chrome.txt` of the first session to `tests/baselines/RELEASE/`, the normal forms in its `cases` directory to `tests/baselines/RELEASE/cases/`, those in its `documents` directory to `tests/baselines/RELEASE/documents/`, and `script/page.json` to `tests/baselines/RELEASE/script/`. The wire's Parity Checks do not look in the last two. Leave out `runs.json`, the raw recordings and the logs, which are not Baselines.
 5. Write the Persona's file again, because `sec-ch-ua-full-version` and `sec-ch-ua-full-version-list` name the build. See [persona.md](persona.md#write-one).
 6. Regenerate the known-gaps list on a Mac or Linux **Host**, and read its diff. See [parity.md](parity.md#the-known-gaps-list).
 
@@ -306,9 +306,14 @@ The three sessions of each Chrome Release gave identical normal forms in all nin
 
 A connection looks the same in every file of a protocol. `tls`, `quic`, `http2` and `http3` are the same in a main file, in its file in `cases` and, over HTTP/1.1 and HTTP/2, in the file through the proxy. So the cases differ from each other in their requests only.
 
+### Documents
+
+[The cases of documents](capture.md#documents) have no Baselines yet. A recording session records them with the others, into `documents/`, which goes to `tests/baselines/RELEASE/documents/`. The wire's Parity Checks do not read that directory until they replay those cases. In headless Chrome 157.0.8103.51 on macOS, on 2026-11-13, two sessions gave the same three normal forms, and the checks of [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording held.
+
 ### What differs between Chrome Releases
 
-Only `sec-ch-ua` and `User-Agent`, with [the values above](#what-differs-from-chrome-157). Over the six files in `cases` from that day that is 76 fields of `sec-ch-ua` and 82 of `User-Agent` per Chrome Release. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so they differ in `User-Agent` alone.
+Only `sec-ch-ua` and `User-Agent`, with [the values above](#what-differs-from-chrome-157).
+ Over the six files in `cases` from that day that is 76 fields of `sec-ch-ua` and 82 of `User-Agent` per Chrome Release. Plain HTTP and a `CONNECT` have no `sec-ch-ua`, so they differ in `User-Agent` alone.
 
 ### Their seed
 

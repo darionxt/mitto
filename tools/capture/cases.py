@@ -44,12 +44,23 @@ CLIENT_HINTS_PLAIN_HTTP_START_PATH = "/case/client-hints-plain-http"
 _FAILED_PREFIX = "/case/failed?"
 COOKIE_SET_PATH = "/case/cookie-set"
 _COOKIE = "mitto=1"
+_DOCUMENT_START_PATH = "/case/documents-start"
+_DOCUMENT_DONE_PATH = "/case/documents-done"
+_DOCUMENT_FRAMES_PATH = "/case/documents-frames"
+_DOCUMENT_PATH = "/case/document"
+_DOCUMENT_FORMS_PATH = "/case/documents-forms"
+_CREDENTIALS_COOKIE_SET_PATH = "/case/credentials-cookie-set"
+_HISTORY_NEXT_PATH = "/case/history-next"
+_HISTORY_COOKIE_SET_PATH = "/case/history-cookie-set"
+_HISTORY_COOKIE_CLEAR_PATH = "/case/history-cookie-clear"
 
 _CASE_PREFIX = "/case/"
 _TEXT = "text/plain; charset=utf-8"
 _HTML = "text/html; charset=utf-8"
 _JAVASCRIPT = "text/javascript; charset=utf-8"
 _PNG = "image/png"
+_CSS = "text/css; charset=utf-8"
+_WOFF2 = "font/woff2"
 _EVERY_ORIGIN = ("Access-Control-Allow-Origin", "*")
 _ETAG = '"mitto"'
 
@@ -151,6 +162,69 @@ _RESUMPTION_POST = _case("resumption_post")
 _RESUMPTION_NAVIGATION = _case("resumption_navigation")
 _RESUMPTION_OTHER_SITE_SCRIPT = _case("resumption_other_site_script")
 
+# What a document requests beside the main Request Kinds, and the navigations it starts.
+_STYLE = _case("style")
+_STYLE_IMPORT = _case("style_import")
+_STYLE_CROSS_SITE = _case("style_cross_site")
+_FONT = _case("font")
+_FONT_CROSS_SITE = _case("font_cross_site")
+_MODULE = _case("module")
+_MODULE_STATIC_IMPORT = _case("module_static_import")
+_MODULE_DYNAMIC_IMPORT = _case("module_dynamic_import")
+_MODULE_CROSS_SITE = _case("module_cross_site")
+_XHR_GET = _case("xhr_get")
+_XHR_GET_CROSS_SITE = _case("xhr_get_cross_site")
+_XHR_POST_TEXT = _case("xhr_post_text")
+_XHR_GET_SYNC = _case("xhr_get_sync")
+_XHR_POST_TEXT_SYNC = _case("xhr_post_text_sync")
+_WORKER = _case("worker")
+_WORKER_IMPORT_SCRIPTS = _case("worker_import_scripts")
+_WORKER_FETCH = _case("worker_fetch")
+_WORKER_MODULE = _case("worker_module")
+_BEACON_TEXT = _case("beacon_text")
+_BEACON_BLOB = _case("beacon_blob")
+_BEACON_FORM_DATA = _case("beacon_form_data")
+_BEACON_TEXT_CROSS_SITE = _case("beacon_text_cross_site")
+_FETCH_LATER = _case("fetch_later")
+# A preflight goes to the path of the request it asks for, so each of the two carries what the other lacks.
+_FETCH_POST_JSON_CROSS_SITE = _case("fetch_post_json_cross_site", carries="content-type")
+_PREFLIGHT = Case("preflight", _FETCH_POST_JSON_CROSS_SITE.path, "access-control-request-method")
+_FETCH_CREDENTIALS_OMIT = _case("fetch_credentials_omit")
+_FETCH_CREDENTIALS_SAME_ORIGIN = _case("fetch_credentials_same_origin")
+_FETCH_CREDENTIALS_INCLUDE = _case("fetch_credentials_include")
+_FETCH_NO_CORS = _case("fetch_no_cors")
+_NAVIGATION_LOCATION = _case("navigation_location")
+_NAVIGATION_CLICK = _case("navigation_click")
+_NAVIGATION_META_REFRESH = _case("navigation_meta_refresh")
+_REDIRECT_LOCATION = tuple(_case(f"redirect_location_{hop}") for hop in range(1, 3))
+_FRAME_SAME_ORIGIN = _case("frame_same_origin")
+_FRAME_SAME_SITE = _case("frame_same_site")
+_FRAME_CROSS_SITE = _case("frame_cross_site")
+_FRAME_SCRIPT = _case("frame_script")
+_FRAME_IMAGE = _case("frame_image")
+_FRAME_FETCH = _case("frame_fetch")
+_DOCUMENT_STYLE = _case("document_style")
+_DOCUMENT_PRELOAD_STYLE = _case("document_preload_style")
+_DOCUMENT_PRELOAD_SCRIPT = _case("document_preload_script")
+_DOCUMENT_PRELOAD_IMAGE = _case("document_preload_image")
+_DOCUMENT_PRELOAD_FONT = _case("document_preload_font")
+_DOCUMENT_SCRIPT = _case("document_script")
+_DOCUMENT_IMAGE_SMALL = _case("document_image_small")
+_DOCUMENT_IMAGE = _case("document_image")
+_DOCUMENT_STYLE_BODY = _case("document_style_body")
+_DOCUMENT_SCRIPT_DEFERRED = _case("document_script_deferred")
+_FAVICON_NOT_ASKED_PATH = "/case/favicon-not-asked"
+# Chrome asks for it by itself, at a path of its own, if it asks at all.
+_FAVICON = Case("favicon", "/favicon.ico", refused_path=_FAVICON_NOT_ASKED_PATH)
+_URLENCODED_QUERY = "name=mitto&a+b%26c=d+e%26f%2Bg"
+"""What the fields of the forms make, urlencoded."""
+# A form that GETs puts its fields in the query, which is part of what stands for the case.
+_FORM_GET = Case("navigation_form_get", f"{_CASE_PREFIX}navigation-form-get?{_URLENCODED_QUERY}")
+_FORM_TEXT = _case("navigation_form_text")
+_FORM_CROSS_SITE = _case("navigation_form_cross_site")
+# The first visit to its page has no cookie, and the traversal back does.
+_HISTORY_BACK = _case("navigation_history_back", carries="cookie")
+
 
 @dataclass(frozen=True, slots=True)
 class HintsAsked:
@@ -248,6 +322,70 @@ _CLIENT_HINTS_CASES = (
     _CH_CRITICAL,
 )
 _CLIENT_HINTS_PLAIN_HTTP_CASES = (_CH_PLAIN_HTTP_FETCH, _CH_PLAIN_HTTP_NAVIGATION)
+_DOCUMENT_ORDERED = (
+    _DOCUMENT_STYLE,
+    _DOCUMENT_PRELOAD_STYLE,
+    _DOCUMENT_PRELOAD_SCRIPT,
+    _DOCUMENT_PRELOAD_IMAGE,
+    _DOCUMENT_PRELOAD_FONT,
+    _DOCUMENT_SCRIPT,
+    _DOCUMENT_IMAGE_SMALL,
+    _DOCUMENT_IMAGE,
+    _DOCUMENT_STYLE_BODY,
+    _DOCUMENT_SCRIPT_DEFERRED,
+)
+"""What the document's markup asks for, whose order on the wire is Chrome's to choose."""
+
+DOCUMENT_CASES = (
+    _STYLE,
+    _STYLE_IMPORT,
+    _STYLE_CROSS_SITE,
+    _FONT,
+    _FONT_CROSS_SITE,
+    _MODULE,
+    _MODULE_STATIC_IMPORT,
+    _MODULE_DYNAMIC_IMPORT,
+    _MODULE_CROSS_SITE,
+    _XHR_GET,
+    _XHR_GET_CROSS_SITE,
+    _XHR_POST_TEXT,
+    _XHR_GET_SYNC,
+    _XHR_POST_TEXT_SYNC,
+    _WORKER,
+    _WORKER_IMPORT_SCRIPTS,
+    _WORKER_FETCH,
+    _WORKER_MODULE,
+    _BEACON_TEXT,
+    _BEACON_BLOB,
+    _BEACON_FORM_DATA,
+    _BEACON_TEXT_CROSS_SITE,
+    _FETCH_LATER,
+    _PREFLIGHT,
+    _FETCH_POST_JSON_CROSS_SITE,
+    _FETCH_CREDENTIALS_OMIT,
+    _FETCH_CREDENTIALS_SAME_ORIGIN,
+    _FETCH_CREDENTIALS_INCLUDE,
+    _FETCH_NO_CORS,
+    _NAVIGATION_LOCATION,
+    _NAVIGATION_CLICK,
+    _NAVIGATION_META_REFRESH,
+    *_REDIRECT_LOCATION,
+    _FRAME_SAME_ORIGIN,
+    _FRAME_SAME_SITE,
+    _FRAME_CROSS_SITE,
+    _FRAME_SCRIPT,
+    _FRAME_IMAGE,
+    _FRAME_FETCH,
+    *_DOCUMENT_ORDERED,
+    _FAVICON,
+    _FORM_GET,
+    _FORM_TEXT,
+    _FORM_CROSS_SITE,
+    _HISTORY_BACK,
+)
+"""The Recording Cases of what a document requests beside the main Request Kinds, in the order a normal form lists them.
+
+The Parity Checks of the wire do not replay these yet, so they are not among CASES."""
 
 CASES = (
     *MAIN_CASES,
@@ -274,6 +412,7 @@ class Run:
         cases: The Recording Cases it produces.
         fresh_cases: In a run that resumes, the Recording Cases whose connections have no ticket to use, where those of
             cases do. They go in a file of their own, named .fresh.json.
+        ordered: Recording Cases among cases whose order on the wire its normal form writes down.
     """
 
     name: str
@@ -284,6 +423,7 @@ class Run:
     done_path: str
     cases: tuple[Case, ...]
     fresh_cases: tuple[Case, ...] = ()
+    ordered: tuple[Case, ...] = ()
 
 
 def _main_run(name: str, label: str, route: str) -> Run:
@@ -302,7 +442,20 @@ def _client_hints_run(name: str, label: str, route: str) -> Run:
     return Run(name, label, route, CASE_HOST, _CH_FIRST.path, _CLIENT_HINTS_DONE_PATH, _CLIENT_HINTS_CASES)
 
 
-RUNS = (
+def _document_run(name: str, label: str, route: str) -> Run:
+    return Run(
+        name,
+        label,
+        route,
+        CASE_HOST,
+        _DOCUMENT_START_PATH,
+        _DOCUMENT_DONE_PATH,
+        DOCUMENT_CASES,
+        ordered=_DOCUMENT_ORDERED,
+    )
+
+
+_FIRST_RUNS = (
     _main_run("http1", "HTTP/1.1", HTTP1),
     _main_run("http2", "HTTP/2", HTTP2),
     _main_run("http3", "HTTP/3", HTTP3),
@@ -320,7 +473,9 @@ RUNS = (
     ),
     _proxy_run("cases/proxy_http1", "Cases through a proxy, over HTTP/1.1", PROXIED_HTTP1),
     _proxy_run("cases/proxy_http2", "Cases through a proxy, over HTTP/2", PROXIED_HTTP2),
-    # Last, because a server's asking lasts as long as the user data directory does, and the origins are the ones above.
+)
+# Last, because a server's asking lasts as long as the user data directory does, and the origins are the ones above.
+_CLIENT_HINTS_RUNS = (
     _client_hints_run("cases/client_hints_http1", "Client hints over HTTP/1.1", HTTP1),
     _client_hints_run("cases/client_hints_http2", "Client hints over HTTP/2", HTTP2),
     _client_hints_run("cases/client_hints_http3", "Client hints over HTTP/3", HTTP3),
@@ -334,7 +489,21 @@ RUNS = (
         _CLIENT_HINTS_PLAIN_HTTP_CASES,
     ),
 )
-"""Every start of a Chrome that a recording session takes, in the order it takes them."""
+
+RUNS = (*_FIRST_RUNS, *_CLIENT_HINTS_RUNS)
+"""The runs of the Recording Cases that the Parity Checks of the wire replay, in the order a recording session takes
+them."""
+
+DOCUMENT_RUNS = (
+    _document_run("documents/http1", "Documents over HTTP/1.1", HTTP1),
+    _document_run("documents/http2", "Documents over HTTP/2", HTTP2),
+    _document_run("documents/http3", "Documents over HTTP/3", HTTP3),
+)
+"""The runs of DOCUMENT_CASES. Their files go to a directory of their own, where the Parity Checks of the wire do not
+look, until those replay them."""
+
+RECORDING_RUNS = (*_FIRST_RUNS, *DOCUMENT_RUNS, *_CLIENT_HINTS_RUNS)
+"""Every start of a Chrome that a recording session takes for the wire, in the order it takes them."""
 
 
 def _resumption_run(name: str, label: str, route: str) -> Run:
@@ -357,7 +526,7 @@ RESUMPTION_RUNS = (
 )
 """The runs for a server that gives out tickets. Their connections would break a normal form of the runs above."""
 
-DONE_PATHS = frozenset(run.done_path for run in (*RUNS, *RESUMPTION_RUNS))
+DONE_PATHS = frozenset(run.done_path for run in (*RECORDING_RUNS, *RESUMPTION_RUNS))
 
 _PAGE_SCRIPT = f"""
   const progress = document.getElementById("progress");
@@ -718,6 +887,327 @@ def _resumption_responses(cross_site: str, done: Response, script: Response, tex
     }
 
 
+# The page lays its text out at once, which is when Chrome starts on the fonts that the text uses, and then waits for
+# them. Their answer is no font, so they fail, after their requests.
+_DOCUMENTS_START_SCRIPT = """
+  const moduleRan = new Promise((resolve) => addEventListener("mitto-module", resolve, {once: true}));
+  const fontsLoaded = () => {
+    document.body.getBoundingClientRect();
+    return Promise.all([...document.fonts].map((face) => face.status === "unloaded"
+      ? Promise.reject(new Error(face.family + " was not used"))
+      : face.loaded.catch(() => undefined)));
+  };
+  const xhr = (method, url, body, async) => new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open(method, url, async);
+    request.onload = resolve;
+    request.onerror = () => reject(new Error(url + " failed"));
+    request.send(body);
+    if (!async) resolve();
+  });
+  const workerAnswered = (url, options) => new Promise((resolve, reject) => {
+    const worker = new Worker(url, options);
+    worker.onmessage = () => {
+      worker.terminate();
+      resolve();
+    };
+    worker.onerror = () => reject(new Error(url + " failed"));
+  });
+  addEventListener("load", () => {
+    (async () => {
+      await fontsLoaded();
+      await moduleRan;
+      await xhr("GET", urls.xhr_get, null, true);
+      await xhr("GET", urls.xhr_get_cross_site, null, true);
+      await xhr("POST", urls.xhr_post_text, "text body", true);
+      await xhr("GET", urls.xhr_get_sync, null, false);
+      await xhr("POST", urls.xhr_post_text_sync, "text body", false);
+      await workerAnswered(urls.worker);
+      await workerAnswered(urls.worker_module, {type: "module"});
+      const fields = new FormData();
+      fields.append("name", "mitto");
+      const queued = [
+        navigator.sendBeacon(urls.beacon_text, "text body"),
+        navigator.sendBeacon(urls.beacon_blob, new Blob(["blob body"])),
+        navigator.sendBeacon(urls.beacon_form_data, fields),
+        navigator.sendBeacon(urls.beacon_text_cross_site, "text body"),
+      ];
+      if (queued.includes(false)) throw new Error("Chrome did not queue every beacon");
+      // It goes when this document does.
+      fetchLater(urls.fetch_later);
+      await get(urls.fetch_post_json_cross_site, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: '{"json":"body"}',
+      });
+      await get(urls.credentials_cookie_set, {credentials: "include"});
+      await get(urls.fetch_credentials_omit, {credentials: "omit"});
+      await get(urls.fetch_credentials_same_origin, {credentials: "same-origin"});
+      await get(urls.fetch_credentials_include, {credentials: "include"});
+      await get(urls.fetch_no_cors, {mode: "no-cors"});
+      location.href = urls.navigation_location;
+    })().catch(report);
+  });
+"""
+
+# A module that imports two more, and then says so to the page. The page waits for its event before it goes on.
+_MODULE_SOURCE = f"""import "{_MODULE_STATIC_IMPORT.path}";
+await import("{_MODULE_DYNAMIC_IMPORT.path}");
+dispatchEvent(new Event("mitto-module"));
+"""
+
+_WORKER_SOURCE = f"""importScripts("{_WORKER_IMPORT_SCRIPTS.path}");
+fetch("{_WORKER_FETCH.path}").then((response) => response.text()).then(() => postMessage("done"));
+"""
+
+_WORKER_MODULE_SOURCE = """postMessage("done");
+"""
+
+# The frame of another site asks for what a frame's own document asks for, and then tells the page.
+_CROSS_SITE_FRAME = f"""<script src="{_FRAME_SCRIPT.path}"></script>
+<img src="{_FRAME_IMAGE.path}" width="1" height="1" alt="">
+<script>
+  fetch("{_FRAME_FETCH.path}")
+    .then((response) => response.text())
+    .then(() => parent.postMessage("framed", "*"))
+    .catch((error) => fetch("{_FAILED_PREFIX}" + encodeURIComponent(error)));
+</script>
+"""
+
+# Chrome asks for /favicon.ico after a load, if it asks at all, so the page gives it time before it says that it did
+# not, which counts only if Chrome did not.
+_DOCUMENT_SCRIPT_SOURCE = f"""
+  addEventListener("load", () => {{
+    setTimeout(() => get("{_FAVICON_NOT_ASKED_PATH}").then(showNext).catch(report), 3000);
+  }});
+"""
+
+# A no-store page that a script's request got a no-store answer for stays out of the back/forward cache, as does one
+# whose cookies changed. Either way the traversal back to it is a request. The cookie, which only that request
+# carries, goes again, because cookies do not go by port and the next run must start without it.
+_HISTORY_BACK_SCRIPT = f"""
+  addEventListener("pageshow", (event) => {{
+    if (event.persisted) {{
+      report(new Error("the page came back from the back/forward cache"));
+      get("{_DOCUMENT_DONE_PATH}");
+    }}
+  }});
+  addEventListener("load", () => {{
+    const [entry] = performance.getEntriesByType("navigation");
+    const traversed = entry.type === "back_forward";
+    get("{_HISTORY_COOKIE_CLEAR_PATH}")
+      .then(() => traversed ? get("{_DOCUMENT_DONE_PATH}") : showNext())
+      .then(() => {{ if (traversed) progress.textContent = "Recorded. You can close this window."; }})
+      .catch(report);
+  }});
+"""
+
+_HISTORY_NEXT_SCRIPT = f"""
+  addEventListener("load", () => {{
+    get("{_HISTORY_COOKIE_SET_PATH}").then(() => history.back()).catch(report);
+  }});
+"""
+
+
+def _navigate_on_load(to: str) -> str:
+    return f"""
+  addEventListener("load", () => {{ location.href = "{to}"; }});
+"""
+
+
+def _documents_start_page(same_site: str, cross_site: str) -> Response:
+    urls = {
+        "xhr_get": _XHR_GET.path,
+        "xhr_get_cross_site": cross_site + _XHR_GET_CROSS_SITE.path,
+        "xhr_post_text": _XHR_POST_TEXT.path,
+        "xhr_get_sync": _XHR_GET_SYNC.path,
+        "xhr_post_text_sync": _XHR_POST_TEXT_SYNC.path,
+        "worker": _WORKER.path,
+        "worker_module": _WORKER_MODULE.path,
+        "beacon_text": _BEACON_TEXT.path,
+        "beacon_blob": _BEACON_BLOB.path,
+        "beacon_form_data": _BEACON_FORM_DATA.path,
+        "beacon_text_cross_site": cross_site + _BEACON_TEXT_CROSS_SITE.path,
+        "fetch_later": _FETCH_LATER.path,
+        "fetch_post_json_cross_site": cross_site + _FETCH_POST_JSON_CROSS_SITE.path,
+        "credentials_cookie_set": same_site + _CREDENTIALS_COOKIE_SET_PATH,
+        "fetch_credentials_omit": same_site + _FETCH_CREDENTIALS_OMIT.path,
+        "fetch_credentials_same_origin": same_site + _FETCH_CREDENTIALS_SAME_ORIGIN.path,
+        "fetch_credentials_include": same_site + _FETCH_CREDENTIALS_INCLUDE.path,
+        "fetch_no_cors": cross_site + _FETCH_NO_CORS.path,
+        "navigation_location": _NAVIGATION_LOCATION.path,
+    }
+    return _page(
+        f'<link rel="stylesheet" href="{_STYLE.path}">',
+        f'<link rel="stylesheet" href="{cross_site}{_STYLE_CROSS_SITE.path}">',
+        '<p class="mitto">Text in a web font.</p>',
+        '<p class="mitto-cross-site">Text in a web font of another site.</p>',
+        f'<script type="module" src="{_MODULE.path}"></script>',
+        f'<script type="module" src="{cross_site}{_MODULE_CROSS_SITE.path}"></script>',
+        f"<script>const urls = {json.dumps(urls)};</script>",
+        script=_DOCUMENTS_START_SCRIPT,
+    )
+
+
+def _style_source(cross_site: str) -> bytes:
+    return f"""@import url("{_STYLE_IMPORT.path}");
+@font-face {{ font-family: mitto; src: url("{_FONT.path}"); }}
+@font-face {{ font-family: mitto-cross-site; src: url("{cross_site}{_FONT_CROSS_SITE.path}"); }}
+.mitto {{ font-family: mitto; }}
+.mitto-cross-site {{ font-family: mitto-cross-site; }}
+""".encode()
+
+
+def _document_page() -> Response:
+    """Return a document whose markup asks for what most pages' does, and which names no icon."""
+    body = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mitto capture</title>
+<link rel="stylesheet" href="{_DOCUMENT_STYLE.path}">
+<link rel="preload" href="{_DOCUMENT_PRELOAD_STYLE.path}" as="style">
+<link rel="preload" href="{_DOCUMENT_PRELOAD_SCRIPT.path}" as="script">
+<link rel="preload" href="{_DOCUMENT_PRELOAD_IMAGE.path}" as="image">
+<link rel="preload" href="{_DOCUMENT_PRELOAD_FONT.path}" as="font" type="font/woff2" crossorigin>
+<script src="{_DOCUMENT_SCRIPT.path}"></script>
+</head>
+<body>
+<p id="progress">Recording...</p>
+<img src="{_DOCUMENT_IMAGE_SMALL.path}" width="1" height="1" alt="">
+<img src="{_DOCUMENT_IMAGE.path}" alt="">
+<link rel="stylesheet" href="{_DOCUMENT_STYLE_BODY.path}">
+<script src="{_DOCUMENT_SCRIPT_DEFERRED.path}" defer></script>
+{_link(_DOCUMENT_FORMS_PATH)}
+<script>{_PAGE_SCRIPT}{_DOCUMENT_SCRIPT_SOURCE}</script>
+</body>
+</html>
+""".encode()
+    return _case_response(_HTML, body)
+
+
+def _form(action: str, *, method: str = "post", enctype: str | None = None) -> str:
+    encoding = "" if enctype is None else f' enctype="{enctype}"'
+    return f'<form method="{method}" action="{action}"{encoding}>{_URLENCODED_FIELDS}{_SUBMIT}</form>'
+
+
+def _with_credentials(page: str, *headers: tuple[str, str]) -> Response:
+    """Return an answer that a request with credentials from the page can read, which one that allows every origin is
+    not."""
+    allowed = (("Access-Control-Allow-Origin", page), ("Access-Control-Allow-Credentials", "true"))
+    return Response(200, _TEXT, b"answered\n", headers=(*allowed, *headers))
+
+
+def _document_responses(
+    page: str, same_site: str, cross_site: str, done: Response, script: Response, image: Response, text: Response
+) -> dict[str, Response]:
+    """Return the answers of the runs of DOCUMENT_CASES, which go through these pages in this order.
+
+    The first page's markup and script ask for each subresource and make each request of a script that the cases
+    have, and the page then starts a navigation, whose page starts the next, and so on. The page after those has frames,
+    and the next is a document whose markup asks for what most pages' does. Forms follow, and last comes a traversal
+    back through history.
+    """
+    style = _case_response(_CSS, b"/* Nothing to do. */\n")
+    # Chrome asks for a font before it can tell that the answer is none.
+    font = _case_response(_WOFF2, b"no font\n")
+    frame = _case_response(_HTML, _document("<p>A frame.</p>"))
+    cookies = tuple(
+        ("Set-Cookie", f"{_COOKIE}; Path={case.path}")
+        for case in (_FETCH_CREDENTIALS_OMIT, _FETCH_CREDENTIALS_SAME_ORIGIN, _FETCH_CREDENTIALS_INCLUDE)
+    )
+    return {
+        _DOCUMENT_START_PATH: _documents_start_page(same_site, cross_site),
+        _STYLE.path: _case_response(_CSS, _style_source(cross_site)),
+        _STYLE_IMPORT.path: style,
+        _STYLE_CROSS_SITE.path: style,
+        _FONT.path: font,
+        _FONT_CROSS_SITE.path: font,
+        _MODULE.path: _case_response(_JAVASCRIPT, _MODULE_SOURCE.encode()),
+        _MODULE_STATIC_IMPORT.path: script,
+        _MODULE_DYNAMIC_IMPORT.path: script,
+        _MODULE_CROSS_SITE.path: script,
+        _XHR_GET.path: text,
+        _XHR_GET_CROSS_SITE.path: text,
+        _XHR_POST_TEXT.path: text,
+        _XHR_GET_SYNC.path: text,
+        _XHR_POST_TEXT_SYNC.path: text,
+        _WORKER.path: _case_response(_JAVASCRIPT, _WORKER_SOURCE.encode()),
+        _WORKER_IMPORT_SCRIPTS.path: script,
+        _WORKER_FETCH.path: text,
+        _WORKER_MODULE.path: _case_response(_JAVASCRIPT, _WORKER_MODULE_SOURCE.encode()),
+        _BEACON_TEXT.path: text,
+        _BEACON_BLOB.path: text,
+        _BEACON_FORM_DATA.path: text,
+        _BEACON_TEXT_CROSS_SITE.path: text,
+        _FETCH_LATER.path: text,
+        # The answer to the preflight and to the request after it.
+        _FETCH_POST_JSON_CROSS_SITE.path: _case_response(
+            _TEXT, b"answered\n", ("Access-Control-Allow-Headers", "content-type")
+        ),
+        # The cookies go by path, so that each request but those of these cases goes without them.
+        _CREDENTIALS_COOKIE_SET_PATH: _with_credentials(page, *cookies),
+        _FETCH_CREDENTIALS_OMIT.path: _with_credentials(page),
+        _FETCH_CREDENTIALS_SAME_ORIGIN.path: _with_credentials(page),
+        _FETCH_CREDENTIALS_INCLUDE.path: _with_credentials(page),
+        _FETCH_NO_CORS.path: text,
+        _NAVIGATION_LOCATION.path: _page(
+            f'<p><a id="link" href="{_NAVIGATION_CLICK.path}">The page clicks this link.</a></p>',
+            script='\n  addEventListener("load", () => document.getElementById("link").click());\n',
+        ),
+        _NAVIGATION_CLICK.path: _case_response(
+            _HTML,
+            _document(
+                f'<meta http-equiv="refresh" content="0; url={_NAVIGATION_META_REFRESH.path}">\n<p>Recording...</p>'
+            ),
+        ),
+        _NAVIGATION_META_REFRESH.path: _page(script=_navigate_on_load(_REDIRECT_LOCATION[0].path)),
+        _REDIRECT_LOCATION[0].path: _redirect(cross_site + _REDIRECT_LOCATION[1].path),
+        _REDIRECT_LOCATION[1].path: _page(script=_navigate_on_load(page + _DOCUMENT_FRAMES_PATH)),
+        _DOCUMENT_FRAMES_PATH: _page(
+            '<script>const framed = new Promise((resolve) => addEventListener("message", resolve, {once: true}));'
+            "</script>",
+            f'<iframe src="{_FRAME_SAME_ORIGIN.path}"></iframe>',
+            f'<iframe src="{same_site}{_FRAME_SAME_SITE.path}"></iframe>',
+            f'<iframe src="{cross_site}{_FRAME_CROSS_SITE.path}"></iframe>',
+            _link(_DOCUMENT_PATH),
+            script='\n  addEventListener("load", () => { framed.then(showNext).catch(report); });\n',
+        ),
+        _FRAME_SAME_ORIGIN.path: frame,
+        _FRAME_SAME_SITE.path: frame,
+        _FRAME_CROSS_SITE.path: _case_response(_HTML, _document(_CROSS_SITE_FRAME)),
+        _FRAME_SCRIPT.path: script,
+        _FRAME_IMAGE.path: image,
+        _FRAME_FETCH.path: text,
+        _DOCUMENT_PATH: _document_page(),
+        _DOCUMENT_STYLE.path: style,
+        _DOCUMENT_PRELOAD_STYLE.path: style,
+        _DOCUMENT_PRELOAD_SCRIPT.path: script,
+        _DOCUMENT_PRELOAD_IMAGE.path: image,
+        _DOCUMENT_PRELOAD_FONT.path: font,
+        _DOCUMENT_SCRIPT.path: script,
+        _DOCUMENT_IMAGE_SMALL.path: image,
+        _DOCUMENT_IMAGE.path: image,
+        _DOCUMENT_STYLE_BODY.path: style,
+        _DOCUMENT_SCRIPT_DEFERRED.path: script,
+        _FAVICON.path: image,
+        _FAVICON_NOT_ASKED_PATH: text,
+        _DOCUMENT_FORMS_PATH: _page(_form(_FORM_GET.path.partition("?")[0], method="get")),
+        _FORM_GET.path: _page(_form(_FORM_TEXT.path, enctype="text/plain")),
+        _FORM_TEXT.path: _page(_form(cross_site + _FORM_CROSS_SITE.path)),
+        _FORM_CROSS_SITE.path: _link_page(page + _HISTORY_BACK.path),
+        _HISTORY_BACK.path: _page(_link(_HISTORY_NEXT_PATH), script=_HISTORY_BACK_SCRIPT),
+        _HISTORY_NEXT_PATH: _page(script=_HISTORY_NEXT_SCRIPT),
+        _HISTORY_COOKIE_SET_PATH: _case_response(
+            _TEXT, b"set\n", ("Set-Cookie", f"{_COOKIE}; Path={_HISTORY_BACK.path}")
+        ),
+        _HISTORY_COOKIE_CLEAR_PATH: _case_response(
+            _TEXT, b"cleared\n", ("Set-Cookie", f"{_COOKIE.partition('=')[0]}=; Max-Age=0; Path={_HISTORY_BACK.path}")
+        ),
+        _DOCUMENT_DONE_PATH: done,
+    }
+
+
 @functools.lru_cache(maxsize=64)
 def _responses(scheme: str, port: int) -> dict[str, Response]:
     """Return the answer to each path of the case pages on a port. They name other origins, so they depend on it."""
@@ -775,6 +1265,7 @@ def _responses(scheme: str, port: int) -> dict[str, Response]:
         _PROXY_DONE_PATH: done,
         **_client_hints_responses(page, same_site, cross_site, done, script, image, text),
         **_resumption_responses(cross_site, done, script, text),
+        **_document_responses(page, same_site, cross_site, done, script, image, text),
     }
 
 
