@@ -162,6 +162,10 @@ class Document : public Node {
       bindings::ExceptionState& exception_state);
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
+  Node* ImportNode(Node* node,
+                   const bindings::BooleanOrImportNodeOptions& options,
+                   bindings::ExceptionState& exception_state);
+  Node* AdoptNode(Node* node, bindings::ExceptionState& exception_state);
   // The live list of the HTML elements whose name attribute is `name`.
   NodeList* GetElementsByName(const std::u16string& name);
   Range* CreateRange();

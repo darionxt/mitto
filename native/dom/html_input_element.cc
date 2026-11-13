@@ -1,5 +1,7 @@
 #include "mitto/dom/html_input_element.h"
 
+#include <algorithm>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -140,10 +142,17 @@ void HTMLInputElement::AttributeChanged(const QualifiedName& name,
       UncheckOthersOfRadioButtonGroup();
     }
   } else if (name.local_name == u"name" || name.local_name == u"type") {
+    if (name.local_name == u"type") {
+      UpdateHasBeenPasswordField();
+    }
     // ParseAttribute() and UpdateType(): it leaves its group for the one of
     // its new name or type.
     AddToRadioButtonGroup();
   }
+}
+
+int32_t HTMLInputElement::DefaultTabIndex() const {
+  return 0;
 }
 
 Node* HTMLInputElement::CloneWithoutChildren(Document& document) const {
@@ -154,6 +163,8 @@ Node* HTMLInputElement::CloneWithoutChildren(Document& document) const {
   input->is_checked_ = Checked();
   input->dirty_checkedness_ = dirty_checkedness_;
   input->is_indeterminate_ = is_indeterminate_;
+  // Blink's copy takes its type from the attribute, not the history.
+  input->UpdateHasBeenPasswordField();
   return copy;
 }
 
@@ -181,6 +192,18 @@ std::u16string HTMLInputElement::Type() const {
 
 void HTMLInputElement::SetType(const std::u16string& type) {
   SetAttributeWithoutValidation(u"type", type);
+}
+
+void HTMLInputElement::UpdateHasBeenPasswordField() {
+  // Blink's TextFieldInputType and its subclasses.
+  static constexpr std::u16string_view kTextFieldTypes[] = {
+      u"email", u"number", u"password", u"search", u"tel", u"text", u"url",
+  };
+  const std::u16string type = Type();
+  const bool text_field =
+      std::ranges::find(kTextFieldTypes, type) != std::end(kTextFieldTypes);
+  has_been_password_field_ =
+      text_field && (has_been_password_field_ || type == u"password");
 }
 
 HTMLInputElement::CheckableType HTMLInputElement::GetCheckableType() const {

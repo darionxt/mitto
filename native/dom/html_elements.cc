@@ -73,6 +73,10 @@ const bindings::WrapperTypeInfo* HTMLButtonElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLButtonElement::kWrapperTypeInfo;
 }
 
+int32_t HTMLButtonElement::DefaultTabIndex() const {
+  return 0;
+}
+
 // static
 HTMLDListElement* HTMLDListElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<HTMLDListElement>(document);
@@ -209,6 +213,10 @@ const bindings::WrapperTypeInfo* HTMLFrameElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLFrameElement::kWrapperTypeInfo;
 }
 
+int32_t HTMLFrameElement::DefaultTabIndex() const {
+  return 0;
+}
+
 // static
 HTMLFrameSetElement* HTMLFrameSetElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<HTMLFrameSetElement>(document);
@@ -244,6 +252,10 @@ HTMLIFrameElement::HTMLIFrameElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLIFrameElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLIFrameElement::kWrapperTypeInfo;
+}
+
+int32_t HTMLIFrameElement::DefaultTabIndex() const {
+  return 0;
 }
 
 // static
@@ -345,6 +357,10 @@ const bindings::WrapperTypeInfo* HTMLObjectElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLObjectElement::kWrapperTypeInfo;
 }
 
+int32_t HTMLObjectElement::DefaultTabIndex() const {
+  return 0;
+}
+
 // static
 HTMLOptGroupElement* HTMLOptGroupElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<HTMLOptGroupElement>(document);
@@ -444,6 +460,10 @@ HTMLSelectElement::HTMLSelectElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLSelectElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLSelectElement::kWrapperTypeInfo;
+}
+
+int32_t HTMLSelectElement::DefaultTabIndex() const {
+  return 0;
 }
 
 // static
@@ -585,6 +605,10 @@ HTMLTextAreaElement::HTMLTextAreaElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLTextAreaElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLTextAreaElement::kWrapperTypeInfo;
+}
+
+int32_t HTMLTextAreaElement::DefaultTabIndex() const {
+  return 0;
 }
 
 // static

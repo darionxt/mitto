@@ -58,10 +58,15 @@ class HTMLInputElement final : public HTMLElement {
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+  int32_t DefaultTabIndex() const override;
 
   // What the bindings, a click and the pseudo-classes read and set.
   bool Checked() const;
   void SetChecked(bool checked);
+  // Whether it has been a password field since it last stopped being a text
+  // field, which turns spellcheck off by default, as Blink's
+  // HasBeenPasswordField() has it.
+  bool HasBeenPasswordField() const { return has_been_password_field_; }
 
  protected:
   // Node: a copy keeps the checkedness, whether it is dirty, and the
@@ -96,6 +101,9 @@ class HTMLInputElement final : public HTMLElement {
   // Blink's DispatchInputAndChangeEventIfNeeded(): input, then change, at a
   // connected checkbox or a radio button that is checked.
   void DispatchInputAndChangeEventIfNeeded();
+  // Blink's UpdateHasBeenPasswordField(), on a new type: a text field that
+  // is or has been a password field.
+  void UpdateHasBeenPasswordField();
 
   bool is_checked_ = false;
   bool dirty_checkedness_ = false;
@@ -103,6 +111,7 @@ class HTMLInputElement final : public HTMLElement {
   // Whether it has joined the group of its form or its connected tree, and
   // not left both since.
   bool in_radio_button_group_ = false;
+  bool has_been_password_field_ = false;
 };
 
 }  // namespace mitto

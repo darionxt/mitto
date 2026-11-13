@@ -8,6 +8,8 @@
 #ifndef MITTO_DOM_SVG_ELEMENTS_H_
 #define MITTO_DOM_SVG_ELEMENTS_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "mitto/dom/svg_element.h"
@@ -79,6 +81,7 @@ class SVGAElement final : public SVGGraphicsElement {
   explicit SVGAElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class SVGAnimateElement final : public SVGAnimationElement {

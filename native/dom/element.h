@@ -113,6 +113,16 @@ class Element : public Node {
   void InsertAdjacentText(const std::u16string& where,
                           const std::u16string& data,
                           bindings::ExceptionState& exception_state);
+  void InsertAdjacentHTML(const std::u16string& position,
+                          const std::u16string& text,
+                          bindings::ExceptionState& exception_state);
+  // HTMLOrForeignElement's tabIndex: the attribute's integer, or else the
+  // element's default, as Blink's Element::tabIndex() reads it.
+  int32_t TabIndex() const;
+  void SetTabIndex(int32_t value);
+  // Blink's DefaultTabIndex(): 0 for an element that the HTML Standard
+  // makes focusable, such as a link or a form control, and -1 otherwise.
+  virtual int32_t DefaultTabIndex() const;
 
   // What the bindings call for a reflected attribute: the content attribute
   // `name`, which is lower case.

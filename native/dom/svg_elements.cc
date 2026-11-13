@@ -151,6 +151,10 @@ const bindings::WrapperTypeInfo* SVGAElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGAElement::kWrapperTypeInfo;
 }
 
+int32_t SVGAElement::DefaultTabIndex() const {
+  return 0;
+}
+
 // static
 SVGAnimateElement* SVGAnimateElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGAnimateElement>(document);

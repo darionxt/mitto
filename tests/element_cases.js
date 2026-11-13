@@ -747,5 +747,164 @@
   run("a set on file", () => { const a = blank.createElementNS(HTML, "a"); a.href = "file:///x"; a.protocol = "http"; const one = a.getAttribute("href"); a.href = "http://u@h.example/"; a.protocol = "file"; return [one, a.getAttribute("href")].join("|"); });
   run("a set special to not", () => { const a = blank.createElementNS(HTML, "a"); a.href = "http://h.example/"; a.protocol = "foo"; const one = a.getAttribute("href"); a.href = "foo://h.example/"; a.protocol = "http"; return [one, a.getAttribute("href")].join("|"); });
   run("a toString", () => { const a = blank.createElementNS(HTML, "a"); a.href = "http://h.example/x"; return [String(a), a + "", `${a}`].join("|"); });
+  // insertAdjacentHTML, importNode, adoptNode.
+  run("insertAdjacentHTML", () => {
+    const p = document.createElement("div");
+    const e = document.createElement("span");
+    p.appendChild(e);
+    e.insertAdjacentHTML("beforebegin", "<i>1</i>");
+    e.insertAdjacentHTML("AFTERBEGIN", "<b>2</b>x");
+    e.insertAdjacentHTML("beforeEnd", "<u>3</u>");
+    e.insertAdjacentHTML("afterend", "<em>4</em>");
+    return p.innerHTML;
+  });
+  run("insertAdjacentHTML no parent", () => document.createElement("span").insertAdjacentHTML("afterend", "x"));
+  run("insertAdjacentHTML fragment parent", () => { const f = document.createDocumentFragment(); const e = document.createElement("i"); f.appendChild(e); e.insertAdjacentHTML("beforebegin", "x"); });
+  run("insertAdjacentHTML bad", () => document.createElement("span").insertAdjacentHTML("middle", "x"));
+  run("insertAdjacentHTML no args", () => document.createElement("span").insertAdjacentHTML("afterbegin"));
+  run("importNode", () => {
+    const doc = new Document();
+    const e = doc.createElementNS(HTML, "div");
+    e.appendChild(doc.createTextNode("t"));
+    const shallow = document.importNode(e);
+    const deep = document.importNode(e, true);
+    const opts = document.importNode(e, {});
+    const self = document.importNode(e, { selfOnly: true });
+    return [shallow.ownerDocument === document, shallow.childNodes.length, deep.childNodes.length, opts.childNodes.length, self.childNodes.length, e.ownerDocument === doc, deep === e].join("|");
+  });
+  run("importNode document", () => document.importNode(new Document()));
+  run("importNode template", () => { const t = document.createElement("template"); t.innerHTML = "<p>x</p>"; const c = document.importNode(t.content, true); return [c.childNodes.length, c.ownerDocument === document, c.firstChild.textContent].join("|"); });
+  run("importNode no args", () => document.importNode());
+  run("importNode null", () => document.importNode(null));
+  run("adoptNode", () => {
+    const doc = new Document();
+    const p = doc.createElementNS(HTML, "div");
+    const c = doc.createElementNS(HTML, "span");
+    p.appendChild(c);
+    const r = document.adoptNode(c);
+    return [r === c, c.ownerDocument === document, p.childNodes.length, c.parentNode].map(String).join("|");
+  });
+  run("adoptNode document", () => document.adoptNode(new Document()));
+  run("adoptNode attr", () => { const e = document.createElement("div"); e.setAttribute("a", "1"); const a = e.getAttributeNode("a"); const doc = new Document(); doc.adoptNode(a); return [a.ownerElement, a.ownerDocument === doc, e.hasAttribute("a"), a.value].map(String).join("|"); });
+  // HTMLElement members.
+  run("tabIndex defaults", () => ["div", "a", "area", "button", "input", "select", "textarea", "iframe", "frame", "object", "span", "summary", "details", "img"].map((n) => n + ":" + document.createElement(n).tabIndex).join(",") + "|" + document.createElementNS(SVG, "a").tabIndex + "," + document.createElementNS(SVG, "rect").tabIndex + "," + document.createElementNS(MATHML, "mi").tabIndex);
+  run("tabIndex summary", () => { const d = document.createElement("details"); const s1 = document.createElement("summary"); const s2 = document.createElement("summary"); d.append(s1, s2); return [s1.tabIndex, s2.tabIndex].join(","); });
+  run("tabIndex parse", () => { const e = document.createElement("div"); const out = []; for (const v of ["3", " -2x", "abc", "", "99999999999"]) { e.setAttribute("tabindex", v); out.push(e.tabIndex); } e.tabIndex = 7; out.push(e.getAttribute("tabindex")); const a = document.createElement("a"); a.setAttribute("tabindex", "bad"); out.push(a.tabIndex); return out.join(","); });
+  run("dir", () => { const e = document.createElement("div"); const out = [JSON.stringify(e.dir)]; for (const v of ["LTR", "rtl", "Auto", "x", ""]) { e.setAttribute("dir", v); out.push(e.dir); } e.dir = "Q"; out.push(e.getAttribute("dir")); return out.join(","); });
+  run("translate", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.translate]; p.setAttribute("translate", "NO"); out.push(c.translate); c.setAttribute("translate", ""); out.push(c.translate); c.setAttribute("translate", "maybe"); out.push(c.translate); c.translate = true; out.push(c.getAttribute("translate")); const s = document.createElementNS(SVG, "g"); s.setAttribute("translate", "no"); const h = document.createElement("b"); s.appendChild(h); out.push(h.translate); return out.join(","); });
+  run("draggable", () => { const out = [document.createElement("div").draggable, document.createElement("img").draggable, document.createElement("a").draggable]; const a = document.createElement("a"); a.href = "x"; out.push(a.draggable); a.setAttribute("draggable", "FALSE"); out.push(a.draggable); const i = document.createElement("img"); i.setAttribute("draggable", "false"); out.push(i.draggable); const d = document.createElement("div"); d.setAttribute("draggable", "True"); out.push(d.draggable); d.draggable = false; out.push(d.getAttribute("draggable")); return out.join(","); });
+  run("spellcheck", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.spellcheck]; p.setAttribute("spellcheck", "false"); out.push(c.spellcheck); c.setAttribute("spellcheck", ""); out.push(c.spellcheck); c.setAttribute("spellcheck", "x"); out.push(c.spellcheck); c.spellcheck = true; out.push(c.getAttribute("spellcheck")); return out.join(","); });
+  // A password input's spellcheck is off by default.
+  run("spellcheck password", () => {
+    const d = document.createElement("div");
+    d.setAttribute("spellcheck", "true");
+    const i = d.appendChild(document.createElement("input"));
+    i.setAttribute("type", "password");
+    const out = [i.spellcheck];
+    const j = document.createElement("input");
+    j.setAttribute("type", "PASSWORD");
+    out.push(j.spellcheck);
+    j.setAttribute("spellcheck", "true");
+    out.push(j.spellcheck);
+    out.push(document.createElement("input").spellcheck);
+    const inner = document.createElement("span");
+    const p = document.createElement("input");
+    p.setAttribute("type", "password");
+    p.appendChild(inner);
+    out.push(inner.spellcheck);
+    return out.join(",");
+  });
+  // Blink's HasBeenPasswordField(): off while it stays a text field after being a password one, and a copy has only
+  // the type it has.
+  run("spellcheck password sticky", () => {
+    const i = document.createElement("input");
+    i.setAttribute("type", "password");
+    i.type = "text";
+    const out = [i.spellcheck];
+    i.setAttribute("type", "search");
+    out.push(i.spellcheck);
+    i.removeAttribute("type");
+    out.push(i.spellcheck, i.cloneNode().spellcheck);
+    i.setAttribute("type", "checkbox");
+    out.push(i.spellcheck);
+    i.setAttribute("type", "text");
+    out.push(i.spellcheck);
+    const p = document.createElement("input");
+    p.type = "Password";
+    out.push(p.cloneNode().spellcheck);
+    const d = document.createElement("div");
+    d.innerHTML = "<input type=password>";
+    const q = d.firstChild;
+    q.type = "email";
+    out.push(q.spellcheck);
+    q.setAttribute("type", "date");
+    out.push(q.spellcheck);
+    q.type = "number";
+    out.push(q.spellcheck);
+    return out.join(",");
+  });
+  run("contentEditable", () => { const e = document.createElement("div"); const out = [e.contentEditable]; for (const v of ["", "TRUE", "false", "plaintext-only", "x"]) { e.setAttribute("contenteditable", v); out.push(e.contentEditable); } e.contentEditable = "PlainText-Only"; out.push(e.getAttribute("contenteditable")); e.contentEditable = "inherit"; out.push(e.hasAttribute("contenteditable")); return out.join(","); });
+  run("contentEditable bad", () => { document.createElement("div").contentEditable = "yes"; });
+  run("isContentEditable", () => {
+    const p = document.createElement("div");
+    const c = document.createElement("span");
+    p.appendChild(c);
+    p.contentEditable = "true";
+    const detached = c.isContentEditable;
+    document.body.appendChild(p);
+    const out = [detached, p.isContentEditable, c.isContentEditable];
+    c.contentEditable = "false";
+    out.push(c.isContentEditable);
+    c.contentEditable = "plaintext-only";
+    out.push(c.isContentEditable);
+    p.remove();
+    return out.join(",");
+  });
+  run("isContentEditable design mode", () => {
+    const p = document.createElement("div");
+    p.innerHTML = "<span contenteditable=false><b></b></span>";
+    const detached = p.firstChild;
+    document.body.appendChild(p);
+    const out = [];
+    try {
+      document.designMode = "on";
+      out.push(detached.isContentEditable, detached.firstChild.isContentEditable, document.documentElement.isContentEditable);
+      p.remove();
+      out.push(detached.isContentEditable);
+    } finally {
+      document.designMode = "off";
+    }
+    return out.join(",");
+  });
+  run("isContentEditable foreign", () => {
+    const p = document.createElement("div");
+    p.contentEditable = "true";
+    const svg = p.appendChild(document.createElementNS(SVG, "svg"));
+    const inSvg = svg.appendChild(document.createElement("span"));
+    const fo = svg.appendChild(document.createElementNS(SVG, "foreignObject"));
+    const inFo = fo.appendChild(document.createElement("span"));
+    const g = svg.appendChild(document.createElementNS(SVG, "g"));
+    const inG = g.appendChild(document.createElement("span"));
+    const math = p.appendChild(document.createElementNS(MATHML, "math"));
+    const inMath = math.appendChild(document.createElement("span"));
+    const mi = math.appendChild(document.createElementNS(MATHML, "mi"));
+    const inMi = mi.appendChild(document.createElement("span"));
+    const other = p.appendChild(document.createElementNS("urn:x", "svg"));
+    const inOther = other.appendChild(document.createElement("span"));
+    const own = fo.appendChild(document.createElement("i"));
+    own.contentEditable = "true";
+    const out = [inSvg, inFo, inG, inMath, inMi, inOther, own].map((e) => e.isContentEditable);
+    document.body.appendChild(p);
+    out.push(inFo.isContentEditable, inSvg.isContentEditable);
+    p.remove();
+    return out.join(",");
+  });
+  run("isContentEditable fragment", () => {
+    const f = document.createDocumentFragment();
+    const e = f.appendChild(document.createElement("span"));
+    const t = document.createElement("template");
+    t.innerHTML = "<div contenteditable><b></b></div>";
+    return [e.isContentEditable, t.content.firstChild.firstChild.isContentEditable].join(",");
+  });
   return JSON.stringify(cases, null, 1);
 })()
