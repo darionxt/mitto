@@ -204,27 +204,48 @@ def test_frames_come_a_vsync_apart_at_60_hz_without_a_session(program: Path) -> 
 
 
 def test_idle_periods_end_with_each_frame_and_are_long_again_once_frames_stop(program: Path) -> None:
-    # While frames come, an idle period lasts at most until the next vsync, and once they stop, up to 50 milliseconds.
+    # While frames come, an idle period ends by the vsync after the frame before it, and once they stop, one lasts up to
+    # 50 milliseconds. A frame that ends past the next vsync, as when a busy runner wakes the Page late, starts no idle
+    # period, as in Chrome, so an idle callback asked for in it can wait until frames stop and run in a long period.
+    # Only those that run while another frame is asked for are held to the vsync, and frames go on until five have, or
+    # until 60 frames have begun. Each period's end is checked rather than the time left, which a callback held up loses.
     script = """
       new Promise((resolve) => {
-        const during = [];
+        const between = [];
         let frames = 0;
-        const loop = () => {
-          requestIdleCallback((deadline) => during.push(deadline.timeRemaining()));
-          if (++frames < 10) {
+        let lastFrame;
+        let asked = false;
+        const loop = (time) => {
+          lastFrame = time;
+          frames++;
+          requestIdleCallback((deadline) => {
+            const read = [performance.now(), deadline.timeRemaining()];
+            if (asked) between.push([...read, lastFrame]);
+          });
+          asked = between.length < 5 && frames < 60;
+          if (asked) {
             requestAnimationFrame(loop);
             return;
           }
-          setTimeout(() => requestIdleCallback((deadline) => resolve({during, after: deadline.timeRemaining()})), 100);
+          setTimeout(() => {
+            const posted = performance.now();
+            requestIdleCallback((deadline) => {
+              resolve({between, after: deadline.timeRemaining() + performance.now() - posted});
+            });
+          }, 100);
         };
         requestAnimationFrame(loop);
       })
     """
     out = _evaluate(program, script)
 
-    assert out["during"]
-    assert max(out["during"]) < _period_ms(_DEFAULT_REFRESH_RATE) + 2 * _CLAMPING_MS
-    assert out["after"] > _period_ms(_DEFAULT_REFRESH_RATE) + 2 * _CLAMPING_MS
+    period = _period_ms(_DEFAULT_REFRESH_RATE)
+    # Each callback between frames reads the time before the time left, so that a stall between the two can only make
+    # its period's end look earlier. One held up past that end has no time left, which says only that it had passed.
+    ends = [(now + remaining, frame) for now, remaining, frame in out["between"] if remaining > 0]
+    assert all(end <= frame + period + 3 * _CLAMPING_MS for end, frame in ends), out
+    # The one after frames stop reads them the other way round, so that a stall can only make the end look later.
+    assert out["after"] > period + 2 * _CLAMPING_MS, out
 
 
 def test_the_command_line_waits_for_a_callback_and_a_cancelled_one_keeps_it_waiting_no_longer(program: Path) -> None:
