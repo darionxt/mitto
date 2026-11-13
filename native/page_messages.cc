@@ -120,7 +120,8 @@ constexpr auto kStartNames = std::to_array<StartName>({
 
 // The numbers of a start, each a field of PageStart, and the least and the
 // most that a Machine can have. Windows holds Chrome to 64 logical processors,
-// in one group of them.
+// in one group of them, and a Machine's display refreshes at most 1000 times a
+// second.
 struct StartNumber {
   std::string_view key;
   int PageStart::* field;
@@ -144,6 +145,7 @@ constexpr auto kStartNumbers = std::to_array<StartNumber>({
     {"screen_height", &PageStart::screen_height, 1, kMost},
     {"viewport_width", &PageStart::viewport_width, 1, kMost},
     {"viewport_height", &PageStart::viewport_height, 1, kMost},
+    {"refresh_rate", &PageStart::refresh_rate, 1, 1000},
 });
 
 // The lists of a start's features, each a field of PageFeatures. Blink has

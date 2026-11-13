@@ -128,6 +128,11 @@ def saved_by_0_2(machine: Machine) -> dict[str, Any]:
     return {name: value for name, value in dataclasses.asdict(machine).items() if name in FIELDS_OF_0_2}
 
 
+def saved_without_a_refresh_rate(machine: Machine) -> dict[str, Any]:
+    """Return what a build of mitto wrote of a Machine before a Machine held its refresh rate."""
+    return {name: value for name, value in dataclasses.asdict(machine).items() if name != "refresh_rate"}
+
+
 def work_area(row: Mapping[str, Any]) -> tuple[Fraction, Fraction]:
     scale = Fraction(row["scale"])
     return row["display_width"] / scale, row["display_height"] / scale - TASKBAR_HEIGHTS[row["windows"]]
@@ -592,10 +597,29 @@ def test_a_machine_with_no_seed_that_mitto_0_2_saved_loads_the_same_each_time() 
     assert machine_from_saved(saved).seed is None
 
 
+@pytest.mark.parametrize("seed", range(50))
+def test_a_machine_saved_without_a_refresh_rate_draws_it_from_its_seed(seed: int) -> None:
+    machine = Machine.draw(seed=seed)
+
+    assert machine_from_saved(saved_without_a_refresh_rate(machine)) == machine
+
+
+def test_a_machine_with_no_seed_saved_without_a_refresh_rate_loads_the_same_each_time() -> None:
+    saved = {**saved_without_a_refresh_rate(Machine.draw(seed=9)), "seed": None}
+    loaded = machine_from_saved(saved)
+
+    assert loaded == machine_from_saved(saved)
+    assert loaded.seed is None
+    assert {name: value for name, value in dataclasses.asdict(loaded).items() if name in saved} == saved
+    assert {"refresh_rate": loaded.refresh_rate} in [without_weight(row) for row in GROUPS["refresh_rate"]["rows"]]
+
+
 def test_a_saved_machine_loads_the_same_in_another_process() -> None:
     saved = [saved_by_0_2(Machine.draw(seed=seed)) for seed in range(5)]
     saved.append({**saved_by_0_2(Machine.draw(seed=5)), "seed": None})
     saved.append({**dict(zip(DISPLAY_OF_0_2, (1700, 1000, 1.75, 900, 500), strict=True)), **saved[0], "seed": None})
+    saved.extend(saved_without_a_refresh_rate(Machine.draw(seed=seed)) for seed in range(6, 11))
+    saved.append({**saved_without_a_refresh_rate(Machine.draw(seed=11)), "seed": None})
     script = (
         "import dataclasses, json, sys\n"
         "from mitto._machine import machine_from_saved\n"
@@ -708,6 +732,8 @@ def test_a_machine_that_a_caller_makes_has_no_seed() -> None:
         ("processors", 65, "processors has to be from 1 to 64"),
         ("touch_points", -1, "touch_points has to be from 0 to 256"),
         ("touch_points", 257, "touch_points has to be from 0 to 256"),
+        ("refresh_rate", 0, "refresh_rate has to be from 1 to 1000"),
+        ("refresh_rate", 1001, "refresh_rate has to be from 1 to 1000"),
         ("window_state", "first", "window_state has to be 'maximised' or 'normal'"),
         ("contrast_theme", "high-contrast", "contrast_theme has to be 'none' or 'aquatic'"),
         ("inverted_colors", "reduce", "inverted_colors has to be 'none' or 'inverted'"),
@@ -759,6 +785,7 @@ def test_a_desktop_that_does_not_fit_together_is_refused(changes: dict[str, Any]
         ("scale", "1", "scale has to be a number, not str"),
         ("scale", True, "scale has to be a number, not bool"),
         ("viewport_width", "1920", "viewport_width has to be a whole number, not str"),
+        ("refresh_rate", 59.94, "refresh_rate has to be a whole number, not float"),
         ("color_scheme", None, "color_scheme has to be text, not NoneType"),
         ("platform_version", 19, "platform_version has to be text, not int"),
         ("audio_input", 1, "audio_input has to be True or False, not int"),

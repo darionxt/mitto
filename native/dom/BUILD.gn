@@ -10,6 +10,8 @@ source_set("dom") {
     "abort_controller.h",
     "abort_signal.cc",
     "abort_signal.h",
+    "animation_frame_controller.cc",
+    "animation_frame_controller.h",
     "bar_prop.cc",
     "bar_prop.h",
     "battery_manager.cc",

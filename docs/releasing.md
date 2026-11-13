@@ -181,6 +181,14 @@ If a source does not answer, or answers in a form the script does not read, such
 
 `--saved` writes the table from the statistics as they are and fetches nothing, such as after a change to an owner's weight. It leaves the time zones as they are.
 
+The refresh rate has no source that the table can take, and keeps [the owner's weights](persona.md#how-common-each-one-is), in the shape of GLAM's shares. Compare them with what GLAM gives for the newest version of Firefox that it has, on Windows:
+
+```bash
+curl -s https://glam.telemetry.mozilla.org/api/v1/data/ -H 'Content-Type: application/json' -d '{"query": {"channel": "release", "os": "Windows", "process": "parent", "probe": "gfx_target_frame_rate", "product": "fog", "aggregationLevel": "version", "app_id": "release", "ping_type": "metrics"}}'
+```
+
+Each version has an entry for each kind of aggregation. The one whose `client_agg_type` is `max` counts each client once, by the highest rate it reported, and its `histogram` gives each bucket's share, by the bucket's lower end, such as `56.53` for 60 Hz. If the shares have moved by more than a point, bring the owner new weights for `_REFRESH_RATES` in [`tools/release/machines.py`](../tools/release/machines.py), and say so in the run's pull request.
+
 ### 8. Drop the oldest Chrome Release
 
 ```bash

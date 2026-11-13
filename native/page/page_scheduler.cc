@@ -75,6 +75,8 @@ PageScheduler::PageScheduler() {
   control_queue_ = sequence_manager_->CreateTaskQueue(
       TaskQueue::Spec(QueueName::CONTROL_TQ));
   control_queue_->SetQueuePriority(TaskPriority::kControlPriority);
+  compositor_queue_ = sequence_manager_->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::COMPOSITOR_TQ));
   idle_queue_ =
       sequence_manager_->CreateTaskQueue(TaskQueue::Spec(QueueName::IDLE_TQ));
   idle_queue_->SetQueuePriority(TaskPriority::kBestEffortPriority);
@@ -88,12 +90,23 @@ PageScheduler::PageScheduler() {
   // MainThreadSchedulerImpl::BeginFrameNotExpectedSoon(): a page that draws
   // no frames has long idle periods from the start.
   idle_helper_->EnableLongIdlePeriod();
+  // ComputeCompositorPriority(): the normal priority, and a very high one
+  // while rendering starves.
+  begin_frame_source_ = std::make_unique<BeginFrameSource>(
+      sequence_manager_.get(), compositor_queue_.get(),
+      BeginFrameSource::Priorities{
+          .normal = static_cast<TaskQueue::QueuePriority>(
+              TaskPriority::kNormalPriority),
+          .starved = static_cast<TaskQueue::QueuePriority>(
+              TaskPriority::kVeryHighPriority)},
+      idle_helper_.get());
   CHECK(!EventLoop::Get());
   EventLoop::Set(this);
 }
 
 PageScheduler::~PageScheduler() {
   EventLoop::Set(nullptr);
+  begin_frame_source_.reset();
   idle_helper_.reset();
 }
 
@@ -110,6 +123,14 @@ scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::TaskRunner(
 void PageScheduler::PostIdleTask(const base::Location& from_here,
                                  IdleTask task) {
   idle_helper_->PostIdleTask(from_here, std::move(task));
+}
+
+void PageScheduler::RequestBeginFrame(BeginFrameCallback begin_frame) {
+  begin_frame_source_->RequestBeginFrame(std::move(begin_frame));
+}
+
+void PageScheduler::SetRefreshRate(int hertz) {
+  begin_frame_source_->SetRefreshRate(hertz);
 }
 
 }  // namespace mitto

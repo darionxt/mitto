@@ -784,7 +784,8 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //               "window_width": 1920, "window_height": 1032,
 //               "contrast_theme": "none", "inverted_colors": "none",
 //               "memory": 8, "screen_width": 1920, "screen_height": 1080,
-//               "scale": 1, "viewport_width": 1920, "viewport_height": 945,
+//               "scale": 1, "refresh_rate": 60,
+//               "viewport_width": 1920, "viewport_height": 945,
 //               "color_scheme": "light", "reduced_motion": "no-preference",
 //               "reduced_transparency": "no-preference",
 //               "effective_type": "4g",
@@ -850,8 +851,9 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   - "memory" is what Chrome makes of the memory, 2, 4, 8, 16 or 32 GiB, from
 //     which the Page's V8 also works out its heap's limits.
 //   - "screen_width" and "screen_height" are the primary display, "scale" its
-//     scale, from 1 to 5, and "viewport_width" and "viewport_height" the
-//     window's page area. Each size is at least 1.
+//     scale, from 1 to 5, "refresh_rate" its refresh rate in hertz, from 1 to
+//     1000, at which the Page begins frames, and "viewport_width" and
+//     "viewport_height" the window's page area. Each size is at least 1.
 //   - "color_scheme" is "light" or "dark", "reduced_motion" and
 //     "reduced_transparency" each "no-preference" or "reduce", and
 //     "effective_type" the effective connection type that the Session's ect

@@ -133,6 +133,11 @@ _MOST_PROCESSORS = 64
 # Upstream: ui/base/pointer/pointer_device_win.cc
 _MOST_TOUCH_POINTS = 256
 
+# Chrome begins a frame at each vsync of the primary display, a period that it works out from the refresh rate that
+# QueryDisplayConfig gives. A Machine holds a whole number of hertz, up to this.
+# Upstream: ui/gl/vsync_provider_win.cc
+_MOST_REFRESH_RATE = 1000
+
 # Chrome holds the throughput as 32 bits of kbps, and nothing larger is a round trip either.
 _LARGEST_ESTIMATE = 2**31 - 1
 
@@ -182,6 +187,8 @@ _GROUPS: dict[str, tuple[str, ...]] = {
     "audio_input": ("audio_input",),
     "video_input": ("video_input",),
     "audio_output": ("audio_output",),
+    # Last, so that a seed draws every other group as it did before the table had it.
+    "refresh_rate": ("refresh_rate",),
 }
 _WINDOWS = "windows"
 _WEIGHT = "weight"
@@ -191,7 +198,8 @@ _DISPLAY = "display"
 # Machine of mitto 0.2 held of it.
 _DISPLAY_OF_0_2 = ("display_width", "display_height", "scale", "viewport_width", "viewport_height")
 
-# The fields that mitto 0.2 did not know. A Machine that it saved lacks them.
+# The fields that mitto 0.2 did not know. A Machine that it saved lacks them, and so does one that a build of mitto saved
+# before it knew the refresh rate.
 _ADDED_AFTER_0_2 = frozenset(
     {
         *_WORK_AREA,
@@ -205,6 +213,7 @@ _ADDED_AFTER_0_2 = frozenset(
         "audio_input",
         "video_input",
         "audio_output",
+        "refresh_rate",
     }
 )
 
@@ -233,6 +242,8 @@ class Machine:
         display_width: The width of the primary display, in pixels.
         display_height: The height of the primary display, in pixels.
         scale: The scale in Windows' display settings, such as 1.25 for 125%.
+        refresh_rate: The refresh rate of the primary display in hertz, such as 60, at which Chrome begins frames and
+            runs a page's animation frame callbacks.
         work_area_x: Where the work area starts from the left, which is the display less the taskbar.
         work_area_y: Where the work area starts from the top.
         work_area_width: The width of the work area.
@@ -271,6 +282,7 @@ class Machine:
     display_width: int
     display_height: int
     scale: float
+    refresh_rate: int
     work_area_x: int
     work_area_y: int
     work_area_width: int
@@ -315,6 +327,7 @@ class Machine:
         display_width: int | None = None,
         display_height: int | None = None,
         scale: float | None = None,
+        refresh_rate: int | None = None,
         work_area_x: int | None = None,
         work_area_y: int | None = None,
         work_area_width: int | None = None,
@@ -356,6 +369,7 @@ class Machine:
             display_width: See memory.
             display_height: See memory.
             scale: See memory.
+            refresh_rate: See memory.
             work_area_x: See memory.
             work_area_y: See memory.
             work_area_width: See memory.
@@ -394,6 +408,7 @@ class Machine:
             "display_width": display_width,
             "display_height": display_height,
             "scale": scale,
+            "refresh_rate": refresh_rate,
             "work_area_x": work_area_x,
             "work_area_y": work_area_y,
             "work_area_width": work_area_width,
@@ -446,6 +461,7 @@ class Machine:
             display_width=1920,
             display_height=1080,
             scale=1,
+            refresh_rate=60,
             work_area_x=0,
             work_area_y=0,
             work_area_width=1920,
@@ -690,6 +706,7 @@ _CHECKS: dict[str, Callable[[str, object], None]] = {
     "display_width": _check_whole_number_from(1),
     "display_height": _check_whole_number_from(1),
     "scale": _check_scale,
+    "refresh_rate": _check_whole_number_from(1, _MOST_REFRESH_RATE),
     "work_area_x": _check_whole_number_from(0),
     "work_area_y": _check_whole_number_from(0),
     "work_area_width": _check_whole_number_from(1),
