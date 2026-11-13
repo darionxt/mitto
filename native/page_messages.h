@@ -384,6 +384,9 @@ struct PageStart {
   int screen_height = 0;
   // The display's scale, such as 1.25, which devicePixelRatio gives.
   double scale = 1;
+  // The display's refresh rate in hertz, at whose vsyncs the Page begins
+  // frames, as Chrome does.
+  int refresh_rate = 60;
   // The window's page area.
   int viewport_width = 0;
   int viewport_height = 0;

@@ -30,9 +30,14 @@ uint64_t DocumentLoadTiming::ToIntegerMilliseconds(base::TimeTicks time) const {
   if (time.is_null()) {
     return 0;
   }
-  const base::Time wall = unix_at_zero_monotonic_ + (time - base::TimeTicks());
   return static_cast<uint64_t>(
-      Performance::ClampTimeResolution(wall - base::Time::UnixEpoch()));
+      Performance::ClampTimeResolution(MonotonicTimeToPseudoWallTime(time)));
+}
+
+base::TimeDelta DocumentLoadTiming::MonotonicTimeToPseudoWallTime(
+    base::TimeTicks time) const {
+  return unix_at_zero_monotonic_ + (time - base::TimeTicks()) -
+         base::Time::UnixEpoch();
 }
 
 }  // namespace mitto

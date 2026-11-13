@@ -941,6 +941,10 @@ class HtmlTreeBuilder {
         element->SetAttributeWithoutValidation(attribute.name, attribute.value);
       }
     }
+    // The token's is attribute gives the element its is value.
+    if (const std::u16string* const is = element->FindAttribute(u"is")) {
+      element->SetIsValue(*is);
+    }
     return element;
   }
 
@@ -1677,7 +1681,7 @@ class HtmlTreeBuilder {
       return true;
     }
     if (name == u"script") {
-      ProcessGenericTextStartTag(token, HtmlTokenizer::State::kScriptData);
+      ProcessScriptStartTag(token);
       return true;
     }
     if (name == u"template") {
@@ -1694,6 +1698,25 @@ class HtmlTreeBuilder {
     original_mode_ = mode_;
     mode_ = Mode::kText;
     InsertHTMLElement(token);
+  }
+
+  // Blink's ProcessScriptStartTag() and InsertScriptElement(): the parser
+  // marks the script it makes as its own, already started in a fragment, so
+  // that it never runs, and gives it where its text starts.
+  void ProcessScriptStartTag(const HtmlToken& token) {
+    tokenizer_->SetState(HtmlTokenizer::State::kScriptData);
+    original_mode_ = mode_;
+    const HtmlTokenizer::ZeroBasedPosition position =
+        tokenizer_->TextPosition();
+    mode_ = Mode::kText;
+    auto* const script = static_cast<HTMLScriptElement*>(
+        CreateElement(token, html_names::kXhtmlNamespace));
+    script->SetCreatedByParser(*document_);
+    if (IsFragment()) {
+      script->SetAlreadyStarted();
+    }
+    script->SetStartPosition(position.line, position.column);
+    AttachOrFosterParent(script, &token);
   }
 
   void ProcessTemplateStartTag(const HtmlToken& token) {

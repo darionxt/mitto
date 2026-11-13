@@ -139,7 +139,7 @@ The HTML tokenizer follows the HTML Standard's tokenization section, and Blink's
 out/mitto/html_tokenizer_test mitto/test/html5lib_tokenizer mitto/test/html5lib_tokenizer_failures.txt
 ```
 
-It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
+It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. It also checks the position that the tokenizer gives right after a start tag, which the tree builder hands a script element for the line and column its errors count from. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
 
 The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
@@ -493,7 +493,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `css_selector_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
 | `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program, the tree builder's test and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 
@@ -517,7 +517,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML, `media_query_fuzzer` for what a page gives `matchMedia()` and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML, `media_query_fuzzer` for what a page gives `matchMedia()`, `css_selector_fuzzer` for the selectors a page gives `querySelector()` and the like, and `page_messages_fuzzer` for what a Page sends its Session, with the files of that name:
 
 ```bash
 mkdir corpus

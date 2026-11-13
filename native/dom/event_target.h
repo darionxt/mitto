@@ -1,10 +1,10 @@
 // The DOM's EventTarget: an object that keeps listeners and dispatches events
 // to them.
 //
-// It follows Blink's EventTarget, for dispatch on a single target: the event's
-// path is the target alone, where every listener of the event's type runs, in
-// the order they were added, capturing or not, as Blink runs them on a target
-// that is not a node.
+// It follows Blink's EventTarget: a target that is not a node dispatches an
+// event to its own listeners alone, every listener of the event's type in the
+// order they were added, capturing or not, and a node through the tree, which
+// event_dispatcher.h does, running each target's listeners here.
 //
 // Upstream: third_party/blink/renderer/core/dom/events/event_target.h
 // Upstream: third_party/blink/renderer/core/dom/events/event_target.cc
@@ -35,6 +35,18 @@ class ExceptionState;
 
 class AbortSignal;
 class Event;
+class Node;
+class Window;
+
+// What a dispatch did with an event, as Blink's DispatchEventResult says.
+enum class DispatchEventResult {
+  kNotCanceled,
+  // A listener canceled it.
+  kCanceledByEventHandler,
+  // A default event handler handled it, as DOMActivate that a listener
+  // canceled marks its click.
+  kCanceledByDefaultEventHandler,
+};
 
 // One listener that a page added: the DOM standard's event listener.
 class EventListenerEntry final
@@ -46,7 +58,9 @@ class EventListenerEntry final
                      bool capture,
                      bool passive,
                      bool once,
-                     bool attribute_handler = false);
+                     bool attribute_handler = false,
+                     bool passive_specified = false,
+                     bool passive_forced_for_document_target = false);
   ~EventListenerEntry();
 
   void Trace(cppgc::Visitor* visitor) const;
@@ -58,6 +72,13 @@ class EventListenerEntry final
   bool capture() const { return capture_; }
   bool passive() const { return passive_; }
   bool once() const { return once_; }
+  // Whether the page said `passive`, and whether Blink made the listener
+  // passive for a document's scrolling, as it does a touch or wheel listener
+  // of a window, a document, its root element or its body.
+  bool passive_specified() const { return passive_specified_; }
+  bool passive_forced_for_document_target() const {
+    return passive_forced_for_document_target_;
+  }
   bool removed() const { return removed_; }
   void set_removed() { removed_ = true; }
   // Whether it is the listener of an event handler attribute, such as
@@ -84,6 +105,8 @@ class EventListenerEntry final
   const bool passive_;
   const bool once_;
   const bool attribute_handler_;
+  const bool passive_specified_;
+  const bool passive_forced_for_document_target_;
   bool removed_ = false;
   cppgc::Member<EventListenerEntry> next_;
   cppgc::Member<AbortSignal> signal_;
@@ -111,13 +134,27 @@ class EventTarget : public bindings::ScriptWrappable {
   bool DispatchEventForBindings(Event* event,
                                 bindings::ExceptionState& exception_state);
 
-  // Dispatches `event` to this target's listeners, and returns whether no
-  // listener canceled it.
+  // This target as a node or a window, or null.
+  virtual Node* ToNode();
+  virtual Window* ToWindow();
+
+  // Dispatches `event`, through the tree for a node, and returns whether
+  // nothing canceled it.
   bool DispatchEvent(Event* event);
-  // The same, with `target` as the event's target, as the HTML Standard fires
-  // an event at a window with the legacy target override flag, such as load,
-  // whose target is the window's document.
+  // The same, and what canceled it.
+  DispatchEventResult DispatchEventWithResult(Event* event);
+  // At this target alone, with `target` as the event's target, as Blink's
+  // LocalDOMWindow::DispatchEvent() fires an event at a window with the HTML
+  // Standard's legacy target override flag, such as load, whose target is the
+  // window's document. As there, the event keeps this target as its current
+  // target, and its target phase, once it is done.
   bool DispatchEventWithTarget(Event* event, EventTarget* target);
+
+  // Runs this target's listeners for the event, at the event's phase, as
+  // Blink's EventTarget::FireEventListeners() does. Returns whether any ran.
+  bool FireEventListeners(Event* event);
+  // What a dispatch of `event` did, once it is done.
+  static DispatchEventResult GetDispatchEventResult(const Event& event);
 
   // The handler of the event handler attribute for `type`, such as `onload`
   // for load, or null.
@@ -146,11 +183,14 @@ class EventTarget : public bindings::ScriptWrappable {
   // Called once a listener of `type` has joined or left, as Blink's
   // AddedEventListener() and RemovedEventListener() are.
   virtual void ListenersChanged(std::u16string_view type) {}
+  // Dispatches `event`: at this target alone, as Blink's
+  // EventTarget::DispatchEventInternal() does. A node goes through the tree.
+  virtual DispatchEventResult DispatchEventInternal(Event* event);
 
  private:
-  // Runs the listeners of the event's type, and returns whether the event is
-  // canceled, as Blink's EventTarget::FireEventListeners() does.
-  bool FireEventListeners(Event* event);
+  // Blink's IsTopLevelNode(): a window, a document, its root element or its
+  // body, whose touch and wheel listeners are passive by default.
+  bool IsTopLevelNode();
   void RemoveEntry(EventListenerEntry* entry);
 
   // The listeners, in the order they were added, as a list of objects on the

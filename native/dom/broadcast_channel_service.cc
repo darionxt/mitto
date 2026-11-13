@@ -21,14 +21,13 @@
 namespace mitto {
 namespace {
 
-// A hop of a message, to the service or from it to a channel. Blink's channel
-// receives on TaskType::kInternalDefault, where this moves once the event loop
-// has Blink's task types (#270).
+// A hop of a message, to the service or from it to a channel, on
+// TaskType::kInternalDefault, where Blink's channel receives.
 void PostServiceTask(base::OnceClosure task) {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
-  event_loop->TaskRunner(EventLoop::Queue::kDefault)
+  event_loop->TaskRunner(TaskType::kInternalDefault)
       ->PostTask(FROM_HERE, std::move(task));
 }
 

@@ -73,8 +73,10 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
 # - SaveSameObject: the bindings keep what a static attribute's getter gave on the interface object, as bind_gen's do on
 #   the receiver; the class keeps what an instance's attribute gives.
-# - PutForwards and LegacyLenientSetter: only an attribute's setter forwards or does nothing, and the writer refuses that
-#   setter's behaviour, so an attribute with either can have its getter alone.
+# - PutForwards: the setter sets the attribute it names on what the getter gives, as bind_gen's
+#   make_steps_of_put_forwards() does.
+# - LegacyLenientSetter: only an attribute's setter does nothing, and the writer refuses that setter's behaviour, so an
+#   attribute with it can have its getter alone.
 # - Serializable and Transferable: only structured cloning reads them, which nothing in a Page can reach yet: it has
 #   neither postMessage() nor structuredClone().
 # - V8EnableIndexOf and V8EnableIterableToList: interceptors that let V8 take its fast paths through an indexed
@@ -92,6 +94,9 @@ WRITTEN = frozenset(
         "Exposed",
         "Global",
         "HTMLConstructor",
+        # The global object's install function installs the factory function, which the class's bindings write.
+        "LegacyFactoryFunction",
+        "LegacyFactoryFunction_RaisesException",
         "LegacyLenientSetter",
         "LegacyNoInterfaceObject",
         "LegacyUnenumerableNamedProperties",
@@ -100,6 +105,8 @@ WRITTEN = frozenset(
         "LegacyWindowAlias",
         "NewObject",
         "NoAllocDirectCall",
+        # A Page's window has one context, which is the node's own.
+        "NodeWrapInOwnContext",
         "NotEnumerable",
         "PutForwards",
         "RaisesException",
@@ -382,6 +389,7 @@ class _InterfaceWriter:
         has_class: Callable[[str], bool],
         context: KnownGapContext,
         class_header: Callable[[str], str],
+        implemented_of: Callable[[str], ImplementedInterface | None],
     ) -> None:
         self.interface = interface
         self.implemented = implemented
@@ -392,6 +400,7 @@ class _InterfaceWriter:
         self.has_class = has_class
         self.context = context
         self.class_header = class_header
+        self.implemented_of = implemented_of
         self.constructs: list[ExposedConstruct] = []
         self.known_gap_rows: list[str] = []
         self.cls = f"mitto::{interface.name}"
@@ -521,6 +530,12 @@ class _InterfaceWriter:
         lines.append("}")
         self.callbacks.append("\n".join(lines))
         return name
+
+    def _stringifier(self) -> str:
+        """A stringifier operation's toString(), which gives the class's ToString(), as Blink's gives its stringifier
+        operation's."""
+        body = [*self._receiver(), "info.GetReturnValue().Set(ToV8String(isolate, impl->ToString()));"]
+        return self._add_callback("StringifierCallback", body)
 
     def _missing(self, name: str, has_receiver: bool = True, lenient: bool = False) -> str:
         """A Known Gap's callback, which known_gap.h has for every member, with the member's MemberInfo as its data."""
@@ -729,6 +744,55 @@ class _InterfaceWriter:
             ],
         )
 
+    def _stringifier_attribute(self) -> Attribute | None:
+        """The attribute whose getter a stringifier gives, when the class has that getter's behaviour."""
+        name = self.interface.stringifier
+        if not name:
+            return None
+        attribute = next((attribute for attribute in self.interface.attributes if attribute.name == name), None)
+        if attribute is None or not self._has_attribute_behaviour(attribute, "get"):
+            return None
+        return attribute
+
+    def stringifier(self) -> str:
+        """The callback of toString() for a stringifier attribute, which gives what the attribute's getter gives, as
+        Blink's toString() is that getter."""
+        attribute = self._stringifier_attribute()
+        assert attribute is not None
+        where = f"stringifier of {self.interface.name}"
+        if reflected_attribute(attribute) is not None:
+            raise UnhandledError(f"{where}: the C++ writer does not handle a reflected stringifier")
+        self.types.return_type(attribute.idl_type, where)
+        call = f"impl->{self.method_name(attribute)}()"
+        return self._add_callback(
+            "ToStringOperationCallback",
+            [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"],
+        )
+
+    def _put_forwards_setter(self, name: str, attribute: Attribute) -> str:
+        """bind_gen's make_steps_of_put_forwards(): the setter sets the attribute that [PutForwards] names on what the
+        getter gives, through V8, so that a page's own getters and setters run as in Chrome."""
+        forward = attribute.extended_attributes.value_of("PutForwards")
+        return self._add_callback(
+            name,
+            [
+                "const v8::Local<v8::Context> context = isolate->GetCurrentContext();",
+                "v8::Local<v8::Value> target;",
+                f'if (!info.This()->Get(context, v8::String::NewFromUtf8Literal(isolate, "{attribute.name}"))',
+                "         .ToLocal(&target)) {",
+                "  return;",
+                "}",
+                "if (!target->IsObject()) {",
+                '  ThrowTypeError(isolate, "The attribute value is not an object");',
+                "  return;",
+                "}",
+                "bool did_set;",
+                "std::ignore = target.As<v8::Object>()",
+                f'                  ->Set(context, v8::String::NewFromUtf8Literal(isolate, "{forward}"), info[0])',
+                "                  .To(&did_set);",
+            ],
+        )
+
     def attribute_setter(self, attribute: Attribute) -> str:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeSetCallback"
@@ -752,9 +816,10 @@ class _InterfaceWriter:
                     "}",
                 ],
             )
-        for key in ("PutForwards", "LegacyLenientSetter"):
-            if key in extended:
-                raise UnhandledError(f"{where}: the C++ writer does not handle the behaviour of [{key}]")
+        if "PutForwards" in extended:
+            return self._put_forwards_setter(name, attribute)
+        if "LegacyLenientSetter" in extended:
+            raise UnhandledError(f"{where}: the C++ writer does not handle the behaviour of [LegacyLenientSetter]")
         if attribute.is_readonly:
             raise UnhandledError(f"{where}: the C++ writer does not handle setters of read-only attributes")
         site = Site(fail="return;")
@@ -1062,18 +1127,58 @@ class _InterfaceWriter:
             body += self._dispatch(overloads, "constructor", where, self._construct, [])
         return self._add_callback(name, body)
 
-    def _construct(self, operation: Operation, where: str, check_length: bool) -> list[str]:
-        """The statements that convert a constructor's arguments, make the class's object and wrap it."""
+    def _construct(
+        self,
+        operation: Operation,
+        where: str,
+        check_length: bool,
+        create: str = "Create",
+        raises: str = "RaisesException",
+    ) -> list[str]:
+        """The statements that convert a constructor's arguments, make the class's object with its static `create`,
+        and wrap it."""
         _check_written(where, operation.extended_attributes)
         conversions, passed = self._arguments(operation.arguments, where, check_length)
         body = list(conversions)
-        if "RaisesException" in operation.extended_attributes:
+        if raises in operation.extended_attributes:
             passed.append("exception_state")
-        body.append(f"{self.cls}* const impl = {self.cls}::Create({', '.join(passed)});")
-        if "RaisesException" in operation.extended_attributes:
+        body.append(f"{self.cls}* const impl = {self.cls}::{create}({', '.join(passed)});")
+        if raises in operation.extended_attributes:
             body += ["if (exception_state.HadException()) {", "  return;", "}"]
         body += ["impl->AssociateWithWrapper(isolate, info.This());", "info.GetReturnValue().Set(info.This());"]
         return body
+
+    def _factory_functions_with_behaviour(self) -> list[OperationGroup]:
+        """The [LegacyFactoryFunction]s, such as Image, whose behaviour the class has: interfaces.gni names each."""
+        return [
+            group for group in self.interface.legacy_factory_functions if self.implemented.has_behaviour(group.name)
+        ]
+
+    def legacy_factory_function(self, group: OperationGroup) -> str:
+        """The callback of a [LegacyFactoryFunction], as bind_gen's make_constructor_function() writes it for one: it
+        must be called with `new`, converts its arguments, and wraps the object that the class's static
+        CreateForJSConstructor() makes in the current window's document, as Blink's [LegacyFactoryFunction_CallWith=
+        Document] passes it, on the object that `new` made from the factory function's template."""
+        where = f"factory function {group.name}"
+        body = [
+            "if (!info.IsConstructCall()) {",
+            "  ThrowTypeError(isolate, ExceptionMessages::ConstructorCalledAsFunction());",
+            "  return;",
+            "}",
+            self._exception_state(),
+        ]
+
+        def construct(operation: Operation, where: str, check_length: bool) -> list[str]:
+            return self._construct(
+                operation, where, check_length, "CreateForJSConstructor", "LegacyFactoryFunction_RaisesException"
+            )
+
+        overloads = self._reachable_overloads(group)
+        if len(overloads) == 1:
+            body += construct(overloads[0], where, True)
+        else:
+            body += self._dispatch(overloads, "constructor", where, construct, [])
+        return self._add_callback(f"{group.name}LegacyFactoryFunction", body)
 
     # The indexed and named properties.
 
@@ -1153,7 +1258,11 @@ class _InterfaceWriter:
             return_type, call = self._getter_call(named, "name")
             reduced = self.types.reduce(return_type)
             # Blink's test of whether the class has the named property: what its getter gives says so.
-            if reduced.kind is TypeKind.INTERFACE or (reduced.kind is TypeKind.STRING and reduced.nullable):
+            if (
+                reduced.kind is TypeKind.INTERFACE
+                or (reduced.kind is TypeKind.STRING and reduced.nullable)
+                or (reduced.kind is TypeKind.UNION and reduced.nullable)
+            ):
                 not_found = "!result"
             elif reduced.kind in (TypeKind.ANY, TypeKind.OBJECT):
                 not_found = "result.IsEmpty()"
@@ -1272,11 +1381,16 @@ class _InterfaceWriter:
                 "  }",
                 "}",
             ]
+        if member is None and property_.name == "toString" and self.interface.stringifier is not None:
+            # A stringifier attribute's getter, or a stringifier operation's ToString().
+            callback = self.stringifier() if self.interface.stringifier else self._stringifier()
+            install = "InstallOperationOnObject" if on_objects else "InstallOperation"
+            first = "isolate, context" if on_objects else "isolate"
+            return [
+                f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
+                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+            ]
         if isinstance(member, ExposedConstruct):
-            if member.kind == "factory function" and self.has_class(member.target):
-                raise UnhandledError(
-                    f"{self.where(member.name)}: the C++ writer does not call the class of a factory function"
-                )
             if member not in self.constructs:
                 self.constructs.append(member)
             construct = f"kExposedConstructs[{self.constructs.index(member)}]"
@@ -1475,16 +1589,20 @@ class _InterfaceWriter:
         }
         lines = ["constexpr ExposedConstructInfo kExposedConstructs[] = {"]
         for construct in self.constructs:
-            operation, number, refused = "nullptr", "0", "false"
+            operation, number, refused, callback = "nullptr", "0", "false", "nullptr"
             if construct.kind == "factory function":
-                group = self.context.factory_functions[construct.name]
-                operation = self.context.types.operation(group, f"factory function {construct.name}")
-                number = str(self.context.gaps.number())
-                refused = "true" if not self.context.gaps.object_is_safe(construct.target) else "false"
+                target = self.implemented_of(construct.target)
+                if target is not None and target.has_behaviour(construct.name):
+                    callback = f"&V8{construct.target}::{construct.name}LegacyFactoryFunctionCallback"
+                else:
+                    group = self.context.factory_functions[construct.name]
+                    operation = self.context.types.operation(group, f"factory function {construct.name}")
+                    number = str(self.context.gaps.number())
+                    refused = "true" if not self.context.gaps.object_is_safe(construct.target) else "false"
             lines.append(
                 f'    {{"{construct.name}", &V8{construct.target}::kWrapperTypeInfo, '
                 f"ExposedConstructInfo::Kind::{kinds[construct.kind]}, {construct.length}, {operation}, {number}, "
-                f"{refused}}},"
+                f"{refused}, {callback}}},"
             )
         return [*lines, "};", ""]
 
@@ -1519,6 +1637,12 @@ class _InterfaceWriter:
                 "",
                 f"  // Returns the {interface.name} that `value` wraps, or null if it wraps none.",
                 f"  static {self.cls}* ToWrappable(v8::Isolate* isolate, v8::Local<v8::Value> value);",
+                *[
+                    f"  // The [LegacyFactoryFunction] {group.name}, which the global object's bindings install.\n"
+                    f"  static void {group.name}LegacyFactoryFunctionCallback("
+                    "const v8::FunctionCallbackInfo<v8::Value>& info);"
+                    for group in self._factory_functions_with_behaviour()
+                ],
                 "};",
                 "",
                 "}  // namespace mitto::bindings",
@@ -1527,10 +1651,16 @@ class _InterfaceWriter:
                 "",
             ]
         )
-        _check_written(f"interface {interface.name}", interface.extended_attributes)
-        for unhandled in ("stringifier", "legacy_factory_functions"):
-            if getattr(interface, unhandled):
-                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {unhandled}")
+        extended = interface.extended_attributes
+        if "LegacyOverrideBuiltIns" in extended and self._special_with_behaviour("named getter") is None:
+            # It changes only named properties, and a named property operation that is a Known Gap is not installed.
+            extended = ExtendedAttributes(
+                tuple(entry for entry in extended.entries if entry[0] != "LegacyOverrideBuiltIns")
+            )
+        _check_written(f"interface {interface.name}", extended)
+        factory_functions = [self.legacy_factory_function(group) for group in self._factory_functions_with_behaviour()]
+        if interface.stringifier and self._stringifier_attribute() is None:
+            raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its stringifier")
         if interface.collection is not None and self._collection_with_behaviour() is None:
             collection_members = [attribute.name for attribute in interface.collection.attributes]
             collection_members += [group.name for group in interface.collection.operation_groups]
@@ -1634,9 +1764,15 @@ class _InterfaceWriter:
             f"  return ToWrappableOf<{self.cls}>(isolate, kWrapperTypeInfo, value);",
             "}",
             "",
-            "}  // namespace mitto::bindings",
-            "",
         ]
+        for callback in factory_functions:
+            source += [
+                f"void {self.v8_class}::{callback}Callback(const v8::FunctionCallbackInfo<v8::Value>& info) {{",
+                f"  {callback}(info);",
+                "}",
+                "",
+            ]
+        source += ["}  // namespace mitto::bindings", ""]
         return header, "\n".join(source)
 
 
@@ -2185,6 +2321,8 @@ def _check_named_members(name: str, interface: Interface, implemented: Implement
     attributes = {attribute.name for attribute in interface.attributes}
     members = attributes | {group.name for group in interface.operation_groups}
     members |= {special.kind for special in interface.special_operations}
+    # A [LegacyFactoryFunction], such as Image, by its name.
+    members |= {group.name for group in interface.legacy_factory_functions}
     if implemented.made_by_known_gaps and interface.constructor_group is not None:
         members.add(CONSTRUCTOR)
     if interface.collection is not None:
@@ -2371,6 +2509,7 @@ def write_bindings(
             by_name.__contains__,
             context,
             lambda name: by_name[name].header,
+            by_name.get,
         )
         header, source = writer.write()
         base = f"v8_{file_name(name)}"

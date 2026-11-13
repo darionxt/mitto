@@ -35,8 +35,10 @@ def program() -> Path:
 @pytest.fixture(scope="module")
 def page_cases(program: Path) -> dict[str, str]:
     """Return what each case gave in the Page program."""
+    # The script goes in on standard input, since Windows limits a command line to 32,767 characters.
     result = subprocess.run(
-        [program, f"--html={_PAGE}", _CASES.read_text(encoding="utf-8")],
+        [program, f"--html={_PAGE}", "-"],
+        input=_CASES.read_text(encoding="utf-8"),
         capture_output=True,
         encoding="utf-8",
         timeout=_TIMEOUT_SECONDS,

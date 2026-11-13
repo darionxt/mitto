@@ -438,9 +438,8 @@ void MessagePort::WaitToReadMore() {
 }
 
 // SimpleWatcher's task, which runs Connector::OnWatcherHandleReady(), or, when
-// `counted`, Connector::PostDispatchNextMessageFromPipe()'s. Blink's port reads
-// on TaskType::kPostedMessage, where this moves once the event loop has
-// Blink's task types (#270).
+// `counted`, Connector::PostDispatchNextMessageFromPipe()'s, on
+// TaskType::kPostedMessage, where Blink's port reads.
 // static
 void MessagePort::PostReadTask(cppgc::WeakPersistent<MessagePort> port,
                                uint64_t generation,
@@ -448,7 +447,7 @@ void MessagePort::PostReadTask(cppgc::WeakPersistent<MessagePort> port,
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
-  event_loop->TaskRunner(EventLoop::Queue::kDefault)
+  event_loop->TaskRunner(TaskType::kPostedMessage)
       ->PostTask(FROM_HERE,
                  base::BindOnce(&MessagePort::RunReadTask, std::move(port),
                                 generation, counted));

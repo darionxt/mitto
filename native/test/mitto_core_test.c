@@ -815,7 +815,7 @@ static const char kPageOptions[] =
     "\"window_height\": 1032, \"contrast_theme\": \"none\", "
     "\"inverted_colors\": \"none\", \"memory\": 8, "
     "\"screen_width\": 1920, \"screen_height\": 1080, \"scale\": 1, "
-    "\"viewport_width\": 1920, \"viewport_height\": 945, "
+    "\"refresh_rate\": 60, \"viewport_width\": 1920, \"viewport_height\": 945, "
     "\"color_scheme\": \"light\", \"reduced_motion\": \"no-preference\", "
     "\"reduced_transparency\": \"no-preference\", "
     "\"effective_type\": \"4g\", \"navigator\": {\"user_agent\": "

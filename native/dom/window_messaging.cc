@@ -167,7 +167,7 @@ void DoPostMessage(Window& window,
     return;
   }
   PostWindowTask(
-      &window,
+      &window, TaskType::kPostedMessage,
       base::BindOnce(
           [](cppgc::WeakPersistent<Window> window, SerializedScriptValue data,
              std::vector<MessagePortChannel> channels,
