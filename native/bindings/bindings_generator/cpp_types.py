@@ -265,7 +265,15 @@ class TypeMapper:
 
     def value_type(self, idl_type: IdlType, where: str) -> str:
         """The C++ type that holds a converted value of the type."""
-        return self.argument_type(idl_type, where).removeprefix("const ").removesuffix("&")
+        argument_type = self.argument_type(idl_type, where)
+        if _is_byte_span(self.reduce(idl_type)):
+            # The bytes until the call, which checks their buffer then (SpanAtCall()).
+            return "ByteSpanArgument"
+        return argument_type.removeprefix("const ").removesuffix("&")
+
+    def is_byte_span(self, idl_type: IdlType) -> bool:
+        """Whether the type is a [PassAsSpan] BufferSource, which goes to the class through SpanAtCall()."""
+        return _is_byte_span(self.reduce(idl_type))
 
     def return_type(self, idl_type: IdlType, where: str) -> str:
         """The C++ type that a class's method returns for the type."""
@@ -553,7 +561,7 @@ class TypeMapper:
             if site.argument_index is None:
                 raise self._refuse(idl_type, where, "a value")
             return [
-                f"base::span<const uint8_t> {target};",
+                f"ByteSpanArgument {target};",
                 f"if (!FromV8ByteSpan({value}, {site.argument_index}, exception_state, &{target})) {{",
                 f"  {site.fail}",
                 "}",

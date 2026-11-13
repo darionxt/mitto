@@ -353,9 +353,12 @@ class _InterfaceWriter:
             # whatever it gets, as Blink's do.
             reduced = self.types.reduce(argument.idl_type)
             converts_undefined = reduced.kind is TypeKind.DICTIONARY and argument.default == "{}"
+            # A [PassAsSpan] argument's bytes go to the class after every argument has converted, with Blink's check
+            # that a page's script did not detach their buffer meanwhile.
+            passed_value = f"SpanAtCall({target})" if self.types.is_byte_span(argument.idl_type) else target
             if not argument.is_optional or converts_undefined:
                 lines += self.types.from_v8(argument.idl_type, value, target, site, argument_where)
-                passed.append(target)
+                passed.append(passed_value)
                 continue
             cpp_type = self.types.value_type(argument.idl_type, argument_where)
             converted = self.types.from_v8(argument.idl_type, value, f"{target}_value", site, argument_where)
@@ -370,7 +373,7 @@ class _InterfaceWriter:
                 f"  {target} = std::move({target}_value);",
             ]
             lines.append("}")
-            passed.append(target)
+            passed.append(passed_value)
         return lines, passed
 
     def _add_callback(self, name: str, body: list[str]) -> str:

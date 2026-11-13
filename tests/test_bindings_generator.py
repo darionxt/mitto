@@ -420,7 +420,11 @@ def test_the_cpp_types_of_what_text_encoder_and_text_decoder_take_and_give() -> 
     assert 'ExceptionMessages::ArgumentNotOfType(1, "Uint8Array")' in view
     assert 'CheckArrayBufferViewNotShared(view, "Uint8Array", exception_state)' in view
     span = types.from_v8(buffer_source, "info[0]", "bytes", Site(fail="return;", argument_index=0), "a")
+    assert span[0] == "ByteSpanArgument bytes;"
     assert "FromV8ByteSpan(info[0], 0, exception_state, &bytes)" in span[1]
+    # The class gets the bytes once every argument has converted, which may have detached their buffer.
+    assert types.value_type(buffer_source, "a") == "ByteSpanArgument"
+    assert types.is_byte_span(buffer_source)
     # The class makes a dictionary's object, and returns it as it is.
     assert types.return_type(dictionary, "a") == "v8::Local<v8::Object>"
     assert types.to_v8(dictionary, "result") == "result"

@@ -519,6 +519,21 @@ _DECODER = {
         " return [new TextDecoder().decode(b), new TextDecoder().decode(v)].join() + '|'",
         "value: ,|",
     ),
+    "decode of a buffer that its options detach": (
+        "const b = new TextEncoder().encode('abc').buffer;"
+        " return JSON.stringify(new TextDecoder().decode(b, {get stream() { b.transfer(0); return false; }}))",
+        'value: ""',
+    ),
+    "decode of a view whose buffer its options detach": (
+        "const v = new TextEncoder().encode('abcdefghijklmnopqrstuvwxyz0123456789'.repeat(2));"
+        " return JSON.stringify(new TextDecoder().decode(v, {get stream() { v.buffer.transfer(0); return false; }}))",
+        'value: ""',
+    ),
+    "decode of a small view whose buffer its options detach": (
+        "const v = new Uint8Array([97, 98, 99]);"
+        " return JSON.stringify(new TextDecoder().decode(v, {get stream() { v.buffer.transfer(0); return false; }}))",
+        'value: "abc"',
+    ),
     "decode of something else": (
         "return new TextDecoder().decode('abc')",
         "threw: TypeError: Failed to execute 'decode' on 'TextDecoder': parameter 1 is not of type 'ArrayBuffer'.",
