@@ -278,7 +278,7 @@ The defaults keep a page's script running where Chrome's runs, and with it the r
 - **Its default until** the milestone of the roadmap that brings its behaviour, or because the roadmap leaves it out, or because no milestone has what it needs yet.
 - **Nothing**, for a member of an interface whose objects a Page cannot have yet.
 
-"Not yet" marks a choice that the Runtime does not have yet: that member is still a Known Gap. `atob()` and `btoa()` are on the list on the owner's word of 2026-11-13, not from the use counters, which do not count them: as Known Gaps they gave `""`, which broke base64, and the code that builds on it, without an error.
+`atob()` and `btoa()` are on the list on the owner's word of 2026-11-13, not from the use counters, which do not count them: as Known Gaps they gave `""`, which broke base64, and the code that builds on it, without an error.
 
 | Members | Page loads | Gets | Why |
 | --- | --- | --- | --- |
