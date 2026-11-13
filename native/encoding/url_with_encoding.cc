@@ -38,9 +38,6 @@ class EncodingCharsetConverter final : public url::CharsetConverter {
 GURL ResolveUrlWithEncoding(const GURL& base,
                             std::u16string_view relative,
                             std::string_view encoding) {
-  if (!base.is_valid()) {
-    return GURL();
-  }
   // UTF-8 needs no converter, and UTF-16 encodes as UTF-8, as Blink's
   // IsUnicodeEncoding() has it.
   std::unique_ptr<EncodingCharsetConverter> converter;
@@ -48,13 +45,18 @@ GURL ResolveUrlWithEncoding(const GURL& base,
       ClosestByteBasedEquivalent(encoding) != kUtf8EncodingName) {
     converter = std::make_unique<EncodingCharsetConverter>(encoding);
   }
-  // GURL::Resolve(), with the converter.
+  // GURL::Resolve(), with the converter. An invalid base counts as none, as
+  // Blink's null KURL does: only an absolute URL resolves, its query still in
+  // the encoding.
+  const std::string_view base_spec =
+      base.is_valid() ? std::string_view(base.spec()) : std::string_view();
+  const url::Parsed base_parsed =
+      base.is_valid() ? base.parsed_for_possibly_invalid_spec() : url::Parsed();
   std::string spec;
   url::StdStringCanonOutput output(&spec);
   url::Parsed parsed;
-  if (!url::ResolveRelative(base.spec(),
-                            base.parsed_for_possibly_invalid_spec(), relative,
-                            converter.get(), &output, &parsed)) {
+  if (!url::ResolveRelative(base_spec, base_parsed, relative, converter.get(),
+                            &output, &parsed)) {
     return GURL();
   }
   output.Complete();

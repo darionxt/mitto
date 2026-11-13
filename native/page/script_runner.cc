@@ -20,6 +20,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
@@ -279,10 +280,11 @@ void ScriptRunner::EndTask() {
       reporter_->TakeUnhandledRejections();
   if (!rejections.empty()) {
     ++reports_queued_;
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&ScriptRunner::ReportRejections, base::Unretained(this),
-                       std::move(rejections)));
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kDOMManipulation)
+        ->PostTask(FROM_HERE, base::BindOnce(&ScriptRunner::ReportRejections,
+                                             base::Unretained(this),
+                                             std::move(rejections)));
   }
   // Results wait for the reports queued before them.
   if (reports_queued_ > 0) {
