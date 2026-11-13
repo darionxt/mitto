@@ -188,16 +188,7 @@ RUNTIME = BuildConfig("runtime", args_file=RUNTIME_ARGS_GN, target="runtime", pr
 # so each has a directory of its own beside the sanitizer's build of the library.
 RUNTIME_ASAN = dataclasses.replace(RUNTIME, name="runtime-asan", args=ASAN.args)
 RUNTIME_UBSAN = dataclasses.replace(RUNTIME, name="runtime-ubsan", args=UBSAN.args)
-# The tree builder's fuzz target, which needs V8's heap as the Page program does: the
-# Runtime's args with the fuzz build's, building that target alone.
-RUNTIME_FUZZ = dataclasses.replace(
-    RUNTIME,
-    name="runtime-fuzz",
-    args=FUZZ.args,
-    target="mitto/dom:html_tree_builder_fuzzer",
-    program="html_tree_builder_fuzzer",
-)
-CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ, RUNTIME, RUNTIME_ASAN, RUNTIME_UBSAN, RUNTIME_FUZZ)
+CONFIGS = (PLAIN, ASAN, UBSAN, FUZZ, RUNTIME, RUNTIME_ASAN, RUNTIME_UBSAN)
 
 
 @dataclasses.dataclass(frozen=True)

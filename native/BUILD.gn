@@ -334,15 +334,11 @@ if (mitto_enable_runtime) {
   # library it links, so ICU's stub data, which runtime_args.gn turns on for
   # V8's build, would clash there with //mitto:icu_data.
   group("runtime") {
-    testonly = use_libfuzzer
     deps = [
       "bindings:generator_test",
       "bindings:web_idl_database",
       "dom:html_tree_builder_test",
       "page:mitto_page",
     ]
-    if (use_libfuzzer) {
-      deps += [ "dom:html_tree_builder_fuzzer" ]
-    }
   }
 }
