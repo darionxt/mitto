@@ -1,6 +1,6 @@
 // windows-1252, which the Encoding Standard's labels for ISO-8859-1 and ASCII
-// name too, as Blink's TextCodecLatin1 decodes it: one character for each
-// byte, from windows-1252's table.
+// name too, as Blink's TextCodecLatin1 decodes and encodes it: one character
+// for each byte, from windows-1252's table.
 //
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_latin1.h
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_latin1.cc
@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 
 #include "base/containers/span.h"
 #include "mitto/encoding/text_codec.h"
@@ -26,6 +27,8 @@ class TextCodecLatin1 final : public TextCodec {
                         FlushBehavior flush,
                         bool stop_on_error,
                         bool& saw_error) override;
+  std::string Encode(std::u16string_view text,
+                     UnencodableHandling handling) override;
 };
 
 }  // namespace mitto

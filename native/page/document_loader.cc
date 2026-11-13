@@ -22,6 +22,10 @@
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/window.h"
+#include "mitto/encoding/content_type.h"
+#include "mitto/encoding/text_encoding_registry.h"
+#include "mitto/encoding/text_resource_decoder.h"
+#include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
 
@@ -168,66 +172,21 @@ void FireSimpleEvent(EventTarget& target, const std::u16string& type) {
   target.DispatchEvent(event);
 }
 
-// How many bytes at the end of `bytes` start a UTF-8 sequence that has not
-// ended yet.
-size_t IncompleteTail(std::string_view bytes) {
-  const size_t look = std::min<size_t>(bytes.size(), 3);
-  for (size_t back = 1; back <= look; ++back) {
-    const uint8_t byte = static_cast<uint8_t>(bytes[bytes.size() - back]);
-    if ((byte & 0xC0) == 0x80) {
-      // A continuation byte: look further back for its lead.
-      continue;
-    }
-    const size_t length = (byte & 0xE0) == 0xC0   ? 2
-                          : (byte & 0xF0) == 0xE0 ? 3
-                          : (byte & 0xF8) == 0xF0 ? 4
-                                                  : 1;
-    return length > back ? back : 0;
-  }
-  return 0;
-}
-
 }  // namespace
-
-Utf8StreamDecoder::Utf8StreamDecoder() = default;
-Utf8StreamDecoder::~Utf8StreamDecoder() = default;
-
-std::u16string Utf8StreamDecoder::Decode(std::string_view bytes) {
-  pending_.append(bytes);
-  std::string_view complete = pending_;
-  if (!started_) {
-    // The byte order mark, once three bytes have come to tell.
-    if (complete.size() < 3 &&
-        std::string_view("\xEF\xBB\xBF").starts_with(complete)) {
-      return std::u16string();
-    }
-    started_ = true;
-    if (complete.starts_with("\xEF\xBB\xBF")) {
-      complete.remove_prefix(3);
-    }
-  }
-  const size_t tail = IncompleteTail(complete);
-  std::u16string text;
-  base::UTF8ToUTF16(complete.data(), complete.size() - tail, &text);
-  pending_ = std::string(complete.substr(complete.size() - tail));
-  return text;
-}
-
-std::u16string Utf8StreamDecoder::Flush() {
-  // A sequence that the stream cut off is not UTF-8, also one that began as a
-  // byte order mark.
-  std::u16string text;
-  base::UTF8ToUTF16(pending_.data(), pending_.size(), &text);
-  pending_.clear();
-  started_ = true;
-  return text;
-}
 
 // One classic script that the document fetches through the Session.
 class DocumentLoader::ScriptFetch final : public PageRequests::Client {
  public:
-  ScriptFetch(DocumentLoader& loader, HTMLScriptElement& element, GURL url)
-      : loader_(loader), element_(&element), url_(std::move(url)) {}
+  // `encoding` is what the script decodes with unless its response or a byte
+  // order mark says otherwise.
+  ScriptFetch(DocumentLoader& loader,
+              HTMLScriptElement& element,
+              GURL url,
+              std::string encoding)
+      : loader_(loader),
+        element_(&element),
+        url_(std::move(url)),
+        encoding_(std::move(encoding)) {}
 
   ScriptFetch(const ScriptFetch&) = delete;
   ScriptFetch& operator=(const ScriptFetch&) = delete;
@@ -251,9 +210,13 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   const GURL& response_url() const { return response_url_; }
   const std::string& response_headers() const { return response_headers_; }
   std::u16string TakeSource() {
-    Utf8StreamDecoder decoder;
-    std::u16string source = decoder.Decode(source_);
-    source += decoder.Flush();
+    const std::unique_ptr<TextResourceDecoder> decoder =
+        BuildClassicScriptDecoder(
+            encoding_, GetMimeTypeAndCharset(
+                           HeaderField(response_headers_, "content-type"))
+                           .charset);
+    std::u16string source = decoder->Decode(base::as_byte_span(source_));
+    source += decoder->Flush();
     source_.clear();
     return source;
   }
@@ -279,6 +242,7 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   const raw_ref<DocumentLoader> loader_;
   const cppgc::Persistent<HTMLScriptElement> element_;
   const GURL url_;
+  const std::string encoding_;
   uint64_t number_ = 0;
   int status_ = 0;
   GURL response_url_;
@@ -348,7 +312,26 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       base::Time::FromString(last_modified.c_str(), &last_modified_time)) {
     document_->SetLastModified(last_modified_time);
   }
+  // The decoder that DocumentLoader makes at commit, for a top-level
+  // document of a browser in the Persona's locale. A response with no MIME
+  // type is HTML here, as the parser reads it, where Chrome's network service
+  // sniffs one.
+  const MimeTypeAndCharset content_type =
+      GetMimeTypeAndCharset(HeaderField(response.headers, "content-type"));
+  decoder_ = BuildTextResourceDecoder(
+      url_,
+      content_type.mime_type.empty() ? "text/html" : content_type.mime_type,
+      content_type.charset, document_->DefaultView()->Start().locale,
+      /*parent=*/nullptr);
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
+}
+
+void DocumentLoader::AppendDecoded(std::u16string text) {
+  // The document's encoding is the decoder's after each piece, as
+  // DecodedDataDocumentParser::UpdateDocument() sets it.
+  document_->SetEncoding(decoder_->encoding(),
+                         decoder_->EncodingWasDetectedHeuristically());
+  parser_->Append(text);
 }
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
@@ -391,7 +374,7 @@ void DocumentLoader::Pump() {
     if (!waiting_body_.empty()) {
       const std::string bytes = std::move(waiting_body_.front());
       waiting_body_.pop_front();
-      parser_->Append(decoder_.Decode(bytes));
+      AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
       requests_->TookBody(kNavigationRequest, bytes.size());
       continue;
     }
@@ -399,7 +382,7 @@ void DocumentLoader::Pump() {
       return;
     }
     if (!parser_finished_) {
-      parser_->Append(decoder_.Flush());
+      AppendDecoded(decoder_->Flush());
       parser_->Finish();
       parser_finished_ = true;
       // The parser may still reach scripts before the end.
@@ -427,13 +410,24 @@ bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
     runner_->RunClassicScript(element.Text(), url_);
     return false;
   }
-  // The document's URL is its base URL: <base> is a Known Gap.
-  const GURL url = src->empty() ? GURL() : url_.Resolve(*src);
+  // The document's URL is its base URL: <base> is a Known Gap. The query is in
+  // the document's encoding.
+  const GURL url = src->empty() ? GURL() : document_->CompleteUrl(*src);
   if (!url.is_valid()) {
     QueueErrorEvent(element);
     return false;
   }
-  auto fetch = std::make_unique<ScriptFetch>(*this, element, url);
+  // The encoding that the element's charset names, with no white space
+  // trimmed, or else the document's, as Chrome's preload scanner fetches a
+  // script that the parser reaches, whose resource the parser then takes.
+  const std::optional<std::u16string> charset =
+      element.GetAttribute(u"charset");
+  std::string encoding = charset ? CanonicalTextEncodingName(*charset) : "";
+  if (encoding.empty()) {
+    encoding = document_->Encoding();
+  }
+  auto fetch =
+      std::make_unique<ScriptFetch>(*this, element, url, std::move(encoding));
   ScriptFetch& started = *fetch;
   const bool runs_after_parsing =
       element.HasAttribute(u"defer") || element.HasAttribute(u"async");
