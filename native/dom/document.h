@@ -28,6 +28,7 @@
 
 namespace mitto {
 
+class Attr;
 class Comment;
 class CookieJar;
 class DocumentFragment;
@@ -133,6 +134,11 @@ class Document : public Node {
   // a document without a window, as Blink has no execution context to make it
   // from.
   PermissionsPolicy* FeaturePolicy();
+  Attr* CreateAttribute(const std::u16string& local_name,
+                        bindings::ExceptionState& exception_state);
+  Attr* CreateAttributeNS(const std::optional<std::u16string>& namespace_uri,
+                          const std::u16string& qualified_name,
+                          bindings::ExceptionState& exception_state);
   Comment* CreateComment(const std::u16string& data);
   DocumentFragment* CreateDocumentFragment();
   Element* CreateElementForBinding(const std::u16string& local_name,

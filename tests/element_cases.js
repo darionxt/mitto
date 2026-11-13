@@ -366,5 +366,269 @@
   run("li value no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLLIElement.prototype, "value"); const e = document.createElement("li"); d.set.call(e); return e.getAttribute("value"); });
   run("link crossOrigin no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "crossOrigin"); const e = document.createElement("link"); d.set.call(e); return e.getAttribute("crossorigin"); });
   run("link fetchPriority no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "fetchPriority"); const e = document.createElement("link"); d.set.call(e); return e.getAttribute("fetchpriority"); });
+  // Attr nodes and NamedNodeMap.
+  run("attr basics", () => {
+    const e = document.createElement("div");
+    e.setAttribute("Id", "x");
+    const a = e.getAttributeNode("id");
+    return [a, a.nodeType, a.nodeName, a.name, a.localName, a.prefix, a.namespaceURI, a.value, a.nodeValue, a.textContent, a.ownerElement === e, a.specified, a.parentNode, a.ownerDocument === document, a.isConnected, a.childNodes.length, a.firstChild, a.hasChildNodes(), a === e.getAttributeNode("ID"), a === e.attributes[0], a === e.attributes.id].map(String).join("|");
+  });
+  run("attr live value", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "a");
+    const a = e.getAttributeNode("title");
+    e.setAttribute("title", "b");
+    const read = a.value;
+    a.value = "c";
+    const back = e.getAttribute("title");
+    a.textContent = null;
+    const cleared = e.getAttribute("title");
+    a.nodeValue = "d";
+    return [read, back, JSON.stringify(cleared), e.getAttribute("title")].join("|");
+  });
+  run("attr detached by removal", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "a");
+    const a = e.getAttributeNode("title");
+    e.removeAttribute("title");
+    const afterRemove = [a.ownerElement, a.value].map(String).join(",");
+    e.setAttribute("title", "new");
+    return [afterRemove, a.value, a === e.getAttributeNode("title")].join("|");
+  });
+  run("createAttribute", () => {
+    const a = document.createAttribute("FOO");
+    const b = new Document().createAttribute("FOO");
+    return [a.name, a.value, a.ownerElement, b.name, a.ownerDocument === document].map(String).join("|");
+  });
+  for (const name of ["", "a b", "a=b", "a>", "1a", ":a", "a:b"]) run(`createAttribute ${JSON.stringify(name)}`, () => document.createAttribute(name).name);
+  run("createAttributeNS", () => {
+    const a = document.createAttributeNS("http://www.w3.org/1999/xlink", "xlink:href");
+    return [a.name, a.prefix, a.localName, a.namespaceURI, a.value].map(String).join("|");
+  });
+  for (const [ns, qn] of [[null, "a:b"], ["urn:x", "xmlns"], ["urn:x", ""], ["urn:x", "a b"]]) run(`createAttributeNS ${ns} ${JSON.stringify(qn)}`, () => document.createAttributeNS(ns, qn).name);
+  run("setAttributeNode", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "old");
+    const before = e.getAttributeNode("title");
+    const a = document.createAttribute("title");
+    a.value = "new";
+    const old = e.setAttributeNode(a);
+    return [old === before, old.value, old.ownerElement, a.ownerElement === e, e.getAttribute("title"), e.setAttributeNode(a) === a, e.attributes.length].map(String).join("|");
+  });
+  run("setAttributeNode fresh old", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "old");
+    const a = document.createAttribute("title");
+    const old = e.setAttributeNode(a);
+    return [old && old.name, old && old.value, old && old.ownerElement, e.getAttribute("title")].map(String).join("|");
+  });
+  run("setAttributeNode none", () => { const e = document.createElement("div"); return String(e.setAttributeNode(document.createAttribute("x"))) + "|" + e.outerHTML; });
+  run("setAttributeNode in use", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "a");
+    document.createElement("p").setAttributeNode(e.getAttributeNode("title"));
+  });
+  run("setAttributeNode other document", () => {
+    const doc = new Document();
+    const a = doc.createAttributeNS(null, "data-x");
+    const e = document.createElement("div");
+    e.setAttributeNode(a);
+    return [a.ownerDocument === document, e.getAttribute("data-x")].join("|");
+  });
+  run("setAttributeNode wrong type", () => document.createElement("div").setAttributeNode(document.createElement("p")));
+  run("setAttributeNodeNS", () => {
+    const e = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    const a = document.createAttributeNS("http://www.w3.org/1999/xlink", "xlink:href");
+    a.value = "#x";
+    e.setAttributeNodeNS(a);
+    return [e.getAttributeNS("http://www.w3.org/1999/xlink", "href"), e.outerHTML].join("|");
+  });
+  // Blink makes the replaced attribute's node with the new name, unless a page asked for its node before.
+  run("setAttributeNodeNS other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "old");
+    const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
+    return [r.name, r.prefix, r.value, r.ownerElement, e.attributes[0].name].join("|");
+  });
+  run("setAttributeNodeNS other prefix asked", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "old");
+    e.getAttributeNodeNS("urn:x", "a");
+    const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
+    return [r.name, r.prefix, r.value, e.attributes[0].name].join("|");
+  });
+  // Blink orders an attribute's node by its qualified name, which keeps the old prefix in the element's attributes.
+  run("attr position other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "1");
+    e.setAttributeNS("urn:x", "p:b", "2");
+    const qa = document.createAttributeNS("urn:x", "q:a");
+    e.setAttributeNodeNS(qa);
+    const pb = e.getAttributeNodeNS("urn:x", "b");
+    return [qa.compareDocumentPosition(pb), pb.compareDocumentPosition(qa), e.getAttributeNames().join(" ")].join("|");
+  });
+  run("removeAttributeNode", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "a");
+    const a = e.getAttributeNode("title");
+    const r = e.removeAttributeNode(a);
+    return [r === a, a.ownerElement, a.value, e.hasAttribute("title")].map(String).join("|");
+  });
+  run("removeAttributeNode other", () => document.createElement("div").removeAttributeNode(document.createAttribute("x")));
+  run("removeAttributeNode twice", () => { const e = document.createElement("div"); e.setAttribute("a", "1"); const a = e.getAttributeNode("a"); e.removeAttributeNode(a); e.removeAttributeNode(a); });
+  run("getAttributeNodeNS", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "1");
+    return [e.getAttributeNodeNS("urn:x", "a").name, e.getAttributeNodeNS("urn:x", "p:a"), e.getAttributeNode("p:a").value, e.getAttributeNode("P:A"), e.getAttributeNode("nope")].map(String).join("|");
+  });
+  run("named node map", () => {
+    const e = document.createElement("div");
+    e.setAttribute("id", "i");
+    e.setAttribute("class", "c");
+    e.setAttributeNS("urn:x", "p:Up", "u");
+    e.setAttributeNS("urn:y", "Low", "l");
+    const m = e.attributes;
+    return [m, m === e.attributes, m.length, m.item(0).name, m.item(5), m[1].name, m[9], m.getNamedItem("class").value, m.getNamedItem("CLASS").value, m.getNamedItemNS("urn:x", "Up").name, Object.keys(m).join(","), Object.getOwnPropertyNames(m).join(","), "id" in m, "p:Up" in m, m["p:Up"].value, JSON.stringify(Object.getOwnPropertyDescriptor(m, "id") && Object.keys(Object.getOwnPropertyDescriptor(m, "id")))].map(String).join("|");
+  });
+  run("named node map live", () => {
+    const e = document.createElement("div");
+    const m = e.attributes;
+    const before = m.length;
+    e.setAttribute("a", "1");
+    return [before, m.length, m[0].value].join("|");
+  });
+  run("named node map remove", () => {
+    const e = document.createElement("div");
+    e.setAttribute("a", "1");
+    e.setAttributeNS("urn:x", "p:b", "2");
+    const r = e.attributes.removeNamedItem("a");
+    const r2 = e.attributes.removeNamedItemNS("urn:x", "b");
+    return [r.name, r.value, r.ownerElement, r2.name, e.attributes.length].map(String).join("|");
+  });
+  run("named node map remove missing", () => document.createElement("div").attributes.removeNamedItem("x"));
+  run("named node map removeNS missing", () => document.createElement("div").attributes.removeNamedItemNS("urn:x", "y"));
+  run("named node map removeNS null", () => document.createElement("div").attributes.removeNamedItemNS(null, "y"));
+  run("named node map set", () => {
+    const e = document.createElement("div");
+    const a = document.createAttribute("x");
+    a.value = "v";
+    return [e.attributes.setNamedItem(a), e.getAttribute("x"), e.attributes.setNamedItemNS(document.createAttribute("y")), e.attributes.length].map(String).join("|");
+  });
+  run("named node map assign", () => { "use strict"; const m = document.createElement("div").attributes; m[0] = 1; });
+  run("named node map iterate", () => { const e = document.createElement("div"); e.setAttribute("a", "1"); e.setAttribute("b", "2"); return [...e.attributes].map((a) => a.name).join(","); });
+  run("attr clone and equal", () => {
+    const e = document.createElement("div");
+    e.setAttribute("title", "a");
+    const a = e.getAttributeNode("title");
+    const c = a.cloneNode();
+    return [c.ownerElement, c.value, c.isEqualNode(a), a.isEqualNode(document.createAttribute("title")), c === a].map(String).join("|");
+  });
+  run("attr appendChild", () => document.createAttribute("x").appendChild(document.createTextNode("t")));
+  run("attr into element", () => document.createElement("div").appendChild(document.createAttribute("x")));
+  run("attr lookups", () => {
+    const e = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    e.setAttribute("title", "a");
+    const a = e.getAttributeNode("title");
+    const free = document.createAttribute("x");
+    return [a.lookupNamespaceURI(null), a.isDefaultNamespace("http://www.w3.org/2000/svg"), free.lookupNamespaceURI(null), a.baseURI === document.baseURI, a.getRootNode() === a].map(String).join("|");
+  });
+  run("attr positions", () => {
+    const root = document.createElement("div");
+    const child = document.createElement("p");
+    root.appendChild(child);
+    root.setAttribute("a", "1");
+    root.setAttribute("b", "2");
+    child.setAttribute("c", "3");
+    const a = root.getAttributeNode("a");
+    const b = root.getAttributeNode("b");
+    const c = child.getAttributeNode("c");
+    const free = document.createAttribute("f");
+    const pos = (x, y) => x.compareDocumentPosition(y);
+    return [pos(a, b), pos(b, a), pos(a, root), pos(root, a), pos(a, child), pos(child, a), pos(a, c), pos(c, a), pos(c, child), pos(child, c), pos(a, a), pos(a, free) & 1, pos(free, root) & 1].join(",");
+  });
+  run("attr textContent of element", () => { const e = document.createElement("div"); e.setAttribute("a", "1"); return e.textContent === "" && e.getAttributeNode("a").textContent; });
+  run("attr move with element", () => {
+    const doc = new Document();
+    const e = document.createElement("div");
+    e.setAttribute("a", "1");
+    const a = e.getAttributeNode("a");
+    doc.appendChild(e);
+    return [a.ownerDocument === doc, e.ownerDocument === doc].join("|");
+  });
+  run("attr value no arg", () => { const d = Object.getOwnPropertyDescriptor(Attr.prototype, "value"); const a = document.createAttribute("x"); d.set.call(a); return a.value; });
+  // DOMTokenList.
+  run("classList basics", () => {
+    const e = document.createElement("div");
+    e.className = "  a b\ta  c\n";
+    const l = e.classList;
+    return [l, l === e.classList, l.length, l.item(0), l.item(3), l[1], l[9], l.value, String(l), l.toString(), l.contains("c"), l.contains("A"), [...l].join(","), Object.keys(l).join(","), [...l.keys()].join(","), [...l.entries()].join(";")].map(String).join("|");
+  });
+  run("classList add", () => {
+    const e = document.createElement("div");
+    e.classList.add("x", "y", "x");
+    const one = e.className;
+    e.classList.add();
+    e.className = " z  z ";
+    e.classList.add("w");
+    return [one, e.className].join("|");
+  });
+  run("classList add empty set", () => { const e = document.createElement("div"); e.classList.add(); return [e.hasAttribute("class"), JSON.stringify(e.getAttribute("class"))].join("|"); });
+  run("classList remove", () => {
+    const e = document.createElement("div");
+    e.classList.remove("a");
+    const missing = e.hasAttribute("class");
+    e.className = " a b  a c ";
+    e.classList.remove("a", "q");
+    return [missing, JSON.stringify(e.className)].join("|");
+  });
+  run("classList toggle", () => {
+    const e = document.createElement("div");
+    const r1 = e.classList.toggle("a");
+    const r2 = e.classList.toggle("a");
+    const attr = JSON.stringify(e.getAttribute("class"));
+    const r3 = e.classList.toggle("b", false);
+    const r4 = e.classList.toggle("b", true);
+    const r5 = e.classList.toggle("b", true);
+    return [r1, r2, attr, r3, r4, r5, e.className].join("|");
+  });
+  run("classList toggle force absent", () => { const e = document.createElement("div"); const r = e.classList.toggle("a", false); return [r, e.hasAttribute("class")].join("|"); });
+  run("classList replace", () => {
+    const e = document.createElement("div");
+    e.className = "a b c b";
+    const r1 = e.classList.replace("b", "d");
+    const s1 = e.className;
+    const r2 = e.classList.replace("q", "z");
+    const s2 = e.className;
+    e.className = "a b c";
+    const r3 = e.classList.replace("c", "a");
+    return [r1, s1, r2, s2, r3, e.className].join("|");
+  });
+  for (const [m, args] of [["add", [""]], ["add", ["a b"]], ["remove", [""]], ["remove", ["a\tb"]], ["toggle", [""]], ["toggle", ["a b"]], ["replace", ["", "a"]], ["replace", ["a", ""]], ["replace", ["a b", "c"]], ["replace", ["a", "c d"]], ["contains", [""]]]) {
+    run(`classList ${m} ${JSON.stringify(args)}`, () => { const e = document.createElement("div"); e.className = "a"; return e.classList[m](...args); });
+  }
+  run("classList supports", () => document.createElement("div").classList.supports("a"));
+  run("classList value setter", () => { const e = document.createElement("div"); e.classList.value = " q  r "; return [e.className, e.classList.length].join("|"); });
+  run("classList put forwards", () => { const e = document.createElement("div"); e.classList = "a  b"; return [e.className, e.classList.length].join("|"); });
+  run("classList put forwards undefined", () => { const e = document.createElement("div"); e.classList = undefined; return e.className; });
+  run("classList put forwards no arg", () => { const d = Object.getOwnPropertyDescriptor(Element.prototype, "classList"); const e = document.createElement("div"); d.set.call(e); return e.className; });
+  run("classList put forwards shadowed", () => {
+    const e = document.createElement("div");
+    Object.defineProperty(e, "classList", { get() { return { set value(v) { this.got = v; } }; }, configurable: true });
+    const d = Object.getOwnPropertyDescriptor(Element.prototype, "classList");
+    d.set.call(e, "z");
+    return e.className;
+  });
+  run("classList put forwards not object", () => {
+    const e = document.createElement("div");
+    Object.defineProperty(e, "classList", { get() { return 5; } });
+    const d = Object.getOwnPropertyDescriptor(Element.prototype, "classList");
+    d.set.call(e, "z");
+  });
+  run("classList no args", () => document.createElement("div").classList.toggle());
+  run("classList item no args", () => document.createElement("div").classList.item());
+  run("classList assign index", () => { "use strict"; document.createElement("div").classList[0] = "a"; });
+  run("part", () => { const e = document.createElement("div"); e.part.add("x"); e.part = "y z"; return [e.getAttribute("part"), e.part.length, e.part === e.part].join("|"); });
+  run("classList on svg", () => { const e = document.createElementNS("http://www.w3.org/2000/svg", "rect"); e.classList.add("q"); return e.getAttribute("class"); });
+  run("classList quirks", () => { const e = document.createElement("div"); e.className = "A a"; return e.classList.length; });
   return JSON.stringify(cases, null, 1);
 })()

@@ -9,6 +9,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/attr.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
@@ -185,6 +186,16 @@ bool AreEqualNodes(const Node& a, const Node& b) {
       }
       break;
     }
+    case Node::kAttributeNode: {
+      const auto& attr_a = static_cast<const Attr&>(a);
+      const auto& attr_b = static_cast<const Attr&>(b);
+      if (attr_a.NamespaceURI() != attr_b.NamespaceURI() ||
+          attr_a.LocalName() != attr_b.LocalName() ||
+          attr_a.Value() != attr_b.Value()) {
+        return false;
+      }
+      break;
+    }
     case Node::kTextNode:
     case Node::kCommentNode:
       if (static_cast<const CharacterData&>(a).Data() !=
@@ -355,23 +366,73 @@ uint16_t Node::CompareDocumentPosition(Node* other) const {
   if (other == this) {
     return 0;
   }
-  if (&TreeRoot() != &other->TreeRoot()) {
-    // Blink orders nodes of different trees by their addresses, so that the
-    // answer stays the same for the two.
-    return kDocumentPositionDisconnected |
-           kDocumentPositionImplementationSpecific |
-           (this > other ? kDocumentPositionPreceding
-                         : kDocumentPositionFollowing);
+  // Blink's Node::compareDocumentPosition(): an attribute stands for its
+  // element, right after it and before its children.
+  const Attr* const attr1 = GetNodeType() == kAttributeNode
+                                ? static_cast<const Attr*>(this)
+                                : nullptr;
+  const Attr* const attr2 = other->GetNodeType() == kAttributeNode
+                                ? static_cast<const Attr*>(other)
+                                : nullptr;
+  const Node* const start1 = attr1 ? attr1->OwnerElement() : this;
+  const Node* const start2 = attr2 ? attr2->OwnerElement() : other;
+  // Blink orders nodes of different trees by their addresses, so that the
+  // answer stays the same for the two.
+  const uint16_t disconnected =
+      kDocumentPositionDisconnected | kDocumentPositionImplementationSpecific |
+      (this > other ? kDocumentPositionPreceding : kDocumentPositionFollowing);
+  if (!start1 || !start2 || &start1->TreeRoot() != &start2->TreeRoot()) {
+    return disconnected;
   }
-  if (IsInclusiveAncestorOf(*other)) {
-    return kDocumentPositionContainedBy | kDocumentPositionFollowing;
+  if (attr1 && attr2 && start1 == start2) {
+    // Two attributes of one element, in the order of its attributes.
+    for (const Element::Attribute& attribute :
+         static_cast<const Element*>(start1)->attributes()) {
+      if (attr1->GetQualifiedName() == attribute.name) {
+        return kDocumentPositionImplementationSpecific |
+               kDocumentPositionFollowing;
+      }
+      if (attr2->GetQualifiedName() == attribute.name) {
+        return kDocumentPositionImplementationSpecific |
+               kDocumentPositionPreceding;
+      }
+    }
+    return disconnected;
   }
-  if (other->IsInclusiveAncestorOf(*this)) {
-    return kDocumentPositionContains | kDocumentPositionPreceding;
+  if (!attr1 && !attr2) {
+    if (IsInclusiveAncestorOf(*other)) {
+      return kDocumentPositionContainedBy | kDocumentPositionFollowing;
+    }
+    if (other->IsInclusiveAncestorOf(*this)) {
+      return kDocumentPositionContains | kDocumentPositionPreceding;
+    }
+  } else if (!attr2) {
+    // `other` holds this attribute when it holds or is its element, and
+    // follows it when it is inside the element.
+    if (other->IsInclusiveAncestorOf(*start1)) {
+      return kDocumentPositionContains | kDocumentPositionPreceding;
+    }
+    if (start1->IsInclusiveAncestorOf(*other)) {
+      return kDocumentPositionFollowing;
+    }
+  } else if (!attr1) {
+    if (IsInclusiveAncestorOf(*start2)) {
+      return kDocumentPositionContainedBy | kDocumentPositionFollowing;
+    }
+    if (start2->IsInclusiveAncestorOf(*this)) {
+      return kDocumentPositionPreceding;
+    }
+  } else {
+    if (start1->IsInclusiveAncestorOf(*start2)) {
+      return kDocumentPositionFollowing;
+    }
+    if (start2->IsInclusiveAncestorOf(*start1)) {
+      return kDocumentPositionPreceding;
+    }
   }
-  for (const Node* node = other->NextInTree(nullptr); node;
+  for (const Node* node = start2->NextInTree(nullptr); node;
        node = node->NextInTree(nullptr)) {
-    if (node == this) {
+    if (node == start1) {
       return kDocumentPositionPreceding;
     }
   }
@@ -399,6 +460,9 @@ std::optional<std::u16string> Node::LookupPrefix(
     case kDocumentFragmentNode:
     case kDocumentTypeNode:
       break;
+    case kAttributeNode:
+      context = static_cast<const Attr*>(this)->OwnerElement();
+      break;
     default:
       context = ParentElement();
       break;
@@ -422,6 +486,9 @@ std::optional<std::u16string> Node::LookupNamespaceURI(
       break;
     case kDocumentFragmentNode:
     case kDocumentTypeNode:
+      break;
+    case kAttributeNode:
+      context = static_cast<const Attr*>(this)->OwnerElement();
       break;
     default:
       context = ParentElement();
