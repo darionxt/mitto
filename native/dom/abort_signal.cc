@@ -383,6 +383,14 @@ void AbortSignal::StartTimeout(base::TimeDelta delay) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timeout_context_.Reset(isolate, isolate->GetCurrentContext());
   kept_by_timeout_ = this;
+  timeout_cancel_id_ =
+      Window::Current().AddContextDestroyedCallback(base::BindOnce(
+          [](cppgc::WeakPersistent<AbortSignal> signal) {
+            if (signal) {
+              signal->CancelTimeout();
+            }
+          },
+          cppgc::WeakPersistent<AbortSignal>(this)));
   timeout_timer_ = std::make_unique<base::DeadlineTimer>();
   // Blink posts the task with base's default policy, which may run it late.
   timeout_timer_->Start(
@@ -399,11 +407,19 @@ void AbortSignal::TimeoutFired() {
   const v8::Local<v8::Context> context = timeout_context_.Get(isolate);
   timeout_context_.Reset();
   const v8::Context::Scope context_scope(context);
+  Window& window = Window::Current();
+  window.RemoveContextDestroyedCallback(timeout_cancel_id_);
   // A window whose document has gone runs nothing more.
-  if (!Window::Current().HasContext()) {
+  if (!window.HasContext()) {
     return;
   }
   SignalAbort(NewDOMException(isolate, "TimeoutError", "signal timed out"));
+}
+
+void AbortSignal::CancelTimeout() {
+  timeout_timer_.reset();
+  timeout_context_.Reset();
+  kept_by_timeout_.Clear();
 }
 
 }  // namespace mitto

@@ -283,6 +283,29 @@ void Window::ClearInterval(int32_t handle) {
   }
 }
 
+void Window::SetTimers(DOMTimerCoordinator* timers) {
+  timers_ = timers;
+  if (timers) {
+    return;
+  }
+  // The context goes: what goes with it hears so, each once.
+  std::map<uint64_t, base::OnceClosure> callbacks;
+  callbacks.swap(context_destroyed_callbacks_);
+  for (auto& [id, callback] : callbacks) {
+    std::move(callback).Run();
+  }
+}
+
+uint64_t Window::AddContextDestroyedCallback(base::OnceClosure callback) {
+  const uint64_t id = ++next_context_destroyed_callback_;
+  context_destroyed_callbacks_.emplace(id, std::move(callback));
+  return id;
+}
+
+void Window::RemoveContextDestroyedCallback(uint64_t id) {
+  context_destroyed_callbacks_.erase(id);
+}
+
 size_t Window::TimerCount() const {
   return timers_ ? timers_->size() : 0;
 }

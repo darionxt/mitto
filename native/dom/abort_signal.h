@@ -132,9 +132,13 @@ class AbortSignal : public EventTarget {
   // listeners and can still abort.
   void UpdateKeptBySources();
   // Aborts a timeout signal after `delay`, in the current context, from a
-  // timer of the Page's event loop, as setTimeout() runs its timers.
+  // timer of the Page's event loop, as setTimeout() runs its timers, unless the
+  // context goes first.
   void StartTimeout(base::TimeDelta delay);
   void TimeoutFired();
+  // The context went: the timer stops and lets the signal go, as Blink's
+  // ContextDestroyed() cancels the task.
+  void CancelTimeout();
 
   const SignalType type_;
   v8::TracedReference<v8::Value> abort_reason_;
@@ -153,6 +157,8 @@ class AbortSignal : public EventTarget {
   std::unique_ptr<base::DeadlineTimer> timeout_timer_;
   v8::Global<v8::Context> timeout_context_;
   cppgc::Persistent<AbortSignal> kept_by_timeout_;
+  // The ID of the window's callback that cancels the timer.
+  uint64_t timeout_cancel_id_ = 0;
 };
 
 }  // namespace mitto

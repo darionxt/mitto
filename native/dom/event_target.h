@@ -137,6 +137,10 @@ class EventTarget : public bindings::ScriptWrappable {
   void RemoveListener(const std::u16string& type,
                       v8::Local<v8::Object> callback,
                       bool capture);
+  // The same, for the function that an abort algorithm marked `listener_id`.
+  void RemoveMarkedListener(const std::u16string& type,
+                            double listener_id,
+                            bool capture);
 
  protected:
   // Called once a listener of `type` has joined or left, as Blink's

@@ -1,5 +1,6 @@
 #include "mitto/dom/event_target.h"
 
+#include <tuple>
 #include <variant>
 
 #include "base/check.h"
@@ -13,6 +14,7 @@
 #include "mitto/dom/event.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
@@ -62,45 +64,65 @@ AbortSignal* SignalOf(
   return dictionary && dictionary->signal ? *dictionary->signal : nullptr;
 }
 
+// The number that marks `callback` for the abort algorithms of the listeners
+// that it is, kept on it in a private property, which a page cannot see, or
+// 0 when it has none and `assign` is false. So an algorithm finds the
+// listener without holding its function.
+double ListenerIdOf(v8::Isolate* isolate,
+                    v8::Local<v8::Object> callback,
+                    bool assign) {
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  const v8::Local<v8::Private> key = v8::Private::ForApi(
+      isolate,
+      v8::String::NewFromUtf8Literal(isolate, "mitto::EventTarget listener"));
+  v8::Local<v8::Value> value;
+  if (callback->GetPrivate(context, key).ToLocal(&value) && value->IsNumber()) {
+    return value.As<v8::Number>()->Value();
+  }
+  if (!assign) {
+    return 0;
+  }
+  static double last_id = 0;
+  const double id = ++last_id;
+  std::ignore =
+      callback->SetPrivate(context, key, v8::Number::New(isolate, id));
+  return id;
+}
+
 // The abort algorithm of a listener added with a signal: it removes the
 // listener of its type, function and capture, as Blink's binds
 // removeEventListener() with them, whichever registration that is by then,
 // such as one that the page removed and added again without the signal.
 // Blink holds the listener weakly, and its AbortSignalRegistry keeps the
-// algorithm while the listener lives; this holds the function, so that it
-// removes such a registration whenever a collection runs in between.
+// algorithm while the listener lives; this holds neither, and finds the
+// function by its mark, so that it removes such a registration whenever a
+// collection runs in between, and keeps no function alive.
 class RemoveListenerAlgorithm final : public AbortSignal::Algorithm {
  public:
-  RemoveListenerAlgorithm(v8::Isolate* isolate,
-                          EventTarget* target,
+  RemoveListenerAlgorithm(EventTarget* target,
                           const std::u16string& type,
-                          v8::Local<v8::Object> callback,
+                          double listener_id,
                           bool capture)
       : target_(target),
         type_(type),
-        callback_(isolate, callback),
+        listener_id_(listener_id),
         capture_(capture) {}
 
   void Run() override {
-    EventTarget* const target = target_.Get();
-    if (!target) {
-      return;
+    if (EventTarget* const target = target_.Get()) {
+      target->RemoveMarkedListener(type_, listener_id_, capture_);
     }
-    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-    const v8::HandleScope handle_scope(isolate);
-    target->RemoveListener(type_, callback_.Get(isolate), capture_);
   }
 
   void Trace(cppgc::Visitor* visitor) const override {
     AbortSignal::Algorithm::Trace(visitor);
     visitor->Trace(target_);
-    visitor->Trace(callback_);
   }
 
  private:
   const cppgc::WeakMember<EventTarget> target_;
   const std::u16string type_;
-  const v8::TracedReference<v8::Object> callback_;
+  const double listener_id_;
   const bool capture_;
 };
 
@@ -278,8 +300,10 @@ void EventTarget::AddEventListener(
   last_listener_ = entry;
   if (signal) {
     entry->set_signal(signal);
-    signal->AddAlgorithm(bindings::MakeGarbageCollected<RemoveListenerAlgorithm>(
-        v8::Isolate::GetCurrent(), this, type, listener, flat.capture));
+    signal->AddAlgorithm(
+        bindings::MakeGarbageCollected<RemoveListenerAlgorithm>(
+            this, type, ListenerIdOf(v8::Isolate::GetCurrent(), listener, true),
+            flat.capture));
   }
   ListenersChanged(type);
 }
@@ -303,6 +327,22 @@ void EventTarget::RemoveListener(const std::u16string& type,
     if (!entry->attribute_handler() && entry->type() == type &&
         entry->capture() == capture &&
         entry->callback(v8::Isolate::GetCurrent())->StrictEquals(callback)) {
+      RemoveEntry(entry);
+      return;
+    }
+  }
+}
+
+void EventTarget::RemoveMarkedListener(const std::u16string& type,
+                                       double listener_id,
+                                       bool capture) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::HandleScope handle_scope(isolate);
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (!entry->attribute_handler() && entry->type() == type &&
+        entry->capture() == capture &&
+        ListenerIdOf(isolate, entry->callback(isolate), false) == listener_id) {
       RemoveEntry(entry);
       return;
     }

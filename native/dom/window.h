@@ -19,9 +19,11 @@
 #include <stdint.h>
 
 #include <array>
+#include <map>
 #include <string>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
@@ -148,7 +150,9 @@ class Window final : public WindowProperties {
   // The timers of the window's context, which the Page program keeps, and
   // which go with it. Without them, as once the context is gone, a timer set
   // is never run, and its ID is 0, as Chrome gives in a destroyed context.
-  void SetTimers(DOMTimerCoordinator* timers) { timers_ = timers; }
+  // Setting none tells what goes with the context, as
+  // AddContextDestroyedCallback() says.
+  void SetTimers(DOMTimerCoordinator* timers);
   // How many timers are set.
   size_t TimerCount() const;
   // What fetch() asks the Session through. Without one, it fails.
@@ -156,6 +160,13 @@ class Window final : public WindowProperties {
   // Whether the Page still runs the window's context: it gives the window its
   // timers until the context goes.
   bool HasContext() const { return timers_ != nullptr; }
+  // What else goes with the context, such as the timer of an
+  // AbortSignal.timeout(): `callback` runs once the Page lets the context go,
+  // as Blink's ExecutionContextLifecycleObserver::ContextDestroyed() does,
+  // unless RemoveContextDestroyedCallback() takes it back first with the ID
+  // that this returns.
+  uint64_t AddContextDestroyedCallback(base::OnceClosure callback);
+  void RemoveContextDestroyedCallback(uint64_t id);
   // What the window reads of the browser and the machine, from the Page's
   // start, and what navigator.connection gives its document. Without them, as
   // in the Page program given a script, it reads what a default PageStart
@@ -197,6 +208,8 @@ class Window final : public WindowProperties {
   PageConnection connection_;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
+  std::map<uint64_t, base::OnceClosure> context_destroyed_callbacks_;
+  uint64_t next_context_destroyed_callback_ = 0;
 };
 
 }  // namespace mitto

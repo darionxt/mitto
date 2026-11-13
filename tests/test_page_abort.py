@@ -396,3 +396,24 @@ _AFTER_A_COLLECTION = {
 @pytest.mark.parametrize(("script", "chrome"), list(_AFTER_A_COLLECTION.values()), ids=list(_AFTER_A_COLLECTION))
 def test_a_collection_changes_nothing_a_signal_does(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script, "--js-flags=--expose-gc") == chrome
+
+
+def test_a_signal_keeps_no_listener_alive_that_the_page_removed(program: Path) -> None:
+    # Blink's abort algorithm holds the listener weakly, so a function that the page removed and let go is collected
+    # while the signal lives on, as here.
+    script = """
+        const c = new AbortController();
+        const t = new EventTarget();
+        let ref;
+        (() => {
+            const f = () => {};
+            ref = new WeakRef(f);
+            t.addEventListener('x', f, {signal: c.signal});
+            t.removeEventListener('x', f);
+        })();
+        await new Promise((resolve) => setTimeout(resolve));
+        gc();
+        return [ref.deref() === undefined, c.signal.aborted].join();
+    """
+
+    assert _evaluate(program, script, "--js-flags=--expose-gc") == "value: true,false"
