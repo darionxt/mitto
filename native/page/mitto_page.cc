@@ -574,10 +574,10 @@ int main(int argc, char** argv) {
     mitto::ServeSession(
         *std::move(session),
         base::BindOnce(&StartV8ForSession, base::Unretained(&v8),
-                       main_thread->task_runner(),
+                       main_thread->V8TaskRunner(),
                        mitto::SplitJsFlags(js_flags)));
   } else {
-    StartV8(v8, main_thread->task_runner(), kMemoryGib, {},
+    StartV8(v8, main_thread->V8TaskRunner(), kMemoryGib, {},
             mitto::SplitJsFlags(js_flags), *std::move(features));
     finished = RunScript(v8.isolate, html.value_or(""), argument);
   }

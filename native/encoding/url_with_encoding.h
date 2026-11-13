@@ -19,7 +19,9 @@ namespace mitto {
 
 // `relative` resolved against `base`, with the query in `encoding`, a
 // canonical name, or in UTF-8 if it is empty, UTF-8 or UTF-16, which the URL
-// Standard encodes as UTF-8. An invalid GURL if it does not resolve.
+// Standard encodes as UTF-8. An invalid `base`, such as an empty one, counts as
+// none, so that only an absolute URL resolves. An invalid GURL if it does not
+// resolve.
 GURL ResolveUrlWithEncoding(const GURL& base,
                             std::u16string_view relative,
                             std::string_view encoding);

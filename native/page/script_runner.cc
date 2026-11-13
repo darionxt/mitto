@@ -286,10 +286,11 @@ void ScriptRunner::EndTask() {
       reporter_->TakeUnhandledRejections();
   if (!rejections.empty()) {
     ++reports_queued_;
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&ScriptRunner::ReportRejections, base::Unretained(this),
-                       std::move(rejections)));
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kDOMManipulation)
+        ->PostTask(FROM_HERE, base::BindOnce(&ScriptRunner::ReportRejections,
+                                             base::Unretained(this),
+                                             std::move(rejections)));
   }
   // Results wait for the reports queued before them.
   if (reports_queued_ > 0) {

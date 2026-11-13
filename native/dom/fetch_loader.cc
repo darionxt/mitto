@@ -12,6 +12,7 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/response.h"
 #include "mitto/header_rules.h"
@@ -184,9 +185,10 @@ void FetchLoader::ReaderStarted() {
 }
 
 void FetchLoader::ResponseCollected() {
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&FetchLoader::Cancel, weak_factory_.GetWeakPtr()));
+  EventLoop::Get()
+      ->TaskRunner(TaskType::kNetworking)
+      ->PostTask(FROM_HERE, base::BindOnce(&FetchLoader::Cancel,
+                                           weak_factory_.GetWeakPtr()));
 }
 
 void FetchLoader::Abort() {
