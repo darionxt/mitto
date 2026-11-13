@@ -138,6 +138,8 @@ source_set("dom") {
     "html_element_factory.h",
     "html_elements.cc",
     "html_elements.h",
+    "html_input_element.cc",
+    "html_input_element.h",
     "html_head_element.cc",
     "html_head_element.h",
     "html_heading_element.cc",

@@ -19,6 +19,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_element_factory.h"
+#include "mitto/dom/html_input_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/qualified_name.h"
@@ -700,8 +701,14 @@ bool IsOptionSelected(const Element& option) {
   return false;
 }
 
+// An input element's checkedness and indeterminate flag, which
+// HTMLInputElement keeps, as Blink's does.
+const HTMLInputElement& AsInput(const Element& input) {
+  return static_cast<const HTMLInputElement&>(input);
+}
+
 // D6: a radio's group, the radios of its name in its form or tree, and the
-// one of them that parsing left checked.
+// one of them that is checked.
 struct RadioGroup {
   std::vector<const Element*> members;
   raw_ptr<const Element> checked = nullptr;
@@ -726,23 +733,16 @@ std::optional<RadioGroup> RadioGroupOf(const Element& radio) {
       continue;
     }
     group.members.push_back(&input);
-    if (HasAttribute(input, u"checked")) {
+    if (AsInput(input).Checked()) {
       group.checked = &input;
     }
   }
   return group;
 }
 
-bool IsRadioChecked(const Element& radio) {
-  const std::optional<RadioGroup> group = RadioGroupOf(radio);
-  return group ? group->checked == &radio : HasAttribute(radio, u"checked");
-}
-
+// Blink's HTMLInputElement::ShouldAppearChecked().
 bool IsInputChecked(const Element& input, std::u16string_view type) {
-  if (type == u"checkbox") {
-    return HasAttribute(input, u"checked");
-  }
-  return type == u"radio" && IsRadioChecked(input);
+  return (type == u"checkbox" || type == u"radio") && AsInput(input).Checked();
 }
 
 // The button type state Submit of a button element.
@@ -1328,9 +1328,17 @@ bool IsDefault(const Element& element) {
 }
 
 bool IsIndeterminate(const Element& element) {
-  if (element.HasHTMLTagName(u"input") && InputType(element) == u"radio") {
-    const std::optional<RadioGroup> group = RadioGroupOf(element);
-    return group ? !group->checked : !HasAttribute(element, u"checked");
+  if (element.HasHTMLTagName(u"input")) {
+    // CheckboxInputType's and RadioInputType's ShouldAppearIndeterminate().
+    const std::u16string type = InputType(element);
+    if (type == u"checkbox") {
+      return AsInput(element).Indeterminate();
+    }
+    if (type == u"radio") {
+      const std::optional<RadioGroup> group = RadioGroupOf(element);
+      return group ? !group->checked : !AsInput(element).Checked();
+    }
+    return false;
   }
   return element.HasHTMLTagName(u"progress") &&
          !HasAttribute(element, u"value");
