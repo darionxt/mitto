@@ -18,12 +18,13 @@
 
 namespace mitto {
 
-class DOMException final : public bindings::ScriptWrappable {
+class DOMException : public bindings::ScriptWrappable {
  public:
   static DOMException* Create(const std::u16string& message,
                               const std::u16string& name);
 
   DOMException(const std::u16string& message, const std::u16string& name);
+  ~DOMException() override;
 
   // What the bindings need of a DOMException: see
   // bindings::PerIsolateData::DOMExceptionHooks.

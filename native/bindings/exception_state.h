@@ -29,8 +29,13 @@ class ExceptionState {
   void ThrowRangeError(std::string_view message);
   // Throws a DOMException with `name`, such as "InvalidStateError".
   void ThrowDOMException(std::string_view name, std::string_view message);
+  // Throws `exception`, a DOMException that the DOM made, such as a
+  // QuotaExceededError, as Blink's ThrowDOMException() overload that takes
+  // one does.
+  void ThrowDOMException(v8::Local<v8::Value> exception);
 
   bool HadException() const { return had_exception_; }
+  v8::Isolate* GetIsolate() const { return isolate_; }
 
  private:
   const raw_ptr<v8::Isolate> isolate_;

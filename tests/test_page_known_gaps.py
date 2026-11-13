@@ -245,12 +245,16 @@ def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
 @pytest.mark.parametrize(
     ("script", "message"),
     [
-        pytest.param("return crypto.randomUUID()", "Failed to execute 'randomUUID' on 'Crypto'", id="crypto"),
+        pytest.param(
+            "return crypto.subtle.digest('SHA-256', new Uint8Array(1))",
+            "Failed to execute 'digest' on 'SubtleCrypto'",
+            id="subtle crypto",
+        ),
         pytest.param("return document.createDocumentFragment()", "Failed to execute", id="an object of a class"),
     ],
 )
 def test_a_refused_known_gap_keeps_todays_error(program: Path, script: str, message: str) -> None:
-    # Its default would be predictable random values, or an object of a class with nothing behind it.
+    # Its default would be a predictable digest or key, or an object of a class with nothing behind it.
     assert _evaluate(program, script).startswith(f"threw: TypeError: {message}")
     assert _evaluate(program, script).endswith("Not implemented.")
 
