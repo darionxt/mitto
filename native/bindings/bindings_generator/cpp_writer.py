@@ -99,6 +99,10 @@ WRITTEN = frozenset(
         "PutForwards",
         "RaisesException",
         "Reflect",
+        "ReflectEmpty",
+        "ReflectInvalid",
+        "ReflectMissing",
+        "ReflectOnly",
         "Replaceable",
         "RuntimeEnabled",
         "SameObject",
@@ -124,7 +128,10 @@ _ARRAY_INTRINSICS = {
 }
 
 # What makes a reflected attribute's behaviour more than reading and writing its content attribute.
-_REFLECT_BEYOND_CONTENT = ("URL", "ReflectOnly", "ReflectMissing", "ReflectInvalid", "ReflectEmpty")
+_REFLECT_BEYOND_CONTENT = ("URL",)
+
+# What limits a reflected attribute to its keywords, which bind_gen's make_reflect_process_keyword_state() follows.
+_REFLECT_KEYWORDS = ("ReflectOnly", "ReflectMissing", "ReflectInvalid", "ReflectEmpty")
 
 _BANNER = "// Written by the bindings generator in native/bindings from Blink's Web IDL\n// database. Do not edit.\n"
 
@@ -218,18 +225,52 @@ def condition_test(condition: Condition, where: str) -> str | None:
     return " && ".join(tests) if tests else "true"
 
 
+@dataclasses.dataclass(frozen=True)
+class Keywords:
+    """The keywords that limit a reflected attribute, [ReflectOnly], and what it gives when its content attribute is
+    missing, empty or another value, [ReflectMissing], [ReflectEmpty] and [ReflectInvalid], or None for none."""
+
+    keywords: tuple[str, ...]
+    missing: str | None
+    invalid: str | None
+    empty: str | None
+
+
+def reflected_keywords(attribute: Attribute) -> Keywords | None:
+    """The keywords of a reflected attribute that [ReflectOnly] limits, or None."""
+    extended = attribute.extended_attributes
+    if "ReflectOnly" not in extended:
+        return None
+    return Keywords(
+        keywords=tuple(extended.values_of("ReflectOnly")),
+        missing=extended.value_of("ReflectMissing") if "ReflectMissing" in extended else None,
+        invalid=extended.value_of("ReflectInvalid") if "ReflectInvalid" in extended else None,
+        empty=extended.value_of("ReflectEmpty") if "ReflectEmpty" in extended else None,
+    )
+
+
 def reflected_attribute(attribute: Attribute) -> str | None:
-    """The content attribute that the writer reflects for `attribute` itself, or None."""
+    """The content attribute that the writer reflects for `attribute` itself, or None: a string or a boolean, or a
+    string that [ReflectOnly] limits to its keywords, which may be nullable."""
     extended = attribute.extended_attributes
     if "Reflect" not in extended or any(key in extended for key in _REFLECT_BEYOND_CONTENT):
         return None
+    keywords = reflected_keywords(attribute)
+    if keywords is None and any(key in extended for key in _REFLECT_KEYWORDS):
+        return None
     idl_type = attribute.idl_type
-    if idl_type.nullable or idl_type.extended_attributes.entries:
+    if (idl_type.nullable and keywords is None) or idl_type.extended_attributes.entries:
+        return None
+    if keywords is not None and not (idl_type.kind is TypeKind.STRING and idl_type.name == "DOMString"):
         return None
     if not ((idl_type.kind is TypeKind.STRING and idl_type.name == "DOMString") or idl_type.kind is TypeKind.BOOLEAN):
         return None
     # Blink's IDL files write a content attribute's "-" as "_", as in Reflect=http_equiv.
     return (extended.value_of("Reflect") or attribute.name.lower()).replace("_", "-")
+
+
+def _string_or_nullopt(value: str | None) -> str:
+    return "std::nullopt" if value is None else f'u"{value}"'
 
 
 def _quote(text: str) -> str:
@@ -353,9 +394,12 @@ class _InterfaceWriter:
             # whatever it gets, as Blink's do.
             reduced = self.types.reduce(argument.idl_type)
             converts_undefined = reduced.kind is TypeKind.DICTIONARY and argument.default == "{}"
+            # A [PassAsSpan] argument's bytes go to the class after every argument has converted, with Blink's check
+            # that a page's script did not detach their buffer meanwhile.
+            passed_value = f"SpanAtCall({target})" if self.types.is_byte_span(argument.idl_type) else target
             if not argument.is_optional or converts_undefined:
                 lines += self.types.from_v8(argument.idl_type, value, target, site, argument_where)
-                passed.append(target)
+                passed.append(passed_value)
                 continue
             cpp_type = self.types.value_type(argument.idl_type, argument_where)
             converted = self.types.from_v8(argument.idl_type, value, f"{target}_value", site, argument_where)
@@ -370,7 +414,7 @@ class _InterfaceWriter:
                 f"  {target} = std::move({target}_value);",
             ]
             lines.append("}")
-            passed.append(target)
+            passed.append(passed_value)
         return lines, passed
 
     def _add_callback(self, name: str, body: list[str]) -> str:
@@ -512,6 +556,21 @@ class _InterfaceWriter:
         if attribute.is_static:
             return self._static_attribute_getter(name, attribute, where)
         if reflected is not None:
+            keywords = reflected_keywords(attribute)
+            if keywords is not None:
+                # bind_gen's make_reflect_process_keyword_state().
+                values = ", ".join(f'u"{keyword}"' for keyword in keywords.keywords)
+                nullable = "true" if attribute.idl_type.nullable else "false"
+                return self._add_callback(
+                    name,
+                    [
+                        *self._receiver(),
+                        f"static constexpr std::u16string_view kKeywords[] = {{{values}}};",
+                        f'info.GetReturnValue().Set(ToV8NullableString(isolate, impl->ReflectedKeywordAttribute(u"'
+                        f'{reflected}", kKeywords, {_string_or_nullopt(keywords.missing)}, '
+                        f"{_string_or_nullopt(keywords.invalid)}, {_string_or_nullopt(keywords.empty)}, {nullable})));",
+                    ],
+                )
             if attribute.idl_type.kind is TypeKind.BOOLEAN:
                 call = f'impl->ReflectedBooleanAttribute(u"{reflected}")'
             else:
@@ -603,11 +662,12 @@ class _InterfaceWriter:
         body = [*self._receiver(), self._exception_state()]
         body += self.types.from_v8(attribute.idl_type, "info[0]", "value", site, where)
         if reflected is not None:
-            setter = (
-                "SetReflectedBooleanAttribute"
-                if attribute.idl_type.kind is TypeKind.BOOLEAN
-                else "SetReflectedStringAttribute"
-            )
+            if attribute.idl_type.kind is TypeKind.BOOLEAN:
+                setter = "SetReflectedBooleanAttribute"
+            elif attribute.idl_type.nullable:
+                setter = "SetReflectedNullableStringAttribute"
+            else:
+                setter = "SetReflectedStringAttribute"
             body.append(f'impl->{setter}(u"{reflected}", value);')
             return self._add_callback(name, body)
         cpp_name = self.method_name(attribute)
@@ -1303,6 +1363,7 @@ class _InterfaceWriter:
             '#include "v8/include/v8-object.h"',
             '#include "v8/include/v8-primitive.h"',
             '#include "v8/include/v8-template.h"',
+            '#include "v8/include/v8-typed-array.h"',
             "",
             "namespace mitto::bindings {",
             "",

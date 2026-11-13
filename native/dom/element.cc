@@ -190,6 +190,51 @@ bool Element::ReflectedBooleanAttribute(std::u16string_view name) const {
   return FindAttribute(name);
 }
 
+// Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
+std::optional<std::u16string> Element::ReflectedKeywordAttribute(
+    std::u16string_view name,
+    base::span<const std::u16string_view> keywords,
+    std::optional<std::u16string_view> missing_default,
+    std::optional<std::u16string_view> invalid_default,
+    std::optional<std::u16string_view> empty_default,
+    bool nullable) const {
+  // A missing attribute is Blink's null string, which is empty but equals no
+  // keyword, not even "".
+  const std::u16string* const value = FindAttribute(name);
+  if (!value && missing_default) {
+    return std::u16string(*missing_default);
+  }
+  if (!value && nullable && !missing_default) {
+    return std::nullopt;
+  }
+  if (empty_default && (!value || value->empty())) {
+    return std::u16string(*empty_default);
+  }
+  if (value) {
+    const std::u16string lower = base::ToLowerASCII(*value);
+    if (std::find(keywords.begin(), keywords.end(), lower) != keywords.end()) {
+      return lower;
+    }
+  }
+  if (invalid_default) {
+    return std::u16string(*invalid_default);
+  }
+  if (nullable) {
+    return std::nullopt;
+  }
+  return std::u16string();
+}
+
+void Element::SetReflectedNullableStringAttribute(
+    std::u16string_view name,
+    const std::optional<std::u16string>& value) {
+  if (value) {
+    SetAttributeWithoutValidation(name, *value);
+    return;
+  }
+  RemoveAttribute(std::u16string(name));
+}
+
 void Element::SetReflectedBooleanAttribute(std::u16string_view name,
                                            bool value) {
   if (value) {

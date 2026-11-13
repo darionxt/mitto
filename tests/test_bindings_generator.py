@@ -12,7 +12,14 @@ import pytest
 from bindings_generator import cpp_writer, extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import Site, TypeMapper
-from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute, write_bindings
+from bindings_generator.cpp_writer import (
+    ImplementedInterface,
+    Keywords,
+    condition_test,
+    reflected_attribute,
+    reflected_keywords,
+    write_bindings,
+)
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
 from bindings_generator.known_gaps import KnownGaps, default_tojson_attributes, has_default_tojson
@@ -350,7 +357,9 @@ def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -
         ((("Reflect", ("http_equiv",)),), "DOMString", "http-equiv"),
         ((("Reflect", ()),), "boolean", "accesskey"),
         ((("Reflect", ()), ("URL", ())), "DOMString", None),
-        ((("Reflect", ()), ("ReflectOnly", ("a",))), "DOMString", None),
+        ((("Reflect", ()), ("ReflectOnly", ("a",))), "DOMString", "accesskey"),
+        ((("Reflect", ()), ("ReflectMissing", ("a",))), "DOMString", None),
+        ((("Reflect", ()), ("ReflectOnly", ("a",))), "boolean", None),
         ((), "DOMString", None),
     ],
 )
@@ -361,6 +370,25 @@ def test_the_writer_reflects_strings_and_booleans_itself(
     attribute = Attribute("accessKey", IdlType(kind, type_name), False, False, ExtendedAttributes(keys), ALWAYS)
 
     assert reflected_attribute(attribute) == expected
+
+
+def test_a_nullable_reflected_attribute_needs_its_keywords() -> None:
+    def attribute(*keys: tuple[str, tuple[str, ...]]) -> Attribute:
+        idl_type = IdlType(TypeKind.STRING, "DOMString", nullable=True)
+        return Attribute("crossOrigin", idl_type, False, False, ExtendedAttributes(keys), ALWAYS)
+
+    limited = attribute(
+        ("Reflect", ()),
+        ("ReflectOnly", ("anonymous", "use-credentials")),
+        ("ReflectInvalid", ("anonymous",)),
+        ("ReflectEmpty", ("anonymous",)),
+    )
+
+    # bind_gen's make_reflect_process_keyword_state() reads what its keywords and defaults say.
+    assert reflected_attribute(limited) == "crossorigin"
+    assert reflected_keywords(limited) == Keywords(("anonymous", "use-credentials"), None, "anonymous", "anonymous")
+    assert reflected_attribute(attribute(("Reflect", ()))) is None
+    assert reflected_keywords(attribute(("Reflect", ()))) is None
 
 
 @pytest.mark.parametrize(
@@ -430,6 +458,42 @@ def test_the_cpp_types_of_what_navigator_returns() -> None:
     assert types.return_type(hardware_concurrency, "a") == "uint64_t"
     assert types.to_v8(hardware_concurrency, "x") == "v8::Number::New(isolate, static_cast<double>(x))"
     assert types.to_v8(IdlType(TypeKind.INTEGER, "unsigned long"), "x") == "v8::Integer::NewFromUnsigned(isolate, x)"
+
+
+def test_the_cpp_types_of_what_text_encoder_and_text_decoder_take_and_give() -> None:
+    types = TypeMapper(frozenset(), frozenset({"TextEncoderEncodeIntoResult"}))
+    uint8_array = IdlType(TypeKind.BUFFER_SOURCE, "Uint8Array")
+    buffer_source = IdlType(
+        TypeKind.UNION,
+        "ArrayBufferView or ArrayBuffer",
+        members=(IdlType(TypeKind.BUFFER_SOURCE, "ArrayBufferView"), IdlType(TypeKind.BUFFER_SOURCE, "ArrayBuffer")),
+        extended_attributes=_extended("PassAsSpan"),
+    )
+    dictionary = IdlType(TypeKind.DICTIONARY, "TextEncoderEncodeIntoResult")
+
+    # A view, which the class may write into, and the bytes of a [PassAsSpan] BufferSource.
+    assert types.argument_type(uint8_array, "a") == "v8::Local<v8::Uint8Array>"
+    assert types.return_type(uint8_array, "a") == "v8::Local<v8::Uint8Array>"
+    assert types.argument_type(buffer_source, "a") == "base::span<const uint8_t>"
+    view = "\n".join(types.from_v8(uint8_array, "info[1]", "view", Site(fail="return;", argument_index=1), "a"))
+    assert "if (!info[1]->IsUint8Array()) {" in view
+    assert 'ExceptionMessages::ArgumentNotOfType(1, "Uint8Array")' in view
+    assert 'CheckArrayBufferViewNotShared(view, "Uint8Array", exception_state)' in view
+    span = types.from_v8(buffer_source, "info[0]", "bytes", Site(fail="return;", argument_index=0), "a")
+    assert span[0] == "ByteSpanArgument bytes;"
+    assert "FromV8ByteSpan(info[0], 0, exception_state, &bytes)" in span[1]
+    # The class gets the bytes once every argument has converted, which may have detached their buffer.
+    assert types.value_type(buffer_source, "a") == "ByteSpanArgument"
+    assert types.is_byte_span(buffer_source)
+    # The class makes a dictionary's object, and returns it as it is.
+    assert types.return_type(dictionary, "a") == "v8::Local<v8::Object>"
+    assert types.to_v8(dictionary, "result") == "result"
+    # [PassAsSpan] goes with an argument alone, and with no other annotation.
+    with pytest.raises(UnhandledError, match="does not handle a value of type"):
+        types.from_v8(buffer_source, "value", "bytes", Site(fail="return false;", dictionary="D", member="m"), "a")
+    shared = dataclasses.replace(buffer_source, extended_attributes=_extended("PassAsSpan", "AllowShared"))
+    with pytest.raises(UnhandledError, match=r"does not handle \[PassAsSpan\]"):
+        types.argument_type(shared, "a")
 
 
 def test_the_cpp_types_of_what_crypto_takes_and_returns() -> None:
