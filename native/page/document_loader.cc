@@ -209,6 +209,9 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   // The URL of the response, after any redirects.
   const GURL& response_url() const { return response_url_; }
   const std::string& response_headers() const { return response_headers_; }
+  // The HTML Standard's muted errors: a response of another origin that no
+  // CORS check let through, whose errors a window's listeners see nothing of.
+  bool muted_errors() const { return opaque_; }
   std::u16string TakeSource() {
     const std::unique_ptr<TextResourceDecoder> decoder =
         BuildClassicScriptDecoder(
@@ -226,6 +229,7 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
     status_ = response.status;
     response_url_ = GURL(response.url);
     response_headers_ = response.headers;
+    opaque_ = response.opaque;
   }
   void OnResponseBody(std::string bytes) override {
     source_ += bytes;
@@ -247,6 +251,7 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
   int status_ = 0;
   GURL response_url_;
   std::string response_headers_;
+  bool opaque_ = false;
   std::string source_;
   bool ended_ = false;
   // Until the fetch ends, it has not succeeded.
@@ -457,7 +462,8 @@ void DocumentLoader::ExecuteFetched(ScriptFetch& fetch) {
     FireSimpleEvent(element, u"error");
     return;
   }
-  runner_->RunClassicScript(fetch.TakeSource(), fetch.response_url());
+  runner_->RunClassicScript(fetch.TakeSource(), fetch.response_url(),
+                            fetch.muted_errors());
   FireSimpleEvent(element, u"load");
 }
 

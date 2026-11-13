@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/function_ref.h"
 #include "mitto/dom/node.h"
 
 namespace mitto {
@@ -22,12 +23,12 @@ class CharacterData : public Node {
 
   // The members of the interface.
   const std::u16string& Data() const { return data_; }
-  void SetData(const std::u16string& data) { data_ = data; }
+  void SetData(const std::u16string& data);
   uint32_t Length() const { return static_cast<uint32_t>(data_.size()); }
   std::u16string SubstringData(uint32_t offset,
                                uint32_t count,
                                bindings::ExceptionState& exception_state) const;
-  void AppendData(const std::u16string& data) { data_ += data; }
+  void AppendData(const std::u16string& data);
   void InsertData(uint32_t offset,
                   const std::u16string& data,
                   bindings::ExceptionState& exception_state);
@@ -48,6 +49,10 @@ class CharacterData : public Node {
   CharacterData(Document& document, const std::u16string& data);
 
  private:
+  // Makes `change` to the data, and queues a record of it for the observers
+  // that it concerns.
+  void ModifyData(base::FunctionRef<void(std::u16string& data)> change);
+
   std::u16string data_;
 };
 

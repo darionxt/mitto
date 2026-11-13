@@ -10,8 +10,9 @@ from tools.capture.devtools import PageClicker
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
 from tools.capture.probe import dumps_record, read_record
 from tools.capture.recording import Recording, raw_form
+from tools.capture.script_delta import dumps_script_delta, script_delta
 from tools.capture.script_normal_form import dumps_script_raw_record, script_normal_form
-from tools.capture.script_page import SCRIPT_RUNS, ScriptRun, posted_record
+from tools.capture.script_page import SCRIPT_RUNS, TOP_LEVEL_PAGE, ScriptRun, posted_record
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
 _RUNS_FILE = "runs.json"
@@ -56,6 +57,9 @@ def main() -> int:
     runs = [run for run in available if run.name in names]
     if len(runs) != len(names):
         parser.error("--runs names a run that needs --tickets, or one that a server with --tickets cannot record")
+    if any(isinstance(run, ScriptRun) for run in runs) and TOP_LEVEL_PAGE not in runs:
+        # A later case's Baseline keeps what differs from the first's, from the same session.
+        parser.error(f"a run of a Script Fingerprint needs {TOP_LEVEL_PAGE.name} in the same session")
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -174,7 +178,8 @@ def _write_form(
 
 
 def _write_script(server: CaptureServer, run: ScriptRun, out: Path) -> bool:
-    """Write the record that a run's page posted, raw and in its Normal Form. Returns whether the page posted one."""
+    """Write the record that a run's page posted, raw and in its Normal Form, or for a later Recording Case what of its
+    Normal Form differs from the first case's of this session. Returns whether the page posted one."""
     recording = server.recording(run.route, host=run.host)
     posted = posted_record(recording, run)
     if posted is None:
@@ -191,8 +196,20 @@ def _write_script(server: CaptureServer, run: ScriptRun, out: Path) -> bool:
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(dumps_script_raw_record(url, peers, record), encoding="utf-8", newline="\n")
     path = out / f"{run.name}.json"
-    path.write_text(dumps_record(script_normal_form(record, url)), encoding="utf-8", newline="\n")
-    print(f"{run.label}: wrote {path}", flush=True)
+    form = script_normal_form(record, url, run.machine_places)
+    if run == TOP_LEVEL_PAGE:
+        path.write_text(dumps_record(form), encoding="utf-8", newline="\n")
+        print(f"{run.label}: wrote {path}", flush=True)
+        return True
+    # A recording session takes the first case first, so its Normal Form is there.
+    first_path = out / f"{TOP_LEVEL_PAGE.name}.json"
+    try:
+        first = read_record(first_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        print(f"{run.label}: no Normal Form of the first case to keep what differs from: {error}", file=sys.stderr)
+        return False
+    path.write_text(dumps_script_delta(script_delta(first, form, TOP_LEVEL_PAGE.case)), encoding="utf-8", newline="\n")
+    print(f"{run.label}: wrote what differs from {first_path.name} to {path}", flush=True)
     return True
 
 

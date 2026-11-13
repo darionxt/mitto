@@ -26,6 +26,9 @@ class HTMLElement : public Element {
   // The members of the interface beyond its reflected attributes.
   std::u16string Autocapitalize() const;
   void SetAutocapitalize(const std::u16string& value);
+  // Fires a click at the element, which runs its activation behaviour, as
+  // Blink's HTMLElement::click() does for a script.
+  void Click() { DispatchSimulatedClick(); }
 };
 
 }  // namespace mitto

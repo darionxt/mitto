@@ -4,11 +4,11 @@
 //
 // It has every insertion mode, foster parenting, the list of active formatting
 // elements with the adoption agency algorithm, framesets, and SVG and MathML
-// elements, and parses fragments for any context element. Where the DOM lacks
-// what a rule needs, such as a DocumentFragment for a template's contents or
-// attributes in namespaces, the node goes in as near Chrome's tree as it can,
-// and the builder records the rule, which tests read to tell such a rule from
-// a wrong tree.
+// elements, templates with their contents, and parses fragments for any
+// context element. Where the DOM lacks what a rule needs, such as a
+// ProcessingInstruction node, the builder goes on as near Chrome's tree as it
+// can and records the rule, which tests read to tell such a rule from a wrong
+// tree.
 //
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.cc

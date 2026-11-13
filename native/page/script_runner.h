@@ -113,8 +113,12 @@ class ScriptRunner final : public base::TaskObserver {
   }
   // Runs a classic script from `url` in the current context, inside a task,
   // reports what it throws as an uncaught error, and then runs the microtasks
-  // it queued, as the HTML Standard cleans up after running a script.
-  void RunClassicScript(std::u16string_view source, const GURL& url);
+  // it queued, as the HTML Standard cleans up after running a script. A
+  // window's error listeners see nothing of the errors of a script whose
+  // errors are `muted`, one of another origin fetched without CORS.
+  void RunClassicScript(std::u16string_view source,
+                        const GURL& url,
+                        bool muted_errors = false);
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,

@@ -1,7 +1,9 @@
 #include "mitto/dom/element.h"
 
 #include <algorithm>
+#include <limits>
 
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -10,6 +12,7 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_element.h"
 #include "mitto/dom/attr.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/dom_token_list.h"
@@ -18,6 +21,7 @@
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/markup_serializer.h"
+#include "mitto/dom/mutation_observer.h"
 #include "mitto/dom/named_node_map.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
@@ -124,15 +128,22 @@ std::optional<size_t> Element::FindAttributeIndex(
 
 void Element::AppendAttributeInternal(const QualifiedName& name,
                                       const std::u16string& value) {
+  // Blink's WillModifyAttribute(): a record for observers, before the change.
+  EnqueueAttributeMutation(*this, name, std::nullopt);
   attributes_.push_back({name, value});
 }
 
 void Element::SetAttributeValueInternal(size_t index,
                                         const std::u16string& value) {
+  // Also when the value stays the same, as in Blink.
+  EnqueueAttributeMutation(*this, attributes_[index].name,
+                           attributes_[index].value);
   attributes_[index].value = value;
 }
 
 void Element::RemoveAttributeInternal(size_t index) {
+  EnqueueAttributeMutation(*this, attributes_[index].name,
+                           attributes_[index].value);
   // Blink's RemoveAttributeInternal(): the attribute's node keeps the value.
   if (Attr* const attr = AttrIfExists(attributes_[index].name)) {
     attr->DetachFromElementWithValue(attributes_[index].value);
@@ -623,6 +634,8 @@ void Element::SetInnerHTML(const std::u16string& html,
           ? static_cast<Node&>(
                 *static_cast<HTMLTemplateElement*>(this)->Content())
           : static_cast<Node&>(*this);
+  // One record for observers, as Blink's ReplaceChildrenWithFragment().
+  const ChildListMutationScope mutation(container);
   container.RemoveChildren();
   for (const cppgc::Persistent<Node>& node : nodes) {
     container.ParserAppendChild(node.Get());
@@ -654,6 +667,8 @@ void Element::SetOuterHTML(const std::u16string& html,
   }
   const cppgc::Persistent<Element> self(this);
   Node* const next = NextSibling();
+  // One record for observers, as Blink's ReplaceChild() of the fragment.
+  const ChildListMutationScope mutation(*parent);
   parent->ParserRemoveChild(*this);
   for (const cppgc::Persistent<Node>& node : nodes) {
     if (next && next->ParentNode() == parent) {

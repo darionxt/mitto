@@ -1,8 +1,12 @@
 #include "mitto/dom/character_data.h"
 
+#include "base/functional/function_ref.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/mutation_observer.h"
+#include "mitto/dom/mutation_record.h"
+#include "v8/include/cppgc/persistent.h"
 
 namespace mitto {
 
@@ -46,6 +50,14 @@ std::u16string CharacterData::SubstringData(
   return data_.substr(offset, real_count);
 }
 
+void CharacterData::SetData(const std::u16string& data) {
+  ModifyData([&data](std::u16string& current) { current = data; });
+}
+
+void CharacterData::AppendData(const std::u16string& data) {
+  ModifyData([&data](std::u16string& current) { current += data; });
+}
+
 void CharacterData::InsertData(uint32_t offset,
                                const std::u16string& data,
                                bindings::ExceptionState& exception_state) {
@@ -53,7 +65,9 @@ void CharacterData::InsertData(uint32_t offset,
   if (!ValidateOffsetCount(offset, 0, Length(), real_count, exception_state)) {
     return;
   }
-  data_.insert(offset, data);
+  ModifyData([offset, &data](std::u16string& current) {
+    current.insert(offset, data);
+  });
 }
 
 void CharacterData::DeleteData(uint32_t offset,
@@ -64,7 +78,9 @@ void CharacterData::DeleteData(uint32_t offset,
                            exception_state)) {
     return;
   }
-  data_.erase(offset, real_count);
+  ModifyData([offset, real_count](std::u16string& current) {
+    current.erase(offset, real_count);
+  });
 }
 
 void CharacterData::ReplaceData(uint32_t offset,
@@ -76,12 +92,34 @@ void CharacterData::ReplaceData(uint32_t offset,
                            exception_state)) {
     return;
   }
-  data_.replace(offset, real_count, data);
+  ModifyData([offset, real_count, &data](std::u16string& current) {
+    current.replace(offset, real_count, data);
+  });
 }
 
 void CharacterData::SetNodeValue(const std::optional<std::u16string>& value,
                                  bindings::ExceptionState& exception_state) {
-  data_ = value.value_or(std::u16string());
+  SetData(value.value_or(std::u16string()));
+}
+
+void CharacterData::ModifyData(
+    base::FunctionRef<void(std::u16string& data)> change) {
+  // Blink's CharacterData::DidModifyData(): a record for the observers that
+  // the change concerns, which no script can change meanwhile. The old data is
+  // kept only for them, since copying it for each append would make the
+  // parser's growing text quadratic, where Blink's strings share their
+  // characters.
+  MutationObserverInterestGroup* const recipients =
+      MutationObserverInterestGroup::CreateForCharacterDataMutation(*this);
+  if (!recipients) {
+    change(data_);
+    return;
+  }
+  const cppgc::Persistent<MutationObserverInterestGroup> held(recipients);
+  const std::u16string old_data = data_;
+  change(data_);
+  recipients->EnqueueMutationRecord(
+      MutationRecord::CreateCharacterData(this, old_data));
 }
 
 std::optional<std::u16string> CharacterData::NodeValue() const {

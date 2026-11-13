@@ -159,6 +159,12 @@ class Window final : public WindowProperties {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // Reports `e` as an error that a script left uncaught: the window's error
+  // event, then the console, as Blink's WindowOrWorkerGlobalScope does.
+  void ReportError(v8::Local<v8::Value> e);
+
+  // EventTarget:
+  Window* ToWindow() override;
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -226,6 +232,9 @@ class Window final : public WindowProperties {
   void AddConsoleMessage(ConsoleLevel level, std::string text);
 
  private:
+  // Runs a callback that queueMicrotask() queued, from its microtask.
+  static void RunQueuedMicrotask(void* data);
+
   // The window's bars, each an object of its own, as Blink's are.
   enum BarKind : size_t {
     kLocationbar,

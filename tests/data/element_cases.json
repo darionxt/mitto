@@ -256,6 +256,7 @@
   "li value no arg": "string:0",
   "link crossOrigin no arg": "threw TypeError: Failed to set the 'crossOrigin' property on 'HTMLLinkElement': 1 argument required, but only 0 present.",
   "link fetchPriority no arg": "threw TypeError: Failed to set the 'fetchPriority' property on 'HTMLLinkElement': 1 argument required, but only 0 present.",
+  "link fetchPriority no arg": "threw TypeError: Failed to set the 'fetchPriority' property on 'HTMLLinkElement': 1 argument required, but only 0 present.",
   "attr basics": "string:[object Attr]|2|id|id|id|null|null|x|x|x|true|true|null|true|false|0|null|false|true|true|true",
   "attr live value": "string:b|c|\"\"|d",
   "attr detached by removal": "string:null,a|a|false",
