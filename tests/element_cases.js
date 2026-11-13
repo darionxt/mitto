@@ -444,6 +444,20 @@
     e.setAttributeNodeNS(a);
     return [e.getAttributeNS("http://www.w3.org/1999/xlink", "href"), e.outerHTML].join("|");
   });
+  // Blink makes the replaced attribute's node with the new name, unless a page asked for its node before.
+  run("setAttributeNodeNS other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "old");
+    const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
+    return [r.name, r.prefix, r.value, r.ownerElement, e.attributes[0].name].join("|");
+  });
+  run("setAttributeNodeNS other prefix asked", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "old");
+    e.getAttributeNodeNS("urn:x", "a");
+    const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
+    return [r.name, r.prefix, r.value, e.attributes[0].name].join("|");
+  });
   run("removeAttributeNode", () => {
     const e = document.createElement("div");
     e.setAttribute("title", "a");
@@ -774,6 +788,52 @@
     out.push(c.isContentEditable);
     p.remove();
     return out.join(",");
+  });
+  run("isContentEditable design mode", () => {
+    const p = document.createElement("div");
+    p.innerHTML = "<span contenteditable=false><b></b></span>";
+    const detached = p.firstChild;
+    document.body.appendChild(p);
+    const out = [];
+    try {
+      document.designMode = "on";
+      out.push(detached.isContentEditable, detached.firstChild.isContentEditable, document.documentElement.isContentEditable);
+      p.remove();
+      out.push(detached.isContentEditable);
+    } finally {
+      document.designMode = "off";
+    }
+    return out.join(",");
+  });
+  run("isContentEditable foreign", () => {
+    const p = document.createElement("div");
+    p.contentEditable = "true";
+    const svg = p.appendChild(document.createElementNS(SVG, "svg"));
+    const inSvg = svg.appendChild(document.createElement("span"));
+    const fo = svg.appendChild(document.createElementNS(SVG, "foreignObject"));
+    const inFo = fo.appendChild(document.createElement("span"));
+    const g = svg.appendChild(document.createElementNS(SVG, "g"));
+    const inG = g.appendChild(document.createElement("span"));
+    const math = p.appendChild(document.createElementNS(MATHML, "math"));
+    const inMath = math.appendChild(document.createElement("span"));
+    const mi = math.appendChild(document.createElementNS(MATHML, "mi"));
+    const inMi = mi.appendChild(document.createElement("span"));
+    const other = p.appendChild(document.createElementNS("urn:x", "svg"));
+    const inOther = other.appendChild(document.createElement("span"));
+    const own = fo.appendChild(document.createElement("i"));
+    own.contentEditable = "true";
+    const out = [inSvg, inFo, inG, inMath, inMi, inOther, own].map((e) => e.isContentEditable);
+    document.body.appendChild(p);
+    out.push(inFo.isContentEditable, inSvg.isContentEditable);
+    p.remove();
+    return out.join(",");
+  });
+  run("isContentEditable fragment", () => {
+    const f = document.createDocumentFragment();
+    const e = f.appendChild(document.createElement("span"));
+    const t = document.createElement("template");
+    t.innerHTML = "<div contenteditable><b></b></div>";
+    return [e.isContentEditable, t.content.firstChild.firstChild.isContentEditable].join(",");
   });
   // dataset.
   run("dataset read", () => {
