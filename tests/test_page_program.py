@@ -1512,6 +1512,18 @@ def test_webkit_request_file_system_names_a_persistent_one_and_refuses_another_t
     )
 
 
+def test_a_presentation_availability_outlives_its_request_until_its_promise_settles(session: _Session) -> None:
+    # Blink's resolver holds what it resolves with, so a page that keeps only the promise still gets the availability.
+    session.start(_with_features(v8_flags=["--expose-gc"]))
+    script = """new Promise((resolve) => {
+        const promise = new PresentationRequest("https://a.test/").getAvailability();
+        gc();
+        promise.then((availability) => resolve(String(availability) + " " + availability.value));
+    })"""
+
+    assert session.evaluate(script) == (False, json.dumps("[object PresentationAvailability] false"))
+
+
 def test_webkit_request_file_system_refuses_an_opaque_origin(session: _Session) -> None:
     # SecurityOrigin::CanAccessFileSystem(): about:blank, which the Page starts with, has an opaque origin.
     session.start()

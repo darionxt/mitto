@@ -139,17 +139,21 @@ v8::Local<v8::Promise> PresentationRequest::GetAvailability(
   }
   // The first requests wait for the browser, which finds no display: the
   // availability is false then, and later requests settle at once.
-  ResolveFromTaskWith(isolate, resolver,
-                      base::BindOnce(
-                          [](cppgc::WeakPersistent<PresentationRequest> request,
-                             v8::Isolate* isolate) -> v8::Local<v8::Value> {
-                            if (!request) {
-                              return v8::Undefined(isolate);
-                            }
-                            request->availability_known_ = true;
-                            return request->availability_->ToV8(isolate);
-                          },
-                          cppgc::WeakPersistent<PresentationRequest>(this)));
+  // The availability stays alive until the task settles the promise with it,
+  // as Blink's resolver holds its result, whether or not the request does.
+  ResolveFromTaskWith(
+      isolate, resolver,
+      base::BindOnce(
+          [](cppgc::WeakPersistent<PresentationRequest> request,
+             cppgc::Persistent<PresentationAvailability> availability,
+             v8::Isolate* isolate) -> v8::Local<v8::Value> {
+            if (request) {
+              request->availability_known_ = true;
+            }
+            return availability->ToV8(isolate);
+          },
+          cppgc::WeakPersistent<PresentationRequest>(this),
+          cppgc::Persistent<PresentationAvailability>(availability_.Get())));
   return resolver->GetPromise();
 }
 
