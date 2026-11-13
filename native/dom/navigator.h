@@ -32,6 +32,7 @@
 namespace mitto {
 
 class MimeTypeArray;
+class LockManager;
 class NavigatorUAData;
 class NetworkInformation;
 class PluginArray;
@@ -76,6 +77,8 @@ class Navigator final : public bindings::ScriptWrappable {
   float DeviceMemory() const;
   // A new object each time, as Blink makes one.
   NavigatorUAData* UserAgentData() const;
+  // The window's Web Locks, made the first time.
+  mitto::LockManager* Locks();
   int32_t MaxTouchPoints() const;
   std::optional<std::u16string> DoNotTrack() const;
 
@@ -93,6 +96,7 @@ class Navigator final : public bindings::ScriptWrappable {
   cppgc::Member<NetworkInformation> connection_;
   cppgc::Member<PluginArray> plugins_;
   cppgc::Member<MimeTypeArray> mime_types_;
+  cppgc::Member<mitto::LockManager> locks_;
 };
 
 }  // namespace mitto

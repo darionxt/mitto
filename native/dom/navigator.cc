@@ -6,11 +6,13 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
+#include "mitto/dom/lock_manager.h"
 #include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
 #include "mitto/dom/network_information.h"
 #include "mitto/dom/plugin_array.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
@@ -69,6 +71,7 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(connection_);
   visitor->Trace(plugins_);
   visitor->Trace(mime_types_);
+  visitor->Trace(locks_);
 }
 
 uint64_t Navigator::HardwareConcurrency() const {
@@ -184,6 +187,16 @@ float Navigator::DeviceMemory() const {
 
 NavigatorUAData* Navigator::UserAgentData() const {
   return NavigatorUAData::Create(navigator_.user_agent_data);
+}
+
+// LockManager::locks(): the navigator's supplement, which the current window
+// owns, since it is that window's navigator a script reads.
+mitto::LockManager* Navigator::Locks() {
+  if (!locks_) {
+    locks_ =
+        bindings::MakeGarbageCollected<mitto::LockManager>(Window::Current());
+  }
+  return locks_.Get();
 }
 
 int32_t Navigator::MaxTouchPoints() const {

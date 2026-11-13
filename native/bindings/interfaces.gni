@@ -455,6 +455,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Lock"
+    file = "lock"
+  },
+  {
+    name = "LockManager"
+    file = "lock_manager"
+  },
+  {
     name = "MediaSource"
     file = "media_source"
     made_by_known_gaps = true
@@ -530,6 +538,7 @@ mitto_bindings_interfaces = [
       "javaEnabled",
       "deviceMemory",
       "userAgentData",
+      "locks",
     ]
   },
   {
