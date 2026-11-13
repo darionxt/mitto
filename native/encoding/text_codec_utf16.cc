@@ -124,4 +124,18 @@ std::u16string TextCodecUtf16::Decode(base::span<const uint8_t> bytes,
   return result;
 }
 
+std::string TextCodecUtf16::Encode(std::u16string_view text,
+                                   UnencodableHandling) {
+  // Each code unit as it is, a lone surrogate too, as in Blink.
+  std::string result(text.size() * 2, '\0');
+  for (size_t i = 0; i < text.size(); ++i) {
+    const char16_t c = text[i];
+    const auto low = static_cast<char>(c);
+    const auto high = static_cast<char>(c >> 8);
+    result[i * 2] = little_endian_ ? low : high;
+    result[i * 2 + 1] = little_endian_ ? high : low;
+  }
+  return result;
+}
+
 }  // namespace mitto

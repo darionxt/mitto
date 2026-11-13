@@ -1,13 +1,19 @@
-# The Encoding Standard's decoders and the registry of their labels, as Blink's
-# WTF has them, which TextDecoder and TextEncoder use. The single-byte
+# The Encoding Standard's decoders and encoders and the registry of their
+# labels, as Blink's WTF has them, which TextDecoder and TextEncoder use, and
+# how a document and a script decode, as Blink's TextResourceDecoder works out
+# their encoding, with Chrome's detector in third_party/ced. The single-byte
 # encodings beyond windows-1252, and the indexes of the CJK ones, come from
 # ICU's converters, in the data that the Page program holds. Nothing here goes
 # into the library: a Page runs in a process of its own.
 
 source_set("encoding") {
   sources = [
+    "content_type.cc",
+    "content_type.h",
     "encoding_tables.cc",
     "encoding_tables.h",
+    "html_meta_charset_parser.cc",
+    "html_meta_charset_parser.h",
     "text_codec.cc",
     "text_codec.h",
     "text_codec_cjk.cc",
@@ -24,9 +30,24 @@ source_set("encoding") {
     "text_codec_utf16.h",
     "text_codec_utf8.cc",
     "text_codec_utf8.h",
+    "text_encoding_detector.cc",
+    "text_encoding_detector.h",
     "text_encoding_registry.cc",
     "text_encoding_registry.h",
+    "text_resource_decoder.cc",
+    "text_resource_decoder.h",
+    "text_resource_decoder_builder.cc",
+    "text_resource_decoder_builder.h",
+    "url_with_encoding.cc",
+    "url_with_encoding.h",
   ]
-  public_deps = [ "//base" ]
-  deps = [ "//third_party/icu" ]
+  public_deps = [
+    "//base",
+    "//url",
+  ]
+  deps = [
+    "//mitto/html:tokenizer",
+    "//third_party/ced",
+    "//third_party/icu",
+  ]
 }

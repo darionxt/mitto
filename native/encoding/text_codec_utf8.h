@@ -40,6 +40,8 @@ class TextCodecUtf8 final : public TextCodec {
                         FlushBehavior flush,
                         bool stop_on_error,
                         bool& saw_error) override;
+  std::string Encode(std::u16string_view text,
+                     UnencodableHandling handling) override;
 
  private:
   void SavePartialSequenceBytes(base::span<const uint8_t>& source);
