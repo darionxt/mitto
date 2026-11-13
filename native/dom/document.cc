@@ -500,6 +500,10 @@ Element* Document::CreateElement(
   return element;
 }
 
+GURL Document::CompleteURL(std::u16string_view url) const {
+  return GURL(base::UTF16ToUTF8(url_)).Resolve(url);
+}
+
 Document& Document::EnsureTemplateDocument() {
   if (template_document_host_) {
     return *this;

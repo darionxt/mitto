@@ -1,8 +1,11 @@
 #include "mitto/dom/element.h"
 
 #include <algorithm>
+#include <limits>
 
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
@@ -16,10 +19,60 @@
 #include "mitto/dom/markup_serializer.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
+#include "url/gurl.h"
 
 namespace mitto {
 
 namespace {
+
+bool IsHTMLSpace(char16_t c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+}
+
+// Blink's StripLeadingAndTrailingHtmlSpaces().
+std::u16string_view StripHTMLSpaces(std::u16string_view value) {
+  while (!value.empty() && IsHTMLSpace(value.front())) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() && IsHTMLSpace(value.back())) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+// Blink's ParseHTMLInteger(): the HTML Standard's rules for parsing integers,
+// with what follows the digits ignored, and nothing for no digits or a value
+// beyond an int.
+std::optional<int32_t> ParseHTMLInteger(std::u16string_view value) {
+  while (!value.empty() && IsHTMLSpace(value.front())) {
+    value.remove_prefix(1);
+  }
+  bool negative = false;
+  if (!value.empty() && (value.front() == '-' || value.front() == '+')) {
+    negative = value.front() == '-';
+    value.remove_prefix(1);
+  }
+  if (value.empty() || value.front() < '0' || value.front() > '9') {
+    return std::nullopt;
+  }
+  int64_t result = 0;
+  for (const char16_t c : value) {
+    if (c < '0' || c > '9') {
+      break;
+    }
+    result = result * 10 + (c - '0');
+    if (result > int64_t{std::numeric_limits<int32_t>::max()} + 1) {
+      return std::nullopt;
+    }
+  }
+  if (negative) {
+    result = -result;
+  }
+  if (!base::IsValueInRangeForNumericType<int32_t>(result)) {
+    return std::nullopt;
+  }
+  return static_cast<int32_t>(result);
+}
 
 void ThrowInvalidAttributeName(const std::u16string& name,
                                bindings::ExceptionState& exception_state) {
@@ -375,6 +428,48 @@ std::optional<std::u16string> Element::ReflectedKeywordAttribute(
     return std::nullopt;
   }
   return std::u16string();
+}
+
+std::optional<std::u16string> Element::ReflectedNullableStringAttribute(
+    std::u16string_view name) const {
+  if (const std::u16string* value = FindAttribute(name)) {
+    return *value;
+  }
+  return std::nullopt;
+}
+
+std::u16string Element::ReflectedURLAttribute(std::u16string_view name) const {
+  const std::u16string* value = FindAttribute(name);
+  if (!value) {
+    return std::u16string();
+  }
+  const std::u16string_view stripped = StripHTMLSpaces(*value);
+  const GURL url = GetDocument().CompleteURL(stripped);
+  return url.is_valid() ? base::UTF8ToUTF16(url.spec())
+                        : std::u16string(stripped);
+}
+
+int32_t Element::ReflectedIntegerAttribute(std::u16string_view name) const {
+  const std::u16string* value = FindAttribute(name);
+  return value ? ParseHTMLInteger(*value).value_or(0) : 0;
+}
+
+void Element::SetReflectedIntegerAttribute(std::u16string_view name,
+                                           int32_t value) {
+  SetAttributeWithoutValidation(name, base::NumberToString16(value));
+}
+
+uint32_t Element::ReflectedUnsignedIntegerAttribute(
+    std::u16string_view name) const {
+  return static_cast<uint32_t>(std::max(0, ReflectedIntegerAttribute(name)));
+}
+
+void Element::SetReflectedUnsignedIntegerAttribute(std::u16string_view name,
+                                                   uint32_t value) {
+  // The HTML Standard's limit for an unsigned long that reflects a content
+  // attribute, whose default here is 0.
+  SetAttributeWithoutValidation(
+      name, base::NumberToString16(value > 0x7fffffffu ? 0u : value));
 }
 
 void Element::SetReflectedNullableStringAttribute(

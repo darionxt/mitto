@@ -15,12 +15,14 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/v8-promise.h"
 
@@ -184,6 +186,10 @@ class Document : public Node {
   Element* CreateElement(const std::optional<std::u16string>& namespace_uri,
                          const std::optional<std::u16string>& prefix,
                          const std::u16string& local_name);
+  // `url` resolved against the document's base URL, as Blink's CompleteURL()
+  // resolves it: the document's URL, since the Runtime does not read <base>
+  // yet. An invalid GURL when it does not resolve.
+  GURL CompleteURL(std::u16string_view url) const;
   // The document that owns the contents of this document's template
   // elements: a new document of the same kind with no window, made the first
   // time one asks, and the document itself for such a document, as Blink's
