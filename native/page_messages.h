@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 14;
+inline constexpr uint32_t kPageProtocolVersion = 15;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
