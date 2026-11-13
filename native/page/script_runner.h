@@ -37,6 +37,7 @@ class Isolate;
 namespace mitto {
 
 class DOMTimerCoordinator;
+class IdleTaskController;
 class Document;
 class DocumentLoader;
 class PageFetcher;
@@ -174,6 +175,7 @@ class ScriptRunner final : public base::TaskObserver {
   std::unique_ptr<DocumentLoader> loader_;
   // The current window's timers and what its fetch() goes through.
   std::unique_ptr<DOMTimerCoordinator> timers_;
+  std::unique_ptr<IdleTaskController> idle_tasks_;
   std::unique_ptr<PageFetcher> fetcher_;
   // What window.chrome of each window that the Page has made reads, the
   // current one's last. They live as long as the Page, for a callback of a

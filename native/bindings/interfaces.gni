@@ -416,6 +416,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "IdleDeadline"
+    file = "idle_deadline"
+  },
+  {
     name = "Location"
     file = "location"
     made_by_known_gaps = true
@@ -875,6 +879,9 @@ mitto_bindings_interfaces = [
       "crypto",
       "atob",
       "btoa",
+      "requestIdleCallback",
+      "cancelIdleCallback",
+      "event",
     ]
   },
   {

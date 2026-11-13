@@ -20,6 +20,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
@@ -196,9 +197,11 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
                                 const PageConnection& connection) {
   const v8::Context::Scope context_scope(context);
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
+  idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   Window& window = Window::Current();
   window.SetTimers(timers_.get());
+  window.SetIdleTasks(idle_tasks_.get());
   window.SetFetcher(fetcher_.get());
   window.SetStart(start_, connection);
   window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
@@ -345,9 +348,11 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
     // The old window's timers and fetches stop with its context.
     const v8::Context::Scope old_scope(context_.Get(isolate_));
     Window::Current().SetTimers(nullptr);
+    Window::Current().SetIdleTasks(nullptr);
     Window::Current().SetFetcher(nullptr);
   }
   timers_.reset();
+  idle_tasks_.reset();
   fetcher_.reset();
   reporter_->ContextDestroyed(context_.Get(isolate_));
   chrome_object_data_.back()->detached = true;

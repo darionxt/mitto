@@ -25,7 +25,9 @@
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
+#include "mitto/dom/event.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
 #include "mitto/dom/navigation.h"
@@ -105,6 +107,34 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(navigation_);
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
+  visitor->Trace(current_event_);
+}
+
+// WindowIdleTasks::requestIdleCallback(): 0 once the context has gone.
+uint32_t Window::RequestIdleCallback(
+    v8::Local<v8::Function> callback,
+    const bindings::IdleRequestOptions& options) {
+  return idle_tasks_ ? idle_tasks_->RequestIdleCallback(callback, options.timeout)
+                     : 0;
+}
+
+void Window::CancelIdleCallback(uint32_t handle) {
+  if (idle_tasks_) {
+    idle_tasks_->CancelIdleCallback(handle);
+  }
+}
+
+size_t Window::IdleCallbackCount() const {
+  return idle_tasks_ ? idle_tasks_->size() : 0;
+}
+
+// LocalDOMWindow::event(): the current event, or undefined.
+v8::Local<v8::Value> Window::Event() const {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!current_event_) {
+    return v8::Undefined(isolate);
+  }
+  return current_event_->ToV8(isolate);
   visitor->Trace(document_load_timing_);
 }
 
