@@ -17,6 +17,7 @@
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
 #include "net/base/io_buffer.h"
+#include "net/base/load_timing_info.h"
 
 namespace mitto {
 
@@ -49,6 +50,19 @@ struct RequestEvent {
   // method of the next hop.
   std::string new_url;
   std::string new_method;
+  // How the hop went, for a Page's Performance Timeline, as Chrome's network
+  // service gives Blink a response's load timing: //net's times of the hop,
+  // the bytes received so far, and whether the cache had the response
+  // validated by the server.
+  net::LoadTimingInfo load_timing;
+  int64_t received_bytes = 0;
+  bool validated = false;
+  // When the request's first hop started, and, for a navigation that
+  // restarted for Critical-CH, when it did, null once a redirect has come
+  // since, and whether it did at all.
+  base::TimeTicks first_request_start;
+  base::TimeTicks critical_ch_restart;
+  bool restarted_for_critical_ch = false;
 };
 
 // Carries one request's events and body from the network thread to whichever

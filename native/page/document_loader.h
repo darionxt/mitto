@@ -37,6 +37,7 @@
 namespace mitto {
 
 class Document;
+class DocumentLoadTiming;
 class HTMLScriptElement;
 class HtmlDocumentParser;
 class ScriptRunner;
@@ -72,6 +73,7 @@ class DocumentLoader final : public PageRequests::Client {
   // PageRequests::Client, for the navigation:
   void OnResponseStarted(const PageResponseStarted& response) override;
   void OnResponseBody(std::string bytes) override;
+  void OnResponseTotals(const PageResponseEnded& ended) override;
   void OnResponseEnded(int net_error) override;
 
  private:
@@ -108,6 +110,10 @@ class DocumentLoader final : public PageRequests::Client {
 
   GURL url_;
   cppgc::Persistent<Document> document_;
+  // How the document loads, which its window's Performance Timeline reads.
+  cppgc::Persistent<DocumentLoadTiming> timing_;
+  // How many bytes of the body have come, as decoded as the Page gets them.
+  uint64_t body_bytes_ = 0;
   std::unique_ptr<HtmlDocumentParser> parser_;
   Utf8StreamDecoder decoder_;
   // Pieces of the body that have arrived and wait for the parser, which waits

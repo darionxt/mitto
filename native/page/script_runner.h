@@ -105,9 +105,11 @@ class ScriptRunner final : public base::TaskObserver {
   Document& CommitDocument(const GURL& url,
                            base::TimeTicks navigation_start,
                            const PageConnection& connection);
-  // What window.chrome of the current window reads, which its document's
-  // loading fills in.
-  ChromeObjectData& chrome_object_data() { return *chrome_object_data_.back(); }
+  // How the current window's document loads, which its document's loading
+  // fills in, and performance.timing and window.chrome read.
+  DocumentLoadTiming& document_load_timing() {
+    return *chrome_object_data_.back()->load_timing;
+  }
   // Runs a classic script from `url` in the current context, inside a task,
   // reports what it throws as an uncaught error, and then runs the microtasks
   // it queued, as the HTML Standard cleans up after running a script.

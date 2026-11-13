@@ -7,11 +7,23 @@
 #define MITTO_REQUEST_CLIENT_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
+#include "base/time/time.h"
 #include "mitto/request_channel.h"
 #include "net/base/io_buffer.h"
 
 namespace mitto {
+
+// What a request took, once it has ended, as Chrome's network service tells
+// Blink when it completes: the body's bytes as they came over the wire, before
+// any content coding was undone, every byte received, headers included, and
+// when it ended.
+struct RequestTotals {
+  int64_t raw_body_bytes = 0;
+  int64_t received_bytes = 0;
+  base::TimeTicks completion_time;
+};
 
 // Hears how a request goes, on the network thread.
 class RequestClient {
@@ -40,6 +52,9 @@ class RequestClient {
   // The stream body wants more of what the caller writes. Only a caller of the
   // C API sends one.
   virtual void OnBodyWanted() {}
+
+  // What the request took, just before OnFinished().
+  virtual void OnTotals(const RequestTotals& totals) {}
 
   // The request has ended: net::OK when all of the body has come, and
   // otherwise a net error. Nothing more comes, and the client may go.

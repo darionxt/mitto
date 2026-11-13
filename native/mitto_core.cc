@@ -367,6 +367,7 @@ class RequestJob final : public net::URLRequest::Delegate,
                                         net::ERR_TIMED_OUT));
     }
     StartConnectTimer();
+    first_request_start_ = base::TimeTicks::Now();
     request_->Start();
   }
 
@@ -600,6 +601,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   // ThrottlingURLLoader and NavigationURLLoaderImpl do. It only ever is a
   // navigation's, whose rules have said what it goes on with.
   void RestartRequest(FetchRules::Restart restart) {
+    const bool for_critical_ch = restart.for_critical_ch;
     std::unique_ptr<net::URLRequest> old_request = std::move(request_);
     const bool has_body = old_request->has_upload();
     request_ =
@@ -613,6 +615,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     }
     proxy_auth_answered_ = false;
     StartConnectTimer();
+    // ThrottlingURLLoader::DidRestartForCriticalClientHint(), for the
+    // navigation's timing, where the restart is a redirect of its own.
+    if (for_critical_ch) {
+      critical_ch_restart_ = base::TimeTicks::Now();
+      restarted_for_critical_ch_ = true;
+    }
     request_->Start();
   }
 
@@ -637,6 +645,16 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.headers = HeaderLines(*request_->response_headers());
     event.status_text = request_->response_headers()->GetStatusText();
     event.redirected = request_->url_chain().size() > 1;
+    // As network::URLLoader fills a response's head for Blink's timing.
+    // Upstream: services/network/url_loader.cc
+    request_->GetLoadTimingInfo(&event.load_timing);
+    event.received_bytes =
+        static_cast<int64_t>(request_->GetTotalReceivedBytes().InBytes());
+    event.validated = response_info.cache_entry_status ==
+                      net::HttpResponseInfo::CacheEntryStatus::ENTRY_VALIDATED;
+    event.first_request_start = first_request_start_;
+    event.critical_ch_restart = critical_ch_restart_;
+    event.restarted_for_critical_ch = restarted_for_critical_ch_;
     return event;
   }
 
@@ -672,7 +690,11 @@ class RequestJob final : public net::URLRequest::Delegate,
       Finish(net::ERR_FAILED);
       return;
     }
-    PushResponseEvent(MITTO_EVENT_REDIRECT_FOLLOWED);
+    // With where it goes, which a Page's timing compares with where it was.
+    client_->OnResponseEvent(std::move(redirect));
+    // ThrottlingURLLoader carries the restart's time on the redirect that it
+    // makes, and not on the ones after it.
+    critical_ch_restart_ = base::TimeTicks();
 
     // Step 13 of https://fetch.spec.whatwg.org/#http-redirect-fetch, which
     // Chrome does in ResourceLoader::WillFollowRedirect() in Blink. The header
@@ -731,10 +753,20 @@ class RequestJob final : public net::URLRequest::Delegate,
   // `result` is net::OK when the body ended, otherwise a net error. This deletes
   // the job, so nothing may touch it afterwards.
   void Finish(int result) {
+    // What URLLoader's completion status carries, before the request goes.
+    RequestTotals totals;
+    totals.completion_time = base::TimeTicks::Now();
+    if (request_) {
+      totals.raw_body_bytes =
+          static_cast<int64_t>(request_->GetRawBodyBytes().InBytes());
+      totals.received_bytes =
+          static_cast<int64_t>(request_->GetTotalReceivedBytes().InBytes());
+    }
     // Deleting the request from its delegate's callback is allowed.
     request_.reset();
     // A client that abandoned the request has gone.
     if (client_) {
+      client_->OnTotals(totals);
       client_->OnFinished(result);
     }
     session_->jobs.erase(session_->jobs.find(this));
@@ -756,6 +788,11 @@ class RequestJob final : public net::URLRequest::Delegate,
   // The stream body, which `request_` owns and drops on a 303.
   base::WeakPtr<BodyStream> body_stream_;
   std::unique_ptr<net::URLRequest> request_;
+  // When the first request started, and when a navigation last restarted for
+  // Critical-CH, if no redirect has come since, for the navigation's timing.
+  base::TimeTicks first_request_start_;
+  base::TimeTicks critical_ch_restart_;
+  bool restarted_for_critical_ch_ = false;
   bool response_started_ = false;
   bool read_wanted_ = false;
   bool proxy_auth_answered_ = false;
@@ -1720,6 +1757,7 @@ int32_t mitto_page_open(MittoSession* session,
     return net::ERR_FILE_NOT_FOUND;
   }
 
+  parsed_options->navigation_start = base::TimeTicks::Now();
   mitto::NetworkCore& core = mitto::NetworkCore::Get();
   mitto::PageChannelEnd ours;
   mitto::PageChannelEnd theirs;

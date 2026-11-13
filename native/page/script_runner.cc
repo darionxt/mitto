@@ -178,9 +178,9 @@ std::optional<std::string> ScriptRunner::Start(
 }
 
 v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin) {
-  chrome_object_data_.push_back(std::make_unique<ChromeObjectData>());
+  chrome_object_data_.push_back(
+      std::make_unique<ChromeObjectData>(time_origin));
   ChromeObjectData& chrome_object_data = *chrome_object_data_.back();
-  chrome_object_data.StartAt(time_origin);
   return NewPageContext(
       isolate_, u"",
       [this, &chrome_object_data](v8::Local<v8::Context> context) {
@@ -201,6 +201,15 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   window.SetTimers(timers_.get());
   window.SetFetcher(fetcher_.get());
   window.SetStart(start_, connection);
+  window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
+  window.SetConsoleSink(base::BindRepeating(
+      [](const SendFrame& send, ConsoleLevel level, std::string text) {
+        PageConsoleMessage message;
+        message.level = level;
+        message.text = std::move(text);
+        send.Run(EncodeConsole(message));
+      },
+      send_));
 }
 
 void ScriptRunner::WillProcessTask(const base::PendingTask& pending_task,

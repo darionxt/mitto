@@ -71,6 +71,11 @@ class FetchRules {
     // Whether it carries on the chain of URLs of the request it replaces, or
     // starts a new one.
     bool keeps_url_chain = false;
+
+    // Whether it is a restart for Critical-CH, which ThrottlingURLLoader makes
+    // a redirect of, and not one for an ACCEPT_CH frame, which the network
+    // service makes within the request.
+    bool for_critical_ch = false;
   };
 
   // `url` is the URL the request starts at. `client_hints_store` and

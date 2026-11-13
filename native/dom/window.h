@@ -43,6 +43,7 @@ class Crypto;
 class CustomElementRegistry;
 class DOMTimerCoordinator;
 class Document;
+class DocumentLoadTiming;
 class Fetcher;
 class History;
 class Location;
@@ -172,6 +173,18 @@ class Window final : public WindowProperties {
   void SetStart(const PageStart& start, const PageConnection& connection);
   // What the window reads of the browser and the machine.
   const PageStart& Start() const { return start_; }
+  // How the window's document loads, which performance.timing and the
+  // navigation's entry read. Without one, as in the Page program given a
+  // script, the window starts one at its time origin.
+  void SetDocumentLoadTiming(DocumentLoadTiming* timing);
+  DocumentLoadTiming& GetDocumentLoadTiming();
+  // Where the console messages of the DOM go, such as a warning of Blink's.
+  // Without one, nowhere.
+  using ConsoleSink =
+      base::RepeatingCallback<void(ConsoleLevel level, std::string text)>;
+  void SetConsoleSink(ConsoleSink sink) { console_sink_ = std::move(sink); }
+  // ExecutionContext::AddConsoleMessage().
+  void AddConsoleMessage(ConsoleLevel level, std::string text);
 
  private:
   // The window's bars, each an object of its own, as Blink's are.
@@ -202,6 +215,8 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Navigation> navigation_;
   cppgc::Member<CustomElementRegistry> custom_elements_;
   cppgc::Member<mitto::Crypto> crypto_;
+  cppgc::Member<DocumentLoadTiming> document_load_timing_;
+  ConsoleSink console_sink_;
   PageStart start_;
   PageConnection connection_;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;

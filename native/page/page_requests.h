@@ -11,14 +11,21 @@
 #include <stdint.h>
 
 #include <map>
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/time/time.h"
 #include "mitto/page/page_reporter.h"
 #include "mitto/page_messages.h"
+#include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-persistent-handle.h"
 
 namespace mitto {
+
+class Window;
 
 class PageRequests {
  public:
@@ -31,6 +38,9 @@ class PageRequests {
     // taken them, now or later, which gives the Session room for as many
     // more.
     virtual void OnResponseBody(std::string bytes) = 0;
+    // What the request took, which the Session says at its end, just before
+    // OnResponseEnded().
+    virtual void OnResponseTotals(const PageResponseEnded& ended) {}
     // The end: net::OK when all of the body has come, and otherwise why the
     // request failed, with or without a response. Nothing more comes.
     virtual void OnResponseEnded(int net_error) = 0;
@@ -55,10 +65,17 @@ class PageRequests {
 
   // Asks the Session for a request of `kind` for `url`, with the Page's
   // document as its Initiator. `client` hears how it goes, and has to live
-  // until its end.
-  uint64_t Start(PageRequestKind kind, std::string url, Client& client);
+  // until its end. The current window's Performance Timeline gets an entry of
+  // it once it ends, as Blink's ResourceFetcher adds one, which says that it
+  // blocked rendering if `render_blocking`.
+  uint64_t Start(PageRequestKind kind,
+                 std::string url,
+                 Client& client,
+                 bool render_blocking = false);
   // The same for `request`, whose number this sets.
-  uint64_t Start(PageRequest request, Client& client);
+  uint64_t Start(PageRequest request,
+                 Client& client,
+                 bool render_blocking = false);
 
   // Tells the Session that request `number` is no longer wanted. Its client
   // hears nothing more of it.
@@ -73,17 +90,49 @@ class PageRequests {
   void OnResponseEnded(const PageResponseEnded& ended);
 
  private:
+  // What the entry of a request of the Page's is made of: ResourceFetcher's
+  // PendingResourceTimingInfo, with the response and the size of its body.
+  struct Timed {
+    Timed();
+    Timed(Timed&&);
+    Timed& operator=(Timed&&);
+    ~Timed();
+
+    base::TimeTicks start_time;
+    std::u16string initiator_type;
+    std::u16string url;
+    bool render_blocking = false;
+    std::optional<PageResponseStarted> response;
+    uint64_t decoded_body_size = 0;
+    // The window that asked, whose timeline gets the entry while it runs, and
+    // its context, in which the entry is added, whoever ends the request.
+    cppgc::WeakPersistent<Window> window;
+    v8::Global<v8::Context> context;
+  };
+
   struct Open {
+    Open();
+    Open(Open&&);
+    Open& operator=(Open&&);
+    ~Open();
+
     raw_ptr<Client> client;
     // Bytes the Session has sent that the client has not taken yet: at most
     // kBodyWindow.
     size_t untaken = 0;
     bool started = false;
+    // For a request of the Page's, not the navigation.
+    std::optional<Timed> timed;
   };
 
   // Returns the request that the Session names, or null after refusing what
   // it sent.
   Open* Find(uint64_t number, std::string_view message);
+  // Adds the entry of a request that ended at `response_end`, with `ended`'s
+  // totals if the Session said them.
+  static void AddResourceTiming(Timed& timed,
+                                base::TimeTicks response_end,
+                                const PageResponseEnded* ended);
 
   const SendFrame send_;
   const base::RepeatingCallback<void(std::string)> refuse_;

@@ -593,17 +593,82 @@ mitto_bindings_interfaces = [
   {
     name = "Performance"
     file = "performance"
+
+    # eventCounts makes its class's object, and interactionCount stays 0, as
+    # a Page takes no input.
     implemented = [
       "now",
       "timeOrigin",
+      "getEntries",
+      "getEntriesByType",
+      "getEntriesByName",
+      "clearResourceTimings",
+      "setResourceTimingBufferSize",
+      "timing",
+      "navigation",
+      "mark",
+      "clearMarks",
+      "measure",
+      "clearMeasures",
       "memory",
+      "toJSON",
     ]
+  },
+  {
+    # Its descendants without a class, such as PerformancePaintTiming, are
+    # entries that never come to a Page.
+    name = "PerformanceEntry"
+    file = "performance_entry"
+    made_by_known_gaps = true
+    implemented = [
+      "name",
+      "entryType",
+      "startTime",
+      "duration",
+      "navigationId",
+      "toJSON",
+    ]
+  },
+  {
+    name = "PerformanceMark"
+    file = "performance_mark"
+  },
+  {
+    name = "PerformanceMeasure"
+    file = "performance_measure"
+  },
+  {
+    name = "PerformanceNavigation"
+    file = "performance_navigation"
+  },
+  {
+    name = "PerformanceNavigationTiming"
+    file = "performance_navigation_timing"
   },
   {
     name = "PerformanceObserver"
     file = "performance_observer"
     made_by_known_gaps = true
     implemented = [ "supportedEntryTypes" ]
+  },
+  {
+    name = "PerformanceResourceTiming"
+    file = "performance_resource_timing"
+
+    # initiatorUrl is behind ResourceTimingInitiator, which is experimental.
+    missing = [ "initiatorUrl" ]
+  },
+  {
+    name = "PerformanceServerTiming"
+    file = "performance_server_timing"
+  },
+  {
+    name = "PerformanceTiming"
+    file = "performance_timing"
+  },
+  {
+    name = "PerformanceTimingConfidence"
+    file = "performance_timing_confidence"
   },
   {
     name = "Plugin"
@@ -733,6 +798,10 @@ mitto_bindings_interfaces = [
     name = "Viewport"
     file = "viewport"
     made_by_known_gaps = true
+  },
+  {
+    name = "VisibilityStateEntry"
+    file = "visibility_state_entry"
   },
   {
     name = "VisualViewport"

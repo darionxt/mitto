@@ -69,6 +69,8 @@ executable("mitto_page") {
     "page_reporter.h",
     "page_requests.cc",
     "page_requests.h",
+    "resource_timing.cc",
+    "resource_timing.h",
     "script_runner.cc",
     "script_runner.h",
     "session_channel.cc",

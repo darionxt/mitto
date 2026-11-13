@@ -1429,8 +1429,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     """The declaration of a union and its FromV8(), which converts a value as Web IDL converts it to a union.
 
     Web IDL tries the union's members in a fixed order: a dictionary for undefined and null, then an object of each
-    interface, then a dictionary for any other object, then a boolean for a boolean, and then, for what is left, a
-    string, or else a boolean.
+    interface, then a dictionary for any other object, then a boolean for a boolean, a number for a Number, and then,
+    for what is left, a string, or else a number, or else a boolean.
     """
     alternatives = ", ".join(types.union_alternative(member) for member in union.members)
     signature = f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result)"
@@ -1448,6 +1448,7 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     sequence = next((member for member in union.members if member.kind is TypeKind.SEQUENCE), None)
     record = next((member for member in union.members if member.kind is TypeKind.RECORD), None)
     has_boolean = any(member.kind is TypeKind.BOOLEAN for member in union.members)
+    number = next((member for member in union.members if member.kind is TypeKind.FLOATING_POINT), None)
     string = next((member for member in union.members if member.kind is TypeKind.STRING), None)
     convert_dictionary = [
         f"  {dictionary.name if dictionary else ''} dictionary;",
@@ -1507,6 +1508,12 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             "    return true;",
             "  }",
         ]
+    convert_number: list[str] = []
+    if number is not None:
+        # bind_gen's union.py converts a Number with the member's own NativeValueTraits, whose message names it.
+        converted = types.from_v8(number, "value", "number", Site(fail="return false;"), f"union {union.syntax}")
+        convert_number = [*_indent(converted), "  *result = number;", "  return true;"]
+        source += ["  if (value->IsNumber()) {", *_indent(convert_number), "  }"]
     if string is not None:
         cpp_string, convert = {
             "ByteString": ("std::string", "FromV8ByteString"),
@@ -1520,6 +1527,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             "  *result = std::move(string);",
             "  return true;",
         ]
+    elif number is not None:
+        source += convert_number
     elif has_boolean:
         source += ["  *result = value->BooleanValue(isolate);", "  return true;"]
     else:

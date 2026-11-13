@@ -467,6 +467,7 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   Restart restart;
   restart.url = original_url_;
+  restart.for_critical_ch = true;
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
        headers.GetHeaderVector()) {
     const bool is_ours = IsClientHintHeader(header.key) && !IsFixed(header.key);

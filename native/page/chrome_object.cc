@@ -12,8 +12,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
 #include "base/task/single_thread_task_runner.h"
+#include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
-#include "mitto/dom/performance.h"
+#include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/performance_timing.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
@@ -114,7 +116,7 @@ class NativeDataObject {
   bool defined_ = true;
 };
 
-double InSeconds(int64_t milliseconds) {
+double InSeconds(uint64_t milliseconds) {
   return base::Milliseconds(milliseconds).InSecondsF();
 }
 
@@ -122,30 +124,29 @@ double InSeconds(int64_t milliseconds) {
 void LoadTimes(const v8::FunctionCallbackInfo<v8::Value>& info) {
   v8::Isolate* const isolate = info.GetIsolate();
   const ChromeObjectData& data = DataOf(info.Data());
+  const PerformanceTiming& timing = *data.timing;
+  const DocumentLoadTiming& load_timing = *data.load_timing;
   // Request time and start load time are the navigation's start, for
   // compatibility; commit is the response's start.
-  const double navigation_start =
-      InSeconds(data.ToIntegerMilliseconds(data.navigation_start));
+  const double navigation_start = InSeconds(timing.NavigationStart());
   NativeDataObject load_times(isolate, isolate->GetCurrentContext());
   load_times.Number("requestTime", navigation_start);
   load_times.Number("startLoadTime", navigation_start);
-  load_times.Number("commitLoadTime",
-                    InSeconds(data.ToIntegerMilliseconds(data.response_start)));
-  load_times.Number(
-      "finishDocumentLoadTime",
-      InSeconds(data.ToIntegerMilliseconds(data.dom_content_loaded_end)));
-  load_times.Number("finishLoadTime",
-                    InSeconds(data.ToIntegerMilliseconds(data.load_end)));
+  load_times.Number("commitLoadTime", InSeconds(timing.ResponseStart()));
+  load_times.Number("finishDocumentLoadTime",
+                    InSeconds(timing.DomContentLoadedEventEnd()));
+  load_times.Number("finishLoadTime", InSeconds(timing.LoadEventEnd()));
   // A Page paints nothing, so its first paint has not come.
   load_times.Number("firstPaintTime", 0);
   load_times.Number("firstPaintAfterLoadTime", 0);
   load_times.Text("navigationType", kNavigationType);
-  load_times.Boolean("wasFetchedViaSpdy", data.was_fetched_via_spdy);
-  load_times.Boolean("wasNpnNegotiated", data.was_alpn_negotiated);
-  load_times.Text("npnNegotiatedProtocol", data.alpn_negotiated_protocol);
+  load_times.Boolean("wasFetchedViaSpdy", load_timing.was_fetched_via_spdy);
+  load_times.Boolean("wasNpnNegotiated", load_timing.was_alpn_negotiated);
+  load_times.Text("npnNegotiatedProtocol",
+                  load_timing.alpn_negotiated_protocol);
   // The network service never sets it.
   load_times.Boolean("wasAlternateProtocolAvailable", false);
-  load_times.Text("connectionInfo", data.connection_info);
+  load_times.Text("connectionInfo", load_timing.connection_info);
   info.GetReturnValue().Set(load_times.Result());
 }
 
@@ -155,10 +156,10 @@ void Csi(const v8::FunctionCallbackInfo<v8::Value>& info) {
   const ChromeObjectData& data = DataOf(info.Data());
   const base::Time now = base::Time::Now();
   const base::Time start = base::Time::FromSecondsSinceUnixEpoch(
-      InSeconds(data.ToIntegerMilliseconds(data.navigation_start)));
+      InSeconds(data.timing->NavigationStart()));
   const base::Time dom_content_loaded_end =
       base::Time::FromSecondsSinceUnixEpoch(
-          InSeconds(data.ToIntegerMilliseconds(data.dom_content_loaded_end)));
+          InSeconds(data.timing->DomContentLoadedEventEnd()));
   NativeDataObject csi(isolate, isolate->GetCurrentContext());
   csi.Number("startE",
              static_cast<double>(start.InMillisecondsSinceUnixEpoch()));
@@ -332,28 +333,13 @@ v8::Local<v8::Object> AppObject(v8::Local<v8::Context> context,
 
 }  // namespace
 
-ChromeObjectData::ChromeObjectData() = default;
+ChromeObjectData::ChromeObjectData(base::TimeTicks navigation_start)
+    : load_timing(
+          bindings::MakeGarbageCollected<DocumentLoadTiming>(navigation_start)),
+      timing(bindings::MakeGarbageCollected<PerformanceTiming>(
+          load_timing.Get())) {}
+
 ChromeObjectData::~ChromeObjectData() = default;
-
-void ChromeObjectData::StartAt(base::TimeTicks start) {
-  // Blink's GetUnixAtZeroMonotonic(), as Performance takes it.
-  unix_at_zero_monotonic =
-      base::Time::Now() - (base::TimeTicks::Now() - base::TimeTicks());
-  navigation_start = start;
-}
-
-int64_t ChromeObjectData::ToIntegerMilliseconds(base::TimeTicks time) const {
-  // PerformanceTiming::MonotonicTimeToIntegerMilliseconds(): coarsened as
-  // performance.timeOrigin is, with the same clamper, and then cut to whole
-  // milliseconds, so that requestTime agrees with timeOrigin.
-  // Upstream: third_party/blink/renderer/core/timing/performance_timing.cc
-  if (time.is_null()) {
-    return 0;
-  }
-  const base::Time wall = unix_at_zero_monotonic + (time - base::TimeTicks());
-  return static_cast<int64_t>(
-      Performance::ClampTimeResolution(wall - base::Time::UnixEpoch()));
-}
 
 void InstallChromeObject(v8::Local<v8::Context> context,
                          ChromeObjectData& data) {
