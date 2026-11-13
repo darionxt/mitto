@@ -49,7 +49,8 @@ def _union_member_name(member: IdlType) -> str:
         return f"{_union_member_name(member.members[0])}Sequence"
     if member.kind is TypeKind.RECORD:
         return f"{_union_member_name(member.members[0])}{_union_member_name(member.members[1])}Record"
-    return member.name[0].upper() + member.name[1:]
+    # Each word of a name such as "unrestricted double" starts a word of the C++ name.
+    return "".join(word[0].upper() + word[1:] for word in member.name.split())
 
 
 def union_name(idl_type: IdlType) -> str:
@@ -318,6 +319,7 @@ class TypeMapper:
         handled = (
             TypeKind.BOOLEAN,
             TypeKind.DICTIONARY,
+            TypeKind.FLOATING_POINT,
             TypeKind.STRING,
             TypeKind.INTERFACE,
             TypeKind.SEQUENCE,
@@ -345,6 +347,8 @@ class TypeMapper:
         """The C++ type of a member of a union, in its std::variant."""
         if member.kind is TypeKind.BOOLEAN:
             return "bool"
+        if member.kind is TypeKind.FLOATING_POINT:
+            return "float" if member.name.endswith("float") else "double"
         if member.kind is TypeKind.STRING and member.name == "ByteString":
             return "std::string"
         if member.kind is TypeKind.STRING:
@@ -532,6 +536,12 @@ class TypeMapper:
             return "std::nullopt"
         if kind is TypeKind.DICTIONARY and literal == "{}":
             return f"{idl_type.name}()"
+        if kind is TypeKind.UNION and literal == "{}":
+            # Web IDL: {} is the default of a union only through its dictionary.
+            dictionary = next((member for member in idl_type.members if member.kind is TypeKind.DICTIONARY), None)
+            if dictionary is not None:
+                self._register_union(idl_type, where)
+                return f"{union_name(idl_type)}({dictionary.name}())"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
         raise UnhandledError(

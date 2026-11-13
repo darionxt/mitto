@@ -311,6 +311,38 @@ def test_a_union_loses_the_interfaces_that_have_no_class() -> None:
     )
 
 
+def test_a_union_converts_a_number_to_its_floating_point_member() -> None:
+    types = TypeMapper(frozenset(), frozenset({"Options"}))
+    string = IdlType(TypeKind.STRING, "DOMString")
+    number = IdlType(TypeKind.FLOATING_POINT, "double")
+    union = IdlType(TypeKind.UNION, "x", members=(string, number))
+
+    assert types.argument_type(union, "a") == "const DOMStringOrDouble&"
+    assert types.union_alternative(number) == "double"
+    header, source = cpp_writer._write_union("DOMStringOrDouble", union, types)  # pyright: ignore[reportPrivateUsage]
+    text = "\n".join(source)
+
+    assert "using DOMStringOrDouble = std::variant<std::u16string, double>;" in header
+    # A Number converts as the member's own type, with its check of finite values, before anything is a string.
+    assert text.index("if (value->IsNumber()) {") < text.index("FromV8String(isolate, value, &string)")
+    assert 'FromV8Double(isolate, value, true, "double", &number_double)' in text
+    unrestricted = IdlType(TypeKind.UNION, "y", members=(IdlType(TypeKind.FLOATING_POINT, "unrestricted double"),))
+    assert types.argument_type(dataclasses.replace(unrestricted, members=(*unrestricted.members, string)), "b") == (
+        "const UnrestrictedDoubleOrDOMString&"
+    )
+
+
+def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -> None:
+    types = TypeMapper(frozenset(), frozenset({"Options"}))
+    union = IdlType(
+        TypeKind.UNION, "x", members=(IdlType(TypeKind.STRING, "DOMString"), IdlType(TypeKind.DICTIONARY, "Options"))
+    )
+
+    assert types.default_value(union, "{}", "a") == "DOMStringOrOptions(Options())"
+    with pytest.raises(UnhandledError, match="default value"):
+        types.default_value(dataclasses.replace(union, members=union.members[:1] * 2), "{}", "b")
+
+
 @pytest.mark.parametrize(
     ("keys", "type_name", "expected"),
     [
