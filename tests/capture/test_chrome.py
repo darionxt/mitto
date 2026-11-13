@@ -14,7 +14,18 @@ from pathlib import Path
 import pytest
 
 from tests.capture.test_script_normal_form import getters_of
-from tools.capture import HTTP1, HTTP2, HTTP3, RESUMPTION_RUNS, RUNS, CaptureServer, Recording, Run, normal_form
+from tools.capture import (
+    DOCUMENT_RUNS,
+    HTTP1,
+    HTTP2,
+    HTTP3,
+    RECORDING_RUNS,
+    RESUMPTION_RUNS,
+    CaptureServer,
+    Recording,
+    Run,
+    normal_form,
+)
 from tools.capture.devtools import PageClicker
 from tools.capture.http1 import Http1Request
 from tools.capture.probe import RecordValue, dumps_record, read_record
@@ -25,10 +36,11 @@ from tools.capture.script_page import SCRIPT_RUNS, ScriptRun
 _CHROME_ENV_VAR = "MITTO_CHROME"
 _PAGE_TIMEOUT_SECONDS = 60.0
 _EXIT_TIMEOUT_SECONDS = 10.0
-_RUNS_BY_NAME = {run.name: run for run in RUNS}
+_RUNS_BY_NAME = {run.name: run for run in RECORDING_RUNS}
 _TLS_RUNS = ("cases/http1", "cases/http2", "cases/http3")
 _CLIENT_HINTS_RUNS = ("cases/client_hints_http1", "cases/client_hints_http2", "cases/client_hints_http3")
 _PROXY_RUNS = ("cases/proxy_http1", "cases/proxy_http2")
+_DOCUMENT_RUNS = tuple(run.name for run in DOCUMENT_RUNS)
 _PROTOCOLS = {
     "http1": "http/1.1",
     "http2": "h2",
@@ -43,6 +55,9 @@ _PROTOCOLS = {
     "cases/client_hints_http2": "h2",
     "cases/client_hints_http3": "h3",
     "cases/client_hints_plain_http": "http/1.1",
+    "documents/http1": "http/1.1",
+    "documents/http2": "h2",
+    "documents/http3": "h3",
 }
 _NAVIGATE = ("navigate", "document")
 _CORS = ("cors", "empty")
@@ -73,6 +88,74 @@ _SITE_MODE_AND_DESTINATION = {
     "redirect_fetch_3": ("cross-site", *_CORS),
     "redirect_fetch_4": ("cross-site", *_CORS),
 }
+_NO_CORS_SCRIPT = ("no-cors", "script")
+_NO_CORS_STYLE = ("no-cors", "style")
+_NO_CORS_IMAGE = ("no-cors", "image")
+_CORS_FONT = ("cors", "font")
+_MODULE_SCRIPT = ("cors", "script")
+_WORKER = ("same-origin", "worker")
+_BEACON = ("no-cors", "empty")
+_FRAME = ("navigate", "iframe")
+_DOCUMENT_SITE_MODE_AND_DESTINATION = {
+    "style": ("same-origin", *_NO_CORS_STYLE),
+    "style_import": ("same-origin", *_NO_CORS_STYLE),
+    "style_cross_site": ("cross-site", *_NO_CORS_STYLE),
+    "font": ("same-origin", *_CORS_FONT),
+    "font_cross_site": ("cross-site", *_CORS_FONT),
+    "module": ("same-origin", *_MODULE_SCRIPT),
+    "module_static_import": ("same-origin", *_MODULE_SCRIPT),
+    "module_dynamic_import": ("same-origin", *_MODULE_SCRIPT),
+    "module_cross_site": ("cross-site", *_MODULE_SCRIPT),
+    "xhr_get": ("same-origin", *_CORS),
+    "xhr_get_cross_site": ("cross-site", *_CORS),
+    "xhr_post_text": ("same-origin", *_CORS),
+    "xhr_get_sync": ("same-origin", *_CORS),
+    "xhr_post_text_sync": ("same-origin", *_CORS),
+    "worker": ("same-origin", *_WORKER),
+    "worker_import_scripts": ("same-origin", *_NO_CORS_SCRIPT),
+    "worker_fetch": ("same-origin", *_CORS),
+    "worker_module": ("same-origin", *_WORKER),
+    "beacon_text": ("same-origin", *_BEACON),
+    "beacon_blob": ("same-origin", *_BEACON),
+    "beacon_form_data": ("same-origin", *_BEACON),
+    "beacon_text_cross_site": ("cross-site", *_BEACON),
+    "fetch_later": ("same-origin", *_CORS),
+    "preflight": ("cross-site", *_CORS),
+    "fetch_post_json_cross_site": ("cross-site", *_CORS),
+    "fetch_credentials_omit": ("same-site", *_CORS),
+    "fetch_credentials_same_origin": ("same-site", *_CORS),
+    "fetch_credentials_include": ("same-site", *_CORS),
+    "fetch_no_cors": ("cross-site", "no-cors", "empty"),
+    "navigation_location": ("same-origin", *_NAVIGATE),
+    "navigation_click": ("same-origin", *_NAVIGATE),
+    "navigation_meta_refresh": ("same-origin", *_NAVIGATE),
+    "redirect_location_1": ("same-origin", *_NAVIGATE),
+    "redirect_location_2": ("cross-site", *_NAVIGATE),
+    "frame_same_origin": ("same-origin", *_FRAME),
+    "frame_same_site": ("same-site", *_FRAME),
+    "frame_cross_site": ("cross-site", *_FRAME),
+    # From the frame of the other site, to that site.
+    "frame_script": ("same-origin", *_NO_CORS_SCRIPT),
+    "frame_image": ("same-origin", *_NO_CORS_IMAGE),
+    "frame_fetch": ("same-origin", *_CORS),
+    "document_style": ("same-origin", *_NO_CORS_STYLE),
+    "document_preload_style": ("same-origin", *_NO_CORS_STYLE),
+    "document_preload_script": ("same-origin", *_NO_CORS_SCRIPT),
+    "document_preload_image": ("same-origin", *_NO_CORS_IMAGE),
+    "document_preload_font": ("same-origin", *_CORS_FONT),
+    "document_script": ("same-origin", *_NO_CORS_SCRIPT),
+    "document_image_small": ("same-origin", *_NO_CORS_IMAGE),
+    "document_image": ("same-origin", *_NO_CORS_IMAGE),
+    "document_style_body": ("same-origin", *_NO_CORS_STYLE),
+    "document_script_deferred": ("same-origin", *_NO_CORS_SCRIPT),
+    "navigation_form_get": ("same-origin", *_NAVIGATE),
+    "navigation_form_text": ("same-origin", *_NAVIGATE),
+    "navigation_form_cross_site": ("cross-site", *_NAVIGATE),
+    # The page it goes back to was reached from a page of the other site, and the traversal keeps that Initiator.
+    "navigation_history_back": ("cross-site", *_NAVIGATE),
+}
+_CLICKED = {"navigation_form_get", "navigation_form_text", "navigation_form_cross_site"}
+"""The navigations of the document runs that a user starts. The page starts the others, with no user activation."""
 
 
 @pytest.fixture(scope="module")
@@ -120,7 +203,7 @@ def go_through(chrome: str, run: Run, *, tickets: bool = False) -> Recording:
 
 def record(chrome: str, run: Run) -> dict[str, Json]:
     """Take a Chrome with a fresh user data directory through a run, and return the normal form of what it sent."""
-    return normal_form(go_through(chrome, run), run.cases)
+    return normal_form(go_through(chrome, run), run.cases, run.ordered)
 
 
 @functools.cache
@@ -145,7 +228,7 @@ def headers_of(form: dict[str, Json], case: str) -> dict[str, str]:
     return {name.lower(): value for name, _, value in pairs}
 
 
-@pytest.mark.parametrize("name", [run.name for run in RUNS])
+@pytest.mark.parametrize("name", [run.name for run in RECORDING_RUNS])
 def test_two_recordings_have_the_same_normal_form(chrome: str, name: str) -> None:
     run = _RUNS_BY_NAME[name]
 
@@ -229,6 +312,90 @@ def test_https_through_a_proxy_starts_with_connect(chrome: str, name: str) -> No
     assert headers["host"] == "<authority>"
     assert headers_of(form, "proxy_navigation")["sec-fetch-site"] == "none"
     assert "tls" in form
+
+
+def method_and_target(form: dict[str, Json], case: str) -> tuple[str, str]:
+    """Return a request's method and target, the same over every protocol."""
+    request_line = request_of(form, case).get("request_line")
+    if isinstance(request_line, str):
+        method, target, _ = request_line.split(" ")
+        return method, target
+    headers = headers_of(form, case)
+    return headers["method"], headers["path"]
+
+
+@pytest.mark.parametrize("name", _DOCUMENT_RUNS)
+@pytest.mark.parametrize(("case", "expected"), _DOCUMENT_SITE_MODE_AND_DESTINATION.items())
+def test_each_document_case_is_what_it_says_it_is(
+    chrome: str, name: str, case: str, expected: tuple[str, str, str]
+) -> None:
+    headers = headers_of(recorded(chrome, name), case)
+
+    assert (headers["sec-fetch-site"], headers["sec-fetch-mode"], headers["sec-fetch-dest"]) == expected
+    # Only a person's click counts as the user's, and what a page starts by itself does not.
+    assert ("sec-fetch-user" in headers) == (case in _CLICKED)
+
+
+@pytest.mark.parametrize("name", _DOCUMENT_RUNS)
+def test_real_chrome_sends_what_the_document_cases_carry(chrome: str, name: str) -> None:
+    form = recorded(chrome, name)
+
+    for case in ("xhr_post_text", "xhr_post_text_sync", "beacon_text", "beacon_text_cross_site"):
+        assert method_and_target(form, case)[0] == "POST", case
+        assert request_of(form, case)["body"] == "text body", case
+        assert headers_of(form, case)["content-type"] == "text/plain;charset=UTF-8", case
+    assert request_of(form, "beacon_blob")["body"] == "blob body"
+    assert "content-type" not in headers_of(form, "beacon_blob")
+    assert headers_of(form, "beacon_form_data")["content-type"] == (
+        "multipart/form-data; boundary=----WebKitFormBoundary<random>"
+    )
+    assert 'name="name"\r\n\r\nmitto\r\n' in str(request_of(form, "beacon_form_data")["body"])
+    assert method_and_target(form, "preflight")[0] == "OPTIONS"
+    assert "body" not in request_of(form, "preflight")
+    assert headers_of(form, "preflight")["access-control-request-method"] == "POST"
+    assert headers_of(form, "preflight")["access-control-request-headers"] == "content-type"
+    assert method_and_target(form, "fetch_post_json_cross_site")[0] == "POST"
+    assert request_of(form, "fetch_post_json_cross_site")["body"] == '{"json":"body"}'
+    for case in ("font_cross_site", "module_cross_site", "xhr_get_cross_site", "fetch_post_json_cross_site"):
+        assert headers_of(form, case)["origin"] == "<origin>", case
+    assert "origin" not in headers_of(form, "fetch_no_cors")
+    assert headers_of(form, "fetch_credentials_include")["cookie"] == "mitto=1"
+    assert "cookie" not in headers_of(form, "fetch_credentials_omit")
+    assert "cookie" not in headers_of(form, "fetch_credentials_same_origin")
+    assert method_and_target(form, "navigation_form_get") == (
+        "GET",
+        "/case/navigation-form-get?name=mitto&a+b%26c=d+e%26f%2Bg",
+    )
+    assert request_of(form, "navigation_form_text")["body"] == "name=mitto\r\na b&c=d e&f+g\r\n"
+    assert headers_of(form, "navigation_form_text")["content-type"] == "text/plain"
+    assert request_of(form, "navigation_form_cross_site")["body"] == "name=mitto&a+b%26c=d+e%26f%2Bg"
+    assert headers_of(form, "navigation_form_cross_site")["origin"] == "<origin>"
+    assert headers_of(form, "navigation_history_back")["cookie"] == "mitto=1"
+
+
+@pytest.mark.parametrize("name", _DOCUMENT_RUNS)
+def test_the_order_of_what_the_document_asks_for_is_chrome_s_over_one_connection(chrome: str, name: str) -> None:
+    form = recorded(chrome, name)
+
+    if form["protocol"] == "http/1.1":
+        assert "order" not in form
+    else:
+        order = form["order"]
+        assert isinstance(order, list)
+        assert sorted(map(str, order)) == sorted(case.name for case in _RUNS_BY_NAME[name].ordered)
+
+
+@pytest.mark.parametrize("name", _DOCUMENT_RUNS)
+def test_chrome_asks_for_an_icon_as_an_image_of_the_page_if_it_asks(chrome: str, name: str) -> None:
+    form = recorded(chrome, name)
+
+    if request_of(form, "favicon") != {"refused": True}:
+        assert method_and_target(form, "favicon") == ("GET", "/favicon.ico")
+        headers = headers_of(form, "favicon")
+        assert (headers["sec-fetch-site"], headers["sec-fetch-mode"], headers["sec-fetch-dest"]) == (
+            "same-origin",
+            *_NO_CORS_IMAGE,
+        )
 
 
 _SENT_BY_DEFAULT = {"sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"}
