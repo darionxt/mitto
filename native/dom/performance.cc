@@ -15,6 +15,7 @@
 #include "mitto/bindings/v8_performance.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/performance_entry.h"
 #include "mitto/dom/performance_mark.h"
@@ -493,7 +494,10 @@ void Performance::AddResourceTiming(ResourceTimingInfo info,
   if (!resource_timing_buffer_full_event_pending_) {
     resource_timing_buffer_full_event_pending_ = true;
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+    // WindowPerformance's timers run on the performance timeline task source.
+    const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+        EventLoop::Get()->TaskRunner(TaskType::kPerformanceTimeline);
+    task_runner->PostTask(
         FROM_HERE,
         base::BindOnce(
             [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,

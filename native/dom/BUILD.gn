@@ -96,6 +96,8 @@ source_set("dom") {
     "history.h",
     "html_all_collection.cc",
     "html_all_collection.h",
+    "html_base_element.cc",
+    "html_base_element.h",
     "html_body_element.cc",
     "html_body_element.h",
     "html_br_element.cc",

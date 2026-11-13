@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
@@ -168,20 +169,29 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
   // Blink's WillModifyAttribute(): a record for observers, before the change.
   EnqueueAttributeMutation(*this, name, std::nullopt);
   attributes_.push_back({name, value});
+  // The hook reads the attribute as it is stored.
+  const Attribute& added = attributes_.back();
+  AttributeChanged(added.name, nullptr, &added.value);
 }
 
 void Element::SetAttributeValueInternal(size_t index,
                                         const std::u16string& value) {
-  // Also when the value stays the same, as in Blink.
+  // Blink's WillModifyAttribute(): a record for observers, before the change,
+  // also when the value stays the same.
   EnqueueAttributeMutation(*this, attributes_[index].name,
                            attributes_[index].value);
-  attributes_[index].value = value;
+  const std::u16string old_value =
+      std::exchange(attributes_[index].value, value);
+  AttributeChanged(attributes_[index].name, &old_value,
+                   &attributes_[index].value);
 }
 
 void Element::RemoveAttributeInternal(size_t index) {
   EnqueueAttributeMutation(*this, attributes_[index].name,
                            attributes_[index].value);
+  const Attribute removed = std::move(attributes_[index]);
   attributes_.erase(attributes_.begin() + index);
+  AttributeChanged(removed.name, &removed.value, nullptr);
 }
 
 const std::u16string* Element::FindAttribute(std::u16string_view name) const {

@@ -247,7 +247,7 @@ NodeMutationObserverData& Node::EnsureMutationObserverData() {
 }
 
 std::u16string Node::BaseURI() const {
-  return GetDocument().UrlForBinding();
+  return base::UTF8ToUTF16(GetDocument().BaseUrl().spec());
 }
 
 NodeList* Node::ChildNodes() {
@@ -508,10 +508,12 @@ bool Node::EnsurePreInsertionValidity(
 }
 
 void Node::InsertNodes(const NodeVector& nodes, Node* next) {
-  // As Blink's ContainerNode::InsertBefore(): the nodes leave their parents
+  // Blink's ContainerNode::InsertBefore(): the nodes leave their parents
   // first, each with a record of its own, and a document fragment all its
-  // children at once, then they come in under one record.
-  const NodeVector inserted = ChildrenOfFragments(nodes);
+  // children at once. Then InsertNodeVector(): each goes in, with a record of
+  // all of them for observers, and is told so before the next, and the
+  // children changed and post-connection steps follow once all are in.
+  const NodeVector children = ChildrenOfFragments(nodes);
   for (const cppgc::Persistent<Node>& node : nodes) {
     if (node->IsDocumentFragmentNode()) {
       node->RemoveChildren();
@@ -519,14 +521,14 @@ void Node::InsertNodes(const NodeVector& nodes, Node* next) {
       parent->ParserRemoveChild(*node);
     }
   }
-  const ChildListMutationScope mutation(*this);
-  for (const cppgc::Persistent<Node>& node : inserted) {
-    if (next) {
-      ParserInsertBefore(node.Get(), *next);
-    } else {
-      ParserAppendChild(node.Get());
-    }
+  ChildListMutationScope mutation(*this);
+  NodeVector post_connection;
+  for (const cppgc::Persistent<Node>& node : children) {
+    LinkChild(*node, next);
+    mutation.ChildAdded(*node);
+    NotifyNodeInserted(*node, post_connection);
   }
+  DidInsertNodes(children, post_connection, /*by_parser=*/false);
 }
 
 Node* Node::InsertBefore(Node* node,
@@ -953,49 +955,41 @@ void Node::SetTreeDocument(Document& document) {
   }
 }
 
-void Node::ParserAppendChild(Node* child) {
-  CHECK(!child->ParentNode());
-  if (!IsDocumentNode()) {
-    child->SetTreeDocument(GetDocument());
-  } else {
-    child->SetTreeDocument(static_cast<Document&>(*this));
-  }
-  child->parent_ = this;
-  child->previous_sibling_ = last_child_;
-  if (last_child_) {
-    last_child_->next_sibling_ = child;
-  } else {
-    first_child_ = child;
-  }
-  last_child_ = child;
-  ChildListMutationScope(*this).ChildAdded(*child);
+Node::InsertionNotificationRequest Node::InsertedInto(Node& insertion_point) {
+  return InsertionNotificationRequest::kInsertionDone;
 }
 
-void Node::ParserInsertBefore(Node* child, Node& next) {
-  CHECK(!child->ParentNode());
-  CHECK_EQ(next.ParentNode(), this);
+void Node::LinkChild(Node& child, Node* next) {
+  CHECK(!child.ParentNode());
   if (!IsDocumentNode()) {
-    child->SetTreeDocument(GetDocument());
+    child.SetTreeDocument(GetDocument());
   } else {
-    child->SetTreeDocument(static_cast<Document&>(*this));
+    child.SetTreeDocument(static_cast<Document&>(*this));
   }
-  child->parent_ = this;
-  child->next_sibling_ = &next;
-  child->previous_sibling_ = next.previous_sibling_;
-  if (next.previous_sibling_) {
-    next.previous_sibling_->next_sibling_ = child;
+  child.parent_ = this;
+  if (!next) {
+    child.previous_sibling_ = last_child_;
+    if (last_child_) {
+      last_child_->next_sibling_ = &child;
+    } else {
+      first_child_ = &child;
+    }
+    last_child_ = &child;
+    return;
+  }
+  CHECK_EQ(next->ParentNode(), this);
+  child.next_sibling_ = next;
+  child.previous_sibling_ = next->previous_sibling_;
+  if (next->previous_sibling_) {
+    next->previous_sibling_->next_sibling_ = &child;
   } else {
-    first_child_ = child;
+    first_child_ = &child;
   }
-  next.previous_sibling_ = child;
-  ChildListMutationScope(*this).ChildAdded(*child);
+  next->previous_sibling_ = &child;
 }
 
-void Node::ParserRemoveChild(Node& child) {
+void Node::UnlinkChild(Node& child) {
   CHECK_EQ(child.ParentNode(), this);
-  // Blink's ContainerNode::WillRemoveChild().
-  ChildListMutationScope(*this).WillRemoveChild(child);
-  NotifyMutationObserversNodeWillDetach(child);
   if (child.previous_sibling_) {
     child.previous_sibling_->next_sibling_ = child.next_sibling_;
   } else {
@@ -1009,6 +1003,76 @@ void Node::ParserRemoveChild(Node& child) {
   child.parent_ = nullptr;
   child.previous_sibling_ = nullptr;
   child.next_sibling_ = nullptr;
+}
+
+void Node::NotifyNodeInserted(Node& child, NodeVector& post_connection) {
+  const bool connected = IsConnected();
+  for (Node* node = &child; node; node = node->NextInTree(&child)) {
+    // As Blink, a leaf that goes into a tree that is not connected is not
+    // told.
+    if (!connected && !node->IsContainerNode()) {
+      continue;
+    }
+    if (node->InsertedInto(*this) ==
+        InsertionNotificationRequest::
+            kInsertionShouldCallDidNotifySubtreeInsertions) {
+      post_connection.emplace_back(node);
+    }
+  }
+}
+
+void Node::DidInsertNodes(const NodeVector& children,
+                          const NodeVector& post_connection,
+                          bool by_parser) {
+  for (const cppgc::Persistent<Node>& child : children) {
+    ChildrenChanged(child->IsElementNode()
+                        ? ChildrenChangeType::kElementInserted
+                        : ChildrenChangeType::kNonElementInserted,
+                    *child, by_parser);
+  }
+  for (const cppgc::Persistent<Node>& node : post_connection) {
+    if (node->IsConnected()) {
+      node->DidNotifySubtreeInsertionsToDocument();
+    }
+  }
+}
+
+void Node::ParserAppendChild(Node* child) {
+  LinkChild(*child, nullptr);
+  ChildListMutationScope(*this).ChildAdded(*child);
+  NodeVector post_connection;
+  NotifyNodeInserted(*child, post_connection);
+  DidInsertNodes({child}, post_connection, /*by_parser=*/true);
+}
+
+void Node::ParserInsertBefore(Node* child, Node& next) {
+  LinkChild(*child, &next);
+  ChildListMutationScope(*this).ChildAdded(*child);
+  NodeVector post_connection;
+  NotifyNodeInserted(*child, post_connection);
+  DidInsertNodes({child}, post_connection, /*by_parser=*/true);
+}
+
+void Node::ParserRemoveChild(Node& child) {
+  const cppgc::Persistent<Node> held(&child);
+  // Blink's ContainerNode::WillRemoveChild(): a record for observers, and
+  // the subtree observers of its ancestors follow it.
+  ChildListMutationScope(*this).WillRemoveChild(child);
+  NotifyMutationObserversNodeWillDetach(child);
+  UnlinkChild(child);
+  // Blink's ContainerNode::NotifyNodeRemoved(): the node and each node inside
+  // it, but a leaf that leaves a tree that is not connected.
+  const bool connected = IsConnected();
+  for (Node* node = &child; node; node = node->NextInTree(&child)) {
+    if (!connected && !node->IsContainerNode()) {
+      continue;
+    }
+    node->RemovedFrom(*this);
+  }
+  ChildrenChanged(child.IsElementNode()
+                      ? ChildrenChangeType::kElementRemoved
+                      : ChildrenChangeType::kNonElementRemoved,
+                  child, /*by_parser=*/false);
 }
 
 void Node::RemoveChildren() {

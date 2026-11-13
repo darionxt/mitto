@@ -415,8 +415,7 @@ bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
     runner_->RunClassicScript(element.Text(), url_);
     return false;
   }
-  // The document's URL is its base URL: <base> is a Known Gap. The query is in
-  // the document's encoding.
+  // The query is in the document's encoding.
   const GURL url = src->empty() ? GURL() : document_->CompleteUrl(*src);
   if (!url.is_valid()) {
     QueueErrorEvent(element);
