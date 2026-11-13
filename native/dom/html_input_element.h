@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/qualified_name.h"
 
 namespace mitto {
 
@@ -51,10 +52,21 @@ class HTMLInputElement final : public HTMLElement {
       Event& event,
       EventDispatchHandlingState* state) override;
   bool IsDisabledFormControl() const override;
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
+  void RemovedFrom(Node& insertion_point) override;
+  // Element:
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
 
-  // What the bindings and a click read and set.
+  // What the bindings, a click and the pseudo-classes read and set.
   bool Checked() const;
   void SetChecked(bool checked);
+
+ protected:
+  // Node: a copy keeps the checkedness, whether it is dirty, and the
+  // indeterminate flag, as Blink's CloneNonAttributePropertiesFrom() has it.
+  Node* CloneWithoutChildren(Document& document) const override;
 
  private:
   enum class CheckableType { kCheckbox, kRadio, kOther };
@@ -62,10 +74,22 @@ class HTMLInputElement final : public HTMLElement {
   // What its type attribute makes it, as far as checkedness goes.
   CheckableType GetCheckableType() const;
   // The radio buttons of its group, itself among them: those of the same
-  // name, not empty, in the same tree and with the same form.
+  // name, not empty, in the same tree and with the same form. For one in a
+  // form or a connected tree, only those that have joined the group, as
+  // Blink's RadioButtonGroupScope has them, so the radio buttons of an
+  // insertion join it one by one in tree order.
   std::vector<HTMLInputElement*> RadioButtonGroup();
   // Blink's RadioInputType::CheckedRadioButtonForGroup().
   HTMLInputElement* CheckedRadioButtonForGroup();
+  // The others of its group that are checked get unchecked, as Blink's
+  // RadioButtonGroup::SetCheckedButton() and
+  // RadioInputType::WillUpdateCheckedness() do once a radio button is checked.
+  void UncheckOthersOfRadioButtonGroup();
+  // Blink's AddToRadioButtonGroup(): a radio button joins the group of the
+  // form it is in or of the tree it is connected to, on being inserted or on
+  // a new name or type, and if it is checked, unchecks the one that was
+  // checked there. Blink keeps no group for a radio button of neither.
+  void AddToRadioButtonGroup();
   // The form element that it is in, which a radio button group shares.
   // Forms' own rules, such as the form attribute, come with forms.
   Element* FormOwner() const;
@@ -76,6 +100,9 @@ class HTMLInputElement final : public HTMLElement {
   bool is_checked_ = false;
   bool dirty_checkedness_ = false;
   bool is_indeterminate_ = false;
+  // Whether it has joined the group of its form or its connected tree, and
+  // not left both since.
+  bool in_radio_button_group_ = false;
 };
 
 }  // namespace mitto

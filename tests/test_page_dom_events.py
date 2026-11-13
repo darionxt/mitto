@@ -189,7 +189,8 @@ def test_a_click_checks_checkboxes_and_radio_buttons_as_chrome_does(
     # The checkedness that a click turns over before the listeners, input and change after them, a canceled click
     # putting back the checkedness, the indeterminate flag and the radio button that was checked, the checked attribute
     # until the checkedness is dirty, a radio button group, a disconnected element, a page's own clicks, a text input
-    # and a disabled checkbox.
+    # and a disabled checkbox; then the groups that the parser, an insertion, a form, a new name or type and the
+    # checked attribute make, copies, and the pseudo-classes that read the checkedness.
     result, uncaught = _run(session, server, "activation")
 
     assert result == _chrome("activation")

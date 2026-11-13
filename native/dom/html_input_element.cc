@@ -79,13 +79,82 @@ void HTMLInputElement::SetChecked(bool checked) {
       GetCheckableType() != CheckableType::kRadio) {
     return;
   }
-  // RadioButtonGroupScope::UpdateCheckedState(): the others of its group
-  // are unchecked.
+  UncheckOthersOfRadioButtonGroup();
+}
+
+void HTMLInputElement::UncheckOthersOfRadioButtonGroup() {
   for (HTMLInputElement* other : RadioButtonGroup()) {
     if (other != this && other->Checked()) {
       other->SetChecked(false);
     }
   }
+}
+
+void HTMLInputElement::AddToRadioButtonGroup() {
+  if (GetCheckableType() != CheckableType::kRadio ||
+      !(FormOwner() || IsConnected())) {
+    return;
+  }
+  in_radio_button_group_ = true;
+  // RadioButtonGroup::Add(): a checked radio button becomes the group's
+  // checked one.
+  if (Checked()) {
+    UncheckOthersOfRadioButtonGroup();
+  }
+}
+
+Node::InsertionNotificationRequest HTMLInputElement::InsertedInto(
+    Node& insertion_point) {
+  const InsertionNotificationRequest request =
+      HTMLElement::InsertedInto(insertion_point);
+  // Blink's InsertedInto() and DidChangeForm(): it joins the group of the
+  // tree it is now connected to, or of the form it is now in, in tree order,
+  // so the last checked radio button of an insertion stays checked.
+  AddToRadioButtonGroup();
+  return request;
+}
+
+void HTMLInputElement::RemovedFrom(Node& insertion_point) {
+  HTMLElement::RemovedFrom(insertion_point);
+  // Blink's RemovedFrom() and WillChangeForm(): it leaves its group, unless
+  // its form left with it.
+  if (!FormOwner() && !IsConnected()) {
+    in_radio_button_group_ = false;
+  }
+}
+
+void HTMLInputElement::AttributeChanged(const QualifiedName& name,
+                                        const std::u16string* old_value,
+                                        const std::u16string* new_value) {
+  HTMLElement::AttributeChanged(name, old_value, new_value);
+  if (name.namespace_uri) {
+    return;
+  }
+  if (name.local_name == u"checked") {
+    // ParseAttribute(): the attribute sets a checkedness that is not dirty,
+    // which Checked() reads from it, and a radio button that it checks
+    // unchecks the others of its group, those of its tree too when it has
+    // no form and is not connected.
+    if (!dirty_checkedness_ && new_value && !old_value &&
+        GetCheckableType() == CheckableType::kRadio) {
+      UncheckOthersOfRadioButtonGroup();
+    }
+  } else if (name.local_name == u"name" || name.local_name == u"type") {
+    // ParseAttribute() and UpdateType(): it leaves its group for the one of
+    // its new name or type.
+    AddToRadioButtonGroup();
+  }
+}
+
+Node* HTMLInputElement::CloneWithoutChildren(Document& document) const {
+  Node* const copy = HTMLElement::CloneWithoutChildren(document);
+  // The copy has the same name in the same namespace, so it is an input
+  // element too.
+  auto* const input = static_cast<HTMLInputElement*>(copy);
+  input->is_checked_ = Checked();
+  input->dirty_checkedness_ = dirty_checkedness_;
+  input->is_indeterminate_ = is_indeterminate_;
+  return copy;
 }
 
 std::u16string HTMLInputElement::Type() const {
@@ -143,6 +212,10 @@ std::vector<HTMLInputElement*> HTMLInputElement::RadioButtonGroup() {
     return group;
   }
   Element* const form = FormOwner();
+  // Without a form or a connected tree, Blink's
+  // RadioInputType::CheckedRadioButtonForGroup() walks the tree for the radio
+  // buttons of the name that have no form either.
+  const bool scoped = form || IsConnected();
   Node& root = TreeRoot();
   for (Node* node = &root; node; node = node->NextInTree(&root)) {
     if (!node->IsElementNode() ||
@@ -151,7 +224,8 @@ std::vector<HTMLInputElement*> HTMLInputElement::RadioButtonGroup() {
     }
     auto* const input = static_cast<HTMLInputElement*>(node);
     if (input->GetCheckableType() == CheckableType::kRadio &&
-        input->GetAttribute(u"name") == name && input->FormOwner() == form) {
+        input->GetAttribute(u"name") == name && input->FormOwner() == form &&
+        (!scoped || input == this || input->in_radio_button_group_)) {
       group.push_back(input);
     }
   }

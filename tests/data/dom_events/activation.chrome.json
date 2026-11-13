@@ -337,5 +337,99 @@
  "disabled": [
   false,
   []
+ ],
+ "parsed": [
+  [
+   false,
+   false,
+   true
+  ],
+  [
+   true,
+   false,
+   true
+  ]
+ ],
+ "inserted": [
+  false,
+  true
+ ],
+ "subtree": [
+  [
+   true,
+   true
+  ],
+  false,
+  false,
+  true
+ ],
+ "appended": [
+  false,
+  false,
+  true
+ ],
+ "form": [
+  false,
+  true
+ ],
+ "form_and_tree": [
+  true,
+  false,
+  true
+ ],
+ "renamed": [
+  false,
+  true
+ ],
+ "retyped": [
+  false,
+  true
+ ],
+ "loose_renamed": [
+  true,
+  true
+ ],
+ "attribute": [
+  [
+   false,
+   true
+  ],
+  [
+   false,
+   false
+  ],
+  false,
+  false
+ ],
+ "loose_attribute": [
+  false,
+  true
+ ],
+ "clone": [
+  [
+   false,
+   true
+  ],
+  false,
+  false
+ ],
+ "clone_radio": [
+  false,
+  true
+ ],
+ "pseudo": [
+  [
+   "q2"
+  ],
+  [
+   "qc",
+   "q3",
+   "q4"
+  ],
+  [
+   "qc",
+   "q1"
+  ],
+  0
  ]
 }
