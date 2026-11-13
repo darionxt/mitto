@@ -15,11 +15,20 @@
 #include <string>
 #include <string_view>
 
+#include "build/build_config.h"
 #include "mitto/dom/event_target.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-forward.h"
+
+#if BUILDFLAG(IS_WIN)
+// base/win/windows_types.h defines PostMessage as PostMessageW, as <windows.h>
+// does, which would rename the member wherever it came first. Once its guard
+// has seen it, the name stays the member's.
+#include "base/win/windows_types.h"
+#undef PostMessage
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace mitto {
 

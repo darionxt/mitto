@@ -394,7 +394,7 @@ void MessagePort::ReadAvailableMessage() {
     return;
   }
   const uint64_t generation = generation_;
-  DispatchMessage(*std::move(message));
+  DispatchMessageEvent(*std::move(message));
   // A listener may have closed or transferred the port.
   if (generation != generation_ || !IsEntangled()) {
     return;
@@ -412,7 +412,7 @@ void MessagePort::ReadAvailableMessage() {
 }
 
 // DispatchMessageEvent() and CreateMessageEvent().
-void MessagePort::DispatchMessage(TransferableMessage message) {
+void MessagePort::DispatchMessageEvent(TransferableMessage message) {
   Window* const window = window_.Get();
   std::vector<MessagePort*> ports =
       EntanglePorts(window, std::move(message.ports));
