@@ -227,6 +227,26 @@
     x.remove();
     return r;
   });
+  run("fragment alone empties before checks", () => {
+    // Blink's ConvertNodeUnionsIntoNodes() takes a fragment's children out before the insertion is checked.
+    const doc = new Document();
+    doc.appendChild(doc.createElement("r"));
+    const f = doc.createDocumentFragment();
+    f.append(doc.createElement("i"));
+    let thrown = "none";
+    try { doc.append(f); } catch (e) { thrown = e.name; }
+    let prepended = "none";
+    const g = doc.createDocumentFragment();
+    g.append(doc.createElement("b"));
+    try { doc.prepend(g); } catch (e) { prepended = e.name; }
+    return [thrown, f.childNodes.length, prepended, g.childNodes.length, doc.childNodes.length].join("|");
+  });
+  run("fragment appended to itself", () => {
+    const f = document.createDocumentFragment();
+    f.append(document.createElement("b"), "t");
+    f.append(f);
+    return [f.childNodes.length, f.firstChild.localName].join("|");
+  });
   // Templates.
   run("template content", () => {
     const t = document.createElement("template");
