@@ -71,6 +71,46 @@ std::u16string_view ContentEditableState(const Element& element) {
   return u"inherit";
 }
 
+// Blink's IsEditableOrEditingHost(): an HTML element whose contenteditable is
+// true or plaintext-only, or one in a connected document in design mode, is an
+// editing host; otherwise a node is editable when its parent is, unless it is
+// an HTML element whose contenteditable is false, or an element that is none
+// of an HTML element, an SVG svg element and a MathML math element.
+bool IsEditableOrEditingHost(const Node& node) {
+  const auto* element =
+      node.IsElementNode() ? static_cast<const Element*>(&node) : nullptr;
+  const bool is_html = element && element->IsHTMLElement();
+  if (is_html) {
+    const std::u16string_view state = ContentEditableState(*element);
+    if (state == u"true" || state == u"plaintext-only") {
+      return true;
+    }
+    if (element->IsConnected() &&
+        element->GetDocument().DesignMode() == u"on") {
+      return true;
+    }
+    if (state == u"false") {
+      return false;
+    }
+  }
+  const Node* parent = node.ParentNode();
+  if (!parent || !IsEditableOrEditingHost(*parent)) {
+    return false;
+  }
+  if (is_html) {
+    return true;
+  }
+  if (element) {
+    const QualifiedName& name = element->TagQName();
+    return (name.namespace_uri == html_names::kSvgNamespace &&
+            name.local_name == u"svg") ||
+           (name.namespace_uri == html_names::kMathMlNamespace &&
+            name.local_name == u"math");
+  }
+  return parent->IsElementNode() &&
+         static_cast<const Element*>(parent)->IsHTMLElement();
+}
+
 }  // namespace
 
 int32_t HTMLElement::DefaultTabIndex() const {
@@ -183,20 +223,7 @@ void HTMLElement::SetContentEditable(
 }
 
 bool HTMLElement::IsContentEditableForBinding() const {
-  for (const Element* element = this; element;
-       element = element->ParentElement()) {
-    if (!element->IsHTMLElement()) {
-      continue;
-    }
-    const std::u16string_view state = ContentEditableState(*element);
-    if (state == u"false") {
-      return false;
-    }
-    if (state != u"inherit") {
-      return true;
-    }
-  }
-  return IsConnected() && GetDocument().DesignMode() == u"on";
+  return IsEditableOrEditingHost(*this);
 }
 
 }  // namespace mitto

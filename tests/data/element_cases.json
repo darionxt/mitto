@@ -801,6 +801,9 @@
   "spellcheck": "string:true,false,true,false,true",
   "contentEditable": "string:inherit,true,true,false,plaintext-only,inherit,plaintext-only,false",
   "contentEditable bad": "threw SyntaxError: Failed to set the 'contentEditable' property on 'HTMLElement': The value provided ('yes') is not one of 'true', 'false', 'plaintext-only', or 'inherit'.",
-  "isContentEditable": "string:true,true,true,false,true"
+  "isContentEditable": "string:true,true,true,false,true",
+  "isContentEditable design mode": "string:true,true,true,false",
+  "isContentEditable foreign": "string:true,false,false,true,false,false,true,false,true",
+  "isContentEditable fragment": "string:false,true"
  }
 }
