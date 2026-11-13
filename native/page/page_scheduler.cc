@@ -228,6 +228,10 @@ scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::V8TaskRunner()
   return v8_queue_->task_runner();
 }
 
+base::sequence_manager::TaskQueue* PageScheduler::CompositorTaskQueue() const {
+  return compositor_queue_.get();
+}
+
 scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::TaskRunner(
     TaskType type) {
   if (type == TaskType::kMainThreadTaskQueueCompositor) {
