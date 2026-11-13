@@ -784,6 +784,27 @@
   run("translate", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.translate]; p.setAttribute("translate", "NO"); out.push(c.translate); c.setAttribute("translate", ""); out.push(c.translate); c.setAttribute("translate", "maybe"); out.push(c.translate); c.translate = true; out.push(c.getAttribute("translate")); const s = document.createElementNS(SVG, "g"); s.setAttribute("translate", "no"); const h = document.createElement("b"); s.appendChild(h); out.push(h.translate); return out.join(","); });
   run("draggable", () => { const out = [document.createElement("div").draggable, document.createElement("img").draggable, document.createElement("a").draggable]; const a = document.createElement("a"); a.href = "x"; out.push(a.draggable); a.setAttribute("draggable", "FALSE"); out.push(a.draggable); const i = document.createElement("img"); i.setAttribute("draggable", "false"); out.push(i.draggable); const d = document.createElement("div"); d.setAttribute("draggable", "True"); out.push(d.draggable); d.draggable = false; out.push(d.getAttribute("draggable")); return out.join(","); });
   run("spellcheck", () => { const p = document.createElement("div"); const c = document.createElement("span"); p.appendChild(c); const out = [c.spellcheck]; p.setAttribute("spellcheck", "false"); out.push(c.spellcheck); c.setAttribute("spellcheck", ""); out.push(c.spellcheck); c.setAttribute("spellcheck", "x"); out.push(c.spellcheck); c.spellcheck = true; out.push(c.getAttribute("spellcheck")); return out.join(","); });
+  // A password input's spellcheck is off by default. Blink's HasBeenPasswordField() stays true once the type was
+  // password; the case leaves that out until the input sees its attributes change.
+  run("spellcheck password", () => {
+    const d = document.createElement("div");
+    d.setAttribute("spellcheck", "true");
+    const i = d.appendChild(document.createElement("input"));
+    i.setAttribute("type", "password");
+    const out = [i.spellcheck];
+    const j = document.createElement("input");
+    j.setAttribute("type", "PASSWORD");
+    out.push(j.spellcheck);
+    j.setAttribute("spellcheck", "true");
+    out.push(j.spellcheck);
+    out.push(document.createElement("input").spellcheck);
+    const inner = document.createElement("span");
+    const p = document.createElement("input");
+    p.setAttribute("type", "password");
+    p.appendChild(inner);
+    out.push(inner.spellcheck);
+    return out.join(",");
+  });
   run("contentEditable", () => { const e = document.createElement("div"); const out = [e.contentEditable]; for (const v of ["", "TRUE", "false", "plaintext-only", "x"]) { e.setAttribute("contenteditable", v); out.push(e.contentEditable); } e.contentEditable = "PlainText-Only"; out.push(e.getAttribute("contenteditable")); e.contentEditable = "inherit"; out.push(e.hasAttribute("contenteditable")); return out.join(","); });
   run("contentEditable bad", () => { document.createElement("div").contentEditable = "yes"; });
   run("isContentEditable", () => {
