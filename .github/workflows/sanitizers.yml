@@ -82,7 +82,7 @@ jobs:
             files: mitto_core_test libmitto_core.so html_tokenizer_test media_query_test
           - config: fuzz
             tests: fuzz
-            files: client_hints_fuzzer cookies_fuzzer page_messages_fuzzer request_options_fuzzer session_settings_fuzzer socks5_auth_fuzzer html_tokenizer_fuzzer media_query_fuzzer libsanitizer_shared_hooks.so
+            files: client_hints_fuzzer cookies_fuzzer page_messages_fuzzer request_options_fuzzer session_settings_fuzzer socks5_auth_fuzzer html_tokenizer_fuzzer media_query_fuzzer css_selector_fuzzer libsanitizer_shared_hooks.so
           # The Runtime's Page program, which builds without the library.
           - config: runtime-asan
             tests: page
@@ -180,11 +180,11 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
           UBSAN_OPTIONS: external_symbolizer_path=${{ runner.temp }}/native-core/llvm-symbolizer
-      - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers, client hints, HTML, media queries and what a Page sends
+      - name: Fuzz the code that reads a Session's settings, a request's options, cookies, a SOCKS5 proxy's answers, client hints, HTML, media queries, selectors and what a Page sends
         if: matrix.tests == 'fuzz'
         run: |
           mkdir "$RUNNER_TEMP/crashes"
-          for target in session_settings request_options cookies socks5_auth client_hints html_tokenizer media_query page_messages; do
+          for target in session_settings request_options cookies socks5_auth client_hints html_tokenizer media_query css_selector page_messages; do
             mkdir "$RUNNER_TEMP/corpus-$target"
             "$RUNNER_TEMP/native-core/${target}_fuzzer" \
               -max_total_time="$FUZZ_SECONDS" \
