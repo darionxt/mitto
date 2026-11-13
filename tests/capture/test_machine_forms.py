@@ -19,6 +19,7 @@ from tools.capture.machine_forms import (
 from tools.capture.normal_form import HINTS_FROM_THE_MACHINE
 from tools.capture.probe import RecordValue, dumps_record
 from tools.capture.recording import Recording, raw_form
+from tools.capture.script_delta import dumps_script_delta, script_delta
 from tools.capture.script_normal_form import (
     DATE_STRINGS,
     DATE_TIME_FORMAT,
@@ -35,7 +36,7 @@ from tools.capture.script_normal_form import (
     dumps_script_raw_record,
     script_normal_form,
 )
-from tools.capture.script_page import SCRIPT_DIRECTORY
+from tools.capture.script_page import SCRIPT_DIRECTORY, SCRIPT_RUNS, ScriptRun
 
 _PAGE_URL = "https://capture.test:8448/script/page"
 
@@ -400,3 +401,80 @@ def test_a_raw_record_with_no_normal_form_beside_it_fails(tmp_path: Path, capsys
 
     assert main([str(tmp_path)]) == 1
     assert "    FAIL  no script/page.json to look in" in capsys.readouterr().out
+
+
+def write_later_case(directory: Path, name: str, values: dict[Place, RecordValue], places: tuple[Place, ...]) -> None:
+    """Write a raw record of a later Recording Case with these values, and beside it what of its Normal Form differs from
+    the first case's, which write_script() wrote, as a recording session does."""
+    record = record_of(values)
+    path = directory / SCRIPT_DIRECTORY / f"{name}.raw.json"
+    path.write_text(dumps_script_raw_record(_PAGE_URL, ["127.0.0.1"], record), encoding="utf-8")
+    first = json.loads((directory / SCRIPT_DIRECTORY / "page.json").read_text(encoding="utf-8"))
+    delta = script_delta(first, script_normal_form(record, _PAGE_URL, places), "page")
+    path.with_name(f"{name}.json").write_text(dumps_script_delta(delta), encoding="utf-8")
+
+
+def run_of(name: str) -> ScriptRun:
+    (run,) = [run for run in SCRIPT_RUNS if run.case == name]
+    return run
+
+
+def test_a_frame_is_held_to_the_places_of_the_machine_in_a_frame_and_to_its_own_size(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_script(tmp_path, windows_values())
+    frame = run_of("same_origin_frame")
+    # The window's place on the display can be the same number as the frame's height, which is no value of the machine.
+    values = {**windows_values(), **frame.own_values, Getter("globalThis", "screenY"): 150}
+    write_later_case(tmp_path, "same_origin_frame", values, frame.machine_places)
+
+    assert main([str(tmp_path)]) == 0
+
+    printed = capsys.readouterr().out.split("script/same_origin_frame.raw.json")[1]
+    assert f": pass, {len(frame.machine_places)} values" in printed
+    assert "    pass  globalThis.innerHeight: the case's own, 150, 1 values" in printed
+    assert "pass  none of" in printed
+
+
+def test_a_frame_whose_own_size_is_another_fails_and_is_not_printed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_script(tmp_path, windows_values())
+    frame = run_of("same_origin_frame")
+    values = {**windows_values(), **frame.own_values, Getter("globalThis", "innerWidth"): 1371}
+    write_later_case(tmp_path, "same_origin_frame", values, frame.machine_places)
+
+    assert main([str(tmp_path)]) == 1
+
+    printed = capsys.readouterr().out
+    assert "    FAIL  globalThis.innerWidth: the case's own, 300, 1 of 1 values without it" in printed
+    assert "1371" not in printed
+
+
+def test_a_worker_is_held_to_its_own_places_of_the_machine(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    write_script(tmp_path, windows_values())
+    worker = run_of("worker")
+    write_later_case(
+        tmp_path, "worker", {place: windows_values()[place] for place in worker.machine_places}, worker.machine_places
+    )
+
+    assert main([str(tmp_path)]) == 0
+
+    printed = capsys.readouterr().out.split("script/worker.raw.json")[1]
+    assert f": pass, {len(worker.machine_places)} values" in printed
+    assert "screen.width" not in printed
+
+
+def test_a_value_of_the_machine_that_shows_in_what_a_later_case_differs_in_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_script(tmp_path, windows_values())
+    worker = run_of("worker")
+    values = {place: windows_values()[place] for place in worker.machine_places}
+    write_later_case(tmp_path, "worker", {**values, Getter("a", "leak"): "Asia/Calcutta"}, worker.machine_places)
+
+    assert main([str(tmp_path)]) == 1
+
+    printed = capsys.readouterr().out
+    assert "    FAIL  a value of the machine shows in script/worker.json, at a get leak" in printed
+    assert "Calcutta" not in printed
