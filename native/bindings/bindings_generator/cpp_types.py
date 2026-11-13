@@ -425,16 +425,24 @@ class TypeMapper:
             TypeKind.INTERFACE,
             TypeKind.SEQUENCE,
             TypeKind.RECORD,
+            TypeKind.BUFFER_SOURCE,
         )
         for member in idl_type.members:
             if member.kind not in handled or member.nullable or member.extended_attributes.entries:
+                raise self._refuse(idl_type, where, "a union")
+            if member.kind is TypeKind.BUFFER_SOURCE and member.name not in _SPAN_MEMBERS:
+                # Of the buffer sources, those of BufferSource.
                 raise self._refuse(idl_type, where, "a union")
             if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
                 # Checks that its elements convert.
                 self.value_type(member, where)
         # Interfaces with a class can be any number. Of the others, Web IDL's conversion takes the first that fits, so
         # the writer allows one of each.
-        kinds = [member.kind for member in idl_type.members if member.kind is not TypeKind.INTERFACE]
+        kinds = [
+            (member.kind, member.name) if member.kind is TypeKind.BUFFER_SOURCE else member.kind
+            for member in idl_type.members
+            if member.kind is not TypeKind.INTERFACE
+        ]
         if len(set(kinds)) != len(kinds):
             raise self._refuse(idl_type, where, "a union")
         for member in idl_type.members:
@@ -456,6 +464,9 @@ class TypeMapper:
             return "std::u16string"
         if member.kind is TypeKind.INTERFACE:
             return f"mitto::{member.name}*"
+        if member.kind is TypeKind.BUFFER_SOURCE:
+            # The buffer or the view, as the call reads it.
+            return f"v8::Local<v8::{member.name}>"
         if member.kind in (TypeKind.SEQUENCE, TypeKind.RECORD):
             return self.value_type(member, "a union")
         return member.name
@@ -705,6 +716,10 @@ class TypeMapper:
             return "std::nullopt"
         if kind is TypeKind.DICTIONARY and literal == "{}":
             return f"{idl_type.name}()"
+        if kind is TypeKind.SEQUENCE and not idl_type.nullable and literal == "[]":
+            # An empty list, such as the transports of OTPCredentialRequestOptions.
+            self.value_type(idl_type, where)
+            return "{}"
         if kind is TypeKind.UNION and literal == "{}":
             # Web IDL: {} is the default of a union only through its dictionary.
             dictionary = next((member for member in idl_type.members if member.kind is TypeKind.DICTIONARY), None)
