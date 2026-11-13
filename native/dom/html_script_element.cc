@@ -2,6 +2,7 @@
 
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_script_element.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/text.h"
 
 namespace mitto {
@@ -16,6 +17,21 @@ HTMLScriptElement::HTMLScriptElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLScriptElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLScriptElement::kWrapperTypeInfo;
+}
+
+void HTMLScriptElement::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(parser_document_);
+  HTMLElement::Trace(visitor);
+}
+
+void HTMLScriptElement::SetCreatedByParser(Document& parser_document) {
+  parser_inserted_ = true;
+  parser_document_ = &parser_document;
+}
+
+void HTMLScriptElement::SetStartPosition(int line, int column) {
+  start_line_ = line;
+  start_column_ = column;
 }
 
 void HTMLScriptElement::SetText(const std::u16string& text,

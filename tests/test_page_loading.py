@@ -943,3 +943,72 @@ def test_a_head_request_gives_a_null_body(session: mitto.Session, server: _PageS
             "})"
         )
         assert page.evaluate(script, timeout=_TIMEOUT_SECONDS) == [200, "", False, ""]
+
+
+def test_a_document_resolves_its_urls_against_its_first_base_element_with_an_href_as_chrome_does(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    server.script("/sub/dir/b.js", "log('b ran');")
+    server.json("/sub/dir/f.json", "sub")
+    url = server.page(
+        "/",
+        "<script>window.logged = []; function log(x) { logged.push(String(x)); }"
+        "window.done = new Promise(resolve => { window.finish = resolve; });</script>"
+        "<base id=b0><base id=b1 href='  /sub/dir/  '><base id=b2 href='/other/'>"
+        "<script id=b src=b.js></script>"
+        "<script>"
+        "function attempt(f) { try { f(); } catch (e) { log('threw ' + e); } }"
+        "attempt(() => log('baseURI ' + document.baseURI));"
+        "attempt(() => log('request ' + new Request('r').url));"
+        "const bases = ['b0', 'b1', 'b2'].map(id => document.getElementById(id));"
+        "attempt(() => log('base href ' + bases.map(b => b.href).join(' ')));"
+        "fetch('f.json').then(r => r.text()).catch(e => 'threw ' + e).then(t => { attempt(() => {"
+        " log('fetch ' + t);"
+        " bases[1].remove();"
+        " log('after remove ' + document.baseURI);"
+        " bases[2].setAttribute('href', 'http://[');"
+        " log('invalid ' + document.baseURI + ' ' + bases[2].href);"
+        " attempt(() => log('invalid request ' + new Request('r').url));"
+        " attempt(() => log('absolute request ' + new Request('http://example.test/r').url));"
+        " bases[2].setAttribute('href', '');"
+        " log('empty ' + document.baseURI + ' ' + bases[2].href);"
+        " bases[2].removeAttribute('href');"
+        " log('none ' + document.baseURI + ' ' + bases[2].href);"
+        " const late = document.createElement('base'); late.href = '/late/'; document.body.append(late);"
+        " log('late ' + document.baseURI + ' ' + late.href + ' ' + new Request('l').url);"
+        " late.href = 'data:text/plain,x';"
+        " log('data ' + document.baseURI + ' ' + late.href);"
+        " late.href = 'javascript:void(0)';"
+        " log('javascript ' + document.baseURI);"
+        " late.remove();"
+        " log('removed ' + document.baseURI);"
+        " finish(logged);"
+        "}); });"
+        "</script>",
+    )
+
+    with _open_page(session, url) as page:
+        origin = server.url("").rstrip("/")
+        # As Chrome 157.0.8103.51 gave it, headless on macOS, for the same page.
+        assert [line.replace(origin, "{origin}") for line in page.evaluate("done")] == [
+            "b ran",
+            "baseURI {origin}/sub/dir/",
+            "request {origin}/sub/dir/r",
+            "base href {origin}/ {origin}/sub/dir/ {origin}/other/",
+            "fetch sub",
+            "after remove {origin}/other/",
+            "invalid about:blank http://[",
+            "threw TypeError: Failed to construct 'Request': Failed to parse URL from r",
+            "absolute request http://example.test/r",
+            "empty {origin}/ {origin}/",
+            "none {origin}/ {origin}/",
+            "late {origin}/late/ {origin}/late/ {origin}/late/l",
+            "data {origin}/ data:text/plain,x",
+            "javascript {origin}/",
+            "removed {origin}/",
+        ]
+        assert [message.text for message in page.console_messages if message.level == "error"] == [
+            "'data' URLs may not be used as base URLs for a document.",
+            "'javascript' URLs may not be used as base URLs for a document.",
+        ]
+        assert [path for path, _ in server.requests] == ["/", "/sub/dir/b.js", "/sub/dir/f.json"]

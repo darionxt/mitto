@@ -78,7 +78,7 @@ uint32_t IdleTaskController::RequestIdleCallback(
   // normal priority.
   if (timeout_ms > 0) {
     EventLoopOfPage()
-        .TaskRunner(EventLoop::Queue::kDefault)
+        .TaskRunner(TaskType::kIdleTask)
         ->PostDelayedTask(FROM_HERE,
                           base::BindOnce(&IdleTask::OnTimeout,
                                          task->timeout_factory.GetWeakPtr()),

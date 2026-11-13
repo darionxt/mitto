@@ -427,8 +427,7 @@ bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
     runner_->RunClassicScript(element.Text(), url_);
     return false;
   }
-  // The document's URL is its base URL: <base> is a Known Gap.
-  const GURL url = src->empty() ? GURL() : url_.Resolve(*src);
+  const GURL url = src->empty() ? GURL() : document_->CompleteUrl(*src);
   if (!url.is_valid()) {
     QueueErrorEvent(element);
     return false;

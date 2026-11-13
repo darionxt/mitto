@@ -114,7 +114,7 @@ class Node : public EventTarget {
                      bindings::ExceptionState& exception_state);
   Node* RemoveChild(Node* child, bindings::ExceptionState& exception_state);
 
-  // The document's URL, as the base URL of a document without <base>.
+  // The node document's base URL.
   std::u16string BaseURI() const;
   // The same live list of the children on every read, as Blink keeps it.
   NodeList* ChildNodes();
@@ -194,6 +194,41 @@ class Node : public EventTarget {
   // Document::AdoptIfNeeded() does.
   void SetTreeDocument(Document& document);
 
+  // The DOM standard's insertion, removing, children changed and
+  // post-connection steps, which a subclass gives itself, as Blink's Node and
+  // ContainerNode call them: after every change to a tree, through the DOM's
+  // algorithms and the parser's alike.
+
+  // What InsertedInto() asks for.
+  enum class InsertionNotificationRequest {
+    kInsertionDone,
+    // DidNotifySubtreeInsertionsToDocument() too, once every node that the
+    // insertion inserts is in.
+    kInsertionShouldCallDidNotifySubtreeInsertions,
+  };
+  // How a node's children changed.
+  enum class ChildrenChangeType {
+    kElementInserted,
+    kNonElementInserted,
+    kElementRemoved,
+    kNonElementRemoved,
+  };
+
+  // Called on this node and each node inside it once the insertion that put
+  // it into `insertion_point`'s tree is done, in tree order.
+  virtual InsertionNotificationRequest InsertedInto(Node& insertion_point);
+  // The post-connection steps of a node that asked for them and is still
+  // connected, once every node of the insertion is in.
+  virtual void DidNotifySubtreeInsertionsToDocument() {}
+  // Called on this node and each node inside it once it has left
+  // `insertion_point`, its old parent or an ancestor of it.
+  virtual void RemovedFrom(Node& insertion_point) {}
+  // Called once `child` has been inserted into this node's children or
+  // removed from them, by the parser if `by_parser`.
+  virtual void ChildrenChanged(ChildrenChangeType type,
+                               Node& child,
+                               bool by_parser) {}
+
  protected:
   // `document` is the node document, null for a Document itself, which then
   // calls SetDocumentToSelf().
@@ -236,6 +271,19 @@ class Node : public EventTarget {
   void InsertNodeVector(const NodeVector& nodes,
                         Node* next,
                         bindings::ExceptionState& exception_state);
+  // Puts `child`, which has no parent, among the children, before `next` or
+  // at the end, and takes it out, telling no one.
+  void LinkChild(Node& child, Node* next);
+  void UnlinkChild(Node& child);
+  // Blink's ContainerNode::NotifyNodeInserted(): InsertedInto() for `child`
+  // and each node inside it, which collects into `post_connection` those that
+  // ask for their post-connection steps.
+  void NotifyNodeInserted(Node& child, NodeVector& post_connection);
+  // Blink's ContainerNode::DidInsertNodeVector(): the children changed steps
+  // of each of `children`, then the post-connection steps.
+  void DidInsertNodes(const NodeVector& children,
+                      const NodeVector& post_connection,
+                      bool by_parser);
 
   cppgc::Member<Node> parent_;
   cppgc::Member<Node> first_child_;
