@@ -96,6 +96,7 @@ executable("mitto_page") {
     "//base",
     "//mitto:page_channel",
     "//mitto/dom",
+    "//mitto/encoding",
     "//third_party/icu",
     "//url",
     "//v8",
