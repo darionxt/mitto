@@ -830,6 +830,7 @@
   "table thead": "string:CAPTION COLGROUP #text THEAD TBODY|true|CAPTION COLGROUP #text THEAD TBODY|null|null",
   "table thead wrong": "threw HierarchyRequestError: Failed to set the 'tHead' property on 'HTMLTableElement': Not a thead element.",
   "table tfoot wrong": "threw HierarchyRequestError: Failed to set the 'tFoot' property on 'HTMLTableElement': Not a tfoot element.",
+  "table caption wrong type": "threw TypeError: Failed to set the 'caption' property on 'HTMLTableElement': Failed to convert value to 'HTMLTableCaptionElement'.",
   "table tfoot": "string:false|true|true|null|null|2",
   "table createTBody": "string:tbody tbody tfoot|true|true",
   "table insertRow": "string:<tbody><tr></tr></tbody>|<tbody><tr id=\"a\"></tr><tr></tr><tr id=\"m\"></tr><tr id=\"z\"></tr></tbody>|<thead><tr id=\"h\"></tr></thead><tbody><tr id=\"x\"></tr><tr id=\"a\"></tr><tr></tr><tr id=\"m\"></tr><tr id=\"z\"></tr></tbody>|3|2",

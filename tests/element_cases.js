@@ -1033,6 +1033,7 @@
   });
   run("table thead wrong", () => { document.createElement("table").tHead = document.createElement("tbody"); });
   run("table tfoot wrong", () => { document.createElement("table").tFoot = document.createElement("thead"); });
+  run("table caption wrong type", () => { document.createElement("table").caption = document.createElement("div"); });
   run("table tfoot", () => {
     const t = tableOf("<tbody><tr></tr></tbody>");
     const f = t.createTFoot();
