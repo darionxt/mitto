@@ -98,6 +98,13 @@ class Window final : public WindowProperties {
                       bindings::ExceptionState& exception_state);
   std::u16string Atob(const std::u16string& data,
                       bindings::ExceptionState& exception_state);
+  // DOMWindowFileSystem's: the file system of the document's origin, from a
+  // task of its own, as Chrome's browser opens one for a new profile, or an
+  // error for an opaque origin or a type other than TEMPORARY and PERSISTENT.
+  void WebkitRequestFileSystem(uint16_t type,
+                               int64_t size,
+                               v8::Local<v8::Object> success_callback,
+                               v8::Local<v8::Object> error_callback);
   v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
                                const bindings::RequestInit& init,
                                bindings::ExceptionState& exception_state);

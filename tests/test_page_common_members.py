@@ -376,6 +376,43 @@ _FEATURE_POLICY_AS_CHROME = {
 }
 
 
+# Trusted Types' table of the attributes that take a trusted type, and whether a value is an object of each, from
+# Chrome 157 at http://127.0.0.1. The objects come from Known Gaps, which make an object of the type they give.
+_TRUSTED_TYPES_AS_CHROME = {
+    "trustedTypes getAttributeType": (
+        "const t = trustedTypes; return JSON.stringify([t.getAttributeType('script', 'src'), t.getAttributeType('SCRIPT', 'SRC'), t.getAttributeType('iframe', 'srcdoc'), t.getAttributeType('embed', 'src'), t.getAttributeType('object', 'data'), t.getAttributeType('object', 'codebase'), t.getAttributeType('div', 'onclick'), t.getAttributeType('div', 'ONCLICK'), t.getAttributeType('div', 'title'), t.getAttributeType('script', 'href', 'http://www.w3.org/2000/svg'), t.getAttributeType('script', 'href', 'http://www.w3.org/2000/svg', 'http://www.w3.org/1999/xlink'), t.getAttributeType('div', 'onclick', 'http://www.w3.org/1998/Math/MathML'), t.getAttributeType('div', 'onclick', '', 'x'), t.getAttributeType('div', 'onfoo'), t.getAttributeType('img', 'onerror'), t.getAttributeType('body', 'onbeforeunload')])",
+        'value: ["TrustedScriptURL","TrustedScriptURL","TrustedHTML","TrustedScriptURL","TrustedScriptURL","TrustedScriptURL","TrustedScript","TrustedScript",null,"TrustedScriptURL","TrustedScriptURL","TrustedScript",null,null,"TrustedScript","TrustedScript"]',
+    ),
+    "trustedTypes is checks": (
+        "const t = trustedTypes; const p = t.createPolicy('p', {createHTML: s => s, createScript: s => s, createScriptURL: s => s}); return JSON.stringify([t.isHTML(p.createHTML('a')), t.isHTML('a'), t.isScript(p.createScript('a')), t.isScriptURL(p.createScriptURL('a')), t.isHTML(t.emptyHTML), t.isScript(t.emptyScript), t.isHTML(p.createScript('a'))])",
+        "value: [true,false,true,true,true,true,false]",
+    ),
+}
+
+
+# The Presentation API as Chrome answers a page whose browser finds no display to present to, from Chrome 157 at
+# http://127.0.0.1: the constructor's checks of its URLs, an availability that stays false, and no presentation to
+# reconnect to.
+_PRESENTATION_AS_CHROME = {
+    "PresentationRequest": (
+        "try { const p = new PresentationRequest('https://a.test/'); const a = await Promise.race([p.getAvailability(), new Promise(r => setTimeout(() => r('pending'), 1000))]); return [typeof a === 'object' ? 'value ' + a.value : a, a === await p.getAvailability()].join(); } catch (e) { return 'threw ' + e; }",
+        "value: value false,true",
+    ),
+    "PresentationRequest reconnect": (
+        "try { await new PresentationRequest('https://a.test/').reconnect('x'); return 'resolved'; } catch (e) { return 'rejected ' + e; }",
+        "value: rejected NotFoundError: Route not found",
+    ),
+    "PresentationRequest bad URL": (
+        "try { new PresentationRequest('http://[x'); return 'made'; } catch (e) { return 'threw ' + e; }",
+        "value: threw SyntaxError: Failed to construct 'PresentationRequest': 'http://[x' can't be resolved to a valid URL.",
+    ),
+    "PresentationRequest no scheme": (
+        "try { new PresentationRequest('ftp://a.test/'); return 'made'; } catch (e) { return 'threw ' + e; }",
+        "value: threw NotSupportedError: Failed to construct 'PresentationRequest': An empty sequence of URLs is not supported.",
+    ),
+}
+
+
 # Permissions, gamepads and storage as Chrome answers a profile that has granted and stored nothing, on a secure page,
 # from Chrome 157 at http://127.0.0.1, which is one.
 _PERMISSIONS_AS_CHROME = {
@@ -521,6 +558,43 @@ def test_request_permission_waits_at_the_prompt_on_a_secure_page(program: Path) 
 )
 def test_permissions_answer_as_chrome_does(program: Path, script: str, expected: str) -> None:
     assert _evaluate(program, script) == expected
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"), list(_TRUSTED_TYPES_AS_CHROME.values()), ids=list(_TRUSTED_TYPES_AS_CHROME)
+)
+def test_trusted_types_answer_as_chrome_does(program: Path, script: str, expected: str) -> None:
+    assert _evaluate(program, script) == expected
+
+
+def test_an_event_handler_takes_a_trusted_script_on_any_element_of_the_three_namespaces(program: Path) -> None:
+    # Blink's EVENT_HANDLER_LIST has an event type's handler, such as ondomcontentloaded, and not an attribute's name
+    # that only starts with "on".
+    script = """const t = trustedTypes;
+        return JSON.stringify([t.getAttributeType("x-y", "ondomcontentloaded"), t.getAttributeType("svg", "onload",
+            "http://www.w3.org/2000/svg"), t.getAttributeType("div", "onclick", "urn:other"), t.getAttributeType("div",
+            "onclick", null, null), t.getAttributeType("script", "src", null), t.getAttributeType("div", "one")])"""
+
+    assert _evaluate(program, script) == (
+        'value: ["TrustedScript","TrustedScript",null,"TrustedScript","TrustedScriptURL",null]'
+    )
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"), list(_PRESENTATION_AS_CHROME.values()), ids=list(_PRESENTATION_AS_CHROME)
+)
+def test_presentation_answers_as_chrome_does(program: Path, script: str, expected: str) -> None:
+    assert _evaluate(program, script) == expected
+
+
+def test_a_presentation_request_takes_a_list_of_urls_and_resolves_them_against_the_document(program: Path) -> None:
+    # Web IDL's overload resolution: an iterable object is the sequence, anything else the string. A URL of a scheme
+    # that Chrome cannot present is left out, and only a list with none left is refused.
+    script = """const made = (urls) => { try { new PresentationRequest(urls); return "made"; } catch (e) { return e.name; } };
+        return JSON.stringify([made(["ftp://a.test/", "https://a.test/"]), made(new Set(["cast:app"])),
+            made({toString: () => "https://a.test/"}), made([]), made({[Symbol.iterator]: 1})])"""
+
+    assert _evaluate(program, script) == 'value: ["made","made","made","NotSupportedError","TypeError"]'
 
 
 @pytest.mark.parametrize(

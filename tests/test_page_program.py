@@ -1448,6 +1448,97 @@ def test_a_page_of_the_engine_releases_persona_lists_the_features_of_its_baselin
     )
 
 
+_FILE_SYSTEM_SCRIPT = """new Promise((resolve) => {
+    const order = [];
+    webkitRequestFileSystem(TEMPORARY, 1024, (fs) => {
+        const root = fs.root;
+        resolve([order.concat("callback").join(), fs.name, Object.prototype.toString.call(fs), root === fs.root,
+            root.filesystem === fs, root.isDirectory, root.isFile, root.name, root.fullPath, root.toURL()]);
+    });
+    order.push("returned");
+})"""
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "www.example.test"])
+def test_webkit_request_file_system_gives_the_file_system_of_the_origin(session: _Session, host: str) -> None:
+    # Chrome 157 gave the same name, root and URL at http://HOST:8722/, from a new profile, on a secure page and
+    # elsewhere: Chrome's identifier of the origin, and its root URL of a temporary file system.
+    session.start()
+    _load_policy_page(session, f"http://{host}:8722/")
+
+    assert session.evaluate(_FILE_SYSTEM_SCRIPT) == (
+        False,
+        json.dumps(
+            [
+                "returned,callback",
+                f"http_{host}_8722:Temporary",
+                "[object DOMFileSystem]",
+                True,
+                True,
+                True,
+                False,
+                "",
+                "/",
+                f"filesystem:http://{host}:8722/temporary/",
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+
+def test_webkit_request_file_system_names_a_persistent_one_and_refuses_another_type(session: _Session) -> None:
+    # As Chrome 157 gave at http://127.0.0.1:8722/. A port that is the scheme's default is 0 in the name, as
+    # storage::GetIdentifierFromOrigin() writes it.
+    session.start()
+    _load_policy_page(session, "https://www.example.test/")
+    script = """Promise.all([
+        new Promise((resolve) => webkitRequestFileSystem(PERSISTENT, 0, (fs) => resolve(fs.name))),
+        new Promise((resolve) => webkitRequestFileSystem(7, 0, () => resolve("opened"),
+            (error) => resolve(error.name + " " + error.message))),
+        new Promise((resolve) => webkitRequestFileSystem(0, 0, {handleEvent(fs) { resolve(this.tag + fs.name); },
+            tag: "object "})),
+    ])"""
+
+    assert session.evaluate(script) == (
+        False,
+        json.dumps(
+            [
+                "https_www.example.test_0:Persistent",
+                "InvalidModificationError The object can not be modified in this way.",
+                "object https_www.example.test_0:Temporary",
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+
+def test_a_presentation_availability_outlives_its_request_until_its_promise_settles(session: _Session) -> None:
+    # Blink's resolver holds what it resolves with, so a page that keeps only the promise still gets the availability.
+    session.start(_with_features(v8_flags=["--expose-gc"]))
+    script = """new Promise((resolve) => {
+        const promise = new PresentationRequest("https://a.test/").getAvailability();
+        gc();
+        promise.then((availability) => resolve(String(availability) + " " + availability.value));
+    })"""
+
+    assert session.evaluate(script) == (False, json.dumps("[object PresentationAvailability] false"))
+
+
+def test_webkit_request_file_system_refuses_an_opaque_origin(session: _Session) -> None:
+    # SecurityOrigin::CanAccessFileSystem(): about:blank, which the Page starts with, has an opaque origin.
+    session.start()
+    script = """new Promise((resolve) => webkitRequestFileSystem(0, 0, () => resolve("opened"),
+        (error) => resolve(error.name + ": " + error.message)))"""
+
+    assert session.evaluate(script) == (
+        False,
+        json.dumps(
+            "SecurityError: It was determined that certain files are unsafe for access within a Web application, or"
+            " that too many calls are being made on file resources."
+        ),
+    )
+
+
 def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(session: _Session) -> None:
     session.start()
     document = "﻿<p id=text>café 𝄞</p>".encode()

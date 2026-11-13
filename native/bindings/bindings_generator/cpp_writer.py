@@ -694,11 +694,14 @@ class _InterfaceWriter:
             )
         ]
 
-    def _overloads_by_type(self, overloads: list[Operation], where: str) -> tuple[str, Operation, Operation] | None:
+    def _overloads_by_type(
+        self, overloads: list[Operation], where: str
+    ) -> tuple[list[str], str, list[str], Operation, Operation] | None:
         """For two overloads that take the same arguments but one, which is a string in one and a callback function, as
-        setTimeout() has, or a dictionary, as CookieStore's get() has, in the other: the test of Web IDL's overload
-        resolution that chooses the other overload for the value given there, and the two overloads, the one that the
-        test chooses first."""
+        setTimeout() has, a dictionary, as CookieStore's get() has, or a sequence, as PresentationRequest's constructor
+        has, in the other: the statements before the test of Web IDL's overload resolution that chooses the other
+        overload for the value given there, the test, the statements after the overload it chooses, and the two
+        overloads, the one that the test chooses first."""
         if len(overloads) != 2:
             return None
         first, second = overloads
@@ -713,6 +716,8 @@ class _InterfaceWriter:
             return None
         index = differing[0]
         kinds = {self.types.reduce(overload.arguments[index].idl_type).kind for overload in overloads}
+        before: list[str] = []
+        after: list[str] = []
         if kinds == {TypeKind.CALLBACK_FUNCTION, TypeKind.STRING}:
             # A callable value chooses the callback function, and anything else the string, which every value
             # converts to.
@@ -721,11 +726,18 @@ class _InterfaceWriter:
             # undefined, null and any object choose the dictionary, and anything else the string.
             chosen_kind = TypeKind.DICTIONARY
             test = f"info[{index}]->IsUndefined() || info[{index}]->IsNull() || info[{index}]->IsObject()"
+        elif kinds == {TypeKind.SEQUENCE, TypeKind.STRING}:
+            # An object with an @@iterator chooses the sequence, as bind_gen's dispatcher tests it, an array first, and
+            # anything else the string. Reading @@iterator may throw.
+            chosen_kind = TypeKind.SEQUENCE
+            before = ["bool iterator_threw = false;"]
+            test = f"info[{index}]->IsArray() || IsIterableObject(isolate, info[{index}], &iterator_threw)"
+            after = ["if (iterator_threw) {", "  return;", "}"]
         else:
             return None
         if self.types.reduce(first.arguments[index].idl_type).kind is chosen_kind:
-            return test, first, second
-        return test, second, first
+            return before, test, after, first, second
+        return before, test, after, second, first
 
     def _call(self, operation: Operation, where: str, check_length: bool) -> list[str]:
         """The statements that convert an operation's arguments, call the class and set the result."""
@@ -778,9 +790,22 @@ class _InterfaceWriter:
         if len(overloads) == 1:
             body += self._call(overloads[0], where, check_length=True)
             return self._add_callback(name, body)
+        body += self._dispatch(overloads, group.name, where, self._call, deferred_receiver)
+        return self._add_callback(name, body)
+
+    def _dispatch(
+        self,
+        overloads: list[Operation],
+        name: str,
+        where: str,
+        call: Callable[[Operation, str, bool], list[str]],
+        deferred_receiver: list[str],
+    ) -> list[str]:
+        """Web IDL's overload resolution among `overloads`, each of which `call` calls."""
+        body: list[str] = []
         by_type = self._overloads_by_type(overloads, where)
         if by_type is not None:
-            test, chosen_overload, other_overload = by_type
+            before, test, after, chosen_overload, other_overload = by_type
             required = min(
                 sum(1 for argument in overload.arguments if not argument.is_optional and not argument.is_variadic)
                 for overload in overloads
@@ -794,18 +819,20 @@ class _InterfaceWriter:
                 ]
             body += deferred_receiver
             # Web IDL's overload resolution at the distinguishing argument.
+            body += before
             body += [f"if ({test}) {{"]
-            body += _indent(self._call(chosen_overload, where, check_length=False))
+            body += _indent(call(chosen_overload, where, False))
             body += ["  return;", "}"]
-            body += self._call(other_overload, where, check_length=False)
-            return self._add_callback(name, body)
+            body += after
+            body += call(other_overload, where, False)
+            return body
         # Web IDL's overload resolution, for overloads that differ in how many arguments they take: the one that takes
         # the most of those given.
         counts = [len(overload.arguments) for overload in overloads]
         if len(set(counts)) != len(counts) or any(
             argument.is_optional or argument.is_variadic for overload in overloads for argument in overload.arguments
         ):
-            raise UnhandledError(f"{where}: the C++ writer does not handle these overloads of {group.name}()")
+            raise UnhandledError(f"{where}: the C++ writer does not handle these overloads of {name}()")
         ordered = sorted(overloads, key=lambda overload: len(overload.arguments), reverse=True)
         fewest = len(ordered[-1].arguments)
         if fewest:
@@ -818,10 +845,10 @@ class _InterfaceWriter:
         body += deferred_receiver
         for overload in ordered[:-1]:
             body += [f"if (info.Length() >= {len(overload.arguments)}) {{"]
-            body += _indent(self._call(overload, where, check_length=False))
+            body += _indent(call(overload, where, False))
             body += ["  return;", "}"]
-        body += self._call(ordered[-1], where, check_length=False)
-        return self._add_callback(name, body)
+        body += call(ordered[-1], where, False)
+        return body
 
     def constructor(self) -> str:
         group = self.interface.constructor_group
@@ -844,22 +871,33 @@ class _InterfaceWriter:
                 name,
                 [f"KnownGapConstructorOfClass(info, {self.v8_class}::kWrapperTypeInfo, *{overloads}, {number});"],
             )
-        operation = group.only_overload(where)
-        _check_written(where, operation.extended_attributes)
-        if "HTMLConstructor" in operation.extended_attributes:
+        overloads = self._reachable_overloads(group)
+        if not overloads:
+            raise UnhandledError(f"{where}: no overload of the constructor can be called")
+        if len(overloads) == 1 and "HTMLConstructor" in overloads[0].extended_attributes:
+            _check_written(where, overloads[0].extended_attributes)
             # V8HTMLConstructor::HtmlConstructor(): with no custom element defined for new.target, it throws.
             body.append('ThrowTypeError(isolate, "Illegal constructor");')
             return self._add_callback(name, body)
         body.append(self._exception_state())
-        conversions, passed = self._arguments(operation.arguments, where)
-        body += conversions
+        if len(overloads) == 1:
+            body += self._construct(overloads[0], where, True)
+        else:
+            body += self._dispatch(overloads, "constructor", where, self._construct, [])
+        return self._add_callback(name, body)
+
+    def _construct(self, operation: Operation, where: str, check_length: bool) -> list[str]:
+        """The statements that convert a constructor's arguments, make the class's object and wrap it."""
+        _check_written(where, operation.extended_attributes)
+        conversions, passed = self._arguments(operation.arguments, where, check_length)
+        body = list(conversions)
         if "RaisesException" in operation.extended_attributes:
             passed.append("exception_state")
         body.append(f"{self.cls}* const impl = {self.cls}::Create({', '.join(passed)});")
         if "RaisesException" in operation.extended_attributes:
             body += ["if (exception_state.HadException()) {", "  return;", "}"]
         body += ["impl->AssociateWithWrapper(isolate, info.This());", "info.GetReturnValue().Set(info.This());"]
-        return self._add_callback(name, body)
+        return body
 
     # The indexed and named properties.
 

@@ -414,6 +414,15 @@ def test_the_cpp_types_of_what_permissions_and_geolocation_take() -> None:
     assert types.default_value(error_callback, "null", "a") == "v8::Local<v8::Function>()"
 
 
+def test_a_nullable_callback_object_whose_default_is_null_is_empty() -> None:
+    # webkitRequestFileSystem()'s error callback, a callback interface.
+    types = TypeMapper(frozenset(), frozenset())
+    error_callback = IdlType(TypeKind.CALLBACK_INTERFACE, "ErrorCallback", nullable=True)
+
+    assert types.argument_type(error_callback, "a") == "v8::Local<v8::Object>"
+    assert types.default_value(error_callback, "null", "a") == "v8::Local<v8::Object>()"
+
+
 def test_a_nullable_reflected_attribute_needs_its_keywords() -> None:
     def attribute(*keys: tuple[str, tuple[str, ...]]) -> Attribute:
         idl_type = IdlType(TypeKind.STRING, "DOMString", nullable=True)
@@ -931,6 +940,36 @@ def test_overloads_that_return_promises_count_the_arguments_before_checking_the_
 
     body = source[source.index("void RequestOperationCallback") :]
     assert body.index("if (info.Length() < 1) {") < body.index("Illegal invocation")
+
+
+def test_constructors_of_a_string_and_a_sequence_choose_the_sequence_for_an_iterable_object() -> None:
+    # PresentationRequest's constructor(USVString url) and constructor(sequence<USVString> urls).
+    url = Argument("url", IdlType(TypeKind.STRING, "USVString"), False, False, None)
+    strings = IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(IdlType(TypeKind.STRING, "USVString"),))
+    urls = Argument("urls", strings, False, False, None)
+    raises = _extended("RaisesException")
+    constructors = OperationGroup(
+        "constructor",
+        (
+            Operation("constructor", (url,), UNDEFINED, False, raises, ALWAYS),
+            Operation("constructor", (urls,), UNDEFINED, False, raises, ALWAYS),
+        ),
+        False,
+        1,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+
+    source = _bindings_of(
+        _interface(constructor_group=constructors), ImplementedInterface("Thing", "mitto/dom/thing.h")
+    )
+
+    body = source[source.index("void ConstructorCallback") :]
+    # bind_gen's dispatcher: an array or an object with an @@iterator, whose reading may throw, then the string.
+    assert "if (info.Length() < 1) {" in body
+    assert "if (info[0]->IsArray() || IsIterableObject(isolate, info[0], &iterator_threw)) {" in body
+    assert body.index("IsIterableObject") < body.index("if (iterator_threw) {") < body.rindex("FromV8USVString")
+    assert body.count("mitto::Thing* const impl = mitto::Thing::Create(") == 2
 
 
 def test_a_class_with_a_window_alias_gives_the_window_both_names() -> None:

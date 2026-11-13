@@ -716,6 +716,9 @@ class TypeMapper:
         if kind is TypeKind.CALLBACK_FUNCTION and idl_type.nullable and literal == "null":
             # Empty for null, as a nullable callback that a page gave as null converts.
             return "v8::Local<v8::Function>()"
+        if kind is TypeKind.CALLBACK_INTERFACE and idl_type.nullable and literal == "null":
+            # The same for a callback interface's object.
+            return "v8::Local<v8::Object>()"
         raise UnhandledError(
             f"{where}: the C++ writer does not handle the default value {literal} of {idl_type.syntax}"
         )

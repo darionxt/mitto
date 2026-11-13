@@ -5,13 +5,17 @@
 
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/strings/strcat.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
+#include "v8/include/v8-exception.h"
+#include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-primitive.h"
 
@@ -57,6 +61,60 @@ void SettleFromTask(v8::Isolate* isolate,
           v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
           v8::Global<v8::Promise::Resolver>(isolate, resolver),
           std::move(make_value), reject));
+}
+
+void CallCallbackInterface(v8::Isolate* isolate,
+                           v8::Global<v8::Object> callback_handle,
+                           const std::string& interface_name,
+                           MakeValue make_argument) {
+  const v8::HandleScope handle_scope(isolate);
+  const v8::Local<v8::Object> callback = callback_handle.Get(isolate);
+  v8::Local<v8::Context> context;
+  if (!callback->GetCreationContext(isolate).ToLocal(&context)) {
+    return;
+  }
+  const v8::Context::Scope context_scope(context);
+  const Window* const window =
+      bindings::V8Window::ToWrappable(isolate, context->Global());
+  if (!window || !window->HasContext()) {
+    return;
+  }
+  v8::Local<v8::Value> argument = std::move(make_argument).Run(isolate);
+  const v8::MicrotasksScope microtasks_scope(
+      context, v8::MicrotasksScope::kRunMicrotasks);
+  const v8::TryCatch try_catch(isolate);
+  // CallbackInvokeHelper::PrepareForCall(): a callable object is called with
+  // no receiver, and otherwise its handleEvent with the object as one.
+  v8::Local<v8::Function> function;
+  v8::Local<v8::Value> receiver = v8::Undefined(isolate);
+  if (callback->IsFunction()) {
+    function = callback.As<v8::Function>();
+  } else {
+    v8::Local<v8::Value> value;
+    if (!callback
+             ->Get(context,
+                   bindings::ToV8StringFromUtf8(isolate, "handleEvent"))
+             .ToLocal(&value)) {
+      bindings::ReportException(isolate, try_catch.Exception());
+      return;
+    }
+    if (!value->IsFunction()) {
+      bindings::ReportException(
+          isolate,
+          v8::Exception::TypeError(bindings::ToV8StringFromUtf8(
+              isolate, base::StrCat({"Failed to execute 'handleEvent' on '",
+                                     interface_name,
+                                     "': The provided callback is not "
+                                     "callable."}))));
+      return;
+    }
+    function = value.As<v8::Function>();
+    receiver = callback;
+  }
+  if (function->Call(context, receiver, 1, &argument).IsEmpty() &&
+      try_catch.HasCaught()) {
+    bindings::ReportException(isolate, try_catch.Exception());
+  }
 }
 
 }  // namespace
@@ -128,6 +186,18 @@ void RejectWithDOMExceptionFromTask(v8::Isolate* isolate,
                      },
                      std::move(name), std::move(message)),
                  /*reject=*/true);
+}
+
+void CallCallbackInterfaceFromTask(
+    v8::Isolate* isolate,
+    v8::Local<v8::Object> callback,
+    std::string interface_name,
+    base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_argument) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&CallCallbackInterface, base::Unretained(isolate),
+                     v8::Global<v8::Object>(isolate, callback),
+                     std::move(interface_name), std::move(make_argument)));
 }
 
 }  // namespace mitto

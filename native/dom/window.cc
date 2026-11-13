@@ -10,6 +10,7 @@
 
 #include "base/base64.h"
 #include "base/check.h"
+#include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -22,6 +23,7 @@
 #include "mitto/dom/custom_element_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/fetch_loader.h"
@@ -37,6 +39,7 @@
 #include "mitto/dom/request.h"
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
+#include "mitto/dom/script_values.h"
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
 #include "mitto/dom/visual_viewport.h"
@@ -415,6 +418,59 @@ std::u16string Window::Btoa(const std::u16string& data,
     return {};
   }
   return base::ASCIIToUTF16(base::Base64Encode(*bytes));
+}
+
+// Upstream: third_party/blink/renderer/modules/filesystem/dom_window_file_system.cc
+// Upstream: third_party/blink/renderer/modules/filesystem/file_system_callbacks.cc
+// Upstream: third_party/blink/renderer/core/fileapi/file_error.cc
+void Window::WebkitRequestFileSystem(uint16_t type,
+                                     int64_t size,
+                                     v8::Local<v8::Object> success_callback,
+                                     v8::Local<v8::Object> error_callback) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  // DOMFileSystem::ReportError(): the error callback, if any, from a task of
+  // its own, with the DOMException of FileError's code and message.
+  const auto report_error = [&](std::string name, std::string message) {
+    if (error_callback.IsEmpty()) {
+      return;
+    }
+    CallCallbackInterfaceFromTask(
+        isolate, error_callback, "ErrorCallback",
+        base::BindOnce(
+            [](const std::string& name, const std::string& message,
+               v8::Isolate* isolate) {
+              return bindings::PerIsolateData::From(isolate)
+                  ->dom_exception_hooks()
+                  .create(isolate, name, message);
+            },
+            std::move(name), std::move(message)));
+  };
+  const url::Origin origin = url::Origin::Create(
+      GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
+  // SecurityOrigin::CanAccessFileSystem().
+  if (origin.opaque()) {
+    report_error("SecurityError",
+                 "It was determined that certain files are unsafe for access "
+                 "within a Web application, or that too many calls are being "
+                 "made on file resources.");
+    return;
+  }
+  if (type != static_cast<uint16_t>(DOMFileSystem::Type::kTemporary) &&
+      type != static_cast<uint16_t>(DOMFileSystem::Type::kPersistent)) {
+    report_error("InvalidModificationError",
+                 "The object can not be modified in this way.");
+    return;
+  }
+  // The browser opens the origin's file system whatever size the page asks
+  // for, and FileSystemCallbacks makes its DOMFileSystem.
+  CallCallbackInterfaceFromTask(
+      isolate, success_callback, "FileSystemCallback",
+      base::BindOnce(
+          [](const url::Origin& origin, DOMFileSystem::Type type,
+             v8::Isolate* isolate) -> v8::Local<v8::Value> {
+            return DOMFileSystem::Create(origin, type)->ToV8(isolate);
+          },
+          origin, static_cast<DOMFileSystem::Type>(type)));
 }
 
 // The Infra Standard's forgiving-base64 decode, as Blink's Base64Decode()

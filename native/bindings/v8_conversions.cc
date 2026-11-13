@@ -373,6 +373,32 @@ bool FromV8Enumeration(v8::Isolate* isolate,
   return false;
 }
 
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+bool IsIterableObject(v8::Isolate* isolate,
+                      v8::Local<v8::Value> value,
+                      bool* threw) {
+  *threw = false;
+  if (!value->IsObject()) {
+    return false;
+  }
+  v8::Local<v8::Value> method;
+  if (!value.As<v8::Object>()
+           ->Get(isolate->GetCurrentContext(), v8::Symbol::GetIterator(isolate))
+           .ToLocal(&method)) {
+    *threw = true;
+    return false;
+  }
+  if (method->IsNullOrUndefined()) {
+    return false;
+  }
+  if (!method->IsFunction()) {
+    ThrowTypeError(isolate, "@@iterator must be a function");
+    *threw = true;
+    return false;
+  }
+  return true;
+}
+
 bool GetIteratorMethod(v8::Isolate* isolate,
                        v8::Local<v8::Object> object,
                        v8::Local<v8::Function>* method) {

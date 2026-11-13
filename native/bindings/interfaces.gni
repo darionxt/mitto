@@ -115,6 +115,10 @@ mitto_bindings_interfaces = [
     file = "dom_exception"
   },
   {
+    name = "DOMFileSystem"
+    file = "dom_file_system"
+  },
+  {
     name = "DOMRect"
     file = "dom_rect"
     made_by_known_gaps = true
@@ -145,6 +149,18 @@ mitto_bindings_interfaces = [
       "bottom",
       "left",
       "fromRect",
+    ]
+  },
+  {
+    name = "DirectoryEntry"
+    file = "directory_entry"
+
+    # Reading the directory and making entries in it.
+    missing = [
+      "createReader",
+      "getFile",
+      "getDirectory",
+      "removeRecursively",
     ]
   },
   {
@@ -264,6 +280,19 @@ mitto_bindings_interfaces = [
       "toggleAttribute",
       "webkitMatchesSelector",
       "children",
+    ]
+  },
+  {
+    name = "Entry"
+    file = "entry"
+
+    # What reads and changes the file system.
+    missing = [
+      "getMetadata",
+      "moveTo",
+      "copyTo",
+      "remove",
+      "getParent",
     ]
   },
   {
@@ -751,6 +780,24 @@ mitto_bindings_interfaces = [
     file = "pop_state_event"
   },
   {
+    name = "PresentationAvailability"
+    file = "presentation_availability"
+
+    # The bindings run its event handler attribute.
+    missing = [ "onchange" ]
+  },
+  {
+    name = "PresentationRequest"
+    file = "presentation_request"
+
+    # Starting a presentation needs a user's activation. The bindings run its
+    # event handler attribute.
+    missing = [
+      "start",
+      "onconnectionavailable",
+    ]
+  },
+  {
     name = "PressureObserver"
     file = "pressure_observer"
     made_by_known_gaps = true
@@ -875,7 +922,13 @@ mitto_bindings_interfaces = [
     name = "TrustedTypePolicyFactory"
     file = "trusted_type_policy_factory"
     made_by_known_gaps = true
-    implemented = [ "defaultPolicy" ]
+    implemented = [
+      "defaultPolicy",
+      "isHTML",
+      "isScript",
+      "isScriptURL",
+      "getAttributeType",
+    ]
   },
   {
     name = "Viewport"
@@ -911,6 +964,7 @@ mitto_bindings_interfaces = [
     file = "window"
     implemented = [
       "window",
+      "webkitRequestFileSystem",
       "self",
       "document",
       "performance",
