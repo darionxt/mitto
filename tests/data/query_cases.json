@@ -2590,6 +2590,32 @@
     false
    ]
   ],
+  "required radios without a name": [
+   [
+    true,
+    false,
+    false,
+    false
+   ],
+   [
+    true,
+    false,
+    false,
+    false
+   ],
+   [
+    false,
+    true,
+    true,
+    true
+   ],
+   [
+    true,
+    false,
+    null,
+    false
+   ]
+  ],
   ":defined and is": [
    true,
    false,

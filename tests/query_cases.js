@@ -222,6 +222,23 @@
       return input.matches(":invalid");
     }),
   ]);
+  // A required radio with no name is in no group, and Blink never takes its
+  // value as missing.
+  record["required radios without a name"] = [
+    '<form><input type=radio required></form>',
+    '<form><input type=radio name="" required></form>',
+    '<form><input type=radio name=g required></form>',
+    '<input type=radio required>',
+  ].map((html) => outcome(() => {
+    const holder = fixture(html);
+    const input = holder.querySelector("input");
+    const form = holder.querySelector("form");
+    const result = [input.matches(":valid"), input.matches(":invalid"), form && form.matches(":invalid")];
+    const detached = input.cloneNode();
+    result.push(detached.matches(":invalid"));
+    holder.remove();
+    return result;
+  }));
   record[":defined and is"] = [
     outcome(() => {
       const element = document.createElement("div");
