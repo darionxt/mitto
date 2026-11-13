@@ -25,6 +25,8 @@ source_set("dom") {
     "cookie_store.h",
     "crash_report_context.cc",
     "crash_report_context.h",
+    "credentials_container.cc",
+    "credentials_container.h",
     "crypto.cc",
     "crypto.h",
     "custom_element_registry.cc",

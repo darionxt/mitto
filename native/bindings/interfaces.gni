@@ -119,6 +119,11 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "CredentialsContainer"
+    file = "credentials_container"
+    implemented = [ "get" ]
+  },
+  {
     name = "CustomEvent"
     file = "custom_event"
   },
@@ -632,6 +637,7 @@ mitto_bindings_interfaces = [
       "cpuPerformance",
       "keyboard",
       "mediaDevices",
+      "credentials",
     ]
   },
   {

@@ -185,6 +185,22 @@ bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
                                    std::string_view type_name,
                                    ExceptionState& exception_state);
 
+// Converts `value`, an ArrayBuffer or a SharedArrayBuffer, to the ArrayBuffer
+// member of a union, as NativeValueTraits<DOMArrayBuffer> does: a buffer that
+// is not shared, not resizable and no larger than Blink takes. Throws and
+// returns false for any other.
+bool FromV8ArrayBufferMember(v8::Local<v8::Value> value,
+                             ExceptionState& exception_state,
+                             v8::Local<v8::ArrayBuffer>* result);
+
+// Converts `value`, a view, to the ArrayBufferView member of a union, as
+// NativeValueTraits<NotShared<DOMArrayBufferView>> does: one whose buffer is
+// neither shared nor resizable, no larger than Blink takes. Throws and returns
+// false for any other.
+bool FromV8ArrayBufferViewMember(v8::Local<v8::Value> value,
+                                 ExceptionState& exception_state,
+                                 v8::Local<v8::ArrayBufferView>* result);
+
 // The bytes of a [PassAsSpan] argument, as Blink's ByteSpanWithInlineStorage
 // holds them with its detach check: those of a buffer, which a page's script
 // may detach while the call's later arguments convert, so that the call then

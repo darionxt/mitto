@@ -365,6 +365,48 @@ def test_a_union_with_a_dictionary_takes_an_empty_dictionary_for_its_default() -
         types.default_value(dataclasses.replace(union, members=union.members[:1] * 2), "{}", "b")
 
 
+def test_a_buffer_source_in_a_dictionary_converts_as_blinks_union_of_a_buffer_and_a_view() -> None:
+    # WebAuthn's challenge: BufferSource, which a dictionary member holds as the union it is.
+    types = TypeMapper(frozenset(), frozenset())
+    buffer = IdlType(TypeKind.BUFFER_SOURCE, "ArrayBuffer")
+    view = IdlType(TypeKind.BUFFER_SOURCE, "ArrayBufferView")
+    union = IdlType(TypeKind.UNION, "(ArrayBuffer or ArrayBufferView)", members=(buffer, view))
+
+    assert types.value_type(union, "a") == "ArrayBufferOrArrayBufferView"
+    header, source = cpp_writer._write_union("ArrayBufferOrArrayBufferView", union, types)  # pyright: ignore[reportPrivateUsage]
+    text = "\n".join(source)
+
+    assert (
+        "using ArrayBufferOrArrayBufferView = std::variant<v8::Local<v8::ArrayBuffer>, v8::Local<v8::ArrayBufferView>>;"
+        in header
+    )
+    # bind_gen's union.py hands a SharedArrayBuffer to the ArrayBuffer member, whose conversion refuses it, and tries the
+    # view next; anything else is not of the union.
+    assert text.index("value->IsArrayBuffer() || value->IsSharedArrayBuffer()") < text.index(
+        "value->IsArrayBufferView()"
+    )
+    assert "FromV8ArrayBufferMember(value, exception_state, &buffer_source)" in text
+    assert "FromV8ArrayBufferViewMember(value, exception_state, &buffer_source)" in text
+    assert 'ExceptionMessages::ValueNotOfType("(ArrayBuffer or ArrayBufferView)")' in text
+    # Only BufferSource's members: a typed array of its own is not one the union takes.
+    with pytest.raises(UnhandledError, match="a union"):
+        types.value_type(dataclasses.replace(union, members=(IdlType(TypeKind.BUFFER_SOURCE, "Uint8Array"), view)), "b")
+
+
+def test_a_sequence_takes_an_empty_list_for_its_default() -> None:
+    # OTPCredentialRequestOptions' transports.
+    types = TypeMapper(frozenset(), frozenset(), {"OTPCredentialTransportType": ("sms",)})
+    transports = IdlType(
+        TypeKind.SEQUENCE,
+        "sequence<OTPCredentialTransportType>",
+        members=(IdlType(TypeKind.ENUMERATION, "OTPCredentialTransportType"),),
+    )
+
+    assert types.default_value(transports, "[]", "a") == "{}"
+    with pytest.raises(UnhandledError, match="default value"):
+        types.default_value(dataclasses.replace(transports, nullable=True), "[]", "b")
+
+
 @pytest.mark.parametrize(
     ("keys", "type_name", "expected"),
     [

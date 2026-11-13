@@ -1483,8 +1483,8 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
     """The declaration of a union and its FromV8(), which converts a value as Web IDL converts it to a union.
 
     Web IDL tries the union's members in a fixed order: a dictionary for undefined and null, then an object of each
-    interface, then a dictionary for any other object, then a boolean for a boolean, a number for a Number, and then,
-    for what is left, a string, or else a number, or else a boolean.
+    interface, then an ArrayBuffer and a view, then a dictionary for any other object, then a boolean for a boolean, a
+    number for a Number, and then, for what is left, a string, or else a number, or else a boolean.
     """
     alternatives = ", ".join(types.union_alternative(member) for member in union.members)
     signature = f"bool FromV8(v8::Isolate* isolate, v8::Local<v8::Value> value, ExceptionState& exception_state, {name}* result)"
@@ -1522,6 +1522,23 @@ def _write_union(name: str, union: IdlType, types: TypeMapper) -> tuple[list[str
             "    return true;",
             "  }",
         ]
+    buffer_sources = {member.name for member in union.members if member.kind is TypeKind.BUFFER_SOURCE}
+    # bind_gen's union.py gives a SharedArrayBuffer to the ArrayBuffer member too, whose conversion refuses it.
+    for buffer_source, test in (
+        ("ArrayBuffer", "value->IsArrayBuffer() || value->IsSharedArrayBuffer()"),
+        ("ArrayBufferView", "value->IsArrayBufferView()"),
+    ):
+        if buffer_source in buffer_sources:
+            source += [
+                f"  if ({test}) {{",
+                f"    v8::Local<v8::{buffer_source}> buffer_source;",
+                f"    if (!FromV8{buffer_source}Member(value, exception_state, &buffer_source)) {{",
+                "      return false;",
+                "    }",
+                "    *result = buffer_source;",
+                "    return true;",
+                "  }",
+            ]
     if sequence is not None or record is not None:
         # Web IDL: an object with an @@iterator converts to the sequence, and any other object to the record.
         source.append("  if (value->IsObject()) {")
@@ -1668,6 +1685,7 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         '#include "mitto/bindings/runtime_features.h"',
         '#include "mitto/bindings/v8_conversions.h"',
         *[f'#include "{header_of(name)}"' for name in union_interfaces],
+        '#include "v8/include/v8-array-buffer.h"',
         '#include "v8/include/v8-context.h"',
         '#include "v8/include/v8-isolate.h"',
         '#include "v8/include/v8-object.h"',

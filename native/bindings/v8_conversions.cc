@@ -122,6 +122,62 @@ bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
 
 namespace {
 
+// partition_alloc::MaxAllocationSize(), the most that Blink takes: 2 GiB less a
+// super page of 2 MiB.
+constexpr size_t kMaxAllocationSize = (size_t{1} << 31) - (size_t{1} << 21);
+
+// DoesExceedSizeLimit() of native_value_traits_buffer_sources.cc: throws a
+// RangeError and returns true for more bytes than Blink takes.
+bool ExceedsSizeLimit(size_t byte_length, ExceptionState& exception_state) {
+  if (byte_length <= kMaxAllocationSize) {
+    return false;
+  }
+  exception_state.ThrowRangeError(
+      "The ArrayBuffer/ArrayBufferView size exceeds the supported range.");
+  return true;
+}
+
+}  // namespace
+
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_buffer_sources.cc
+bool FromV8ArrayBufferMember(v8::Local<v8::Value> value,
+                             ExceptionState& exception_state,
+                             v8::Local<v8::ArrayBuffer>* result) {
+  // ToDOMArrayBuffer() takes no SharedArrayBuffer, which bind_gen's union
+  // gives to the ArrayBuffer member all the same.
+  if (!value->IsArrayBuffer()) {
+    exception_state.ThrowTypeError(
+        ExceptionMessages::FailedToConvertJSValue("ArrayBuffer"));
+    return false;
+  }
+  const v8::Local<v8::ArrayBuffer> buffer = value.As<v8::ArrayBuffer>();
+  if (buffer->IsResizableByUserJavaScript()) {
+    exception_state.ThrowTypeError(
+        "The provided ArrayBuffer value must not be resizable.");
+    return false;
+  }
+  if (ExceedsSizeLimit(buffer->ByteLength(), exception_state)) {
+    return false;
+  }
+  *result = buffer;
+  return true;
+}
+
+bool FromV8ArrayBufferViewMember(v8::Local<v8::Value> value,
+                                 ExceptionState& exception_state,
+                                 v8::Local<v8::ArrayBufferView>* result) {
+  const v8::Local<v8::ArrayBufferView> view = value.As<v8::ArrayBufferView>();
+  if (!CheckArrayBufferViewNotShared(view, "ArrayBufferView",
+                                     exception_state) ||
+      ExceedsSizeLimit(view->ByteLength(), exception_state)) {
+    return false;
+  }
+  *result = view;
+  return true;
+}
+
+namespace {
+
 // The bytes of `buffer` from `offset`, `length` of them.
 base::span<const uint8_t> BytesOf(v8::Local<v8::ArrayBuffer> buffer,
                                   size_t offset,
@@ -223,15 +279,7 @@ bool FromV8ByteSpan(v8::Local<v8::Value> value,
         ExceptionMessages::ArgumentNotOfType(argument_index, "ArrayBuffer"));
     return false;
   }
-  // partition_alloc::MaxAllocationSize(), the most that Blink takes: 2 GiB
-  // less a super page of 2 MiB.
-  constexpr size_t kMaxAllocationSize = (size_t{1} << 31) - (size_t{1} << 21);
-  if (result->size() > kMaxAllocationSize) {
-    exception_state.ThrowRangeError(
-        "The ArrayBuffer/ArrayBufferView size exceeds the supported range.");
-    return false;
-  }
-  return true;
+  return !ExceedsSizeLimit(result->size(), exception_state);
 }
 
 v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
