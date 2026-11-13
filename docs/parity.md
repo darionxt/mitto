@@ -143,7 +143,7 @@ Chrome 157, page, behaviour, history get length
 
 ### The kind of a gap
 
-Each gap has a kind, which says who closes it. The exit of M7 has Known Gaps for missing behaviour only, so a shape or a value is for mitto to match, and the list only holds one until it does:
+Each gap has a kind, which says who closes it. The exit of M7 has Known Gaps for missing behaviour only, and for what a Persona of an older Chrome Release cannot turn off, such as members that its release installed in another order ([persona.md](persona.md#what-an-older-persona-cannot-turn-off)). Any other shape or value is for mitto to match, and the list only holds one until it does:
 
 | Kind | Which gaps |
 | --- | --- |
@@ -165,7 +165,7 @@ A value that misses is a gap of the kind `machine`, in the field of its place, w
 
 ### Their known-gaps list
 
-`tests/baselines/script_known_gaps.json` holds the Script Fingerprint's Known Gaps, beside the wire's, one per line, with the keys `release`, `case`, `kind`, `field`, `baseline` and `mitto`. A run fails on a gap that is not in the list and on one in the list that no longer exists, as the wire's does. There is one list for every Host, because a Script Fingerprint must not depend on the Host either. `grep '"kind": "shape"' tests/baselines/script_known_gaps.json` lists what is for mitto to match.
+`tests/baselines/script_known_gaps.json` holds the Script Fingerprint's Known Gaps, beside the wire's, one per line, with the keys `release`, `case`, `kind`, `field`, `baseline` and `mitto`. A run fails on a gap that is not in the list and on one in the list that no longer exists, as the wire's does. There is one list for every Host, because a Script Fingerprint must not depend on the Host either. `grep '"kind": "shape"' tests/baselines/script_known_gaps.json` lists what is for mitto to match, with what an older Persona cannot turn off.
 
 To write the list again from what the Page does now:
 
