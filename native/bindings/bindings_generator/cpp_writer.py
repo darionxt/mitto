@@ -73,8 +73,10 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 # - SameObject: the class keeps the object and returns it on every call, so the bindings keep nothing of their own.
 # - SaveSameObject: the bindings keep what a static attribute's getter gave on the interface object, as bind_gen's do on
 #   the receiver; the class keeps what an instance's attribute gives.
-# - PutForwards and LegacyLenientSetter: only an attribute's setter forwards or does nothing, and the writer refuses that
-#   setter's behaviour, so an attribute with either can have its getter alone.
+# - PutForwards: the setter sets the attribute it names on what the getter gives, as bind_gen's
+#   make_steps_of_put_forwards() does.
+# - LegacyLenientSetter: only an attribute's setter does nothing, and the writer refuses that setter's behaviour, so an
+#   attribute with it can have its getter alone.
 # - Serializable and Transferable: only structured cloning reads them, which nothing in a Page can reach yet: it has
 #   neither postMessage() nor structuredClone().
 # - V8EnableIndexOf and V8EnableIterableToList: interceptors that let V8 take its fast paths through an indexed
@@ -729,6 +731,55 @@ class _InterfaceWriter:
             ],
         )
 
+    def _stringifier_attribute(self) -> Attribute | None:
+        """The attribute whose getter a stringifier gives, when the class has that getter's behaviour."""
+        name = self.interface.stringifier
+        if not name:
+            return None
+        attribute = next((attribute for attribute in self.interface.attributes if attribute.name == name), None)
+        if attribute is None or not self._has_attribute_behaviour(attribute, "get"):
+            return None
+        return attribute
+
+    def stringifier(self) -> str:
+        """The callback of toString() for a stringifier attribute, which gives what the attribute's getter gives, as
+        Blink's toString() is that getter."""
+        attribute = self._stringifier_attribute()
+        assert attribute is not None
+        where = f"stringifier of {self.interface.name}"
+        if reflected_attribute(attribute) is not None:
+            raise UnhandledError(f"{where}: the C++ writer does not handle a reflected stringifier")
+        self.types.return_type(attribute.idl_type, where)
+        call = f"impl->{self.method_name(attribute)}()"
+        return self._add_callback(
+            "ToStringOperationCallback",
+            [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"],
+        )
+
+    def _put_forwards_setter(self, name: str, attribute: Attribute) -> str:
+        """bind_gen's make_steps_of_put_forwards(): the setter sets the attribute that [PutForwards] names on what the
+        getter gives, through V8, so that a page's own getters and setters run as in Chrome."""
+        forward = attribute.extended_attributes.value_of("PutForwards")
+        return self._add_callback(
+            name,
+            [
+                "const v8::Local<v8::Context> context = isolate->GetCurrentContext();",
+                "v8::Local<v8::Value> target;",
+                f'if (!info.This()->Get(context, v8::String::NewFromUtf8Literal(isolate, "{attribute.name}"))',
+                "         .ToLocal(&target)) {",
+                "  return;",
+                "}",
+                "if (!target->IsObject()) {",
+                '  ThrowTypeError(isolate, "The attribute value is not an object");',
+                "  return;",
+                "}",
+                "bool did_set;",
+                "std::ignore = target.As<v8::Object>()",
+                f'                  ->Set(context, v8::String::NewFromUtf8Literal(isolate, "{forward}"), info[0])',
+                "                  .To(&did_set);",
+            ],
+        )
+
     def attribute_setter(self, attribute: Attribute) -> str:
         where = f"attribute {self.where(attribute.name)}"
         name = f"{function_name(attribute.name)}AttributeSetCallback"
@@ -752,9 +803,10 @@ class _InterfaceWriter:
                     "}",
                 ],
             )
-        for key in ("PutForwards", "LegacyLenientSetter"):
-            if key in extended:
-                raise UnhandledError(f"{where}: the C++ writer does not handle the behaviour of [{key}]")
+        if "PutForwards" in extended:
+            return self._put_forwards_setter(name, attribute)
+        if "LegacyLenientSetter" in extended:
+            raise UnhandledError(f"{where}: the C++ writer does not handle the behaviour of [LegacyLenientSetter]")
         if attribute.is_readonly:
             raise UnhandledError(f"{where}: the C++ writer does not handle setters of read-only attributes")
         site = Site(fail="return;")
@@ -1196,6 +1248,13 @@ class _InterfaceWriter:
                 "  }",
                 "}",
             ]
+        if member is None and property_.name == "toString" and self.interface.stringifier is not None:
+            install = "InstallOperationOnObject" if on_objects else "InstallOperation"
+            first = "isolate, context" if on_objects else "isolate"
+            return [
+                f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
+                f"{self.stringifier()}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+            ]
         if isinstance(member, ExposedConstruct):
             if member.kind == "factory function" and self.has_class(member.target):
                 raise UnhandledError(
@@ -1452,9 +1511,12 @@ class _InterfaceWriter:
             ]
         )
         _check_written(f"interface {interface.name}", interface.extended_attributes)
-        for unhandled in ("stringifier", "legacy_factory_functions"):
-            if getattr(interface, unhandled):
-                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {unhandled}")
+        if interface.legacy_factory_functions:
+            raise UnhandledError(
+                f"interface {interface.name}: the C++ writer does not handle its legacy_factory_functions"
+            )
+        if interface.stringifier is not None and self._stringifier_attribute() is None:
+            raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its stringifier")
         if interface.collection is not None and self._collection_with_behaviour() is None:
             collection_members = [attribute.name for attribute in interface.collection.attributes]
             collection_members += [group.name for group in interface.collection.operation_groups]

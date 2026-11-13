@@ -14,6 +14,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
+#include "mitto/dom/attr.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
@@ -429,6 +430,45 @@ Comment* Document::CreateComment(const std::u16string& data) {
 
 Text* Document::CreateTextNode(const std::u16string& data) {
   return Text::Create(*this, data);
+}
+
+Attr* Document::CreateAttribute(const std::u16string& local_name,
+                                bindings::ExceptionState& exception_state) {
+  if (!IsValidAttributeLocalName(local_name)) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The localName provided ('",
+                      base::UTF16ToUTF8(local_name),
+                      "') contains an invalid character."}));
+    return nullptr;
+  }
+  return Attr::Create(
+      *this,
+      QualifiedName{.local_name =
+                        is_html_ ? base::ToLowerASCII(local_name) : local_name},
+      std::u16string());
+}
+
+Attr* Document::CreateAttributeNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    bindings::ExceptionState& exception_state) {
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kAttribute,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  return Attr::Create(*this, *name, std::u16string());
 }
 
 DocumentFragment* Document::CreateDocumentFragment() {

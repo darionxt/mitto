@@ -349,6 +349,11 @@ HtmlTokenizer::Position HtmlTokenizer::NextPosition() const {
   return {line_, column_ + current_length_};
 }
 
+HtmlTokenizer::ZeroBasedPosition HtmlTokenizer::TextPosition() const {
+  const Position next = NextPosition();
+  return {next.line - 1, next.column - 1};
+}
+
 void HtmlTokenizer::ReportError(HtmlParseErrorCode code) {
   ReportErrorAt(code, CurrentPosition());
 }
