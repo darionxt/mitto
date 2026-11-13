@@ -8,6 +8,7 @@
 //
 // Upstream: third_party/blink/renderer/core/dom/events/event_target.h
 // Upstream: third_party/blink/renderer/core/dom/events/event_target.cc
+// Upstream: third_party/blink/renderer/core/dom/abort_signal_registry.cc
 
 #ifndef MITTO_DOM_EVENT_TARGET_H_
 #define MITTO_DOM_EVENT_TARGET_H_
@@ -32,6 +33,7 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
+class AbortSignal;
 class Event;
 
 // One listener that a page added: the DOM standard's event listener.
@@ -70,6 +72,11 @@ class EventListenerEntry final
   EventListenerEntry* next() const { return next_.Get(); }
   void set_next(EventListenerEntry* next) { next_ = next; }
 
+  // The signal that removes it, which it keeps while the target keeps it, as
+  // Blink's AbortSignalRegistry keeps the signal's algorithm while its
+  // listener lives.
+  void set_signal(AbortSignal* signal);
+
  private:
   const std::u16string type_;
   v8::TracedReference<v8::Object> callback_;
@@ -79,6 +86,7 @@ class EventListenerEntry final
   const bool attribute_handler_;
   bool removed_ = false;
   cppgc::Member<EventListenerEntry> next_;
+  cppgc::Member<AbortSignal> signal_;
 };
 
 class EventTarget : public bindings::ScriptWrappable {
@@ -121,6 +129,19 @@ class EventTarget : public bindings::ScriptWrappable {
   void SetAttributeEventHandler(v8::Isolate* isolate,
                                 const std::u16string& type,
                                 v8::Local<v8::Value> handler);
+
+  // Whether a listener of `type` is there, an event handler's among them.
+  bool HasEventListeners(std::u16string_view type) const;
+  // Removes the listener of `type` with `callback` and `capture`, if there is
+  // one, as removeEventListener() does.
+  void RemoveListener(const std::u16string& type,
+                      v8::Local<v8::Object> callback,
+                      bool capture);
+
+ protected:
+  // Called once a listener of `type` has joined or left, as Blink's
+  // AddedEventListener() and RemovedEventListener() are.
+  virtual void ListenersChanged(std::u16string_view type) {}
 
  private:
   // Runs the listeners of the event's type, and returns whether the event is

@@ -44,6 +44,15 @@ _64_BIT_INTEGERS = frozenset({"long long", "unsigned long long"})
 _ANNOTATIONS = frozenset({"LegacyNullToEmptyString"})
 
 
+def _is_enforce_range(idl_type: IdlType) -> bool:
+    """Whether the type is an [EnforceRange] integer, which converts with Web IDL's range checks."""
+    return (
+        idl_type.kind is TypeKind.INTEGER
+        and not idl_type.nullable
+        and [key for key, _ in idl_type.extended_attributes.entries] == ["EnforceRange"]
+    )
+
+
 def _union_member_name(member: IdlType) -> str:
     if member.kind is TypeKind.SEQUENCE:
         return f"{_union_member_name(member.members[0])}Sequence"
@@ -67,6 +76,7 @@ class Site:
         argument_index_expression: the C++ expression of the index, for a variadic argument.
         dictionary: the dictionary, for a dictionary member.
         member: the member's name, for a dictionary member.
+        element: whether it is an item of a sequence or a record, which Blink converts with NativeValue().
     """
 
     fail: str
@@ -74,6 +84,7 @@ class Site:
     argument_index_expression: str | None = None
     dictionary: str | None = None
     member: str | None = None
+    element: bool = False
 
     def not_of_type(self, type_name: str) -> str:
         """The expression of the message for a value that is not of the type."""
@@ -81,8 +92,9 @@ class Site:
             return f"ExceptionMessages::ArgumentNotOfType({self.argument_index_expression}, {_quote(type_name)})"
         if self.argument_index is not None:
             return f"ExceptionMessages::ArgumentNotOfType({self.argument_index}, {_quote(type_name)})"
-        if self.dictionary is not None:
-            # The member's context goes in front when the error leaves the call (exception_context.h).
+        if self.dictionary is not None or self.element:
+            # The member's context goes in front when the error leaves the call (exception_context.h). An item has
+            # NativeValue()'s message, as Blink's IDLSequence and IDLRecord convert each.
             return f"ExceptionMessages::FailedToConvertJSValue({_quote(type_name)})"
         return f"ExceptionMessages::ValueNotOfType({_quote(type_name)})"
 
@@ -162,6 +174,8 @@ class TypeMapper:
         return UnhandledError(f"{where}: the C++ writer does not handle {use} of type {idl_type.syntax}")
 
     def _check_annotations(self, idl_type: IdlType, where: str) -> None:
+        if _is_enforce_range(idl_type):
+            return
         for key, _ in idl_type.extended_attributes.entries:
             if key not in _ANNOTATIONS or idl_type.kind is not TypeKind.STRING:
                 raise UnhandledError(f"{where}: the C++ writer does not handle [{key}] on the type {idl_type.syntax}")
@@ -178,6 +192,8 @@ class TypeMapper:
         if kind is TypeKind.BOOLEAN and not idl_type.nullable:
             return "bool"
         if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS and not idl_type.nullable:
+            return _INTEGERS[idl_type.name]
+        if _is_enforce_range(idl_type):
             return _INTEGERS[idl_type.name]
         if kind is TypeKind.FLOATING_POINT and not idl_type.nullable:
             return "float" if idl_type.name.endswith("float") else "double"
@@ -370,6 +386,14 @@ class TypeMapper:
         cpp_type = self.value_type(idl_type, where)
         if kind is TypeKind.BOOLEAN:
             return [f"const bool {target} = {value}->BooleanValue(isolate);"]
+        if _is_enforce_range(idl_type):
+            # Web IDL's ConvertToInt() with [EnforceRange], as Blink's EnforceRange conversions do.
+            return [
+                f"{cpp_type} {target};",
+                f'if (!FromV8IntegerEnforceRange(isolate, {value}, "{idl_type.name}", exception_state, &{target})) {{',
+                f"  {site.fail}",
+                "}",
+            ]
         if kind is TypeKind.INTEGER:
             return [
                 f"{cpp_type} {target};",
@@ -420,7 +444,7 @@ class TypeMapper:
             element_type = idl_type.members[0]
             element = self._name("element")
             item = self._name("item")
-            inner = self.from_v8(element_type, item, element, Site(fail="return false;"), where)
+            inner = self.from_v8(element_type, item, element, Site(fail="return false;", element=True), where)
             return [
                 f"{cpp_type} {target};",
                 f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
@@ -438,8 +462,9 @@ class TypeMapper:
             key_value = self._name("key_value")
             item = self._name("item")
             item_value = self._name("item_value")
-            converted_key = self.from_v8(idl_type.members[0], key_value, key, Site(fail="return false;"), where)
-            converted_item = self.from_v8(idl_type.members[1], item_value, item, Site(fail="return false;"), where)
+            item_site = Site(fail="return false;", element=True)
+            converted_key = self.from_v8(idl_type.members[0], key_value, key, item_site, where)
+            converted_item = self.from_v8(idl_type.members[1], item_value, item, item_site, where)
             return [
                 f"{cpp_type} {target};",
                 f"if (!IterateRecord(isolate, {value}, exception_state, {_quote(idl_type.syntax)},",

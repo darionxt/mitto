@@ -6,8 +6,12 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_response.h"
+#include "mitto/dom/abort_signal.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/request.h"
@@ -93,6 +97,26 @@ Response* Initialize(std::optional<std::string> body,
 
 }  // namespace
 
+// The abort algorithm of a fetched body, as Blink's BodyStreamBuffer adds one.
+class AbortBodyAlgorithm final : public AbortSignal::Algorithm {
+ public:
+  explicit AbortBodyAlgorithm(Response* response) : response_(response) {}
+
+  void Run() override {
+    if (Response* const response = response_.Get()) {
+      response->AbortBody();
+    }
+  }
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    AbortSignal::Algorithm::Trace(visitor);
+    visitor->Trace(response_);
+  }
+
+ private:
+  const cppgc::WeakMember<Response> response_;
+};
+
 // static
 Response* Response::Create(const std::optional<v8::Local<v8::Value>>& body,
                            const bindings::ResponseInit& init,
@@ -163,6 +187,8 @@ void Response::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(headers_);
   visitor->Trace(reader_);
+  visitor->Trace(signal_);
+  visitor->Trace(abort_reason_);
 }
 
 std::u16string Response::Type() const {
@@ -191,6 +217,45 @@ v8::Local<v8::Promise> Response::Text(
   return Read(ReadAs::kText, exception_state);
 }
 
+void Response::FollowSignal(AbortSignal* signal) {
+  signal_ = signal;
+  signal->AddAlgorithm(
+      bindings::MakeGarbageCollected<AbortBodyAlgorithm>(this));
+}
+
+void Response::AbortBody() {
+  // A body that a script has read all of stays so. Chrome's body of a HEAD
+  // request or a null body status is an empty stream, which a read uses up,
+  // so a null body that no script read aborts too.
+  if ((body_state_ == BodyState::kNull && null_body_read_) ||
+      (body_used_ && reader_.IsEmpty() && whole_body_reader_.is_null())) {
+    return;
+  }
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::HandleScope handle_scope(isolate);
+  // Blink errors the body with the signal's reason under
+  // ForwardReasonToFetchBodyAbort, and before it with an AbortError of its
+  // own.
+  const v8::Local<v8::Value> reason =
+      bindings::PerIsolateData::From(isolate)->features().IsEnabled(
+          bindings::RuntimeFeature::kForwardReasonToFetchBodyAbort)
+          ? signal_->Reason()
+          : bindings::PerIsolateData::From(isolate)
+                ->dom_exception_hooks()
+                .create(isolate, "AbortError", "BodyStreamBuffer was aborted");
+  body_state_ = BodyState::kAborted;
+  body_.clear();
+  abort_reason_.Reset(isolate, reason);
+  if (!whole_body_reader_.is_null()) {
+    std::move(whole_body_reader_).Run(std::nullopt);
+  }
+  if (!reader_.IsEmpty()) {
+    const v8::Local<v8::Promise::Resolver> resolver = reader_.Get(isolate);
+    reader_.Reset();
+    std::ignore = resolver->Reject(isolate->GetCurrentContext(), reason);
+  }
+}
+
 void Response::AppendBody(std::string_view bytes) {
   body_.append(bytes);
   if (body_state_ == BodyState::kNull) {
@@ -199,8 +264,8 @@ void Response::AppendBody(std::string_view bytes) {
 }
 
 void Response::EndBody(int net_error) {
-  // A null body stays one, whenever the end comes.
-  if (body_state_ == BodyState::kNull) {
+  // A null body stays one, whenever the end comes, and an aborted one so.
+  if (body_state_ == BodyState::kNull || body_state_ == BodyState::kAborted) {
     return;
   }
   body_state_ = net_error == 0 ? BodyState::kComplete : BodyState::kFailed;
@@ -232,9 +297,18 @@ v8::Local<v8::Promise> Response::Read(
            .ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
+  // An aborted body rejects each read with its reason, and is not used, as
+  // Blink's BodyStreamBuffer stops before it locks its stream.
+  if (body_state_ == BodyState::kAborted) {
+    std::ignore = resolver->Reject(isolate->GetCurrentContext(),
+                                   abort_reason_.Get(isolate));
+    return resolver->GetPromise();
+  }
   // A null body is never used, and reads as empty each time.
   if (body_state_ != BodyState::kNull) {
     body_used_ = true;
+  } else {
+    null_body_read_ = true;
   }
   if (body_state_ == BodyState::kLoading) {
     reader_.Reset(isolate, resolver);
@@ -252,7 +326,12 @@ void Response::ReadAll(
     base::OnceCallback<void(std::optional<std::string> body)> done) {
   CHECK(!body_used_);
   if (body_state_ == BodyState::kNull) {
+    null_body_read_ = true;
     std::move(done).Run(std::string());
+    return;
+  }
+  if (body_state_ == BodyState::kAborted) {
+    std::move(done).Run(std::nullopt);
     return;
   }
   body_used_ = true;
@@ -267,7 +346,7 @@ void Response::ReadAll(
 }
 
 std::optional<std::string> Response::TakeBody() {
-  if (body_state_ == BodyState::kFailed) {
+  if (body_state_ == BodyState::kFailed || body_state_ == BodyState::kAborted) {
     return std::nullopt;
   }
   std::string body;

@@ -139,6 +139,34 @@ v8::Local<v8::Value> ToV8(v8::Isolate* isolate, ScriptWrappable* object) {
   return object->ToV8(isolate);
 }
 
+// Upstream: third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.cc
+bool FromV8EnforceRange(v8::Isolate* isolate,
+                        v8::Local<v8::Value> value,
+                        std::string_view type_name,
+                        double minimum,
+                        double maximum,
+                        ExceptionState& exception_state,
+                        double* result) {
+  double number;
+  if (!value->NumberValue(isolate->GetCurrentContext()).To(&number)) {
+    return false;
+  }
+  if (!std::isfinite(number)) {
+    exception_state.ThrowTypeError(
+        base::StrCat({"Value is", std::isinf(number) ? " infinite and" : "",
+                      " not of type '", type_name, "'."}));
+    return false;
+  }
+  number = std::trunc(number);
+  if (number < minimum || number > maximum) {
+    exception_state.ThrowTypeError(
+        base::StrCat({"Value is outside the '", type_name, "' value range."}));
+    return false;
+  }
+  *result = number + 0.0;
+  return true;
+}
+
 bool FromV8Double(v8::Isolate* isolate,
                   v8::Local<v8::Value> value,
                   bool restricted,

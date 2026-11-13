@@ -9,6 +9,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_window.h"
+#include "mitto/dom/abort_signal.h"
 #include "mitto/dom/bar_prop.h"
 #include "mitto/dom/crash_report_context.h"
 #include "mitto/dom/custom_element_registry.h"
@@ -276,6 +277,13 @@ v8::Local<v8::Promise> Window::Fetch(
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
     return v8::Local<v8::Promise>();
   }
+  // A request whose signal has aborted rejects with its reason, before any
+  // check of where it goes.
+  AbortSignal* const signal = request->Signal();
+  if (signal->Aborted()) {
+    std::ignore = resolver->Reject(context, signal->Reason());
+    return resolver->GetPromise();
+  }
   const url::Origin document_origin = url::Origin::Create(
       GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
   const bool cross_origin = !document_origin.IsSameOriginWith(request->url());
@@ -299,9 +307,10 @@ v8::Local<v8::Promise> Window::Fetch(
   data.headers = request->GetHeaders()->ToLines();
   data.body = request->body();
   data.same_origin = request->mode() == Request::Mode::kSameOrigin;
-  fetcher_->Fetch(std::move(data), std::make_unique<FetchLoader>(
-                                       isolate, context, resolver,
-                                       /*head=*/request->Method() == "HEAD"));
+  fetcher_->Fetch(std::move(data),
+                  std::make_unique<FetchLoader>(
+                      isolate, context, resolver,
+                      /*head=*/request->Method() == "HEAD", signal));
   return resolver->GetPromise();
 }
 

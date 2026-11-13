@@ -9,7 +9,9 @@
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_event_target.h"
+#include "mitto/dom/abort_signal.h"
 #include "mitto/dom/event.h"
+#include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -48,6 +50,48 @@ FlatOptions Flatten(
   flat.once = dictionary.once;
   return flat;
 }
+
+// The signal of addEventListener()'s options, if they have one.
+AbortSignal* SignalOf(
+    const std::optional<bindings::AddEventListenerOptionsOrBoolean>& options) {
+  if (!options) {
+    return nullptr;
+  }
+  const auto* dictionary =
+      std::get_if<bindings::AddEventListenerOptions>(&*options);
+  return dictionary && dictionary->signal ? *dictionary->signal : nullptr;
+}
+
+// The abort algorithm of a listener added with a signal: it removes the
+// listener, as Blink's binds removeEventListener() with the target and the
+// listener held weakly.
+class RemoveListenerAlgorithm final : public AbortSignal::Algorithm {
+ public:
+  RemoveListenerAlgorithm(EventTarget* target, EventListenerEntry* entry)
+      : target_(target), entry_(entry) {}
+
+  void Run() override {
+    EventTarget* const target = target_.Get();
+    EventListenerEntry* const entry = entry_.Get();
+    if (!target || !entry) {
+      return;
+    }
+    v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+    const v8::HandleScope handle_scope(isolate);
+    target->RemoveListener(entry->type(), entry->callback(isolate),
+                           entry->capture());
+  }
+
+  void Trace(cppgc::Visitor* visitor) const override {
+    AbortSignal::Algorithm::Trace(visitor);
+    visitor->Trace(target_);
+    visitor->Trace(entry_);
+  }
+
+ private:
+  const cppgc::WeakMember<EventTarget> target_;
+  const cppgc::WeakMember<EventListenerEntry> entry_;
+};
 
 bool FlattenCapture(
     const std::optional<bindings::EventListenerOptionsOrBoolean>& options) {
@@ -160,6 +204,11 @@ EventListenerEntry::~EventListenerEntry() = default;
 void EventListenerEntry::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(callback_);
   visitor->Trace(next_);
+  visitor->Trace(signal_);
+}
+
+void EventListenerEntry::set_signal(AbortSignal* signal) {
+  signal_ = signal;
 }
 
 // static
@@ -188,6 +237,11 @@ void EventTarget::AddEventListener(
   if (listener.IsEmpty()) {
     return;
   }
+  // A signal that has aborted adds nothing, as in Blink before anything else.
+  AbortSignal* const signal = SignalOf(options);
+  if (signal && signal->Aborted()) {
+    return;
+  }
   // Blink makes a target's EventTargetData here, before it checks for the same
   // listener, and keeps it after its listeners are removed.
   has_event_target_data_ = true;
@@ -211,6 +265,12 @@ void EventTarget::AddEventListener(
     first_listener_ = entry;
   }
   last_listener_ = entry;
+  if (signal) {
+    entry->set_signal(signal);
+    signal->AddAlgorithm(
+        bindings::MakeGarbageCollected<RemoveListenerAlgorithm>(this, entry));
+  }
+  ListenersChanged(type);
 }
 
 void EventTarget::RemoveEventListener(
@@ -221,15 +281,31 @@ void EventTarget::RemoveEventListener(
   if (listener.IsEmpty()) {
     return;
   }
+  RemoveListener(type, listener, capture);
+}
+
+void EventTarget::RemoveListener(const std::u16string& type,
+                                 v8::Local<v8::Object> callback,
+                                 bool capture) {
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
     if (!entry->attribute_handler() && entry->type() == type &&
         entry->capture() == capture &&
-        entry->callback(v8::Isolate::GetCurrent())->StrictEquals(listener)) {
+        entry->callback(v8::Isolate::GetCurrent())->StrictEquals(callback)) {
       RemoveEntry(entry);
       return;
     }
   }
+}
+
+bool EventTarget::HasEventListeners(std::u16string_view type) const {
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->type() == type) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void EventTarget::RemoveEntry(EventListenerEntry* entry) {
@@ -250,6 +326,7 @@ void EventTarget::RemoveEntry(EventListenerEntry* entry) {
       last_listener_ = previous;
     }
     entry->set_next(nullptr);
+    ListenersChanged(entry->type());
     return;
   }
 }
@@ -300,6 +377,7 @@ void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
     first_listener_ = entry;
   }
   last_listener_ = entry;
+  ListenersChanged(type);
 }
 
 bool EventTarget::DispatchEventForBindings(
