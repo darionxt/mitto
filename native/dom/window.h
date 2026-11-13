@@ -183,6 +183,11 @@ class Window final : public WindowProperties {
   // ContextDestroyed() cancels the signal's task.
   uint64_t AddSignalTimer(base::OnceClosure cancel);
   void RemoveSignalTimer(uint64_t id);
+  // What else goes with the context, such as the locks of a LockManager:
+  // `callback` runs once the Page lets the context go, as Blink's
+  // ExecutionContextLifecycleObserver::ContextDestroyed() does. It counts
+  // among no timers.
+  void AddContextDestroyedCallback(base::OnceClosure callback);
   // What the window reads of the browser and the machine, from the Page's
   // start, and what navigator.connection gives its document. Without them, as
   // in the Page program given a script, it reads what a default PageStart
@@ -240,6 +245,7 @@ class Window final : public WindowProperties {
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
+  std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
 };

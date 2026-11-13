@@ -340,12 +340,22 @@ void Window::SetTimers(DOMTimerCoordinator* timers) {
   if (timers) {
     return;
   }
-  // The context goes, and with it the signals' timers.
+  // The context goes, and with it the signals' timers and what else goes
+  // with it.
   std::map<uint64_t, base::OnceClosure> signal_timers;
   signal_timers.swap(signal_timers_);
   for (auto& [id, cancel] : signal_timers) {
     std::move(cancel).Run();
   }
+  std::vector<base::OnceClosure> callbacks;
+  callbacks.swap(context_destroyed_callbacks_);
+  for (base::OnceClosure& callback : callbacks) {
+    std::move(callback).Run();
+  }
+}
+
+void Window::AddContextDestroyedCallback(base::OnceClosure callback) {
+  context_destroyed_callbacks_.push_back(std::move(callback));
 }
 
 uint64_t Window::AddSignalTimer(base::OnceClosure cancel) {
