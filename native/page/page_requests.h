@@ -20,6 +20,8 @@
 #include "mitto/page/page_reporter.h"
 #include "mitto/page_messages.h"
 #include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-context.h"
+#include "v8/include/v8-persistent-handle.h"
 
 namespace mitto {
 
@@ -102,8 +104,10 @@ class PageRequests {
     bool render_blocking = false;
     std::optional<PageResponseStarted> response;
     uint64_t decoded_body_size = 0;
-    // The window that asked, whose timeline gets the entry while it runs.
+    // The window that asked, whose timeline gets the entry while it runs, and
+    // its context, in which the entry is added, whoever ends the request.
     cppgc::WeakPersistent<Window> window;
+    v8::Global<v8::Context> context;
   };
 
   struct Open {

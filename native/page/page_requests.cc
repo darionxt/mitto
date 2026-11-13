@@ -11,6 +11,8 @@
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/resource_timing.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-local-handle.h"
 
 namespace mitto {
 
@@ -59,6 +61,8 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
   timed.window = &Window::Current();
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  timed.context.Reset(isolate, isolate->GetCurrentContext());
   send_.Run(EncodeRequest(request));
   return request.number;
 }
@@ -88,6 +92,11 @@ void PageRequests::AddResourceTiming(Timed& timed,
   if (!window || !window->HasContext()) {
     return;
   }
+  // A request can end outside any context, as when the garbage collector takes
+  // a Response that no script read.
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const v8::HandleScope handle_scope(isolate);
+  const v8::Context::Scope context_scope(timed.context.Get(isolate));
   const PageResponseStarted* const response =
       timed.response ? &*timed.response : nullptr;
   ResourceTimingInfo info = CreateResourceTimingInfo(
