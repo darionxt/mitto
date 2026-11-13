@@ -1,5 +1,9 @@
 #include "mitto/dom/document.h"
 
+#include <algorithm>
+
+#include "base/check.h"
+#include "base/containers/span.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -34,6 +38,9 @@
 #include "mitto/dom/text.h"
 #include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
+#include "mitto/encoding/text_codec.h"
+#include "mitto/encoding/text_encoding_registry.h"
+#include "mitto/encoding/url_with_encoding.h"
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -324,6 +331,49 @@ std::u16string Document::Title() const {
   return std::u16string();
 }
 
+std::u16string Document::CharacterSet() const {
+  return base::ASCIIToUTF16(encoding_);
+}
+
+void Document::SetEncoding(std::string_view encoding,
+                           bool detected_heuristically) {
+  DCHECK(!encoding.empty());
+  // The loader sets the encoding after each piece of the body, so the tree is
+  // searched only when windows-1252 gives way to another.
+  Element* title_element = nullptr;
+  if (encoding_ != encoding && encoding_ == kWindows1252EncodingName) {
+    // The first title element in tree order, as Blink keeps its title element.
+    for (Node* node = FirstChild(); node; node = node->NextInTree(this)) {
+      if (node->IsElementNode() &&
+          static_cast<Element*>(node)->HasHTMLTagName(u"title")) {
+        title_element = static_cast<Element*>(node);
+        break;
+      }
+    }
+  }
+  if (title_element && !title_element->FirstElementChild()) {
+    const std::u16string text = title_element->DescendantTextContent();
+    if (std::ranges::all_of(text, [](char16_t c) { return c <= 0xFF; })) {
+      std::string original_bytes(text.begin(), text.end());
+      bool saw_error = false;
+      const std::u16string decoded = NewTextCodec(encoding)->Decode(
+          base::as_byte_span(original_bytes), FlushBehavior::kDataEof,
+          /*stop_on_error=*/false, saw_error);
+      // textContent's setter: one Text node, or none for an empty string.
+      title_element->RemoveChildren();
+      if (!decoded.empty()) {
+        title_element->ParserAppendChild(Text::Create(*this, decoded));
+      }
+    }
+  }
+  encoding_ = std::string(encoding);
+  encoding_detected_heuristically_ = detected_heuristically;
+}
+
+GURL Document::CompleteUrl(std::u16string_view url) const {
+  return ResolveUrlWithEncoding(GURL(base::UTF16ToUTF8(url_)), url, encoding_);
+}
+
 void Document::SetTitle(const std::u16string& title) {
   Element* const root = DocumentElement();
   if (!root || !root->IsHTMLElement()) {
@@ -547,6 +597,9 @@ Document& Document::EnsureTemplateDocument() {
 Node* Document::CloneWithoutChildren(Document& document) const {
   Document* const copy = is_html_ ? CreateHTML() : Create();
   copy->SetCompatibilityMode(compat_mode_);
+  // Blink's CloneDataFromDocument() copies the encoding too.
+  copy->encoding_ = encoding_;
+  copy->encoding_detected_heuristically_ = encoding_detected_heuristically_;
   return copy;
 }
 

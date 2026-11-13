@@ -35,6 +35,7 @@ Open each address in a Chrome started that way. Chrome ignores `--ignore-certifi
 |---|---|
 | `recordings/http1.json`, `recordings/http2.json`, `recordings/http3.json` | The normal form of the main **Request Kinds** over each protocol |
 | `recordings/cases/*.json` | The normal form of the other **Recording Cases** |
+| `recordings/documents/*.json` | The normal form of [what a document requests](#documents) beside the main Request Kinds |
 | `recordings/*.raw.json`, `recordings/cases/*.raw.json` | The raw recording of each: every connection that came in by the same way, with the client's address, its ClientHello bytes, its Initial packets over QUIC, every frame and every request |
 | `recordings/script/page.json` | The [Normal Form of the Script Fingerprint](#the-normal-form-of-a-script-fingerprint) of a top-level page |
 | `recordings/script/page.raw.json` | What that page posted, with its address and the address of each client that reached it. It holds the values of the machine that recorded it, so it stays on that machine |
@@ -46,7 +47,7 @@ To check that a client records the same twice, record it into two directories an
 
 `--host` sets another name ending in `.localhost`. `--http1-port`, `--http2-port`, `--http3-port`, `--plain-http-port`, `--proxy-port` and `--script-port` set other ports. The normal form does not depend on any of them. `--runs` names the runs to wait for, such as `--runs http1 http2 http3`.
 
-`--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols. It never attaches to the page of a Script Fingerprint, which needs no click.
+`--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. Every such call gives the page a user activation, whatever it runs, which lasts for seconds (`ThreadDebuggerCommonImpl::beginUserGesture()` in Blink), and a navigation that the page's own script then starts would count as the user's too. So it asks whether there is something to click without a gesture, and gives one only to the click. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols. It never attaches to the page of a Script Fingerprint, which needs no click.
 
 ## What the server does
 
@@ -93,6 +94,7 @@ Each main Request Kind makes one **Recording Case**, named after it. The other c
 | Cases over HTTP/1.1, HTTP/2, HTTP/3 | `cases/http1.json`, `cases/http2.json`, `cases/http3.json` | The port of that protocol | The table below |
 | Cases over plain HTTP | `cases/plain_http.json` | The plain HTTP port | `plain_http_navigation`, `plain_http_fetch`, `plain_http_script`, `plain_http_image` |
 | Cases through a proxy, over HTTP/1.1 and HTTP/2 | `cases/proxy_http1.json`, `cases/proxy_http2.json` | The proxy, to the port of that protocol | `proxy_connect`, `proxy_navigation` |
+| Documents over HTTP/1.1, HTTP/2, HTTP/3 | `documents/http1.json`, `documents/http2.json`, `documents/http3.json` | The port of that protocol | [Those below](#documents) |
 | Client hints over HTTP/1.1, HTTP/2, HTTP/3 | `cases/client_hints_http1.json`, `cases/client_hints_http2.json`, `cases/client_hints_http3.json` | The port of that protocol | [Those below](#client-hints) |
 | Client hints over plain HTTP | `cases/client_hints_plain_http.json` | The plain HTTP port | `client_hints_plain_http_fetch`, `client_hints_plain_http_navigation` |
 
@@ -112,7 +114,40 @@ The three runs over TLS go through the same pages, in this order, and the page a
 | `navigation_form_urlencoded`, `navigation_form_multipart` | A click on the button of a form, with names and values that take escaping. The second has a file |
 | `redirect_navigation_1` to `redirect_navigation_4` | A click on a link, with the same hops as the fetch |
 
-Every response under `/case/` allows every origin, because a request shows no sign of that and a page cannot go on without it. So the cases need no preflight, and each hop of a redirect also works with `Origin: null`.
+Every response under `/case/` allows every origin, because a request shows no sign of that and a page cannot go on without it. So the cases need no preflight, and each hop of a redirect also works with `Origin: null`. Only [the runs of documents](#documents) have a preflight, and answers for requests with credentials.
+
+### Documents
+
+The runs at `documents/` record what a document requests beside the main Request Kinds, and the navigations that it starts by itself: the Request Kinds that M8's pages make. Their files stay apart from `cases/`, because the Parity Checks of the wire replay each case in `cases/`, and they do not replay these yet. A recording session takes these runs after those above and before the client hints, whose asking would reach them. The three runs over TLS go through these pages in order, from `/case/documents-start`. Only the forms need a click. The page starts each other navigation by itself, with no user activation:
+
+| Recording Case | What makes it |
+|---|---|
+| `style`, `style_import`, `style_cross_site` | Stylesheets of the first page, the first of which `@import`s another |
+| `font`, `font_cross_site` | The fonts of that stylesheet's `@font-face` rules, which text of the page uses. The page lays the text out and waits for them. Their answer is no font, which Chrome finds out only after asking |
+| `module`, `module_static_import`, `module_dynamic_import`, `module_cross_site` | A module script that imports a second one statically and a third with `import()`, and one at another site |
+| `xhr_get`, `xhr_get_cross_site`, `xhr_post_text`, `xhr_get_sync`, `xhr_post_text_sync` | `XMLHttpRequest`, asynchronous and synchronous, without a body and with a string |
+| `worker`, `worker_import_scripts`, `worker_fetch`, `worker_module`, `worker_blob_fetch` | A classic dedicated worker, which calls `importScripts()` and `fetch()`, a module worker, and a worker from a `blob:` URL, which calls `fetch()`. The browser asks for a worker's script, with `User-Agent` after `Referer` as in its own requests. A worker's requests carry no client hints, and a `blob:` URL is no referrer |
+| `beacon_text`, `beacon_blob`, `beacon_form_data`, `beacon_text_cross_site` | `sendBeacon()` with a string, a `Blob` with no type and a `FormData` |
+| `fetch_later` | `fetchLater()`, whose request Chrome sends when the first page goes |
+| `preflight`, `fetch_post_json_cross_site` | `fetch()` with JSON to another site, and the preflight that Chrome sends first. Both go to one path, and each counts by a line that the other lacks, `Access-Control-Request-Method` and `Content-Type` |
+| `fetch_credentials_omit`, `fetch_credentials_same_origin`, `fetch_credentials_include` | `fetch()` with each `credentials` mode, to the other origin of the site, which has just set a cookie for each of these paths. A cookie of the same site is no third-party cookie, so Chrome's choice about those does not decide what goes |
+| `fetch_no_cors` | `fetch()` with `mode: "no-cors"` to another site |
+| `navigation_location`, `navigation_click`, `navigation_meta_refresh` | A navigation that the page starts through `location`, a link's `click()` and `<meta http-equiv="refresh">`, each from the page before |
+| `redirect_location_1`, `redirect_location_2` | One through `location`, whose hop goes to another site |
+| `frame_same_origin`, `frame_same_site`, `frame_cross_site` | The navigation of a frame at each origin |
+| `frame_script`, `frame_image`, `frame_fetch` | What the frame of the other site asks for: a script and an image of its markup, and a `fetch()` |
+| `frame_nested`, `frame_nested_fetch` | A frame of the page's origin inside the frame of the other site, and its `fetch()` with `credentials: "include"` to its own origin. The page has set a cookie of each `SameSite` for these two paths, and only `SameSite=None` goes, because a frame under one of another site is a third party's. Chrome says `Sec-Fetch-Storage-Access` only for a request whose credentials mode is `include` (`SetSecFetchStorageAccessHeader()` in `services/network`) |
+
+| `document_style`, `document_preload_style`, `document_preload_script`, `document_preload_image`, `document_preload_font`, `document_script`, `document_image_small`, `document_image`, `document_style_body`, `document_script_deferred` | What a document's markup asks for: stylesheets in its head and its body, preloads of a stylesheet, a script, an image and a font, a script that blocks the parser and a deferred one, and an image that says it is small and one that does not say its size |
+| `favicon` | `/favicon.ico`, which Chrome asks for by itself after that document has loaded, because it names no icon. Every other page names a `data:` icon. The page waits three seconds and then says that Chrome did not ask, which counts only if Chrome did not, as `{"refused": true}` |
+| `navigation_form_get`, `navigation_form_text`, `navigation_form_cross_site` | A click on the button of a form that GETs, which puts its fields in the query that stands for the case, one that POSTs `text/plain`, and one that POSTs urlencoded to another site |
+| `navigation_history_back` | `history.back()` to the page of an earlier step, which Chrome asks for again. The page in between sets a cookie for that page's path, so only this request carries it |
+
+The answer to the preflight allows `Content-Type`. Those to requests with credentials allow the page's origin with credentials, which an answer that allows every origin does not.
+
+Chrome 157 keeps a page whose answer says `Cache-Control: no-store` in its back/forward cache, for three minutes, and restores it unless its cookies changed (`kCacheControlNoStoreEnterBackForwardCache`, on by default at the level `kStoreAndRestoreUnlessCookieChange`). It keeps none whose scripts got a `no-store` answer. The page that the traversal goes back to is both, so Chrome asks for it again. A page that comes back from the cache says so, and the case is then missing. Cookies do not go by port, so that page also takes its cookie away again, and the run over the next protocol starts without it.
+
+`order` in [the normal form](#the-normal-form) lists the ten cases of the document's markup in the order Chrome opened their streams, over HTTP/2 and HTTP/3, where one connection carries them. Over HTTP/1.1 Chrome spreads them over connections, so the order in which they arrive is not Chrome's, and the normal form has none.
 
 ### Client hints
 
@@ -233,7 +268,8 @@ And an HTTP/3 connection like this:
 | `tls` | The ClientHello. Over QUIC it comes without TLS records, so it has no `record_version`. |
 | `http2` | Only for `h2`. `preface` holds the frames the client sent before its first request, without acknowledgements of what the server sent. |
 | `http3` | Only for `h3`. `streams` lists the unidirectional streams the client opened, and `control` the frames on its control stream, without those listed below. |
-| `requests` | One entry per Recording Case recorded, always in the order navigation, fetch, script, image and then those of [the tables above](#recording-cases). If a case was requested twice, the first request counts. `cookie` and `revalidation` only count a request with `Cookie` or `If-None-Match`, so the first request with one counts. |
+| `requests` | One entry per Recording Case recorded, always in the order navigation, fetch, script, image and then those of [the tables above](#recording-cases). If a case was requested twice, the first request counts. A case that has to carry a line only counts a request with it, so the first request with one counts: `Cookie` for `cookie` and `navigation_history_back`, `If-None-Match` for `revalidation`, `Access-Control-Request-Method` for `preflight` and `Content-Type` for `fetch_post_json_cross_site`. |
+| `order` | Only in [the files of documents](#documents) over HTTP/2 and HTTP/3. The names of the cases of the document's markup, in the order the client opened their streams. |
 
 An HTTP/1.1 request has `request_line` and `headers`. An HTTP/2 request has the `flags` of its HEADERS frame, the frame's `priority` if it has any, `headers` and, if there were any, `later_frames`: what the client sent on the stream after the headers, without the content of bodies or encoded header blocks. An HTTP/3 request has `headers` and, if there were any, `priority_updates`: the priorities that PRIORITY_UPDATE frames on the control stream gave it, in order. It also has `earlier_frames` and `later_frames`: what the client sent on the stream before and after the first headers, without the content of bodies or encoded header sections. On a connection that sent early data it has `early_data`, which lists what came before the client's Finished: `request` for the request itself, and the type of each other stream. It goes with the request, because what a client sends early depends on the request. Headers are written `name: value`, in the order sent and with the case sent, and repeated headers stay separate.
 
@@ -785,7 +821,8 @@ To reach the server over HTTP/3, a client needs `server.spki_hash` trusted and `
 
 `CaptureServer(tickets=True)` gives out tickets, and `RESUMPTION_RUNS` lists the runs that use them. `normal_form(recording, run.cases)` gives the resumed connections of such a run, and `normal_form(recording, run.fresh_cases)` the fresh ones. They cannot go in one normal form, because a normal form holds what its connections have in common.
 
-To reach a case page, a client needs `server.host_resolver_rules`, which a native Session takes as `host_resolver_rules` from `mitto._native`. `CASE_HOST` names the page, and `server.url(route, host=CASE_HOST, path=...)` and `server.recording(route, host=CASE_HOST)` go with it, so that the placeholders are the ones the Baselines have. `RUNS` lists every run, and `server.start_url(run)` and `server.chrome_flags(run)` say how to start one.
+To reach a case page, a client needs `server.host_resolver_rules`, which a native Session takes as `host_resolver_rules` from `mitto._native`. `CASE_HOST` names the page, and `server.url(route, host=CASE_HOST, path=...)` and `server.recording(route, host=CASE_HOST)` go with it, so that the placeholders are the ones the Baselines have. `RECORDING_RUNS` lists every run of the wire in the order a recording session takes them, `RUNS` those whose cases the Parity Checks replay, and `DOCUMENT_RUNS` [the others](#documents). `server.start_url(run)` and `server.chrome_flags(run)` say how to start one, and `normal_form(recording, run.cases, run.ordered)` gives a run's normal form with its `order`.
+
 
 ## Tests
 

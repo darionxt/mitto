@@ -1,10 +1,12 @@
-// The encodings that ICU decodes for Blink, its TextCodecIcu: the Encoding
-// Standard's single-byte encodings beyond windows-1252, such as ISO-8859-2,
-// windows-1251 and KOI8-R, from the converters and the table of names that
-// Chromium's ICU data holds, which the Page program holds too. Their names
-// come from that table: each converter's name in the HTML standard of
-// Chromium's data, or else its MIME name, with every alias of the converter
-// but those that end in "-html".
+// The encodings that ICU decodes and encodes for Blink, its TextCodecIcu: the
+// Encoding Standard's single-byte encodings beyond windows-1252, such as
+// ISO-8859-2, windows-1251 and KOI8-R, from the converters and the table of
+// names that Chromium's ICU data holds, which the Page program holds too.
+// Their names come from that table: each converter's name in the HTML standard
+// of Chromium's data, or else its MIME name, with every alias of the converter
+// but those that end in "-html". The encoder writes what UnencodableHandling
+// says for a character that the converter lacks, and ICU's escape for an
+// invalid one, such as "%UD800" for a lone surrogate.
 //
 // Blink keeps one closed converter for each thread to open the next quicker.
 // The single-byte converters keep no state between calls, so a page sees no
@@ -43,11 +45,18 @@ class TextCodecIcu final : public TextCodec {
                         FlushBehavior flush,
                         bool stop_on_error,
                         bool& saw_error) override;
+  std::string Encode(std::u16string_view text,
+                     UnencodableHandling handling) override;
 
  private:
   struct ConverterCloser {
     void operator()(UConverter* converter) const;
   };
+
+  // Opens the converter, which decoding and encoding share, as Blink's does.
+  void CreateIcuConverter();
+  std::string EncodeInternal(std::u16string_view text,
+                             UnencodableHandling handling);
 
   const std::string encoding_;
   std::unique_ptr<UConverter, ConverterCloser> converter_;
