@@ -601,6 +601,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   // ThrottlingURLLoader and NavigationURLLoaderImpl do. It only ever is a
   // navigation's, whose rules have said what it goes on with.
   void RestartRequest(FetchRules::Restart restart) {
+    const bool for_critical_ch = restart.for_critical_ch;
     std::unique_ptr<net::URLRequest> old_request = std::move(request_);
     const bool has_body = old_request->has_upload();
     request_ =
@@ -616,8 +617,10 @@ class RequestJob final : public net::URLRequest::Delegate,
     StartConnectTimer();
     // ThrottlingURLLoader::DidRestartForCriticalClientHint(), for the
     // navigation's timing, where the restart is a redirect of its own.
-    critical_ch_restart_ = base::TimeTicks::Now();
-    restarted_for_critical_ch_ = true;
+    if (for_critical_ch) {
+      critical_ch_restart_ = base::TimeTicks::Now();
+      restarted_for_critical_ch_ = true;
+    }
     request_->Start();
   }
 

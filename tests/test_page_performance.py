@@ -650,6 +650,24 @@ def test_the_navigation_s_redirects_show_unless_one_went_to_another_origin(
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_restart_for_critical_ch_is_a_redirect_of_the_navigation(origins: tuple[_Origin, _Origin]) -> None:
+    page, _ = origins
+    page.routes["/"] = _html("<p>restarted", ("Accept-CH", "Sec-CH-UA-Arch"), ("Critical-CH", "Sec-CH-UA-Arch"))
+    with mitto.Session() as session, _open_page(session, page.url("/")) as opened:
+        result = opened.evaluate(
+            """(() => {
+              const n = performance.getEntriesByType('navigation')[0];
+              return [n.redirectCount, n.redirectStart > 0, n.redirectEnd > 0, n.criticalCHRestart > 0,
+                      n.criticalCHRestart <= n.fetchStart,
+                      [performance.timing.redirectStart > 0, performance.navigation.redirectCount]];
+            })()"""
+        )
+
+    # As in Chrome, whose ThrottlingURLLoader makes the restart a redirect to where the navigation started.
+    assert result == [1, True, True, True, True, [True, 1]]
+
+
+@pytest.mark.usefixtures("page_program")
 def test_a_full_resource_buffer_fires_its_event_and_keeps_what_the_handler_makes_room_for(
     origins: tuple[_Origin, _Origin],
 ) -> None:
