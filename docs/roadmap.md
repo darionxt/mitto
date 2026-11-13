@@ -124,7 +124,7 @@ Goal: a Page's **Script Fingerprint** matches real Chrome's for its Persona and 
 - Bindings for every interface that Chrome exposes to a page, from the generator. A member whose behaviour is missing is a **Known Gap**. When a page calls it, it runs Chrome's checks and conversions, tells the Session, and gives its type's default. The members that pages call most get behaviour, or Chrome's outcome for the Page's state, written by hand ([runtime.md](runtime.md#what-a-known-gap-does)).
 - `navigator`, `screen`, `devicePixelRatio`, `matchMedia()`, `navigator.connection` and `navigator.userAgentData` from the Persona and the Machine, as [persona.md](persona.md#the-runtime) lists them. The Machine gains what the Runtime reads and HTTP does not, such as the time zone, the number of processors and the window's place ([ADR-0007](adr/0007-a-machine-of-its-own-per-session.md)).
 - A Persona of an older Chrome Release turns off the V8 and Blink features that its release did not ship ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)).
-- **Exit:** Parity Checks of the Script Fingerprint pass for every Chrome Release in the Supported Window, on every Host, with Known Gaps for missing behaviour only.
+- **Exit:** Parity Checks of the Script Fingerprint pass for every Chrome Release in the Supported Window, on every Host, with Known Gaps for missing behaviour only, and for what a Persona of an older Chrome Release cannot turn off ([ADR-0008](adr/0008-v8-and-bindings-from-web-idl.md)).
 
 ### M8: Documents
 

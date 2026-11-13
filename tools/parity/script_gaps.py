@@ -37,7 +37,8 @@ type _Entry = dict[str, RecordValue]
 class GapKind(StrEnum):
     """What a gap of a Script Fingerprint is about, which says who closes it.
 
-    A shape or a value is for mitto to match, and only missing behaviour stays a Known Gap at M7's exit.
+    A shape or a value is for mitto to match, and only missing behaviour stays a Known Gap at M7's exit, with what a
+    Persona of an older Chrome Release cannot turn off, such as members that its release installed in another order.
     """
 
     SHAPE = "shape"
