@@ -149,10 +149,15 @@ class MessagePort final : public EventTarget {
   static std::optional<std::vector<MessagePortChannel>> DisentanglePorts(
       v8::Isolate* isolate,
       const std::vector<cppgc::Persistent<MessagePort>>& ports);
-  // EntanglePorts(): a new port of `window`'s context for each end.
-  static std::vector<MessagePort*> EntanglePorts(
+  // EntanglePorts(): a new port of `window`'s context for each end, each held
+  // until what receives it, an event or a clone, holds it, since the
+  // collector does not look into a std::vector's buffer.
+  static std::vector<cppgc::Persistent<MessagePort>> EntanglePorts(
       Window* window,
       std::vector<MessagePortChannel> channels);
+  // The ports that `ports` hold, which must outlive the list.
+  static std::vector<MessagePort*> PortsOf(
+      const std::vector<cppgc::Persistent<MessagePort>>& ports);
 
   // PostMessageHelper::SerializeMessageByMove(): `message` serialized with
   // `transfer`, whose objects go into `transferables`, or nullopt after

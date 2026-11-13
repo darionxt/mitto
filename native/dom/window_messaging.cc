@@ -7,7 +7,8 @@
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
 // Upstream: third_party/blink/renderer/core/frame/dom_window.cc
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.cc
-// Upstream: third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
+// Upstream:
+// third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
 
 #include <optional>
 #include <string>
@@ -99,11 +100,11 @@ void DispatchPostMessage(Window& window,
                          const TargetOrigin& target,
                          UserActivation* user_activation,
                          SchedulerTaskContext* task_state) {
-  std::vector<MessagePort*> ports =
+  const std::vector<cppgc::Persistent<MessagePort>> ports =
       MessagePort::EntanglePorts(&window, std::move(channels));
-  MessageEvent* const event =
-      MessageEvent::CreateForMessage(std::move(data), source_origin, &window,
-                                     std::move(ports), user_activation);
+  MessageEvent* const event = MessageEvent::CreateForMessage(
+      std::move(data), source_origin, &window, MessagePort::PortsOf(ports),
+      user_activation);
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   std::optional<SchedulerTaskScope> task_scope;
   if (task_state && !SchedulerTaskContext::Current(isolate)) {
@@ -209,8 +210,9 @@ v8::Local<v8::Value> Window::StructuredClone(
   if (!channels) {
     return v8::Undefined(isolate);
   }
-  return serialized->Deserialize(
-      isolate, MessagePort::EntanglePorts(this, *std::move(channels)));
+  const std::vector<cppgc::Persistent<MessagePort>> ports =
+      MessagePort::EntanglePorts(this, *std::move(channels));
+  return serialized->Deserialize(isolate, MessagePort::PortsOf(ports));
 }
 
 void Window::PostMessage(v8::Local<v8::Value> message,

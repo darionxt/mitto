@@ -399,17 +399,28 @@ std::optional<std::vector<MessagePortChannel>> MessagePort::DisentanglePorts(
 }
 
 // static
-std::vector<MessagePort*> MessagePort::EntanglePorts(
+std::vector<cppgc::Persistent<MessagePort>> MessagePort::EntanglePorts(
     Window* window,
     std::vector<MessagePortChannel> channels) {
-  std::vector<MessagePort*> ports;
+  std::vector<cppgc::Persistent<MessagePort>> ports;
   ports.reserve(channels.size());
   for (MessagePortChannel& channel : channels) {
     auto* const port = bindings::MakeGarbageCollected<MessagePort>(window);
+    ports.emplace_back(port);
     port->Entangle(std::move(channel), nullptr);
-    ports.push_back(port);
   }
   return ports;
+}
+
+// static
+std::vector<MessagePort*> MessagePort::PortsOf(
+    const std::vector<cppgc::Persistent<MessagePort>>& ports) {
+  std::vector<MessagePort*> raw;
+  raw.reserve(ports.size());
+  for (const cppgc::Persistent<MessagePort>& port : ports) {
+    raw.push_back(port.Get());
+  }
+  return raw;
 }
 
 // Connector::WaitToReadMore() and ArmOrNotify(): a trap that posts a task when
@@ -493,11 +504,11 @@ void MessagePort::ReadAvailableMessage() {
 // DispatchMessageEvent() and CreateMessageEvent().
 void MessagePort::DispatchMessageEvent(TransferableMessage message) {
   Window* const window = window_.Get();
-  std::vector<MessagePort*> ports =
+  const std::vector<cppgc::Persistent<MessagePort>> ports =
       EntanglePorts(window, std::move(message.ports));
   MessageEvent* const event = MessageEvent::CreateForMessage(
       std::move(message.message), /*origin=*/std::nullopt, /*source=*/nullptr,
-      std::move(ports),
+      PortsOf(ports),
       message.user_activation ? UserActivation::CreateSnapshot() : nullptr);
   // The task state of a channel that schedules within the window.
   std::optional<SchedulerTaskScope> task_scope;
