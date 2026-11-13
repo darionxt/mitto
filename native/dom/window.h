@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -150,14 +151,21 @@ class Window final : public WindowProperties {
   // The timers of the window's context, which the Page program keeps, and
   // which go with it. Without them, as once the context is gone, a timer set
   // is never run, and its ID is 0, as Chrome gives in a destroyed context.
-  void SetTimers(DOMTimerCoordinator* timers) { timers_ = timers; }
-  // How many timers are set.
+  // Setting none stops the timers of AbortSignal.timeout() too.
+  void SetTimers(DOMTimerCoordinator* timers);
+  // How many timers are set, those of AbortSignal.timeout() among them.
   size_t TimerCount() const;
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
   // Whether the Page still runs the window's context: it gives the window its
   // timers until the context goes.
   bool HasContext() const { return timers_ != nullptr; }
+  // The timer of an AbortSignal.timeout(), which counts among the window's
+  // timers until RemoveSignalTimer() takes it back with the ID that this
+  // returns. Its `cancel` runs once the Page lets the context go, as Blink's
+  // ContextDestroyed() cancels the signal's task.
+  uint64_t AddSignalTimer(base::OnceClosure cancel);
+  void RemoveSignalTimer(uint64_t id);
   // What the window reads of the browser and the machine, from the Page's
   // start, and what navigator.connection gives its document. Without them, as
   // in the Page program given a script, it reads what a default PageStart
@@ -213,6 +221,8 @@ class Window final : public WindowProperties {
   PageConnection connection_;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
+  std::map<uint64_t, base::OnceClosure> signal_timers_;
+  uint64_t next_signal_timer_ = 0;
 };
 
 }  // namespace mitto

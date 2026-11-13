@@ -11,6 +11,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/abort_signal.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/response.h"
 #include "mitto/header_rules.h"
@@ -46,16 +47,38 @@ std::set<std::string> ExposedHeaderNames(const Headers& headers) {
   return names;
 }
 
+// The abort algorithm of a fetch, which holds the loader weakly, as Blink's
+// binds FetchLoaderBase::Abort().
+class AbortFetchAlgorithm final : public AbortSignal::Algorithm {
+ public:
+  explicit AbortFetchAlgorithm(base::WeakPtr<FetchLoader> loader)
+      : loader_(std::move(loader)) {}
+
+  void Run() override {
+    if (FetchLoader* const loader = loader_.get()) {
+      loader->Abort();
+    }
+  }
+
+ private:
+  base::WeakPtr<FetchLoader> loader_;
+};
+
 }  // namespace
 
 FetchLoader::FetchLoader(v8::Isolate* isolate,
                          v8::Local<v8::Context> context,
                          v8::Local<v8::Promise::Resolver> resolver,
-                         bool head)
+                         bool head,
+                         AbortSignal* signal)
     : isolate_(isolate),
       context_(isolate, context),
       resolver_(isolate, resolver),
-      head_(head) {}
+      head_(head),
+      signal_(signal) {
+  signal->AddAlgorithm(bindings::MakeGarbageCollected<AbortFetchAlgorithm>(
+      weak_factory_.GetWeakPtr()));
+}
 
 FetchLoader::~FetchLoader() {
   if (Response* const response = response_.Get()) {
@@ -105,6 +128,7 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
       cors ? Response::ResponseType::kCors : Response::ResponseType::kBasic,
       head.status, head.status_text, base::UTF8ToUTF16(head.url),
       head.redirected, headers, null_body ? nullptr : this);
+  response->FollowSignal(signal_.Get());
   response_ = response;
   std::ignore = resolver_.Get(isolate_)->Resolve(
       context, bindings::ToV8(isolate_, response));
@@ -163,6 +187,19 @@ void FetchLoader::ResponseCollected() {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
       FROM_HERE,
       base::BindOnce(&FetchLoader::Cancel, weak_factory_.GetWeakPtr()));
+}
+
+void FetchLoader::Abort() {
+  const v8::HandleScope handle_scope(isolate_);
+  const v8::Local<v8::Context> context = context_.Get(isolate_);
+  const v8::Context::Scope context_scope(context);
+  // The Fetch Standard's "abort a fetch": the promise rejects with the
+  // reason, and the Response errors its own body.
+  if (!resolver_.IsEmpty()) {
+    std::ignore = resolver_.Get(isolate_)->Reject(context, signal_->Reason());
+    resolver_.Reset();
+  }
+  Cancel();
 }
 
 void FetchLoader::Cancel() {

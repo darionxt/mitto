@@ -1,5 +1,6 @@
 // The Fetch Standard's Request, with what fetch() sends: its URL, method,
-// header lines and a body. Its other members, and RequestInit's members that
+// header lines and a body, and the signal that aborts it, which follows the
+// signal it is given. Its other members, and RequestInit's members that
 // change how a request goes, such as `cache` or `redirect`, are Known Gaps:
 // a value other than the default throws.
 //
@@ -21,6 +22,7 @@
 
 namespace mitto {
 
+class AbortSignal;
 class Headers;
 
 class Request final : public bindings::ScriptWrappable {
@@ -46,6 +48,7 @@ class Request final : public bindings::ScriptWrappable {
   std::string Method() const { return method_; }
   std::u16string Url() const;
   mitto::Headers* GetHeaders() const { return headers_.Get(); }
+  AbortSignal* Signal() const { return signal_.Get(); }
 
   // What fetch() uses.
   const GURL& url() const { return url_; }
@@ -58,6 +61,7 @@ class Request final : public bindings::ScriptWrappable {
   cppgc::Member<mitto::Headers> headers_;
   std::optional<std::string> body_;
   Mode mode_ = Mode::kCors;
+  cppgc::Member<AbortSignal> signal_;
 };
 
 // Extracts a body from `value`, as the Fetch Standard does for a BodyInit:

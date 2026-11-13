@@ -1,6 +1,7 @@
 #include "mitto/dom/request.h"
 
 #include <variant>
+#include <vector>
 
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -8,6 +9,7 @@
 #include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_request.h"
+#include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/window.h"
@@ -82,11 +84,15 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
   Request* const input_request = std::holds_alternative<Request*>(input)
                                      ? std::get<Request*>(input)
                                      : nullptr;
+  // The signal that the new one's follows: the input's, or init's, which may
+  // be null.
+  AbortSignal* signal = nullptr;
   if (input_request) {
     request->url_ = input_request->url_;
     request->method_ = input_request->method_;
     request->mode_ = input_request->mode_;
     request->body_ = input_request->body_;
+    signal = input_request->signal_.Get();
   } else {
     // The API base URL: the document's, since a Page has no <base> yet.
     const std::u16string& input_string = std::get<std::u16string>(input);
@@ -137,6 +143,16 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     }
     request->method_ = NormalizeMethod(method);
   }
+  if (init.signal) {
+    signal = *init.signal;
+  }
+  // A new dependent signal that follows it, as Blink makes before the
+  // Request.
+  std::vector<AbortSignal*> signals;
+  if (signal) {
+    signals.push_back(signal);
+  }
+  request->signal_ = AbortSignal::CreateComposite(signals);
   request->headers_ = Headers::Create(Headers::Guard::kRequest);
   if (init.headers) {
     request->headers_->FillWith(*init.headers, exception_state);
@@ -180,6 +196,7 @@ const bindings::WrapperTypeInfo* Request::GetWrapperTypeInfo() const {
 void Request::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(headers_);
+  visitor->Trace(signal_);
 }
 
 std::u16string Request::Url() const {

@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -86,6 +87,43 @@ bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
     }
     *result = static_cast<T>(number);
   }
+  return true;
+}
+
+// Converts `value` to one of Web IDL's integer types with [EnforceRange], as
+// ConvertToInt() does: ToNumber(), then a TypeError naming `type_name` for a
+// value that is not finite or whose integer part is outside the type's range,
+// which for the 64-bit types is that of the integers a double holds exactly.
+// Returns false if anything threw.
+bool FromV8EnforceRange(v8::Isolate* isolate,
+                        v8::Local<v8::Value> value,
+                        std::string_view type_name,
+                        double minimum,
+                        double maximum,
+                        ExceptionState& exception_state,
+                        double* result);
+template <typename T>
+bool FromV8IntegerEnforceRange(v8::Isolate* isolate,
+                               v8::Local<v8::Value> value,
+                               std::string_view type_name,
+                               ExceptionState& exception_state,
+                               T* result)
+  requires(std::is_integral_v<T>)
+{
+  // Blink's kJSMaxInteger, 2^53 - 1.
+  constexpr double kMaxSafeInteger = 9007199254740991.0;
+  constexpr double kMinimum =
+      sizeof(T) == 8 ? (std::is_signed_v<T> ? -kMaxSafeInteger : 0.0)
+                     : static_cast<double>(std::numeric_limits<T>::min());
+  constexpr double kMaximum =
+      sizeof(T) == 8 ? kMaxSafeInteger
+                     : static_cast<double>(std::numeric_limits<T>::max());
+  double number;
+  if (!FromV8EnforceRange(isolate, value, type_name, kMinimum, kMaximum,
+                          exception_state, &number)) {
+    return false;
+  }
+  *result = static_cast<T>(number);
   return true;
 }
 
@@ -204,14 +242,6 @@ bool IterateRecord(
     ExceptionState& exception_state,
     std::string_view type_name,
     base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each);
-
-// The checks of NativeValueTraits<NotShared<T>> once `view` is a view of the
-// type that `type_name` names, such as "ArrayBufferView": its buffer may be
-// neither shared nor resizable. Throws a TypeError for one that is, and
-// returns false then.
-bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
-                                   std::string_view type_name,
-                                   ExceptionState& exception_state);
 
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);

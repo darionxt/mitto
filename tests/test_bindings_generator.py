@@ -460,6 +460,22 @@ def test_the_cpp_types_of_what_navigator_returns() -> None:
     assert types.to_v8(IdlType(TypeKind.INTEGER, "unsigned long"), "x") == "v8::Integer::NewFromUnsigned(isolate, x)"
 
 
+def test_an_enforce_range_integer_and_an_item_of_a_sequence_convert_as_blinks_do() -> None:
+    types = TypeMapper(frozenset({"AbortSignal"}), frozenset())
+    milliseconds = IdlType(TypeKind.INTEGER, "unsigned long long", extended_attributes=_extended("EnforceRange"))
+    signals = IdlType(TypeKind.SEQUENCE, "sequence<AbortSignal>", members=(IdlType(TypeKind.INTERFACE, "AbortSignal"),))
+
+    # AbortSignal.timeout()'s argument: Web IDL's range checks, for a 64-bit type too.
+    assert types.argument_type(milliseconds, "a") == "uint64_t"
+    converted = "\n".join(types.from_v8(milliseconds, "info[0]", "ms", Site(fail="return;", argument_index=0), "a"))
+    assert 'FromV8IntegerEnforceRange(isolate, info[0], "unsigned long long", exception_state, &ms)' in converted
+    # An item has NativeValue()'s message, as AbortSignal.any([{}]) throws in Chrome.
+    items = "\n".join(types.from_v8(signals, "info[0]", "list", Site(fail="return;", argument_index=0), "a"))
+    assert 'ExceptionMessages::FailedToConvertJSValue("AbortSignal")' in items
+    with pytest.raises(UnhandledError, match=r"does not handle \[Clamp\]"):
+        types.argument_type(dataclasses.replace(milliseconds, extended_attributes=_extended("Clamp")), "a")
+
+
 def test_the_cpp_types_of_what_text_encoder_and_text_decoder_take_and_give() -> None:
     types = TypeMapper(frozenset(), frozenset({"TextEncoderEncodeIntoResult"}))
     uint8_array = IdlType(TypeKind.BUFFER_SOURCE, "Uint8Array")
