@@ -93,6 +93,8 @@ WRITTEN = frozenset(
         "LegacyNoInterfaceObject",
         "LegacyUnenumerableNamedProperties",
         "LegacyUnforgeable",
+        # The global object's table of exposed constructs installs the alias.
+        "LegacyWindowAlias",
         "NewObject",
         "NoAllocDirectCall",
         "NotEnumerable",
