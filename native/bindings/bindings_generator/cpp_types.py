@@ -231,6 +231,9 @@ class TypeMapper:
         kind = idl_type.kind
         if kind is TypeKind.BOOLEAN and not idl_type.nullable:
             return "bool"
+        if kind is TypeKind.INTEGER and idl_type.name in _64_BIT_INTEGERS and "Clamp" in idl_type.extended_attributes:
+            # FromV8ClampedInteger() converts the integers of 32 bits or fewer only.
+            raise self._refuse(idl_type, where, "an argument")
         if kind is TypeKind.INTEGER and idl_type.name in _CONVERTED_INTEGERS:
             # Empty for null.
             return f"std::optional<{_INTEGERS[idl_type.name]}>" if idl_type.nullable else _INTEGERS[idl_type.name]
