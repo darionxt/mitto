@@ -79,7 +79,10 @@ def _machines(args: argparse.Namespace) -> int:
 
 def _drop(args: argparse.Namespace) -> int:
     dropped = drop_oldest(args.root)
-    print(f"Dropped Chrome {dropped.release}: its Persona, its Baselines and {dropped.gaps} known gaps.")
+    print(
+        f"Dropped Chrome {dropped.release}: its Persona, its Baselines, {dropped.gaps} known gaps of the wire"
+        f" and {dropped.script_gaps} of the Script Fingerprint."
+    )
     print("Wrote the line of README.md that names the Supported Window.")
     if dropped.still_named:
         print(f"These lines of code still name Chrome {dropped.release}. Change those that present it:")

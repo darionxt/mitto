@@ -17,6 +17,7 @@ import pytest
 
 from tests.test_docs import lines_naming_chrome_releases, supported_window
 from tools.parity import Gap, dumps_known_gaps, loads_known_gaps
+from tools.parity.script_gaps import GapKind, ScriptGap, loads_script_known_gaps
 from tools.release.drop import DropError, Named, drop_oldest, releases, still_named
 
 REPOSITORY = Path(__file__).parents[2]
@@ -28,6 +29,7 @@ PERSONAS = Path("src/mitto/personas")
 PERSONA_MODULE = Path("src/mitto/_persona.py")
 BASELINES = Path("tests/baselines")
 KNOWN_GAPS = BASELINES / "known_gaps.json"
+SCRIPT_KNOWN_GAPS = BASELINES / "script_known_gaps.json"
 README = Path("README.md")
 
 type Layout = Callable[[list[str]], str]
@@ -164,6 +166,22 @@ def test_the_known_gaps_of_the_oldest_chrome_release_leave_the_list(tree: Path) 
 
     assert dropped.gaps == 2
     assert loads_known_gaps((tree / KNOWN_GAPS).read_text()) == gaps[2:]
+
+
+def test_the_script_known_gaps_of_the_oldest_chrome_release_leave_their_list(tree: Path) -> None:
+    add_new_engine_release(tree)
+    gaps = [
+        ScriptGap(OLDEST, "page", GapKind.SHAPE, "globalThis own <order>", [["Lock", 1]], [["Lock", 2]]),
+        ScriptGap(NEW, "page", GapKind.BEHAVIOUR, "crypto get subtle", ["object", "crypto.subtle"], None),
+        ScriptGap(OLDEST, "page", GapKind.BEHAVIOUR, "history get length", 1, 0),
+    ]
+    (tree / SCRIPT_KNOWN_GAPS).write_text(dumps_known_gaps(gaps))
+
+    dropped = drop_oldest(tree)
+
+    assert dropped.script_gaps == 2
+    assert loads_script_known_gaps((tree / SCRIPT_KNOWN_GAPS).read_text()) == [gaps[1]]
+    assert not (tree / BASELINES / OLDEST / "script").exists()
 
 
 def test_a_supported_window_of_three_is_left_as_it_is(tree: Path) -> None:

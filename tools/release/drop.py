@@ -1,7 +1,7 @@
 """Dropping the oldest Chrome Release from the Supported Window, once the new Engine Release has its Persona.
 
-What goes is its Persona's file, its Baselines, its entries in the known-gaps list and its name in
-src/mitto/_persona.py, and the line of README.md that names the Supported Window is written again. The other docs are
+What goes is its Persona's file, its Baselines, its entries in the known-gaps lists of the wire and of the Script
+Fingerprint and its name in src/mitto/_persona.py, and the line of README.md that names the Supported Window is written again. The other docs are
 left to whoever runs it, by the rule in docs/releasing.md. Everything is checked before anything changes, so a refusal
 leaves the tree as it was.
 """
@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools.parity import KNOWN_GAPS_FILE_NAME, dumps_known_gaps, loads_known_gaps
+from tools.parity.script_gaps import SCRIPT_KNOWN_GAPS_FILE_NAME, loads_script_known_gaps
 from tools.release.persona import persona_path
 from tools.release.window import WINDOW_SIZE
 
@@ -65,12 +66,14 @@ class Dropped:
 
     Attributes:
         release: The Chrome Release it dropped.
-        gaps: How many entries of the known-gaps list it took out.
+        gaps: How many entries of the wire's known-gaps list it took out.
+        script_gaps: How many entries of the Script Fingerprint's known-gaps list it took out.
         still_named: Lines of code that still name the Chrome Release, which it did not know how to change.
     """
 
     release: str
     gaps: int
+    script_gaps: int
     still_named: list[Named]
 
 
@@ -84,7 +87,7 @@ def drop_oldest(root: Path = REPOSITORY) -> Dropped:
     """Drop the oldest Chrome Release from the tree at root.
 
     Raises:
-        DropError: The Supported Window would hold fewer than three Chrome Releases, the oldest has no Baselines, the
+        DropError: The Supported Window would hold fewer than three Chrome Releases, the oldest has no Baselines, a
             known-gaps list cannot be read, src/mitto/_persona.py names it where this does not know how to change it,
             the Engine Release is not the newest Chrome Release, or README.md has no one line that names the Window.
     """
@@ -107,14 +110,21 @@ def drop_oldest(root: Path = REPOSITORY) -> Dropped:
     known_gaps = root / _BASELINES / KNOWN_GAPS_FILE_NAME
     gaps = loads_known_gaps(known_gaps.read_text(encoding="utf-8")) if known_gaps.exists() else []
     kept = [gap for gap in gaps if gap.release != oldest]
+    script_known_gaps = root / _BASELINES / SCRIPT_KNOWN_GAPS_FILE_NAME
+    script_gaps = (
+        loads_script_known_gaps(script_known_gaps.read_text(encoding="utf-8")) if script_known_gaps.exists() else []
+    )
+    script_kept = [gap for gap in script_gaps if gap.release != oldest]
 
     persona_path(oldest, root / _PERSONAS).unlink()
     shutil.rmtree(baselines)
     if known_gaps.exists():
         known_gaps.write_text(dumps_known_gaps(kept), encoding="utf-8", newline="\n")
+    if script_known_gaps.exists():
+        script_known_gaps.write_text(dumps_known_gaps(script_kept), encoding="utf-8", newline="\n")
     module.write_text(module_text, encoding="utf-8", newline="\n")
     readme.write_text(readme_text, encoding="utf-8", newline="\n")
-    return Dropped(oldest, len(gaps) - len(kept), still_named(oldest, root))
+    return Dropped(oldest, len(gaps) - len(kept), len(script_gaps) - len(script_kept), still_named(oldest, root))
 
 
 def still_named(release: str, root: Path = REPOSITORY) -> list[Named]:
