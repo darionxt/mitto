@@ -122,9 +122,10 @@ class SessionState:
     def open_page(self, url: str) -> NativePage:
         """Open a Page that navigates to `url` through this Session, or nowhere for ABOUT_BLANK.
 
-        It starts with this Session's Machine, its time zone, processors, window and the rest of what a page reads, the
-        locale, user agent and user agent client hints of its Persona, and the languages of its Accept-Language. Its requests send what this Session's Persona says each Request Kind sends, as a request of
-        that kind does, and run no timers, as Chrome's have none, whatever this Session's default timeout says.
+        It starts with this Session's Machine, its time zone, processors, window, refresh rate and the rest of what a page
+        reads, the locale, user agent and user agent client hints of its Persona, and the languages of its Accept-Language.
+        Its requests send what this Session's Persona says each Request Kind sends, as a request of that kind does, and run
+        no timers, as Chrome's have none, whatever this Session's default timeout says.
 
         Raises:
             ValueError: If `url` holds a NUL character or cannot be encoded as UTF-8, or the native Session has closed.
@@ -166,6 +167,7 @@ class SessionState:
             screen_width=screen_width,
             screen_height=screen_height,
             scale=machine.scale,
+            refresh_rate=machine.refresh_rate,
             viewport_width=machine.viewport_width,
             viewport_height=machine.viewport_height,
             color_scheme=machine.color_scheme,

@@ -1,10 +1,12 @@
-// The idle periods of the Page's main thread, as Blink's IdleHelper runs them
-// for a page that draws no frames: long idle periods, each of which lasts until
-// the next delayed task is due, and at most 50 milliseconds. Idle tasks wait in
-// a queue of their own, behind a fence that lets through only those posted
-// before the period started, and each gets the period's end. Once they have
-// run, the next period starts when this one ends if more wait, and periods
-// pause until one is posted if none does.
+// The idle periods of the Page's main thread, as Blink's IdleHelper runs them:
+// while the Page begins no frames, long idle periods, each of which lasts until
+// the next delayed task is due, and at most 50 milliseconds, and between the
+// frames that it begins, short idle periods that end when the next frame is
+// due. Idle tasks wait in a queue of their own, behind a fence that lets
+// through only those posted before the period started, and each gets the
+// period's end. Once they have run in a long idle period, the next period
+// starts when this one ends if more wait, and periods pause until one is
+// posted if none does. A short idle period just ends.
 //
 // Upstream: third_party/blink/renderer/platform/scheduler/common/idle_helper.cc
 // Upstream: third_party/blink/renderer/platform/scheduler/common/single_thread_idle_task_runner.cc
@@ -43,6 +45,12 @@ class IdleHelper final : public base::TaskObserver {
   // Ends the current idle period, if one has started, and starts a long one
   // if it can, or tries again once it might.
   void EnableLongIdlePeriod();
+  // Starts an idle period that ends at `idle_period_deadline`, as between two
+  // frames, unless it would be shorter than a millisecond.
+  void StartShortIdlePeriod(base::TimeTicks now,
+                            base::TimeTicks idle_period_deadline);
+  // Ends the current idle period, if one has started, as a frame begins.
+  void EndIdlePeriod();
 
   void PostIdleTask(const base::Location& from_here, EventLoop::IdleTask task);
 
@@ -54,6 +62,7 @@ class IdleHelper final : public base::TaskObserver {
  private:
   enum class IdlePeriodState {
     kNotInIdlePeriod,
+    kInShortIdlePeriod,
     kInLongIdlePeriod,
     // A long idle period with no idle task to run, which ends only when one
     // is posted.
@@ -68,7 +77,6 @@ class IdleHelper final : public base::TaskObserver {
   void StartIdlePeriod(IdlePeriodState new_state,
                        base::TimeTicks now,
                        base::TimeTicks idle_period_deadline);
-  void EndIdlePeriod();
   void UpdateLongIdlePeriodStateAfterIdleTask();
   bool IsInIdlePeriod() const;
   bool IsInLongIdlePeriod() const;

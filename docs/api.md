@@ -242,6 +242,7 @@ Machine(
     display_width: int,
     display_height: int,
     scale: float,
+    refresh_rate: int,
     work_area_x: int,
     work_area_y: int,
     work_area_width: int,
@@ -283,6 +284,7 @@ Sizes and places on the desktop are in device-independent pixels, which are the 
 | `display_width` | `int` | The width of the primary display, in pixels |
 | `display_height` | `int` | The height of the primary display, in pixels |
 | `scale` | `float` | The scale in Windows' display settings, such as 1.25 for 125%: 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5 or 5. `dpr` says it |
+| `refresh_rate` | `int` | The refresh rate of the primary display in hertz, such as 60 or 144, from 24 to 1000. Chrome begins a frame at each of its vsyncs, so a page can measure it from the times that `requestAnimationFrame()` gives its callbacks |
 | `work_area_x` | `int` | Where the work area starts from the left, which is the display less the taskbar: 0 with the taskbar at the bottom. At least 0 |
 | `work_area_y` | `int` | Where the work area starts from the top: 0 with the taskbar at the bottom. At least 0 |
 | `work_area_width` | `int` | The width of the work area, which lies on the display |
@@ -320,6 +322,7 @@ Machine.draw(
     display_width: int | None = None,
     display_height: int | None = None,
     scale: float | None = None,
+    refresh_rate: int | None = None,
     work_area_x: int | None = None,
     work_area_y: int | None = None,
     work_area_width: int | None = None,
@@ -350,7 +353,7 @@ Machine.draw(
 
 Return a Machine drawn from [the table](persona.md#the-table) that ships with mitto, with each value given here and the rest drawn to fit them.
 
-The display, its scale, the work area, the window and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the display too, since its taskbar takes some of the height. A display that the table does not have can be given by its size, scale and viewport alone, as in mitto 0.2: it then gets the work area of a taskbar at its bottom, and a maximised window if the viewport fills that work area less Chrome's bars, or else a window around the viewport where Chrome puts its first. A contrast theme draws the Windows that has it and the colour scheme it gives. Each other value is drawn on its own. The time zone is drawn for the Persona's locale, which is `en-US` for every Persona, and that gives `"America/New_York"`, so a Session whose requests leave through a proxy gives the zone of the proxy's exit as `time_zone`, since a server can compare the two.
+The display, its scale, the work area, the window and the viewport are drawn together, as one row of the table, and so are the round trip and the throughput. Of each of these two groups, give every value, or only values that a row has, such as `scale=1.25` alone. The Windows version goes with the display too, since its taskbar takes some of the height. A display that the table does not have can be given by its size, scale and viewport alone, as in mitto 0.2: it then gets the work area of a taskbar at its bottom, and a maximised window if the viewport fills that work area less Chrome's bars, or else a window around the viewport where Chrome puts its first. A contrast theme draws the Windows that has it and the colour scheme it gives. Each other value is drawn on its own, the refresh rate too. The time zone is drawn for the Persona's locale, which is `en-US` for every Persona, and that gives `"America/New_York"`, so a Session whose requests leave through a proxy gives the zone of the proxy's exit as `time_zone`, since a server can compare the two.
 
 The same seed and the same table give the same Machine on every Host, and a value given in one group leaves what the seed draws for the others as it was, unless they have to fit together. Without a seed, one is drawn, which the Machine keeps. Another version of mitto can have another table, which draws another Machine from the same seed.
 
@@ -371,7 +374,7 @@ assert mitto.Machine.draw(seed=7, memory=16, time_zone="Europe/Berlin") == machi
 Machine.named(name: str) -> Self
 ```
 
-Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills its work area on Windows 11 24H2, a round trip of 50 ms and a throughput of 10,000 kbps, and the settings that Windows comes with. mitto 0.1 had no Runtime, so what only a page reads is what the table draws most often: 8 logical processors, no touch screen and the time zone `America/New_York`. mitto 0.1 sent that network as an `rtt` of 50 and a `downlink` of 10 to every host, and with Chrome's noise the `downlink` is now from 9 to 10, by host. Another name raises a `ValueError`, and anything but text a `TypeError`.
+Return the Machine of a name. `"mitto-0.1"` is the one that every Session of mitto 0.1 claimed: 8 GiB, a 1920 by 1080 display at 100% with a window that fills its work area on Windows 11 24H2, a round trip of 50 ms and a throughput of 10,000 kbps, and the settings that Windows comes with. mitto 0.1 had no Runtime, so what only a page reads is what the table draws most often: 8 logical processors, a refresh rate of 60 Hz, no touch screen and the time zone `America/New_York`. mitto 0.1 sent that network as an `rtt` of 50 and a `downlink` of 10 to every host, and with Chrome's noise the `downlink` is now from 9 to 10, by host. Another name raises a `ValueError`, and anything but text a `TypeError`.
 
 ```python
 assert mitto.Machine.named("mitto-0.1").viewport_height == 945

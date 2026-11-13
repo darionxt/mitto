@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 13;
+inline constexpr uint32_t kPageProtocolVersion = 14;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -377,6 +377,9 @@ struct PageStart {
   int screen_height = 0;
   // The display's scale, such as 1.25, which devicePixelRatio gives.
   double scale = 1;
+  // The display's refresh rate in hertz, at whose vsyncs the Page begins
+  // frames, as Chrome does.
+  int refresh_rate = 60;
   // The window's page area.
   int viewport_width = 0;
   int viewport_height = 0;
