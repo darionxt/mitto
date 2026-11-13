@@ -28,7 +28,7 @@ std::u16string HTMLAnchorElement::Href() const {
   if (!value) {
     return std::u16string();
   }
-  const GURL url = GetDocument().CompleteURL(StripHTMLSpaces(*value));
+  const GURL url = GetDocument().CompleteUrl(StripHTMLSpaces(*value));
   return url.is_valid() ? base::UTF8ToUTF16(url.spec()) : *value;
 }
 
