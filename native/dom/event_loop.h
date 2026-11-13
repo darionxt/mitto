@@ -1,10 +1,12 @@
 // The Page's event loop as the DOM sees it: a task runner for each of Blink's
 // task types that a Page posts, on the queue and at the priority that Blink's
-// frame scheduler gives that type, the queues of scheduler.postTask(), and
-// idle tasks, which run in idle periods. The Page program makes it and gives
-// it to the DOM, on its main thread.
+// frame scheduler gives that type, the queues of scheduler.postTask(), idle
+// tasks, which run in idle periods, and the frames that it begins at the
+// display's refresh rate. The Page program makes it and gives it to the DOM,
+// on its main thread.
 //
 // Upstream: third_party/blink/public/platform/task_type.h
+// Upstream: third_party/blink/renderer/core/frame/local_frame_view.cc
 // Upstream: third_party/blink/renderer/platform/scheduler/common/task_priority.h
 // Upstream: third_party/blink/renderer/platform/scheduler/main_thread/frame_scheduler_impl.cc
 // Upstream: third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h
@@ -102,6 +104,9 @@ class EventLoop {
 
   // Runs in an idle period, and gets the period's end.
   using IdleTask = base::OnceCallback<void(base::TimeTicks deadline)>;
+  // Runs in a frame, and gets the frame's time: the vsync that began it.
+  using BeginFrameCallback =
+      base::OnceCallback<void(base::TimeTicks frame_time)>;
 
   // The Page's, or null before the Page program has made one.
   static EventLoop* Get();
@@ -117,6 +122,14 @@ class EventLoop {
   // Runs `task` when nothing else is ready, in the first idle period that
   // starts after now, as ThreadScheduler::PostIdleTask() does.
   virtual void PostIdleTask(const base::Location& from_here, IdleTask task) = 0;
+  // Runs `begin_frame` in the next frame that the Page begins, as
+  // LocalFrameView::ScheduleAnimation() asks Chrome's compositor for one. What
+  // is asked for before a frame begins runs in it, in the order it was asked
+  // for, and what a frame asks for runs in the next.
+  virtual void RequestBeginFrame(BeginFrameCallback begin_frame) = 0;
+  // The display's refresh rate in hertz, whose vsyncs begin the frames: 60
+  // until this says otherwise.
+  virtual void SetRefreshRate(int hertz) = 0;
 
  protected:
   virtual ~EventLoop() = default;
