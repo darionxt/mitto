@@ -2,7 +2,9 @@
 
 A navigation counts as the user's only with a user gesture, and with a gesture Chrome sends Sec-Fetch-User. A script on
 the page has none to give, so the gesture has to come from outside. It goes through the debugging port, and only runs
-the page's own click on the page's own element.
+the page's own click on the page's own element. Each call with a gesture gives the page a user activation, whatever it
+runs, which lasts for seconds and would count for a navigation that a script of the page starts. So it asks without
+one first, and gives one only to the click.
 
 It never attaches to a page of a Script Fingerprint, which needs no click, and which a debugger could change.
 """
@@ -18,7 +20,7 @@ from typing import Self, cast
 from urllib.parse import urlsplit
 
 from websockets.exceptions import WebSocketException
-from websockets.sync.client import connect
+from websockets.sync.client import ClientConnection, connect
 
 from tools.capture.script_page import SCRIPT_DIRECTORY
 
@@ -30,14 +32,16 @@ _STOP_TIMEOUT_SECONDS = 10.0
 _WEB_SCHEMES = ("http://", "https://")
 _SCRIPT_PAGES = f"/{SCRIPT_DIRECTORY}/"
 
-_CLICK_NEXT = """
-(() => {
-  const next = document.getElementById("next");
+_NEXT = 'document.getElementById("next")'
+_HAS_NEXT = f"(() => {{ const next = {_NEXT}; return Boolean(next && !next.hidden && !next.dataset.clicked); }})()"
+_CLICK_NEXT = f"""
+(() => {{
+  const next = {_NEXT};
   if (!next || next.hidden || next.dataset.clicked) return false;
   next.dataset.clicked = "true";
   next.click();
   return true;
-})()
+}})()
 """
 
 
@@ -72,17 +76,10 @@ class PageClicker:
 
     def _drive_page(self) -> None:
         with connect(self._page_socket(), proxy=None, open_timeout=_ANSWER_TIMEOUT_SECONDS) as page:
-            for call in itertools.count(1):
-                if self._stopping.is_set():
-                    return
-                command = {
-                    "id": call,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": _CLICK_NEXT, "userGesture": True},
-                }
-                page.send(json.dumps(command))
-                while json.loads(page.recv(_ANSWER_TIMEOUT_SECONDS)).get("id") != call:
-                    pass
+            calls = itertools.count(1)
+            while not self._stopping.is_set():
+                if _evaluate(page, next(calls), _HAS_NEXT, user_gesture=False) is True:
+                    _evaluate(page, next(calls), _CLICK_NEXT, user_gesture=True)
                 self._stopping.wait(_POLL_SECONDS)
 
     def _page_socket(self) -> str:
@@ -101,3 +98,17 @@ class PageClicker:
             and target["url"].startswith(_WEB_SCHEMES)
             and not urlsplit(target["url"]).path.startswith(_SCRIPT_PAGES)
         )
+
+
+def _evaluate(page: ClientConnection, call: int, expression: str, *, user_gesture: bool) -> object:
+    """Evaluate an expression in a page, and return its value, or None if it has none that JSON can hold."""
+    command = {
+        "id": call,
+        "method": "Runtime.evaluate",
+        "params": {"expression": expression, "returnByValue": True, "userGesture": user_gesture},
+    }
+    page.send(json.dumps(command))
+    while True:
+        answer = json.loads(page.recv(_ANSWER_TIMEOUT_SECONDS))
+        if answer.get("id") == call:
+            return answer.get("result", {}).get("result", {}).get("value")
