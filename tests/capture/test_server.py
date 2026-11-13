@@ -8,6 +8,7 @@ import html
 import json
 import logging
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -924,7 +925,88 @@ def test_command_line_writes_what_a_later_case_differs_in_from_the_first(tmp_pat
     delta = read_script_delta((tmp_path / "script" / "same_origin_frame.json").read_text(encoding="utf-8"))
     assert delta["objects"] == [{"path": "globalThis", "get": [["innerWidth", 300]]}]
     assert (tmp_path / "script" / "same_origin_frame.raw.json").is_file()
-    assert "differs from page.json" in output
+    assert "differs from script/page.json" in output
+
+
+def start_script_runs(tmp_path: Path, *runs: str) -> tuple[subprocess.Popen[str], int]:
+    """Start the command line for some runs of the Script Fingerprint, wait until it waits for their records, and return
+    it with the port of their pages."""
+    ports = free_ports(5)
+    http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
+    command = [
+        sys.executable,
+        "-m",
+        "tools.capture",
+        "--out",
+        str(tmp_path),
+        *("--http1-port", str(ports[0]), "--http2-port", str(ports[1]), "--http3-port", str(http3_port)),
+        *("--plain-http-port", str(ports[2]), "--proxy-port", str(ports[3]), "--script-port", str(ports[4])),
+        "--runs",
+        *runs,
+    ]
+    process = subprocess.Popen(
+        command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+    )
+    assert process.stdout is not None
+    while not process.stdout.readline().startswith("Waiting"):
+        assert process.poll() is None
+    return process, ports[4]
+
+
+def post_record(port: int, path: str, body: bytes) -> None:
+    with connect(port, host=CASE_HOST) as sock:
+        http1_exchange(sock, "POST", path, authority=f"{CASE_HOST}:{port}", body=body)
+
+
+def test_command_line_writes_a_later_case_that_came_first_once_the_first_is_written(tmp_path: Path) -> None:
+    process, port = start_script_runs(tmp_path, "script/page", "script/worker")
+    with process:
+        post_record(port, DEDICATED_WORKER.done_path, record_with(0))
+        # The worker's record is in, and the server has nothing to keep what differs from yet.
+        time.sleep(0.5)
+        assert not (tmp_path / "script" / "worker.json").exists()
+        post_record(port, RECORD_PATH, record_with(1371))
+        output, errors = process.communicate(timeout=_TIMEOUT_SECONDS)
+
+    assert process.returncode == 0, errors
+    delta = read_script_delta((tmp_path / "script" / "worker.json").read_text(encoding="utf-8"))
+    assert delta["objects"] == [{"path": "globalThis", "get": [["innerWidth", 0]]}]
+    written = [line for line in output.splitlines() if "wrote" in line]
+    assert [line.partition(":")[0] for line in written] == [
+        "Script Fingerprint of a top-level page",
+        "Script Fingerprint of a dedicated worker",
+    ]
+
+
+def test_command_line_writes_no_later_case_when_the_first_posts_no_record(tmp_path: Path) -> None:
+    process, port = start_script_runs(tmp_path, "script/page", "script/worker")
+    with process:
+        post_record(port, DEDICATED_WORKER.done_path, record_with(0))
+        post_record(port, RECORD_PATH, b"[]")
+        _, errors = process.communicate(timeout=_TIMEOUT_SECONDS)
+
+    assert process.returncode == 1
+    assert "Script Fingerprint of a top-level page: the page posted no record of the probe" in errors
+    assert (
+        "Script Fingerprint of a dedicated worker: wrote only "
+        f"{tmp_path / 'script' / 'worker.raw.json'}, since Script Fingerprint of a top-level page has no Normal Form"
+    ) in errors
+    assert not (tmp_path / "script" / "worker.json").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no SIGINT to send to a process")
+def test_command_line_stopped_early_names_a_later_case_whose_first_never_came(tmp_path: Path) -> None:
+    process, port = start_script_runs(tmp_path, "script/page", "script/worker", "script/same_origin_frame")
+    with process:
+        post_record(port, DEDICATED_WORKER.done_path, record_with(0))
+        time.sleep(0.5)
+        process.send_signal(signal.SIGINT)
+        _, errors = process.communicate(timeout=_TIMEOUT_SECONDS)
+
+    assert process.returncode == 130
+    assert "Script Fingerprint of a dedicated worker: its record came, but nothing was written for it" in errors
+    assert "frame" not in errors
+    assert not (tmp_path / "script" / "worker.json").exists()
 
 
 def test_command_line_refuses_a_later_case_without_the_first(tmp_path: Path) -> None:
