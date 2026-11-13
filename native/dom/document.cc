@@ -1,6 +1,7 @@
 #include "mitto/dom/document.h"
 
 #include <algorithm>
+#include <variant>
 
 #include "base/check.h"
 #include "base/containers/span.h"
@@ -14,7 +15,9 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
+#include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
@@ -28,12 +31,16 @@
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/mathml_element.h"
+#include "mitto/dom/node_iterator.h"
+#include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/qualified_name.h"
+#include "mitto/dom/range.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
 #include "mitto/dom/text.h"
+#include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/text_codec.h"
 #include "mitto/encoding/text_encoding_registry.h"
@@ -52,6 +59,20 @@ void ThrowInvalidTagName(const std::u16string& name,
       "InvalidCharacterError",
       base::StrCat({"The tag name provided ('", base::UTF16ToUTF8(name),
                     "') is not a valid name."}));
+}
+
+// Gives `element` the is value of createElement()'s or createElementNS()'s
+// options. With no custom element definitions, that leaves an HTML element
+// undefined. A string in place of the options gives none, as Blink's
+// FlattenCreateElementOptions().
+void SetIsValueFromOptions(
+    Element& element,
+    const bindings::DOMStringOrElementCreationOptions& options) {
+  const auto* const dictionary =
+      std::get_if<bindings::ElementCreationOptions>(&options);
+  if (dictionary && dictionary->is) {
+    element.SetIsValue(*dictionary->is);
+  }
 }
 
 bool IsAsciiWhitespace(char16_t c) {
@@ -112,6 +133,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(feature_policy_);
   visitor->Trace(template_document_);
   visitor->Trace(template_document_host_);
+  visitor->Trace(traversals_);
 }
 
 mitto::Location* Document::Location() const {
@@ -388,7 +410,9 @@ void Document::SetTitle(const std::u16string& title) {
         CreateElement(html_names::kXhtmlNamespace, std::nullopt, u"title");
     head->ParserAppendChild(title_element);
   }
-  // HTMLTitleElement's text setter: replace all with one Text node.
+  // HTMLTitleElement's text setter: replace all with one Text node, one
+  // record for observers.
+  const ChildListMutationScope mutation(*title_element);
   title_element->RemoveChildren();
   if (!title.empty()) {
     title_element->ParserAppendChild(Text::Create(*this, title));
@@ -518,14 +542,15 @@ Element* Document::CreateElementNS(
                       base::UTF16ToUTF8(qualified_name), "')."}));
     return nullptr;
   }
-  // The options name a custom element registry or a customized built-in
-  // element, which need definitions that the Runtime, without custom
-  // elements, never has. Blink then checks the whole name.
+  // Blink then checks the whole name.
   if (!IsValidElementLocalName(qualified_name)) {
     ThrowInvalidTagName(qualified_name, exception_state);
     return nullptr;
   }
-  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+  Element* const element =
+      CreateElement(name->namespace_uri, name->prefix, name->local_name);
+  SetIsValueFromOptions(*element, options);
+  return element;
 }
 
 Element* Document::CreateElementForBinding(
@@ -545,9 +570,11 @@ Element* Document::CreateElementForBinding(
     const std::u16string& local_name,
     const bindings::DOMStringOrElementCreationOptions& options,
     bindings::ExceptionState& exception_state) {
-  // Its `is` names a customized built-in element, which needs a definition
-  // that the Runtime, without custom elements, never has.
-  return CreateElementForBinding(local_name, exception_state);
+  Element* const element = CreateElementForBinding(local_name, exception_state);
+  if (element) {
+    SetIsValueFromOptions(*element, options);
+  }
+  return element;
 }
 
 Node* Document::ImportNode(Node* node,
@@ -611,6 +638,33 @@ Element* Document::GetElementById(const std::u16string& id) const {
     }
   }
   return nullptr;
+}
+
+NodeList* Document::GetElementsByName(const std::u16string& name) {
+  return EnsureNodeLists().NameNodeList(*this, name);
+}
+
+Range* Document::CreateRange() {
+  return Range::Create(*this);
+}
+
+NodeIterator* Document::CreateNodeIterator(Node* root,
+                                           uint32_t what_to_show,
+                                           v8::Local<v8::Object> filter) {
+  return NodeIterator::Create(root, what_to_show, filter);
+}
+
+TreeWalker* Document::CreateTreeWalker(Node* root,
+                                       uint32_t what_to_show,
+                                       v8::Local<v8::Object> filter) {
+  return TreeWalker::Create(root, what_to_show, filter);
+}
+
+AttachedTraversals& Document::Traversals() {
+  if (!traversals_) {
+    traversals_ = bindings::MakeGarbageCollected<AttachedTraversals>();
+  }
+  return *traversals_;
 }
 
 Element* Document::CreateElement(

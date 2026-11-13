@@ -20,7 +20,6 @@
 #include "mitto/bindings/v8_html_geolocation_element.h"
 #include "mitto/bindings/v8_html_hr_element.h"
 #include "mitto/bindings/v8_html_iframe_element.h"
-#include "mitto/bindings/v8_html_input_element.h"
 #include "mitto/bindings/v8_html_install_element.h"
 #include "mitto/bindings/v8_html_label_element.h"
 #include "mitto/bindings/v8_html_legend_element.h"
@@ -256,22 +255,6 @@ const bindings::WrapperTypeInfo* HTMLIFrameElement::GetWrapperTypeInfo() const {
 }
 
 int32_t HTMLIFrameElement::DefaultTabIndex() const {
-  return 0;
-}
-
-// static
-HTMLInputElement* HTMLInputElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<HTMLInputElement>(document);
-}
-
-HTMLInputElement::HTMLInputElement(Document& document)
-    : HTMLElement(document, u"input") {}
-
-const bindings::WrapperTypeInfo* HTMLInputElement::GetWrapperTypeInfo() const {
-  return &bindings::V8HTMLInputElement::kWrapperTypeInfo;
-}
-
-int32_t HTMLInputElement::DefaultTabIndex() const {
   return 0;
 }
 

@@ -147,7 +147,8 @@ void IdleTaskController::RunIdleTask(uint32_t id,
     std::ignore =
         callback->Call(context, v8::Undefined(isolate_), 1, &argument);
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
-      bindings::ReportException(isolate_, try_catch.Exception());
+      bindings::ReportException(isolate_, try_catch.Exception(),
+                                try_catch.Message());
     }
   }
   // The callback may have ended the window's context, and this with it.

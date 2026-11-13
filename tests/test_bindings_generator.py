@@ -722,6 +722,22 @@ def test_a_callback_function_argument_throws_chromes_message_for_a_value_that_is
     assert 'ExceptionMessages::ArgumentNotOfType(0, "Function")' in "\n".join(lines)
 
 
+def test_a_promise_argument_is_the_promise_or_one_resolved_with_the_value() -> None:
+    # PromiseRejectionEventInit's promise, as Blink's NativeValueTraits<IDLPromise<T>> convert it.
+    types = TypeMapper(frozenset(), frozenset())
+    promise = IdlType(TypeKind.PROMISE, "Promise<any>", members=(IdlType(TypeKind.ANY, "any"),))
+
+    lines = types.from_v8(promise, "value", "converted", Site(fail="return false;", dictionary="Init"), "a")
+
+    assert types.argument_type(promise, "a") == "v8::Local<v8::Promise>"
+    assert lines == [
+        "v8::Local<v8::Promise> converted;",
+        "if (!FromV8Promise(isolate, value, &converted)) {",
+        "  return false;",
+        "}",
+    ]
+
+
 def _window(*constructs: ExposedConstruct) -> Interface:
     return _interface(
         name="Window",
@@ -1083,6 +1099,83 @@ def test_constructors_of_a_string_and_a_sequence_choose_the_sequence_for_an_iter
     assert body.count("mitto::Thing* const impl = mitto::Thing::Create(") == 2
 
 
+def _post_message_overloads(
+    second: Argument, third: Argument | None = None
+) -> tuple[OperationGroup, dict[str, Dictionary]]:
+    """postMessage(any message, `second`[, `third`]) and postMessage(any message, optional Options options = {})."""
+    message = Argument("message", IdlType(TypeKind.ANY, "any"), False, False, None)
+    options = Argument("options", IdlType(TypeKind.DICTIONARY, "Options"), True, False, "{}")
+    raises = _extended("RaisesException")
+    first_arguments = (message, second) if third is None else (message, second, third)
+    group = OperationGroup(
+        "postMessage",
+        (
+            Operation("postMessage", first_arguments, UNDEFINED, False, raises, ALWAYS),
+            Operation("postMessage", (message, options), UNDEFINED, False, raises, ALWAYS),
+        ),
+        False,
+        1,
+        ExtendedAttributes(),
+        ALWAYS,
+    )
+    flag = DictionaryMember("flag", BOOLEAN, False, "false", ExtendedAttributes(), ALWAYS)
+    return group, {"Options": Dictionary("Options", None, (flag,), ExtendedAttributes())}
+
+
+def test_overloads_of_a_sequence_and_a_dictionary_choose_neither_for_a_primitive() -> None:
+    # MessagePort's postMessage(message, sequence<object> transfer) and postMessage(message, optional options).
+    objects = IdlType(TypeKind.SEQUENCE, "sequence<object>", members=(IdlType(TypeKind.OBJECT, "object"),))
+    group, dictionaries = _post_message_overloads(Argument("transfer", objects, False, False, None))
+
+    source = _bindings_of(
+        _interface(operation_groups=(group,)),
+        ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("postMessage",)),
+        dictionaries,
+    )
+
+    body = source[source.index("void PostMessageOperationCallback") :]
+    # bind_gen's dispatcher: one argument takes the dictionary, an iterable object the sequence, undefined, null and
+    # any other object the dictionary, and a primitive fails.
+    assert "if (info.Length() < 1) {" in body
+    assert "if (info[1]->IsArray() || IsIterableObject(isolate, info[1], &iterator_threw)) {" in body
+    assert "if (!info[1]->IsNullOrUndefined() && !info[1]->IsObject()) {" in body
+    assert body.index("IsIterableObject") < body.index("Overload resolution failed.") < body.index("Options arg2")
+
+
+def test_overloads_with_optional_arguments_choose_by_count_then_by_type() -> None:
+    # Window's postMessage(message, USVString targetOrigin, optional sequence<object> transfer = []) and
+    # postMessage(message, optional options = {}).
+    objects = IdlType(TypeKind.SEQUENCE, "sequence<object>", members=(IdlType(TypeKind.OBJECT, "object"),))
+    group, dictionaries = _post_message_overloads(
+        Argument("targetOrigin", IdlType(TypeKind.STRING, "USVString"), False, False, None),
+        Argument("transfer", objects, True, False, "[]"),
+    )
+
+    source = _bindings_of(
+        _interface(operation_groups=(group,)),
+        ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("postMessage",)),
+        dictionaries,
+    )
+
+    body = source[source.index("void PostMessageOperationCallback") :]
+    # Three arguments take the first overload, two choose by the second's type, and one takes the second overload.
+    three = body.index("if (info.Length() >= 3) {")
+    two = body.index("if (info.Length() == 2) {")
+    by_type = body.index("if (info[1]->IsUndefined() || info[1]->IsNull() || info[1]->IsObject()) {")
+    assert body.index("if (info.Length() < 1) {") < three < two < by_type
+    assert body.count("impl->PostMessage(") == 4
+
+
+def test_a_nullable_interface_whose_default_is_null_is_no_object() -> None:
+    # MessageEventInit's source and userActivation.
+    types = TypeMapper(frozenset({"EventTarget"}), frozenset())
+    source = IdlType(TypeKind.INTERFACE, "EventTarget", nullable=True)
+
+    assert types.default_value(source, "null", "a") == "nullptr"
+    with pytest.raises(UnhandledError, match="default value"):
+        TypeMapper(frozenset(), frozenset()).default_value(source, "null", "b")
+
+
 def test_a_class_with_a_window_alias_gives_the_window_both_names() -> None:
     # PermissionsPolicy's [LegacyWindowAlias=FeaturePolicy]: the alias is the same interface object.
     thing = _interface(extended_attributes=ExtendedAttributes((("LegacyWindowAlias", ("OldThing",)),)))
@@ -1436,3 +1529,38 @@ def test_a_promise_attribute_that_is_a_known_gap_has_no_signature() -> None:
     lines = [line for line in source.splitlines() if "InstallAttribute(" in line]
     assert "v8::Local<v8::Signature>()" in next(line for line in lines if '"ready"' in line)
     assert 'signature, "on"' in next(line for line in lines if '"on"' in line)
+
+
+def test_a_class_returns_a_nullable_callback_interface_and_a_nullable_union_of_classes() -> None:
+    # TreeWalker's filter, and HTMLAllCollection's item(), which gives an Element or an HTMLCollection.
+    types = TypeMapper(frozenset({"Element", "HTMLCollection"}), frozenset())
+    filter_type = IdlType(TypeKind.CALLBACK_INTERFACE, "NodeFilter", nullable=True)
+    union = IdlType(
+        TypeKind.UNION,
+        "(HTMLCollection or Element)",
+        nullable=True,
+        members=(IdlType(TypeKind.INTERFACE, "HTMLCollection"), IdlType(TypeKind.INTERFACE, "Element")),
+    )
+
+    assert types.return_type(filter_type, "x") == "v8::Local<v8::Object>"
+    assert types.to_v8(filter_type, "value") == "ToV8NullableObject(isolate, value)"
+    assert types.return_type(union, "x") == "bindings::ScriptWrappable*"
+    assert types.to_v8(union, "value") == "ToV8(isolate, value)"
+
+
+def test_a_stringifier_operation_calls_the_classs_to_string() -> None:
+    source = _bindings_of(_interface(stringifier=""), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert "info.GetReturnValue().Set(ToV8String(isolate, impl->ToString()));" in source
+    assert '"toString", kInterfaceName, StringifierCallback, 0, v8::DontDelete' not in source
+    assert '"toString", kInterfaceName, StringifierCallback, 0, v8::None' in source
+
+
+def test_an_attribute_setter_throws_blinks_message_for_a_value_that_is_no_object_of_its_interface() -> None:
+    # TreeWalker's currentNode: NativeValueTraitsInterfaceNotOfType() without an argument index.
+    node = IdlType(TypeKind.INTERFACE, "Thing")
+    current = Attribute("current", node, False, False, _extended("NodeWrapInOwnContext"), ALWAYS)
+    source = _bindings_of(_interface(attributes=(current,)), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert 'ExceptionMessages::FailedToConvertJSValue("Thing")' in source
+    assert "impl->SetCurrent(" in source

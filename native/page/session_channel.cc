@@ -24,6 +24,7 @@
 #include "base/threading/thread.h"
 #include "base/types/expected.h"
 #include "build/build_config.h"
+#include "mitto/dom/broadcast_channel_service.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -214,6 +215,16 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreChange:
         cookie_jar_->CookieStoreChanged(std::move(frame->cookie_store_change));
         return;
+      case PageMessage::kBroadcastReceived:
+        if (!started_) {
+          Refuse("a broadcast came before the start");
+          return;
+        }
+        main_thread_->PostTask(
+            FROM_HERE, base::BindOnce(&SessionLink::BroadcastOnMainThread,
+                                      base::Unretained(this),
+                                      std::move(frame->broadcast)));
+        return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
       case PageMessage::kConsole:
@@ -228,6 +239,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreGet:
       case PageMessage::kCookieStoreSet:
       case PageMessage::kCookieStoreListen:
+      case PageMessage::kBroadcast:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -278,6 +290,20 @@ class SessionLink final : public PageChannel::Delegate
       return;
     }
     (*isolate)->SetOOMErrorHandler(&OnOutOfMemory);
+    // What the Page's BroadcastChannels send to the Session's other Pages. A
+    // message too large for a frame stays in the Page.
+    BroadcastChannelService::Get().SetSessionSender(base::BindRepeating(
+        [](SendFrame send, const std::string& name, bool locked,
+           std::vector<uint8_t> data) {
+          PageBroadcast broadcast;
+          broadcast.name = name;
+          broadcast.locked = locked;
+          broadcast.data.assign(data.begin(), data.end());
+          if (BroadcastFits(broadcast)) {
+            send.Run(EncodeBroadcast(PageMessage::kBroadcast, broadcast));
+          }
+        },
+        send));
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
@@ -292,6 +318,15 @@ class SessionLink final : public PageChannel::Delegate
     if (runner_) {
       runner_->Evaluate(call, script);
     }
+  }
+
+  void BroadcastOnMainThread(PageBroadcast broadcast) {
+    if (!runner_) {
+      return;
+    }
+    BroadcastChannelService::Get().OnSessionMessage(
+        broadcast.name, broadcast.locked,
+        std::vector<uint8_t>(broadcast.data.begin(), broadcast.data.end()));
   }
 
   void ResponseOnMainThread(FrameFromSession frame) {

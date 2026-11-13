@@ -28,6 +28,7 @@
 
 namespace mitto {
 
+class AttachedTraversals;
 class Attr;
 class Comment;
 class CookieJar;
@@ -39,8 +40,11 @@ class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
 class Location;
+class NodeIterator;
 class PermissionsPolicy;
+class Range;
 class Text;
+class TreeWalker;
 class Window;
 
 class Document : public Node {
@@ -89,6 +93,7 @@ class Document : public Node {
   // The host of the document's origin, and nothing for an opaque one.
   std::u16string Domain() const;
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
+  bool InDesignMode() const { return design_mode_; }
   void SetDesignMode(const std::u16string& value);
   Element* ScrollingElement() const;
   Element* ActiveElement() const;
@@ -161,6 +166,15 @@ class Document : public Node {
                    const bindings::BooleanOrImportNodeOptions& options,
                    bindings::ExceptionState& exception_state);
   Node* AdoptNode(Node* node, bindings::ExceptionState& exception_state);
+  // The live list of the HTML elements whose name attribute is `name`.
+  NodeList* GetElementsByName(const std::u16string& name);
+  Range* CreateRange();
+  NodeIterator* CreateNodeIterator(Node* root,
+                                   uint32_t what_to_show,
+                                   v8::Local<v8::Object> filter);
+  TreeWalker* CreateTreeWalker(Node* root,
+                               uint32_t what_to_show,
+                               v8::Local<v8::Object> filter);
 
   // Node's.
   uint16_t GetNodeType() const override;
@@ -235,6 +249,12 @@ class Document : public Node {
   // or changes its href.
   void ProcessBaseElement();
 
+  // The live ranges and node iterators of the document, which the DOM tells
+  // as its trees change, made when one is first attached.
+  AttachedTraversals& Traversals();
+  // Null while none was ever attached, so that a change costs nothing then.
+  AttachedTraversals* ExistingTraversals() const { return traversals_.Get(); }
+
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
 
@@ -267,6 +287,7 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  cppgc::Member<AttachedTraversals> traversals_;
   cppgc::Member<Document> template_document_;
   // The document whose template document this is.
   cppgc::Member<Document> template_document_host_;

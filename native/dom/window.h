@@ -26,6 +26,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "build/build_config.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/window_properties.h"
@@ -35,6 +36,14 @@
 #include "v8/include/v8-forward.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-value.h"
+
+#if BUILDFLAG(IS_WIN)
+// base/win/windows_types.h defines PostMessage as PostMessageW, as <windows.h>
+// does, which would rename the member wherever it came first. Once its guard
+// has seen it, the name stays the member's.
+#include "base/win/windows_types.h"
+#undef PostMessage
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace mitto {
 
@@ -165,6 +174,26 @@ class Window final : public WindowProperties {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // window_messaging.cc: a structured clone of `value`, and a message to the
+  // window itself, which frames will extend to other windows.
+  v8::Local<v8::Value> StructuredClone(
+      v8::Local<v8::Value> value,
+      const bindings::StructuredSerializeOptions& options,
+      bindings::ExceptionState& exception_state);
+  void PostMessage(v8::Local<v8::Value> message,
+                   const std::u16string& target_origin,
+                   const std::vector<v8::Local<v8::Object>>& transfer,
+                   bindings::ExceptionState& exception_state);
+  void PostMessage(v8::Local<v8::Value> message,
+                   const bindings::WindowPostMessageOptions& options,
+                   bindings::ExceptionState& exception_state);
+
+  // Reports `e` as an error that a script left uncaught: the window's error
+  // event, then the console, as Blink's WindowOrWorkerGlobalScope does.
+  void ReportError(v8::Local<v8::Value> e);
+
+  // EventTarget:
+  Window* ToWindow() override;
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -239,6 +268,9 @@ class Window final : public WindowProperties {
   void AddConsoleMessage(ConsoleLevel level, std::string text);
 
  private:
+  // Runs a callback that queueMicrotask() queued, from its microtask.
+  static void RunQueuedMicrotask(void* data);
+
   // The window's bars, each an object of its own, as Blink's are.
   enum BarKind : size_t {
     kLocationbar,

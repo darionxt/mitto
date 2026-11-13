@@ -804,6 +804,7 @@
   "draggable": "string:false,true,false,true,false,false,true,false",
   "spellcheck": "string:true,false,true,false,true",
   "spellcheck password": "string:false,false,true,true,false",
+  "spellcheck password sticky": "string:false,false,false,true,true,true,false,false,true,true",
   "contentEditable": "string:inherit,true,true,false,plaintext-only,inherit,plaintext-only,false",
   "contentEditable bad": "threw SyntaxError: Failed to set the 'contentEditable' property on 'HTMLElement': The value provided ('yes') is not one of 'true', 'false', 'plaintext-only', or 'inherit'.",
   "isContentEditable": "string:true,true,true,false,true",

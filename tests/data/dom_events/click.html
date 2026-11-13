@@ -1,0 +1,38 @@
+<!doctype html><html><head><title>click</title></head><body><div id=outer><span id=inner>x</span></div>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const r = {};
+const inner = document.getElementById('inner'), outer = document.getElementById('outer');
+const log = [];
+for (const type of ['click', 'DOMActivate', 'mousedown', 'pointerdown', 'mouseup']) {
+  document.addEventListener(type, e => log.push([type, e.constructor.name, e.target.id, e.bubbles, e.cancelable, e.composed, e.isTrusted, e.detail, e.view === window, e.eventPhase]));
+}
+inner.addEventListener('click', e => { if (r.click) return;
+  r.click = [e.pointerId, e.pointerType, e.isPrimary, e.width, e.height, e.pressure, e.button, e.buttons, e.screenX, e.clientX, e.ctrlKey, e.relatedTarget, e instanceof PointerEvent, e instanceof MouseEvent, e.composedPath().length];
+});
+inner.click();
+r.log = log.splice(0);
+// A canceled click fires no DOMActivate; a DOMActivate listener that cancels.
+inner.addEventListener('click', e => e.preventDefault(), {once: true});
+inner.click();
+r.canceled = log.splice(0);
+// A click that the page makes, of MouseEvent: DOMActivate as for click().
+inner.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 3}));
+r.page_mouse_event = log.splice(0);
+inner.dispatchEvent(new Event('click', {bubbles: true}));
+r.page_plain_event = log.splice(0);
+// click() inside a click of the same element does nothing.
+let nested = 0;
+outer.addEventListener('click', function f() { nested++; outer.click(); }, {once: true});
+outer.click();
+r.nested = [nested, log.splice(0).length];
+// A detached element's click.
+const lone = document.createElement('b');
+let lone_log = [];
+lone.addEventListener('click', e => lone_log.push(['click', e.composedPath().length]));
+lone.addEventListener('DOMActivate', e => lone_log.push(['DOMActivate', e.composedPath().length, e.isTrusted]));
+lone.click();
+r.detached = lone_log;
+done(r);
+</script>
+</body></html>

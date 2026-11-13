@@ -7,6 +7,7 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_element.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/html_input_element.h"
 #include "mitto/dom/html_names.h"
 
 namespace mitto {
@@ -191,14 +192,10 @@ bool HTMLElement::Spellcheck() const {
     if (value && base::EqualsCaseInsensitiveASCII(*value, u"false")) {
       return false;
     }
-    // The default state: off in a password field. Blink asks whether the
-    // input has ever been one, HasBeenPasswordField(); this reads the type it
-    // has now, until the input sees its attributes change.
-    if (element->HasHTMLTagName(u"input")) {
-      const std::u16string* type = element->FindAttribute(u"type");
-      if (type && base::EqualsCaseInsensitiveASCII(*type, u"password")) {
-        return false;
-      }
+    // The default state: off in an input that has been a password field.
+    if (element->HasHTMLTagName(u"input") &&
+        static_cast<const HTMLInputElement*>(element)->HasBeenPasswordField()) {
+      return false;
     }
   }
   return true;
