@@ -637,6 +637,22 @@ def test_a_timer_without_delay_runs_before_a_task_posted_after_it(program: Path)
     assert _evaluate(program, script) == ["timer", "user-visible task", "second timer"]
 
 
+def test_a_delayed_task_that_its_signal_aborted_keeps_the_command_line_waiting_no_longer(program: Path) -> None:
+    # Blink cancels the queued task of an aborted postTask(), so nothing waits for its delay.
+    script = """
+      (() => {
+        const controller = new AbortController();
+        const task = scheduler.postTask(() => 'ran', {delay: 60000, signal: controller.signal});
+        controller.abort();
+        return task.catch((error) => error.name);
+      })()
+    """
+    started = time.monotonic()
+
+    assert _evaluate(program, script) == "AbortError"
+    assert time.monotonic() - started < _TIMEOUT_SECONDS / 2
+
+
 def test_fetch_fails_on_the_command_line_which_has_no_session(program: Path) -> None:
     script = "fetch('http://127.0.0.1:1/').then(() => 'fetched', error => String(error))"
 

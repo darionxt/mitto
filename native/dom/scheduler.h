@@ -52,8 +52,11 @@ class Scheduler final : public bindings::ScriptWrappable {
   v8::Local<v8::Promise> Yield(bindings::ExceptionState& exception_state);
 
   // How many postTask() callbacks, delayed ones among them, and yield()
-  // continuations wait to run.
+  // continuations wait to run, but for those that their signal aborted.
   size_t pending_tasks() const { return pending_tasks_; }
+  // A task or a continuation no longer waits: it runs, or its signal aborted
+  // it.
+  void PendingTaskEnded() { --pending_tasks_; }
 
  private:
   // Whether the window still runs its context, or throws if not.
