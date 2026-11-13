@@ -126,7 +126,8 @@
       <input type=url value="https://x.test/"><input pattern="[a-z]+" value="abc"><input pattern="[a-z]+" value="123">
       <input type=number min=1 max=5 value=3><input type=number min=1 max=5 value=9><input type=number value=4>
       <input type=number min=0 step=2 value=3><input type=number value="oops" placeholder=n>
-      <input type=range><input type=date min=2020-01-01 value=2019-12-31><input type=time min=22:00 max=02:00 value=23:00>
+      <input type=range><input type=range min=0 max=10 step=2 value=3 required><input type=range min=1 max=10 step=4 value=99>
+      <input type=range min=0 max=3 step=10 value=2><input type=range step=any value=7.5><input type=date min=2020-01-01 value=2019-12-31><input type=time min=22:00 max=02:00 value=23:00>
       <input placeholder=p><input placeholder=p value=v><textarea placeholder=t></textarea><textarea>v</textarea>
       <textarea required></textarea>
       <select id=s1><option>a<option selected>b<option selected>c</select>
@@ -134,6 +135,8 @@
       <select id=s3 required><option value="">pick<option>x</select>
       <select id=s4 multiple><option>a<option selected>b</select>
       <select id=s5 size=3><option>a<option>b</select>
+      <select required id=s6><option value=" ">pick</option><option>x</option></select>
+      <select required id=s7><option> </option><option>x</option></select>
       <fieldset disabled><legend><input id=inlegend></legend><input id=infield></fieldset>
       <fieldset disabled><input id=nolegend required></fieldset>
       <fieldset disabled><div><legend><input id=notfirst></legend></div></fieldset>
@@ -171,7 +174,8 @@
     ":defined", ":not(:defined)", ":open", ":popover-open", ":modal", ":lang(en)", ":lang(EN-us)", ":lang(fr)",
     ":lang(e)", ":dir(rtl)", ":dir(ltr)", "svg a", "svg|a", "*|a", "|a", "text", "foreignObject",
     "foreignobject", "FOREIGNOBJECT", "foreignObject div", "#fo:dir(rtl)", "[href]", "[*|href]", "a[href]", "svg :link", ":-internal-text-field", "option:checked",
-    "fieldset :disabled", "select:invalid", "form:invalid", "fieldset:valid",
+    "fieldset :disabled", "select:invalid", "select:valid", "form:invalid", "fieldset:valid",
+    "input[type=range]:valid", "input[type=range]:in-range", "input[type=range]:invalid",
   ];
   record.matching = matching.map((selector) => [
     selector,

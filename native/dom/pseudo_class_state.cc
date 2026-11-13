@@ -404,6 +404,39 @@ StepRange StepRangeOf(const Element& input, std::u16string_view type) {
   return range;
 }
 
+// Blink's RangeInputType::SanitizeValue(): the value, or the middle of the
+// range, held in the range and rounded onto the step grid, which refuses
+// "any", from the minimum, or the value attribute without one.
+double SanitizedRangeValue(const Element& input, std::u16string_view raw) {
+  const StepRange range = StepRangeOf(input, u"range");
+  const double value = ParseNumber(raw).value_or(
+      range.minimum + (range.maximum - range.minimum) / 2);
+  const double in_range =
+      std::min(std::max(value, range.minimum), range.maximum);
+  const std::u16string* step_attribute = input.FindAttribute(u"step");
+  std::optional<double> step =
+      step_attribute ? ParseNumber(*step_attribute) : std::nullopt;
+  if (!step || *step <= 0) {
+    step = 1;
+  }
+  const std::u16string* min_attribute = input.FindAttribute(u"min");
+  const std::u16string* value_attribute = input.FindAttribute(u"value");
+  std::optional<double> base =
+      min_attribute ? ParseNumber(*min_attribute) : std::nullopt;
+  if (!base) {
+    base = value_attribute ? ParseNumber(*value_attribute) : std::nullopt;
+  }
+  const double step_base = base.value_or(0);
+  const double rounded =
+      step_base + std::round((in_range - step_base) / *step) * *step;
+  const double clamped = rounded > range.maximum   ? rounded - *step
+                         : rounded < range.minimum ? rounded + *step
+                                                   : rounded;
+  // A step larger than the range leaves the value where it was held.
+  return clamped < range.minimum || clamped > range.maximum ? in_range
+                                                            : clamped;
+}
+
 // D2: the value of an untouched input, null where the value attribute is
 // for a type whose value is the attribute itself.
 std::optional<std::u16string> InputValue(const Element& input,
@@ -441,11 +474,8 @@ std::optional<std::u16string> InputValue(const Element& input,
     return joined;
   }
   if (type == u"range") {
-    const StepRange range = StepRangeOf(input, type);
-    double value = ParseNumber(raw).value_or(
-        range.minimum + (range.maximum - range.minimum) / 2);
-    value = std::min(std::max(value, range.minimum), range.maximum);
-    return base::UTF8ToUTF16(base::NumberToString(value));
+    return base::UTF8ToUTF16(
+        base::NumberToString(SanitizedRangeValue(input, raw)));
   }
   if (IsSteppableType(type)) {
     return ParseForType(type, raw) ? raw : std::u16string();
@@ -800,24 +830,24 @@ bool SupportsRequired(std::u16string_view type) {
          IsOneOf(type, {u"checkbox", u"radio", u"file"});
 }
 
-// An option's value: its value attribute, or its text, stripped and with
-// runs of whitespace as one space.
+// Blink's HTMLOptionElement::value(): its value attribute, or its text,
+// stripped and with runs of whitespace as one space.
 std::u16string OptionValue(const Element& option) {
-  std::u16string text;
+  // An explicit value is the option's value as it is.
   if (const std::u16string* value = option.FindAttribute(u"value")) {
-    text = *value;
-  } else {
-    for (const Node* node = option.FirstChild(); node;) {
-      if (node->IsElementNode() &&
-          static_cast<const Element*>(node)->LocalName() == u"script") {
-        node = node->NextInTreeSkippingChildren(&option);
-        continue;
-      }
-      if (node->IsTextNode()) {
-        text += static_cast<const CharacterData*>(node)->Data();
-      }
-      node = node->NextInTree(&option);
+    return *value;
+  }
+  std::u16string text;
+  for (const Node* node = option.FirstChild(); node;) {
+    if (node->IsElementNode() &&
+        static_cast<const Element*>(node)->LocalName() == u"script") {
+      node = node->NextInTreeSkippingChildren(&option);
+      continue;
     }
+    if (node->IsTextNode()) {
+      text += static_cast<const CharacterData*>(node)->Data();
+    }
+    node = node->NextInTree(&option);
   }
   std::u16string collapsed;
   bool in_space = false;
