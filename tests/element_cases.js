@@ -458,6 +458,16 @@
     const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
     return [r.name, r.prefix, r.value, e.attributes[0].name].join("|");
   });
+  // Blink orders an attribute's node by its qualified name, which keeps the old prefix in the element's attributes.
+  run("attr position other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "1");
+    e.setAttributeNS("urn:x", "p:b", "2");
+    const qa = document.createAttributeNS("urn:x", "q:a");
+    e.setAttributeNodeNS(qa);
+    const pb = e.getAttributeNodeNS("urn:x", "b");
+    return [qa.compareDocumentPosition(pb), pb.compareDocumentPosition(qa), e.getAttributeNames().join(" ")].join("|");
+  });
   run("removeAttributeNode", () => {
     const e = document.createElement("div");
     e.setAttribute("title", "a");

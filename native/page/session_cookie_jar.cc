@@ -6,6 +6,8 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/page_messages.h"
 
 namespace mitto {
@@ -15,7 +17,11 @@ SessionCookieJar::~SessionCookieJar() = default;
 
 void SessionCookieJar::SetSend(SendFrame send) {
   send_ = std::move(send);
-  main_thread_ = base::SingleThreadTaskRunner::GetCurrentDefault();
+  // Blink's CookieStore hears from RestrictedCookieManager on the DOM
+  // manipulation task source.
+  main_thread_ = EventLoop::Get()
+                     ? EventLoop::Get()->TaskRunner(TaskType::kDOMManipulation)
+                     : base::SingleThreadTaskRunner::GetCurrentDefault();
 }
 
 std::u16string SessionCookieJar::Cookies() {

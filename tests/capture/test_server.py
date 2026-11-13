@@ -4,6 +4,7 @@ import base64
 import contextlib
 import errno
 import hashlib
+import html
 import json
 import logging
 import re
@@ -33,14 +34,22 @@ from tools.capture import (
     RequestKind,
     normal_form,
 )
-from tools.capture.cases import CASE_HOST, HOST_NAMES
+from tools.capture.cases import CASE_HOST, CROSS_SITE_HOST, HOST_NAMES
 from tools.capture.http1 import Http1Request
 from tools.capture.http2 import SETTINGS
 from tools.capture.page import DONE_PATH
 from tools.capture.probe import RecordValue, probe_script
 from tools.capture.recording import SCRIPT, ConnectionRecord, QuicConnectionRecord
+from tools.capture.script_delta import read_script_delta
 from tools.capture.script_normal_form import read_script_raw_record
-from tools.capture.script_page import PAGE_PATH, RECORD_PATH
+from tools.capture.script_page import (
+    CROSS_SITE_FRAME,
+    DEDICATED_WORKER,
+    PAGE_PATH,
+    RECORD_PATH,
+    SAME_ORIGIN_FRAME,
+    SRCDOC_FRAME,
+)
 
 _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
@@ -793,3 +802,139 @@ def test_command_line_explains_a_page_that_posted_no_record(tmp_path: Path) -> N
     assert process.returncode == 1
     assert "the page posted no record of the probe" in errors
     assert not (tmp_path / "script" / "page.json").exists()
+
+
+def get_script_page(server: CaptureServer, path: str, host: str = CASE_HOST) -> tuple[int, str, str]:
+    """Return the status, the content type and the text of a path on the route of the Script Fingerprint's pages."""
+    with connect(server.port(SCRIPT), offered=("http/1.1",), host=host) as sock:
+        answer = http1_exchange(sock, "GET", path, authority=server.authority(SCRIPT, host=host))
+    return answer.status, answer.headers["content-type"], answer.body.decode()
+
+
+def frame_source(parent: str) -> str:
+    (source,) = re.findall(r'<iframe src="([^"]*)"></iframe>', parent)
+    return source
+
+
+def test_a_frame_of_a_script_fingerprint_runs_the_markup_and_probe_of_the_top_level_page() -> None:
+    probe = json.dumps(probe_script()).replace("<", "\\u003c")
+    with CaptureServer() as server:
+        _, _, parent = get_script_page(server, SAME_ORIGIN_FRAME.start_path)
+        status, content_type, frame = get_script_page(server, frame_source(parent))
+        _, _, page = get_script_page(server, PAGE_PATH)
+
+    assert frame_source(parent) == "/script/same-origin-frame/frame"
+    assert (status, content_type) == (200, "text/html; charset=utf-8")
+    assert probe in frame
+    assert f'fetch("{SAME_ORIGIN_FRAME.done_path}", {{method: "POST", body: record}})' in frame
+    # The same markup, with a wait for the frame's size before the probe.
+    assert frame.split("<script>")[0] == page.split("<script>")[0]
+    assert "innerWidth === 0" in frame
+    assert "innerWidth" not in page.replace(probe, "")
+
+
+def test_a_frame_of_another_site_is_at_its_name_on_the_same_port() -> None:
+    with CaptureServer() as server:
+        _, _, parent = get_script_page(server, CROSS_SITE_FRAME.start_path)
+        port = server.port(SCRIPT)
+        source = frame_source(parent)
+        status, _, frame = get_script_page(server, source.partition(str(port))[2], host=CROSS_SITE_HOST)
+
+    assert source == f"https://{CROSS_SITE_HOST}:{port}/script/cross-site-frame/frame"
+    assert status == 200
+    assert f'fetch("{CROSS_SITE_FRAME.done_path}", ' in frame
+
+
+def test_a_srcdoc_frame_holds_the_frames_markup_and_probe() -> None:
+    with CaptureServer() as server:
+        _, _, parent = get_script_page(server, SRCDOC_FRAME.start_path)
+
+    (document,) = re.findall(r'<iframe srcdoc="([^"]*)"></iframe>', parent)
+    frame = html.unescape(document)
+    assert frame.startswith("<!doctype html>")
+    assert json.dumps(probe_script()).replace("<", "\\u003c") in frame
+    assert f'fetch("{SRCDOC_FRAME.done_path}", ' in frame
+    assert "<" not in document
+
+
+def test_the_worker_of_a_script_fingerprint_runs_the_probe_and_posts_its_record_itself() -> None:
+    with CaptureServer() as server:
+        _, _, parent = get_script_page(server, DEDICATED_WORKER.start_path)
+        (source,) = re.findall(r'new Worker\("([^"]*)"\)', parent)
+        status, content_type, script = get_script_page(server, source)
+
+    assert source == "/script/worker/worker.js"
+    assert (status, content_type) == (200, "text/javascript; charset=utf-8")
+    assert json.dumps(probe_script()).replace("<", "\\u003c") in script
+    assert f'fetch("{DEDICATED_WORKER.done_path}", {{method: "POST", body: record}})' in script
+    # Nothing that would be a property of the worker's global object, which the probe reads.
+    assert script.startswith("setTimeout(() => {\n  (0, eval)(")
+
+
+def test_each_record_path_of_a_script_fingerprint_says_that_its_run_has_finished() -> None:
+    runs = (SAME_ORIGIN_FRAME, SRCDOC_FRAME, CROSS_SITE_FRAME, DEDICATED_WORKER)
+    with CaptureServer() as server, connect(server.port(SCRIPT), offered=("http/1.1",), host=CASE_HOST) as sock:
+        for run in runs:
+            assert not server.wait_for_page(SCRIPT, 0, done_path=run.done_path)
+            answer = http1_exchange(sock, "POST", run.done_path, authority=server.authority(SCRIPT), body=b"{}")
+            assert answer.status == 200
+            assert server.wait_for_page(SCRIPT, _TIMEOUT_SECONDS, done_path=run.done_path)
+
+
+def record_with(inner_width: RecordValue) -> bytes:
+    record: dict[str, RecordValue] = {
+        "format": 1,
+        "objects": [{"path": "globalThis", "kind": "instance", "get": [["innerWidth", inner_width], ["name", ""]]}],
+        "values": {},
+        "reports": [],
+    }
+    return json.dumps(record).encode()
+
+
+def test_command_line_writes_what_a_later_case_differs_in_from_the_first(tmp_path: Path) -> None:
+    ports = free_ports(5)
+    http3_port = free_ports(1, socket.SOCK_DGRAM)[0]
+    command = [
+        sys.executable,
+        "-m",
+        "tools.capture",
+        "--out",
+        str(tmp_path),
+        *("--http1-port", str(ports[0]), "--http2-port", str(ports[1]), "--http3-port", str(http3_port)),
+        *("--plain-http-port", str(ports[2]), "--proxy-port", str(ports[3]), "--script-port", str(ports[4])),
+        "--runs",
+        "script/page",
+        "script/same_origin_frame",
+    ]
+    authority = f"{CASE_HOST}:{ports[4]}"
+    with subprocess.Popen(
+        command, cwd=_REPOSITORY, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ) as process:
+        assert process.stdout is not None
+        while not process.stdout.readline().startswith("Waiting"):
+            assert process.poll() is None
+        with connect(ports[4], host=CASE_HOST) as sock:
+            http1_exchange(sock, "POST", RECORD_PATH, authority=authority, body=record_with(1371))
+        time.sleep(0.5)
+        with connect(ports[4], host=CASE_HOST) as sock:
+            http1_exchange(sock, "POST", SAME_ORIGIN_FRAME.done_path, authority=authority, body=record_with(300))
+        output = process.stdout.read()
+        assert process.wait(_TIMEOUT_SECONDS) == 0, output
+
+    delta = read_script_delta((tmp_path / "script" / "same_origin_frame.json").read_text(encoding="utf-8"))
+    assert delta["objects"] == [{"path": "globalThis", "get": [["innerWidth", 300]]}]
+    assert (tmp_path / "script" / "same_origin_frame.raw.json").is_file()
+    assert "differs from page.json" in output
+
+
+def test_command_line_refuses_a_later_case_without_the_first(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.capture", "--out", str(tmp_path), "--runs", "script/worker"],
+        cwd=_REPOSITORY,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "script/page" in result.stderr

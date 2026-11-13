@@ -15,10 +15,13 @@
 #include "base/strings/string_util.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/html_template_element.h"
+#include "mitto/dom/qualified_name.h"
 #include "mitto/dom/text.h"
 #include "mitto/html/html_token.h"
 #include "mitto/html/html_tokenizer.h"
@@ -230,12 +233,44 @@ constexpr std::pair<std::u16string_view, std::u16string_view>
         {u"zoomandpan", u"zoomAndPan"},
 };
 
-// The attributes that "adjust foreign attributes" puts in a namespace: those
-// of XLink, xml:lang, xml:space, xmlns and xmlns:xlink.
-constexpr Names kForeignAttributeNames = {
-    u"xlink:actuate", u"xlink:arcrole", u"xlink:href", u"xlink:role",
-    u"xlink:show",    u"xlink:title",   u"xlink:type", u"xml:lang",
-    u"xml:space",     u"xmlns",         u"xmlns:xlink"};
+// The attributes that "adjust foreign attributes" puts in a namespace, as
+// Blink's AdjustForeignAttributes() maps them: those of XLink, xml:lang,
+// xml:space, xmlns and xmlns:xlink.
+struct ForeignAttribute {
+  std::u16string_view name;
+  const char16_t* prefix;
+  std::u16string_view local_name;
+  const char16_t* namespace_uri;
+};
+
+constexpr ForeignAttribute kForeignAttributes[] = {
+    {u"xlink:actuate", u"xlink", u"actuate", html_names::kXlinkNamespace},
+    {u"xlink:arcrole", u"xlink", u"arcrole", html_names::kXlinkNamespace},
+    {u"xlink:href", u"xlink", u"href", html_names::kXlinkNamespace},
+    {u"xlink:role", u"xlink", u"role", html_names::kXlinkNamespace},
+    {u"xlink:show", u"xlink", u"show", html_names::kXlinkNamespace},
+    {u"xlink:title", u"xlink", u"title", html_names::kXlinkNamespace},
+    {u"xlink:type", u"xlink", u"type", html_names::kXlinkNamespace},
+    {u"xml:lang", u"xml", u"lang", html_names::kXmlNamespace},
+    {u"xml:space", u"xml", u"space", html_names::kXmlNamespace},
+    {u"xmlns", nullptr, u"xmlns", html_names::kXmlnsNamespace},
+    {u"xmlns:xlink", u"xmlns", u"xlink", html_names::kXmlnsNamespace},
+};
+
+// The name that an attribute of a foreign element gets.
+std::optional<QualifiedName> ForeignAttributeName(std::u16string_view name) {
+  for (const ForeignAttribute& attribute : kForeignAttributes) {
+    if (attribute.name == name) {
+      return QualifiedName{
+          .prefix = attribute.prefix
+                        ? std::optional<std::u16string>(attribute.prefix)
+                        : std::nullopt,
+          .local_name = std::u16string(attribute.local_name),
+          .namespace_uri = std::u16string(attribute.namespace_uri)};
+    }
+  }
+  return std::nullopt;
+}
 
 template <size_t N>
 void AdjustName(
@@ -433,7 +468,11 @@ class HtmlTreeBuilder {
       template_modes_.push_back(Mode::kTemplateContents);
     }
     ResetInsertionModeAppropriately();
-    for (Node* node = &context; node; node = node->ParentNode()) {
+    // Blink leaves the form element pointer null for a context in a
+    // template's contents, whose document is a template document.
+    for (Node* node = context.GetDocument().IsTemplateDocument() ? nullptr
+                                                                 : &context;
+         node; node = node->ParentNode()) {
       if (node->IsElementNode() &&
           static_cast<Element*>(node)->HasHTMLTagName(u"form")) {
         form_element_ = static_cast<Element*>(node);
@@ -869,15 +908,38 @@ class HtmlTreeBuilder {
 
   // Making and inserting nodes, as Blink's HTMLConstructionSite does.
 
-  // The document of what goes in the current node.
-  Document& OwnerDocumentForCurrentNode() const { return *document_; }
+  static bool IsTemplate(const Node& node) {
+    return node.IsElementNode() &&
+           static_cast<const Element&>(node).HasHTMLTagName(u"template");
+  }
 
+  // Blink's OwnerDocumentForCurrentNode(): the document of what goes in the
+  // current node, which for a template is its contents' template document.
+  Document& OwnerDocumentForCurrentNode() const {
+    if (open_elements_.empty()) {
+      return *document_;
+    }
+    Element& node = CurrentNode();
+    if (IsTemplate(node)) {
+      return static_cast<HTMLTemplateElement&>(node).Content()->GetDocument();
+    }
+    return node.GetDocument();
+  }
+
+  // Blink's "create an element for the token". The attributes of a foreign
+  // element that "adjust foreign attributes" names go in their namespaces.
   Element* CreateElement(const HtmlToken& token,
                          const char16_t* namespace_uri) {
     Element* const element = OwnerDocumentForCurrentNode().CreateElement(
         namespace_uri, std::nullopt, token.name);
+    const bool foreign = namespace_uri != html_names::kXhtmlNamespace;
     for (const HtmlAttribute& attribute : token.attributes) {
-      element->SetAttributeWithoutValidation(attribute.name, attribute.value);
+      if (const std::optional<QualifiedName> name =
+              foreign ? ForeignAttributeName(attribute.name) : std::nullopt) {
+        element->SetAttributeWithoutValidation(*name, attribute.value);
+      } else {
+        element->SetAttributeWithoutValidation(attribute.name, attribute.value);
+      }
     }
     return element;
   }
@@ -889,13 +951,11 @@ class HtmlTreeBuilder {
   }
 
   // The standard's "appropriate place for inserting a node" for a template:
-  // its contents.
-  void AdjustForTemplate(InsertionLocation& location) {
-    if (location.parent->IsElementNode() &&
-        static_cast<Element*>(location.parent.Get())
-            ->HasHTMLTagName(u"template")) {
-      // The template's contents need a DocumentFragment of the template's own
-      // document, which the DOM does not have yet. They go in the template.
+  // the end of its contents.
+  static void AdjustForTemplate(InsertionLocation& location) {
+    if (IsTemplate(*location.parent)) {
+      location.parent =
+          static_cast<HTMLTemplateElement*>(location.parent.Get())->Content();
       location.next_child = nullptr;
     }
   }
@@ -990,13 +1050,6 @@ class HtmlTreeBuilder {
 
   void InsertForeignElement(const HtmlToken& token,
                             const char16_t* namespace_uri) {
-    for (const HtmlAttribute& attribute : token.attributes) {
-      if (IsOneOf(attribute.name, kForeignAttributeNames)) {
-        // These need attributes in namespaces, which the DOM does not have
-        // yet. They keep their qualified names, in no namespace.
-        Skip("namespaces of foreign attributes");
-      }
-    }
     Element* const element = CreateElement(token, namespace_uri);
     AttachOrFosterParent(element, token.self_closing ? nullptr : &token);
   }
@@ -1035,9 +1088,6 @@ class HtmlTreeBuilder {
   // shadow trees will do; until then the template goes in as Blink puts one
   // whose root cannot attach.
   void InsertHTMLTemplateElement(const HtmlToken& token) {
-    // A template's contents go in the template itself until the DOM has a
-    // DocumentFragment for them, so its tree is not Chrome's, contents or not.
-    Skip("template contents");
     Element* const element = CreateElement(token, html_names::kXhtmlNamespace);
     const std::u16string* const mode =
         FindTokenAttribute(token, u"shadowrootmode");
@@ -1075,8 +1125,8 @@ class HtmlTreeBuilder {
       static_cast<Text*>(previous)->AppendData(std::u16string(text));
       return;
     }
-    Insert(std::move(location),
-           Text::Create(OwnerDocumentForCurrentNode(), std::u16string(text)));
+    Document& document = location.parent->GetDocument();
+    Insert(std::move(location), Text::Create(document, std::u16string(text)));
   }
 
   void InsertComment(const std::u16string& data) {

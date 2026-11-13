@@ -172,7 +172,7 @@ class Document : public Node {
   // The window whose document this is, which defaultView gives.
   void SetWindow(Window* window) { window_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
-  void SetUrl(std::u16string url) { url_ = std::move(url); }
+  void SetUrl(std::u16string url);
   // The canonical name of the encoding that the document's body decodes with,
   // as text_encoding_registry.h has it: UTF-8 for a document that no body
   // has decoded into yet, as Blink's DocumentEncodingData starts.
@@ -185,10 +185,6 @@ class Document : public Node {
   // late changes windows-1252 to another, the text of the document's <title>,
   // decoded as windows-1252 already, decodes again with the new one.
   void SetEncoding(std::string_view encoding, bool detected_heuristically);
-  // Blink's Document::CompleteURL(): `url` resolved against the document's
-  // URL, its base URL while <base> is a Known Gap, with the query in the
-  // document's encoding. An invalid GURL if it does not resolve.
-  GURL CompleteUrl(std::u16string_view url) const;
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
   // Where document.cookie reaches the cookies of the document's Session. A
@@ -215,12 +211,33 @@ class Document : public Node {
   // time one asks, and the document itself for such a document, as Blink's
   // EnsureTemplateDocument().
   Document& EnsureTemplateDocument();
+  // Whether it is another document's template document.
+  bool IsTemplateDocument() const { return template_document_host_; }
+
+  // The URLs a document resolves, as Blink's Document has them.
+  //
+  // The HTML Standard's document base URL: the frozen base URL of the first
+  // base element with an href in tree order, else the fallback base URL. A
+  // base URL that is not valid is none, and about:blank for those who read
+  // it.
+  const GURL& BaseUrl() const;
+  // Blink's Document::CompleteURL(): `url` resolved against the base URL,
+  // with the query in the document's encoding, which every URL that the
+  // document resolves goes through. An invalid GURL if it does not resolve.
+  GURL CompleteUrl(std::u16string_view url) const;
+  // The document's URL, as no frame gives a document of a Page another.
+  GURL FallbackBaseUrl() const { return GURL(url_); }
+  // Blink's Document::ProcessBaseElement(), once a base element comes, goes,
+  // or changes its href.
+  void ProcessBaseElement();
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
 
  private:
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
+  // Blink's Document::UpdateBaseURL().
+  void UpdateBaseUrl();
 
   HTMLCollection* Collection(cppgc::Member<HTMLCollection>& cached,
                              HTMLCollection::Type type);
@@ -249,6 +266,10 @@ class Document : public Node {
   cppgc::Member<Document> template_document_;
   // The document whose template document this is.
   cppgc::Member<Document> template_document_host_;
+  // The frozen base URL of the first base element with an href, empty for
+  // none, and the base URL that it gives, empty for one that is not valid.
+  GURL base_element_url_;
+  GURL base_url_ = GURL("about:blank");
 };
 
 }  // namespace mitto

@@ -94,11 +94,12 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     request->body_ = input_request->body_;
     signal = input_request->signal_.Get();
   } else {
-    // The API base URL: the document's, since a Page has no <base> yet.
+    // The API base URL: the document's base URL, against which the input
+    // parses as the URL Standard has it, with its query in UTF-8 whatever the
+    // document's encoding, as Blink's KURL(base_url, input) does.
     const std::u16string& input_string = std::get<std::u16string>(input);
-    const GURL base(
-        base::UTF16ToUTF8(Window::Current().GetDocument().UrlForBinding()));
-    const GURL parsed = base.Resolve(input_string);
+    const GURL parsed =
+        Window::Current().GetDocument().BaseUrl().Resolve(input_string);
     if (!parsed.is_valid()) {
       exception_state.ThrowTypeError(base::StrCat(
           {"Failed to parse URL from ", base::UTF16ToUTF8(input_string)}));
