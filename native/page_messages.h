@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 11;
+inline constexpr uint32_t kPageProtocolVersion = 12;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -276,6 +276,33 @@ struct PageLoadTiming {
   bool socket_reused = false;
 };
 
+// What the variations seed of a Page's Chrome Release says of
+// kDeprecateUnload, which takes "unload" out of the permissions policy of the
+// pages it covers.
+struct DeprecatedUnload {
+  // kDeprecateUnloadByBucket's parameters: the share of hosts covered, which
+  // hosts those are for this installation.
+  struct ByBucket {
+    int percent = 100;
+    // None where the seed gives each installation a bucket of its own, which
+    // only a percent between 0 and 100 needs: then no host is in the share.
+    std::optional<int> bucket;
+  };
+
+  DeprecatedUnload();
+  DeprecatedUnload(const DeprecatedUnload&);
+  DeprecatedUnload& operator=(const DeprecatedUnload&);
+  ~DeprecatedUnload();
+
+  // Whether kDeprecateUnload is on.
+  bool enabled = false;
+  // The hosts of kDeprecateUnloadByAllowList's "allowlist" when that feature
+  // is on, where an empty list covers every host.
+  std::optional<std::vector<std::string>> allow_list;
+  // kDeprecateUnloadByBucket's parameters when that feature is on.
+  std::optional<ByBucket> by_bucket;
+};
+
 // What a Page turns on and off beside the Engine Release's runtime-enabled
 // features and V8's defaults, as its Persona says: what its Chrome Release did
 // not ship yet, and what the variations seed of that release switches.
@@ -293,6 +320,7 @@ struct PageFeatures {
   // V8's flags, such as "--no-foo" or "--foo=1", in the order to set them,
   // after those of the Engine Release.
   std::vector<std::string> v8_flags;
+  DeprecatedUnload deprecated_unload;
 };
 
 // What a Page starts with, which it would otherwise read from the machine and

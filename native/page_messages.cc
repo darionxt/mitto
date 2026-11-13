@@ -38,6 +38,12 @@ constexpr std::string_view kFeaturesKey = "features";
 constexpr std::string_view kEnableBlinkFeaturesKey = "enable_blink_features";
 constexpr std::string_view kDisableBlinkFeaturesKey = "disable_blink_features";
 constexpr std::string_view kV8FlagsKey = "v8_flags";
+constexpr std::string_view kDeprecatedUnloadKey = "deprecated_unload";
+constexpr std::string_view kEnabledKey = "enabled";
+constexpr std::string_view kAllowListKey = "allow_list";
+constexpr std::string_view kByBucketKey = "by_bucket";
+constexpr std::string_view kPercentKey = "percent";
+constexpr std::string_view kBucketKey = "bucket";
 
 constexpr std::string_view kMaximised = "maximised";
 constexpr std::string_view kNormal = "normal";
@@ -150,6 +156,10 @@ constexpr auto kFeatureLists = std::to_array<FeatureList>({
 });
 constexpr size_t kMaxFeatureNameSize = 128;
 constexpr size_t kMaxV8FlagSize = 256;
+// kDeprecateUnloadByAllowList's hosts: the seed's list has a few dozen, and a
+// host has at most 253 characters.
+constexpr size_t kMaxAllowListSize = 4096;
+constexpr size_t kMaxHostSize = 253;
 
 constexpr uint8_t kHasResult = 0;
 constexpr uint8_t kFailed = 1;
@@ -302,10 +312,103 @@ bool IsV8Flag(std::string_view flag) {
   });
 }
 
+base::expected<DeprecatedUnload, std::string> ReadDeprecatedUnload(
+    const base::Value* value) {
+  const auto not_valid = [](std::string_view what) {
+    return base::unexpected(base::StrCat(
+        {"a start whose features' \"", kDeprecatedUnloadKey, "\" ", what}));
+  };
+  const base::DictValue* const dict = value ? value->GetIfDict() : nullptr;
+  if (!dict) {
+    return not_valid("is not an object");
+  }
+  for (const auto [key, item] : *dict) {
+    if (key != kEnabledKey && key != kAllowListKey && key != kByBucketKey) {
+      return not_valid(base::StrCat({"has the unknown key \"", key, "\""}));
+    }
+  }
+  DeprecatedUnload unload;
+  const std::optional<bool> enabled = dict->FindBool(kEnabledKey);
+  if (!enabled) {
+    return not_valid("has no \"enabled\" that is true or false");
+  }
+  unload.enabled = *enabled;
+  const base::Value* const allow_list = dict->Find(kAllowListKey);
+  if (!allow_list) {
+    return not_valid("has no \"allow_list\"");
+  }
+  if (!allow_list->is_none()) {
+    const base::ListValue* const hosts = allow_list->GetIfList();
+    if (!hosts || hosts->size() > kMaxAllowListSize) {
+      return not_valid("has an \"allow_list\" that is not a list of hosts");
+    }
+    unload.allow_list.emplace();
+    for (const base::Value& host : *hosts) {
+      const std::string* const text = host.GetIfString();
+      if (!text || text->empty() || text->size() > kMaxHostSize ||
+          !base::IsStringASCII(*text)) {
+        return not_valid("has an \"allow_list\" that is not a list of hosts");
+      }
+      unload.allow_list->push_back(*text);
+    }
+  }
+  const base::Value* const by_bucket = dict->Find(kByBucketKey);
+  if (!by_bucket) {
+    return not_valid("has no \"by_bucket\"");
+  }
+  if (!by_bucket->is_none()) {
+    const base::DictValue* const rollout = by_bucket->GetIfDict();
+    const std::optional<int> percent =
+        rollout ? rollout->FindInt(kPercentKey) : std::nullopt;
+    const base::Value* const bucket =
+        rollout ? rollout->Find(kBucketKey) : nullptr;
+    const bool valid = rollout && rollout->size() == 2u && percent &&
+                       *percent >= 0 && *percent <= 100 && bucket &&
+                       (bucket->is_none() || bucket->is_int());
+    if (!valid) {
+      return not_valid(
+          "has a \"by_bucket\" that is not a percent and a bucket or null");
+    }
+    unload.by_bucket = DeprecatedUnload::ByBucket{
+        .percent = *percent,
+        .bucket = bucket->is_int() ? std::optional<int>(bucket->GetInt())
+                                   : std::nullopt};
+  }
+  return unload;
+}
+
+base::DictValue WriteDeprecatedUnload(const DeprecatedUnload& unload) {
+  base::DictValue dict;
+  dict.Set(kEnabledKey, unload.enabled);
+  if (unload.allow_list) {
+    base::ListValue hosts;
+    for (const std::string& host : *unload.allow_list) {
+      hosts.Append(host);
+    }
+    dict.Set(kAllowListKey, std::move(hosts));
+  } else {
+    dict.Set(kAllowListKey, base::Value());
+  }
+  if (unload.by_bucket) {
+    base::DictValue rollout;
+    rollout.Set(kPercentKey, unload.by_bucket->percent);
+    if (unload.by_bucket->bucket) {
+      rollout.Set(kBucketKey, *unload.by_bucket->bucket);
+    } else {
+      rollout.Set(kBucketKey, base::Value());
+    }
+    dict.Set(kByBucketKey, std::move(rollout));
+  } else {
+    dict.Set(kByBucketKey, base::Value());
+  }
+  return dict;
+}
+
 base::expected<PageFeatures, std::string> ReadFeatures(
     const base::DictValue& dict) {
   for (const auto [key, value] : dict) {
-    if (std::ranges::none_of(kFeatureLists, [key](const FeatureList& list) {
+    if (key != kDeprecatedUnloadKey &&
+        std::ranges::none_of(kFeatureLists, [key](const FeatureList& list) {
           return list.key == key;
         })) {
       return base::unexpected(base::StrCat(
@@ -334,6 +437,12 @@ base::expected<PageFeatures, std::string> ReadFeatures(
       (features.*list.field).push_back(*text);
     }
   }
+  base::expected<DeprecatedUnload, std::string> unload =
+      ReadDeprecatedUnload(dict.Find(kDeprecatedUnloadKey));
+  if (!unload.has_value()) {
+    return base::unexpected(std::move(unload).error());
+  }
+  features.deprecated_unload = *std::move(unload);
   return features;
 }
 
@@ -1004,6 +1113,12 @@ PageNavigator::PageNavigator() = default;
 PageNavigator::PageNavigator(const PageNavigator&) = default;
 PageNavigator& PageNavigator::operator=(const PageNavigator&) = default;
 PageNavigator::~PageNavigator() = default;
+DeprecatedUnload::DeprecatedUnload() = default;
+DeprecatedUnload::DeprecatedUnload(const DeprecatedUnload&) = default;
+DeprecatedUnload& DeprecatedUnload::operator=(const DeprecatedUnload&) =
+    default;
+DeprecatedUnload::~DeprecatedUnload() = default;
+
 PageFeatures::PageFeatures() = default;
 PageFeatures::PageFeatures(const PageFeatures&) = default;
 PageFeatures& PageFeatures::operator=(const PageFeatures&) = default;
@@ -1076,6 +1191,8 @@ std::string EncodeStart(const PageStart& start) {
     }
     features.Set(list.key, std::move(items));
   }
+  features.Set(kDeprecatedUnloadKey,
+               WriteDeprecatedUnload(start.features.deprecated_unload));
   dict.Set(kFeaturesKey, std::move(features));
   return EncodeFrame(PageMessage::kStart, *base::WriteJson(dict));
 }

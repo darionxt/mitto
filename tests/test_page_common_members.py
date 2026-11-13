@@ -354,6 +354,28 @@ _NOTIFICATION_AS_CHROME = {
 }
 
 
+# document.featurePolicy of a top-level page with no Permissions-Policy header, from Chrome 157 at http://127.0.0.1 with a
+# new profile, whose seed deprecates nothing yet: the features of the window's hash map of their names in its order,
+# with the Page's runtime-enabled features, each allowed by its default allowlist. The Persona's seed may take unload
+# away, which tests/test_page_program.py covers.
+_FEATURE_POLICY_AS_CHROME = {
+    "featurePolicy features": (
+        "return JSON.stringify(document.featurePolicy.features())",
+        'value: ["geolocation","ch-ua-full-version-list","cross-origin-isolated","screen-wake-lock","on-device-speech-recognition","translator","publickey-credentials-get","ch-ua-arch","bluetooth","compute-pressure","ch-prefers-reduced-transparency","deferred-fetch","usb","ch-save-data","publickey-credentials-create","deferred-fetch-minimal","ch-downlink","ch-ua-form-factors","otp-credentials","payment","ch-ua","ch-ua-model","ch-ect","autoplay","camera","language-detector","private-state-token-issuance","digital-credentials-get","accelerometer","ch-ua-platform-version","idle-detection","language-model","speaker-selection","interest-cohort","ch-viewport-height","captured-surface-control","local-fonts","ch-ua-platform","midi","ch-ua-full-version","xr-spatial-tracking","clipboard-read","gamepad","display-capture","keyboard-map","aria-notify","local-network","ch-ua-high-entropy-values","ch-width","ch-prefers-reduced-motion","browsing-topics","encrypted-media","local-network-access","gyroscope","serial","ch-rtt","ch-ua-mobile","window-management","unload","ch-dpr","ch-prefers-color-scheme","ch-ua-wow64","fullscreen","identity-credentials-get","private-state-token-redemption","hid","summarizer","ch-ua-bitness","digital-credentials-create","storage-access","sync-xhr","ch-device-memory","ch-viewport-width","picture-in-picture","loopback-network","magnetometer","clipboard-write","media-playback-while-not-visible","microphone"]',
+    ),
+    "featurePolicy allowed": (
+        "return JSON.stringify(document.featurePolicy.allowedFeatures())",
+        'value: ["geolocation","ch-ua-full-version-list","cross-origin-isolated","screen-wake-lock","on-device-speech-recognition","translator","publickey-credentials-get","ch-ua-arch","bluetooth","compute-pressure","ch-prefers-reduced-transparency","deferred-fetch","usb","ch-save-data","publickey-credentials-create","deferred-fetch-minimal","ch-downlink","ch-ua-form-factors","otp-credentials","payment","ch-ua","ch-ua-model","ch-ect","autoplay","camera","language-detector","private-state-token-issuance","digital-credentials-get","accelerometer","ch-ua-platform-version","idle-detection","language-model","speaker-selection","interest-cohort","ch-viewport-height","captured-surface-control","local-fonts","ch-ua-platform","midi","ch-ua-full-version","xr-spatial-tracking","clipboard-read","gamepad","display-capture","keyboard-map","aria-notify","local-network","ch-ua-high-entropy-values","ch-width","ch-prefers-reduced-motion","browsing-topics","encrypted-media","local-network-access","gyroscope","serial","ch-rtt","ch-ua-mobile","window-management","unload","ch-dpr","ch-prefers-color-scheme","ch-ua-wow64","fullscreen","identity-credentials-get","private-state-token-redemption","hid","summarizer","ch-ua-bitness","digital-credentials-create","storage-access","sync-xhr","ch-device-memory","ch-viewport-width","picture-in-picture","loopback-network","magnetometer","clipboard-write","media-playback-while-not-visible","microphone"]',
+    ),
+    "featurePolicy is the same object": (
+        "return [document.featurePolicy === document.featurePolicy, document.permissionsPolicy === undefined, "
+        "'permissionsPolicy' in document, FeaturePolicy === PermissionsPolicy, "
+        "Object.getOwnPropertyDescriptor(window, 'FeaturePolicy').enumerable, FeaturePolicy.name].join()",
+        "value: true,true,false,true,false,PermissionsPolicy",
+    ),
+}
+
+
 # Permissions, gamepads and storage as Chrome answers a profile that has granted and stored nothing, on a secure page,
 # from Chrome 157 at http://127.0.0.1, which is one.
 _PERMISSIONS_AS_CHROME = {
@@ -498,6 +520,13 @@ def test_request_permission_waits_at_the_prompt_on_a_secure_page(program: Path) 
     ("script", "expected"), list(_PERMISSIONS_AS_CHROME.values()), ids=list(_PERMISSIONS_AS_CHROME)
 )
 def test_permissions_answer_as_chrome_does(program: Path, script: str, expected: str) -> None:
+    assert _evaluate(program, script) == expected
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"), list(_FEATURE_POLICY_AS_CHROME.values()), ids=list(_FEATURE_POLICY_AS_CHROME)
+)
+def test_the_feature_policy_lists_what_chromes_lists(program: Path, script: str, expected: str) -> None:
     assert _evaluate(program, script) == expected
 
 

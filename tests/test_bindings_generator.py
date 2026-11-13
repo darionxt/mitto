@@ -933,6 +933,34 @@ def test_overloads_that_return_promises_count_the_arguments_before_checking_the_
     assert body.index("if (info.Length() < 1) {") < body.index("Illegal invocation")
 
 
+def test_a_class_with_a_window_alias_gives_the_window_both_names() -> None:
+    # PermissionsPolicy's [LegacyWindowAlias=FeaturePolicy]: the alias is the same interface object.
+    thing = _interface(extended_attributes=ExtendedAttributes((("LegacyWindowAlias", ("OldThing",)),)))
+    exposed = (
+        ExposedConstruct("Thing", "interface", "Thing", ALWAYS),
+        ExposedConstruct("Window", "interface", "Window", ALWAYS),
+        ExposedConstruct("OldThing", "alias", "Thing", ALWAYS),
+    )
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=exposed,
+    )
+    definitions = Definitions({"Thing": thing, "Window": window}, {}, {}, {}, frozenset())
+    implemented = [
+        ImplementedInterface("Thing", "mitto/dom/thing.h"),
+        ImplementedInterface("Window", "mitto/dom/window.h"),
+    ]
+
+    source = write_bindings(definitions, [], implemented)["v8_window.cc"]
+
+    assert '{"Thing", &V8Thing::kWrapperTypeInfo, ExposedConstructInfo::Kind::kInterfaceObject' in source
+    assert '{"OldThing", &V8Thing::kWrapperTypeInfo, ExposedConstructInfo::Kind::kInterfaceObject' in source
+
+
 def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() -> None:
     source = _bindings_of(
         _collection("indexed getter", "named getter"), ImplementedInterface("Thing", "mitto/dom/thing.h")

@@ -11,7 +11,7 @@ from mitto._native import NativeLibraryError
 from tools.capture import RecordingError
 from tools.parity.check import BASELINES_DIRECTORY, Baseline, BaselineError, find_gaps, load_baselines
 from tools.parity.gaps import KNOWN_GAPS_FILE_NAME, Gap, KnownGapsError, dumps_known_gaps, loads_known_gaps, mismatches
-from tools.parity.script import ScriptRecordingError, find_script_gaps, load_script_baselines
+from tools.parity.script import ScriptBaseline, ScriptRecordingError, find_script_gaps, load_script_baselines
 from tools.parity.script_gaps import SCRIPT_KNOWN_GAPS_FILE_NAME, GapKind, ScriptGap, loads_script_known_gaps
 
 
@@ -22,28 +22,32 @@ def _gaps_by_case(baselines: Iterable[Baseline], gaps: Iterable[Gap]) -> Iterato
         yield f"  {case}: {counts[case]}"
 
 
-def _script_counts(gaps: Iterable[ScriptGap]) -> Iterator[str]:
-    """Yield one line for each kind of gap, and one for each Chrome Release, so that a count of 0 shows too."""
+def _script_counts(baselines: Iterable[ScriptBaseline], gaps: Iterable[ScriptGap]) -> Iterator[str]:
+    """Yield one line for each kind of gap, and one for each Chrome Release in the Baselines, so that a count of 0 shows
+    too."""
     kinds = Counter(gap.kind for gap in gaps)
     releases = Counter(gap.release for gap in gaps)
     yield "Gaps by kind, over every Chrome Release:"
     yield from (f"  {kind}: {kinds[kind]}" for kind in GapKind)
     yield "Gaps by Chrome Release:"
-    yield from (f"  {release}: {releases[release]}" for release in sorted(releases))
+    yield from (
+        f"  {release}: {releases[release]}" for release in sorted({b.release for b in baselines} | releases.keys())
+    )
 
 
 def _write_script_list(baselines: Path) -> int:
     known_gaps = baselines / SCRIPT_KNOWN_GAPS_FILE_NAME
     try:
         listed = loads_script_known_gaps(known_gaps.read_text(encoding="utf-8")) if known_gaps.exists() else []
-        found = find_script_gaps(load_script_baselines(baselines))
+        loaded = load_script_baselines(baselines)
+        found = find_script_gaps(loaded)
     except (BaselineError, KnownGapsError, NativeLibraryError, ScriptRecordingError, MittoError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     changes = mismatches(found, listed)
     known_gaps.write_text(dumps_known_gaps(found), encoding="utf-8")
     print(f"Wrote {len(found)} gaps to {known_gaps}: {len(changes.unlisted)} new, {len(changes.gone)} gone.")
-    print("\n".join(_script_counts(found)))
+    print("\n".join(_script_counts(loaded, found)))
     return 0
 
 

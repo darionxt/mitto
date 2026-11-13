@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from mitto._native import DeprecatedUnload
 from mitto._persona import WINDOWS_PERSONAS
 from tests.release.test_variations_seed import group, message, number, seed, study, windows_stable
 from tools.release.gitiles import CHROMIUM_URL
@@ -190,7 +191,20 @@ def test_what_the_seed_turns_on_is_on_and_said() -> None:
 
 
 def test_a_base_feature_that_names_no_runtime_feature_changes_nothing() -> None:
-    assert features_of(ENGINE_SOURCE, switch("DeprecateUnload", True), switch("Something", True)) == PageFeatures()
+    assert features_of(ENGINE_SOURCE, switch("FrameTopHeader", True), switch("Something", True)) == PageFeatures()
+
+
+def test_what_the_seed_says_of_unload_goes_into_the_page_features_and_is_said() -> None:
+    switches = [switch("DeprecateUnload", True, rollout_percent="100"), switch("DeprecateUnloadByAllowList", True)]
+
+    result = persona_features(ENGINE_SOURCE, ENGINE_SOURCE, SEED, switches, baseline_seed=SEED)
+
+    assert result.page.deprecated_unload == DeprecatedUnload(enabled=True, allow_list=())
+    assert result.switched == (
+        "DeprecateUnload on: Study/Group, 100% of installations",
+        "DeprecateUnloadByAllowList on: Study/Group, 100% of installations",
+    )
+    assert result.page.enable_blink_features == result.page.disable_blink_features == ()
 
 
 def test_a_state_that_the_engine_releases_dependencies_cannot_give_goes_to_review() -> None:
@@ -382,10 +396,17 @@ def test_writing_puts_what_each_page_starts_with_into_its_personas_file_and_repo
             "--js_staged_back",
             "--sqrt_allocation_limits",
         ],
+        "deprecated_unload": {"enabled": False, "allow_list": None, "by_bucket": None},
     }
     assert written == before
     engine = json.loads((directory / ENGINE_FILE).read_text(encoding="utf-8"))["page_features"]
-    assert engine == {"seed": SEED, "enable_blink_features": [], "disable_blink_features": [], "v8_flags": []}
+    assert engine == {
+        "seed": SEED,
+        "enable_blink_features": [],
+        "disable_blink_features": [],
+        "v8_flags": [],
+        "deprecated_unload": {"enabled": False, "allow_list": None, "by_bucket": None},
+    }
     assert report.startswith(f"{OLDER_FILE}: Chrome {OLDER}, seed {SEED}\n")
     assert "  disable_blink_features gains: NewInEngine, StableLater, Copied\n" in report
     assert "    Copied off: ConversionMeasurement in Deprecation/Disabled, 100% of installations\n" in report

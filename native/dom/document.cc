@@ -20,6 +20,7 @@
 #include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
@@ -123,6 +124,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(anchors_);
   visitor->Trace(applets_);
   visitor->Trace(all_);
+  visitor->Trace(feature_policy_);
 }
 
 mitto::Location* Document::Location() const {
@@ -285,6 +287,15 @@ v8::Local<v8::Promise> Document::HasStorageAccess() const {
   const bool access = window_ && window_->IsSecureContextForBindings();
   ResolveFromTask(isolate, resolver, v8::Boolean::New(isolate, access));
   return resolver->GetPromise();
+}
+
+PermissionsPolicy* Document::FeaturePolicy() {
+  if (!feature_policy_ && window_) {
+    feature_policy_ = PermissionsPolicy::Create(
+        url_, IsUnloadDeprecated(window_->Start().features.deprecated_unload,
+                                 GURL(url_)));
+  }
+  return feature_policy_.Get();
 }
 
 void Document::SetReadiness(Readiness readiness) {

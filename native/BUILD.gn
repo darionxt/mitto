@@ -53,6 +53,16 @@ source_set("header_rules") {
   deps = [ "//base" ]
 }
 
+# Blink's hash of a string, whose order a Page's DOM and the library's header
+# lists both follow.
+source_set("string_hasher") {
+  sources = [
+    "string_hasher.cc",
+    "string_hasher.h",
+  ]
+  deps = [ "//base" ]
+}
+
 source_set("page_channel") {
   sources = [
     "page_channel.h",
@@ -114,8 +124,6 @@ shared_library("mitto_core") {
     "socks5_auth_socket_factory.h",
     "ssl_config_service_mojo.cc",
     "ssl_config_service_mojo.h",
-    "string_hasher.cc",
-    "string_hasher.h",
     "stub_resolver_config_reader.cc",
     "stub_resolver_config_reader.h",
   ]
@@ -139,6 +147,7 @@ shared_library("mitto_core") {
   deps = [
     ":icu_data",
     ":page_channel",
+    ":string_hasher",
     "//base",
     "//crypto",
     "//net",
@@ -270,13 +279,12 @@ if (use_libfuzzer) {
       "session_settings.h",
       "socks5_auth_exchange.cc",
       "socks5_auth_exchange.h",
-      "string_hasher.cc",
-      "string_hasher.h",
       "test/session_settings_fuzzer.cc",
     ]
     additional_configs = [ ":public_api" ]
     deps = [
       ":icu_data",
+      ":string_hasher",
       "//base",
       "//crypto",
       "//net",

@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 11
+_PROTOCOL_VERSION = 12
 
 
 def _script_request(number: int, url: str) -> str:
