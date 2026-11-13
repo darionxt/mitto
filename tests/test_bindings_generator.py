@@ -819,7 +819,9 @@ def _collection(*specials: str, unenumerable: bool = True) -> Interface:
     )
 
 
-def _bindings_of(interface: Interface, implemented: ImplementedInterface) -> str:
+def _bindings_of(
+    interface: Interface, implemented: ImplementedInterface, dictionaries: dict[str, Dictionary] | None = None
+) -> str:
     """The bindings that the C++ writer gives the interface, beside a Window that exposes it."""
     window = _interface(
         name="Window",
@@ -829,9 +831,44 @@ def _bindings_of(interface: Interface, implemented: ImplementedInterface) -> str
         exposed_constructs=("Thing", "Window"),
         exposed=tuple(ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Thing", "Window")),
     )
-    definitions = Definitions({"Thing": interface, "Window": window}, {}, {}, {}, frozenset())
+    definitions = Definitions({"Thing": interface, "Window": window}, dictionaries or {}, {}, {}, frozenset())
     files = write_bindings(definitions, [], [implemented, ImplementedInterface("Window", "mitto/dom/window.h")])
     return files["v8_thing.cc"]
+
+
+def test_overloads_that_return_promises_choose_a_dictionary_for_undefined_null_and_objects() -> None:
+    # CookieStore's get(): a string or optional options, and an error in either rejects the promise.
+    promise = IdlType(TypeKind.PROMISE, "Promise", members=(IdlType(TypeKind.ANY, "any"),))
+    by_name = Operation(
+        "get",
+        (Argument("name", IdlType(TypeKind.STRING, "USVString"), False, False, None),),
+        promise,
+        False,
+        _extended("RaisesException"),
+        ALWAYS,
+    )
+    by_options = Operation(
+        "get",
+        (Argument("options", IdlType(TypeKind.DICTIONARY, "Options"), True, False, "{}"),),
+        promise,
+        False,
+        _extended("RaisesException"),
+        ALWAYS,
+    )
+    member = DictionaryMember("name", IdlType(TypeKind.STRING, "USVString"), False, None, ExtendedAttributes(), ALWAYS)
+    interface = _interface(
+        operation_groups=(OperationGroup("get", (by_name, by_options), False, 0, ExtendedAttributes(), ALWAYS),)
+    )
+
+    source = _bindings_of(
+        interface,
+        ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("get",)),
+        {"Options": Dictionary("Options", None, (member,), ExtendedAttributes())},
+    )
+
+    assert "ExceptionToRejectPromiseScope reject_promise_scope(info);" in source
+    assert "if (info[0]->IsUndefined() || info[0]->IsNull() || info[0]->IsObject()) {" in source
+    assert "info.Length() <" not in source
 
 
 def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() -> None:
