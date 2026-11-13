@@ -10,7 +10,6 @@ Times are checked against each other, never against the wall clock, since a busy
 import itertools
 import json
 import os
-import statistics
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -31,8 +30,10 @@ _DEFAULT_REFRESH_RATE = 60
 # How far the clamping of 100 microseconds can take a time from the one it coarsens, either way.
 _CLAMPING_MS = 0.1
 
-# How late a busy runner can wake a task: a period shorter than this can miss vsyncs.
-_BUSY_RUNNER_MS = 4
+# How long after its vsync a frame starts, which the Page takes from Chrome, and how much later than a callback's end
+# the Page can pick the next frame, beside the clamping of both times.
+_BEGIN_FRAME_LATENCY_MS = 1.2
+_SLACK_MS = 0.5
 
 
 @pytest.fixture(scope="module")
@@ -69,14 +70,38 @@ def _is_whole_periods(difference: float, period: float) -> bool:
     return periods >= 1 and abs(difference - periods * period) < 2 * _CLAMPING_MS
 
 
-# Records the times that a run of animation frame callbacks gets, each requested from the one before. It starts a while
-# after the document's zero, which a frame's time counts from: a frame that began before it gets 0.
+def _assert_frames_a_period_apart(frames: list[list[float]], period: float) -> None:
+    """Assert that frames come at the vsyncs of a period, from what each callback got and when it ended.
+
+    Each frame's time is a whole number of periods after the last. A frame whose callback ended before the BeginFrame
+    of the next vsync reached the compositor, which is a frame's start after that vsync, is followed by the frame of
+    that vsync. One that ended later, as when a busy runner wakes the Page late, misses vsyncs, as a busy Chrome does,
+    so its successor is only held to whole periods.
+    """
+    times = [time for time, _ in frames]
+    differences = [later - earlier for earlier, later in itertools.pairwise(times)]
+
+    assert all(_is_whole_periods(difference, period) for difference in differences), differences
+    assert all(round(time * 10) / 10 == time for time in times)
+    deadline = period + _BEGIN_FRAME_LATENCY_MS - _SLACK_MS
+    in_time = [later - time for (time, end), later in zip(frames, times[1:], strict=False) if end - time < deadline]
+    assert all(abs(difference - period) < 2 * _CLAMPING_MS for difference in in_time), (frames, period)
+
+
+# Records the time that each of a run of animation frame callbacks gets, each requested from the one before, and when
+# the callback ended. It starts a while after the document's zero, which a frame's time counts from: a frame that began
+# before it gets 0.
 _FRAMES_SCRIPT = """
   new Promise((resolve) => {
-    const times = [];
+    const frames = [];
     const loop = (time) => {
-      times.push(time);
-      if (times.length < %d) requestAnimationFrame(loop); else resolve(times);
+      if (frames.length + 1 < %d) {
+        requestAnimationFrame(loop);
+        frames.push([time, performance.now()]);
+      } else {
+        frames.push([time, performance.now()]);
+        resolve(frames);
+      }
     };
     setTimeout(() => requestAnimationFrame(loop), 50);
   })
@@ -174,14 +199,8 @@ def test_animation_frame_callbacks_run_as_chrome_runs_them(program: Path) -> Non
 
 
 def test_frames_come_a_vsync_apart_at_60_hz_without_a_session(program: Path) -> None:
-    times = _evaluate(program, _FRAMES_SCRIPT % 30)
-    period = _period_ms(_DEFAULT_REFRESH_RATE)
-    differences = [later - earlier for earlier, later in itertools.pairwise(times)]
-
-    assert all(_is_whole_periods(difference, period) for difference in differences), differences
-    # What Chrome gave at 60 Hz: mostly 16.6 and 16.7.
-    assert round(statistics.median(differences), 1) in {16.6, 16.7}
-    assert all(round(time * 10) / 10 == time for time in times)
+    # Chrome gave 16.6 and 16.7 at 60 Hz.
+    _assert_frames_a_period_apart(_evaluate(program, _FRAMES_SCRIPT % 30), _period_ms(_DEFAULT_REFRESH_RATE))
 
 
 def test_idle_periods_end_with_each_frame_and_are_long_again_once_frames_stop(program: Path) -> None:
@@ -239,16 +258,6 @@ def machine_page(request: pytest.FixtureRequest, page_program: None) -> Iterator
 
 
 def test_frames_come_at_the_machines_refresh_rate(machine_page: tuple[mitto.Machine, Page]) -> None:
+    # Even a display faster than a frame takes to start, such as one of 1000 Hz, gets the next vsync's frame.
     machine, page = machine_page
-    times = page.evaluate(_FRAMES_SCRIPT % 60)
-    period = _period_ms(machine.refresh_rate)
-    differences = [later - earlier for earlier, later in itertools.pairwise(times)]
-
-    assert all(_is_whole_periods(difference, period) for difference in differences), differences
-    assert all(round(time * 10) / 10 == time for time in times)
-    # Even a display faster than a frame takes to start gets a frame at a vsync after the last.
-    assert min(differences) < period + 2 * _CLAMPING_MS
-    # A busy runner wakes a task late by about a millisecond now and then, which makes a period of one millisecond
-    # miss vsyncs, as a busy Chrome would. Slower displays get a frame at most vsyncs.
-    if period >= _BUSY_RUNNER_MS:
-        assert abs(statistics.median(differences) - period) < 2 * _CLAMPING_MS
+    _assert_frames_a_period_apart(page.evaluate(_FRAMES_SCRIPT % 60), _period_ms(machine.refresh_rate))
