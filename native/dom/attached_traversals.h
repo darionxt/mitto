@@ -17,6 +17,7 @@
 namespace mitto {
 
 class CharacterData;
+class Document;
 class Node;
 class NodeIterator;
 class Range;
@@ -50,6 +51,11 @@ class AttachedTraversals final
   // `next`, the Text node after `node`, is about to be merged into it, whose
   // data was `offset` long and now ends with `next`'s.
   void DidMergeText(Text& node, Text& next, uint32_t offset);
+  // `root` and what is inside it moved from this document to `document`:
+  // the iterators rooted there and the ranges now in it go with them, as
+  // Blink's MoveNodeIteratorsToNewDocument() and DidMoveTreeToNewDocument()
+  // move them.
+  void DidMoveTreeToNewDocument(Node& root, Document& document);
 
  private:
   struct Entry;

@@ -1,7 +1,10 @@
 #include "mitto/dom/attached_traversals.h"
 
+#include <vector>
+
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/character_data.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/range.h"
@@ -115,6 +118,36 @@ void AttachedTraversals::DidMergeText(Text& node, Text& next, uint32_t offset) {
       range->DidMergeText(node, next, offset);
     }
   });
+}
+
+void AttachedTraversals::DidMoveTreeToNewDocument(Node& root,
+                                                  Document& document) {
+  // On the stack, where the collector finds them, since moving one changes
+  // the lists.
+  std::vector<Range*> ranges;
+  std::vector<NodeIterator*> iterators;
+  ForEach([&](Range* range, NodeIterator* iterator) {
+    if (range) {
+      ranges.push_back(range);
+    }
+    if (iterator && root.IsInclusiveAncestorOf(*iterator->Root())) {
+      iterators.push_back(iterator);
+    }
+  });
+  for (NodeIterator* iterator : iterators) {
+    cppgc::Member<Entry>* link = &first_;
+    while (Entry* const entry = link->Get()) {
+      if (entry->iterator == iterator) {
+        *link = entry->next;
+        break;
+      }
+      link = &entry->next;
+    }
+    document.Traversals().AttachNodeIterator(iterator);
+  }
+  for (Range* range : ranges) {
+    range->UpdateOwnerDocumentIfNeeded();
+  }
 }
 
 }  // namespace mitto

@@ -103,6 +103,9 @@ class Range final : public NodeRange {
                       uint32_t added);
   void DidSplitText(Text& node, Text& new_node, uint32_t offset);
   void DidMergeText(Text& node, Text& next, uint32_t offset);
+  // Moves the range to the document its boundary points are in now, if a
+  // tree moved them to another.
+  void UpdateOwnerDocumentIfNeeded();
 
  private:
   enum class Action {

@@ -1102,4 +1102,14 @@ void Range::DidMergeText(Text& node, Text& next, uint32_t offset) {
   update(end_container_, end_offset_);
 }
 
+void Range::UpdateOwnerDocumentIfNeeded() {
+  Document& document = start_container_->GetDocument();
+  if (&document == owner_document_) {
+    return;
+  }
+  owner_document_->Traversals().DetachRange(this);
+  owner_document_ = &document;
+  document.Traversals().AttachRange(this);
+}
+
 }  // namespace mitto

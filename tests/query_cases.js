@@ -135,6 +135,8 @@
       <select id=s4 multiple><option>a<option selected>b</select>
       <select id=s5 size=3><option>a<option>b</select>
       <fieldset disabled><legend><input id=inlegend></legend><input id=infield></fieldset>
+      <fieldset disabled><input id=nolegend required></fieldset>
+      <fieldset disabled><div><legend><input id=notfirst></legend></div></fieldset>
       <optgroup disabled><option>o</option></optgroup>
       <button id=b1>b</button><button type=reset>r</button>
     </form>
@@ -361,6 +363,18 @@
   top.lastChild.remove();
   walking.push(tail.referenceNode.nodeName, tail.pointerBeforeReferenceNode, walk(tail, "previousNode"));
   walking.push(outcome(() => document.createNodeIterator(top, 1, () => { throw new Error("x"); }).nextNode()));
+  // An iterator and a range whose tree moves to another document.
+  const elsewhere = new Document();
+  const moving = document.createElement("div");
+  moving.innerHTML = "<b>1</b><i>2</i><u>3</u>";
+  const moved_iterator = document.createNodeIterator(moving, NodeFilter.SHOW_ELEMENT);
+  walk(moved_iterator, "nextNode", 2);
+  const moved_range = new Range();
+  moved_range.selectNodeContents(moving);
+  elsewhere.append(moving);
+  moving.firstChild.remove();
+  walking.push(moved_iterator.referenceNode.nodeName, moved_iterator.pointerBeforeReferenceNode,
+    walk(moved_iterator, "nextNode"), moved_range.endOffset, moved_range.startContainer === moving);
   walking.push(NodeFilter.SHOW_ALL, NodeFilter.FILTER_SKIP, typeof NodeFilter, Object.getOwnPropertyNames(NodeFilter).length);
   record.walking = walking;
 

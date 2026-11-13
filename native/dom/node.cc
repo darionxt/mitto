@@ -985,6 +985,10 @@ void Node::SetTreeDocument(Document& document) {
   for (Node* node = this; node; node = node->NextInTree(this)) {
     node->DidMoveToNewDocument(*old_document);
   }
+  if (AttachedTraversals* const traversals =
+          old_document->ExistingTraversals()) {
+    traversals->DidMoveTreeToNewDocument(*this, document);
+  }
 }
 
 void Node::ParserAppendChild(Node* child) {

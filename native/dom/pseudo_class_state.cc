@@ -550,8 +550,12 @@ bool HasDisabledFieldSetAncestor(const Element& element) {
       last_legend = ancestor;
     }
     if (ancestor->HasHTMLTagName(u"fieldset") &&
-        HasAttribute(*ancestor, u"disabled") &&
-        LegendOf(*ancestor) != last_legend) {
+        HasAttribute(*ancestor, u"disabled")) {
+      // Blink's UpdateAncestorDisabledState(): only the fieldset's first
+      // legend, if it has one, keeps what is inside it enabled.
+      if (last_legend && last_legend == LegendOf(*ancestor)) {
+        continue;
+      }
       return true;
     }
   }
