@@ -354,6 +354,70 @@ _NOTIFICATION_AS_CHROME = {
 }
 
 
+# Permissions, gamepads and storage as Chrome answers a profile that has granted and stored nothing, on a secure page,
+# from Chrome 157 at http://127.0.0.1, which is one.
+_PERMISSIONS_AS_CHROME = {
+    "query each name": (
+        "async function query(d) { try { const s = await navigator.permissions.query(d); return s.state + '/' + s.name; } catch (e) { return 'threw ' + e; } } const NAMES = ['accelerometer', 'ambient-light-sensor', 'background-fetch', 'background-sync', 'bluetooth', 'camera', 'captured-surface-control', 'clipboard-read', 'clipboard-write', 'display-capture', 'fullscreen', 'geolocation', 'geolocation-approximate', 'gyroscope', 'idle-detection', 'keyboard-lock', 'local-fonts', 'local-network', 'local-network-access', 'loopback-network', 'magnetometer', 'microphone', 'midi', 'nfc', 'notifications', 'payment-handler', 'periodic-background-sync', 'persistent-storage', 'pointer-lock', 'push', 'screen-wake-lock', 'speaker-selection', 'storage-access', 'system-wake-lock', 'top-level-storage-access', 'web-app-installation', 'window-management', 'unknown-name']; const r = {}; for (const n of NAMES) r[n] = await query({name: n}); return JSON.stringify(r)",
+        'value: {"accelerometer":"granted/sensors","ambient-light-sensor":"threw TypeError: Failed to execute \'query\' on \'Permissions\': GenericSensorExtraClasses flag is not enabled.","background-fetch":"granted/background_fetch","background-sync":"granted/background_sync","bluetooth":"threw TypeError: Failed to execute \'query\' on \'Permissions\': Failed to read the \'name\' property from \'PermissionDescriptor\': The provided value \'bluetooth\' is not a valid enum value of type PermissionName.","camera":"prompt/video_capture","captured-surface-control":"prompt/captured-surface-control","clipboard-read":"prompt/clipboard_read","clipboard-write":"granted/clipboard_write","display-capture":"prompt/display_capture","fullscreen":"threw TypeError: Failed to execute \'query\' on \'Permissions\': Fullscreen Permission only supports allowWithoutGesture:true.","geolocation":"prompt/geolocation","geolocation-approximate":"threw TypeError: Failed to execute \'query\' on \'Permissions\': Permission API support for approximate geolocation is not enabled.","gyroscope":"granted/sensors","idle-detection":"prompt/idle_detection","keyboard-lock":"granted/keyboard-lock","local-fonts":"prompt/local_fonts","local-network":"prompt/local-network","local-network-access":"prompt/local-network-access","loopback-network":"prompt/loopback-network","magnetometer":"granted/sensors","microphone":"prompt/audio_capture","midi":"prompt/midi","nfc":"threw TypeError: Failed to execute \'query\' on \'Permissions\': Web NFC is not enabled.","notifications":"prompt/notifications","payment-handler":"granted/payment_handler","periodic-background-sync":"denied/periodic_background_sync","persistent-storage":"prompt/durable_storage","pointer-lock":"granted/pointer-lock","push":"threw NotSupportedError: Failed to execute \'query\' on \'Permissions\': Push Permission without userVisibleOnly:true isn\'t supported yet.","screen-wake-lock":"granted/screen_wake_lock","speaker-selection":"threw TypeError: Failed to execute \'query\' on \'Permissions\': The Speaker Selection API is not enabled.","storage-access":"granted/storage-access","system-wake-lock":"threw TypeError: Failed to execute \'query\' on \'Permissions\': System Wake Lock is not enabled.","top-level-storage-access":"threw TypeError: Failed to execute \'query\' on \'Permissions\': The requested origin is invalid.","web-app-installation":"threw TypeError: Failed to execute \'query\' on \'Permissions\': The Web App Install API is not enabled.","window-management":"prompt/window-management","unknown-name":"threw TypeError: Failed to execute \'query\' on \'Permissions\': Failed to read the \'name\' property from \'PermissionDescriptor\': The provided value \'unknown-name\' is not a valid enum value of type PermissionName."}',
+    ),
+    "query with descriptors": (
+        "async function query(d) { try { const s = await navigator.permissions.query(d); return s.state + '/' + s.name; } catch (e) { return 'threw ' + e; } } await query({name: 'clipboard-read'}); return JSON.stringify({midiSysex: await query({name: 'midi', sysex: true}), ptz: await query({name: 'camera', panTiltZoom: true}), push: await query({name: 'push', userVisibleOnly: true}), fullscreen: await query({name: 'fullscreen', allowWithoutGesture: true}), clipboardWrite: await query({name: 'clipboard-write', allowWithoutGesture: true}), tlsa: await query({name: 'top-level-storage-access', requestedOrigin: 'https://a.test'})})",
+        'value: {"midiSysex":"prompt/midi","ptz":"prompt/video_capture","push":"prompt/notifications","fullscreen":"denied/fullscreen","clipboardWrite":"prompt/clipboard_read","tlsa":"prompt/top-level-storage-access"}',
+    ),
+    "query errors": (
+        "async function query(d) { try { const s = await navigator.permissions.query(d); return s.state + '/' + s.name; } catch (e) { return 'threw ' + e; } } return JSON.stringify([await query(), await query({}), await query(5), await query({name: 'push'})])",
+        "value: [\"threw TypeError: Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'.\",\"threw TypeError: Failed to execute 'query' on 'Permissions': Failed to read the 'name' property from 'PermissionDescriptor': Required member is undefined.\",\"threw TypeError: Failed to execute 'query' on 'Permissions': parameter 1 is not of type 'object'.\",\"threw NotSupportedError: Failed to execute 'query' on 'Permissions': Push Permission without userVisibleOnly:true isn't supported yet.\"]",
+    ),
+    "query's object": (
+        "async function query(d) { try { const s = await navigator.permissions.query(d); return s.state + '/' + s.name; } catch (e) { return 'threw ' + e; } } const a = await navigator.permissions.query({name: 'geolocation'}); const b = await navigator.permissions.query({name: 'geolocation'}); return [a === b, a instanceof PermissionStatus, Object.prototype.toString.call(a), a.onchange, Object.getOwnPropertyNames(a).length, typeof a.addEventListener].join()",
+        "value: false,true,[object PermissionStatus],,0,function",
+    ),
+    "the name of the first descriptor": (
+        "async function query(d) { try { const s = await navigator.permissions.query(d); return s.state + '/' + s.name; } catch (e) { return 'threw ' + e; } } await navigator.permissions.query({name: 'clipboard-read'}); return (await navigator.permissions.query({name: 'clipboard-write', allowWithoutGesture: true})).name",
+        "value: clipboard_read",
+    ),
+    "query on another receiver": (
+        "try { await Permissions.prototype.query.call({}, {name: 'geolocation'}); return 'resolved'; } catch (e) { return 'rejected ' + e; }",
+        "value: rejected TypeError: Failed to execute 'query' on 'Permissions': Illegal invocation",
+    ),
+    "query's promise settles later": (
+        "async function query(d) { try { const s = await navigator.permissions.query(d); return s.state + '/' + s.name; } catch (e) { return 'threw ' + e; } } const seen = []; navigator.permissions.query({name: 'geolocation'}).then(() => seen.push('settled')); await Promise.resolve(); seen.push('microtask'); await new Promise(r => setTimeout(r, 200)); return seen.join()",
+        "value: microtask,settled",
+    ),
+    "getGamepads": (
+        "const g = navigator.getGamepads(); return [Array.isArray(g), g.length, g.every(x => x === null), g === navigator.getGamepads()].join()",
+        "value: true,8,true,false",
+    ),
+    "hasStorageAccess": ("return String(await document.hasStorageAccess())", "value: true"),
+    "storage estimate": (
+        "const e = await navigator.storage.estimate(); return JSON.stringify(e) + '|' + Object.keys(e).join()",
+        'value: {"quota":10737418240,"usage":0,"usageDetails":{}}|quota,usage,usageDetails',
+    ),
+    "storage persisted": ("return String(await navigator.storage.persisted())", "value: false"),
+    "storage persist": (
+        "return String(await Promise.race([navigator.storage.persist(), new Promise(r => setTimeout(() => r('pending'), 500))]))",
+        "value: false",
+    ),
+}
+
+
+# Geolocation on a secure page, as headful Chrome 157 on Windows gave from a new profile: its prompt waits for a person,
+# while the timeout runs. Headless Chrome, which has no prompt, denies instead.
+_GEOLOCATION_AS_CHROME = {
+    "a timeout runs while the prompt waits": (
+        "return await new Promise(r => { navigator.geolocation.getCurrentPosition(p => r('position'), "
+        "e => r('error ' + e.code + ' ' + e.message), {timeout: 500}); setTimeout(() => r('pending'), 4000); })",
+        "value: error 3 Timeout expired",
+    ),
+    "without a timeout the prompt waits": (
+        "return await new Promise(r => { navigator.geolocation.getCurrentPosition(p => r('position'), "
+        "e => r('error ' + e.code + ' ' + e.message)); setTimeout(() => r('pending'), 3000); })",
+        "value: pending",
+    ),
+}
+
+
 @pytest.fixture(scope="module")
 def program() -> Path:
     """Return the Page program, or skip if the environment names none."""
@@ -428,3 +492,56 @@ def test_request_permission_waits_at_the_prompt_on_a_secure_page(program: Path) 
         return [answer, called].join()"""
 
     assert _evaluate(program, script) == "value: pending,not called"
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"), list(_PERMISSIONS_AS_CHROME.values()), ids=list(_PERMISSIONS_AS_CHROME)
+)
+def test_permissions_answer_as_chrome_does(program: Path, script: str, expected: str) -> None:
+    assert _evaluate(program, script) == expected
+
+
+@pytest.mark.parametrize(
+    ("script", "expected"), list(_GEOLOCATION_AS_CHROME.values()), ids=list(_GEOLOCATION_AS_CHROME)
+)
+def test_geolocation_answers_as_chrome_does(program: Path, script: str, expected: str) -> None:
+    assert _evaluate(program, script) == expected
+
+
+def test_a_geolocation_error_is_an_object_of_its_interface(program: Path) -> None:
+    script = """return await new Promise((resolve) => navigator.geolocation.getCurrentPosition(() => {}, (error) =>
+        resolve([Object.prototype.toString.call(error), error instanceof GeolocationPositionError, error.code,
+            error.TIMEOUT, error.PERMISSION_DENIED].join()), {timeout: 0}))"""
+
+    assert _evaluate(program, script) == "value: [object GeolocationPositionError],true,3,3,1"
+
+
+def test_a_watch_times_out_and_waits_on_until_it_is_cleared(program: Path) -> None:
+    # Blink's GeoNotifier: a timeout ends a one-shot request, but a watch waits on for a position, with no timer.
+    script = """let errors = 0;
+        const id = navigator.geolocation.watchPosition(() => {}, () => { errors++; }, {timeout: 50});
+        const cleared = navigator.geolocation.watchPosition(() => {}, () => { errors += 100; }, {timeout: 50});
+        navigator.geolocation.clearWatch(cleared);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return [typeof id, id > 0, cleared === id + 1, errors].join()"""
+
+    assert _evaluate(program, script) == "value: number,true,true,1"
+
+
+def test_a_geolocation_timeout_keeps_the_script_running(program: Path) -> None:
+    # No timer of the window's is set while the request waits, yet its timeout comes.
+    script = """return await new Promise((resolve) =>
+        navigator.geolocation.getCurrentPosition(() => {}, (error) => resolve(error.code), {timeout: 100}))"""
+
+    assert _evaluate(program, script) == "value: 3"
+
+
+@pytest.mark.parametrize(("timeout", "fires"), [("-5", True), ("'x'", True), ("1e12", False)])
+def test_a_geolocation_timeout_is_clamped(program: Path, timeout: str, fires: bool) -> None:
+    # PositionOptions' [Clamp] unsigned long: NaN and what is below 0 become 0, and what is above 2^32 - 1 that.
+    script = f"""return await new Promise((resolve) => {{
+        navigator.geolocation.getCurrentPosition(() => {{}}, () => resolve("fired"), {{timeout: {timeout}}});
+        setTimeout(() => resolve("waits"), 300);
+    }})"""
+
+    assert _evaluate(program, script) == ("value: fired" if fires else "value: waits")

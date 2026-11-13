@@ -393,7 +393,8 @@ void Window::RemoveSignalTimer(uint64_t id) {
 }
 
 size_t Window::TimerCount() const {
-  return (timers_ ? timers_->size() : 0) + signal_timers_.size();
+  return (timers_ ? timers_->size() : 0) + signal_timers_.size() +
+         (navigator_ ? navigator_->GeolocationTimerCount() : 0);
 }
 
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc

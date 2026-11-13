@@ -8,6 +8,7 @@
 //
 // Upstream: third_party/blink/renderer/core/dom/document.h
 // Upstream: third_party/blink/renderer/core/dom/document.cc
+// Upstream: third_party/blink/renderer/modules/storage_access/document_storage_access.cc
 
 #ifndef MITTO_DOM_DOCUMENT_H_
 #define MITTO_DOM_DOCUMENT_H_
@@ -21,6 +22,7 @@
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
 #include "v8/include/cppgc/member.h"
+#include "v8/include/v8-promise.h"
 
 namespace mitto {
 
@@ -117,6 +119,10 @@ class Document : public Node {
   void SetCookie(const std::u16string& value,
                  bindings::ExceptionState& exception_state);
   std::u16string ReadyState() const;
+  // DocumentStorageAccess: a top-level document has the access to its cookies
+  // that a profile allows, which a new profile does, on a secure page, and
+  // none elsewhere.
+  v8::Local<v8::Promise> HasStorageAccess() const;
   Comment* CreateComment(const std::u16string& data);
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);
