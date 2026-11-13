@@ -92,6 +92,8 @@ std::u16string DecodeScriptSource(std::string_view bytes) {
 // a script.
 void RunClassicScript(std::u16string_view source,
                       const GURL& source_url,
+                      int start_line,
+                      int start_column,
                       bool muted_errors) {
   // V8 holds no longer string, and a script that it cannot hold does not run.
   if (source.size() > static_cast<size_t>(v8::String::kMaxLength)) {
@@ -117,7 +119,7 @@ void RunClassicScript(std::u16string_view source,
   }
   // A script of another origin that came without CORS has its errors muted,
   // as V8ScriptRunner gives its origin.
-  v8::ScriptOrigin origin(name, 0, 0,
+  v8::ScriptOrigin origin(name, start_line, start_column,
                           /*resource_is_shared_cross_origin=*/
                           !muted_errors);
   v8::Local<v8::Script> compiled;
@@ -223,11 +225,15 @@ class PendingScript::FetchClient final : public mitto::FetchClient {
 // static
 PendingScript* PendingScript::CreateInline(HTMLScriptElement& element,
                                            std::u16string source,
-                                           GURL source_url) {
+                                           GURL source_url,
+                                           int start_line,
+                                           int start_column) {
   PendingScript* const script = bindings::MakeGarbageCollected<PendingScript>(
       element, /*is_external=*/false);
   script->source_ = std::move(source);
   script->source_url_ = std::move(source_url);
+  script->start_line_ = start_line;
+  script->start_column_ = start_column;
   return script;
 }
 
@@ -367,6 +373,8 @@ void PendingScript::ExecuteScriptBlock() {
   const bool muted_errors = muted_errors_;
   std::u16string source = std::move(source_);
   const GURL source_url = source_url_;
+  const int start_line = start_line_;
+  const int start_column = start_column_;
   Window* const original_window = original_window_.Get();
   Document* const original_document = original_element_document_.Get();
   Dispose();
@@ -385,7 +393,7 @@ void PendingScript::ExecuteScriptBlock() {
     return;
   }
   document.PushCurrentScript(element);
-  RunClassicScript(source, source_url, muted_errors);
+  RunClassicScript(source, source_url, start_line, start_column, muted_errors);
   document.PopCurrentScript(element);
   if (is_external) {
     element->DispatchLoadEvent();

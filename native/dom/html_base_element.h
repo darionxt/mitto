@@ -7,7 +7,6 @@
 #define MITTO_DOM_HTML_BASE_ELEMENT_H_
 
 #include <string>
-#include <string_view>
 
 #include "mitto/dom/html_element.h"
 
@@ -30,7 +29,7 @@ class HTMLBaseElement final : public HTMLElement {
   InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
   void RemovedFrom(Node& insertion_point) override;
   // Element's.
-  void AttributeChanged(std::u16string_view name,
+  void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
 };

@@ -15,7 +15,6 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
-#include "mitto/dom/script_loader.h"
 #include "mitto/dom/text.h"
 #include "mitto/html/html_token.h"
 #include "mitto/html/html_tokenizer.h"
@@ -448,8 +447,11 @@ class HtmlTreeBuilder {
     // A script that the parser makes is parser-inserted, and one that the
     // fragment parser makes has already started, so that it never runs.
     if (element->HasHTMLTagName(u"script")) {
-      static_cast<HTMLScriptElement*>(element)->Loader().SetCreatedByParser(
-          *document_, /*already_started=*/IsFragment());
+      auto* const script = static_cast<HTMLScriptElement*>(element);
+      script->SetCreatedByParser(*document_);
+      if (IsFragment()) {
+        script->SetAlreadyStarted();
+      }
     }
     for (const HtmlAttribute& attribute : token.attributes) {
       element->SetAttributeWithoutValidation(attribute.name, attribute.value);

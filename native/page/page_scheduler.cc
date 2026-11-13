@@ -5,6 +5,7 @@
 #include "base/check.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/message_pump_type.h"
+#include "base/notreached.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 
 namespace mitto {
@@ -89,6 +90,9 @@ PageScheduler::FrameQueue QueueOf(TaskType type) {
       return FrameQueue::kUnpausable;
     case TaskType::kInternalInspector:
       return FrameQueue::kInspector;
+    case TaskType::kMainThreadTaskQueueCompositor:
+      // The main thread's, which TaskRunner() gives itself.
+      NOTREACHED();
   }
 }
 
@@ -224,13 +228,11 @@ scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::V8TaskRunner()
   return v8_queue_->task_runner();
 }
 
-scoped_refptr<base::SingleThreadTaskRunner>
-PageScheduler::CompositorTaskRunner() const {
-  return compositor_queue_->task_runner();
-}
-
 scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::TaskRunner(
     TaskType type) {
+  if (type == TaskType::kMainThreadTaskQueueCompositor) {
+    return compositor_queue_->task_runner();
+  }
   return frame_queues_[static_cast<size_t>(QueueOf(type))]->task_runner();
 }
 

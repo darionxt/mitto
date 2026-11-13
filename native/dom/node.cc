@@ -58,6 +58,23 @@ bool CheckReferenceChildParent(const Node& parent,
   return true;
 }
 
+// The nodes that inserting `nodes` inserts: a document fragment's children in
+// its place.
+NodeVector ChildrenOfFragments(const NodeVector& nodes) {
+  NodeVector result;
+  for (const cppgc::Persistent<Node>& node : nodes) {
+    if (!node->IsDocumentFragmentNode()) {
+      result.push_back(node);
+      continue;
+    }
+    for (Node* child = node->FirstChild(); child;
+         child = child->NextSibling()) {
+      result.emplace_back(child);
+    }
+  }
+  return result;
+}
+
 // Blink's Document::CanAcceptChild(): what a document can hold, one element
 // and one doctype, the doctype first.
 bool DocumentCanAcceptChildren(const Document& document,
@@ -69,6 +86,7 @@ bool DocumentCanAcceptChildren(const Document& document,
       old_child->GetNodeType() == nodes[0]->GetNodeType()) {
     return true;
   }
+  const NodeVector inserted = ChildrenOfFragments(nodes);
   int doctypes = 0;
   int elements = 0;
   bool doctype_after_reference = false;
@@ -91,7 +109,7 @@ bool DocumentCanAcceptChildren(const Document& document,
       element_after_reference = saw_reference;
     }
   }
-  for (const cppgc::Persistent<Node>& node : nodes) {
+  for (const cppgc::Persistent<Node>& node : inserted) {
     switch (node->GetNodeType()) {
       case Node::kCommentNode:
       case Node::kProcessingInstructionNode:
@@ -159,8 +177,7 @@ bool AreEqualNodes(const Node& a, const Node& b) {
         return false;
       }
       for (const Element::Attribute& attribute : element_a.attributes()) {
-        const std::optional<std::u16string> other =
-            element_b.GetAttribute(attribute.name);
+        const std::u16string* other = element_b.FindAttribute(attribute.name);
         if (!other || *other != attribute.value) {
           return false;
         }
@@ -208,7 +225,7 @@ void Node::Trace(cppgc::Visitor* visitor) const {
 }
 
 std::u16string Node::BaseURI() const {
-  return base::UTF8ToUTF16(GetDocument().BaseURL().spec());
+  return base::UTF8ToUTF16(GetDocument().BaseUrl().spec());
 }
 
 NodeList* Node::ChildNodes() {
@@ -259,7 +276,7 @@ void Node::SetNodeValue(const std::optional<std::u16string>& value,
 }
 
 std::optional<std::u16string> Node::TextContentForBinding() const {
-  if (IsElementNode()) {
+  if (IsElementNode() || IsDocumentFragmentNode()) {
     return DescendantTextContent();
   }
   return NodeValue();
@@ -267,7 +284,7 @@ std::optional<std::u16string> Node::TextContentForBinding() const {
 
 void Node::SetTextContentForBinding(const std::optional<std::u16string>& value,
                                     bindings::ExceptionState& exception_state) {
-  if (!IsElementNode()) {
+  if (!IsElementNode() && !IsDocumentFragmentNode()) {
     SetNodeValue(value, exception_state);
     return;
   }
@@ -325,6 +342,7 @@ Node* Node::Clone(Document& document, bool deep) const {
       copy->ParserAppendChild(child->Clone(children_document, true));
     }
   }
+  CloningSteps(*copy, deep);
   return copy;
 }
 
@@ -363,8 +381,63 @@ bool Node::Contains(Node* other) const {
   return other && IsInclusiveAncestorOf(*other);
 }
 
+std::optional<std::u16string> Node::LookupPrefix(
+    const std::optional<std::u16string>& namespace_uri) const {
+  // Blink's Node::lookupPrefix().
+  if (!namespace_uri || namespace_uri->empty()) {
+    return std::nullopt;
+  }
+  const Element* context = nullptr;
+  switch (GetNodeType()) {
+    case kElementNode:
+      context = static_cast<const Element*>(this);
+      break;
+    case kDocumentNode:
+      context = static_cast<const Document*>(this)->DocumentElement();
+      break;
+    case kDocumentFragmentNode:
+    case kDocumentTypeNode:
+      break;
+    default:
+      context = ParentElement();
+      break;
+  }
+  return context ? context->LocateNamespacePrefix(*namespace_uri)
+                 : std::nullopt;
+}
+
+std::optional<std::u16string> Node::LookupNamespaceURI(
+    const std::optional<std::u16string>& prefix) const {
+  // Blink's Node::lookupNamespaceURI(): an empty prefix is none.
+  const std::optional<std::u16string> locate =
+      prefix && prefix->empty() ? std::nullopt : prefix;
+  const Element* context = nullptr;
+  switch (GetNodeType()) {
+    case kElementNode:
+      context = static_cast<const Element*>(this);
+      break;
+    case kDocumentNode:
+      context = static_cast<const Document*>(this)->DocumentElement();
+      break;
+    case kDocumentFragmentNode:
+    case kDocumentTypeNode:
+      break;
+    default:
+      context = ParentElement();
+      break;
+  }
+  return context ? context->LocateNamespace(locate) : std::nullopt;
+}
+
+bool Node::IsDefaultNamespace(
+    const std::optional<std::u16string>& namespace_uri) const {
+  const std::optional<std::u16string> expected =
+      namespace_uri && namespace_uri->empty() ? std::nullopt : namespace_uri;
+  return LookupNamespaceURI(std::nullopt) == expected;
+}
+
 bool Node::ChildTypeAllowed(uint16_t type) const {
-  if (!IsElementNode()) {
+  if (!IsElementNode() && !IsDocumentFragmentNode()) {
     return false;
   }
   return type == kElementNode || type == kTextNode || type == kCommentNode ||
@@ -391,7 +464,7 @@ bool Node::EnsurePreInsertionValidity(
   if (!CheckReferenceChildParent(*this, next, old_child, exception_state)) {
     return false;
   }
-  for (const cppgc::Persistent<Node>& node : nodes) {
+  for (const cppgc::Persistent<Node>& node : ChildrenOfFragments(nodes)) {
     if (!ChildTypeAllowed(node->GetNodeType())) {
       exception_state.ThrowDOMException(
           kHierarchyRequestError,
@@ -408,15 +481,16 @@ void Node::InsertNodes(const NodeVector& nodes, Node* next) {
   // Blink's ContainerNode::InsertNodeVector(): each node goes in, and is told
   // so, before the next, and the children changed and post-connection steps
   // follow once all are in.
+  const NodeVector children = ChildrenOfFragments(nodes);
   NodeVector post_connection;
-  for (const cppgc::Persistent<Node>& node : nodes) {
+  for (const cppgc::Persistent<Node>& node : children) {
     if (Node* const parent = node->ParentNode()) {
       parent->ParserRemoveChild(*node);
     }
     LinkChild(*node, next);
     NotifyNodeInserted(*node, post_connection);
   }
-  DidInsertNodes(nodes, post_connection, /*by_parser=*/false);
+  DidInsertNodes(children, post_connection, /*by_parser=*/false);
 }
 
 Node* Node::InsertBefore(Node* node,
@@ -551,6 +625,15 @@ NodeVector Node::ConvertNodeUnionsIntoNodes(
   NodeVector result;
   for (const bindings::NodeOrDOMString& item : nodes) {
     if (Node* const* node = std::get_if<Node*>(&item)) {
+      if ((*node)->IsDocumentFragmentNode()) {
+        // A fragment gives its children, which leave it, as in Blink.
+        const cppgc::Persistent<Node> fragment(*node);
+        while (Node* const child = fragment->FirstChild()) {
+          result.emplace_back(child);
+          fragment->ParserRemoveChild(*child);
+        }
+        continue;
+      }
       result.emplace_back(*node);
     } else {
       result.emplace_back(
@@ -803,8 +886,12 @@ void Node::SetTreeDocument(Document& document) {
   if (document_ == &document) {
     return;
   }
+  const cppgc::Persistent<Document> old_document(document_.Get());
   for (Node* node = this; node; node = node->NextInTree(this)) {
     node->document_ = &document;
+  }
+  for (Node* node = this; node; node = node->NextInTree(this)) {
+    node->DidMoveToNewDocument(*old_document);
   }
 }
 

@@ -10,7 +10,6 @@
 
 #include <optional>
 #include <string>
-#include <string_view>
 
 #include "mitto/dom/html_element.h"
 #include "v8/include/cppgc/member.h"
@@ -44,6 +43,22 @@ class HTMLScriptElement final : public HTMLElement {
   // HTMLScriptElement.supports(): the script types Chrome runs.
   static bool Supports(const std::u16string& type);
 
+  // What the parser tells a script element before it inserts it, as Blink's
+  // CreateElementFlags and ScriptLoader keep it.
+  //
+  // The script is parser-inserted, with `parser_document` as its parser
+  // document and no force async.
+  void SetCreatedByParser(Document& parser_document);
+  // The script never runs: one that the fragment parser makes, or a copy of
+  // one that has run.
+  void SetAlreadyStarted();
+  // Where the script's text starts in its document, a zero-based line and
+  // column, as Blink's TextPosition: the offsets of an inline script's
+  // errors.
+  void SetStartPosition(int line, int column);
+  int StartLine() const { return start_line_; }
+  int StartColumn() const { return start_column_; }
+
   // What the DOM, the parser and the Page use.
   ScriptLoader& Loader() const { return *loader_; }
   // HTMLScriptElement::IsPotentiallyRenderBlocking(): blocking="render", or a
@@ -60,7 +75,7 @@ class HTMLScriptElement final : public HTMLElement {
                        Node& child,
                        bool by_parser) override;
   // Element's.
-  void AttributeChanged(std::u16string_view name,
+  void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
 
@@ -69,6 +84,8 @@ class HTMLScriptElement final : public HTMLElement {
 
  private:
   cppgc::Member<ScriptLoader> loader_;
+  int start_line_ = 0;
+  int start_column_ = 0;
 };
 
 }  // namespace mitto

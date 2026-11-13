@@ -70,6 +70,13 @@ _VIEW_TYPES = frozenset(
 _SPAN_MEMBERS = frozenset({"ArrayBuffer", "ArrayBufferView"})
 
 
+def _is_union_of_interfaces(idl_type: IdlType) -> bool:
+    """Whether the type is a union whose members are all interfaces, which a class returns as one object."""
+    return idl_type.kind is TypeKind.UNION and all(
+        member.kind is TypeKind.INTERFACE and not member.nullable for member in idl_type.members
+    )
+
+
 def _is_byte_span(idl_type: IdlType) -> bool:
     """Whether the type is a [PassAsSpan] BufferSource, which a class takes as its bytes."""
     return (
@@ -310,7 +317,7 @@ class TypeMapper:
             TypeKind.FROZEN_ARRAY,
             TypeKind.FLOATING_POINT,
         )
-        if idl_type.nullable and not nullable_ok:
+        if idl_type.nullable and not (nullable_ok or _is_union_of_interfaces(idl_type)):
             raise self._refuse(idl_type, where, "a return value")
         if kind is TypeKind.UNDEFINED:
             return "void"
@@ -354,6 +361,10 @@ class TypeMapper:
             # No object can be of an interface without a class, so the class can only give null, which Blink's classes
             # also give for a type that the IDL does not make nullable, as Document's rootElement does in an HTML
             # document.
+            return "bindings::ScriptWrappable*"
+        if _is_union_of_interfaces(idl_type):
+            # An object of one of the interfaces, or null, as Blink returns document.currentScript's
+            # HTMLOrSVGScriptElement: the class gives the object, whose wrapper is of its own interface.
             return "bindings::ScriptWrappable*"
         if kind is TypeKind.SEQUENCE:
             element = idl_type.members[0]
@@ -406,7 +417,7 @@ class TypeMapper:
             return f"ToV8String(isolate, {expression})"
         if kind is TypeKind.ANY:
             return expression
-        if kind is TypeKind.INTERFACE:
+        if kind is TypeKind.INTERFACE or _is_union_of_interfaces(idl_type):
             return f"ToV8(isolate, {expression})"
         if kind is TypeKind.SEQUENCE:
             if idl_type.members[0].kind is TypeKind.STRING and idl_type.members[0].name == "ByteString":

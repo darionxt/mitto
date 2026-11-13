@@ -134,12 +134,10 @@ ScriptLoader::ScriptTypeAtPrepare ScriptLoader::GetScriptTypeAtPrepare(
   return ScriptTypeAtPrepare::kInvalid;
 }
 
-void ScriptLoader::SetCreatedByParser(Document& document,
-                                      bool already_started) {
+void ScriptLoader::SetCreatedByParser(Document& document) {
   parser_inserted_ = true;
   parser_document_ = &document;
   force_async_ = false;
-  already_started_ = already_started;
 }
 
 void ScriptLoader::DidNotifySubtreeInsertionsToDocument() {
@@ -259,7 +257,7 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
       return nullptr;
     }
     is_external_script_ = true;
-    const GURL url = element_document.CompleteURL(stripped_src);
+    const GURL url = element_document.CompleteUrl(stripped_src);
     if (!url.is_valid()) {
       QueueErrorEvent(*element_);
       return nullptr;
@@ -301,10 +299,13 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         return nullptr;
       case ScriptTypeAtPrepare::kClassic:
         // DevTools names an inline script that the parser inserted after its
-        // document, and one that the DOM inserted after nothing.
+        // document, with its errors counted from where its text starts, and
+        // one that the DOM inserted after nothing, from its start.
         prepared_pending_script_ = PendingScript::CreateInline(
             *element_, source_text,
-            parser_inserted_ ? GURL(element_document.UrlForBinding()) : GURL());
+            parser_inserted_ ? GURL(element_document.UrlForBinding()) : GURL(),
+            parser_inserted_ ? element_->StartLine() : 0,
+            parser_inserted_ ? element_->StartColumn() : 0);
         break;
     }
   }

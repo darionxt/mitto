@@ -81,6 +81,9 @@ enum class TaskType {
   // next deferred script, at a very high priority.
   kInternalContinueScriptLoading,
   kInternalNavigationAssociated,
+  // The main thread's compositor queue, where a frame's rendering steps
+  // begin, at the normal priority while rendering is not starved.
+  kMainThreadTaskQueueCompositor,
 };
 
 class EventLoop {

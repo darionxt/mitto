@@ -62,9 +62,6 @@ class PageScheduler final : public EventLoop {
   const scoped_refptr<base::SingleThreadTaskRunner>& task_runner() const;
   // V8's own tasks, as gin posts them for Chrome's renderers.
   scoped_refptr<base::SingleThreadTaskRunner> V8TaskRunner() const;
-  // The compositor's queue, at the normal priority, where a frame's rendering
-  // steps begin.
-  scoped_refptr<base::SingleThreadTaskRunner> CompositorTaskRunner() const;
 
   // EventLoop:
   scoped_refptr<base::SingleThreadTaskRunner> TaskRunner(

@@ -13,6 +13,7 @@
 #include "mitto/bindings/v8_document.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
@@ -24,8 +25,12 @@
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/mathml_element.h"
 #include "mitto/dom/permissions_policy.h"
+#include "mitto/dom/qualified_name.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_element_factory.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
@@ -36,35 +41,6 @@
 namespace mitto {
 
 namespace {
-
-// Blink's IsValidElementName(), the DOM standard's valid element local name.
-bool IsValidElementName(std::u16string_view name) {
-  if (name.empty()) {
-    return false;
-  }
-  const auto is_ascii_alpha = [](char16_t c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-  };
-  if (is_ascii_alpha(name[0])) {
-    for (const char16_t c : name.substr(1)) {
-      if (c == 0 || c == ' ' || c == '\t' || c == '\n' || c == '\f' ||
-          c == '\r' || c == '/' || c == '>') {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (name[0] < 0x80 && name[0] != ':' && name[0] != '_') {
-    return false;
-  }
-  for (const char16_t c : name.substr(1)) {
-    if (!is_ascii_alpha(c) && !(c >= '0' && c <= '9') && c != '-' && c != '.' &&
-        c != ':' && c != '_' && c < 0x80) {
-      return false;
-    }
-  }
-  return true;
-}
 
 void ThrowInvalidTagName(const std::u16string& name,
                          bindings::ExceptionState& exception_state) {
@@ -132,6 +108,8 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(feature_policy_);
   visitor->Trace(script_runner_);
   current_script_stack_.Trace(visitor);
+  visitor->Trace(template_document_);
+  visitor->Trace(template_document_host_);
 }
 
 mitto::Location* Document::Location() const {
@@ -413,10 +391,67 @@ Text* Document::CreateTextNode(const std::u16string& data) {
   return Text::Create(*this, data);
 }
 
+DocumentFragment* Document::CreateDocumentFragment() {
+  return DocumentFragment::Create(*this);
+}
+
+Element* Document::CreateElementNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    bindings::ExceptionState& exception_state) {
+  // Blink's CreateQualifiedName(), then CreateRawElement().
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kElement,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+}
+
+Element* Document::CreateElementNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    const bindings::DOMStringOrElementCreationOptions& options,
+    bindings::ExceptionState& exception_state) {
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kElement,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  // The options name a custom element registry or a customized built-in
+  // element, which need definitions that the Runtime, without custom
+  // elements, never has. Blink then checks the whole name.
+  if (!IsValidElementLocalName(qualified_name)) {
+    ThrowInvalidTagName(qualified_name, exception_state);
+    return nullptr;
+  }
+  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+}
+
 Element* Document::CreateElementForBinding(
     const std::u16string& local_name,
     bindings::ExceptionState& exception_state) {
-  if (!IsValidElementName(local_name)) {
+  if (!IsValidElementLocalName(local_name)) {
     ThrowInvalidTagName(local_name, exception_state);
     return nullptr;
   }
@@ -456,10 +491,31 @@ Element* Document::CreateElement(
     const std::optional<std::u16string>& namespace_uri,
     const std::optional<std::u16string>& prefix,
     const std::u16string& local_name) {
-  if (namespace_uri == html_names::kXhtmlNamespace && !prefix) {
-    return CreateHTMLElement(*this, local_name);
+  Element* element = nullptr;
+  if (namespace_uri == html_names::kXhtmlNamespace) {
+    element = CreateHTMLElement(*this, local_name);
+  } else if (namespace_uri == html_names::kSvgNamespace) {
+    element = CreateSVGElement(*this, local_name);
+  } else if (namespace_uri == html_names::kMathMlNamespace) {
+    element = MathMLElement::Create(*this, local_name);
+  } else {
+    return Element::Create(*this, namespace_uri, prefix, local_name);
   }
-  return Element::Create(*this, namespace_uri, prefix, local_name);
+  if (prefix) {
+    element->SetPrefixForCreateElementNS(prefix);
+  }
+  return element;
+}
+
+Document& Document::EnsureTemplateDocument() {
+  if (template_document_host_) {
+    return *this;
+  }
+  if (!template_document_) {
+    template_document_ = is_html_ ? CreateHTML() : Create();
+    template_document_->template_document_host_ = this;
+  }
+  return *template_document_;
 }
 
 Node* Document::CloneWithoutChildren(Document& document) const {
@@ -478,16 +534,15 @@ std::u16string Document::NodeName() const {
 
 void Document::SetUrl(std::u16string url) {
   url_ = std::move(url);
-  UpdateBaseURL();
+  UpdateBaseUrl();
 }
 
-// Upstream: third_party/blink/renderer/core/dom/document.cc
-const GURL& Document::BaseURL() const {
+const GURL& Document::BaseUrl() const {
   static const base::NoDestructor<GURL> kBlank("about:blank");
   return base_url_.is_empty() ? *kBlank : base_url_;
 }
 
-GURL Document::CompleteURL(std::u16string_view url) const {
+GURL Document::CompleteUrl(std::u16string_view url) const {
   // A document with no base URL resolves only an absolute URL.
   return base_url_.is_valid() ? base_url_.Resolve(url) : GURL(url);
 }
@@ -509,17 +564,16 @@ void Document::ProcessBaseElement() {
     const std::u16string_view stripped =
         base::TrimString(*href, u" \t\n\f\r", base::TRIM_ALL);
     if (!stripped.empty()) {
-      base_element_url = FallbackBaseURL().Resolve(stripped);
+      base_element_url = FallbackBaseUrl().Resolve(stripped);
       // A URL that is not valid keeps what it was given, as a KURL does.
       if (!base_element_url.is_valid()) {
         base_element_url = GURL(stripped);
       }
     }
   }
-  if (!base_element_url.is_empty() &&
-      (base_element_url.SchemeIs("data") ||
-       base_element_url.SchemeIs("javascript")) &&
-      window_) {
+  const bool data_or_javascript = base_element_url.SchemeIs("data") ||
+                                  base_element_url.SchemeIs("javascript");
+  if (data_or_javascript && window_) {
     window_->AddConsoleMessage(
         ConsoleLevel::kError,
         base::StrCat({"'", base_element_url.scheme(),
@@ -530,18 +584,14 @@ void Document::ProcessBaseElement() {
   }
   // The HTML Standard's frozen base URL: the fallback base URL for a URL of
   // data or javascript, or for a document whose scripts cannot run.
-  if (!base_element_url.SchemeIs("data") &&
-      !base_element_url.SchemeIs("javascript") && window_) {
-    base_element_url_ = base_element_url;
-  } else {
-    base_element_url_ = FallbackBaseURL();
-  }
-  UpdateBaseURL();
+  base_element_url_ =
+      !data_or_javascript && window_ ? base_element_url : FallbackBaseUrl();
+  UpdateBaseUrl();
 }
 
-void Document::UpdateBaseURL() {
+void Document::UpdateBaseUrl() {
   base_url_ =
-      !base_element_url_.is_empty() ? base_element_url_ : FallbackBaseURL();
+      !base_element_url_.is_empty() ? base_element_url_ : FallbackBaseUrl();
   if (!base_url_.is_valid()) {
     base_url_ = GURL();
   }
@@ -555,7 +605,7 @@ DocumentScriptRunner& Document::GetScriptRunner() {
   return *script_runner_;
 }
 
-HTMLScriptElement* Document::CurrentScriptForBinding() const {
+bindings::ScriptWrappable* Document::CurrentScriptForBinding() const {
   return current_script_stack_.empty() ? nullptr : current_script_stack_.back();
 }
 

@@ -31,6 +31,7 @@ namespace mitto {
 
 class Comment;
 class CookieJar;
+class DocumentFragment;
 class CustomElementRegistry;
 class DocumentScriptRunner;
 class DocumentType;
@@ -134,16 +135,26 @@ class Document : public Node {
   // from.
   PermissionsPolicy* FeaturePolicy();
   Comment* CreateComment(const std::u16string& data);
+  DocumentFragment* CreateDocumentFragment();
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);
   Element* CreateElementForBinding(
       const std::u16string& local_name,
       const bindings::DOMStringOrElementCreationOptions& options,
       bindings::ExceptionState& exception_state);
+  Element* CreateElementNS(const std::optional<std::u16string>& namespace_uri,
+                           const std::u16string& qualified_name,
+                           bindings::ExceptionState& exception_state);
+  Element* CreateElementNS(
+      const std::optional<std::u16string>& namespace_uri,
+      const std::u16string& qualified_name,
+      const bindings::DOMStringOrElementCreationOptions& options,
+      bindings::ExceptionState& exception_state);
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
-  // The script element whose classic script runs, and null outside one.
-  HTMLScriptElement* CurrentScriptForBinding() const;
+  // The script element whose classic script runs, and null outside one: an
+  // HTMLOrSVGScriptElement, as the bindings return a union of interfaces.
+  bindings::ScriptWrappable* CurrentScriptForBinding() const;
 
   // Node's.
   uint16_t GetNodeType() const override;
@@ -172,13 +183,20 @@ class Document : public Node {
   // interactive and complete, as Blink's Document::SetReadyState() does.
   void SetReadiness(Readiness readiness);
   // An element of the class that its namespace and name call for, as Blink's
-  // factories make it: for the HTML namespace, the HTML Standard's interface
-  // for the name, or HTMLElement while the Runtime lacks that interface.
+  // Document::CreateRawElement() makes it: for the HTML namespace, the HTML
+  // Standard's interface for the name, or HTMLElement while the Runtime lacks
+  // that interface; for the SVG namespace, the interface of SVG for the name,
+  // or SVGElement for a name it does not know; for MathML, MathMLElement;
+  // and otherwise an Element. The tree builder and createElementNS() make
+  // every element through it.
   Element* CreateElement(const std::optional<std::u16string>& namespace_uri,
                          const std::optional<std::u16string>& prefix,
                          const std::u16string& local_name);
-  // When the document was made, as Blink's Document::GetStartTime().
-  base::TimeTicks StartTime() const { return start_time_; }
+  // The document that owns the contents of this document's template
+  // elements: a new document of the same kind with no window, made the first
+  // time one asks, and the document itself for such a document, as Blink's
+  // EnsureTemplateDocument().
+  Document& EnsureTemplateDocument();
 
   // The URLs a document resolves, as Blink's Document has them.
   //
@@ -186,14 +204,17 @@ class Document : public Node {
   // base element with an href in tree order, else the fallback base URL. A
   // base URL that is not valid is none, and about:blank for those who read
   // it.
-  const GURL& BaseURL() const;
-  // `url` parsed against the base URL.
-  GURL CompleteURL(std::u16string_view url) const;
+  const GURL& BaseUrl() const;
+  // Blink's Document::CompleteURL(): `url` parsed against the base URL, which
+  // every URL that the document resolves goes through.
+  GURL CompleteUrl(std::u16string_view url) const;
   // The document's URL, as no frame gives a document of a Page another.
-  GURL FallbackBaseURL() const { return GURL(url_); }
+  GURL FallbackBaseUrl() const { return GURL(url_); }
   // Blink's Document::ProcessBaseElement(), once a base element comes, goes,
   // or changes its href.
   void ProcessBaseElement();
+  // When the document was made, as Blink's Document::GetStartTime().
+  base::TimeTicks StartTime() const { return start_time_; }
 
   // What the document's scripts use.
   //
@@ -221,12 +242,11 @@ class Document : public Node {
 
  private:
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
+  // Blink's Document::UpdateBaseURL().
+  void UpdateBaseUrl();
 
   HTMLCollection* Collection(cppgc::Member<HTMLCollection>& cached,
                              HTMLCollection::Type type);
-
-  // Blink's Document::UpdateBaseURL().
-  void UpdateBaseURL();
 
   const bool is_html_;
   const base::TimeTicks start_time_ = base::TimeTicks::Now();
@@ -248,6 +268,9 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  cppgc::Member<Document> template_document_;
+  // The document whose template document this is.
+  cppgc::Member<Document> template_document_host_;
   // The frozen base URL of the first base element with an href, empty for
   // none, and the base URL that it gives, empty for one that is not valid.
   GURL base_element_url_;

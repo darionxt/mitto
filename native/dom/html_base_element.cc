@@ -28,7 +28,7 @@ std::u16string HTMLBaseElement::Href() const {
   }
   const std::u16string_view stripped =
       base::TrimString(*value, u" \t\n\f\r", base::TRIM_ALL);
-  const GURL url = GetDocument().FallbackBaseURL().Resolve(stripped);
+  const GURL url = GetDocument().FallbackBaseUrl().Resolve(stripped);
   if (!url.is_valid()) {
     return std::u16string(stripped);
   }
@@ -55,11 +55,14 @@ void HTMLBaseElement::RemovedFrom(Node& insertion_point) {
   }
 }
 
-void HTMLBaseElement::AttributeChanged(std::u16string_view name,
+void HTMLBaseElement::AttributeChanged(const QualifiedName& name,
                                        const std::u16string* old_value,
                                        const std::u16string* new_value) {
   HTMLElement::AttributeChanged(name, old_value, new_value);
-  if ((name == u"href" || name == u"target") && IsConnected()) {
+  // HTMLBaseElement::ParseAttribute(): href and target, of no namespace.
+  if (!name.namespace_uri &&
+      (name.local_name == u"href" || name.local_name == u"target") &&
+      IsConnected()) {
     GetDocument().ProcessBaseElement();
   }
 }

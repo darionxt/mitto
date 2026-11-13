@@ -56,10 +56,14 @@ std::string ElidedUrl(const GURL& url);
 class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
  public:
   // An inline script of `element`, which is ready, whose errors name
-  // `source_url`, empty for a script that the parser did not insert.
+  // `source_url`, empty for a script that the parser did not insert, and
+  // count lines and columns from `start_line` and `start_column`, where its
+  // text starts in the document.
   static PendingScript* CreateInline(HTMLScriptElement& element,
                                      std::u16string source,
-                                     GURL source_url);
+                                     GURL source_url,
+                                     int start_line,
+                                     int start_column);
   // `element`'s script at `url`, which this fetches through its window's
   // Fetcher, as a script that blocks rendering if `render_blocking`, and
   // checks against `integrity`.
@@ -127,6 +131,8 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
   base::OnceClosure on_ready_;
   std::u16string source_;
   GURL source_url_;
+  int start_line_ = 0;
+  int start_column_ = 0;
   // Whether it came from another origin without CORS, whose errors scripts
   // do not see.
   bool muted_errors_ = false;

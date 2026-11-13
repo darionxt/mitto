@@ -54,7 +54,7 @@ std::u16string HTMLScriptElement::Src() const {
   }
   const std::u16string stripped(
       base::TrimString(*value, u" \t\n\f\r", base::TRIM_ALL));
-  const GURL url = GetDocument().CompleteURL(stripped);
+  const GURL url = GetDocument().CompleteUrl(stripped);
   return url.is_valid() ? base::UTF8ToUTF16(url.spec()) : *value;
 }
 
@@ -96,6 +96,19 @@ void HTMLScriptElement::SetScriptTextContentForBinding(
 bool HTMLScriptElement::Supports(const std::u16string& type) {
   return type == u"classic" || type == u"module" || type == u"importmap" ||
          type == u"speculationrules" || type == u"webbundle";
+}
+
+void HTMLScriptElement::SetCreatedByParser(Document& parser_document) {
+  loader_->SetCreatedByParser(parser_document);
+}
+
+void HTMLScriptElement::SetAlreadyStarted() {
+  loader_->SetAlreadyStarted();
+}
+
+void HTMLScriptElement::SetStartPosition(int line, int column) {
+  start_line_ = line;
+  start_column_ = column;
 }
 
 bool HTMLScriptElement::IsPotentiallyRenderBlocking() const {
@@ -145,14 +158,17 @@ void HTMLScriptElement::ChildrenChanged(ChildrenChangeType type,
                            type == ChildrenChangeType::kNonElementInserted);
 }
 
-void HTMLScriptElement::AttributeChanged(std::u16string_view name,
+void HTMLScriptElement::AttributeChanged(const QualifiedName& name,
                                          const std::u16string* old_value,
                                          const std::u16string* new_value) {
   HTMLElement::AttributeChanged(name, old_value, new_value);
-  // HTMLScriptElement::ParseAttribute().
-  if (name == u"src") {
+  // HTMLScriptElement::ParseAttribute(), for attributes of no namespace.
+  if (name.namespace_uri) {
+    return;
+  }
+  if (name.local_name == u"src") {
     loader_->HandleSourceAttribute(new_value ? *new_value : std::u16string());
-  } else if (name == u"async") {
+  } else if (name.local_name == u"async") {
     loader_->HandleAsyncAttribute();
   }
 }

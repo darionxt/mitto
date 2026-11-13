@@ -97,7 +97,7 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     // The API base URL: the document's base URL.
     const std::u16string& input_string = std::get<std::u16string>(input);
     const GURL parsed =
-        Window::Current().GetDocument().CompleteURL(input_string);
+        Window::Current().GetDocument().CompleteUrl(input_string);
     if (!parsed.is_valid()) {
       exception_state.ThrowTypeError(base::StrCat(
           {"Failed to parse URL from ", base::UTF16ToUTF8(input_string)}));

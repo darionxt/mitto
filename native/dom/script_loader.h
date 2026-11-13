@@ -57,10 +57,10 @@ class ScriptLoader final : public cppgc::GarbageCollected<ScriptLoader> {
       const std::optional<std::u16string>& language);
 
   // The parser makes its script elements parser-inserted, with `document`
-  // as their parser document and no force async. One that the fragment
-  // parser makes has already started, so it never runs.
-  void SetCreatedByParser(Document& document, bool already_started);
-  // A copy of a script that has already started has too.
+  // as their parser document and no force async.
+  void SetCreatedByParser(Document& document);
+  // One that the fragment parser makes has already started, so it never
+  // runs, and so has a copy of a script that has already started.
   void SetAlreadyStarted() { already_started_ = true; }
 
   bool IsParserInserted() const { return parser_inserted_; }

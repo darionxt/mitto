@@ -21,6 +21,7 @@
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_span_element.h"
 #include "mitto/dom/html_style_element.h"
+#include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_title_element.h"
 #include "mitto/dom/html_ulist_element.h"
 #include "mitto/dom/html_unknown_element.h"
@@ -201,6 +202,9 @@ HTMLElement* CreateHTMLElement(Document& document,
   }
   if (name == u"li") {
     return HTMLLIElement::Create(document);
+  }
+  if (name == u"template") {
+    return HTMLTemplateElement::Create(document);
   }
   if (name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6') {
     return HTMLHeadingElement::Create(document, local_name);
