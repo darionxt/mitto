@@ -5,6 +5,8 @@
 #include "base/check.h"
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/types/to_address.h"
 #include "mitto/encoding/text_codec_cjk.h"
 #include "mitto/encoding/text_codec_utf16.h"
@@ -100,6 +102,76 @@ size_t DecodeToBuffer(UConverter* converter,
   return static_cast<size_t>(target_pointer - target.data());
 }
 
+// Writes what `handling` gives for a code point that the converter lacks.
+// Otherwise, as for an invalid code point such as a lone surrogate, it does
+// what ICU's escape callback does, which writes "%UD800" for U+D800.
+void FormatEscapedEntityCallback(const void* context,
+                                 UConverterFromUnicodeArgs* from_u_args,
+                                 const UChar* code_units,
+                                 int32_t length,
+                                 UChar32 code_point,
+                                 UConverterCallbackReason reason,
+                                 UErrorCode* error,
+                                 UnencodableHandling handling) {
+  if (reason == UCNV_UNASSIGNED) {
+    *error = U_ZERO_ERROR;
+    const std::u16string entity = base::ASCIIToUTF16(
+        TextCodec::GetUnencodableReplacement(code_point, handling));
+    const char16_t* source = entity.data();
+    ucnv_cbFromUWriteUChars(from_u_args, &source,
+                            base::to_address(entity.end()), 0, error);
+  } else {
+    UCNV_FROM_U_CALLBACK_ESCAPE(context, from_u_args, code_units, length,
+                                code_point, reason, error);
+  }
+}
+
+void NumericEntityCallback(const void* context,
+                           UConverterFromUnicodeArgs* from_u_args,
+                           const UChar* code_units,
+                           int32_t length,
+                           UChar32 code_point,
+                           UConverterCallbackReason reason,
+                           UErrorCode* error) {
+  FormatEscapedEntityCallback(context, from_u_args, code_units, length,
+                              code_point, reason, error,
+                              UnencodableHandling::kXmlCharRef);
+}
+
+void CssEscapedEntityCallback(const void* context,
+                              UConverterFromUnicodeArgs* from_u_args,
+                              const UChar* code_units,
+                              int32_t length,
+                              UChar32 code_point,
+                              UConverterCallbackReason reason,
+                              UErrorCode* error) {
+  FormatEscapedEntityCallback(context, from_u_args, code_units, length,
+                              code_point, reason, error,
+                              UnencodableHandling::kCssEscape);
+}
+
+void UrlEscapedEntityCallback(const void* context,
+                              UConverterFromUnicodeArgs* from_u_args,
+                              const UChar* code_units,
+                              int32_t length,
+                              UChar32 code_point,
+                              UConverterCallbackReason reason,
+                              UErrorCode* error) {
+  FormatEscapedEntityCallback(context, from_u_args, code_units, length,
+                              code_point, reason, error,
+                              UnencodableHandling::kUrlEncodedCharRef);
+}
+
+void NotReachedEntityCallback(const void* context,
+                              UConverterFromUnicodeArgs* from_u_args,
+                              const UChar* code_units,
+                              int32_t length,
+                              UChar32 code_point,
+                              UConverterCallbackReason reason,
+                              UErrorCode* error) {
+  NOTREACHED();
+}
+
 }  // namespace
 
 void TextCodecIcu::ConverterCloser::operator()(UConverter* converter) const {
@@ -163,17 +235,24 @@ TextCodecIcu::TextCodecIcu(std::string_view canonical_name)
 
 TextCodecIcu::~TextCodecIcu() = default;
 
+void TextCodecIcu::CreateIcuConverter() {
+  DCHECK(!converter_);
+  UErrorCode error = U_ZERO_ERROR;
+  converter_.reset(ucnv_open(encoding_.c_str(), &error));
+  if (converter_) {
+    ucnv_setFallback(converter_.get(), true);
+  }
+}
+
 std::u16string TextCodecIcu::Decode(base::span<const uint8_t> data,
                                     FlushBehavior flush,
                                     bool stop_on_error,
                                     bool& saw_error) {
   if (!converter_) {
-    UErrorCode error = U_ZERO_ERROR;
-    converter_.reset(ucnv_open(encoding_.c_str(), &error));
+    CreateIcuConverter();
     if (!converter_) {
       return std::u16string();
     }
-    ucnv_setFallback(converter_.get(), true);
   }
 
   const ErrorCallbackSetter callback_setter(converter_.get(), stop_on_error);
@@ -198,6 +277,66 @@ std::u16string TextCodecIcu::Decode(base::span<const uint8_t> data,
     saw_error = true;
   }
   return result;
+}
+
+std::string TextCodecIcu::EncodeInternal(std::u16string_view text,
+                                         UnencodableHandling handling) {
+  UErrorCode error = U_ZERO_ERROR;
+  switch (handling) {
+    case UnencodableHandling::kXmlCharRef:
+      ucnv_setFromUCallBack(converter_.get(), NumericEntityCallback, nullptr,
+                            nullptr, nullptr, &error);
+      break;
+    case UnencodableHandling::kUrlEncodedCharRef:
+      ucnv_setFromUCallBack(converter_.get(), UrlEscapedEntityCallback, nullptr,
+                            nullptr, nullptr, &error);
+      break;
+    case UnencodableHandling::kCssEscape:
+      ucnv_setFromUCallBack(converter_.get(), CssEscapedEntityCallback, nullptr,
+                            nullptr, nullptr, &error);
+      break;
+    case UnencodableHandling::kNone:
+      // Only UTF-8 and UTF-16 take kNone, and ICU encodes neither here.
+      DCHECK(TextCodecUtf16::IsSupported(encoding_) ||
+             TextCodecUtf8::IsSupported(encoding_));
+      ucnv_setFromUCallBack(converter_.get(), NotReachedEntityCallback, nullptr,
+                            nullptr, nullptr, &error);
+      break;
+  }
+  DCHECK(U_SUCCESS(error));
+  if (U_FAILURE(error)) {
+    return std::string();
+  }
+
+  const base::span<const char16_t> input(text);
+  const char16_t* source = input.data();
+  std::string result;
+  std::array<char, kConversionBufferSize> buffer;
+  do {
+    char* target = buffer.data();
+    error = U_ZERO_ERROR;
+    ucnv_fromUnicode(converter_.get(), &target, base::to_address(buffer.end()),
+                     &source, base::to_address(input.end()), nullptr, true,
+                     &error);
+    const base::span<const char> encoded =
+        base::span(buffer).first(static_cast<size_t>(target - buffer.data()));
+    result.append(encoded.begin(), encoded.end());
+  } while (error == U_BUFFER_OVERFLOW_ERROR);
+  return result;
+}
+
+std::string TextCodecIcu::Encode(std::u16string_view text,
+                                 UnencodableHandling handling) {
+  if (text.empty()) {
+    return std::string();
+  }
+  if (!converter_) {
+    CreateIcuConverter();
+  }
+  if (!converter_) {
+    return std::string();
+  }
+  return EncodeInternal(text, handling);
 }
 
 }  // namespace mitto

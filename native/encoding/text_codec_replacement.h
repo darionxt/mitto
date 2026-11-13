@@ -1,7 +1,8 @@
 // The Encoding Standard's replacement encoding, as Blink's
 // TextCodecReplacement decodes it: one U+FFFD for the whole stream, if it has
 // any bytes. Its labels, such as iso-2022-kr, name encodings that a page must
-// not be decoded with. TextDecoder refuses it, as Blink's does.
+// not be decoded with. TextDecoder refuses it, as Blink's does. It encodes as
+// UTF-8, as Blink's, which is a UTF-8 codec with its own decoder.
 //
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_replacement.h
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_replacement.cc
@@ -12,6 +13,7 @@
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 
 #include "base/containers/span.h"
 #include "mitto/encoding/text_codec.h"
@@ -27,6 +29,8 @@ class TextCodecReplacement final : public TextCodec {
                         FlushBehavior flush,
                         bool stop_on_error,
                         bool& saw_error) override;
+  std::string Encode(std::u16string_view text,
+                     UnencodableHandling handling) override;
 
  private:
   bool replacement_error_returned_ = false;

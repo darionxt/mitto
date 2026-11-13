@@ -3,6 +3,7 @@
 import argparse
 import itertools
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,18 @@ from bindings_generator.runtime_features import read_features
 from bindings_generator.web_idl_reader import Definitions, read_database
 
 __all__ = ["main"]
+
+
+def _expand_response_files(argv: list[str]) -> list[str]:
+    """The arguments with each @FILE replaced by the arguments that the file holds, which GN writes for a response file
+    quoted as a Unix shell quotes them."""
+    expanded: list[str] = []
+    for argument in argv:
+        if argument.startswith("@"):
+            expanded += shlex.split(Path(argument[1:]).read_text(encoding="utf-8"))
+        else:
+            expanded.append(argument)
+    return expanded
 
 
 def _parse(argv: list[str]) -> argparse.Namespace:
@@ -47,7 +60,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True, help="where the C++ goes")
     parser.add_argument("--output", action="append", default=[], help="a file that GN expects in the output directory")
     parser.add_argument("--listing", type=Path, required=True, help="where the listing of every interface goes")
-    return parser.parse_args(argv)
+    return parser.parse_args(_expand_response_files(argv))
 
 
 def _check_feature_names(definitions: Definitions, names: set[str]) -> None:

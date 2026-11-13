@@ -11,6 +11,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_collection.h"
@@ -455,7 +456,8 @@ bool Node::EnsurePreInsertionValidity(
                                      next, old_child, exception_state);
   }
   for (const cppgc::Persistent<Node>& node : nodes) {
-    if (node->IsContainerNode() && node->IsInclusiveAncestorOf(*this)) {
+    if (node->IsContainerNode() &&
+        node->IsHostIncludingInclusiveAncestorOf(*this)) {
       exception_state.ThrowDOMException(
           kHierarchyRequestError, "The new child element contains the parent.");
       return false;
@@ -828,6 +830,22 @@ Node& Node::TreeRoot() const {
     node = node->ParentNode();
   }
   return const_cast<Node&>(*node);
+}
+
+bool Node::IsHostIncludingInclusiveAncestorOf(const Node& node) const {
+  for (const Node* ancestor = &node; ancestor;) {
+    if (ancestor == this) {
+      return true;
+    }
+    if (ancestor->ParentNode()) {
+      ancestor = ancestor->ParentNode();
+    } else if (ancestor->IsDocumentFragmentNode()) {
+      ancestor = static_cast<const DocumentFragment*>(ancestor)->Host();
+    } else {
+      ancestor = nullptr;
+    }
+  }
+  return false;
 }
 
 bool Node::IsInclusiveAncestorOf(const Node& node) const {
