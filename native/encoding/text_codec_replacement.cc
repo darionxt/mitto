@@ -3,6 +3,8 @@
 #include <memory>
 #include <string_view>
 
+#include "mitto/encoding/text_codec_utf8.h"
+
 namespace mitto {
 
 namespace {
@@ -39,6 +41,12 @@ std::u16string TextCodecReplacement::Decode(base::span<const uint8_t> data,
   replacement_error_returned_ = true;
   saw_error = true;
   return std::u16string(1, kReplacementCharacter);
+}
+
+std::string TextCodecReplacement::Encode(std::u16string_view text,
+                                         UnencodableHandling) {
+  // https://encoding.spec.whatwg.org/#replacement: the encoder is UTF-8's.
+  return EncodeUtf8(text);
 }
 
 }  // namespace mitto

@@ -285,6 +285,11 @@ std::u16string TextCodecUtf8::Decode(base::span<const uint8_t> bytes,
   return result;
 }
 
+std::string TextCodecUtf8::Encode(std::u16string_view text,
+                                  UnencodableHandling) {
+  return EncodeUtf8(text);
+}
+
 std::string EncodeUtf8(std::u16string_view text) {
   // At most three bytes for each code unit: a code point beyond the Basic
   // Multilingual Plane takes two code units and four bytes.
