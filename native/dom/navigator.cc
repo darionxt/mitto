@@ -7,6 +7,7 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_navigator.h"
 #include "mitto/dom/battery_manager.h"
+#include "mitto/dom/credentials_container.h"
 #include "mitto/dom/geolocation.h"
 #include "mitto/dom/keyboard.h"
 #include "mitto/dom/lock_manager.h"
@@ -85,6 +86,7 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(keyboard_);
   visitor->Trace(media_devices_object_);
   visitor->Trace(locks_);
+  visitor->Trace(credentials_);
 }
 
 uint64_t Navigator::HardwareConcurrency() const {
@@ -240,6 +242,13 @@ StorageManager* Navigator::Storage() {
     storage_ = StorageManager::Create();
   }
   return storage_.Get();
+}
+
+CredentialsContainer* Navigator::Credentials() {
+  if (!credentials_) {
+    credentials_ = CredentialsContainer::Create();
+  }
+  return credentials_.Get();
 }
 
 size_t Navigator::GeolocationTimerCount() const {

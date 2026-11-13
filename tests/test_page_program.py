@@ -1604,6 +1604,71 @@ def test_webkit_request_file_system_refuses_an_opaque_origin(session: _Session) 
     )
 
 
+_CREDENTIALS_CASES = Path(__file__).parent / "credentials_cases.js"
+_CREDENTIALS_AS_CHROME = Path(__file__).parent / "data" / "credentials_cases.json"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_credentials_get_gives_what_chrome_gives(session: _Session, host: str) -> None:
+    # tests/credentials_cases.js, in order, on a secure page on an IP address, which WebAuthn refuses, and on a domain,
+    # where a WebAuthn request waits in the browser's one slot: what Chrome 157 gave from a new profile.
+    session.start()
+    _load_policy_page(session, f"http://{host}:8722/")
+
+    threw, value = session.evaluate(_CREDENTIALS_CASES.read_text())
+
+    assert not threw, value
+    assert json.loads(json.loads(value)) == json.loads(_CREDENTIALS_AS_CHROME.read_text())[host]
+
+
+def test_an_abort_cancels_the_webauthn_request_that_the_browser_holds(session: _Session) -> None:
+    # AuthenticatorCommonImpl::Cancel() drops whichever request the browser holds: the one that waits rejects with
+    # ABORT_ERROR's exception, and the one whose signal aborted, which the browser refused as a second request, with its
+    # reason. A FedCM request has a pipe of its own, which its abort goes through.
+    session.start()
+    _load_policy_page(session, "http://localhost:8722/")
+    script = """(async () => {
+        const settled = (p) => p.then(String, (e) => String(e));
+        const challenge = {challenge: new Uint8Array(1)};
+        const held = settled(navigator.credentials.get({publicKey: challenge}));
+        const controller = new AbortController();
+        const second = settled(navigator.credentials.get({publicKey: challenge, signal: controller.signal}));
+        controller.abort("stop");
+        const fedcm = new AbortController();
+        const identity = settled(navigator.credentials.get({identity: {providers: [
+            {configURL: "https://idp.test/config.json", clientId: "x"}]}, signal: fedcm.signal}));
+        fedcm.abort("leave");
+        return [await held, await second, await identity];
+    })()"""
+
+    assert session.evaluate(script) == (
+        False,
+        json.dumps(["AbortError: Request has been aborted.", "stop", "leave"], separators=(",", ":")),
+    )
+
+
+def test_credentials_get_refuses_an_opaque_origin(session: _Session) -> None:
+    # about:blank, which the Page starts with, is a secure context with an opaque origin, which WebAuthn's browser
+    # refuses (OriginAllowedToMakeWebAuthnRequests()), and the digital credentials API before it asks for an activation.
+    session.start()
+    script = """Promise.all([
+        navigator.credentials.get({publicKey: {challenge: new Uint8Array(1)}}),
+        navigator.credentials.get({digital: {requests: []}}),
+    ].map((p) => p.then(String, (e) => e.name + ": " + e.message)))"""
+
+    assert session.evaluate(script) == (
+        False,
+        json.dumps(
+            [
+                "NotAllowedError: The current origin is an opaque origin and hence not allowed to access"
+                " 'PublicKeyCredential' objects.",
+                "NotAllowedError: The credential operation is not allowed in an opaque origin.",
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+
 def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(session: _Session) -> None:
     session.start()
     document = "﻿<p id=text>café 𝄞</p>".encode()

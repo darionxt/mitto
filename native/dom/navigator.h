@@ -36,6 +36,7 @@
 
 namespace mitto {
 
+class CredentialsContainer;
 class Geolocation;
 class Keyboard;
 class MediaDevices;
@@ -95,6 +96,9 @@ class Navigator final : public bindings::ScriptWrappable {
   mitto::Permissions* Permissions();
   mitto::Geolocation* Geolocation();
   StorageManager* Storage();
+  // The Credential Management API's container, [SameObject], made the first
+  // time a page asks.
+  CredentialsContainer* Credentials();
   // How many of navigator.geolocation's requests wait on a timer.
   size_t GeolocationTimerCount() const;
   // A new array each time, of kItemsLengthCap nulls: no gamepad is there.
@@ -134,6 +138,7 @@ class Navigator final : public bindings::ScriptWrappable {
   cppgc::Member<mitto::Keyboard> keyboard_;
   cppgc::Member<mitto::MediaDevices> media_devices_object_;
   cppgc::Member<mitto::LockManager> locks_;
+  cppgc::Member<CredentialsContainer> credentials_;
 };
 
 }  // namespace mitto
