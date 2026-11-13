@@ -865,7 +865,13 @@ NodeList* Node::QuerySelectorAll(const std::u16string& selectors,
   if (!query) {
     return nullptr;
   }
-  return NodeList::CreateStatic(query->QueryAll(*this));
+  const NodeVector found = query->QueryAll(*this);
+  std::vector<Node*> nodes;
+  nodes.reserve(found.size());
+  for (const cppgc::Persistent<Node>& node : found) {
+    nodes.push_back(node.Get());
+  }
+  return NodeList::CreateStatic(nodes);
 }
 
 HTMLCollection* Node::GetElementsByTagName(

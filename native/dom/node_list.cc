@@ -13,11 +13,11 @@ NodeList* NodeList::CreateChildNodes(Node* root) {
 }
 
 // static
-NodeList* NodeList::CreateStatic(const NodeVector& nodes) {
+NodeList* NodeList::CreateStatic(const std::vector<Node*>& nodes) {
   NodeList* const list =
       bindings::MakeGarbageCollected<NodeList>(Type::kStatic, nullptr);
-  for (const cppgc::Persistent<Node>& node : nodes) {
-    list->nodes_.push_back(node.Get());
+  for (Node* node : nodes) {
+    list->nodes_.push_back(node);
   }
   return list;
 }

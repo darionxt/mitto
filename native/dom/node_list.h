@@ -17,6 +17,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/heap_vector.h"
@@ -37,7 +38,7 @@ class NodeList : public bindings::ScriptWrappable {
   // The children of `root`.
   static NodeList* CreateChildNodes(Node* root);
   // `nodes`, which the list keeps as they are.
-  static NodeList* CreateStatic(const NodeVector& nodes);
+  static NodeList* CreateStatic(const std::vector<Node*>& nodes);
   // The HTML elements under `document` whose name attribute is `name`.
   static NodeList* CreateName(Node* document, const std::u16string& name);
   // An empty one, for a Known Gap that gives one.
