@@ -176,6 +176,30 @@ void AbortSignal::AddAlgorithm(Algorithm* algorithm) {
   last_algorithm_ = algorithm;
 }
 
+void AbortSignal::RemoveAlgorithm(Algorithm* algorithm) {
+  if (Aborted() || settled_) {
+    return;
+  }
+  CHECK(!running_abort_steps_);
+  Algorithm* previous = nullptr;
+  for (Algorithm* current = first_algorithm_.Get(); current;
+       previous = current, current = current->next_.Get()) {
+    if (current != algorithm) {
+      continue;
+    }
+    if (previous) {
+      previous->next_ = current->next_;
+    } else {
+      first_algorithm_ = current->next_;
+    }
+    if (last_algorithm_ == current) {
+      last_algorithm_ = previous;
+    }
+    current->next_ = nullptr;
+    return;
+  }
+}
+
 void AbortSignal::SignalAbort(std::optional<v8::Local<v8::Value>> reason) {
   CHECK(!IsComposite());
   if (Aborted()) {

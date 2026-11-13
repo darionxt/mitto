@@ -1647,6 +1647,31 @@ def test_an_abort_cancels_the_webauthn_request_that_the_browser_holds(session: _
     )
 
 
+def test_a_signal_lets_go_of_the_credential_requests_that_have_their_answer(session: _Session) -> None:
+    # Blink's ScopedAbortState takes a request's algorithm off its signal once the browser has answered, so a signal
+    # that outlives its requests, such as a page's one controller, holds none of them, nor their promises.
+    session.start(_with_features(v8_flags=["--expose-gc"]))
+    _load_policy_page(session, "http://127.0.0.1:8722/")
+    script = """(async () => {
+        const controller = new AbortController();
+        const refused = async () => {
+            const promise = navigator.credentials.get({publicKey: {challenge: new Uint8Array(1)},
+                signal: controller.signal});
+            const ref = new WeakRef(promise);
+            await promise.catch(() => {});
+            return ref;
+        };
+        const refs = [new WeakRef({}), await refused(), await refused(), await refused()];
+        for (let i = 0; i < 2; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            gc();
+        }
+        return [refs.map((ref) => ref.deref() === undefined), controller.signal.aborted];
+    })()"""
+
+    assert session.evaluate(script) == (False, json.dumps([[True, True, True, True], False], separators=(",", ":")))
+
+
 def test_credentials_get_refuses_an_opaque_origin(session: _Session) -> None:
     # about:blank, which the Page starts with, is a secure context with an opaque origin, which WebAuthn's browser
     # refuses (OriginAllowedToMakeWebAuthnRequests()), and the digital credentials API before it asks for an activation.

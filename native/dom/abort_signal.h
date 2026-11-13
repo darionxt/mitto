@@ -98,6 +98,11 @@ class AbortSignal : public EventTarget {
   // The DOM standard's "add an algorithm", which does nothing once the signal
   // has aborted or can no longer abort.
   void AddAlgorithm(Algorithm* algorithm);
+  // The DOM standard's "remove an algorithm", which a feature does once it no
+  // longer needs the signal, as Blink's ScopedAbortState does when its request
+  // completes, so that the signal lets go of it. It does nothing once the
+  // signal has aborted or can no longer abort.
+  void RemoveAlgorithm(Algorithm* algorithm);
   // "Signal abort", for a signal that is not composite: with no reason given,
   // an AbortError, as AbortController.abort() gives.
   void SignalAbort(std::optional<v8::Local<v8::Value>> reason);

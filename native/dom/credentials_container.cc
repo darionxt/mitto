@@ -382,10 +382,17 @@ class CredentialsContainer::Request final
   bool waiting() const { return waiting_; }
   void set_waiting(bool waiting) { waiting_ = waiting; }
   // Whether the browser's answer has come, which takes the request's
-  // algorithm off its signal, as Blink's ScopedAbortState goes with the
-  // callback.
+  // algorithm off its signal, as Blink's ScopedAbortState does once the
+  // callback has it, so that a signal that outlives the request does not hold
+  // it.
   bool answered() const { return answered_; }
-  void set_answered() { answered_ = true; }
+  void set_answered() {
+    answered_ = true;
+    if (signal_ && algorithm_) {
+      signal_->RemoveAlgorithm(algorithm_.Get());
+    }
+    algorithm_ = nullptr;
+  }
 
  private:
   v8::TracedReference<v8::Promise::Resolver> resolver_;
