@@ -989,7 +989,7 @@ def test_the_tree_builders_fuzz_build_adds_the_fuzz_builds_args_to_the_runtimes(
     export.write_args(export.RUNTIME_FUZZ, tmp_path)
 
     assert (tmp_path / "args.gn").read_text() == (
-        export.ARGS_GN.read_text() + export.RUNTIME_ARGS_GN.read_text() + export.FUZZ.args
+        export.ARGS_GN.read_text() + export.RUNTIME_ARGS_GN.read_text() + export.FUZZ.args + "v8_use_perfetto = true\n"
     )
     assert (export.RUNTIME_FUZZ.target, export.RUNTIME_FUZZ.output(export.LINUX)) == (
         "mitto/dom:html_tree_builder_fuzzer",
