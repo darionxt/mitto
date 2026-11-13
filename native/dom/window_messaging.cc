@@ -7,8 +7,7 @@
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
 // Upstream: third_party/blink/renderer/core/frame/dom_window.cc
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.cc
-// Upstream:
-// third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
 
 #include <optional>
 #include <string>

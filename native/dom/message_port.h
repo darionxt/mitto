@@ -15,8 +15,7 @@
 //
 // Upstream: third_party/blink/renderer/core/messaging/message_port.h
 // Upstream: third_party/blink/renderer/core/messaging/message_port.cc
-// Upstream:
-// third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
 // Upstream: mojo/public/cpp/bindings/lib/connector.cc
 
 #ifndef MITTO_DOM_MESSAGE_PORT_H_
