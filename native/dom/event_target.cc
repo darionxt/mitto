@@ -63,34 +63,45 @@ AbortSignal* SignalOf(
 }
 
 // The abort algorithm of a listener added with a signal: it removes the
-// listener, as Blink's binds removeEventListener() with the target and the
-// listener held weakly.
+// listener of its type, function and capture, as Blink's binds
+// removeEventListener() with them, whichever registration that is by then,
+// such as one that the page removed and added again without the signal.
+// Blink holds the listener weakly, and its AbortSignalRegistry keeps the
+// algorithm while the listener lives; this holds the function, so that it
+// removes such a registration whenever a collection runs in between.
 class RemoveListenerAlgorithm final : public AbortSignal::Algorithm {
  public:
-  RemoveListenerAlgorithm(EventTarget* target, EventListenerEntry* entry)
-      : target_(target), entry_(entry) {}
+  RemoveListenerAlgorithm(v8::Isolate* isolate,
+                          EventTarget* target,
+                          const std::u16string& type,
+                          v8::Local<v8::Object> callback,
+                          bool capture)
+      : target_(target),
+        type_(type),
+        callback_(isolate, callback),
+        capture_(capture) {}
 
   void Run() override {
     EventTarget* const target = target_.Get();
-    EventListenerEntry* const entry = entry_.Get();
-    if (!target || !entry) {
+    if (!target) {
       return;
     }
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
     const v8::HandleScope handle_scope(isolate);
-    target->RemoveListener(entry->type(), entry->callback(isolate),
-                           entry->capture());
+    target->RemoveListener(type_, callback_.Get(isolate), capture_);
   }
 
   void Trace(cppgc::Visitor* visitor) const override {
     AbortSignal::Algorithm::Trace(visitor);
     visitor->Trace(target_);
-    visitor->Trace(entry_);
+    visitor->Trace(callback_);
   }
 
  private:
   const cppgc::WeakMember<EventTarget> target_;
-  const cppgc::WeakMember<EventListenerEntry> entry_;
+  const std::u16string type_;
+  const v8::TracedReference<v8::Object> callback_;
+  const bool capture_;
 };
 
 bool FlattenCapture(
@@ -267,8 +278,8 @@ void EventTarget::AddEventListener(
   last_listener_ = entry;
   if (signal) {
     entry->set_signal(signal);
-    signal->AddAlgorithm(
-        bindings::MakeGarbageCollected<RemoveListenerAlgorithm>(this, entry));
+    signal->AddAlgorithm(bindings::MakeGarbageCollected<RemoveListenerAlgorithm>(
+        v8::Isolate::GetCurrent(), this, type, listener, flat.capture));
   }
   ListenersChanged(type);
 }

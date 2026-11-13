@@ -36,7 +36,7 @@ def program() -> Path:
     return Path(path)
 
 
-def _evaluate(program: Path, script: str) -> str:
+def _evaluate(program: Path, script: str, *flags: str) -> str:
     # The outcome of the script as a string, or what it threw, as tests/test_page_known_gaps.py writes it.
     wrapped = f"""(async () => {{
         try {{
@@ -48,7 +48,12 @@ def _evaluate(program: Path, script: str) -> str:
         }}
     }})()"""
     result = subprocess.run(
-        [program, "-"], input=wrapped, capture_output=True, encoding="utf-8", timeout=_TIMEOUT_SECONDS, check=False
+        [program, *flags, "-"],
+        input=wrapped,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
     )
     assert (result.returncode, result.stderr) == (0, "")
     return result.stdout.removesuffix("\n")
@@ -362,3 +367,32 @@ _AS_CHROME = {
 @pytest.mark.parametrize(("script", "chrome"), list(_AS_CHROME.values()), ids=list(_AS_CHROME))
 def test_an_abort_signal_does_what_chrome_does(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome
+
+
+# What a collection between the steps must not change: each gives what Chrome gave for the same script with no
+# collection, in the _AS_CHROME cases of the same names. gc() is V8's, which --expose-gc gives the Page program.
+_AFTER_A_COLLECTION = {
+    "a composite signal kept by its listener": (
+        "const c = new AbortController();"
+        " AbortSignal.any([c.signal]).addEventListener('abort', () => log.push('fired'));"
+        " gc(); c.abort(); return log.join()",
+        "value: fired",
+    ),
+    "a listener's signal from AbortSignal.any()": (
+        "const c = new AbortController(); const t = new EventTarget();"
+        " t.addEventListener('x', () => log.push('x'), {signal: AbortSignal.any([c.signal])});"
+        " gc(); c.abort(); t.dispatchEvent(new Event('x')); return log.length",
+        "value: 0",
+    ),
+    "the signal removes a listener added again without it": (
+        "const c = new AbortController(); const t = new EventTarget(); const f = () => log.push('f');"
+        " t.addEventListener('x', f, {signal: c.signal}); t.removeEventListener('x', f); gc();"
+        " t.addEventListener('x', f); gc(); c.abort(); t.dispatchEvent(new Event('x')); return log.length",
+        "value: 0",
+    ),
+}
+
+
+@pytest.mark.parametrize(("script", "chrome"), list(_AFTER_A_COLLECTION.values()), ids=list(_AFTER_A_COLLECTION))
+def test_a_collection_changes_nothing_a_signal_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script, "--js-flags=--expose-gc") == chrome

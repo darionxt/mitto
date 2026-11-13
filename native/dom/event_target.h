@@ -74,7 +74,7 @@ class EventListenerEntry final
 
   // The signal that removes it, which it keeps while the target keeps it, as
   // Blink's AbortSignalRegistry keeps the signal's algorithm while its
-  // listener lives.
+  // listener lives, so that a signal that only listeners reach stays.
   void set_signal(AbortSignal* signal);
 
  private:
