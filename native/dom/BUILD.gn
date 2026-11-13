@@ -2,6 +2,7 @@
 # built with the bindings that the generator writes for them, which call them,
 # and the tree builder of the HTML parser, which makes their nodes.
 
+import("//build/config/sanitizers/sanitizers.gni")
 import("//mitto/bindings/generated_files.gni")
 
 source_set("dom") {
@@ -326,5 +327,24 @@ executable("html_tree_builder_test") {
   # native/page/BUILD.gn.
   if (is_win) {
     configs -= [ "//build/config/compiler:cet_shadow_stack" ]
+  }
+}
+
+# Only the runtime-fuzz build loads this, so that no other build of the Runtime
+# reads //testing.
+if (use_libfuzzer) {
+  import("//testing/libfuzzer/fuzzer_test.gni")
+
+  # Feeds any markup to the tree builder, on V8's C++ heap as the test does.
+  fuzzer_test("html_tree_builder_fuzzer") {
+    sources = [ "//mitto/test/html_tree_builder_fuzzer.cc" ]
+    deps = [
+      ":dom",
+      "//base",
+      "//mitto/page:icu_data",
+      "//mitto/page:v8_snapshot",
+      "//third_party/icu",
+      "//v8",
+    ]
   }
 }
