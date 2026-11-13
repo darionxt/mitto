@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/functional/callback.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-forward.h"
 #include "v8/include/v8-local-handle.h"
@@ -45,6 +46,13 @@ v8::Local<v8::Object> PlainObject(
 void ResolveFromTask(v8::Isolate* isolate,
                      v8::Local<v8::Promise::Resolver> resolver,
                      v8::Local<v8::Value> value);
+
+// The same with what `make_value` gives in that task, which may run a page's
+// callback first, as Blink's answer to a request does.
+void ResolveFromTaskWith(
+    v8::Isolate* isolate,
+    v8::Local<v8::Promise::Resolver> resolver,
+    base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_value);
 
 // Rejects `resolver` from a task of its own, as ResolveFromTask() resolves,
 // with a DOMException of `name` and `message` that the task makes, so that its

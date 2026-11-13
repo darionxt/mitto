@@ -91,6 +91,10 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "CustomEvent"
+    file = "custom_event"
+  },
+  {
     name = "DOMException"
     file = "dom_exception"
   },
@@ -309,7 +313,7 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLElement"
     file = "html_element"
-    implemented = []
+    implemented = [ "autocapitalize" ]
   },
   {
     name = "HTMLHeadElement"
@@ -580,7 +584,11 @@ mitto_bindings_interfaces = [
     name = "Notification"
     file = "notification"
     made_by_known_gaps = true
-    implemented = [ "maxActions" ]
+    implemented = [
+      "maxActions",
+      "permission",
+      "requestPermission",
+    ]
   },
   {
     name = "Performance"

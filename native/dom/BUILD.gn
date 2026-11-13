@@ -23,6 +23,8 @@ source_set("dom") {
     "crypto.h",
     "custom_element_registry.cc",
     "custom_element_registry.h",
+    "custom_event.cc",
+    "custom_event.h",
     "document.cc",
     "document.h",
     "document_picture_in_picture.cc",
