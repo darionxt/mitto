@@ -10,6 +10,7 @@
 #include "mitto/bindings/v8_element.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
+#include "mitto/dom/dom_tree_version.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_tree_builder.h"
@@ -110,15 +111,18 @@ std::optional<size_t> Element::FindAttributeIndex(
 
 void Element::AppendAttributeInternal(const QualifiedName& name,
                                       const std::u16string& value) {
+  IncrementDomTreeVersion();
   attributes_.push_back({name, value});
 }
 
 void Element::SetAttributeValueInternal(size_t index,
                                         const std::u16string& value) {
+  IncrementDomTreeVersion();
   attributes_[index].value = value;
 }
 
 void Element::RemoveAttributeInternal(size_t index) {
+  IncrementDomTreeVersion();
   attributes_.erase(attributes_.begin() + index);
 }
 
@@ -472,23 +476,14 @@ void Element::SetOuterHTML(const std::u16string& html,
 Element* Element::Closest(const std::u16string& selectors,
                           bindings::ExceptionState& exception_state) {
   const std::optional<SelectorQuery> query =
-      SelectorQuery::Parse(selectors, exception_state);
-  if (!query) {
-    return nullptr;
-  }
-  for (Node* node = this; node && node->IsElementNode();
-       node = node->ParentNode()) {
-    if (query->Matches(static_cast<Element&>(*node))) {
-      return static_cast<Element*>(node);
-    }
-  }
-  return nullptr;
+      SelectorQuery::Parse(selectors, *this, exception_state);
+  return query ? query->Closest(*this) : nullptr;
 }
 
 bool Element::Matches(const std::u16string& selectors,
                       bindings::ExceptionState& exception_state) {
   const std::optional<SelectorQuery> query =
-      SelectorQuery::Parse(selectors, exception_state);
+      SelectorQuery::Parse(selectors, *this, exception_state);
   return query && query->Matches(*this);
 }
 

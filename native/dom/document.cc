@@ -9,6 +9,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
+#include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
@@ -22,12 +23,16 @@
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/mathml_element.h"
+#include "mitto/dom/node_iterator.h"
+#include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/qualified_name.h"
+#include "mitto/dom/range.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/svg_element.h"
 #include "mitto/dom/svg_element_factory.h"
 #include "mitto/dom/text.h"
+#include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
@@ -103,6 +108,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(feature_policy_);
   visitor->Trace(template_document_);
   visitor->Trace(template_document_host_);
+  visitor->Trace(traversals_);
 }
 
 mitto::Location* Document::Location() const {
@@ -478,6 +484,33 @@ Element* Document::GetElementById(const std::u16string& id) const {
     }
   }
   return nullptr;
+}
+
+NodeList* Document::GetElementsByName(const std::u16string& name) {
+  return EnsureNodeLists().NameNodeList(*this, name);
+}
+
+Range* Document::CreateRange() {
+  return Range::Create(*this);
+}
+
+NodeIterator* Document::CreateNodeIterator(Node* root,
+                                           uint32_t what_to_show,
+                                           v8::Local<v8::Object> filter) {
+  return NodeIterator::Create(root, what_to_show, filter);
+}
+
+TreeWalker* Document::CreateTreeWalker(Node* root,
+                                       uint32_t what_to_show,
+                                       v8::Local<v8::Object> filter) {
+  return TreeWalker::Create(root, what_to_show, filter);
+}
+
+AttachedTraversals& Document::Traversals() {
+  if (!traversals_) {
+    traversals_ = bindings::MakeGarbageCollected<AttachedTraversals>();
+  }
+  return *traversals_;
 }
 
 Element* Document::CreateElement(

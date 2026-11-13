@@ -22,12 +22,12 @@ class CharacterData : public Node {
 
   // The members of the interface.
   const std::u16string& Data() const { return data_; }
-  void SetData(const std::u16string& data) { data_ = data; }
+  void SetData(const std::u16string& data);
   uint32_t Length() const { return static_cast<uint32_t>(data_.size()); }
   std::u16string SubstringData(uint32_t offset,
                                uint32_t count,
                                bindings::ExceptionState& exception_state) const;
-  void AppendData(const std::u16string& data) { data_ += data; }
+  void AppendData(const std::u16string& data);
   void InsertData(uint32_t offset,
                   const std::u16string& data,
                   bindings::ExceptionState& exception_state);
@@ -44,10 +44,20 @@ class CharacterData : public Node {
   void SetNodeValue(const std::optional<std::u16string>& value,
                     bindings::ExceptionState& exception_state) override;
 
+  // Sets the data without moving the live ranges in it, for splitText() and
+  // normalize(), which move them themselves.
+  void SetDataWithoutUpdate(const std::u16string& data) { data_ = data; }
+
  protected:
   CharacterData(Document& document, const std::u16string& data);
 
  private:
+  // The DOM standard's "replace data", with `count` already cut to what the
+  // data holds after `offset`: the live ranges in the node move.
+  void ReplaceDataInternal(uint32_t offset,
+                           uint32_t count,
+                           const std::u16string& data);
+
   std::u16string data_;
 };
 

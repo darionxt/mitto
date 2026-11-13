@@ -3,6 +3,8 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/dom/attached_traversals.h"
+#include "mitto/dom/document.h"
 
 namespace mitto {
 
@@ -53,7 +55,7 @@ void CharacterData::InsertData(uint32_t offset,
   if (!ValidateOffsetCount(offset, 0, Length(), real_count, exception_state)) {
     return;
   }
-  data_.insert(offset, data);
+  ReplaceDataInternal(offset, 0, data);
 }
 
 void CharacterData::DeleteData(uint32_t offset,
@@ -64,7 +66,7 @@ void CharacterData::DeleteData(uint32_t offset,
                            exception_state)) {
     return;
   }
-  data_.erase(offset, real_count);
+  ReplaceDataInternal(offset, real_count, std::u16string());
 }
 
 void CharacterData::ReplaceData(uint32_t offset,
@@ -76,12 +78,31 @@ void CharacterData::ReplaceData(uint32_t offset,
                            exception_state)) {
     return;
   }
-  data_.replace(offset, real_count, data);
+  ReplaceDataInternal(offset, real_count, data);
 }
 
 void CharacterData::SetNodeValue(const std::optional<std::u16string>& value,
                                  bindings::ExceptionState& exception_state) {
-  data_ = value.value_or(std::u16string());
+  SetData(value.value_or(std::u16string()));
+}
+
+void CharacterData::SetData(const std::u16string& data) {
+  ReplaceDataInternal(0, Length(), data);
+}
+
+void CharacterData::AppendData(const std::u16string& data) {
+  ReplaceDataInternal(Length(), 0, data);
+}
+
+void CharacterData::ReplaceDataInternal(uint32_t offset,
+                                        uint32_t count,
+                                        const std::u16string& data) {
+  data_.replace(offset, count, data);
+  if (AttachedTraversals* const traversals =
+          GetDocument().ExistingTraversals()) {
+    traversals->DidReplaceText(*this, offset, count,
+                               static_cast<uint32_t>(data.size()));
+  }
 }
 
 std::optional<std::u16string> CharacterData::NodeValue() const {

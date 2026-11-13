@@ -40,6 +40,7 @@ class Element;
 class HTMLCollection;
 class Node;
 class NodeList;
+class NodeListsNodeData;
 
 // Nodes that C++ holds between allocations. A vector's buffer is not on the
 // C++ heap, where the collector would see its members, so each is persistent.
@@ -142,6 +143,19 @@ class Node : public EventTarget {
   void Remove(bindings::ExceptionState& exception_state);
   Element* QuerySelector(const std::u16string& selectors,
                          bindings::ExceptionState& exception_state);
+  // A static list of what matches, as Blink's StaticNodeList.
+  NodeList* QuerySelectorAll(const std::u16string& selectors,
+                             bindings::ExceptionState& exception_state);
+
+  // The members of Document and Element that give live collections of the
+  // elements under the node, the same while a page keeps one.
+  HTMLCollection* GetElementsByTagName(const std::u16string& qualified_name);
+  HTMLCollection* GetElementsByTagNameNS(
+      const std::optional<std::u16string>& namespace_uri,
+      const std::u16string& local_name);
+  HTMLCollection* GetElementsByClassName(const std::u16string& class_names);
+  // The cache of those collections.
+  NodeListsNodeData& EnsureNodeLists();
 
   // What the DOM and the parser use.
 
@@ -188,6 +202,13 @@ class Node : public EventTarget {
   void ParserRemoveChild(Node& child);
   // Takes out every child.
   void RemoveChildren();
+
+  // The DOM standard's "ensure pre-insertion validity" of `node` before
+  // `next`, with Blink's checks and messages, as Range's insertNode() runs it.
+  bool EnsurePreInsertionValidity(
+      Node* node,
+      const Node* next,
+      bindings::ExceptionState& exception_state) const;
 
   // A copy of this node, in `document`, with its children if `deep`.
   Node* Clone(Document& document, bool deep) const;
@@ -248,6 +269,7 @@ class Node : public EventTarget {
   cppgc::Member<Document> document_;
   cppgc::Member<NodeList> child_nodes_;
   cppgc::Member<HTMLCollection> children_;
+  cppgc::Member<NodeListsNodeData> node_lists_;
 };
 
 }  // namespace mitto
