@@ -78,7 +78,10 @@ class CookieStore final : public EventTarget {
   v8::Local<v8::Promise> DoRead(const bindings::CookieStoreGetOptions& options,
                                 bool get_all,
                                 bindings::ExceptionState& exception_state);
-  v8::Local<v8::Promise> DoWrite(const bindings::CookieInit& options,
+  // `method` is the member that writes, whose name a rejection says, as the
+  // context of Blink's resolver does.
+  v8::Local<v8::Promise> DoWrite(std::string_view method,
+                                 const bindings::CookieInit& options,
                                  bindings::ExceptionState& exception_state);
   // ToCookieParams(): the cookie that `options` describe, or nothing after
   // throwing why not.
