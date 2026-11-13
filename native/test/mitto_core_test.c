@@ -826,7 +826,9 @@ static const char kPageOptions[] =
     "\"bitness\": \"64\", \"model\": \"\", \"ua_full_version\": "
     "\"157.0.8103.39\", \"wow64\": false, \"form_factors\": []}}, "
     "\"features\": {\"enable_blink_features\": [], "
-    "\"disable_blink_features\": [], \"v8_flags\": []}}}";
+    "\"disable_blink_features\": [], \"v8_flags\": [], "
+    "\"deprecated_unload\": {\"enabled\": false, \"allow_list\": null, "
+    "\"by_bucket\": null}}}}";
 
 static MittoPage* g_page;
 static int64_t g_page_process;

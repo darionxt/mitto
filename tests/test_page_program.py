@@ -23,6 +23,9 @@ from typing import Any
 
 import pytest
 
+from mitto._persona import ENGINE_RELEASE_PERSONA, load_persona
+from tools.parity import BASELINES_DIRECTORY
+
 _PROGRAM_ENV_VAR = "MITTO_PAGE_PROGRAM"
 _TIMEOUT_SECONDS = 60
 _SCRIPT_THREW = 1
@@ -132,7 +135,7 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 11
+_PROTOCOL_VERSION = 12
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -191,14 +194,20 @@ _DEFAULT_START: dict[str, object] = {
     },
     # Which the library adds: what about:blank's navigator.connection gives.
     "connection": {"rtt": 100, "downlink": 2.65},
-    "features": {"enable_blink_features": [], "disable_blink_features": [], "v8_flags": []},
+    "features": {
+        "enable_blink_features": [],
+        "disable_blink_features": [],
+        "v8_flags": [],
+        "deprecated_unload": {"enabled": False, "allow_list": None, "by_bucket": None},
+    },
 }
 
 
-def _with_features(**lists: list[str]) -> dict[str, object]:
-    """Return the default start with each of `lists` in place in its features."""
-    features: dict[str, list[str]] = {"enable_blink_features": [], "disable_blink_features": [], "v8_flags": []}
-    return {**_DEFAULT_START, "features": {**features, **lists}}
+def _with_features(**values: object) -> dict[str, object]:
+    """Return the default start with each of `values` in place in its features."""
+    features = _DEFAULT_START["features"]
+    assert isinstance(features, dict)
+    return {**_DEFAULT_START, "features": {**features, **values}}
 
 
 class _Session:
@@ -523,6 +532,28 @@ def test_a_page_with_no_features_in_its_start_has_the_engine_releases(session: _
         ),
         (_with_features(v8_flags=["--a b"]), 'a start whose features\' "v8_flags" holds what is not a V8 flag'),
         (_with_features(disable_blink_features=["NoSuchFeature"]), "no runtime-enabled feature is named NoSuchFeature"),
+        (
+            _with_features(deprecated_unload=None),
+            'a start whose features\' "deprecated_unload" is not an object',
+        ),
+        (
+            _with_features(deprecated_unload={"enabled": True, "allow_list": None}),
+            'a start whose features\' "deprecated_unload" has no "by_bucket"',
+        ),
+        (
+            _with_features(deprecated_unload={"enabled": True, "allow_list": [""], "by_bucket": None}),
+            'a start whose features\' "deprecated_unload" has an "allow_list" that is not a list of hosts',
+        ),
+        (
+            _with_features(
+                deprecated_unload={"enabled": True, "allow_list": None, "by_bucket": {"percent": 101, "bucket": 0}}
+            ),
+            'a start whose features\' "deprecated_unload" has a "by_bucket" that is not a percent and a bucket or null',
+        ),
+        (
+            _with_features(deprecated_unload={"enabled": True, "allow_list": None, "by_bucket": None, "x": 1}),
+            'a start whose features\' "deprecated_unload" has the unknown key "x"',
+        ),
     ],
     ids=str,
 )
@@ -1291,6 +1322,126 @@ def test_permissions_are_denied_where_the_document_is_not_a_secure_context(sessi
                 "undefined",
                 8,
                 "1 Only secure origins are allowed (see: https://goo.gl/Y0ZkNV).",
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "www.example.test"])
+def test_a_documents_feature_policy_allows_what_chromes_allows(session: _Session, host: str) -> None:
+    # Chrome 157 gave the same at http://HOST:8722/, from a new profile, whose seed deprecates nothing yet: a feature
+    # whose default allowlist is * is the "*" one's, one whose default is 'self' the document's origin's, an unknown
+    # feature nobody's, and a URL that does not parse has an opaque origin, which has none.
+    origin = f"http://{host}:8722"
+    session.start()
+    _respond(session, 0, f"{origin}/", "text/html")
+    _body(session, 0, b"<p>policy</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+    script = """(() => {
+        const p = document.featurePolicy;
+        return [[p.allowsFeature("camera"), p.allowsFeature("autoplay"), p.allowsFeature("unknown"),
+            p.allowsFeature("camera", "https://other.example"), p.allowsFeature("autoplay", "https://other.example"),
+            p.allowsFeature("camera", location.origin), p.allowsFeature("unload"), p.allowsFeature("camera", "not a url")],
+            ["camera", "autoplay", "unknown", "unload", "fullscreen", "payment"].map((f) => p.getAllowlistForFeature(f))];
+    })()"""
+
+    assert session.evaluate(script) == (
+        False,
+        json.dumps(
+            [
+                [True, True, False, False, False, True, True, False],
+                [[origin], [origin], [], ["*"], [origin], [origin]],
+            ],
+            separators=(",", ":"),
+        ),
+    )
+
+
+def _load_policy_page(session: _Session, url: str) -> None:
+    _respond(session, 0, url, "text/html")
+    _body(session, 0, b"<p>policy</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+
+
+_UNLOAD_SCRIPT = """(() => {
+    const p = document.featurePolicy;
+    return [p.features().includes("unload"), p.allowedFeatures().includes("unload"), p.allowsFeature("unload"),
+        p.getAllowlistForFeature("unload")];
+})()"""
+_UNLOAD_KEPT = json.dumps([True, True, True, ["*"]], separators=(",", ":"))
+_UNLOAD_DEPRECATED = json.dumps([True, False, False, []], separators=(",", ":"))
+
+
+@pytest.mark.parametrize(
+    ("unload", "deprecated"),
+    [
+        ({"enabled": False, "allow_list": None, "by_bucket": None}, False),
+        # Neither an allow list nor buckets: every page.
+        ({"enabled": True, "allow_list": None, "by_bucket": None}, True),
+        ({"enabled": True, "allow_list": ["a.test", "www.example.test"], "by_bucket": None}, True),
+        ({"enabled": True, "allow_list": ["a.test"], "by_bucket": None}, False),
+        # An empty allow list covers every host.
+        ({"enabled": True, "allow_list": [], "by_bucket": None}, True),
+        # A host off the allow list is in the buckets' share.
+        ({"enabled": True, "allow_list": ["a.test"], "by_bucket": {"percent": 100, "bucket": None}}, True),
+        ({"enabled": True, "allow_list": None, "by_bucket": {"percent": 0, "bucket": 1}}, False),
+        # IsIncludedInGradualRollout() with base::PersistentHash(): www.example.test is in half of the hosts of bucket 1,
+        # and not of bucket 0.
+        ({"enabled": True, "allow_list": None, "by_bucket": {"percent": 50, "bucket": 1}}, True),
+        ({"enabled": True, "allow_list": None, "by_bucket": {"percent": 50, "bucket": 0}}, False),
+        # Without a bucket the Persona is in no share.
+        ({"enabled": True, "allow_list": None, "by_bucket": {"percent": 50, "bucket": None}}, False),
+    ],
+    ids=str,
+)
+def test_the_seed_takes_unload_out_of_the_policy_of_the_pages_it_covers(
+    session: _Session, unload: dict[str, object], deprecated: bool
+) -> None:
+    # GetPermissionsPolicyFeatureList(): the default allowlist of unload is none for a covered page, so no origin has
+    # it, but it is still one of the features.
+    session.start(_with_features(deprecated_unload=unload))
+    _load_policy_page(session, "http://www.example.test:8722/")
+
+    assert session.evaluate(_UNLOAD_SCRIPT) == (False, _UNLOAD_DEPRECATED if deprecated else _UNLOAD_KEPT)
+
+
+@pytest.mark.parametrize(
+    ("unload", "deprecated"),
+    [
+        ({"enabled": True, "allow_list": None, "by_bucket": None}, True),
+        # Either list limits it to pages of http and https.
+        ({"enabled": True, "allow_list": [], "by_bucket": None}, False),
+        ({"enabled": True, "allow_list": None, "by_bucket": {"percent": 100, "bucket": 0}}, False),
+    ],
+    ids=str,
+)
+def test_unload_stays_on_a_page_that_is_not_http_where_the_seed_limits_it(
+    session: _Session, unload: dict[str, object], deprecated: bool
+) -> None:
+    session.start(_with_features(deprecated_unload=unload))
+
+    assert session.evaluate(_UNLOAD_SCRIPT) == (False, _UNLOAD_DEPRECATED if deprecated else _UNLOAD_KEPT)
+
+
+def test_a_page_of_the_engine_releases_persona_lists_the_features_of_its_baselines(session: _Session) -> None:
+    # What the Persona's Page turns off, TopicsAPI among them, and its seed, which deprecates unload on every host.
+    persona = load_persona(ENGINE_RELEASE_PERSONA)
+    session.start({**_DEFAULT_START, "features": persona.page_features.to_option()})
+    _load_policy_page(session, "http://www.example.test:8722/")
+    page = BASELINES_DIRECTORY / persona.release / "script" / "page.json"
+    values = json.loads(page.read_text(encoding="utf-8"))["values"]
+
+    assert session.evaluate("[document.featurePolicy.features(), document.featurePolicy.allowedFeatures()]") == (
+        False,
+        json.dumps(
+            [
+                values["document.featurePolicy.features()"]["value"],
+                values["document.featurePolicy.allowedFeatures()"]["value"],
             ],
             separators=(",", ":"),
         ),

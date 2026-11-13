@@ -1182,7 +1182,12 @@ PAGE_START: dict[str, Any] = {
             "form_factors": ["Desktop"],
         },
     },
-    "features": {"enable_blink_features": [], "disable_blink_features": [], "v8_flags": []},
+    "features": {
+        "enable_blink_features": [],
+        "disable_blink_features": [],
+        "v8_flags": [],
+        "deprecated_unload": {"enabled": False, "allow_list": None, "by_bucket": None},
+    },
 }
 
 
@@ -1397,8 +1402,33 @@ def _template(headers: Any = (("Accept", "*/*"),), **fetch: Any) -> dict[str, An
         pytest.param(blank_page_options(features=[]), id="features-not-an-object"),
         pytest.param(blank_page_options(features=page_features(js_flags=[])), id="unknown-key-in-the-features"),
         pytest.param(
-            blank_page_options(features={"enable_blink_features": [], "disable_blink_features": []}),
+            blank_page_options(
+                features={key: value for key, value in PAGE_START["features"].items() if key != "v8_flags"}
+            ),
             id="no-v8-flags",
+        ),
+        pytest.param(
+            blank_page_options(
+                features={key: value for key, value in PAGE_START["features"].items() if key != "deprecated_unload"}
+            ),
+            id="no-deprecated-unload",
+        ),
+        pytest.param(
+            blank_page_options(features=page_features(deprecated_unload={"enabled": True})), id="unload-without-lists"
+        ),
+        pytest.param(
+            blank_page_options(
+                features=page_features(deprecated_unload={"enabled": True, "allow_list": [1], "by_bucket": None})
+            ),
+            id="host-not-a-string",
+        ),
+        pytest.param(
+            blank_page_options(
+                features=page_features(
+                    deprecated_unload={"enabled": True, "allow_list": None, "by_bucket": {"percent": -1, "bucket": 0}}
+                )
+            ),
+            id="percent-below-zero",
         ),
         pytest.param(blank_page_options(features=page_features(enable_blink_features="A")), id="features-not-a-list"),
         pytest.param(blank_page_options(features=page_features(enable_blink_features=["A,B"])), id="comma-in-a-name"),

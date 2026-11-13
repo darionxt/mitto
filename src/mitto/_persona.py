@@ -12,11 +12,11 @@ from collections.abc import Container, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import NotRequired, Self, TypedDict
+from typing import Any, NotRequired, Self, TypedDict
 
 from mitto._body import EncodedBody, StreamBody
 from mitto._machine import Machine, client_hints
-from mitto._native import FetchParams, PageFeatures, Priority
+from mitto._native import DeprecatedUnload, FetchParams, PageFeatures, Priority
 
 __all__ = [
     "CHROME_155_WINDOWS",
@@ -100,6 +100,7 @@ class _PageFeaturesData(TypedDict):
     enable_blink_features: list[str]
     disable_blink_features: list[str]
     v8_flags: list[str]
+    deprecated_unload: dict[str, Any]
 
 
 class _PersonaData(TypedDict):
@@ -213,6 +214,7 @@ def load_persona(name: str) -> Persona:
             enable_blink_features=tuple(data["page_features"]["enable_blink_features"]),
             disable_blink_features=tuple(data["page_features"]["disable_blink_features"]),
             v8_flags=tuple(data["page_features"]["v8_flags"]),
+            deprecated_unload=DeprecatedUnload.from_option(data["page_features"]["deprecated_unload"]),
         ),
         _kinds={RequestKind(kind): kind_data for kind, kind_data in data["kinds"].items()},
     )

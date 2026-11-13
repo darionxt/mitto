@@ -33,7 +33,9 @@ from typing import Any, cast
 
 import json5
 
+from mitto._native import DeprecatedUnload
 from tools.parity import BASELINES_DIRECTORY
+from tools.release.deprecated_unload import deprecated_unload
 from tools.release.gitiles import CHROMIUM_URL
 from tools.release.persona import PAGE_FEATURES_KEY, PERSONAS_DIRECTORY, dumps_persona
 from tools.release.variations_seed import (
@@ -161,11 +163,14 @@ class PageFeatures:
         enable_blink_features: The runtime-enabled features to turn on, in the order of the Engine Release's file.
         disable_blink_features: Those to turn off, in the same order.
         v8_flags: V8's flags, in the order to set them.
+        deprecated_unload: What the seed says of kDeprecateUnload, which takes unload out of a page's permissions
+            policy.
     """
 
     enable_blink_features: tuple[str, ...] = ()
     disable_blink_features: tuple[str, ...] = ()
     v8_flags: tuple[str, ...] = ()
+    deprecated_unload: DeprecatedUnload = field(default_factory=DeprecatedUnload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,12 +260,13 @@ def persona_features(
         engine: The Engine Release, at the build that the engine is built from, whose set a Page has by default.
         seed: The version of the variations seed that `switches` come from.
         switches: What the seed switches for most installations of the Persona's Chrome.
-        undecided: The studies of the seed that depend on the machine. Those that switch a runtime-enabled feature or a
-            V8 flag go to review.
+        undecided: The studies of the seed that depend on the machine. Those that switch a runtime-enabled feature, a
+            V8 flag or kDeprecateUnload go to review.
         baseline_seed: The version of the seed that the release's Baselines were recorded with, or None if they name
             none. Another version than `seed` goes to review, since the Persona's data and its Baselines should come
             from one seed.
     """
+    undecided = tuple(undecided)
     review: list[str] = []
     if baseline_seed is None or not seed.startswith(baseline_seed):
         review.append(
@@ -284,12 +290,18 @@ def persona_features(
         for path, text in release.compared.items()
         if engine.compared.get(path) != text
     ]
+    unload = deprecated_unload(switches, undecided)
     return PersonaFeatures(
         build=release.build,
         seed=seed,
-        page=PageFeatures(enable_blink_features=enable, disable_blink_features=disable, v8_flags=flags),
-        switched=tuple(switched),
-        review=tuple(review),
+        page=PageFeatures(
+            enable_blink_features=enable,
+            disable_blink_features=disable,
+            v8_flags=flags,
+            deprecated_unload=unload.unload,
+        ),
+        switched=(*switched, *unload.switched),
+        review=(*review, *unload.review),
     )
 
 
@@ -331,6 +343,7 @@ def write_page_features(
             "enable_blink_features": list(features.page.enable_blink_features),
             "disable_blink_features": list(features.page.disable_blink_features),
             "v8_flags": list(features.page.v8_flags),
+            "deprecated_unload": features.page.deprecated_unload.to_option(),
         }
         path.write_text(dumps_persona(data), encoding="utf-8", newline="\n")
         sections.append(_report(path.name, features, before))
@@ -375,6 +388,9 @@ def _report(name: str, features: PersonaFeatures, before: Mapping[str, Any]) -> 
             lines.append(f"  {key} gains: {', '.join(added)}")
         if gone:
             lines.append(f"  {key} loses: {', '.join(gone)}")
+    unload = page.deprecated_unload.to_option()
+    if before.get("deprecated_unload") != unload:
+        lines.append(f"  deprecated_unload becomes: {json.dumps(unload)}")
     lines += ["  The seed switches:", *(f"    {line}" for line in features.switched)] if features.switched else []
     lines += ["  To review:", *(f"    {line}" for line in features.review)] if features.review else []
     return "\n".join(lines)

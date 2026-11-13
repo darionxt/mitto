@@ -206,6 +206,7 @@ mitto_bindings_interfaces = [
       "all",
       "children",
       "hasStorageAccess",
+      "featurePolicy",
     ]
   },
   {
@@ -729,6 +730,10 @@ mitto_bindings_interfaces = [
       "requestAll",
       "revoke",
     ]
+  },
+  {
+    name = "PermissionsPolicy"
+    file = "permissions_policy"
   },
   {
     name = "Plugin"

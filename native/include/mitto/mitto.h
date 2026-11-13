@@ -800,7 +800,11 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //                   "form_factors": ["Desktop"]}},
 //               "features": {"enable_blink_features": [],
 //                            "disable_blink_features": ["CanvasDrawElement"],
-//                            "v8_flags": ["--sqrt_allocation_limits"]}},
+//                            "v8_flags": ["--sqrt_allocation_limits"],
+//                            "deprecated_unload": {
+//                                "enabled": true, "allow_list": [...],
+//                                "by_bucket": {"percent": 100,
+//                                              "bucket": null}}}},
 //     "url": "https://example.com/",
 //     "requests": {
 //       "navigation": {"headers": [["sec-ch-ua", "..."], ...],
@@ -857,7 +861,7 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     lists at most 32 items long.
 //   - "features" is what the Page turns on and off beside the Engine Release's
 //     runtime-enabled features and V8's defaults, as the Session's Persona
-//     says, with these three keys and no other. "enable_blink_features" and
+//     says, with these four keys and no other. "enable_blink_features" and
 //     "disable_blink_features" name runtime-enabled features to turn on, and
 //     then off, as Chrome's --enable-blink-features and
 //     --disable-blink-features do, at most 4096 each, each at most 128 ASCII
@@ -865,7 +869,14 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //     feature, because only it holds the bindings. "v8_flags" are V8's flags,
 //     at most 256, set in their order after the Engine Release's, each as gin
 //     writes one: "--name", "--no-name" or "--name=value", at most 256
-//     characters, with no space.
+//     characters, with no space. "deprecated_unload" is what the variations
+//     seed says of kDeprecateUnload, which takes "unload" out of the
+//     permissions policy of the documents it covers: "enabled", true or
+//     false; "allow_list", null, or the hosts of
+//     kDeprecateUnloadByAllowList, at most 4096, each at most 253 ASCII
+//     characters, where none covers every host; and "by_bucket", null, or
+//     kDeprecateUnloadByBucket's "percent", from 0 to 100, and "bucket", an
+//     integer, or null where the seed gives each installation its own.
 //   The library works out what the Page's navigator.connection gives from the
 //   Session's network estimate.
 // - "url" is where the Page navigates once it opens, through the Session, as a

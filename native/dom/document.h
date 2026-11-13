@@ -35,6 +35,7 @@ class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
 class Location;
+class PermissionsPolicy;
 class Text;
 class Window;
 
@@ -123,6 +124,10 @@ class Document : public Node {
   // that a profile allows, which a new profile does, on a secure page, and
   // none elsewhere.
   v8::Local<v8::Promise> HasStorageAccess() const;
+  // The same object each time, made the first time a page asks, and none for
+  // a document without a window, as Blink has no execution context to make it
+  // from.
+  PermissionsPolicy* FeaturePolicy();
   Comment* CreateComment(const std::u16string& data);
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);
@@ -193,6 +198,7 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> anchors_;
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
+  cppgc::Member<PermissionsPolicy> feature_policy_;
 };
 
 }  // namespace mitto

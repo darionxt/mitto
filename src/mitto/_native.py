@@ -37,6 +37,7 @@ __all__ = [
     "BrandVersion",
     "ConsoleLevel",
     "ConsoleMessage",
+    "DeprecatedUnload",
     "EventType",
     "FetchParams",
     "Finished",
@@ -72,6 +73,7 @@ __all__ = [
     "ResponseStarted",
     "Session",
     "UncaughtError",
+    "UnloadBuckets",
     "encode_url",
     "find_library",
     "finished_response",
@@ -981,6 +983,61 @@ class PageNavigator:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class UnloadBuckets:
+    """kDeprecateUnloadByBucket's rollout, as the variations seed of a Persona's Chrome Release gives it.
+
+    Attributes:
+        percent: kDeprecateUnload's "rollout_percent": on what share of hosts, from 0 to 100, each installation has
+            unload deprecated.
+        bucket: "rollout_bucket", which hosts those are, or None where the seed gives each installation a bucket of
+            its own. Only a percent between 0 and 100 needs it, and without it a Page deprecates unload on no host
+            that the share decides.
+    """
+
+    percent: int = 100
+    bucket: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeprecatedUnload:
+    """What the variations seed of a Persona's Chrome Release says of kDeprecateUnload, which takes "unload" out of the
+    permissions policy of the pages it covers: the "deprecated_unload" of the "features" of the "start" option of
+    mitto_page_open(), and of a Persona's "page_features".
+
+    Attributes:
+        enabled: Whether kDeprecateUnload is on. Off, every page keeps unload.
+        allow_list: The hosts of kDeprecateUnloadByAllowList's "allowlist" when that feature is on, where none means
+            every host, or else None.
+        by_bucket: kDeprecateUnloadByBucket's rollout when that feature is on, or else None.
+    """
+
+    enabled: bool = False
+    allow_list: tuple[str, ...] | None = None
+    by_bucket: UnloadBuckets | None = None
+
+    @classmethod
+    def from_option(cls, option: Mapping[str, Any]) -> Self:
+        """Return it from what to_option() gives, as a Persona's file holds it."""
+        allow_list = option["allow_list"]
+        by_bucket = option["by_bucket"]
+        return cls(
+            enabled=bool(option["enabled"]),
+            allow_list=None if allow_list is None else tuple(str(host) for host in allow_list),
+            by_bucket=None if by_bucket is None else UnloadBuckets(int(by_bucket["percent"]), by_bucket["bucket"]),
+        )
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "deprecated_unload" of the "features" of the "start" option of mitto_page_open()."""
+        return {
+            "enabled": self.enabled,
+            "allow_list": None if self.allow_list is None else list(self.allow_list),
+            "by_bucket": None
+            if self.by_bucket is None
+            else {"percent": self.by_bucket.percent, "bucket": self.by_bucket.bucket},
+        }
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PageFeatures:
     """What a Page turns on and off beside the Engine Release's runtime-enabled features and V8's defaults, as its
@@ -990,15 +1047,22 @@ class PageFeatures:
         enable_blink_features: Names of runtime-enabled features to turn on, as Chrome's --enable-blink-features takes.
         disable_blink_features: Names of those to turn off after, as Chrome's --disable-blink-features takes.
         v8_flags: V8's flags, such as "--no-foo", in the order to set them, after the Engine Release's.
+        deprecated_unload: What the variations seed says of kDeprecateUnload.
     """
 
     enable_blink_features: tuple[str, ...] = ()
     disable_blink_features: tuple[str, ...] = ()
     v8_flags: tuple[str, ...] = ()
+    deprecated_unload: DeprecatedUnload = field(default_factory=DeprecatedUnload)
 
     def to_option(self) -> dict[str, object]:
         """Return the "features" of the "start" option of mitto_page_open()."""
-        return {page_field.name: list(getattr(self, page_field.name)) for page_field in fields(self)}
+        return {
+            "enable_blink_features": list(self.enable_blink_features),
+            "disable_blink_features": list(self.disable_blink_features),
+            "v8_flags": list(self.v8_flags),
+            "deprecated_unload": self.deprecated_unload.to_option(),
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
