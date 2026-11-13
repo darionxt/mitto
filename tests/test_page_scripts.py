@@ -333,6 +333,26 @@ _CASES["load_and_error"] = _Case(
     }
 )
 
+# A connected script with neither src nor text: an empty src prepares nothing, a real one later does.
+_CASES["empty_src_set"] = _Case(
+    {
+        "/": _page(
+            "<script>"
+            "addEventListener('load', () => {"
+            " const s = document.createElement('script');"
+            " s.addEventListener('error', () => log('error'));"
+            " s.addEventListener('load', () => log('load'));"
+            " document.body.append(s);"
+            " s.src = ''; log('empty src set');"
+            " setTimeout(() => { log('after a task'); s.src = '/x.js'; log('real src set');"
+            "  setTimeout(() => finish(logged), 300); }, 50);"
+            "});"
+            "</script>"
+        ),
+        "/x.js": _js("log('x ran');"),
+    }
+)
+
 # <base> for the URLs that a document resolves.
 _CASES["base_url"] = _Case(
     {
@@ -744,6 +764,13 @@ _CHROME: dict[str, list[str]] = {
         "redirected load null",
         "last ran",
         "last load null",
+    ],
+    "empty_src_set": [
+        "empty src set",
+        "after a task",
+        "real src set",
+        "x ran",
+        "load",
     ],
     "base_url": [
         "b b",
