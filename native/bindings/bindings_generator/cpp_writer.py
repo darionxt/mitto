@@ -99,6 +99,9 @@ WRITTEN = frozenset(
         "LegacyFactoryFunction_RaisesException",
         "LegacyLenientSetter",
         "LegacyNoInterfaceObject",
+        # It changes only named properties, which the interceptors' flag says, and a named property operation that is
+        # a Known Gap is not installed.
+        "LegacyOverrideBuiltIns",
         "LegacyUnenumerableNamedProperties",
         "LegacyUnforgeable",
         # The global object's table of exposed constructs installs the alias.
@@ -1122,9 +1125,12 @@ class _InterfaceWriter:
         interface = self.interface
         indexed = self._special_with_behaviour("indexed getter")
         named = self._special_with_behaviour("named getter")
-        for kind in ("indexed setter", "named setter", "named deleter"):
-            if self._special_with_behaviour(kind):
-                raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its {kind}")
+        if self._special_with_behaviour("indexed setter"):
+            raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its indexed setter")
+        named_setter = self._special_with_behaviour("named setter")
+        named_deleter = self._special_with_behaviour("named deleter")
+        if (named_setter or named_deleter) and named is None:
+            raise UnhandledError(f"interface {interface.name}: a named setter or deleter needs the named getter")
         if indexed is None and named is None:
             return False
         if "Global" in interface.extended_attributes or interface.name == "WindowProperties":
@@ -1174,8 +1180,13 @@ class _InterfaceWriter:
             return_type, call = self._getter_call(named, "name")
             reduced = self.types.reduce(return_type)
             # Blink's test of whether the class has the named property: what its getter gives says so.
+            value = "result"
             if reduced.kind is TypeKind.INTERFACE or (reduced.kind is TypeKind.STRING and reduced.nullable):
                 not_found = "!result"
+            elif reduced.kind is TypeKind.STRING:
+                # Blink's getter gives a null String for none; the class gives an empty std::optional.
+                not_found = "!result"
+                value = "*result"
             elif reduced.kind in (TypeKind.ANY, TypeKind.OBJECT):
                 not_found = "result.IsEmpty()"
             else:
@@ -1189,7 +1200,7 @@ class _InterfaceWriter:
                         f"  if ({not_found}) {{",
                         "    return v8::Local<v8::Value>();",
                         "  }",
-                        f"  return {self.types.to_v8(return_type, 'result')};",
+                        f"  return {self.types.to_v8(return_type, value)};",
                         "}",
                     ]
                 )
@@ -1210,8 +1221,15 @@ class _InterfaceWriter:
             fields[2:5] = ["&NamedPropertyGetter", "&NamedPropertyNames", "&NamedPropertyQuery"]
             if "LegacyUnenumerableNamedProperties" in interface.extended_attributes:
                 flags.append("kNamedPropertiesUnenumerable")
+            if "LegacyOverrideBuiltIns" in interface.extended_attributes:
+                flags.append("kNamedPropertiesOverrideBuiltIns")
             if named.operation.extended_attributes.value_of("Affects") == "Everything":
                 flags.append("kNamedGetterHasSideEffects")
+        setter_fields = ["nullptr", "nullptr"]
+        if named_setter is not None:
+            setter_fields[0] = self._named_setter(named_setter)
+        if named_deleter is not None:
+            setter_fields[1] = self._named_deleter(named_deleter)
         flag_value = " | ".join(flags) if flags else "0"
         self.callbacks.append(
             "\n".join(
@@ -1219,11 +1237,64 @@ class _InterfaceWriter:
                     "constexpr IndexedAndNamedProperties kIndexedAndNamedProperties = {",
                     *(f"    {field}," for field in fields),
                     f"    {flag_value},",
+                    *(f"    {field}," for field in setter_fields),
                     "};",
                 ]
             )
         )
         return True
+
+    def _special_method(self, special: SpecialOperation) -> str:
+        """The class's method of an indexed or named property operation, named after its identifier, or Blink's
+        Anonymous<Kind>() for one without."""
+        operation = special.operation
+        if operation.name:
+            return self.method_name(operation)
+        return "Anonymous" + special.kind.title().replace(" ", "")
+
+    def _named_setter(self, special: SpecialOperation) -> str:
+        """The function that converts a named property setter's value and calls the class's setter, as bind_gen's
+        make_named_property_setter_callback() does: an error converting or setting stays pending."""
+        where = f"named setter of {self.interface.name}"
+        operation = special.operation
+        _check_written(where, operation.extended_attributes)
+        value_argument = operation.arguments[1]
+        site = Site(fail="return;")
+        conversion = self.types.from_v8(value_argument.idl_type, "value", "property_value", site, where)
+        passed = ["name", "property_value"]
+        if "RaisesException" in operation.extended_attributes:
+            passed.append("exception_state")
+        self.callbacks.append(
+            "\n".join(
+                [
+                    "void NamedPropertySetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
+                    "                         const std::u16string& name, v8::Local<v8::Value> value) {",
+                    "  ExceptionState exception_state(isolate);",
+                    *_indent(conversion),
+                    f"  HolderOf(isolate, holder)->{self._special_method(special)}({', '.join(passed)});",
+                    "}",
+                ]
+            )
+        )
+        return "&NamedPropertySetter"
+
+    def _named_deleter(self, special: SpecialOperation) -> str:
+        """The function that calls the class's named property deleter, which says whether it deleted the property."""
+        where = f"named deleter of {self.interface.name}"
+        _check_written(where, special.operation.extended_attributes)
+        if "RaisesException" in special.operation.extended_attributes:
+            raise UnhandledError(f"{where}: the C++ writer does not handle a deleter that raises an exception")
+        self.callbacks.append(
+            "\n".join(
+                [
+                    "bool NamedPropertyDeleter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
+                    "                          const std::u16string& name) {",
+                    f"  return HolderOf(isolate, holder)->{self._special_method(special)}(name);",
+                    "}",
+                ]
+            )
+        )
+        return "&NamedPropertyDeleter"
 
     # The install functions.
 
@@ -1561,13 +1632,7 @@ class _InterfaceWriter:
                 "",
             ]
         )
-        extended = interface.extended_attributes
-        if "LegacyOverrideBuiltIns" in extended and self._special_with_behaviour("named getter") is None:
-            # It changes only named properties, and a named property operation that is a Known Gap is not installed.
-            extended = ExtendedAttributes(
-                tuple(entry for entry in extended.entries if entry[0] != "LegacyOverrideBuiltIns")
-            )
-        _check_written(f"interface {interface.name}", extended)
+        _check_written(f"interface {interface.name}", interface.extended_attributes)
         factory_functions = [self.legacy_factory_function(group) for group in self._factory_functions_with_behaviour()]
         if interface.stringifier is not None and self._stringifier_attribute() is None:
             raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its stringifier")

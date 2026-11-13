@@ -801,6 +801,17 @@
   "spellcheck": "string:true,false,true,false,true",
   "contentEditable": "string:inherit,true,true,false,plaintext-only,inherit,plaintext-only,false",
   "contentEditable bad": "threw SyntaxError: Failed to set the 'contentEditable' property on 'HTMLElement': The value provided ('yes') is not one of 'true', 'false', 'plaintext-only', or 'inherit'.",
-  "isContentEditable": "string:true,true,true,false,true"
+  "isContentEditable": "string:true,true,true,false,true",
+  "dataset read": "string:[object DOMStringMap]|true|1|2|undefined|4|undefined|5|undefined|7|undefined|[\"foo\",\"fooBar\",\"X\",\"a1B\",\"\",\"ns\"]|[\"foo\",\"fooBar\",\"X\",\"a1B\",\"\",\"ns\"]|true|true|{\"value\":\"1\",\"writable\":true,\"enumerable\":true,\"configurable\":true}",
+  "dataset write": "string:data-foo-bar data-x data--up data-to-string data-a-1|1|null|[\"fooBar\",\"x\",\"Up\",\"toString\",\"a-1\"]|string|[object DOMStringMap]",
+  "dataset bad name": "threw SyntaxError: Failed to set a named property 'a-b' on 'DOMStringMap': 'a-b' is not a valid property name.",
+  "dataset bad attribute": "threw InvalidCharacterError: Failed to set a named property 'a b' on 'DOMStringMap': 'data-a b' is not a valid attribute name.",
+  "dataset delete": "string:true|true|true|false|[]",
+  "dataset define": "string:v|TypeError: Failed to set a named property 'y' on 'DOMStringMap': Accessor properties are not allowed.|[\"x\"]",
+  "dataset override builtins": "string:string|h",
+  "dataset symbol": "string:1|1",
+  "dataset svg": "string:v|[object DOMStringMap]",
+  "dataset strict delete": "boolean:true",
+  "dataset json": "string:{\"a\":\"1\",\"bC\":\"2\"}|{\"a\":\"1\",\"bC\":\"2\"}"
  }
 }

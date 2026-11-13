@@ -12,6 +12,7 @@
 #include "mitto/dom/attr.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
+#include "mitto/dom/dom_string_map.h"
 #include "mitto/dom/dom_token_list.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_parser_idioms.h"
@@ -67,6 +68,7 @@ void Element::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(attribute_map_);
   visitor->Trace(class_list_);
   visitor->Trace(part_);
+  visitor->Trace(dataset_);
 }
 
 bool Element::IsHTMLElement() const {
@@ -192,6 +194,13 @@ DOMTokenList* Element::ClassList() {
     class_list_ = DOMTokenList::Create(*this, u"class");
   }
   return class_list_.Get();
+}
+
+DOMStringMap* Element::Dataset() {
+  if (!dataset_) {
+    dataset_ = DOMStringMap::Create(*this);
+  }
+  return dataset_.Get();
 }
 
 DOMTokenList* Element::Part() {

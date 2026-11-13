@@ -35,6 +35,9 @@ inline constexpr uint8_t kNamedPropertiesUnenumerable = 1 << 0;
 // not call them to preview an object.
 inline constexpr uint8_t kIndexedGetterHasSideEffects = 1 << 1;
 inline constexpr uint8_t kNamedGetterHasSideEffects = 1 << 2;
+// [LegacyOverrideBuiltIns]: a named property hides a property of the
+// prototype chain of the same name.
+inline constexpr uint8_t kNamedPropertiesOverrideBuiltIns = 1 << 3;
 
 // What the class of an interface gives: each function reads the object that
 // `holder` wraps, which is one of the interface's.
@@ -62,12 +65,24 @@ struct IndexedAndNamedProperties {
                    v8::Local<v8::Object> holder,
                    const std::u16string& name);
   uint8_t flags;
+  // The named property setter, which converts `value` and may throw, leaving
+  // the exception pending. Null without one.
+  void (*named_setter)(v8::Isolate* isolate,
+                       v8::Local<v8::Object> holder,
+                       const std::u16string& name,
+                       v8::Local<v8::Value> value);
+  // The named property deleter: whether it deleted the property, as Blink's
+  // kDeleted, or else leaves it to an ordinary delete, as kDidNotIntercept.
+  // Null without one.
+  bool (*named_deleter)(v8::Isolate* isolate,
+                        v8::Local<v8::Object> holder,
+                        const std::u16string& name);
 };
 
 // Installs the interceptors of `properties` on the interface's instance
 // template, as bind_gen's make_indexed_and_named_property_callbacks_and_
-// install_node() does for an interface without indexed or named property
-// setters and deleters.
+// install_node() does for an interface without indexed property setters and
+// deleters.
 void InstallIndexedAndNamedProperties(
     v8::Isolate* isolate,
     v8::Local<v8::ObjectTemplate> instance_template,

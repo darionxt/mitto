@@ -968,7 +968,7 @@ def _collection(*specials: str, unenumerable: bool = True) -> Interface:
         ExtendedAttributes(),
         ALWAYS,
     )
-    operations = {"indexed getter": item, "named getter": named_item, "named setter": named_item}
+    operations = {"indexed getter": item, "indexed setter": item, "named getter": named_item}
     return _interface(
         attributes=(
             Attribute("length", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, ExtendedAttributes(), ALWAYS),
@@ -1214,7 +1214,7 @@ def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() 
     assert "const auto result = HolderOf(isolate, holder)->NamedItem(name);" in source
     assert "return HolderOf(isolate, holder)->NamedPropertyEnumerator();" in source
     assert "return HolderOf(isolate, holder)->NamedPropertyQuery(name);" in source
-    assert "    kNamedPropertiesUnenumerable,\n};" in source
+    assert "    kNamedPropertiesUnenumerable,\n    nullptr,\n    nullptr,\n};" in source
     assert "InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);" in source
     # %Array.prototype.values%, as Blink installs it for an indexed getter.
     assert "SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values," in source
@@ -1226,7 +1226,7 @@ def test_a_named_getter_alone_leaves_the_indices_to_it() -> None:
     )
 
     assert "kIndexedAndNamedProperties = {\n    nullptr,\n    nullptr,\n    &NamedPropertyGetter," in source
-    assert "    0,\n};" in source
+    assert "    0,\n    nullptr,\n    nullptr,\n};" in source
     assert "kArrayProto_values" not in source
 
 
@@ -1239,9 +1239,44 @@ def test_a_getter_that_is_a_known_gap_has_no_interceptor() -> None:
     assert "kArrayProto_values" in source
 
 
+def _string_map(*keys: str) -> Interface:
+    """An interface like DOMStringMap, with a named getter, setter and deleter without identifiers."""
+    string = IdlType(TypeKind.STRING, "DOMString")
+    name = Argument("name", string, False, False, None)
+    getter = Operation("", (name,), string, False, ExtendedAttributes(), ALWAYS)
+    setter = Operation(
+        "", (name, Argument("value", string, False, False, None)), UNDEFINED, False, _extended(*keys), ALWAYS
+    )
+    deleter = Operation("", (name,), UNDEFINED, False, ExtendedAttributes(), ALWAYS)
+    return _interface(
+        special_operations=(
+            SpecialOperation("named getter", getter),
+            SpecialOperation("named setter", setter),
+            SpecialOperation("named deleter", deleter),
+        ),
+        extended_attributes=_extended("LegacyOverrideBuiltIns"),
+    )
+
+
+def test_a_named_setter_and_deleter_call_the_class() -> None:
+    source = _bindings_of(_string_map("RaisesException"), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    # A DOMString getter's class gives std::nullopt for no property.
+    assert "const auto result = HolderOf(isolate, holder)->AnonymousNamedGetter(name);" in source
+    assert "return ToV8String(isolate, *result);" in source
+    assert "HolderOf(isolate, holder)->AnonymousNamedSetter(name, property_value, exception_state);" in source
+    assert "return HolderOf(isolate, holder)->AnonymousNamedDeleter(name);" in source
+    assert "    kNamedPropertiesOverrideBuiltIns,\n    &NamedPropertySetter,\n    &NamedPropertyDeleter,\n};" in source
+
+
 def test_the_writer_refuses_what_it_cannot_install_of_named_properties() -> None:
-    with pytest.raises(UnhandledError, match="interface Thing: the C\\+\\+ writer does not handle its named setter"):
-        _bindings_of(_collection("named getter", "named setter"), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+    implemented = ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("named setter",))
+    with pytest.raises(UnhandledError, match="interface Thing: a named setter or deleter needs the named getter"):
+        _bindings_of(_string_map(), implemented)
+    with pytest.raises(UnhandledError, match="interface Thing: the C\\+\\+ writer does not handle its indexed setter"):
+        _bindings_of(
+            _collection("indexed getter", "indexed setter"), ImplementedInterface("Thing", "mitto/dom/thing.h")
+        )
 
 
 def test_each_iterable_gets_an_iterator_of_its_own() -> None:

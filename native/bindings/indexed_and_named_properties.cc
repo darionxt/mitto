@@ -94,12 +94,25 @@ v8::Intercepted NamedGetter(v8::Local<v8::Name> name,
 v8::Intercepted NamedSetter(v8::Local<v8::Name> name,
                             v8::Local<v8::Value> value,
                             const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const IndexedAndNamedProperties& properties = PropertiesOf(info);
+  if (properties.named_setter) {
+    // Web IDL's [[Set]], step 2: the named property setter, for any string.
+    properties.named_setter(isolate, info.Holder(), StringOf(isolate, name),
+                            value);
+    return v8::Intercepted::kYes;
+  }
   // Web IDL's [[Set]] of a legacy platform object without a named property
   // setter: OrdinarySetWithOwnDescriptor(), which fails for a supported
   // property name, whose own property is read-only.
-  v8::Isolate* const isolate = info.GetIsolate();
-  if (PropertiesOf(info).has_name(isolate, info.Holder(),
-                                  StringOf(isolate, name))) {
+  if ((properties.flags & kNamedPropertiesOverrideBuiltIns) &&
+      info.Holder()
+          ->GetRealNamedPropertyAttributesInPrototypeChain(
+              isolate->GetCurrentContext(), name)
+          .IsJust()) {
+    return v8::Intercepted::kNo;
+  }
+  if (properties.has_name(isolate, info.Holder(), StringOf(isolate, name))) {
     ThrowIfShouldThrow(info, "Named property setter is not supported.");
     return v8::Intercepted::kYes;
   }
@@ -114,7 +127,7 @@ v8::Intercepted NamedQuery(v8::Local<v8::Name> name,
   if (!properties.has_name(isolate, info.Holder(), StringOf(isolate, name))) {
     return v8::Intercepted::kNo;
   }
-  uint32_t attributes = v8::ReadOnly;
+  uint32_t attributes = properties.named_setter ? v8::None : v8::ReadOnly;
   if (properties.flags & kNamedPropertiesUnenumerable) {
     attributes |= v8::DontEnum;
   }
@@ -125,11 +138,21 @@ v8::Intercepted NamedQuery(v8::Local<v8::Name> name,
 v8::Intercepted NamedDeleter(
     v8::Local<v8::Name> name,
     const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  const IndexedAndNamedProperties& properties = PropertiesOf(info);
+  if (properties.named_deleter) {
+    // Web IDL's [[Delete]], step 2.2: the named property deleter, which
+    // leaves a property it did not delete to an ordinary delete.
+    if (!properties.named_deleter(isolate, info.Holder(),
+                                  StringOf(isolate, name))) {
+      return v8::Intercepted::kNo;
+    }
+    info.GetReturnValue().Set(true);
+    return v8::Intercepted::kYes;
+  }
   // Web IDL's [[Delete]]: without a named property deleter, false for a
   // visible named property.
-  v8::Isolate* const isolate = info.GetIsolate();
-  if (!PropertiesOf(info).has_name(isolate, info.Holder(),
-                                   StringOf(isolate, name))) {
+  if (!properties.has_name(isolate, info.Holder(), StringOf(isolate, name))) {
     return v8::Intercepted::kNo;
   }
   info.GetReturnValue().Set(false);
@@ -149,9 +172,22 @@ v8::Intercepted NamedDefiner(
     v8::Local<v8::Name> name,
     const v8::PropertyDescriptor& descriptor,
     const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  v8::Isolate* const isolate = info.GetIsolate();
+  if (PropertiesOf(info).named_setter) {
+    // Web IDL's [[DefineOwnProperty]], step 2.2.2: false for an accessor,
+    // and otherwise the named property setter with the value.
+    if (descriptor.has_get() || descriptor.has_set()) {
+      ThrowIfShouldThrow(info, "Accessor properties are not allowed.");
+      return v8::Intercepted::kYes;
+    }
+    return NamedSetter(name,
+                       descriptor.has_value()
+                           ? descriptor.value()
+                           : v8::Undefined(isolate).As<v8::Value>(),
+                       info);
+  }
   // Web IDL's [[DefineOwnProperty]], step 2: without a named property
   // setter, false for a supported property name.
-  v8::Isolate* const isolate = info.GetIsolate();
   if (PropertiesOf(info).has_name(isolate, info.Holder(),
                                   StringOf(isolate, name))) {
     ThrowIfShouldThrow(info, "Named property setter is not supported.");
@@ -165,9 +201,11 @@ v8::Intercepted NamedDescriptor(
     v8::Local<v8::Name> name,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   // LegacyPlatformObjectGetOwnProperty: a named property is visible unless
-  // the prototype chain has a property of that name.
+  // the prototype chain has a property of that name, or the interface has
+  // [LegacyOverrideBuiltIns].
   v8::Isolate* const isolate = info.GetIsolate();
-  if (info.Holder()
+  if (!(PropertiesOf(info).flags & kNamedPropertiesOverrideBuiltIns) &&
+      info.Holder()
           ->GetRealNamedPropertyAttributesInPrototypeChain(
               isolate->GetCurrentContext(), name)
           .IsJust()) {
@@ -180,8 +218,9 @@ v8::Intercepted NamedDescriptor(
   // [LegacyUnenumerableNamedProperties].
   const bool enumerable =
       !(PropertiesOf(info).flags & kNamedPropertiesUnenumerable);
+  const bool writable = PropertiesOf(info).named_setter;
   info.GetReturnValue().Set(DataPropertyDescriptor(
-      isolate, info.GetReturnValue().Get(), /*writable=*/false, enumerable));
+      isolate, info.GetReturnValue().Get(), writable, enumerable));
   return v8::Intercepted::kYes;
 }
 
@@ -299,8 +338,10 @@ void InstallIndexedAndNamedProperties(
     // Named properties are strings, and never shadow a property of the object
     // or its prototypes, without [LegacyOverrideBuiltIns].
     int flags =
-        static_cast<int>(v8::PropertyHandlerFlags::kOnlyInterceptStrings) |
-        static_cast<int>(v8::PropertyHandlerFlags::kNonMasking);
+        static_cast<int>(v8::PropertyHandlerFlags::kOnlyInterceptStrings);
+    if (!(properties.flags & kNamedPropertiesOverrideBuiltIns)) {
+      flags |= static_cast<int>(v8::PropertyHandlerFlags::kNonMasking);
+    }
     if (!(properties.flags & kNamedGetterHasSideEffects)) {
       flags |= static_cast<int>(v8::PropertyHandlerFlags::kHasNoSideEffect);
     }
