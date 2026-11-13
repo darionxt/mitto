@@ -15,6 +15,18 @@ constexpr uint32_t kDefaultHeight = 150;
 }  // namespace
 
 // static
+uint32_t HTMLCanvasElement::Dimension(const Element& element,
+                                      std::u16string_view name,
+                                      uint32_t default_value) {
+  // Blink's Reset(): an attribute that is not a non-negative integer of at
+  // most 2147483647 gives the default.
+  const std::u16string* value = element.FindAttribute(name);
+  const std::optional<uint32_t> parsed =
+      value ? ParseHTMLNonNegativeInteger(*value) : std::nullopt;
+  return parsed && *parsed <= 0x7fffffffu ? *parsed : default_value;
+}
+
+// static
 HTMLCanvasElement* HTMLCanvasElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<HTMLCanvasElement>(document);
 }
@@ -27,9 +39,7 @@ const bindings::WrapperTypeInfo* HTMLCanvasElement::GetWrapperTypeInfo() const {
 }
 
 uint32_t HTMLCanvasElement::Width() const {
-  const std::u16string* value = FindAttribute(u"width");
-  return value ? ParseHTMLNonNegativeInteger(*value).value_or(kDefaultWidth)
-               : kDefaultWidth;
+  return Dimension(*this, u"width", kDefaultWidth);
 }
 
 void HTMLCanvasElement::SetWidth(uint32_t value,
@@ -41,9 +51,7 @@ void HTMLCanvasElement::SetWidth(uint32_t value,
 }
 
 uint32_t HTMLCanvasElement::Height() const {
-  const std::u16string* value = FindAttribute(u"height");
-  return value ? ParseHTMLNonNegativeInteger(*value).value_or(kDefaultHeight)
-               : kDefaultHeight;
+  return Dimension(*this, u"height", kDefaultHeight);
 }
 
 void HTMLCanvasElement::SetHeight(uint32_t value,

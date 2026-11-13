@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#include <string_view>
+
 #include "mitto/dom/html_element.h"
 
 namespace mitto {
@@ -28,6 +30,11 @@ class HTMLCanvasElement final : public HTMLElement {
   void SetWidth(uint32_t value, bindings::ExceptionState& exception_state);
   uint32_t Height() const;
   void SetHeight(uint32_t value, bindings::ExceptionState& exception_state);
+
+ private:
+  static uint32_t Dimension(const Element& element,
+                            std::u16string_view name,
+                            uint32_t default_value);
 };
 
 }  // namespace mitto
