@@ -1,7 +1,14 @@
-# The html5lib tree construction tests in html5lib_tree that the tree builder
-# fails without skipping a rule, each under the reason why.
+# The html5lib tree construction tests in html5lib_tree where Chrome's tree
+# differs from the one the test expects, each under the reason why. The tree
+# builder builds Chrome's tree for each, and fails it without skipping a rule.
 # html_tree_builder_test checks that each test here fails without skipping a
 # rule, and that every other test passes or skips one.
+#
+# These tests are html5lib-python 1.1's. The Engine Release's tree holds a
+# newer copy of html5lib's tests in third_party/blink/web_tests/html5lib, with
+# Chrome's results beside them: where this says that html5lib has since
+# changed, that copy expects the tree that Chrome builds and the tree builder
+# builds.
 #
 # A line names one test: its file and its index in the file from 0. What
 # follows # is the start of its markup.
@@ -11,3 +18,42 @@
 # Release. The tokenizer then makes nothing of <? at the end of the input,
 # where these tests, which predate them, expect a bogus comment.
 tests1.dat:39  # <?
+
+# The Engine Release parses select as the HTML Standard has since had it, for
+# customizable select: with no insertion mode of its own, so that elements
+# such as b, svg, math, plaintext, keygen and textarea go inside it, and a
+# select inside another closes it. html5lib has since changed to match.
+menuitem-element.dat:13  # <!DOCTYPE html><select><menuitem></select>
+tests1.dat:29  # <select><b><option><select><option></b></select>X
+tests1.dat:101  # <select><b><option><select><option></b></select>
+tests10.dat:3  # <!DOCTYPE html><body><select><svg></svg></select>
+tests10.dat:4  # <!DOCTYPE html><body><select><option><svg></svg></option></select>
+tests10.dat:16  # <!DOCTYPE html><body><table><tr><td><select><svg><g>foo</g><g>bar</g><p>baz</table><p>quux
+tests10.dat:17  # <!DOCTYPE html><body><table><select><svg><g>foo</g><g>bar</g><p>baz</table><p>quux
+tests18.dat:13  # <!doctype html><select><plaintext></plaintext>X
+tests18.dat:14  # <!doctype html><table><select><plaintext>a<caption>b
+tests7.dat:30  # <select><keygen>
+tests9.dat:4  # <!DOCTYPE html><body><select><math></math></select>
+tests9.dat:5  # <!DOCTYPE html><body><select><option><math></math></option></select>
+tests9.dat:17  # <!DOCTYPE html><body><table><tr><td><select><math><mi>foo</mi><mi>bar</mi><p>baz</table><p>quux
+tests9.dat:18  # <!DOCTYPE html><body><table><select><math><mi>foo</mi><mi>bar</mi><p>baz</table><p>quux
+tests_innerHTML_1.dat:80  # <keygen><option>
+tests_innerHTML_1.dat:81  # <textarea><option>
+webkit02.dat:17  # <option><XH<optgroup></optgroup>
+
+# The same, in a fragment whose context is a select, which is not on the stack
+# of open elements: so an input does not close it, and stays. html5lib, even in
+# its newer copy, expects the input to go, and Chrome's results there record
+# that Chrome keeps it.
+tests_innerHTML_1.dat:79  # <input><option>
+
+# In a fragment whose context is an SVG or MathML element, a start tag that
+# ends foreign content pops back to HTML content, as in a document, where the
+# HTML Standard had such a tag go into the context's namespace. The standard
+# and html5lib have since changed to what Blink does.
+foreign-fragment.dat:0  # <nobr>X
+foreign-fragment.dat:1  # <font color></font>X
+foreign-fragment.dat:38  # <div></div>
+foreign-fragment.dat:40  # <div></div>
+foreign-fragment.dat:47  # <div><h1>X</h1></div>
+foreign-fragment.dat:48  # <div></div>

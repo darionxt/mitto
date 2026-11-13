@@ -6,17 +6,14 @@
 // TESTS is a directory of html5lib's .dat files, and FAILURES the list,
 // native/test/html5lib_tree_failures.txt. A test passes when the tree it
 // builds is the one it expects. One that builds another tree is a failure
-// unless the tree builder recorded a rule it skipped: a first tree builder
-// lacks most of tree construction (roadmap, M8), and a document that needs
-// what it lacks may get another tree, but never without saying which rule it
-// skipped. It exits with an error if a test that the list names passes or
-// skips a rule, or if one that it does not name fails. --print-failures
-// prints every failure in the form of the list, without its reasons, and
-// --print-skipped each test that skipped a rule, with the rules.
+// unless the tree builder recorded a rule it could not follow, because the DOM
+// lacks what the rule needs: such a document may get another tree, but never
+// without saying which rule. It exits with an error if a test that the list
+// names passes or records a rule, or if one that it does not name fails.
+// --print-failures prints every failure in the form of the list, without its
+// reasons, and --print-skipped each test that recorded a rule, with the rules.
 //
-// Tests with #script-off are left out: a Page runs scripts. So are those of
-// template contents and of a context in another namespace, which need what
-// the tree builder skips anyway.
+// Tests with #script-off are left out: a Page runs scripts.
 
 #include "mitto/dom/html_tree_builder.h"
 
@@ -160,14 +157,14 @@ void DumpNode(const Node& node, int depth, std::vector<std::string>& lines) {
       std::vector<Element::Attribute> attributes = element.attributes();
       std::sort(attributes.begin(), attributes.end(),
                 [](const Element::Attribute& a, const Element::Attribute& b) {
-                  return a.name < b.name;
+                  return a.name.ToString() < b.name.ToString();
                 });
       const std::string attribute_indent =
           "| " + std::string((depth + 1) * 2, ' ');
       for (const Element::Attribute& attribute : attributes) {
-        lines.push_back(
-            base::StrCat({attribute_indent, base::UTF16ToUTF8(attribute.name),
-                          "=\"", base::UTF16ToUTF8(attribute.value), "\""}));
+        lines.push_back(base::StrCat(
+            {attribute_indent, base::UTF16ToUTF8(attribute.name.ToString()),
+             "=\"", base::UTF16ToUTF8(attribute.value), "\""}));
       }
       break;
     }
@@ -268,10 +265,7 @@ int RunTests(const base::FilePath& directory,
   std::set<std::string> seen;
   for (const base::FilePath& file : files) {
     for (const Test& test : ReadTests(file)) {
-      if (test.script_off || (test.fragment_context &&
-                              (test.fragment_context->starts_with("svg ") ||
-                               test.fragment_context->starts_with("math ") ||
-                               *test.fragment_context == "template"))) {
+      if (test.script_off) {
         continue;
       }
       seen.insert(test.id);

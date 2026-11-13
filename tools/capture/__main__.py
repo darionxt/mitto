@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from tools.capture.cases import RESUMPTION_RUNS, RUNS, Case, Run
+from tools.capture.cases import RECORDING_RUNS, RESUMPTION_RUNS, Case, Run
 from tools.capture.devtools import PageClicker
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
 from tools.capture.probe import dumps_record, read_record
@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument(
         "--runs",
         nargs="+",
-        choices=[run.name for run in (*SCRIPT_RUNS, *RUNS, *RESUMPTION_RUNS)],
+        choices=[run.name for run in (*SCRIPT_RUNS, *RECORDING_RUNS, *RESUMPTION_RUNS)],
         metavar="RUN",
         help="which recordings to wait for (default: all of them)",
     )
@@ -51,7 +51,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.host.endswith(".localhost"):
         parser.error(f"{args.host!r} does not end in .localhost")
-    available: tuple[Run | ScriptRun, ...] = RESUMPTION_RUNS if args.tickets else (*SCRIPT_RUNS, *RUNS)
+    available: tuple[Run | ScriptRun, ...] = RESUMPTION_RUNS if args.tickets else (*SCRIPT_RUNS, *RECORDING_RUNS)
     names = args.runs or [run.name for run in available]
     runs = [run for run in available if run.name in names]
     if len(runs) != len(names):
@@ -147,16 +147,18 @@ def _write(server: CaptureServer, run: Run | ScriptRun, out: Path) -> bool:
     raw_path = out / f"{run.name}.raw.json"
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(json.dumps(raw_form(recording), indent=2) + "\n", encoding="utf-8", newline="\n")
-    written = _write_form(recording, run, run.cases, out / f"{run.name}.json", raw_path)
+    written = _write_form(recording, run, run.cases, run.ordered, out / f"{run.name}.json", raw_path)
     if run.fresh_cases:
-        written = _write_form(recording, run, run.fresh_cases, out / f"{run.name}.fresh.json", raw_path) and written
+        written = _write_form(recording, run, run.fresh_cases, (), out / f"{run.name}.fresh.json", raw_path) and written
     return written
 
 
-def _write_form(recording: Recording, run: Run, cases: tuple[Case, ...], path: Path, raw_path: Path) -> bool:
+def _write_form(
+    recording: Recording, run: Run, cases: tuple[Case, ...], ordered: tuple[Case, ...], path: Path, raw_path: Path
+) -> bool:
     """Write the normal form of some of a run's cases. Returns whether it is complete."""
     try:
-        form = normal_form(recording, cases)
+        form = normal_form(recording, cases, ordered)
     except RecordingError as error:
         print(f"{run.label}: {error}. See {raw_path}.", file=sys.stderr)
         return False

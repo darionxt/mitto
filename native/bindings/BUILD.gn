@@ -128,39 +128,50 @@ action_with_pydeps("generate_bindings") {
     "--listing",
     rebase_path(outputs[0], root_build_dir),
   ]
+
+  # The outputs and the interfaces go into a response file: on Windows, the
+  # command line of a process holds at most 32,767 characters.
+  args += [ "@{{response_file_name}}" ]
+  response_file_contents = []
   foreach(file, _generated_runtime + mitto_bindings_generated_dom_files) {
     outputs += [ "$_generated_dir/$file" ]
-    args += [
+    response_file_contents += [
       "--output",
       file,
     ]
   }
   foreach(interface, mitto_bindings_interfaces) {
-    args += [
+    response_file_contents += [
       "--interface",
       interface.name,
     ]
+    if (defined(interface.header)) {
+      response_file_contents += [
+        "--header",
+        "${interface.name}=${interface.header}",
+      ]
+    }
     if (defined(interface.missing)) {
       foreach(member, interface.missing) {
-        args += [
+        response_file_contents += [
           "--missing",
           "${interface.name}.$member",
         ]
       }
     }
     if (defined(interface.made_by_known_gaps) && interface.made_by_known_gaps) {
-      args += [
+      response_file_contents += [
         "--made-by-known-gaps",
         interface.name,
       ]
     }
     if (defined(interface.implemented)) {
-      args += [
+      response_file_contents += [
         "--only-implemented",
         interface.name,
       ]
       foreach(member, interface.implemented) {
-        args += [
+        response_file_contents += [
           "--implemented",
           "${interface.name}.$member",
         ]

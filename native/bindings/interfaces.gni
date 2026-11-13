@@ -25,6 +25,10 @@
 # the constructor as any member, and a constructor that is a Known Gap makes
 # the object that way. Without it, the class has its constructor.
 #
+# `header` names the file in native/dom whose header declares the class, when
+# it is not `file`, as svg_elements.h declares the classes of SVG that have
+# nothing of their own yet.
+#
 # "maplike" or "setlike" in `implemented` gives a read-only declaration of
 # that kind its behaviour: the bindings write its members, which read the
 # class's MaplikeEntries() or SetlikeValues().
@@ -216,7 +220,9 @@ mitto_bindings_interfaces = [
       "childElementCount",
       "append",
       "createComment",
+      "createDocumentFragment",
       "createElement",
+      "createElementNS",
       "createTextNode",
       "getElementById",
       "prepend",
@@ -251,6 +257,21 @@ mitto_bindings_interfaces = [
       "children",
       "hasStorageAccess",
       "featurePolicy",
+    ]
+  },
+  {
+    name = "DocumentFragment"
+    file = "document_fragment"
+    implemented = [
+      "children",
+      "firstElementChild",
+      "lastElementChild",
+      "childElementCount",
+      "append",
+      "getElementById",
+      "prepend",
+      "querySelector",
+      "replaceChildren",
     ]
   },
   {
@@ -292,8 +313,10 @@ mitto_bindings_interfaces = [
       "before",
       "closest",
       "getAttribute",
+      "getAttributeNS",
       "getAttributeNames",
       "hasAttribute",
+      "hasAttributeNS",
       "hasAttributes",
       "insertAdjacentElement",
       "insertAdjacentText",
@@ -302,9 +325,11 @@ mitto_bindings_interfaces = [
       "querySelector",
       "remove",
       "removeAttribute",
+      "removeAttributeNS",
       "replaceChildren",
       "replaceWith",
       "setAttribute",
+      "setAttributeNS",
       "toggleAttribute",
       "webkitMatchesSelector",
       "children",
@@ -459,6 +484,11 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLTemplateElement"
+    file = "html_template_element"
+    implemented = [ "content" ]
+  },
+  {
     name = "HTMLTitleElement"
     file = "html_title_element"
     implemented = [ "text" ]
@@ -550,6 +580,11 @@ mitto_bindings_interfaces = [
   {
     name = "LockManager"
     file = "lock_manager"
+  },
+  {
+    name = "MathMLElement"
+    file = "mathml_element"
+    implemented = []
   },
   {
     name = "MediaDeviceInfo"
@@ -711,8 +746,11 @@ mitto_bindings_interfaces = [
       "getRootNode",
       "hasChildNodes",
       "insertBefore",
+      "isDefaultNamespace",
       "isEqualNode",
       "isSameNode",
+      "lookupNamespaceURI",
+      "lookupPrefix",
       "normalize",
       "removeChild",
       "replaceChild",
@@ -926,6 +964,431 @@ mitto_bindings_interfaces = [
       "json",
       "text",
     ]
+  },
+  {
+    name = "SVGAElement"
+    file = "svg_a_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGAnimateElement"
+    file = "svg_animate_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGAnimateMotionElement"
+    file = "svg_animate_motion_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGAnimateTransformElement"
+    file = "svg_animate_transform_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGAnimationElement"
+    file = "svg_animation_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGCircleElement"
+    file = "svg_circle_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGClipPathElement"
+    file = "svg_clip_path_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGComponentTransferFunctionElement"
+    file = "svg_component_transfer_function_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGDefsElement"
+    file = "svg_defs_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGDescElement"
+    file = "svg_desc_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGElement"
+    file = "svg_element"
+    implemented = []
+  },
+  {
+    name = "SVGEllipseElement"
+    file = "svg_ellipse_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEBlendElement"
+    file = "svg_fe_blend_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEColorMatrixElement"
+    file = "svg_fe_color_matrix_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEComponentTransferElement"
+    file = "svg_fe_component_transfer_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFECompositeElement"
+    file = "svg_fe_composite_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEConvolveMatrixElement"
+    file = "svg_fe_convolve_matrix_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEDiffuseLightingElement"
+    file = "svg_fe_diffuse_lighting_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEDisplacementMapElement"
+    file = "svg_fe_displacement_map_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEDistantLightElement"
+    file = "svg_fe_distant_light_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEDropShadowElement"
+    file = "svg_fe_drop_shadow_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEFloodElement"
+    file = "svg_fe_flood_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEFuncAElement"
+    file = "svg_fe_func_a_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEFuncBElement"
+    file = "svg_fe_func_b_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEFuncGElement"
+    file = "svg_fe_func_g_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEFuncRElement"
+    file = "svg_fe_func_r_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEGaussianBlurElement"
+    file = "svg_fe_gaussian_blur_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEImageElement"
+    file = "svg_fe_image_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEMergeElement"
+    file = "svg_fe_merge_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEMergeNodeElement"
+    file = "svg_fe_merge_node_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEMorphologyElement"
+    file = "svg_fe_morphology_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEOffsetElement"
+    file = "svg_fe_offset_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFEPointLightElement"
+    file = "svg_fe_point_light_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFESpecularLightingElement"
+    file = "svg_fe_specular_lighting_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFESpotLightElement"
+    file = "svg_fe_spot_light_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFETileElement"
+    file = "svg_fe_tile_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFETurbulenceElement"
+    file = "svg_fe_turbulence_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGFilterElement"
+    file = "svg_filter_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGForeignObjectElement"
+    file = "svg_foreign_object_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGGElement"
+    file = "svg_g_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGGeometryElement"
+    file = "svg_geometry_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGGradientElement"
+    file = "svg_gradient_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGGraphicsElement"
+    file = "svg_graphics_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGImageElement"
+    file = "svg_image_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGLineElement"
+    file = "svg_line_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGLinearGradientElement"
+    file = "svg_linear_gradient_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGMPathElement"
+    file = "svg_mpath_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGMarkerElement"
+    file = "svg_marker_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGMaskElement"
+    file = "svg_mask_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGMetadataElement"
+    file = "svg_metadata_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGPathElement"
+    file = "svg_path_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGPatternElement"
+    file = "svg_pattern_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGPolygonElement"
+    file = "svg_polygon_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGPolylineElement"
+    file = "svg_polyline_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGRadialGradientElement"
+    file = "svg_radial_gradient_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGRectElement"
+    file = "svg_rect_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGSVGElement"
+    file = "svg_svg_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGScriptElement"
+    file = "svg_script_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGSetElement"
+    file = "svg_set_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGStopElement"
+    file = "svg_stop_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGStyleElement"
+    file = "svg_style_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGSwitchElement"
+    file = "svg_switch_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGSymbolElement"
+    file = "svg_symbol_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGTSpanElement"
+    file = "svg_tspan_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGTextContentElement"
+    file = "svg_text_content_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGTextElement"
+    file = "svg_text_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGTextPathElement"
+    file = "svg_text_path_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGTextPositioningElement"
+    file = "svg_text_positioning_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGTitleElement"
+    file = "svg_title_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGUseElement"
+    file = "svg_use_element"
+    header = "svg_elements"
+    implemented = []
+  },
+  {
+    name = "SVGViewElement"
+    file = "svg_view_element"
+    header = "svg_elements"
+    implemented = []
   },
   {
     name = "Scheduler"

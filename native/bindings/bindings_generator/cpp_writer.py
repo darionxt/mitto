@@ -294,6 +294,7 @@ class _InterfaceWriter:
         index: int,
         has_class: Callable[[str], bool],
         context: KnownGapContext,
+        class_header: Callable[[str], str],
     ) -> None:
         self.interface = interface
         self.implemented = implemented
@@ -303,6 +304,7 @@ class _InterfaceWriter:
         self.index = index
         self.has_class = has_class
         self.context = context
+        self.class_header = class_header
         self.constructs: list[ExposedConstruct] = []
         self.known_gap_rows: list[str] = []
         self.cls = f"mitto::{interface.name}"
@@ -1460,7 +1462,7 @@ class _InterfaceWriter:
             self.implemented.header,
         }
         includes |= {header_of(name) for name in self.types.used_interfaces}
-        includes |= {f"mitto/dom/{file_name(name)}.h" for name in self.types.used_interfaces}
+        includes |= {self.class_header(name) for name in self.types.used_interfaces}
         if interface.parent is not None:
             includes.add(header_of(interface.parent))
         if self.interface_object_parent is not None:
@@ -2270,6 +2272,7 @@ def write_bindings(
             indexes[name],
             by_name.__contains__,
             context,
+            lambda name: by_name[name].header,
         )
         header, source = writer.write()
         base = f"v8_{file_name(name)}"
