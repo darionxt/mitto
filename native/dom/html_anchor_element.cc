@@ -1,6 +1,7 @@
 #include "mitto/dom/html_anchor_element.h"
 
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_anchor_element.h"
@@ -205,6 +206,21 @@ void HTMLAnchorElementBase::SetHash(const std::u16string& value) {
   if (url.IsValid()) {
     SetUrl(url);
   }
+}
+
+bool HTMLAnchorElementBase::Draggable() const {
+  const std::u16string* value = FindAttribute(u"draggable");
+  if (value && base::EqualsCaseInsensitiveASCII(*value, u"true")) {
+    return true;
+  }
+  if (value && base::EqualsCaseInsensitiveASCII(*value, u"false")) {
+    return false;
+  }
+  return FindAttribute(u"href");
+}
+
+int32_t HTMLAnchorElementBase::DefaultTabIndex() const {
+  return 0;
 }
 
 // static

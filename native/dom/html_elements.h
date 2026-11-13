@@ -8,6 +8,8 @@
 #ifndef MITTO_DOM_HTML_ELEMENTS_H_
 #define MITTO_DOM_HTML_ELEMENTS_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "mitto/dom/html_element.h"
@@ -31,6 +33,7 @@ class HTMLButtonElement final : public HTMLElement {
   explicit HTMLButtonElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLDListElement final : public HTMLElement {
@@ -130,6 +133,7 @@ class HTMLFrameElement final : public HTMLElement {
   explicit HTMLFrameElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLFrameSetElement final : public HTMLElement {
@@ -157,6 +161,7 @@ class HTMLIFrameElement final : public HTMLElement {
   explicit HTMLIFrameElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLInputElement final : public HTMLElement {
@@ -166,6 +171,7 @@ class HTMLInputElement final : public HTMLElement {
   explicit HTMLInputElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLLabelElement final : public HTMLElement {
@@ -240,6 +246,7 @@ class HTMLObjectElement final : public HTMLElement {
   explicit HTMLObjectElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLOptGroupElement final : public HTMLElement {
@@ -314,6 +321,7 @@ class HTMLSelectElement final : public HTMLElement {
   explicit HTMLSelectElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLSelectedContentElement final : public HTMLElement {
@@ -410,6 +418,7 @@ class HTMLTextAreaElement final : public HTMLElement {
   explicit HTMLTextAreaElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  int32_t DefaultTabIndex() const override;
 };
 
 class HTMLTimeElement final : public HTMLElement {

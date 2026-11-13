@@ -1,5 +1,6 @@
 #include "mitto/dom/html_image_element.h"
 
+#include "base/strings/string_util.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_image_element.h"
 #include "mitto/dom/html_parser_idioms.h"
@@ -36,6 +37,11 @@ HTMLImageElement::HTMLImageElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLImageElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLImageElement::kWrapperTypeInfo;
+}
+
+bool HTMLImageElement::Draggable() const {
+  const std::u16string* value = FindAttribute(u"draggable");
+  return !value || !base::EqualsCaseInsensitiveASCII(*value, u"false");
 }
 
 uint32_t HTMLImageElement::Width() const {

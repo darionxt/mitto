@@ -726,6 +726,14 @@ class TypeMapper:
             if dictionary is not None:
                 self._register_union(idl_type, where)
                 return f"{union_name(idl_type)}({dictionary.name}())"
+        if (
+            kind is TypeKind.UNION
+            and literal in ("true", "false")
+            and any(member.kind is TypeKind.BOOLEAN for member in idl_type.members)
+        ):
+            # A boolean default of a union with a boolean member, such as importNode()'s options = false.
+            self._register_union(idl_type, where)
+            return f"{union_name(idl_type)}({literal})"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
         if kind is TypeKind.CALLBACK_FUNCTION and idl_type.nullable and literal == "null":

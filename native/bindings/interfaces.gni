@@ -240,6 +240,8 @@ mitto_bindings_interfaces = [
       "createElementNS",
       "createTextNode",
       "getElementById",
+      "adoptNode",
+      "importNode",
       "prepend",
       "querySelector",
       "replaceChildren",
@@ -336,6 +338,7 @@ mitto_bindings_interfaces = [
       "hasAttributeNS",
       "hasAttributes",
       "insertAdjacentElement",
+      "insertAdjacentHTML",
       "insertAdjacentText",
       "matches",
       "prepend",
@@ -551,7 +554,16 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLElement"
     file = "html_element"
-    implemented = [ "autocapitalize" ]
+    implemented = [
+      "autocapitalize",
+      "dir",
+      "translate",
+      "draggable",
+      "spellcheck",
+      "contentEditable",
+      "isContentEditable",
+      "tabIndex",
+    ]
   },
   {
     name = "HTMLEmbedElement"
@@ -1022,7 +1034,7 @@ mitto_bindings_interfaces = [
   {
     name = "MathMLElement"
     file = "mathml_element"
-    implemented = []
+    implemented = [ "tabIndex" ]
   },
   {
     name = "MediaDeviceInfo"
@@ -1450,7 +1462,7 @@ mitto_bindings_interfaces = [
   {
     name = "SVGElement"
     file = "svg_element"
-    implemented = []
+    implemented = [ "tabIndex" ]
   },
   {
     name = "SVGEllipseElement"

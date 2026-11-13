@@ -45,6 +45,10 @@ class HTMLAnchorElementBase : public HTMLElement {
   std::u16string Hash() const;
   void SetHash(const std::u16string& value);
 
+  // HTMLElement's: a link with href is draggable by default, and focusable.
+  bool Draggable() const override;
+  int32_t DefaultTabIndex() const override;
+
  protected:
   HTMLAnchorElementBase(Document& document, const std::u16string& local_name);
 

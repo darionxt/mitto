@@ -396,6 +396,18 @@ def test_a_buffer_source_in_a_dictionary_converts_as_blinks_union_of_a_buffer_an
         types.value_type(dataclasses.replace(union, members=(IdlType(TypeKind.BUFFER_SOURCE, "Uint8Array"), view)), "b")
 
 
+def test_a_union_with_a_boolean_takes_a_boolean_default() -> None:
+    # Document.importNode()'s optional (boolean or ImportNodeOptions) options = false.
+    union = IdlType(
+        TypeKind.UNION,
+        "boolean or ImportNodeOptions",
+        members=(BOOLEAN, IdlType(TypeKind.DICTIONARY, "ImportNodeOptions")),
+    )
+    types = TypeMapper(frozenset(), frozenset({"ImportNodeOptions"}), {})
+
+    assert types.default_value(union, "false", "a") == "BooleanOrImportNodeOptions(false)"
+
+
 def test_a_sequence_takes_an_empty_list_for_its_default() -> None:
     # OTPCredentialRequestOptions' transports.
     types = TypeMapper(frozenset(), frozenset(), {"OTPCredentialTransportType": ("sms",)})

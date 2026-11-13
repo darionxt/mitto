@@ -503,6 +503,52 @@ Element* Document::CreateElementForBinding(
   return CreateElementForBinding(local_name, exception_state);
 }
 
+Node* Document::ImportNode(Node* node,
+                           const bindings::BooleanOrImportNodeOptions& options,
+                           bindings::ExceptionState& exception_state) {
+  // Blink's importNode(): a boolean says whether to copy the subtree, and
+  // options say so unless they ask for the node alone. A custom element
+  // registry, which the Runtime has none of, changes nothing.
+  bool deep = false;
+  if (const bool* subtree = std::get_if<bool>(&options)) {
+    deep = *subtree;
+  } else {
+    deep = !std::get<bindings::ImportNodeOptions>(options).self_only;
+  }
+  if (node->IsDocumentNode()) {
+    exception_state.ThrowDOMException(
+        "NotSupportedError",
+        "The node provided is a document, which may not be imported.");
+    return nullptr;
+  }
+  return node->Clone(*this, deep);
+}
+
+Node* Document::AdoptNode(Node* node,
+                          bindings::ExceptionState& exception_state) {
+  // Blink's adoptNode().
+  if (node->IsDocumentNode()) {
+    exception_state.ThrowDOMException(
+        "NotSupportedError", base::StrCat({"The node provided is of type '",
+                                           base::UTF16ToUTF8(node->NodeName()),
+                                           "', which may not be adopted."}));
+    return nullptr;
+  }
+  if (node->GetNodeType() == kAttributeNode) {
+    Attr* const attr = static_cast<Attr*>(node);
+    if (Element* const owner = attr->OwnerElement()) {
+      owner->RemoveAttributeNode(attr, exception_state);
+    }
+  } else if (Node* const parent = node->ParentNode()) {
+    parent->RemoveChild(node, exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+  }
+  node->SetTreeDocument(*this);
+  return node;
+}
+
 Element* Document::GetElementById(const std::u16string& id) const {
   if (id.empty()) {
     return nullptr;

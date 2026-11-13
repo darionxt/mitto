@@ -739,6 +739,67 @@ void Element::InsertAdjacentText(const std::u16string& where,
   InsertAdjacent(where, Text::Create(GetDocument(), data), exception_state);
 }
 
+void Element::InsertAdjacentHTML(const std::u16string& position,
+                                 const std::u16string& text,
+                                 bindings::ExceptionState& exception_state) {
+  // Blink's ContextNodeForInsertion() and InsertAdjacentHTMLInternal(): a
+  // parent that is not an element, or the html element of an HTML document,
+  // parses in a new body element.
+  Node* context_node = nullptr;
+  if (base::EqualsCaseInsensitiveASCII(position, u"beforeBegin") ||
+      base::EqualsCaseInsensitiveASCII(position, u"afterEnd")) {
+    context_node = ParentNode();
+    if (!context_node || context_node->IsDocumentNode()) {
+      exception_state.ThrowDOMException("NoModificationAllowedError",
+                                        "The element has no parent.");
+      return;
+    }
+  } else if (base::EqualsCaseInsensitiveASCII(position, u"afterBegin") ||
+             base::EqualsCaseInsensitiveASCII(position, u"beforeEnd")) {
+    context_node = this;
+  } else {
+    exception_state.ThrowDOMException(
+        "SyntaxError",
+        base::StrCat({"The value provided ('", base::UTF16ToUTF8(position),
+                      "') is not one of 'beforeBegin', 'afterBegin', "
+                      "'beforeEnd', or 'afterEnd'."}));
+    return;
+  }
+  const bool needs_body =
+      !context_node->IsElementNode() ||
+      (GetDocument().IsHTMLDocument() &&
+       static_cast<Element*>(context_node)->HasHTMLTagName(u"html"));
+  const cppgc::Persistent<Element> context(
+      needs_body ? GetDocument().CreateElement(html_names::kXhtmlNamespace,
+                                               std::nullopt, u"body")
+                 : static_cast<Element*>(context_node));
+  const NodeVector nodes = ParseFragment(text, *context, exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
+  const cppgc::Persistent<DocumentFragment> fragment(
+      DocumentFragment::Create(GetDocument()));
+  for (const cppgc::Persistent<Node>& node : nodes) {
+    fragment->ParserAppendChild(node.Get());
+  }
+  InsertAdjacent(position, fragment.Get(), exception_state);
+}
+
+int32_t Element::TabIndex() const {
+  const std::u16string* value = FindAttribute(u"tabindex");
+  const std::optional<int32_t> parsed =
+      value ? ParseHTMLInteger(*value) : std::nullopt;
+  return parsed.value_or(DefaultTabIndex());
+}
+
+void Element::SetTabIndex(int32_t value) {
+  SetReflectedIntegerAttribute(u"tabindex", value);
+}
+
+int32_t Element::DefaultTabIndex() const {
+  return -1;
+}
+
 Node* Element::CloneWithoutChildren(Document& document) const {
   Element* const copy = document.CreateElement(
       tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);

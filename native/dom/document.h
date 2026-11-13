@@ -155,6 +155,10 @@ class Document : public Node {
       bindings::ExceptionState& exception_state);
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
+  Node* ImportNode(Node* node,
+                   const bindings::BooleanOrImportNodeOptions& options,
+                   bindings::ExceptionState& exception_state);
+  Node* AdoptNode(Node* node, bindings::ExceptionState& exception_state);
 
   // Node's.
   uint16_t GetNodeType() const override;
