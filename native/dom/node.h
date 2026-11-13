@@ -99,6 +99,12 @@ class Node : public EventTarget {
   bool IsSameNode(Node* other) const { return other == this; }
   uint16_t CompareDocumentPosition(Node* other) const;
   bool Contains(Node* other) const;
+  std::optional<std::u16string> LookupPrefix(
+      const std::optional<std::u16string>& namespace_uri) const;
+  std::optional<std::u16string> LookupNamespaceURI(
+      const std::optional<std::u16string>& prefix) const;
+  bool IsDefaultNamespace(
+      const std::optional<std::u16string>& namespace_uri) const;
   Node* InsertBefore(Node* node,
                      Node* child,
                      bindings::ExceptionState& exception_state);
@@ -146,9 +152,15 @@ class Node : public EventTarget {
   bool IsCommentNode() const { return GetNodeType() == kCommentNode; }
   bool IsDocumentNode() const { return GetNodeType() == kDocumentNode; }
   bool IsDocumentTypeNode() const { return GetNodeType() == kDocumentTypeNode; }
+  bool IsDocumentFragmentNode() const {
+    return GetNodeType() == kDocumentFragmentNode;
+  }
   bool IsCharacterDataNode() const;
-  // Whether it can have children: a document or an element.
-  bool IsContainerNode() const { return IsDocumentNode() || IsElementNode(); }
+  // Whether it can have children: a document, a document fragment or an
+  // element.
+  bool IsContainerNode() const {
+    return IsDocumentNode() || IsElementNode() || IsDocumentFragmentNode();
+  }
 
   // The topmost ancestor, or this node.
   Node& TreeRoot() const;
@@ -177,6 +189,11 @@ class Node : public EventTarget {
   // A copy of this node, in `document`, with its children if `deep`.
   Node* Clone(Document& document, bool deep) const;
 
+  // Gives this node and those inside it `document` as their node document,
+  // and runs DidMoveToNewDocument() on each that moves, as Blink's
+  // Document::AdoptIfNeeded() does.
+  void SetTreeDocument(Document& document);
+
  protected:
   // `document` is the node document, null for a Document itself, which then
   // calls SetDocumentToSelf().
@@ -186,6 +203,13 @@ class Node : public EventTarget {
 
   // A copy of this node alone, in `document`.
   virtual Node* CloneWithoutChildren(Document& document) const = 0;
+  // The DOM standard's cloning steps, which Clone() runs on this node for its
+  // `copy` after copying the children, as Blink's
+  // CloneNonAttributePropertiesFrom() runs on the copy.
+  virtual void CloningSteps(Node& copy, bool deep) const {}
+  // What a node does once it and its tree move to another document, from
+  // `old_document`, as Blink's Node::DidMoveToNewDocument().
+  virtual void DidMoveToNewDocument(Document& old_document) {}
 
  private:
   // The DOM standard's "ensure pre-insertion validity" with Blink's checks
@@ -198,7 +222,9 @@ class Node : public EventTarget {
       bindings::ExceptionState& exception_state) const;
   // Whether a node of `type` may be a child of this one.
   bool ChildTypeAllowed(uint16_t type) const;
-  // Inserts `nodes`, which are valid here, before `next`, or at the end.
+  // Inserts `nodes`, which are valid here, before `next`, or at the end. A
+  // document fragment among them gives its children, which leave it, as the
+  // DOM standard's insert does.
   void InsertNodes(const NodeVector& nodes, Node* next);
   // Blink's ConvertNodeUnionsIntoNodes(): nodes for the arguments of append()
   // and the like, with a new Text node for each string. With more than one,
@@ -210,8 +236,6 @@ class Node : public EventTarget {
   void InsertNodeVector(const NodeVector& nodes,
                         Node* next,
                         bindings::ExceptionState& exception_state);
-  // Gives this node and those inside it `document` as their node document.
-  void SetTreeDocument(Document& document);
 
   cppgc::Member<Node> parent_;
   cppgc::Member<Node> first_child_;

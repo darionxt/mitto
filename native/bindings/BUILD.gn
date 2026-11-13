@@ -140,6 +140,12 @@ action_with_pydeps("generate_bindings") {
       "--interface",
       interface.name,
     ]
+    if (defined(interface.header)) {
+      args += [
+        "--header",
+        "${interface.name}=${interface.header}",
+      ]
+    }
     if (defined(interface.missing)) {
       foreach(member, interface.missing) {
         args += [

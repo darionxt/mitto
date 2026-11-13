@@ -9,7 +9,9 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_element.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/markup_serializer.h"
 #include "mitto/dom/selector_query.h"
@@ -18,22 +20,6 @@
 namespace mitto {
 
 namespace {
-
-// Blink's IsValidAttributeLocalName(), the DOM standard's valid attribute
-// local name: not empty, and none of ASCII whitespace, U+0000, '/', '=' and
-// '>'.
-bool IsValidAttributeLocalName(std::u16string_view name) {
-  if (name.empty()) {
-    return false;
-  }
-  for (const char16_t c : name) {
-    if (c == 0 || c == ' ' || c == '\t' || c == '\n' || c == '\f' ||
-        c == '\r' || c == '/' || c == '=' || c == '>') {
-      return false;
-    }
-  }
-  return true;
-}
 
 void ThrowInvalidAttributeName(const std::u16string& name,
                                bindings::ExceptionState& exception_state) {
@@ -59,9 +45,9 @@ Element::Element(Document& document,
                  const std::optional<std::u16string>& prefix,
                  const std::u16string& local_name)
     : Node(&document),
-      namespace_uri_(namespace_uri),
-      prefix_(prefix),
-      local_name_(local_name) {}
+      tag_name_{.prefix = prefix,
+                .local_name = local_name,
+                .namespace_uri = namespace_uri} {}
 
 Element::~Element() = default;
 
@@ -70,12 +56,16 @@ const bindings::WrapperTypeInfo* Element::GetWrapperTypeInfo() const {
 }
 
 bool Element::IsHTMLElement() const {
-  return namespace_uri_ == html_names::kXhtmlNamespace;
+  return tag_name_.namespace_uri == html_names::kXhtmlNamespace;
+}
+
+void Element::SetPrefixForCreateElementNS(
+    const std::optional<std::u16string>& prefix) {
+  tag_name_.prefix = prefix;
 }
 
 std::u16string Element::TagName() const {
-  std::u16string qualified_name =
-      prefix_ ? base::StrCat({*prefix_, u":", local_name_}) : local_name_;
+  std::u16string qualified_name = tag_name_.ToString();
   if (IsHTMLElement() && GetDocument().IsHTMLDocument()) {
     return base::ToUpperASCII(qualified_name);
   }
@@ -90,19 +80,81 @@ std::u16string Element::AttributeNameForLookup(
   return name;
 }
 
+std::optional<size_t> Element::FindAttributeIndexHinted(
+    std::u16string_view name,
+    std::u16string_view lowered) const {
+  for (size_t i = 0; i < attributes_.size(); ++i) {
+    const QualifiedName& attribute_name = attributes_[i].name;
+    if (!attribute_name.prefix && attribute_name.local_name == lowered) {
+      return i;
+    }
+  }
+  for (size_t i = 0; i < attributes_.size(); ++i) {
+    const QualifiedName& attribute_name = attributes_[i].name;
+    if (attribute_name.prefix && attribute_name.ToString() == name) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<size_t> Element::FindAttributeIndex(
+    const QualifiedName& name) const {
+  for (size_t i = 0; i < attributes_.size(); ++i) {
+    if (attributes_[i].name.Matches(name)) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+void Element::AppendAttributeInternal(const QualifiedName& name,
+                                      const std::u16string& value) {
+  attributes_.push_back({name, value});
+}
+
+void Element::SetAttributeValueInternal(size_t index,
+                                        const std::u16string& value) {
+  attributes_[index].value = value;
+}
+
+void Element::RemoveAttributeInternal(size_t index) {
+  attributes_.erase(attributes_.begin() + index);
+}
+
 const std::u16string* Element::FindAttribute(std::u16string_view name) const {
   for (const Attribute& attribute : attributes_) {
-    if (attribute.name == name) {
+    if (!attribute.name.namespace_uri && attribute.name.local_name == name) {
       return &attribute.value;
     }
   }
   return nullptr;
 }
 
+const std::u16string* Element::FindAttribute(const QualifiedName& name) const {
+  const std::optional<size_t> index = FindAttributeIndex(name);
+  return index ? &attributes_[*index].value : nullptr;
+}
+
 std::optional<std::u16string> Element::GetAttribute(
     const std::u16string& name) const {
-  if (const std::u16string* value =
-          FindAttribute(AttributeNameForLookup(name))) {
+  if (const std::optional<size_t> index =
+          FindAttributeIndexHinted(name, AttributeNameForLookup(name))) {
+    return attributes_[*index].value;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::u16string> Element::GetAttributeNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& local_name) const {
+  // A QualifiedName of an empty namespace has none, as Blink's.
+  const std::u16string* value = FindAttribute(
+      QualifiedName{.local_name = local_name,
+                    .namespace_uri = namespace_uri && !namespace_uri->empty()
+                                         ? namespace_uri
+                                         : std::nullopt});
+  if (value) {
     return *value;
   }
   return std::nullopt;
@@ -112,20 +164,30 @@ std::vector<std::u16string> Element::GetAttributeNamesForBindings() const {
   std::vector<std::u16string> names;
   names.reserve(attributes_.size());
   for (const Attribute& attribute : attributes_) {
-    names.push_back(attribute.name);
+    names.push_back(attribute.name.ToString());
   }
   return names;
 }
 
 void Element::SetAttributeWithoutValidation(std::u16string_view name,
                                             const std::u16string& value) {
-  for (Attribute& attribute : attributes_) {
-    if (attribute.name == name) {
-      attribute.value = value;
-      return;
-    }
+  SetAttributeWithoutValidation(
+      QualifiedName{.local_name = std::u16string(name)}, value);
+}
+
+void Element::SetAttributeWithoutValidation(const QualifiedName& name,
+                                            const std::u16string& value) {
+  if (const std::optional<size_t> index = FindAttributeIndex(name)) {
+    SetAttributeValueInternal(*index, value);
+    return;
   }
-  attributes_.push_back({std::u16string(name), value});
+  AppendAttributeInternal(name, value);
+}
+
+void Element::RemoveAttribute(const QualifiedName& name) {
+  if (const std::optional<size_t> index = FindAttributeIndex(name)) {
+    RemoveAttributeInternal(*index);
+  }
 }
 
 void Element::SetAttribute(const std::u16string& name,
@@ -135,18 +197,53 @@ void Element::SetAttribute(const std::u16string& name,
     ThrowInvalidAttributeName(name, exception_state);
     return;
   }
-  SetAttributeWithoutValidation(AttributeNameForLookup(name), value);
+  // Blink's SetAttributeHinted(): the attribute that the qualified name
+  // finds, or a new one of no namespace.
+  const std::u16string lookup = AttributeNameForLookup(name);
+  if (const std::optional<size_t> index =
+          FindAttributeIndexHinted(name, lookup)) {
+    SetAttributeValueInternal(*index, value);
+    return;
+  }
+  AppendAttributeInternal(QualifiedName{.local_name = lookup}, value);
+}
+
+void Element::SetAttributeNS(const std::optional<std::u16string>& namespace_uri,
+                             const std::u16string& qualified_name,
+                             const std::u16string& value,
+                             bindings::ExceptionState& exception_state) {
+  // Blink's ParseAttributeName().
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kAttribute,
+      exception_state);
+  if (!name) {
+    return;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"'", base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "' is an invalid namespace for attributes."}));
+    return;
+  }
+  SetAttributeWithoutValidation(*name, value);
 }
 
 void Element::RemoveAttribute(const std::u16string& name) {
-  const std::u16string lookup = AttributeNameForLookup(name);
-  const auto found = std::find_if(attributes_.begin(), attributes_.end(),
-                                  [&lookup](const Attribute& attribute) {
-                                    return attribute.name == lookup;
-                                  });
-  if (found != attributes_.end()) {
-    attributes_.erase(found);
+  if (const std::optional<size_t> index =
+          FindAttributeIndexHinted(name, AttributeNameForLookup(name))) {
+    RemoveAttributeInternal(*index);
   }
+}
+
+void Element::RemoveAttributeNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& local_name) {
+  RemoveAttribute(
+      QualifiedName{.local_name = local_name,
+                    .namespace_uri = namespace_uri && !namespace_uri->empty()
+                                         ? namespace_uri
+                                         : std::nullopt});
 }
 
 bool Element::ToggleAttribute(const std::u16string& name,
@@ -156,23 +253,78 @@ bool Element::ToggleAttribute(const std::u16string& name,
     ThrowInvalidAttributeName(name, exception_state);
     return false;
   }
+  // Blink's toggleAttribute() looks up the lower-case name both ways.
   const std::u16string lookup = AttributeNameForLookup(name);
-  if (!FindAttribute(lookup)) {
+  const std::optional<size_t> index = FindAttributeIndexHinted(lookup, lookup);
+  if (!index) {
     if (force.value_or(true)) {
-      SetAttributeWithoutValidation(lookup, std::u16string());
+      AppendAttributeInternal(QualifiedName{.local_name = lookup},
+                              std::u16string());
       return true;
     }
     return false;
   }
   if (!force.value_or(false)) {
-    RemoveAttribute(lookup);
+    RemoveAttributeInternal(*index);
     return false;
   }
   return true;
 }
 
 bool Element::HasAttribute(const std::u16string& name) const {
-  return FindAttribute(AttributeNameForLookup(name));
+  return FindAttributeIndexHinted(name, AttributeNameForLookup(name))
+      .has_value();
+}
+
+bool Element::HasAttributeNS(const std::optional<std::u16string>& namespace_uri,
+                             const std::u16string& local_name) const {
+  return GetAttributeNS(namespace_uri, local_name).has_value();
+}
+
+std::optional<std::u16string> Element::LocateNamespacePrefix(
+    const std::u16string& namespace_uri) const {
+  for (const Element* element = this; element;
+       element = element->ParentElement()) {
+    if (element->Prefix() && element->NamespaceURI() == namespace_uri) {
+      return element->Prefix();
+    }
+    for (const Attribute& attribute : element->attributes_) {
+      if (attribute.name.prefix == u"xmlns" &&
+          attribute.value == namespace_uri) {
+        return attribute.name.local_name;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::u16string> Element::LocateNamespace(
+    const std::optional<std::u16string>& prefix) const {
+  if (prefix == u"xml") {
+    return std::u16string(html_names::kXmlNamespace);
+  }
+  if (prefix == u"xmlns") {
+    return std::u16string(html_names::kXmlnsNamespace);
+  }
+  for (const Element* element = this; element;
+       element = element->ParentElement()) {
+    if (element->NamespaceURI() && element->Prefix() == prefix) {
+      return element->NamespaceURI();
+    }
+    // As Blink, which looks at an attribute's prefix and local name, not its
+    // namespace.
+    for (const Attribute& attribute : element->attributes_) {
+      if ((attribute.name.prefix == u"xmlns" &&
+           attribute.name.local_name == prefix) ||
+          (attribute.name.local_name == u"xmlns" && !prefix)) {
+        if (attribute.value.empty()) {
+          return std::nullopt;
+        }
+        return attribute.value;
+      }
+    }
+  }
+  return std::nullopt;
 }
 
 std::u16string Element::ReflectedStringAttribute(
@@ -232,7 +384,7 @@ void Element::SetReflectedNullableStringAttribute(
     SetAttributeWithoutValidation(name, *value);
     return;
   }
-  RemoveAttribute(std::u16string(name));
+  RemoveAttribute(QualifiedName{.local_name = std::u16string(name)});
 }
 
 void Element::SetReflectedBooleanAttribute(std::u16string_view name,
@@ -241,12 +393,7 @@ void Element::SetReflectedBooleanAttribute(std::u16string_view name,
     SetAttributeWithoutValidation(name, std::u16string());
     return;
   }
-  const auto found = std::find_if(
-      attributes_.begin(), attributes_.end(),
-      [name](const Attribute& attribute) { return attribute.name == name; });
-  if (found != attributes_.end()) {
-    attributes_.erase(found);
-  }
+  RemoveAttribute(QualifiedName{.local_name = std::u16string(name)});
 }
 
 std::u16string Element::InnerHTML() const {
@@ -275,9 +422,15 @@ void Element::SetInnerHTML(const std::u16string& html,
   if (exception_state.HadException()) {
     return;
   }
-  RemoveChildren();
+  // A template's markup goes into its contents.
+  Node& container =
+      HasHTMLTagName(u"template")
+          ? static_cast<Node&>(
+                *static_cast<HTMLTemplateElement*>(this)->Content())
+          : static_cast<Node&>(*this);
+  container.RemoveChildren();
   for (const cppgc::Persistent<Node>& node : nodes) {
-    ParserAppendChild(node.Get());
+    container.ParserAppendChild(node.Get());
   }
 }
 
@@ -386,11 +539,9 @@ void Element::InsertAdjacentText(const std::u16string& where,
 }
 
 Node* Element::CloneWithoutChildren(Document& document) const {
-  Element* const copy =
-      document.CreateElement(namespace_uri_, prefix_, local_name_);
-  for (const Attribute& attribute : attributes_) {
-    copy->SetAttributeWithoutValidation(attribute.name, attribute.value);
-  }
+  Element* const copy = document.CreateElement(
+      tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);
+  copy->attributes_ = attributes_;
   return copy;
 }
 
