@@ -276,6 +276,14 @@ bool IterateSequenceWithMethod(
     v8::Local<v8::Function> method,
     base::FunctionRef<bool(v8::Local<v8::Value>)> each);
 
+// Whether `value` is an object whose @@iterator is neither undefined nor null,
+// as Blink's IsEsIterableObject() decides it for Web IDL's overload
+// resolution. Returns false with `*threw` set if reading it threw, or threw a
+// TypeError because it is not callable.
+bool IsIterableObject(v8::Isolate* isolate,
+                      v8::Local<v8::Value> value,
+                      bool* threw);
+
 // Gets the @@iterator of `object` into `method`, which stays empty if it is
 // undefined or null. Returns false if that threw, or threw a TypeError because
 // it is not callable.
