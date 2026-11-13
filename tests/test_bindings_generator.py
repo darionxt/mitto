@@ -1115,6 +1115,34 @@ def test_a_class_with_a_window_alias_gives_the_window_both_names() -> None:
     assert '{"OldThing", &V8Thing::kWrapperTypeInfo, ExposedConstructInfo::Kind::kInterfaceObject' in source
 
 
+def test_a_class_stringifier_gives_its_attributes_getter() -> None:
+    # DOMTokenList's `stringifier attribute DOMString value`: Blink's toString() is the getter.
+    value = Attribute("value", IdlType(TypeKind.STRING, "DOMString"), False, False, ExtendedAttributes(), ALWAYS)
+    thing = _interface(attributes=(value,), stringifier="value")
+
+    source = _bindings_of(thing, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    callback = source[source.index("void ToStringOperationCallback") :]
+    assert "impl->Value()" in callback[: callback.index("\n}")]
+    assert '"toString", kInterfaceName, ToStringOperationCallback, 0' in source
+
+
+def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None:
+    # Element's [PutForwards=value] classList: bind_gen's make_steps_of_put_forwards().
+    list_type = IdlType(TypeKind.INTERFACE, "Thing")
+    forwards = ExtendedAttributes((("PutForwards", ("value",)),))
+    attribute = Attribute("classList", list_type, True, False, forwards, ALWAYS)
+    thing = _interface(attributes=(attribute,))
+
+    source = _bindings_of(thing, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    setter = source[source.index("void ClassListAttributeSetCallback") :]
+    setter = setter[: setter.index("\n}")]
+    assert 'v8::String::NewFromUtf8Literal(isolate, "classList")' in setter
+    assert '"The attribute value is not an object"' in setter
+    assert 'v8::String::NewFromUtf8Literal(isolate, "value"), info[0]' in setter
+
+
 def test_a_class_declared_in_a_shared_header_is_included_from_it() -> None:
     # svg_elements.h declares the classes of SVG that have nothing of their own, which interfaces.gni's `header` names.
     part = _interface(name="Part", tag=3, max_subclass_tag=3)

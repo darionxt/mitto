@@ -48,6 +48,7 @@ void HTMLTemplateElement::CloningSteps(Node& copy, bool deep) const {
 }
 
 void HTMLTemplateElement::DidMoveToNewDocument(Document& old_document) {
+  HTMLElement::DidMoveToNewDocument(old_document);
   // The HTML Standard's adopting steps: the contents move to the template
   // document of the new document.
   if (content_) {

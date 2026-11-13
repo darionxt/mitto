@@ -12,14 +12,17 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_element.h"
+#include "mitto/dom/attr.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
+#include "mitto/dom/dom_token_list.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/markup_serializer.h"
 #include "mitto/dom/mutation_observer.h"
+#include "mitto/dom/named_node_map.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
 #include "url/gurl.h"
@@ -111,6 +114,14 @@ const bindings::WrapperTypeInfo* Element::GetWrapperTypeInfo() const {
   return &bindings::V8Element::kWrapperTypeInfo;
 }
 
+void Element::Trace(cppgc::Visitor* visitor) const {
+  Node::Trace(visitor);
+  attr_nodes_.Trace(visitor);
+  visitor->Trace(attribute_map_);
+  visitor->Trace(class_list_);
+  visitor->Trace(part_);
+}
+
 bool Element::IsHTMLElement() const {
   return tag_name_.namespace_uri == html_names::kXhtmlNamespace;
 }
@@ -189,9 +200,148 @@ void Element::SetAttributeValueInternal(size_t index,
 void Element::RemoveAttributeInternal(size_t index) {
   EnqueueAttributeMutation(*this, attributes_[index].name,
                            attributes_[index].value);
+  // Blink's RemoveAttributeInternal(): the attribute's node keeps the value.
+  if (Attr* const attr = AttrIfExists(attributes_[index].name)) {
+    attr->DetachFromElementWithValue(attributes_[index].value);
+    attr_nodes_.EraseIf([attr](Attr* node) { return node == attr; });
+  }
   const Attribute removed = std::move(attributes_[index]);
   attributes_.erase(attributes_.begin() + index);
   AttributeChanged(removed.name, &removed.value, nullptr);
+}
+
+Attr* Element::AttrIfExists(const QualifiedName& name) const {
+  for (size_t i = 0; i < attr_nodes_.size(); ++i) {
+    if (attr_nodes_[i]->GetQualifiedName().Matches(name)) {
+      return attr_nodes_[i];
+    }
+  }
+  return nullptr;
+}
+
+Attr* Element::EnsureAttr(const QualifiedName& name) {
+  if (Attr* const attr = AttrIfExists(name)) {
+    return attr;
+  }
+  Attr* const attr = Attr::Create(*this, name);
+  attr_nodes_.push_back(attr);
+  return attr;
+}
+
+Attr* Element::DetachAttributeAt(size_t index) {
+  Attr* attr = AttrIfExists(attributes_[index].name);
+  if (!attr) {
+    attr = Attr::Create(GetDocument(), attributes_[index].name,
+                        attributes_[index].value);
+  }
+  RemoveAttributeInternal(index);
+  return attr;
+}
+
+Attr* Element::DetachAttribute(const QualifiedName& name) {
+  const std::optional<size_t> index = FindAttributeIndex(name);
+  return index ? DetachAttributeAt(*index) : nullptr;
+}
+
+Attr* Element::DetachAttributeByQualifiedName(const std::u16string& name) {
+  const std::optional<size_t> index =
+      FindAttributeIndexHinted(name, AttributeNameForLookup(name));
+  return index ? DetachAttributeAt(*index) : nullptr;
+}
+
+NamedNodeMap* Element::AttributesForBindings() {
+  if (!attribute_map_) {
+    attribute_map_ = NamedNodeMap::Create(*this);
+  }
+  return attribute_map_.Get();
+}
+
+DOMTokenList* Element::ClassList() {
+  if (!class_list_) {
+    class_list_ = DOMTokenList::Create(*this, u"class");
+  }
+  return class_list_.Get();
+}
+
+DOMTokenList* Element::Part() {
+  if (!part_) {
+    part_ = DOMTokenList::Create(*this, u"part");
+  }
+  return part_.Get();
+}
+
+Attr* Element::GetAttributeNode(const std::u16string& name) {
+  const std::optional<size_t> index =
+      FindAttributeIndexHinted(name, AttributeNameForLookup(name));
+  return index ? EnsureAttr(attributes_[*index].name) : nullptr;
+}
+
+Attr* Element::GetAttributeNodeNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& local_name) {
+  const std::optional<size_t> index = FindAttributeIndex(
+      QualifiedName{.local_name = local_name,
+                    .namespace_uri = namespace_uri && !namespace_uri->empty()
+                                         ? namespace_uri
+                                         : std::nullopt});
+  return index ? EnsureAttr(attributes_[*index].name) : nullptr;
+}
+
+Attr* Element::SetAttributeNode(Attr* attr,
+                                bindings::ExceptionState& exception_state) {
+  // Blink's Element::setAttributeNode().
+  const QualifiedName& name = attr->GetQualifiedName();
+  Attr* old_attr = AttrIfExists(name);
+  if (old_attr == attr) {
+    return attr;
+  }
+  if (attr->OwnerElement()) {
+    exception_state.ThrowDOMException(
+        "InUseAttributeError",
+        "The node provided is an attribute node that is already an attribute "
+        "of another Element; attribute nodes must be explicitly cloned.");
+    return nullptr;
+  }
+  const std::u16string value = attr->Value();
+  const std::optional<size_t> index = FindAttributeIndex(name);
+  if (index) {
+    if (old_attr) {
+      old_attr->DetachFromElementWithValue(attributes_[*index].value);
+      attr_nodes_.EraseIf([old_attr](Attr* node) { return node == old_attr; });
+    } else {
+      old_attr = Attr::Create(GetDocument(), name, attributes_[*index].value);
+    }
+    SetAttributeValueInternal(*index, value);
+  } else {
+    AppendAttributeInternal(name, value);
+  }
+  attr->AttachToElement(*this);
+  attr->SetTreeDocument(GetDocument());
+  attr_nodes_.push_back(attr);
+  return old_attr;
+}
+
+Attr* Element::SetAttributeNodeNS(Attr* attr,
+                                  bindings::ExceptionState& exception_state) {
+  return SetAttributeNode(attr, exception_state);
+}
+
+Attr* Element::RemoveAttributeNode(Attr* attr,
+                                   bindings::ExceptionState& exception_state) {
+  if (attr->OwnerElement() != this) {
+    exception_state.ThrowDOMException(
+        "NotFoundError", "The node provided is owned by another element.");
+    return nullptr;
+  }
+  const std::optional<size_t> index =
+      FindAttributeIndex(attr->GetQualifiedName());
+  if (!index) {
+    exception_state.ThrowDOMException(
+        "NotFoundError", "The attribute was not found on this element.");
+    return nullptr;
+  }
+  RemoveAttributeInternal(*index);
+  return attr;
 }
 
 const std::u16string* Element::FindAttribute(std::u16string_view name) const {
@@ -667,6 +817,12 @@ Node* Element::CloneWithoutChildren(Document& document) const {
       tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);
   copy->attributes_ = attributes_;
   return copy;
+}
+
+void Element::DidMoveToNewDocument(Document& old_document) {
+  for (Attr* const attr : attr_nodes_.ToVector()) {
+    attr->SetTreeDocument(GetDocument());
+  }
 }
 
 uint16_t Element::GetNodeType() const {

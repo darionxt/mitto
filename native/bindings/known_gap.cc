@@ -407,9 +407,9 @@ void PutForwards(const v8::FunctionCallbackInfo<v8::Value>& info,
     return;
   }
   if (!target->IsObject()) {
+    // bind_gen's message, which names no attribute.
     ExceptionState exception_state(isolate);
-    exception_state.ThrowTypeError(
-        base::StrCat({"The attribute '", member.name, "' is not an object."}));
+    exception_state.ThrowTypeError("The attribute value is not an object");
     return;
   }
   std::ignore = target.As<v8::Object>()->Set(
