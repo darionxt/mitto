@@ -13,6 +13,8 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/idle_deadline.h"
+#include "mitto/dom/scheduler_task_context.h"
+#include "mitto/dom/window.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -132,6 +134,12 @@ void IdleTaskController::RunIdleTask(uint32_t id,
   found->second->timeout_factory.InvalidateWeakPtrs();
   const base::WeakPtr<IdleTaskController> self = weak_factory_.GetWeakPtr();
   {
+    // WindowIdleTasksManager::V8IdleTask: the callback runs with the
+    // background priority current, which a yield() in it inherits.
+    const SchedulerTaskScope task_scope(
+        isolate_, bindings::MakeGarbageCollected<SchedulerTaskContext>(
+                      &Window::Current(), /*abort_source=*/nullptr,
+                      SchedulerTaskContext::Priority::kBackground));
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::Value> argument = bindings::ToV8(
         isolate_,

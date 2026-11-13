@@ -54,6 +54,7 @@ class MediaQueryList;
 class Navigation;
 class Navigator;
 class Performance;
+class Scheduler;
 class Screen;
 class StyleMedia;
 class Viewport;
@@ -147,6 +148,8 @@ class Window final : public WindowProperties {
   // undefined outside one.
   v8::Local<v8::Value> Event() const;
   mitto::Crypto* Crypto();
+  // The window's scheduler, made the first time.
+  mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
 
@@ -173,6 +176,9 @@ class Window final : public WindowProperties {
   void SetIdleTasks(IdleTaskController* idle_tasks) { idle_tasks_ = idle_tasks; }
   // How many idle callbacks wait.
   size_t IdleCallbackCount() const;
+  // How many scheduler.postTask() callbacks and scheduler.yield()
+  // continuations wait.
+  size_t ScheduledTaskCount() const;
   // The HTML Standard's current event of the window, which a dispatch sets
   // while it calls a listener.
   mitto::Event* CurrentEvent() const { return current_event_.Get(); }
@@ -240,6 +246,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Navigation> navigation_;
   cppgc::Member<CustomElementRegistry> custom_elements_;
   cppgc::Member<mitto::Crypto> crypto_;
+  cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
