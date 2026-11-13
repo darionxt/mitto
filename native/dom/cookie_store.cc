@@ -514,13 +514,16 @@ void CookieStore::StartObserving() {
         });
       },
       cppgc::WeakPersistent<CookieStore>(this), isolate, std::move(context)));
-  window->AddContextDestroyedCallback(base::BindOnce(
-      [](cppgc::WeakPersistent<CookieStore> store) {
-        if (store) {
-          store->StopObserving();
-        }
-      },
-      cppgc::WeakPersistent<CookieStore>(this)));
+  if (!stops_with_context_) {
+    stops_with_context_ = true;
+    window->AddContextDestroyedCallback(base::BindOnce(
+        [](cppgc::WeakPersistent<CookieStore> store) {
+          if (store) {
+            store->StopObserving();
+          }
+        },
+        cppgc::WeakPersistent<CookieStore>(this)));
+  }
 }
 
 void CookieStore::StopObserving() {

@@ -91,6 +91,8 @@ class CookieStore final : public EventTarget {
 
   const cppgc::WeakMember<Window> window_;
   bool observing_ = false;
+  // Whether the store stops observing when the context goes.
+  bool stops_with_context_ = false;
 };
 
 }  // namespace mitto
