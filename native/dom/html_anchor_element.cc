@@ -22,10 +22,14 @@ ResolvedURL HTMLAnchorElementBase::Url() const {
   if (!href) {
     return ResolvedURL();
   }
-  // A URL that does not resolve is none, as Blink's Url() has it.
-  ResolvedURL url(ResolvedURL(GetDocument().UrlForBinding()),
-                  StripHTMLSpaces(*href));
-  return url.IsValid() ? url : ResolvedURL();
+  // Blink's Href() resolves it with the document's CompleteURL(), which
+  // encodes the query in the document's encoding. A URL that does not resolve
+  // is none, as Blink's Url() has it.
+  const GURL url = GetDocument().CompleteUrl(StripHTMLSpaces(*href));
+  if (!url.is_valid()) {
+    return ResolvedURL();
+  }
+  return ResolvedURL(base::UTF8ToUTF16(url.spec()));
 }
 
 void HTMLAnchorElementBase::SetUrl(const ResolvedURL& url) {
