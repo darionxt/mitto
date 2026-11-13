@@ -708,6 +708,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "TextDecoder"
+    file = "text_decoder"
+  },
+  {
+    name = "TextEncoder"
+    file = "text_encoder"
+  },
+  {
     name = "TrustedTypePolicyFactory"
     file = "trusted_type_policy_factory"
     made_by_known_gaps = true

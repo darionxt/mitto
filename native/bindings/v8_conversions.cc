@@ -120,6 +120,120 @@ bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
   return true;
 }
 
+namespace {
+
+// The bytes of `buffer` from `offset`, `length` of them.
+base::span<const uint8_t> BytesOf(v8::Local<v8::ArrayBuffer> buffer,
+                                  size_t offset,
+                                  size_t length) {
+  if (!length) {
+    return {};
+  }
+  // SAFETY: V8 gives the buffer's data and its length in bytes, and a view's
+  // bytes lie within its buffer.
+  return UNSAFE_BUFFERS(base::span(static_cast<const uint8_t*>(buffer->Data()),
+                                   buffer->ByteLength()))
+      .subspan(offset, length);
+}
+
+}  // namespace
+
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.cc
+ByteSpanArgument::ByteSpanArgument() = default;
+ByteSpanArgument::ByteSpanArgument(const ByteSpanArgument&) = default;
+ByteSpanArgument& ByteSpanArgument::operator=(const ByteSpanArgument&) =
+    default;
+ByteSpanArgument::~ByteSpanArgument() = default;
+
+void ByteSpanArgument::SetBuffer(v8::Local<v8::ArrayBuffer> buffer,
+                                 size_t offset,
+                                 size_t length) {
+  buffer_ = buffer;
+  offset_ = offset;
+  length_ = length;
+  copied_ = false;
+}
+
+void ByteSpanArgument::SetCopy(v8::Local<v8::ArrayBufferView> view) {
+  length_ = view->CopyContents(inline_storage_.data(), inline_storage_.size());
+  copied_ = true;
+}
+
+base::span<const uint8_t> ByteSpanArgument::get() const {
+  if (copied_) {
+    return base::span(inline_storage_).first(length_);
+  }
+  // Blink's detach check: a buffer detached since gives no bytes.
+  if (buffer_.IsEmpty() || buffer_->WasDetached()) {
+    return {};
+  }
+  return BytesOf(buffer_, offset_, length_);
+}
+
+base::span<const uint8_t> SpanAtCall(const ByteSpanArgument& argument) {
+  return argument.get();
+}
+
+std::optional<base::span<const uint8_t>> SpanAtCall(
+    const std::optional<ByteSpanArgument>& argument) {
+  if (!argument) {
+    return std::nullopt;
+  }
+  return argument->get();
+}
+
+bool FromV8ByteSpan(v8::Local<v8::Value> value,
+                    int argument_index,
+                    ExceptionState& exception_state,
+                    ByteSpanArgument* result) {
+  constexpr char kResizable[] =
+      "The provided ArrayBuffer value must not be resizable";
+  if (value->IsArrayBuffer()) {
+    const v8::Local<v8::ArrayBuffer> buffer = value.As<v8::ArrayBuffer>();
+    if (buffer->IsResizableByUserJavaScript()) {
+      exception_state.ThrowTypeError(kResizable);
+      return false;
+    }
+    result->SetBuffer(buffer, 0, buffer->ByteLength());
+  } else if (value->IsArrayBufferView()) {
+    const v8::Local<v8::ArrayBufferView> view = value.As<v8::ArrayBufferView>();
+    if (view->HasBuffer()) {
+      const v8::Local<v8::ArrayBuffer> buffer = view->Buffer();
+      if (buffer->IsResizableByUserJavaScript()) {
+        exception_state.ThrowTypeError(kResizable);
+        return false;
+      }
+      if (buffer->GetBackingStore()->IsShared()) {
+        exception_state.ThrowTypeError(
+            "The provided ArrayBufferView value must not be shared.");
+        return false;
+      }
+      result->SetBuffer(buffer, view->ByteOffset(), view->ByteLength());
+    } else if (view->ByteLength() <= ByteSpanArgument::kInlineStorageSize) {
+      // A view that V8 keeps on its heap, whose bytes Blink copies.
+      result->SetCopy(view);
+    } else {
+      // V8 keeps none this large on its heap; asking for its buffer moves the
+      // bytes off it, which a page cannot see.
+      result->SetBuffer(view->Buffer(), view->ByteOffset(), view->ByteLength());
+    }
+  } else {
+    exception_state.ThrowTypeError(
+        ExceptionMessages::ArgumentNotOfType(argument_index, "ArrayBuffer"));
+    return false;
+  }
+  // partition_alloc::MaxAllocationSize(), the most that Blink takes: 2 GiB
+  // less a super page of 2 MiB.
+  constexpr size_t kMaxAllocationSize = (size_t{1} << 31) - (size_t{1} << 21);
+  if (result->size() > kMaxAllocationSize) {
+    exception_state.ThrowRangeError(
+        "The ArrayBuffer/ArrayBufferView size exceeds the supported range.");
+    return false;
+  }
+  return true;
+}
+
 v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
                                         std::optional<double> number) {
   if (!number) {

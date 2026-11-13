@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 
+#include <array>
 #include <limits>
 #include <optional>
 #include <string>
@@ -126,6 +127,63 @@ bool FromV8IntegerEnforceRange(v8::Isolate* isolate,
   return true;
 }
 
+// Checks a view that converted to `type_name`, such as "Uint8Array", as
+// NativeValueTraits<NotShared<T>> does: its buffer must be neither shared nor
+// resizable. Throws a TypeError and returns false if it is.
+bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
+                                   std::string_view type_name,
+                                   ExceptionState& exception_state);
+
+// The bytes of a [PassAsSpan] argument, as Blink's ByteSpanWithInlineStorage
+// holds them with its detach check: those of a buffer, which a page's script
+// may detach while the call's later arguments convert, so that the call then
+// reads none, or a copy of those of a view that V8 keeps on its heap, which
+// no script can take away.
+class ByteSpanArgument {
+ public:
+  // V8 keeps a typed array of at most this many bytes on its heap, and Blink
+  // copies one into storage of this size.
+  static constexpr size_t kInlineStorageSize = 64;
+
+  ByteSpanArgument();
+  ByteSpanArgument(const ByteSpanArgument&);
+  ByteSpanArgument& operator=(const ByteSpanArgument&);
+  ~ByteSpanArgument();
+
+  // `length` bytes of `buffer` from `offset`.
+  void SetBuffer(v8::Local<v8::ArrayBuffer> buffer,
+                 size_t offset,
+                 size_t length);
+  // A copy of the bytes of `view`, which has no buffer of its own yet.
+  void SetCopy(v8::Local<v8::ArrayBufferView> view);
+
+  size_t size() const { return length_; }
+  // The bytes, none if the buffer has been detached since.
+  base::span<const uint8_t> get() const;
+
+ private:
+  v8::Local<v8::ArrayBuffer> buffer_;
+  size_t offset_ = 0;
+  size_t length_ = 0;
+  bool copied_ = false;
+  std::array<uint8_t, kInlineStorageSize> inline_storage_{};
+};
+
+// What the class's method takes for a [PassAsSpan] argument, once every
+// argument has converted.
+base::span<const uint8_t> SpanAtCall(const ByteSpanArgument& argument);
+std::optional<base::span<const uint8_t>> SpanAtCall(
+    const std::optional<ByteSpanArgument>& argument);
+
+// Converts the argument at `argument_index` of a [PassAsSpan] BufferSource to
+// its bytes, as Blink's NativeValueTraits of PassAsSpan do: an ArrayBuffer or
+// a view on one that is neither shared nor resizable, and no larger than
+// Blink takes. Throws and returns false for anything else.
+bool FromV8ByteSpan(v8::Local<v8::Value> value,
+                    int argument_index,
+                    ExceptionState& exception_state,
+                    ByteSpanArgument* result);
+
 // Converts `value` to a double or float, by ToNumber(). For one that is not
 // unrestricted, `restricted`, throws a TypeError naming `type_name` for a value
 // that is not finite. Returns false if anything threw.
@@ -184,14 +242,6 @@ bool IterateRecord(
     ExceptionState& exception_state,
     std::string_view type_name,
     base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each);
-
-// The checks of NativeValueTraits<NotShared<T>> once `view` is a view of the
-// type that `type_name` names, such as "ArrayBufferView": its buffer may be
-// neither shared nor resizable. Throws a TypeError for one that is, and
-// returns false then.
-bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
-                                   std::string_view type_name,
-                                   ExceptionState& exception_state);
 
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);
