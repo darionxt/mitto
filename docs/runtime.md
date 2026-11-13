@@ -568,6 +568,7 @@ Known Gaps of selectors:
 - `:valid` and `:invalid` take an email address with a domain that is not ASCII as not valid, where Blink converts the domain with UTS 46 first.
 - A control's form is the one its `form` attribute names, or its nearest form ancestor, but not the one that the parser's form element pointer gives a control outside its form in misnested markup.
 - Chrome focuses an element with `autofocus` at its first rendering, and `:focus` then matches it, where a Page focuses nothing.
+- A control's state is read from its attributes and tree at each match, where Chrome keeps a control's checkedness, selectedness and value once it has them, as its form control classes do. So the two differ once a script changes those attributes: when the `checked` attribute leaves a group's checked radio, Chrome leaves the whole group unchecked, while the Runtime checks the last radio of the group that still has the attribute, and `:indeterminate` and the group's `:valid` follow. The form controls of [#281](https://github.com/darionxt/mitto/issues/281) keep that state.
 
 ### Collections
 
