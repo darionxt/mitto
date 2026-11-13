@@ -40,8 +40,8 @@ _CONVERTED_INTEGERS = frozenset({"byte", "octet", "short", "unsigned short", "lo
 # The integer types that a page reads as a Number rather than a V8 Integer, which holds 32 bits.
 _64_BIT_INTEGERS = frozenset({"long long", "unsigned long long"})
 
-# The conversion annotations on a type that the writer follows.
-_ANNOTATIONS = frozenset({"LegacyNullToEmptyString"})
+# The conversion annotations on a type that the writer follows, and the kind of type each goes on.
+_ANNOTATIONS = {"LegacyNullToEmptyString": TypeKind.STRING, "Clamp": TypeKind.INTEGER}
 
 # The views that the writer converts as Blink's NotShared<T> does, each held by V8's class of its name: one whose buffer
 # is neither shared nor resizable.
@@ -215,7 +215,7 @@ class TypeMapper:
         if _is_enforce_range(idl_type) or _is_byte_span(idl_type):
             return
         for key, _ in idl_type.extended_attributes.entries:
-            if key not in _ANNOTATIONS or idl_type.kind is not TypeKind.STRING:
+            if _ANNOTATIONS.get(key) is not idl_type.kind:
                 raise UnhandledError(f"{where}: the C++ writer does not handle [{key}] on the type {idl_type.syntax}")
 
     def _use_dictionary(self, name: str) -> None:
@@ -251,7 +251,7 @@ class TypeMapper:
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
             self.used_interfaces.add(idl_type.name)
             return f"mitto::{idl_type.name}*"
-        if kind is TypeKind.CALLBACK_INTERFACE:
+        if kind is TypeKind.CALLBACK_INTERFACE or (kind is TypeKind.OBJECT and not idl_type.nullable):
             return "v8::Local<v8::Object>"
         if kind is TypeKind.BUFFER_SOURCE and idl_type.name in _VIEW_TYPES and not idl_type.nullable:
             # A view whose buffer is neither shared nor resizable, as NotShared<T> holds one.
@@ -352,6 +352,9 @@ class TypeMapper:
             if element.kind is TypeKind.INTERFACE and element.name in self._implemented and not element.nullable:
                 self.used_interfaces.add(element.name)
                 return f"std::vector<mitto::{element.name}*>"
+            if element.kind is TypeKind.INTERFACE and element.nullable:
+                # Null or an object, as navigator.getGamepads() gives nulls for a gamepad that is not there.
+                return "std::vector<bindings::ScriptWrappable*>"
             if element.kind is TypeKind.STRING and element.name == "DOMString" and not element.nullable:
                 return "std::vector<std::u16string>"
             if element.kind is TypeKind.STRING and element.name == "ByteString" and not element.nullable:
@@ -473,9 +476,10 @@ class TypeMapper:
                 "}",
             ]
         if kind is TypeKind.INTEGER:
+            function = "FromV8ClampedInteger" if "Clamp" in idl_type.extended_attributes else "FromV8Integer"
             return [
                 f"{cpp_type} {target};",
-                f"if (!FromV8Integer(isolate, {value}, &{target})) {{",
+                f"if (!{function}(isolate, {value}, &{target})) {{",
                 f"  {site.fail}",
                 "}",
             ]
@@ -613,6 +617,15 @@ class TypeMapper:
                 f"  {site.fail}",
                 "}",
             ]
+        if kind is TypeKind.OBJECT:
+            # NativeValueTraits<IDLObject>: an object, or a TypeError.
+            return [
+                f"if (!{value}->IsObject()) {{",
+                f"  exception_state.ThrowTypeError({site.not_of_type('object')});",
+                f"  {site.fail}",
+                "}",
+                f"const v8::Local<v8::Object> {target} = {value}.As<v8::Object>();",
+            ]
         if kind is TypeKind.CALLBACK_INTERFACE:
             lines = [
                 f"v8::Local<v8::Object> {target};",
@@ -642,6 +655,10 @@ class TypeMapper:
             return literal
         if kind is TypeKind.INTEGER and literal.lstrip("-").isdigit():
             return literal
+        if kind is TypeKind.INTEGER and literal.lower().startswith("0x"):
+            # A hexadecimal literal, such as PositionOptions' timeout of 0xFFFFFFFF, which C++ reads as written.
+            int(literal, 16)
+            return literal
         if kind is TypeKind.FLOATING_POINT:
             try:
                 float(literal)
@@ -665,6 +682,9 @@ class TypeMapper:
                 return f"{union_name(idl_type)}({dictionary.name}())"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
+        if kind is TypeKind.CALLBACK_FUNCTION and idl_type.nullable and literal == "null":
+            # Empty for null, as a nullable callback that a page gave as null converts.
+            return "v8::Local<v8::Function>()"
         raise UnhandledError(
             f"{where}: the C++ writer does not handle the default value {literal} of {idl_type.syntax}"
         )
