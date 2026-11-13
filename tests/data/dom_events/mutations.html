@@ -55,6 +55,14 @@ queueMicrotask(() => {
   s2.observe(c, {attributes: true});
   c.setAttribute('data-y', '1');
   c.setAttribute('data-x', '2');
+  // normalize(): an empty Text sibling goes with no record of the data before it, a nonempty one merges in.
+  const n = document.createElement('p');
+  n.append('a', '', 'b');
+  root.appendChild(n);
+  const normalized = new MutationObserver(() => {});
+  normalized.observe(n, {childList: true, characterData: true, characterDataOldValue: true, subtree: true});
+  n.normalize();
+  r.normalize = describe(normalized.takeRecords());
   function finish() {
     r.shared = [shared.length, shared[0] === shared[1], shared[0].attributeName, shared[1].attributeName, shared[0].addedNodes === shared[0].addedNodes, shared[0].addedNodes.length];
     r.window_alias = [typeof WebKitMutationObserver, WebKitMutationObserver === MutationObserver];

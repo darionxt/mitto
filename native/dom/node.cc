@@ -318,7 +318,13 @@ void Node::Normalize() {
     Node* next = text->NextSibling();
     while (next && next->IsTextNode()) {
       Node* const after = next->NextSibling();
-      text->AppendData(static_cast<Text*>(next)->Data());
+      // Blink's Text::MergeNextSiblingNodesIfPossible() takes an empty one
+      // out without changing this node's data, which an observer would hear
+      // of.
+      if (const std::u16string& data = static_cast<Text*>(next)->Data();
+          !data.empty()) {
+        text->AppendData(data);
+      }
       next->ParentNode()->ParserRemoveChild(*next);
       next = after;
     }
