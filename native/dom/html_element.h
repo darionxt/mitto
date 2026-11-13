@@ -22,6 +22,10 @@ class HTMLElement : public Element {
   ~HTMLElement() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface beyond its reflected attributes.
+  std::u16string Autocapitalize() const;
+  void SetAutocapitalize(const std::u16string& value);
 };
 
 }  // namespace mitto

@@ -563,8 +563,204 @@ ScriptWrappable* MakeObjectBehind(
   NOTREACHED();
 }
 
+// Whether a member of an event's init dictionary, of type `member`, can
+// initialize the attribute of the same name, of type `attribute`: the same
+// type, or a sequence for a frozen array of the same items.
+bool InitializesAttribute(const IdlTypeInfo& member,
+                          const IdlTypeInfo& attribute) {
+  if (member.kind == IdlTypeKind::kSequence &&
+      attribute.kind == IdlTypeKind::kFrozenArray) {
+    return member.members.size() == 1 && attribute.members.size() == 1 &&
+           InitializesAttribute(*member.members[0], *attribute.members[0]);
+  }
+  return &member == &attribute ||
+         (member.kind == attribute.kind && member.flags == attribute.flags &&
+          std::string_view(member.name) == attribute.name &&
+          member.interface == attribute.interface &&
+          member.dictionary == attribute.dictionary);
+}
+
+v8::MaybeLocal<v8::Value> AttributeValueOf(v8::Isolate* isolate,
+                                           v8::Local<v8::Context> context,
+                                           const IdlTypeInfo& type,
+                                           v8::Local<v8::Value> value);
+
+// The members of a converted dictionary, given or by their defaults, into
+// `object`, in the order of the IDL, as Blink's ToV8 of a dictionary writes
+// them.
+bool CopyDictionary(v8::Isolate* isolate,
+                    v8::Local<v8::Context> context,
+                    const DictionaryInfo& dictionary,
+                    v8::Local<v8::Object> converted,
+                    v8::Local<v8::Object> object) {
+  if (dictionary.parent && !CopyDictionary(isolate, context, *dictionary.parent,
+                                           converted, object)) {
+    return false;
+  }
+  const PerIsolateData& data = *PerIsolateData::From(isolate);
+  for (const DictionaryMemberInfo& member : dictionary.members) {
+    if (member.condition && !member.condition(data)) {
+      continue;
+    }
+    const v8::Local<v8::String> key = ToV8StringFromUtf8(isolate, member.name);
+    bool given = false;
+    if (!converted->HasOwnProperty(context, key).To(&given)) {
+      return false;
+    }
+    v8::Local<v8::Value> value;
+    if (given) {
+      v8::Local<v8::Value> item;
+      if (!converted->Get(context, key).ToLocal(&item) ||
+          !AttributeValueOf(isolate, context, *member.type, item)
+               .ToLocal(&value)) {
+        return false;
+      }
+    } else if (!member.default_value) {
+      continue;
+    } else if (!DefaultFromLiteral(isolate, context, member).ToLocal(&value)) {
+      return false;
+    }
+    if (object->CreateDataProperty(context, key, value).IsNothing()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// What an attribute gives once a converted value of its type initializes it,
+// as Blink's ToV8 gives the member that its event class keeps: a sequence
+// becomes a frozen array, and a dictionary an object of the page's.
+v8::MaybeLocal<v8::Value> AttributeValueOf(v8::Isolate* isolate,
+                                           v8::Local<v8::Context> context,
+                                           const IdlTypeInfo& type,
+                                           v8::Local<v8::Value> value) {
+  switch (type.kind) {
+    case IdlTypeKind::kDictionary: {
+      if (!value->IsObject()) {
+        return value;
+      }
+      const v8::Local<v8::Object> object = NewPlainObject(isolate);
+      if (!CopyDictionary(isolate, context, *type.dictionary,
+                          value.As<v8::Object>(), object)) {
+        return {};
+      }
+      return object;
+    }
+    case IdlTypeKind::kSequence:
+    case IdlTypeKind::kFrozenArray: {
+      if (!value->IsArray()) {
+        return value;
+      }
+      const v8::Local<v8::Array> items = value.As<v8::Array>();
+      std::vector<v8::Local<v8::Value>> copied;
+      copied.reserve(items->Length());
+      for (uint32_t i = 0; i < items->Length(); ++i) {
+        v8::Local<v8::Value> item;
+        v8::Local<v8::Value> copy;
+        if (!items->Get(context, i).ToLocal(&item) ||
+            !AttributeValueOf(isolate, context, *type.members[0], item)
+                 .ToLocal(&copy)) {
+          return {};
+        }
+        copied.push_back(copy);
+      }
+      const v8::Local<v8::Array> array =
+          v8::Array::New(isolate, copied.data(), copied.size());
+      if (type.kind == IdlTypeKind::kFrozenArray &&
+          array->SetIntegrityLevel(context, v8::IntegrityLevel::kFrozen)
+              .IsNothing()) {
+        return {};
+      }
+      return array;
+    }
+    default:
+      return value;
+  }
+}
+
+// The attribute named `name` of an object of `interface` that a Known Gap
+// gives, on it or on an ancestor without a class, or null.
+const MemberInfo* KnownGapAttribute(const PerIsolateData& data,
+                                    const WrapperTypeInfo& interface,
+                                    std::string_view name) {
+  constexpr uint16_t kNotGiven =
+      kMemberStatic | kMemberEventHandler | kMemberRefused;
+  for (const WrapperTypeInfo* type = &interface; type && type->table;
+       type = type->parent) {
+    for (const base::span<const MemberInfo> members :
+         {type->table->template_members, type->table->context_members}) {
+      for (const MemberInfo& member : members) {
+        if (member.kind == MemberKind::kAttribute &&
+            member.target != MemberTarget::kInterface &&
+            !(member.flags & kNotGiven) &&
+            std::string_view(member.name) == name &&
+            (!member.condition || member.condition(data))) {
+          return &member;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
+// The DOM Standard's inner event creation steps: each member of an event's
+// init dictionary, given or by its default, initializes the attribute of the
+// same name, as each of Blink's event classes does in its constructor. A
+// Known Gap attribute gives it from then on, as what a setter stored. Returns
+// false if that threw.
+bool InitializeEventAttributes(v8::Isolate* isolate,
+                               v8::Local<v8::Object> event,
+                               const WrapperTypeInfo& interface,
+                               const DictionaryInfo& dictionary,
+                               v8::Local<v8::Object> init) {
+  if (dictionary.parent &&
+      !InitializeEventAttributes(isolate, event, interface, *dictionary.parent,
+                                 init)) {
+    return false;
+  }
+  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  PerIsolateData& data = *PerIsolateData::From(isolate);
+  for (const DictionaryMemberInfo& member : dictionary.members) {
+    if (member.condition && !member.condition(data)) {
+      continue;
+    }
+    const MemberInfo* const attribute =
+        KnownGapAttribute(data, interface, member.name);
+    if (!attribute || !InitializesAttribute(*member.type, *attribute->type)) {
+      continue;
+    }
+    const v8::Local<v8::String> key = ToV8StringFromUtf8(isolate, member.name);
+    bool given = false;
+    if (!init->HasOwnProperty(context, key).To(&given)) {
+      return false;
+    }
+    v8::Local<v8::Value> item;
+    if (given) {
+      if (!init->Get(context, key).ToLocal(&item)) {
+        return false;
+      }
+    } else if (!member.default_value) {
+      continue;
+    } else if (!DefaultFromLiteral(isolate, context, member).ToLocal(&item)) {
+      return false;
+    }
+    v8::Local<v8::Value> value;
+    if (!AttributeValueOf(isolate, context, *attribute->type, item)
+             .ToLocal(&value) ||
+        event
+            ->SetPrivate(context,
+                         data.KnownGapPrivate(isolate, attribute->number),
+                         value)
+            .IsNothing()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // A constructor's steps once its arguments have converted: the object that V8
-// made for `new`, with the class's object behind it where there is one.
+// made for `new`, with the class's object behind it where there is one, and
+// for an event the attributes that its init dictionary gives.
 void Construct(const v8::FunctionCallbackInfo<v8::Value>& info,
                const WrapperTypeInfo& interface,
                const OperationInfo& operation,
@@ -572,13 +768,27 @@ void Construct(const v8::FunctionCallbackInfo<v8::Value>& info,
                std::string_view name) {
   v8::Isolate* const isolate = info.GetIsolate();
   std::vector<v8::Local<v8::Value>> arguments;
-  if (!Arguments(info, operation, arguments)) {
+  const OverloadInfo* const overload = Arguments(info, operation, arguments);
+  if (!overload) {
     return;
   }
   Report(isolate, number, name);
   if (ScriptWrappable* const object =
           MakeObjectBehind(isolate, interface, arguments)) {
     object->AssociateWithWrapper(isolate, info.This());
+  }
+  if (interface.table && interface.table->behind == ObjectBehind::kEvent &&
+      overload->arguments.size() > 1 &&
+      overload->arguments[1].type->kind == IdlTypeKind::kDictionary) {
+    const v8::Local<v8::Object> init =
+        arguments.size() > 1 && arguments[1]->IsObject()
+            ? arguments[1].As<v8::Object>()
+            : v8::Object::New(isolate, v8::Null(isolate), nullptr, nullptr, 0);
+    if (!InitializeEventAttributes(isolate, info.This(), interface,
+                                   *overload->arguments[1].type->dictionary,
+                                   init)) {
+      return;
+    }
   }
   info.GetReturnValue().Set(info.This());
 }

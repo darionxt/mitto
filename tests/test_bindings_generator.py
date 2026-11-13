@@ -12,7 +12,14 @@ import pytest
 from bindings_generator import cpp_writer, extended_attributes
 from bindings_generator.cpp_names import file_name, function_name, member_name
 from bindings_generator.cpp_types import Site, TypeMapper
-from bindings_generator.cpp_writer import ImplementedInterface, condition_test, reflected_attribute, write_bindings
+from bindings_generator.cpp_writer import (
+    ImplementedInterface,
+    Keywords,
+    condition_test,
+    reflected_attribute,
+    reflected_keywords,
+    write_bindings,
+)
 from bindings_generator.errors import UnhandledError
 from bindings_generator.install_plan import Phase, Property, plan_interface
 from bindings_generator.known_gaps import KnownGaps, default_tojson_attributes, has_default_tojson
@@ -318,7 +325,9 @@ def test_a_union_loses_the_interfaces_that_have_no_class() -> None:
         ((("Reflect", ("http_equiv",)),), "DOMString", "http-equiv"),
         ((("Reflect", ()),), "boolean", "accesskey"),
         ((("Reflect", ()), ("URL", ())), "DOMString", None),
-        ((("Reflect", ()), ("ReflectOnly", ("a",))), "DOMString", None),
+        ((("Reflect", ()), ("ReflectOnly", ("a",))), "DOMString", "accesskey"),
+        ((("Reflect", ()), ("ReflectMissing", ("a",))), "DOMString", None),
+        ((("Reflect", ()), ("ReflectOnly", ("a",))), "boolean", None),
         ((), "DOMString", None),
     ],
 )
@@ -329,6 +338,25 @@ def test_the_writer_reflects_strings_and_booleans_itself(
     attribute = Attribute("accessKey", IdlType(kind, type_name), False, False, ExtendedAttributes(keys), ALWAYS)
 
     assert reflected_attribute(attribute) == expected
+
+
+def test_a_nullable_reflected_attribute_needs_its_keywords() -> None:
+    def attribute(*keys: tuple[str, tuple[str, ...]]) -> Attribute:
+        idl_type = IdlType(TypeKind.STRING, "DOMString", nullable=True)
+        return Attribute("crossOrigin", idl_type, False, False, ExtendedAttributes(keys), ALWAYS)
+
+    limited = attribute(
+        ("Reflect", ()),
+        ("ReflectOnly", ("anonymous", "use-credentials")),
+        ("ReflectInvalid", ("anonymous",)),
+        ("ReflectEmpty", ("anonymous",)),
+    )
+
+    # bind_gen's make_reflect_process_keyword_state() reads what its keywords and defaults say.
+    assert reflected_attribute(limited) == "crossorigin"
+    assert reflected_keywords(limited) == Keywords(("anonymous", "use-credentials"), None, "anonymous", "anonymous")
+    assert reflected_attribute(attribute(("Reflect", ()))) is None
+    assert reflected_keywords(attribute(("Reflect", ()))) is None
 
 
 @pytest.mark.parametrize(
