@@ -281,6 +281,7 @@
   "setAttributeNodeNS": "string:#x|<use xlink:href=\"#x\"></use>",
   "setAttributeNodeNS other prefix": "string:q:a|q|old||q:a",
   "setAttributeNodeNS other prefix asked": "string:p:a|p|old|q:a",
+  "attr position other prefix": "string:34|36|p:a p:b",
   "removeAttributeNode": "string:true|null|a|false",
   "removeAttributeNode other": "threw NotFoundError: Failed to execute 'removeAttributeNode' on 'Element': The node provided is owned by another element.",
   "removeAttributeNode twice": "threw NotFoundError: Failed to execute 'removeAttributeNode' on 'Element': The node provided is owned by another element.",
