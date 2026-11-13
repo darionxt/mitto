@@ -191,6 +191,8 @@
   "template innerHTML": "string:0|2|<p>a</p><b>c</b>|<template><p>a</p><b>c</b></template>|true|",
   "template clone": "string:1|true|0|<p>a</p>|true|true",
   "template adopt": "string:true|true|false|true|false",
+  "template contents hold no template ancestor": "string:HierarchyRequestError|HierarchyRequestError: Failed to execute 'append' on 'DocumentFragment': The new child element contains the parent.|0",
+  "outerHTML in a fragment": "string:B,#text,P|<em>z</em>w",
   "template content setter": "[object DocumentFragment]",
   "template shadowRootMode": "string:|open|x|",
   "svg in html serialize": "string:<svg><foreignObject requiredExtensions=\"x\"></foreignObject></svg><math xlink:href=\"u\"></math>",
