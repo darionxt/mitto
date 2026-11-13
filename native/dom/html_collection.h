@@ -1,7 +1,8 @@
 // The DOM's HTMLCollection: a live view of the elements under a node that a
 // kind of collection takes, in tree order, as Blink's HTMLCollection and its
 // document collections read the tree on each access. The document's images,
-// embeds, links, forms, scripts, anchors and applets, and a node's children.
+// embeds, links, forms, scripts, anchors and applets, a node's children, and
+// the rows, bodies and cells of a table.
 // HTMLFormControlsCollection and HTMLOptionsCollection, which have no class,
 // inherit from it, so it is not final.
 //
@@ -39,6 +40,12 @@ class HTMLCollection : public bindings::ScriptWrappable {
     // Always empty, as Chrome's has been since it dropped applets.
     kDocApplets,
     kChildren,
+    // A table's rows, as Blink's HTMLTableRowsCollection orders them, its
+    // tbody children, a section's tr children and a row's td and th children.
+    kTableRows,
+    kTBodies,
+    kSectionRows,
+    kRowCells,
   };
 
   static HTMLCollection* Create(Node* root, Type type);

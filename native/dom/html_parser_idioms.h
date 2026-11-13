@@ -31,6 +31,13 @@ std::optional<int32_t> ParseHTMLInteger(std::u16string_view value);
 // digits.
 std::optional<uint32_t> ParseHTMLNonNegativeInteger(std::u16string_view value);
 
+// Blink's ParseHTMLClampedNonNegativeInteger(): the same, clamped to `min`
+// and `max`, with `max` for a value beyond 4294967295.
+std::optional<uint32_t> ParseHTMLClampedNonNegativeInteger(
+    std::u16string_view value,
+    uint32_t min,
+    uint32_t max);
+
 }  // namespace mitto
 
 #endif  // MITTO_DOM_HTML_PARSER_IDIOMS_H_

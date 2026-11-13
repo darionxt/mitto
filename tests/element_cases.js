@@ -942,5 +942,184 @@
     const d = document.createElement("div").dataset;
     return [Reflect.set(d, "a", "1"), Reflect.set(d, "a-b", "1")].join("|");
   });
+  // Tables.
+  const tableOf = (markup) => { const d = document.createElement("div"); d.innerHTML = "<table>" + markup + "</table>"; return d.firstChild; };
+  const ids = (list) => Array.from(list, (e) => e.id || e.localName).join(",");
+  run("table rows order", () => {
+    const t = document.createElement("table");
+    const add = (parent, name, id) => { const e = parent.appendChild(document.createElement(name)); if (id) e.id = id; return e; };
+    const tb1 = add(t, "tbody");
+    add(tb1, "tr", "b1");
+    const tf = add(t, "tfoot");
+    add(tf, "tr", "f1");
+    add(t, "tr", "t1");
+    const th = add(t, "thead");
+    add(th, "tr", "h1");
+    add(th, "td", "notrow");
+    const th2 = add(t, "thead");
+    add(th2, "tr", "h2");
+    add(t, "div").appendChild(document.createElement("tr")).id = "nested";
+    add(add(t, "tbody"), "tr", "b2");
+    add(tb1, "tr", "b1b");
+    t.appendChild(document.createElementNS(SVG, "tr")).id = "svg";
+    const rows = t.rows;
+    return [ids(rows), rows.length, rows === t.rows, ids(t.tBodies), t.tBodies === t.tBodies, t.rows.namedItem("t1").id, t.tHead === th, t.tFoot === tf].join("|");
+  });
+  run("table caption", () => {
+    const t = tableOf("<tbody></tbody>");
+    const out = [t.caption];
+    const c = t.createCaption();
+    out.push(c.localName, t.firstChild === c, t.createCaption() === c);
+    const c2 = document.createElement("caption");
+    t.caption = c2;
+    out.push(t.firstChild === c2, c.parentNode, t.caption === c2);
+    t.caption = null;
+    out.push(t.caption, t.children.length);
+    t.deleteCaption();
+    return out.map(String).join("|");
+  });
+  run("table thead", () => {
+    const t = document.createElement("table");
+    t.appendChild(document.createElement("caption"));
+    t.appendChild(document.createElement("colgroup"));
+    t.appendChild(document.createTextNode("x"));
+    t.appendChild(document.createElement("tbody"));
+    const h = t.createTHead();
+    const out = [Array.from(t.childNodes, (n) => n.nodeName).join(" "), t.createTHead() === h];
+    const h2 = document.createElement("thead");
+    t.tHead = h2;
+    out.push(Array.from(t.childNodes, (n) => n.nodeName).join(" "), h.parentNode);
+    t.deleteTHead();
+    out.push(t.tHead);
+    return out.map(String).join("|");
+  });
+  run("table thead wrong", () => { document.createElement("table").tHead = document.createElement("tbody"); });
+  run("table tfoot wrong", () => { document.createElement("table").tFoot = document.createElement("thead"); });
+  run("table tfoot", () => {
+    const t = tableOf("<tbody><tr></tr></tbody>");
+    const f = t.createTFoot();
+    t.appendChild(document.createElement("tbody"));
+    const out = [t.lastChild === f, t.createTFoot() === f];
+    const f2 = document.createElement("tfoot");
+    t.tFoot = f2;
+    out.push(t.lastChild === f2, f.parentNode);
+    t.deleteTFoot();
+    out.push(t.tFoot, t.children.length);
+    return out.map(String).join("|");
+  });
+  run("table createTBody", () => {
+    const t = document.createElement("table");
+    const b1 = t.createTBody();
+    t.appendChild(document.createElement("tfoot"));
+    const b2 = t.createTBody();
+    return [Array.from(t.children, (e) => e.localName).join(" "), t.children[1] === b2, b1 !== b2].join("|");
+  });
+  run("table insertRow", () => {
+    const t = document.createElement("table");
+    const r0 = t.insertRow();
+    const out = [t.innerHTML];
+    t.insertRow(0).id = "a";
+    t.insertRow(-1).id = "z";
+    t.insertRow(2).id = "m";
+    out.push(t.innerHTML);
+    const h = t.createTHead();
+    h.insertRow().id = "h";
+    t.insertRow(1).id = "x";
+    out.push(t.innerHTML, r0.rowIndex, r0.sectionRowIndex);
+    return out.join("|");
+  });
+  run("table insertRow direct", () => { const t = tableOf(""); t.appendChild(document.createElement("tr")).id = "d"; t.insertRow().id = "n"; t.insertRow(0).id = "f"; return t.innerHTML; });
+  run("table insertRow too big", () => document.createElement("table").insertRow(1));
+  run("table insertRow too small", () => document.createElement("table").insertRow(-2));
+  run("table deleteRow", () => {
+    const t = tableOf("<thead><tr id=h></tr></thead><tbody><tr id=a></tr><tr id=b></tr></tbody><tfoot><tr id=f></tr></tfoot>");
+    t.deleteRow(-1);
+    const out = [ids(t.rows)];
+    t.deleteRow(0);
+    out.push(ids(t.rows));
+    t.deleteRow(1);
+    out.push(ids(t.rows));
+    const e = document.createElement("table");
+    e.deleteRow(-1);
+    out.push(e.rows.length);
+    return out.join("|");
+  });
+  run("table deleteRow too big", () => document.createElement("table").deleteRow(0));
+  run("table deleteRow too small", () => document.createElement("table").deleteRow(-2));
+  run("section rows", () => {
+    const s = document.createElement("tbody");
+    const out = [s.rows.length, s.rows === s.rows];
+    s.insertRow().id = "a";
+    s.insertRow(0).id = "b";
+    s.insertRow(1).id = "c";
+    s.appendChild(document.createElement("td"));
+    out.push(ids(s.rows));
+    s.deleteRow(-1);
+    s.deleteRow(0);
+    out.push(ids(s.rows));
+    return out.join("|");
+  });
+  run("section insertRow bad", () => document.createElement("thead").insertRow(2));
+  run("section deleteRow bad", () => document.createElement("tfoot").deleteRow(0));
+  run("section deleteRow empty", () => { const s = document.createElement("tfoot"); s.deleteRow(-1); return s.rows.length; });
+  run("row indices", () => {
+    const t = tableOf("<thead><tr id=h></tr></thead><tbody><tr id=a></tr><tr id=b></tr></tbody><tr id=d></tr>");
+    const out = Array.from(t.rows, (r) => r.rowIndex + "/" + r.sectionRowIndex);
+    const lone = document.createElement("tr");
+    out.push(lone.rowIndex, lone.sectionRowIndex);
+    const div = document.createElement("div").appendChild(document.createElement("tbody"));
+    const inner = div.appendChild(document.createElement("tr"));
+    out.push(inner.rowIndex, inner.sectionRowIndex);
+    return out.join(",");
+  });
+  run("row cells", () => {
+    const r = document.createElement("tr");
+    const out = [r.cells.length, r.cells === r.cells];
+    r.insertCell().id = "a";
+    r.insertCell(0).id = "b";
+    r.appendChild(document.createElement("th")).id = "h";
+    r.appendChild(document.createElement("div"));
+    r.insertCell(2).id = "c";
+    out.push(ids(r.cells), Array.from(r.cells, (c) => c.cellIndex).join(""), r.insertCell().localName);
+    r.deleteCell(-1);
+    r.deleteCell(0);
+    out.push(ids(r.cells));
+    out.push(document.createElement("td").cellIndex);
+    return out.join("|");
+  });
+  run("row insertCell bad", () => document.createElement("tr").insertCell(1));
+  run("row deleteCell bad", () => document.createElement("tr").deleteCell(0));
+  run("row deleteCell low", () => document.createElement("tr").deleteCell(-2));
+  run("row deleteCell empty", () => { const r = document.createElement("tr"); r.appendChild(document.createElement("td")); r.deleteCell(-1); r.deleteCell(-1); });
+  run("cell spans", () => {
+    const c = document.createElement("td");
+    const out = [c.colSpan, c.rowSpan];
+    for (const v of ["0", "3", "2000", "99999999999", "-1", "-0", " 7x", "", "abc"]) {
+      c.setAttribute("colspan", v);
+      c.setAttribute("rowspan", v);
+      out.push(c.colSpan + "/" + c.rowSpan);
+    }
+    c.setAttribute("rowspan", "70000");
+    out.push(c.rowSpan);
+    c.colSpan = 5;
+    c.rowSpan = 0;
+    out.push(c.getAttribute("colspan"), c.getAttribute("rowspan"));
+    c.colSpan = 3000000000;
+    c.rowSpan = -1;
+    out.push(c.getAttribute("colspan"), c.getAttribute("rowspan"));
+    return out.join(",");
+  });
+  run("col span", () => {
+    const c = document.createElement("colgroup");
+    const out = [c.span];
+    for (const v of ["0", "4", "1001", "99999999999", "x"]) { c.setAttribute("span", v); out.push(c.span); }
+    c.span = 0;
+    out.push(c.getAttribute("span"));
+    c.span = 4294967295;
+    out.push(c.getAttribute("span"));
+    return out.join(",");
+  });
+  run("cell cellIndex in table", () => { const t = tableOf("<tr><th></th><td id=x></td></tr>"); return t.querySelector("#x").cellIndex; });
+  run("table reflected", () => { const t = document.createElement("table"); t.bgColor = null; t.cellPadding = 3; return [t.getAttribute("bgcolor"), t.cellPadding, t.border, document.createElement("td").scope].join("|"); });
   return JSON.stringify(cases, null, 1);
 })()

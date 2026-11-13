@@ -1,5 +1,6 @@
 #include "mitto/dom/html_parser_idioms.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace mitto {
@@ -61,7 +62,13 @@ std::optional<int32_t> ParseHTMLInteger(std::u16string_view value) {
   return static_cast<int32_t>(result);
 }
 
-std::optional<uint32_t> ParseHTMLNonNegativeInteger(std::u16string_view value) {
+namespace {
+
+enum class NumberParsingResult { kError, kOverflowMax, kSuccess };
+
+// Blink's ParseHTMLNonNegativeIntegerInternal().
+NumberParsingResult ParseNonNegative(std::u16string_view value,
+                                     uint32_t& result_value) {
   value = SkipHTMLSpaces(value);
   bool negative = false;
   if (!value.empty() && (value.front() == '-' || value.front() == '+')) {
@@ -69,7 +76,7 @@ std::optional<uint32_t> ParseHTMLNonNegativeInteger(std::u16string_view value) {
     value.remove_prefix(1);
   }
   if (value.empty() || !IsAsciiDigit(value.front())) {
-    return std::nullopt;
+    return NumberParsingResult::kError;
   }
   uint64_t result = 0;
   for (const char16_t c : value) {
@@ -78,14 +85,40 @@ std::optional<uint32_t> ParseHTMLNonNegativeInteger(std::u16string_view value) {
     }
     // A minus sign takes only zeros, as WTF's AcceptMinusZeroForUnsigned.
     if (negative && c != '0') {
-      return std::nullopt;
+      return NumberParsingResult::kError;
     }
     result = result * 10 + (c - '0');
     if (result > std::numeric_limits<uint32_t>::max()) {
-      return std::nullopt;
+      return NumberParsingResult::kOverflowMax;
     }
   }
-  return static_cast<uint32_t>(result);
+  result_value = static_cast<uint32_t>(result);
+  return NumberParsingResult::kSuccess;
+}
+
+}  // namespace
+
+std::optional<uint32_t> ParseHTMLNonNegativeInteger(std::u16string_view value) {
+  uint32_t result = 0;
+  if (ParseNonNegative(value, result) != NumberParsingResult::kSuccess) {
+    return std::nullopt;
+  }
+  return result;
+}
+
+std::optional<uint32_t> ParseHTMLClampedNonNegativeInteger(
+    std::u16string_view value,
+    uint32_t min,
+    uint32_t max) {
+  uint32_t result = 0;
+  switch (ParseNonNegative(value, result)) {
+    case NumberParsingResult::kError:
+      return std::nullopt;
+    case NumberParsingResult::kOverflowMax:
+      return max;
+    case NumberParsingResult::kSuccess:
+      return std::clamp(result, min, max);
+  }
 }
 
 }  // namespace mitto
