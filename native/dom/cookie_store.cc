@@ -9,6 +9,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_conversions.h"
@@ -231,7 +232,7 @@ v8::Local<v8::Promise> CookieStore::Set(
 v8::Local<v8::Promise> CookieStore::Set(
     const bindings::CookieInit& options,
     bindings::ExceptionState& exception_state) {
-  return DoWrite(options, exception_state);
+  return DoWrite("set", options, exception_state);
 }
 
 // CookieStore::Delete(): a cookie that expired at the Unix epoch, which takes
@@ -244,7 +245,7 @@ v8::Local<v8::Promise> CookieStore::Delete(
   options.name = stripped_name;
   options.value = stripped_name.empty() ? u"deleted" : u"";
   options.expires = 0;
-  return DoWrite(options, exception_state);
+  return DoWrite("delete", options, exception_state);
 }
 
 v8::Local<v8::Promise> CookieStore::Delete(
@@ -260,7 +261,7 @@ v8::Local<v8::Promise> CookieStore::Delete(
   init.path = options.path;
   init.same_site = u"strict";
   init.partitioned = options.partitioned;
-  return DoWrite(init, exception_state);
+  return DoWrite("delete", init, exception_state);
 }
 
 // CookieStore::DoRead(), ToBackendOptions() and CookieUrlForRead().
@@ -331,6 +332,7 @@ v8::Local<v8::Promise> CookieStore::DoRead(
 
 // CookieStore::DoWrite() and OnSetCanonicalCookieResult().
 v8::Local<v8::Promise> CookieStore::DoWrite(
+    std::string_view method,
     const bindings::CookieInit& options,
     bindings::ExceptionState& exception_state) {
   CookieJar* const jar = JarForAccess(exception_state);
@@ -352,7 +354,8 @@ v8::Local<v8::Promise> CookieStore::DoWrite(
       *std::move(set),
       base::BindOnce(
           [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
-             v8::Global<v8::Promise::Resolver> resolver_handle, bool stored) {
+             v8::Global<v8::Promise::Resolver> resolver_handle,
+             const std::string& message, bool stored) {
             RunInContext(
                 isolate, context_handle, [&](v8::Local<v8::Context> context) {
                   const v8::Local<v8::Promise::Resolver> resolver =
@@ -364,14 +367,18 @@ v8::Local<v8::Promise> CookieStore::DoWrite(
                   }
                   std::ignore = resolver->Reject(
                       context,
-                      v8::Exception::TypeError(bindings::ToV8String(
-                          isolate,
-                          u"Cookie was malformed and could not be stored, "
-                          u"due to problem(s) while parsing.")));
+                      v8::Exception::TypeError(
+                          bindings::ToV8StringFromUtf8(isolate, message)));
                 });
           },
           isolate, v8::Global<v8::Context>(isolate, context),
-          v8::Global<v8::Promise::Resolver>(isolate, resolver)));
+          v8::Global<v8::Promise::Resolver>(isolate, resolver),
+          // ScriptPromiseResolver::RejectWithTypeError() puts the message in
+          // the context of the call that made the resolver.
+          bindings::ExceptionMessages::FailedToExecute(
+              method, "CookieStore",
+              "Cookie was malformed and could not be stored, due to "
+              "problem(s) while parsing.")));
   return resolver->GetPromise();
 }
 

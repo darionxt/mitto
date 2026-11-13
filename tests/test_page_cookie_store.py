@@ -365,3 +365,34 @@ def _evaluate(url: str, script: str) -> Any:
 @pytest.mark.usefixtures("page_program")
 def test_the_cookie_store_reads_writes_and_tells_of_changes_as_chrome_s(blank_page: str) -> None:
     assert _evaluate(blank_page, _COOKIES) == _COOKIES_EXPECTED
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_cookie_too_long_for_any_store_is_refused_as_chrome_refuses_it(blank_page: str) -> None:
+    # 16 MiB strings, more than a frame of the channel holds: Chrome's network service refuses to store such a cookie,
+    # and no cookie has such a name.
+    script = """
+      (async () => {
+        const big = 'x'.repeat(16 * 1024 * 1024);
+        const settle = (p) => p.then(v => ['fulfilled', v === undefined ? 'undefined' : v],
+                                     e => ['rejected', `${e.name}: ${e.message}`]);
+        return {
+          setValue: await settle(cookieStore.set('a', big)),
+          setName: await settle(cookieStore.set(big, '1')),
+          getName: await settle(cookieStore.get(big)),
+          getAllName: await settle(cookieStore.getAll(big)),
+          deleteName: await settle(cookieStore.delete(big)),
+          after: await settle(cookieStore.getAll()),
+        };
+      })()
+    """
+    malformed = "Cookie was malformed and could not be stored, due to problem(s) while parsing."
+
+    assert _evaluate(blank_page, script) == {
+        "setValue": ["rejected", f"TypeError: Failed to execute 'set' on 'CookieStore': {malformed}"],
+        "setName": ["rejected", f"TypeError: Failed to execute 'set' on 'CookieStore': {malformed}"],
+        "getName": ["fulfilled", None],
+        "getAllName": ["fulfilled", []],
+        "deleteName": ["rejected", f"TypeError: Failed to execute 'delete' on 'CookieStore': {malformed}"],
+        "after": ["fulfilled", []],
+    }

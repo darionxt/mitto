@@ -1,6 +1,7 @@
 #include "mitto/page/session_cookie_jar.h"
 
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/location.h"
@@ -61,6 +62,15 @@ bool SessionCookieJar::Answer(uint64_t number, std::string line) {
 
 void SessionCookieJar::GetForCookieStore(PageCookieStoreGet get,
                                          CookiesAnswer answer) {
+  // A name too long for a frame names no cookie, since //net refuses a name
+  // and value of more than 4096 bytes: the Session's answer would be none,
+  // and comes from a task of its own all the same.
+  if (get.name.size() > kMaxPayloadSize - 9) {
+    main_thread_->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(answer), std::vector<PageCookie>()));
+    return;
+  }
   get.question = ++last_cookie_store_question_;
   {
     base::AutoLock lock(lock_);
@@ -72,6 +82,13 @@ void SessionCookieJar::GetForCookieStore(PageCookieStoreGet get,
 
 void SessionCookieJar::SetForCookieStore(PageCookieStoreSet set,
                                          StoredAnswer answer) {
+  // Nor can a cookie too long for a frame be stored: the Session's answer
+  // would be that it was not.
+  if (set.name.size() + set.value.size() + set.domain.size() + set.path.size() >
+      kMaxPayloadSize - 30) {
+    main_thread_->PostTask(FROM_HERE, base::BindOnce(std::move(answer), false));
+    return;
+  }
   set.question = ++last_cookie_store_question_;
   {
     base::AutoLock lock(lock_);
