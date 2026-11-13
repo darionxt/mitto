@@ -17,15 +17,6 @@
 
 namespace mitto {
 
-class HTMLBaseElement final : public HTMLElement {
- public:
-  static HTMLBaseElement* Create(Document& document);
-
-  explicit HTMLBaseElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
 class HTMLButtonElement final : public HTMLElement {
  public:
   static HTMLButtonElement* Create(Document& document);

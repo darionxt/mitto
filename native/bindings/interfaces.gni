@@ -464,8 +464,7 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLBaseElement"
     file = "html_base_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [ "href" ]
   },
   {
     name = "HTMLBodyElement"
@@ -1998,6 +1997,10 @@ mitto_bindings_interfaces = [
       "btoa",
       "requestIdleCallback",
       "cancelIdleCallback",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "webkitRequestAnimationFrame",
+      "webkitCancelAnimationFrame",
       "event",
       "scheduler",
       "cookieStore",

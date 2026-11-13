@@ -1,6 +1,7 @@
 #include "mitto/dom/element.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
@@ -125,11 +126,17 @@ std::optional<size_t> Element::FindAttributeIndex(
 void Element::AppendAttributeInternal(const QualifiedName& name,
                                       const std::u16string& value) {
   attributes_.push_back({name, value});
+  // The hook reads the attribute as it is stored.
+  const Attribute& added = attributes_.back();
+  AttributeChanged(added.name, nullptr, &added.value);
 }
 
 void Element::SetAttributeValueInternal(size_t index,
                                         const std::u16string& value) {
-  attributes_[index].value = value;
+  const std::u16string old_value =
+      std::exchange(attributes_[index].value, value);
+  AttributeChanged(attributes_[index].name, &old_value,
+                   &attributes_[index].value);
 }
 
 void Element::RemoveAttributeInternal(size_t index) {
@@ -138,7 +145,9 @@ void Element::RemoveAttributeInternal(size_t index) {
     attr->DetachFromElementWithValue(attributes_[index].value);
     attr_nodes_.EraseIf([attr](Attr* node) { return node == attr; });
   }
+  const Attribute removed = std::move(attributes_[index]);
   attributes_.erase(attributes_.begin() + index);
+  AttributeChanged(removed.name, &removed.value, nullptr);
 }
 
 Attr* Element::AttrIfExists(const QualifiedName& name) const {

@@ -135,7 +135,7 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 13
+_PROTOCOL_VERSION = 14
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -159,6 +159,7 @@ _DEFAULT_START: dict[str, object] = {
     "screen_width": 1920,
     "screen_height": 1080,
     "scale": 1,
+    "refresh_rate": 60,
     "viewport_width": 1920,
     "viewport_height": 945,
     "color_scheme": "light",
@@ -557,6 +558,7 @@ def test_a_page_with_no_features_in_its_start_has_the_engine_releases(session: _
         ({**_DEFAULT_START, "inverted_colors": True}, 'a start whose "inverted_colors" is not "none" or "inverted"'),
         ({**_DEFAULT_START, "memory": 12}, 'a start whose "memory" is not 2, 4, 8, 16 or 32'),
         ({**_DEFAULT_START, "scale": 0.5}, 'a start whose "scale" is not a number from 1 to 5'),
+        ({**_DEFAULT_START, "refresh_rate": 23}, 'a start whose "refresh_rate" is not a whole number from 24 to 1000'),
         (
             {**_DEFAULT_START, "viewport_height": 0},
             'a start whose "viewport_height" is not a whole number from 1 to 2147483647',

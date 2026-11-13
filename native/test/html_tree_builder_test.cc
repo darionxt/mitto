@@ -44,9 +44,12 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_template_element.h"
+#include "mitto/dom/qualified_name.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "v8/include/cppgc/persistent.h"
@@ -129,6 +132,23 @@ std::vector<Test> ReadTests(const base::FilePath& path) {
   return tests;
 }
 
+// An attribute's name as html5lib writes it: one in a namespace as the
+// namespace's usual prefix and its local name, apart.
+std::u16string AttributeName(const QualifiedName& name) {
+  if (!name.namespace_uri) {
+    return name.local_name;
+  }
+  std::u16string prefix = *name.namespace_uri;
+  if (prefix == html_names::kXlinkNamespace) {
+    prefix = u"xlink";
+  } else if (prefix == html_names::kXmlNamespace) {
+    prefix = u"xml";
+  } else if (prefix == html_names::kXmlnsNamespace) {
+    prefix = u"xmlns";
+  }
+  return prefix + u" " + name.local_name;
+}
+
 void DumpNode(const Node& node, int depth, std::vector<std::string>& lines) {
   const std::string indent = "| " + std::string(depth * 2, ' ');
   switch (node.GetNodeType()) {
@@ -157,14 +177,24 @@ void DumpNode(const Node& node, int depth, std::vector<std::string>& lines) {
       std::vector<Element::Attribute> attributes = element.attributes();
       std::sort(attributes.begin(), attributes.end(),
                 [](const Element::Attribute& a, const Element::Attribute& b) {
-                  return a.name.ToString() < b.name.ToString();
+                  return AttributeName(a.name) < AttributeName(b.name);
                 });
       const std::string attribute_indent =
           "| " + std::string((depth + 1) * 2, ' ');
       for (const Element::Attribute& attribute : attributes) {
         lines.push_back(base::StrCat(
-            {attribute_indent, base::UTF16ToUTF8(attribute.name.ToString()),
+            {attribute_indent, base::UTF16ToUTF8(AttributeName(attribute.name)),
              "=\"", base::UTF16ToUTF8(attribute.value), "\""}));
+      }
+      // html5lib puts a template's contents under a line of their own.
+      if (element.HasHTMLTagName(u"template")) {
+        lines.push_back(attribute_indent + "content");
+        const DocumentFragment& content =
+            *static_cast<const HTMLTemplateElement&>(element).Content();
+        for (const Node* child = content.FirstChild(); child;
+             child = child->NextSibling()) {
+          DumpNode(*child, depth + 2, lines);
+        }
       }
       break;
     }
