@@ -8,12 +8,22 @@ docs/capture.md, "The Normal Form of a Script Fingerprint", says what it hides, 
 
 import json
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urlsplit
 
-from tools.capture.normal_form import AUTHORITY_PLACEHOLDER, HOST_PLACEHOLDER, MACHINE_PLACEHOLDER, ORIGIN_PLACEHOLDER
+from tools.capture.cases import CROSS_SITE_HOST, SAME_SITE_HOST
+from tools.capture.normal_form import (
+    AUTHORITY_PLACEHOLDER,
+    CROSS_SITE_AUTHORITY_PLACEHOLDER,
+    CROSS_SITE_ORIGIN_PLACEHOLDER,
+    HOST_PLACEHOLDER,
+    MACHINE_PLACEHOLDER,
+    ORIGIN_PLACEHOLDER,
+    SAME_SITE_AUTHORITY_PLACEHOLDER,
+    SAME_SITE_ORIGIN_PLACEHOLDER,
+)
 from tools.capture.probe import RecordValue, dumps_record, read_record
 
 RUN_PLACEHOLDER = "<run>"
@@ -21,6 +31,14 @@ RUN_PLACEHOLDER = "<run>"
 
 PORT_PLACEHOLDER = "<port>"
 """What a Normal Form holds for the page's port, where a value is the port alone, as location.port is."""
+
+SAME_SITE_HOST_PLACEHOLDER = "<same-site-host>"
+"""What a Normal Form holds for the name of another origin of the page's site, where a value is the name alone, as
+location.hostname is."""
+
+CROSS_SITE_HOST_PLACEHOLDER = "<cross-site-host>"
+"""What a Normal Form holds for the name of another site, where a value is the name alone, as location.hostname is in a
+frame of that site."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +178,50 @@ MACHINE_PLACES: tuple[Place, ...] = (
     *(Computed(DATE_STRINGS, (day, name)) for day in ("winter", "summer") for name in DATE_STRING_NAMES),
 )
 """Each place whose value follows the machine, which a Normal Form hides as <machine>. machine_forms.SCRIPT_FORMS holds
-the form of each."""
+the form of each.
+
+These are a top-level page's. A frame has those of FRAME_MACHINE_PLACES, and a worker those of WORKER_MACHINE_PLACES, at
+the same places.
+"""
+
+FRAME_VIEWPORT: Mapping[Place, RecordValue] = {
+    Getter("globalThis", "innerWidth"): 300,
+    Getter("globalThis", "innerHeight"): 150,
+    Getter("visualViewport", "width"): 300,
+    Getter("visualViewport", "height"): 150,
+    Computed(MEDIA_KEYWORDS, ("orientation",)): ["landscape"],
+    Computed(MEDIA_AGREEMENT, ("width = innerWidth",)): True,
+    Computed(MEDIA_AGREEMENT, ("height = innerHeight",)): True,
+    Computed(MEDIA_AGREEMENT, ("aspect-ratio = innerWidth / innerHeight",)): True,
+}
+"""What a frame's viewport gives at the places of MACHINE_PLACES that are a frame's own: an iframe's size by default,
+300 by 150 pixels, whatever the machine, which the case decides. A frame has no viewport segments."""
+
+_A_FRAMES_OWN: frozenset[Place] = frozenset(
+    {*FRAME_VIEWPORT, *_getters('viewport.segments["0"]', "width", "height", "right", "bottom")}
+)
+
+FRAME_MACHINE_PLACES: tuple[Place, ...] = tuple(place for place in MACHINE_PLACES if place not in _A_FRAMES_OWN)
+"""Each place whose value follows the machine in a frame: those of MACHINE_PLACES but the frame's viewport, its size
+and shape, which its element in the parent decides and which the Normal Form keeps, such as innerWidth."""
+
+_IN_A_WORKER = frozenset(
+    {
+        *_getters("navigator", "hardwareConcurrency", "deviceMemory"),
+        *_getters("navigator.connection", "effectiveType", "rtt", "downlink"),
+    }
+)
+_COMPUTED_IN_A_WORKER = frozenset(
+    {HIGH_ENTROPY_VALUES, DATE_TIME_FORMAT, DATE_TIME_FORMAT_HOURS, TIME_ZONE_OFFSETS, DATE_STRINGS}
+)
+
+WORKER_MACHINE_PLACES: tuple[Place, ...] = tuple(
+    place
+    for place in MACHINE_PLACES
+    if place in _IN_A_WORKER or (isinstance(place, Computed) and place.key in _COMPUTED_IN_A_WORKER)
+)
+"""Each place whose value follows the machine in a dedicated worker: the processors, the memory, the network, Windows'
+version and the time zone. A worker has no window, no screen, no matchMedia() and no memory figures."""
 
 RUN_PLACES: tuple[Place, ...] = (
     Getter("performance", "timeOrigin"),
@@ -180,7 +241,9 @@ that console.memory's rounded figures share (WindowPerformance::memory() and Hea
 what it gives depends on how long the walk took after it read console.memory (#210)."""
 
 
-def script_normal_form(record: dict[str, RecordValue], page_url: str | None) -> dict[str, RecordValue]:
+def script_normal_form(
+    record: dict[str, RecordValue], page_url: str | None, machine_places: Iterable[Place] = MACHINE_PLACES
+) -> dict[str, RecordValue]:
     """Return the Normal Form of a probe's record, as a new record.
 
     A getter that threw at one of those places stays as it is, since how it failed is the Runtime's and not the
@@ -188,25 +251,35 @@ def script_normal_form(record: dict[str, RecordValue], page_url: str | None) -> 
 
     Args:
         record: What the probe gave, as read_record() reads it.
-        page_url: The address of the page that the probe ran in, whose origin, name and port go behind placeholders, or
-            None for a page with no origin of its own, such as about:blank.
+        page_url: The address of the top-level page, whose origin, name and port go behind placeholders, with those of
+            the other origin of its site and of the other site that a frame of the page can be at, or None for a page
+            with no origin of its own, such as about:blank.
+        machine_places: Each place whose value follows the machine where the probe ran: MACHINE_PLACES in a top-level
+            page, FRAME_MACHINE_PLACES in a frame and WORKER_MACHINE_PLACES in a worker.
     """
     form = cast(dict[str, RecordValue], json.loads(json.dumps(record)))
     _hide(form, RUN_PLACES, RUN_PLACEHOLDER)
-    _hide(form, MACHINE_PLACES, MACHINE_PLACEHOLDER)
+    _hide(form, machine_places, MACHINE_PLACEHOLDER)
     if page_url is None:
         return form
-    return cast(dict[str, RecordValue], _behind_placeholders(form, _PageAddress.of(page_url)))
+    return cast(dict[str, RecordValue], _behind_placeholders(form, _Addresses.of(page_url)))
 
 
-def machine_values(record: dict[str, RecordValue]) -> Iterator[tuple[Place, RecordValue]]:
-    """Yield each place of MACHINE_PLACES that a record holds, with its value there, in the order of MACHINE_PLACES."""
-    for place in MACHINE_PLACES:
+def machine_values(
+    record: dict[str, RecordValue], places: Iterable[Place] = MACHINE_PLACES
+) -> Iterator[tuple[Place, RecordValue]]:
+    """Yield each place of the machine that a record holds, with its value there, in the order of the places."""
+    for place in places:
         for slot in _found(record, place):
             yield place, slot.get()
 
 
-def machine_values_shown(raw_record: dict[str, RecordValue], form: dict[str, RecordValue]) -> tuple[int, list[str]]:
+def machine_values_shown(
+    raw_record: dict[str, RecordValue],
+    form: dict[str, RecordValue],
+    places: Iterable[Place] = MACHINE_PLACES,
+    own: Iterable[Place] = (),
+) -> tuple[int, list[str]]:
     """Look for each value of the machine that a raw record holds anywhere in a Normal Form, such as its own.
 
     A Normal Form hides each value of MACHINE_PLACES, but a value that a place left out holds, or that another value is
@@ -216,21 +289,36 @@ def machine_values_shown(raw_record: dict[str, RecordValue], form: dict[str, Rec
     looked for in each string, and a number among what the getters and the third step gave, where it cannot be one of
     the constants that interfaces hold.
 
+    Args:
+        raw_record: What the probe gave.
+        form: Its Normal Form, or what of it a Baseline keeps.
+        places: Each place whose value follows the machine where the probe ran.
+        own: Each place whose value the case decides and not the machine, such as a frame's size, which is not looked
+            in, since a value there, such as a height of 150, can be the same number as one of the machine's by chance.
+
     Returns:
         How many values it looked for, and where in the Normal Form one showed, such as "screen get width". It never
         says which value showed.
     """
     sought: list[RecordValue] = []
-    for _, value in machine_values(raw_record):
+    for _, value in machine_values(raw_record, places):
         for candidate in _distinctive(value):
             if candidate not in sought:
                 sought.append(candidate)
+    skipped = {_where(place) for place in own}
     shown = [
         where
         for where, value, numbers_count in _leaves(form)
-        if any(_shows(candidate, value, numbers_count=numbers_count) for candidate in sought)
+        if where not in skipped and any(_shows(candidate, value, numbers_count=numbers_count) for candidate in sought)
     ]
     return len(sought), list(dict.fromkeys(shown))
+
+
+def _where(place: Place) -> str:
+    """Return where _leaves() says a value at a place is."""
+    if isinstance(place, Getter):
+        return f"{place.path} get {place.name}"
+    return "".join((f'values[{json.dumps(place.key)}]["value"]', *(f"[{json.dumps(key)}]" for key in place.keys)))
 
 
 _KEYWORD_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
@@ -415,38 +503,67 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 @dataclass(frozen=True, slots=True)
-class _PageAddress:
+class _Address:
+    """Where an origin is, and the placeholders for it, its name and port."""
+
     origin: str
     authority: str
     host: str
+    placeholders: tuple[str, str, str]
+
+    def hidden(self, text: str) -> str:
+        """Put the origin, its name and port in a text behind placeholders, but not a longer name that ends in its
+        name, such as that of another origin of its site, or a longer port."""
+        for part, placeholder in zip((self.origin, self.authority, self.host), self.placeholders, strict=True):
+            text = re.sub(rf"(?<![\w.-]){re.escape(part)}(?![\w-])", placeholder, text)
+        return text
+
+
+@dataclass(frozen=True, slots=True)
+class _Addresses:
+    """The top-level page's origin, the other origin of its site and the other site, at its scheme and port."""
+
     port: str | None
+    origins: tuple[_Address, ...]
 
     @classmethod
-    def of(cls, url: str) -> "_PageAddress":
+    def of(cls, url: str) -> "_Addresses":
         parts = urlsplit(url)
         if not parts.scheme or not parts.hostname:
             raise ValueError(f"{url!r} has no origin")
         # A URL in a page leaves out its scheme's own port, as location.origin does.
         default = parts.port is not None and _DEFAULT_PORTS.get(parts.scheme) == parts.port
         port = None if parts.port is None or default else str(parts.port)
-        authority = parts.hostname if port is None else f"{parts.hostname}:{port}"
-        return cls(f"{parts.scheme}://{authority}", authority, parts.hostname, port)
+
+        def address(host: str, placeholders: tuple[str, str, str]) -> _Address:
+            authority = host if port is None else f"{host}:{port}"
+            return _Address(f"{parts.scheme}://{authority}", authority, host, placeholders)
+
+        return cls(
+            port,
+            (
+                address(parts.hostname, (ORIGIN_PLACEHOLDER, AUTHORITY_PLACEHOLDER, HOST_PLACEHOLDER)),
+                address(
+                    SAME_SITE_HOST,
+                    (SAME_SITE_ORIGIN_PLACEHOLDER, SAME_SITE_AUTHORITY_PLACEHOLDER, SAME_SITE_HOST_PLACEHOLDER),
+                ),
+                address(
+                    CROSS_SITE_HOST,
+                    (CROSS_SITE_ORIGIN_PLACEHOLDER, CROSS_SITE_AUTHORITY_PLACEHOLDER, CROSS_SITE_HOST_PLACEHOLDER),
+                ),
+            ),
+        )
 
     def placeholders(self, text: str) -> str:
-        """Put the page's origin, name and port in a text behind placeholders, but not a longer name that ends in its
-        name, such as that of another origin of its site, or a longer port."""
+        """Put each origin, name and port in a text behind its placeholders."""
         if text == self.port:
             return PORT_PLACEHOLDER
-        for part, placeholder in (
-            (self.origin, ORIGIN_PLACEHOLDER),
-            (self.authority, AUTHORITY_PLACEHOLDER),
-            (self.host, HOST_PLACEHOLDER),
-        ):
-            text = re.sub(rf"(?<![\w.-]){re.escape(part)}(?![\w-])", placeholder, text)
+        for address in self.origins:
+            text = address.hidden(text)
         return text
 
 
-def _behind_placeholders(value: RecordValue, address: _PageAddress) -> RecordValue:
+def _behind_placeholders(value: RecordValue, address: _Addresses) -> RecordValue:
     if isinstance(value, str):
         return address.placeholders(value)
     if isinstance(value, list):
