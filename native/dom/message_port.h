@@ -8,12 +8,14 @@
 // for each message that waits, at the back of the queue. A port that closes
 // drops what it has not read, and its peer closes itself once it has read the
 // rest. A transferred port takes its end, and the messages waiting there, to
-// the new port. A port stays alive while it has started and is entangled, and
-// closes when its window's context goes.
+// the new port. A port sent through its own pipe to its peer can never be read,
+// and its peer never hears that it went. A port stays alive while it has
+// started and is entangled, and closes when its window's context goes.
 //
 // Upstream: third_party/blink/renderer/core/messaging/message_port.h
 // Upstream: third_party/blink/renderer/core/messaging/message_port.cc
-// Upstream: third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
+// Upstream:
+// third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.cc
 // Upstream: mojo/public/cpp/bindings/lib/connector.cc
 
 #ifndef MITTO_DOM_MESSAGE_PORT_H_
@@ -23,7 +25,6 @@
 #include <stdint.h>
 
 #include <optional>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -160,11 +161,6 @@ class MessagePort final : public EventTarget {
       v8::Local<v8::Value> message,
       const std::vector<v8::Local<v8::Object>>& transfer,
       Transferables& transferables);
-
- protected:
-  // Setting onmessage or onmessageerror starts the port, as Blink's setters
-  // do.
-  void ListenersChanged(std::u16string_view type) override;
 
  private:
   // What mojo::Connector does for the port.

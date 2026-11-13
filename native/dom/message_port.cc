@@ -50,6 +50,11 @@ class MessagePortChannel::Pipe : public base::RefCounted<Pipe> {
 
   std::array<std::deque<TransferableMessage>, 2> queues_;
   std::array<bool, 2> closed_ = {false, false};
+  // An end that went inside a message sent through this pipe to that end
+  // itself, which nothing can read again: what comes to it goes, and the
+  // other end never hears that it went, as with a mojo handle sent through
+  // its own pipe.
+  std::array<bool, 2> unreachable_ = {false, false};
   std::array<base::OnceClosure, 2> traps_;
 
  private:
@@ -90,7 +95,18 @@ void MessagePortChannel::Send(TransferableMessage message) {
     return;
   }
   const int peer = 1 - side_;
-  if (pipe_->closed_[peer]) {
+  // A message that carries the other end could only be read by that end,
+  // which travels inside it, and would hold the pipe that holds it.
+  for (MessagePortChannel& port : message.ports) {
+    if (port.pipe_ == pipe_ && port.side_ == peer) {
+      pipe_->unreachable_[peer] = true;
+      // Let go of it without closing it.
+      port.pipe_ = nullptr;
+      std::deque<TransferableMessage> unread;
+      unread.swap(pipe_->queues_[peer]);
+    }
+  }
+  if (pipe_->closed_[peer] || pipe_->unreachable_[peer]) {
     // Dropped, and with it the ends it carried.
     return;
   }
@@ -322,15 +338,6 @@ std::vector<MessagePort*> MessagePort::EntanglePorts(
     ports.push_back(port);
   }
   return ports;
-}
-
-void MessagePort::ListenersChanged(std::u16string_view type) {
-  if (type != u"message" && type != u"messageerror") {
-    return;
-  }
-  if (AttributeEventHandler(v8::Isolate::GetCurrent(), type)->IsObject()) {
-    Start();
-  }
 }
 
 // Connector::WaitToReadMore() and ArmOrNotify(): a trap that posts a task when

@@ -479,6 +479,28 @@
     out.messageChannel.closeReceiver = got;
   }
   {
+    const { port1, port2 } = new MessageChannel();
+    const got = [];
+    port2.onmessage = null;
+    port2.addEventListener("message", (e) => got.push(e.data));
+    port1.postMessage("after a null handler");
+    const other = new MessageChannel();
+    const otherGot = [];
+    other.port2.onmessageerror = 5;
+    other.port2.addEventListener("message", (e) => otherGot.push(e.data));
+    other.port1.postMessage("after a number");
+    await tick(20);
+    out.messageChannel.handlerOfNoObjectStarts = [got, otherGot, port2.onmessage, other.port2.onmessageerror];
+  }
+  {
+    const { port1, port2 } = new MessageChannel();
+    port1.start();
+    port1.postMessage("into its own pipe", [port2]);
+    const soon = [outcome(() => port2.postMessage(1)), outcome(() => port1.postMessage(() => {}))];
+    await tick(20);
+    out.messageChannel.peerThroughItsOwnPipe = [...soon, outcome(() => port1.postMessage(() => {}))];
+  }
+  {
     const { port1 } = new MessageChannel();
     out.messageChannel.errors = {
       clone: outcome(() => port1.postMessage(() => {})),

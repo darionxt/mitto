@@ -943,6 +943,21 @@
     "ok"
    ],
    "closeReceiver": [],
+   "handlerOfNoObjectStarts": [
+    [
+     "after a null handler"
+    ],
+    [
+     "after a number"
+    ],
+    null,
+    null
+   ],
+   "peerThroughItsOwnPipe": [
+    "ok",
+    "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': () => {} could not be cloned.",
+    "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': () => {} could not be cloned."
+   ],
    "errors": {
     "clone": "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': () => {} could not be cloned.",
     "sourcePort": "DataCloneError: Failed to execute 'postMessage' on 'MessagePort': Port at index 0 contains the source port.",
