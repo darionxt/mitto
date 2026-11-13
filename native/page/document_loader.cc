@@ -412,11 +412,12 @@ bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
     return false;
   }
   if (!src) {
-    runner_->RunClassicScript(element.Text(), url_);
+    // Blink's ClassicScript: its errors count from where the parser found it.
+    runner_->RunClassicScript(element.Text(), url_, /*muted_errors=*/false,
+                              element.StartLine(), element.StartColumn());
     return false;
   }
-  // The document's URL is its base URL: <base> is a Known Gap. The query is in
-  // the document's encoding.
+  // The query is in the document's encoding.
   const GURL url = src->empty() ? GURL() : document_->CompleteUrl(*src);
   if (!url.is_valid()) {
     QueueErrorEvent(element);

@@ -165,6 +165,11 @@ class Element : public Node {
   // through the factory of its namespace, that prefix, as Blink's
   // SetTagNameForCreateElementNS() does.
   void SetPrefixForCreateElementNS(const std::optional<std::u16string>& prefix);
+  // The is value the element was made with, from createElement()'s options or
+  // the parser's is attribute, which later changes to that attribute leave
+  // alone, as Blink's IsValue().
+  const std::optional<std::u16string>& IsValue() const { return is_value_; }
+  void SetIsValue(const std::u16string& is_value) { is_value_ = is_value; }
   const std::vector<Attribute>& attributes() const { return attributes_; }
   // The value of the attribute of no namespace whose local name is `name`, or
   // null, as Blink's FastGetAttribute() reads an HTML attribute.
@@ -204,6 +209,12 @@ class Element : public Node {
   bool HasHTMLTagName(std::u16string_view name) const {
     return IsHTMLElement() && tag_name_.local_name == name;
   }
+  // Called once the attribute `name` has changed from `old_value` to
+  // `new_value`, null for none, through the DOM and the parser alike, as
+  // Blink's Element::AttributeChanged() is.
+  virtual void AttributeChanged(const QualifiedName& name,
+                                const std::u16string* old_value,
+                                const std::u16string* new_value) {}
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
@@ -250,6 +261,7 @@ class Element : public Node {
 
   QualifiedName tag_name_;
   std::vector<Attribute> attributes_;
+  std::optional<std::u16string> is_value_;
   // The nodes of the attributes that a page has asked for, as Blink's
   // AttrNodeList.
   HeapVector<Attr> attr_nodes_;

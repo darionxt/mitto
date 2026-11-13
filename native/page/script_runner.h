@@ -37,6 +37,7 @@ class Isolate;
 namespace mitto {
 
 class DOMTimerCoordinator;
+class AnimationFrameController;
 class IdleTaskController;
 class Document;
 class DocumentLoader;
@@ -116,9 +117,13 @@ class ScriptRunner final : public base::TaskObserver {
   // it queued, as the HTML Standard cleans up after running a script. A
   // window's error listeners see nothing of the errors of a script whose
   // errors are `muted`, one of another origin fetched without CORS.
+  // An inline script starts at `line_offset` and `column_offset` of its
+  // document, zero-based, which its errors count from.
   void RunClassicScript(std::u16string_view source,
                         const GURL& url,
-                        bool muted_errors = false);
+                        bool muted_errors = false,
+                        int line_offset = 0,
+                        int column_offset = 0);
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
@@ -180,6 +185,7 @@ class ScriptRunner final : public base::TaskObserver {
   // The current window's timers and what its fetch() goes through.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
+  std::unique_ptr<AnimationFrameController> animation_frames_;
   std::unique_ptr<PageFetcher> fetcher_;
   // What window.chrome of each window that the Page has made reads, the
   // current one's last. They live as long as the Page, for a callback of a

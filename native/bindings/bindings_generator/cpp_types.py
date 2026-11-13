@@ -138,6 +138,13 @@ class Site:
             return f"ExceptionMessages::FailedToConvertJSValue({_quote(type_name)})"
         return f"ExceptionMessages::ValueNotOfType({_quote(type_name)})"
 
+    def interface_not_of_type(self, type_name: str) -> str:
+        """The message for a value that is no object of an interface, as Blink's NativeValueTraitsInterfaceNotOfType()
+        gives it: an attribute's setter gives NativeValue()'s, as a member does."""
+        if self.argument_index is None and self.argument_index_expression is None:
+            return f"ExceptionMessages::FailedToConvertJSValue({_quote(type_name)})"
+        return self.not_of_type(type_name)
+
 
 def _quote(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -312,7 +319,8 @@ class TypeMapper:
             TypeKind.STRING,
             TypeKind.FROZEN_ARRAY,
             TypeKind.FLOATING_POINT,
-        )
+            TypeKind.CALLBACK_INTERFACE,
+        ) or self._is_union_of_classes(idl_type)
         if idl_type.nullable and not nullable_ok:
             raise self._refuse(idl_type, where, "a return value")
         if kind is TypeKind.UNDEFINED:
@@ -350,6 +358,15 @@ class TypeMapper:
             return "std::u16string"
         if kind is TypeKind.ANY:
             return "v8::Local<v8::Value>"
+        if kind is TypeKind.CALLBACK_INTERFACE:
+            # The object that a page gave, empty for null, as Blink's class gives back its V8 callback interface.
+            return "v8::Local<v8::Object>"
+        if self._is_union_of_classes(idl_type):
+            # One of the members' objects, or null, as HTMLAllCollection's item() gives an Element or an
+            # HTMLCollection.
+            for member in idl_type.members:
+                self.used_interfaces.add(member.name)
+            return "bindings::ScriptWrappable*"
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
             self.used_interfaces.add(idl_type.name)
             return f"mitto::{idl_type.name}*"
@@ -409,8 +426,10 @@ class TypeMapper:
             return f"ToV8String(isolate, {expression})"
         if kind is TypeKind.ANY:
             return expression
-        if kind is TypeKind.INTERFACE:
+        if kind is TypeKind.INTERFACE or self._is_union_of_classes(idl_type):
             return f"ToV8(isolate, {expression})"
+        if kind is TypeKind.CALLBACK_INTERFACE:
+            return f"ToV8NullableObject(isolate, {expression})"
         if kind is TypeKind.SEQUENCE:
             if idl_type.members[0].kind is TypeKind.STRING and idl_type.members[0].name == "ByteString":
                 return f"ToV8ByteStringArray(isolate, {expression})"
@@ -418,6 +437,13 @@ class TypeMapper:
                 return f"ToV8StringArray(isolate, {expression})"
             return f"ToV8Array(isolate, {expression})"
         raise AssertionError(idl_type.syntax)
+
+    def _is_union_of_classes(self, idl_type: IdlType) -> bool:
+        """Whether the type is a union whose members are all interfaces with a class."""
+        return idl_type.kind is TypeKind.UNION and all(
+            member.kind is TypeKind.INTERFACE and member.name in self._implemented and not member.nullable
+            for member in idl_type.members
+        )
 
     def _register_union(self, idl_type: IdlType, where: str) -> None:
         handled = (
@@ -658,7 +684,7 @@ class TypeMapper:
             return [
                 f"{cpp_type} const {target} = V8{idl_type.name}::ToWrappable(isolate, {value});",
                 f"if ({check}) {{",
-                f"  exception_state.ThrowTypeError({site.not_of_type(idl_type.name)});",
+                f"  exception_state.ThrowTypeError({site.interface_not_of_type(idl_type.name)});",
                 f"  {site.fail}",
                 "}",
             ]

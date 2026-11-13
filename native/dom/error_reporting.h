@@ -60,9 +60,13 @@ bool DispatchUnhandledRejection(v8::Isolate* isolate,
 // Blink's ClassicScript::CreateScriptOrigin() makes it: shared cross-origin,
 // so that the window's error listeners see its errors as they are, unless
 // its errors are `muted`, as for a script of another origin whose response
-// had opaque tainting.
+// had opaque tainting. An inline script starts at `line_offset` and
+// `column_offset` of its document, zero-based, so that its errors count
+// lines and columns from the document's start.
 v8::ScriptOrigin ClassicScriptOrigin(v8::Local<v8::Value> name,
-                                     bool muted_errors);
+                                     bool muted_errors,
+                                     int line_offset = 0,
+                                     int column_offset = 0);
 
 // Reports what a script that the Runtime ran threw, which `try_catch`
 // caught, as an error that nothing caught: the window's error event, then the

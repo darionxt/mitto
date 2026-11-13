@@ -10,7 +10,7 @@ queueMicrotask(() => { throw new EvalError('from a microtask'); });
 window.addEventListener('error', function nested(e) {
   if (e.message.includes('nest')) { window.removeEventListener('error', nested); throw new Error('thrown in an error listener'); }
 });
-setTimeout(() => { throw new Error('nest'); }, 5);
+setTimeout(() => { throw new Error('nest'); }, 50);
 Promise.reject(new Error('rejected'));
 Promise.reject(new Error('cancel me'));
 Promise.reject(new Error('handle later'));
@@ -34,4 +34,4 @@ log.push(['PromiseRejectionEvent', r1.promise === pr, describe(r1.reason), r2.pr
 window.dispatchEvent(new ErrorEvent('error', {message: 'dispatched', filename: 'here', lineno: 7, colno: 8, error: 9}));
 // But not one at another target.
 document.body.onerror = function () { log.push(['body onerror', arguments.length]); };
-setTimeout(() => done(log), 100);
+setTimeout(() => done(log), 200);

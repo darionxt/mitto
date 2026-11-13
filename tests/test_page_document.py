@@ -249,10 +249,12 @@ def test_a_comment_is_not_whitespace_in_a_selector(program: Path, selector: str)
     )
 
 
-def test_a_selector_that_needs_more_than_simple_selectors_is_a_known_gap(program: Path) -> None:
-    result = _run(program, "document.querySelector('p:first-child')")
+def test_pseudo_classes_match_and_a_pseudo_element_matches_nothing(program: Path) -> None:
+    # tests/test_page_queries.py holds the selectors to what Chrome matches; here, that they are no Known Gaps.
+    script = "[document.querySelector('p:first-child').id, document.querySelector('p::before'), "
+    script += "document.querySelectorAll(':is(p, b):not(#a)').length].join()"
 
-    assert result.stderr == ("Uncaught TypeError: Failed to execute 'querySelector' on 'Document': Not implemented.\n")
+    assert _evaluate(program, script, "<p id=a>x<b>y</b></p><p>z</p>") == "a,,2"
 
 
 def test_the_documents_scripts_do_not_run_until_a_page_loads_documents(program: Path) -> None:

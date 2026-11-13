@@ -66,6 +66,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/idle_task_controller.h"
@@ -336,7 +337,7 @@ base::expected<v8::Isolate*, std::string> StartV8ForSession(
 
 // The event loop of the command line: after each task, a microtask
 // checkpoint, as in a Page, and the end of the loop once no task is ready and
-// no timer is set.
+// no timer is set, and no callback waits for an idle period or a frame.
 class CommandLineLoop final : public base::TaskObserver {
  public:
   CommandLineLoop(v8::Isolate* isolate, base::RunLoop& run_loop)
@@ -359,6 +360,7 @@ class CommandLineLoop final : public base::TaskObserver {
     v8::MicrotasksScope::PerformCheckpoint(isolate_);
     if (mitto::Window::Current().TimerCount() == 0 &&
         mitto::Window::Current().IdleCallbackCount() == 0 &&
+        mitto::Window::Current().AnimationFrameCallbackCount() == 0 &&
         mitto::Window::Current().ScheduledTaskCount() == 0) {
       run_loop_->QuitWhenIdle();
     }
@@ -393,6 +395,8 @@ bool RunScript(v8::Isolate* isolate,
   mitto::Window::Current().SetTimers(&timers);
   mitto::IdleTaskController idle_tasks(isolate, context);
   mitto::Window::Current().SetIdleTasks(&idle_tasks);
+  mitto::AnimationFrameController animation_frames(isolate, context);
+  mitto::Window::Current().SetAnimationFrames(&animation_frames);
   mitto::Window::Current().SetDocumentLoadTiming(chrome_data.load_timing.Get());
   isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
                                             v8::Isolate::kMessageError);
@@ -448,6 +452,7 @@ bool RunScript(v8::Isolate* isolate,
   run_loop.Run();
   mitto::Window::Current().SetTimers(nullptr);
   mitto::Window::Current().SetIdleTasks(nullptr);
+  mitto::Window::Current().SetAnimationFrames(nullptr);
   chrome_data.detached = true;
 
   const v8::TryCatch try_catch(isolate);
@@ -587,10 +592,10 @@ int main(int argc, char** argv) {
     mitto::ServeSession(
         *std::move(session),
         base::BindOnce(&StartV8ForSession, base::Unretained(&v8),
-                       main_thread->task_runner(),
+                       main_thread->V8TaskRunner(),
                        mitto::SplitJsFlags(js_flags)));
   } else {
-    StartV8(v8, main_thread->task_runner(), kMemoryGib, {},
+    StartV8(v8, main_thread->V8TaskRunner(), kMemoryGib, {},
             mitto::SplitJsFlags(js_flags), *std::move(features));
     finished = RunScript(v8.isolate, html.value_or(""), argument);
   }

@@ -17,6 +17,7 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/bar_prop.h"
 #include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
@@ -136,6 +137,32 @@ void Window::CancelIdleCallback(uint32_t handle) {
 
 size_t Window::IdleCallbackCount() const {
   return idle_tasks_ ? idle_tasks_->size() : 0;
+}
+
+// ScriptedAnimationController::RegisterFrameCallback(): 0 once the context has
+// gone.
+int32_t Window::RequestAnimationFrame(v8::Local<v8::Function> callback) {
+  return animation_frames_
+             ? animation_frames_->RequestAnimationFrame(callback,
+                                                        /*legacy=*/false)
+             : 0;
+}
+
+int32_t Window::WebkitRequestAnimationFrame(v8::Local<v8::Function> callback) {
+  return animation_frames_
+             ? animation_frames_->RequestAnimationFrame(callback,
+                                                        /*legacy=*/true)
+             : 0;
+}
+
+void Window::CancelAnimationFrame(int32_t handle) {
+  if (animation_frames_) {
+    animation_frames_->CancelAnimationFrame(handle);
+  }
+}
+
+size_t Window::AnimationFrameCallbackCount() const {
+  return animation_frames_ ? animation_frames_->size() : 0;
 }
 
 size_t Window::ScheduledTaskCount() const {

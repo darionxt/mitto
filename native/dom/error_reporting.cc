@@ -159,9 +159,10 @@ bool DispatchUnhandledRejection(v8::Isolate* isolate,
 }
 
 v8::ScriptOrigin ClassicScriptOrigin(v8::Local<v8::Value> name,
-                                     bool muted_errors) {
-  return v8::ScriptOrigin(name, /*resource_line_offset=*/0,
-                          /*resource_column_offset=*/0,
+                                     bool muted_errors,
+                                     int line_offset,
+                                     int column_offset) {
+  return v8::ScriptOrigin(name, line_offset, column_offset,
                           /*resource_is_shared_cross_origin=*/!muted_errors);
 }
 

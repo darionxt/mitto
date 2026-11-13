@@ -458,6 +458,16 @@
     const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
     return [r.name, r.prefix, r.value, e.attributes[0].name].join("|");
   });
+  // Blink orders an attribute's node by its qualified name, which keeps the old prefix in the element's attributes.
+  run("attr position other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "1");
+    e.setAttributeNS("urn:x", "p:b", "2");
+    const qa = document.createAttributeNS("urn:x", "q:a");
+    e.setAttributeNodeNS(qa);
+    const pb = e.getAttributeNodeNS("urn:x", "b");
+    return [qa.compareDocumentPosition(pb), pb.compareDocumentPosition(qa), e.getAttributeNames().join(" ")].join("|");
+  });
   run("removeAttributeNode", () => {
     const e = document.createElement("div");
     e.setAttribute("title", "a");
@@ -703,5 +713,39 @@
   run("dialog details", () => { const d = document.createElement("dialog"); const s = document.createElement("details"); d.open = true; s.open = true; s.name = "g"; return [d.open, d.outerHTML, s.open, s.name, s.outerHTML].join("|"); });
   run("parsed interfaces", () => { const d = document.createElement("div"); d.innerHTML = "<a href=x>a</a><img><canvas></canvas><table><tbody><tr><td>c</td></tr></tbody></table><video></video><dialog></dialog>"; const out = []; for (let n = d.firstChild; n; n = n.nextSibling) out.push(Object.prototype.toString.call(n)); return out.join(","); });
   run("ol start", () => { const o = document.createElement("ol"); return [o.reversed, o.type, o.compact].join("|"); });
+  // The parts of a link's URL.
+  const parts = (e) => ["href", "origin", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash"].map((p) => p + "=" + e[p]).join(" ");
+  const hrefs = [null, "", "https://user:pa%20ss@Example.COM:8080/a/../b/c?q=1&r#frag", "http://example.com:80/", "https://example.com:443/x", "ftp://f.example:21/", "ws://w.example:81/", "file:///C:/dir/f.txt", "data:text/plain,hi", "javascript:void(0)", "mailto:a@b.example", "http://[::1]:8000/p", "http://[bad", "http://example.com/%7Euser?%20x#%20y", "blob:https://example.com/uuid", "about:blank#f", "http://a.example/\u00e9?\u00e9#\u00e9", "  http://sp.example/ ", "x/y", "?q", "#h", "http://example.com:99999/", "http://ex ample.com/", "sc://opaque/path?q#f", "sc:opaque", "http://xn--nxasmq6b.example/", "http://\u00e9.example/"];
+  for (const value of hrefs) {
+    run(`a parts ${JSON.stringify(value)}`, () => { const a = blank.createElementNS(HTML, "a"); if (value !== null) a.setAttribute("href", value); return parts(a); });
+  }
+  run("area parts", () => { const a = blank.createElementNS(HTML, "area"); a.href = "https://e.example:1/p?q#h"; return parts(a); });
+  const setters = [
+    ["protocol", ["https", "HTTPS:junk", "ftp", "file", "foo", "1x", "", "ws:"]],
+    ["username", ["u", "u s", "", "@:/"]],
+    ["password", ["p", "", "p:w"]],
+    ["host", ["h.example", "h.example:81", "h.example:80", ":81", "", "h.example:0081x", "[::2]:9", "a/b", "h\t.example"]],
+    ["hostname", ["n.example", "n.example:5", "", "a b", "N.EXAMPLE"]],
+    ["port", ["81", "443", "80", "", "0081x", "x", "65536", "08080", "000"]],
+    ["pathname", ["/p q", "x", "", "/a/../b", "\\\\c"]],
+    ["search", ["q=1", "?", "", "??x", "a b", "#"]],
+    ["hash", ["h", "#h", "", "#", "a b", "\u00e9"]],
+  ];
+  for (const [name, values] of setters) {
+    for (const value of values) {
+      run(`a set ${name} ${JSON.stringify(value)}`, () => {
+        const a = blank.createElementNS(HTML, "a");
+        a.href = "http://user:pw@host.example:8080/path?query#frag";
+        a[name] = value;
+        return a.getAttribute("href");
+      });
+    }
+  }
+  run("a set on no href", () => { const a = blank.createElementNS(HTML, "a"); a.protocol = "https"; a.hash = "x"; a.search = "y"; a.host = "h"; a.pathname = "p"; return String(a.getAttribute("href")); });
+  run("a set on opaque", () => { const a = blank.createElementNS(HTML, "a"); a.href = "mailto:x@y.example"; a.host = "h"; a.pathname = "p"; a.port = "1"; a.search = "s"; a.hash = "h"; return a.getAttribute("href"); });
+  run("a set on invalid", () => { const a = blank.createElementNS(HTML, "a"); a.href = "http://[bad"; a.search = "s"; a.hash = "h"; a.protocol = "https"; a.pathname = "/p"; return a.getAttribute("href"); });
+  run("a set on file", () => { const a = blank.createElementNS(HTML, "a"); a.href = "file:///x"; a.protocol = "http"; const one = a.getAttribute("href"); a.href = "http://u@h.example/"; a.protocol = "file"; return [one, a.getAttribute("href")].join("|"); });
+  run("a set special to not", () => { const a = blank.createElementNS(HTML, "a"); a.href = "http://h.example/"; a.protocol = "foo"; const one = a.getAttribute("href"); a.href = "foo://h.example/"; a.protocol = "http"; return [one, a.getAttribute("href")].join("|"); });
+  run("a toString", () => { const a = blank.createElementNS(HTML, "a"); a.href = "http://h.example/x"; return [String(a), a + "", `${a}`].join("|"); });
   return JSON.stringify(cases, null, 1);
 })()

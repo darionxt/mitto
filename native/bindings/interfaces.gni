@@ -49,6 +49,18 @@ mitto_bindings_interfaces = [
     missing = [ "onabort" ]
   },
   {
+    name = "AbstractRange"
+    file = "abstract_range"
+    made_by_known_gaps = true
+    implemented = [
+      "startContainer",
+      "endContainer",
+      "startOffset",
+      "endOffset",
+      "collapsed",
+    ]
+  },
+  {
     name = "Attr"
     file = "attr"
   },
@@ -240,9 +252,17 @@ mitto_bindings_interfaces = [
       "createElementNS",
       "createTextNode",
       "getElementById",
+      "getElementsByClassName",
+      "getElementsByName",
+      "getElementsByTagName",
+      "getElementsByTagNameNS",
       "prepend",
       "querySelector",
+      "querySelectorAll",
       "replaceChildren",
+      "createRange",
+      "createNodeIterator",
+      "createTreeWalker",
       "get domain",
       "designMode",
       "scrollingElement",
@@ -286,6 +306,7 @@ mitto_bindings_interfaces = [
       "getElementById",
       "prepend",
       "querySelector",
+      "querySelectorAll",
       "replaceChildren",
     ]
   },
@@ -332,6 +353,9 @@ mitto_bindings_interfaces = [
       "getAttributeNames",
       "getAttributeNode",
       "getAttributeNodeNS",
+      "getElementsByClassName",
+      "getElementsByTagName",
+      "getElementsByTagNameNS",
       "hasAttribute",
       "hasAttributeNS",
       "hasAttributes",
@@ -340,6 +364,7 @@ mitto_bindings_interfaces = [
       "matches",
       "prepend",
       "querySelector",
+      "querySelectorAll",
       "remove",
       "removeAttribute",
       "removeAttributeNS",
@@ -411,22 +436,47 @@ mitto_bindings_interfaces = [
     file = "html_all_collection"
     made_by_known_gaps = true
 
-    # Its named getter, namedItem() and item() give a union of HTMLCollection and
-    # Element, which the C++ writer does not return yet.
     implemented = [
       "length",
       "indexed getter",
+      "named getter",
+      "namedItem",
+      "item",
     ]
   },
   {
     name = "HTMLAnchorElement"
     file = "html_anchor_element"
-    implemented = [ "href" ]
+    implemented = [
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+    ]
   },
   {
     name = "HTMLAreaElement"
     file = "html_area_element"
-    implemented = [ "href" ]
+    implemented = [
+      "href",
+      "origin",
+      "protocol",
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "port",
+      "pathname",
+      "search",
+      "hash",
+    ]
   },
   {
     name = "HTMLAudioElement"
@@ -441,8 +491,7 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLBaseElement"
     file = "html_base_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [ "href" ]
   },
   {
     name = "HTMLBodyElement"
@@ -1184,6 +1233,10 @@ mitto_bindings_interfaces = [
     file = "media_query_list_event"
   },
   {
+    name = "NodeIterator"
+    file = "node_iterator"
+  },
+  {
     name = "NodeList"
     file = "node_list"
     made_by_known_gaps = true
@@ -1192,6 +1245,11 @@ mitto_bindings_interfaces = [
       "item",
       "indexed getter",
     ]
+  },
+  {
+    name = "NodeRange"
+    file = "node_range"
+    made_by_known_gaps = true
   },
   {
     name = "Notification"
@@ -1357,6 +1415,18 @@ mitto_bindings_interfaces = [
   {
     name = "QuotaExceededError"
     file = "quota_exceeded_error"
+  },
+  {
+    name = "Range"
+    file = "range"
+    made_by_known_gaps = true
+
+    # Its geometry, and expand(), which needs it, are M9's.
+    missing = [
+      "getClientRects",
+      "getBoundingClientRect",
+      "expand",
+    ]
   },
   {
     name = "Request"
@@ -1847,6 +1917,11 @@ mitto_bindings_interfaces = [
     missing = [ "getDirectory" ]
   },
   {
+    name = "StaticRange"
+    file = "static_range"
+    made_by_known_gaps = true
+  },
+  {
     name = "StyleMedia"
     file = "style_media"
     made_by_known_gaps = true
@@ -1887,6 +1962,10 @@ mitto_bindings_interfaces = [
   {
     name = "TextEncoder"
     file = "text_encoder"
+  },
+  {
+    name = "TreeWalker"
+    file = "tree_walker"
   },
   {
     name = "TrustedTypePolicyFactory"
@@ -1984,6 +2063,10 @@ mitto_bindings_interfaces = [
       "btoa",
       "requestIdleCallback",
       "cancelIdleCallback",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "webkitRequestAnimationFrame",
+      "webkitCancelAnimationFrame",
       "event",
       "scheduler",
       "cookieStore",

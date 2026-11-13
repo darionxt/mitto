@@ -334,6 +334,9 @@ v8::Local<v8::Value> ToV8ByteStringArray(v8::Isolate* isolate,
 // The number, or null.
 v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
                                         std::optional<double> number);
+// The object, or null for an empty one.
+v8::Local<v8::Value> ToV8NullableObject(v8::Isolate* isolate,
+                                        v8::Local<v8::Object> object);
 // The string, or null.
 v8::Local<v8::Value> ToV8NullableString(
     v8::Isolate* isolate,

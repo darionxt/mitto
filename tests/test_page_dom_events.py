@@ -135,8 +135,9 @@ def test_events_take_chromes_path_and_order_through_a_document_to_the_window(
 def test_uncaught_errors_and_rejections_reach_the_windows_listeners_and_then_the_session(
     session: mitto.Session, server: _DataServer
 ) -> None:
-    # onerror's five arguments, the ErrorEvent of each place an error can be left uncaught, "Script error." for a
-    # script of another origin, reportError(), unhandledrejection and rejectionhandled, and the constructors.
+    # onerror's five arguments, the ErrorEvent of each place an error can be left uncaught, an inline script's place in
+    # its document, "Script error." for a script of another origin, reportError(), unhandledrejection and
+    # rejectionhandled, and the constructors.
     result, uncaught = _run(session, server, "errors")
 
     assert result == _chrome("errors")
@@ -149,6 +150,7 @@ def test_uncaught_errors_and_rejections_reach_the_windows_listeners_and_then_the
         "Uncaught a string",
         "Uncaught URIError: from a file",
         "Uncaught Error: cross-origin secret",
+        "Uncaught TypeError: Cannot read properties of null (reading 'inline')",
         "Uncaught RangeError: from a listener",
         "Uncaught Error: reported",
         "Uncaught 42",

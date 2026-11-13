@@ -1,9 +1,8 @@
 #include "mitto/dom/element.h"
 
 #include <algorithm>
-#include <limits>
+#include <utility>
 
-#include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -16,6 +15,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/dom_token_list.h"
+#include "mitto/dom/dom_tree_version.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/html_template_element.h"
@@ -130,26 +130,38 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
                                       const std::u16string& value) {
   // Blink's WillModifyAttribute(): a record for observers, before the change.
   EnqueueAttributeMutation(*this, name, std::nullopt);
+  IncrementDomTreeVersion();
   attributes_.push_back({name, value});
+  // The hook reads the attribute as it is stored.
+  const Attribute& added = attributes_.back();
+  AttributeChanged(added.name, nullptr, &added.value);
 }
 
 void Element::SetAttributeValueInternal(size_t index,
                                         const std::u16string& value) {
-  // Also when the value stays the same, as in Blink.
+  // Blink's WillModifyAttribute(): a record for observers, before the change,
+  // also when the value stays the same.
   EnqueueAttributeMutation(*this, attributes_[index].name,
                            attributes_[index].value);
-  attributes_[index].value = value;
+  IncrementDomTreeVersion();
+  const std::u16string old_value =
+      std::exchange(attributes_[index].value, value);
+  AttributeChanged(attributes_[index].name, &old_value,
+                   &attributes_[index].value);
 }
 
 void Element::RemoveAttributeInternal(size_t index) {
   EnqueueAttributeMutation(*this, attributes_[index].name,
                            attributes_[index].value);
+  IncrementDomTreeVersion();
   // Blink's RemoveAttributeInternal(): the attribute's node keeps the value.
   if (Attr* const attr = AttrIfExists(attributes_[index].name)) {
     attr->DetachFromElementWithValue(attributes_[index].value);
     attr_nodes_.EraseIf([attr](Attr* node) { return node == attr; });
   }
+  const Attribute removed = std::move(attributes_[index]);
   attributes_.erase(attributes_.begin() + index);
+  AttributeChanged(removed.name, &removed.value, nullptr);
 }
 
 Attr* Element::AttrIfExists(const QualifiedName& name) const {
@@ -682,23 +694,14 @@ void Element::SetOuterHTML(const std::u16string& html,
 Element* Element::Closest(const std::u16string& selectors,
                           bindings::ExceptionState& exception_state) {
   const std::optional<SelectorQuery> query =
-      SelectorQuery::Parse(selectors, exception_state);
-  if (!query) {
-    return nullptr;
-  }
-  for (Node* node = this; node && node->IsElementNode();
-       node = node->ParentNode()) {
-    if (query->Matches(static_cast<Element&>(*node))) {
-      return static_cast<Element*>(node);
-    }
-  }
-  return nullptr;
+      SelectorQuery::Parse(selectors, *this, exception_state);
+  return query ? query->Closest(*this) : nullptr;
 }
 
 bool Element::Matches(const std::u16string& selectors,
                       bindings::ExceptionState& exception_state) {
   const std::optional<SelectorQuery> query =
-      SelectorQuery::Parse(selectors, exception_state);
+      SelectorQuery::Parse(selectors, *this, exception_state);
   return query && query->Matches(*this);
 }
 
@@ -758,6 +761,7 @@ Node* Element::CloneWithoutChildren(Document& document) const {
   Element* const copy = document.CreateElement(
       tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);
   copy->attributes_ = attributes_;
+  copy->is_value_ = is_value_;
   return copy;
 }
 
