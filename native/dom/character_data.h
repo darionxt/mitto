@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/function_ref.h"
 #include "mitto/dom/node.h"
 
 namespace mitto {
@@ -48,8 +49,9 @@ class CharacterData : public Node {
   CharacterData(Document& document, const std::u16string& data);
 
  private:
-  // Queues a record of the change from `old_data` for observers.
-  void DidModifyData(const std::u16string& old_data);
+  // Makes `change` to the data, and queues a record of it for the observers
+  // that it concerns.
+  void ModifyData(base::FunctionRef<void(std::u16string& data)> change);
 
   std::u16string data_;
 };

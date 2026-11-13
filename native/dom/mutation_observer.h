@@ -40,7 +40,6 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
-class CharacterData;
 class Element;
 class MutationObserverRegistration;
 class MutationRecord;
@@ -97,7 +96,8 @@ class MutationObserver final : public bindings::ScriptWrappable {
   HeapVector<MutationRecord> records_;
   // What the last takeRecords() took, until the next.
   HeapVector<MutationRecord> taken_records_;
-  HeapVector<MutationObserverRegistration> registrations_;
+  // Weak, as Blink's: a node holds its registrations, which go with it.
+  WeakHeapVector<MutationObserverRegistration> registrations_;
   // The order of the observers' deliveries: the order they were made in.
   const uint32_t priority_;
 };
@@ -206,14 +206,14 @@ class MutationObserverInterestGroup final
   const MutationRecordDeliveryOptions old_value_flag_;
 };
 
-// What the DOM's changes call, as Blink's Element::WillModifyAttribute() and
-// CharacterData::DidModifyData() do: a record of the attribute `name` of
-// `element`, which had `old_value`, or of `node`'s data, which was `old_data`.
+// What an attribute's change calls, as Blink's Element::WillModifyAttribute()
+// does: a record of the attribute `name` of `element`, which had `old_value`.
+// A change of a node's data queues its record itself, through
+// CreateForCharacterDataMutation(), so that it keeps the old data only for an
+// observer.
 void EnqueueAttributeMutation(Element& element,
                               const std::u16string& name,
                               const std::optional<std::u16string>& old_value);
-void EnqueueCharacterDataMutation(CharacterData& node,
-                                  const std::u16string& old_data);
 
 // Blink's Node::NotifyMutationObserversNodeWillDetach(): `node` is about to
 // leave its parent, and the subtree registrations of its ancestors follow it.

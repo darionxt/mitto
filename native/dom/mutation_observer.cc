@@ -8,7 +8,6 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_mutation_observer.h"
 #include "mitto/bindings/v8_window.h"
-#include "mitto/dom/character_data.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/mutation_record.h"
 #include "mitto/dom/node.h"
@@ -204,13 +203,19 @@ void MutationObserver::Observe(Node* target,
 
 void MutationObserver::Disconnect() {
   records_.clear();
-  // A registration may go while the others are taken off.
-  const std::vector<MutationObserverRegistration*> registrations =
-      registrations_.ToVector();
-  for (MutationObserverRegistration* registration : registrations) {
+  // A registration may go while the others are taken off, and one whose node
+  // the collector took has gone with it.
+  std::vector<cppgc::Persistent<MutationObserverRegistration>> registrations;
+  for (MutationObserverRegistration* registration : registrations_.ToVector()) {
+    if (registration) {
+      registrations.emplace_back(registration);
+    }
+  }
+  for (const cppgc::Persistent<MutationObserverRegistration>& registration :
+       registrations) {
     bool still_there = false;
     for (size_t i = 0; i < registrations_.size(); ++i) {
-      still_there |= registrations_[i] == registration;
+      still_there |= registrations_[i] == registration.Get();
     }
     if (still_there) {
       registration->Unregister();
@@ -231,13 +236,16 @@ std::vector<MutationRecord*> MutationObserver::TakeRecords() {
 
 void MutationObserver::ObservationStarted(
     MutationObserverRegistration* registration) {
+  // Those whose nodes the collector took leave room first.
+  registrations_.EraseIf(
+      [](MutationObserverRegistration* item) { return !item; });
   registrations_.push_back(registration);
 }
 
 void MutationObserver::ObservationEnded(
     MutationObserverRegistration* registration) {
   registrations_.EraseIf([registration](MutationObserverRegistration* item) {
-    return item == registration;
+    return !item || item == registration;
   });
 }
 
@@ -270,8 +278,9 @@ void MutationObserver::Deliver() {
   // ones that have any are taken first.
   std::vector<MutationObserverRegistration*> transient;
   for (size_t i = 0; i < registrations_.size(); ++i) {
-    if (registrations_[i]->HasTransientRegistrations()) {
-      transient.push_back(registrations_[i]);
+    MutationObserverRegistration* const registration = registrations_[i];
+    if (registration && registration->HasTransientRegistrations()) {
+      transient.push_back(registration);
     }
   }
   for (MutationObserverRegistration* registration : transient) {
@@ -509,16 +518,6 @@ void EnqueueAttributeMutation(Element& element,
     const cppgc::Persistent<MutationObserverInterestGroup> held(recipients);
     recipients->EnqueueMutationRecord(
         MutationRecord::CreateAttributes(&element, name, old_value));
-  }
-}
-
-void EnqueueCharacterDataMutation(CharacterData& node,
-                                  const std::u16string& old_data) {
-  if (MutationObserverInterestGroup* const recipients =
-          MutationObserverInterestGroup::CreateForCharacterDataMutation(node)) {
-    const cppgc::Persistent<MutationObserverInterestGroup> held(recipients);
-    recipients->EnqueueMutationRecord(
-        MutationRecord::CreateCharacterData(&node, old_data));
   }
 }
 
