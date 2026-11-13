@@ -817,6 +817,9 @@
   "dataset symbol": "string:1|1",
   "dataset svg": "string:v|[object DOMStringMap]",
   "dataset strict delete": "boolean:true",
-  "dataset json": "string:{\"a\":\"1\",\"bC\":\"2\"}|{\"a\":\"1\",\"bC\":\"2\"}"
+  "dataset json": "string:{\"a\":\"1\",\"bC\":\"2\"}|{\"a\":\"1\",\"bC\":\"2\"}",
+  "dataset receiver": "string:|true|v|true|false|w|1|true|[\"bar\"]",
+  "dataset reflect define": "string:true|true|true|||v|true|[\"z\"]",
+  "dataset reflect set": "threw SyntaxError: Failed to set a named property 'a-b' on 'DOMStringMap': 'a-b' is not a valid property name."
  }
 }

@@ -886,5 +886,28 @@
   run("dataset svg", () => { const e = document.createElementNS(SVG, "rect"); e.dataset.k = "v"; return [e.getAttribute("data-k"), document.createElementNS(MATHML, "mi").dataset + ""].join("|"); });
   run("dataset strict delete", () => { "use strict"; const d = document.createElement("div").dataset; return delete d.nothing; });
   run("dataset json", () => { const e = document.createElement("div"); e.dataset.a = "1"; e.dataset.bC = "2"; return JSON.stringify(e.dataset) + "|" + JSON.stringify(Object.assign({}, e.dataset)); });
+  // V8 calls the named setter only when the receiver is the map itself; a setter's error propagates through Reflect.
+  run("dataset receiver", () => {
+    const e = document.createElement("div");
+    const child = Object.create(e.dataset);
+    child.foo = "v";
+    const r = {};
+    const ok = Reflect.set(e.dataset, "k", "w", r);
+    e.setAttribute("data-bar", "1");
+    child.bar = "2";
+    return [e.getAttribute("data-foo"), child.hasOwnProperty("foo"), child.foo, ok, e.hasAttribute("data-k"), r.k, e.getAttribute("data-bar"), child.hasOwnProperty("bar"), JSON.stringify(Object.keys(e.dataset))].join("|");
+  });
+  run("dataset reflect define", () => {
+    const d = document.createElement("div").dataset;
+    const a = Reflect.defineProperty(d, "x", { get() { return 1; } });
+    const b = Reflect.defineProperty(d, "y", { value: "v" });
+    const c = Reflect.defineProperty(d, "z", { value: "v", writable: false });
+    const del = Reflect.deleteProperty(d, "y");
+    return [a, b, c, d.x, d.y, d.z, del, JSON.stringify(Object.keys(d))].join("|");
+  });
+  run("dataset reflect set", () => {
+    const d = document.createElement("div").dataset;
+    return [Reflect.set(d, "a", "1"), Reflect.set(d, "a-b", "1")].join("|");
+  });
   return JSON.stringify(cases, null, 1);
 })()
