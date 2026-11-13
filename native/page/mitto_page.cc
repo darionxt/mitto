@@ -371,8 +371,7 @@ bool RunScript(v8::Isolate* isolate,
                std::string_view source) {
   const v8::HandleScope handle_scope(isolate);
   // Its about:blank's loading started when the context did.
-  mitto::ChromeObjectData chrome_data;
-  chrome_data.StartAt(
+  mitto::ChromeObjectData chrome_data(
       mitto::bindings::PerIsolateData::From(isolate)->time_origin());
   CommandLineInspector inspector(isolate);
   const v8::Local<v8::Context> context = mitto::NewPageContext(
@@ -385,6 +384,7 @@ bool RunScript(v8::Isolate* isolate,
   const v8::Context::Scope context_scope(context);
   mitto::DOMTimerCoordinator timers(isolate, context);
   mitto::Window::Current().SetTimers(&timers);
+  mitto::Window::Current().SetDocumentLoadTiming(chrome_data.load_timing.Get());
   isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
                                             v8::Isolate::kMessageError);
 

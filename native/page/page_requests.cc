@@ -7,8 +7,22 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
+#include "mitto/dom/performance.h"
+#include "mitto/dom/window.h"
+#include "mitto/page/resource_timing.h"
 
 namespace mitto {
+
+PageRequests::Timed::Timed() = default;
+PageRequests::Timed::Timed(Timed&&) = default;
+PageRequests::Timed& PageRequests::Timed::operator=(Timed&&) = default;
+PageRequests::Timed::~Timed() = default;
+
+PageRequests::Open::Open() = default;
+PageRequests::Open::Open(Open&&) = default;
+PageRequests::Open& PageRequests::Open::operator=(Open&&) = default;
+PageRequests::Open::~Open() = default;
 
 PageRequests::PageRequests(
     SendFrame send,
@@ -23,16 +37,28 @@ void PageRequests::SetNavigationClient(Client& client) {
 
 uint64_t PageRequests::Start(PageRequestKind kind,
                              std::string url,
-                             Client& client) {
+                             Client& client,
+                             bool render_blocking) {
   PageRequest request;
   request.kind = kind;
   request.url = std::move(url);
-  return Start(std::move(request), client);
+  return Start(std::move(request), client, render_blocking);
 }
 
-uint64_t PageRequests::Start(PageRequest request, Client& client) {
+uint64_t PageRequests::Start(PageRequest request,
+                             Client& client,
+                             bool render_blocking) {
   request.number = next_number_++;
-  open_[request.number].client = &client;
+  Open& open = open_[request.number];
+  open.client = &client;
+  // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
+  Timed& timed = open.timed.emplace();
+  timed.start_time = base::TimeTicks::Now();
+  timed.initiator_type =
+      request.kind == PageRequestKind::kScript ? u"script" : u"fetch";
+  timed.url = base::UTF8ToUTF16(request.url);
+  timed.render_blocking = render_blocking;
+  timed.window = &Window::Current();
   send_.Run(EncodeRequest(request));
   return request.number;
 }
@@ -42,10 +68,42 @@ void PageRequests::Cancel(uint64_t number) {
   if (found == open_.end() || !found->second.client) {
     return;
   }
+  // ResourceFetcher::HandleLoaderError() adds the entry of a request that the
+  // page let go, as of now.
+  if (found->second.timed) {
+    AddResourceTiming(*found->second.timed, base::TimeTicks::Now(), nullptr);
+    found->second.timed.reset();
+  }
   // It stays open until the Session ends it, so that what the Session sent
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
   send_.Run(EncodeCancel(number));
+}
+
+// static
+void PageRequests::AddResourceTiming(Timed& timed,
+                                     base::TimeTicks response_end,
+                                     const PageResponseEnded* ended) {
+  Window* const window = timed.window.Get();
+  if (!window || !window->HasContext()) {
+    return;
+  }
+  const PageResponseStarted* const response =
+      timed.response ? &*timed.response : nullptr;
+  ResourceTimingInfo info = CreateResourceTimingInfo(
+      timed.start_time, std::move(timed.url), response, response_end);
+  if (response) {
+    if (info.allow_timing_details) {
+      info.last_redirect_end_time = TicksOf(response->last_redirect_end);
+    }
+    if (ended) {
+      SetResourceTimingSizes(info, *response, ended->encoded_body_size,
+                             ended->received_bytes, timed.decoded_body_size);
+    }
+  }
+  info.render_blocking_status = timed.render_blocking;
+  window->Performance()->AddResourceTiming(std::move(info),
+                                           timed.initiator_type);
 }
 
 void PageRequests::TookBody(uint64_t number, size_t bytes) {
@@ -91,6 +149,9 @@ void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
     return;
   }
   open->started = true;
+  if (open->timed) {
+    open->timed->response = response;
+  }
   if (open->client) {
     open->client->OnResponseStarted(response);
   }
@@ -111,6 +172,9 @@ void PageRequests::OnResponseBody(PageResponseBody body) {
     // Cancelled: the Session needs no credit for what it sent meanwhile.
     return;
   }
+  if (open->timed) {
+    open->timed->decoded_body_size += body.bytes.size();
+  }
   open->untaken += body.bytes.size();
   // The client may take the bytes, and give credit, before this returns.
   open->client->OnResponseBody(std::move(body.bytes));
@@ -122,8 +186,16 @@ void PageRequests::OnResponseEnded(const PageResponseEnded& ended) {
     return;
   }
   Client* const client = open->client;
+  std::optional<Timed> timed = std::move(open->timed);
   open_.erase(ended.number);
+  // ResourceFetcher adds the entry before the resource's clients hear of the
+  // end, so that a script sees its own. A request that the Session refused
+  // before it started never loaded, as Blink fails such a fetch first.
+  if (timed && ended.completion_time != 0) {
+    AddResourceTiming(*timed, TicksOf(ended.completion_time), &ended);
+  }
   if (client) {
+    client->OnResponseTotals(ended);
     client->OnResponseEnded(ended.net_error);
   }
 }

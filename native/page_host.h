@@ -68,6 +68,10 @@ struct PageOptions {
   // Where the Page navigates when it opens. Without one it stays at
   // about:blank.
   std::optional<GURL> url;
+  // When the navigation started: when the caller opened the Page, before its
+  // process started, as Chrome's NavigationRequest starts a tab's navigation
+  // before its renderer runs. What its document's timeOrigin counts from.
+  base::TimeTicks navigation_start;
   // What each Request Kind sends.
   std::optional<PageRequestTemplate> navigation;
   std::optional<PageRequestTemplate> script;

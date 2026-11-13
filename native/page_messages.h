@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 9;
+inline constexpr uint32_t kPageProtocolVersion = 10;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -233,6 +233,31 @@ struct PageConnection {
   double downlink = 0;
 };
 
+// How the last hop of a request went, as //net's LoadTimingInfo has it and
+// Chrome's network service hands it to Blink for the Performance Timeline:
+// each a time of base::TimeTicks in microseconds, which every process of the
+// machine shares, and 0 for a step that did not happen.
+struct PageLoadTiming {
+  // When the hop started: the request's start, or when it followed its last
+  // redirect.
+  int64_t request_start = 0;
+  int64_t domain_lookup_start = 0;
+  int64_t domain_lookup_end = 0;
+  // From the start of the connection, its DNS lookup included, to the end of
+  // its TLS handshake.
+  int64_t connect_start = 0;
+  int64_t connect_end = 0;
+  int64_t ssl_start = 0;
+  int64_t send_start = 0;
+  // The first and last byte of the headers, an informational response's
+  // included, and the first byte of the final response's headers.
+  int64_t receive_headers_start = 0;
+  int64_t receive_headers_end = 0;
+  int64_t receive_non_informational_headers_start = 0;
+  // Whether the hop reused a connection.
+  bool socket_reused = false;
+};
+
 // What a Page turns on and off beside the Engine Release's runtime-enabled
 // features and V8's defaults, as its Persona says: what its Chrome Release did
 // not ship yet, and what the variations seed of that release switches.
@@ -369,6 +394,8 @@ struct PageCredit {
 // as a request of its own does.
 struct PageResponseStarted {
   PageResponseStarted();
+  PageResponseStarted(const PageResponseStarted&);
+  PageResponseStarted& operator=(const PageResponseStarted&);
   PageResponseStarted(PageResponseStarted&&);
   PageResponseStarted& operator=(PageResponseStarted&&);
   ~PageResponseStarted();
@@ -404,6 +431,31 @@ struct PageResponseStarted {
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;
+  // For the Performance Timeline, as Chrome's network service tells Blink:
+  // how the last hop went;
+  PageLoadTiming timing;
+  // whether the response passed the Fetch Standard's TAO check on each hop,
+  // and whether its tainting is opaque, as a script's is once a hop has gone
+  // to another origin than the document's;
+  bool timing_allow_passed = false;
+  bool opaque = false;
+  // whether the cache had the server validate it, and how many bytes had
+  // come by its start, headers included, none for one from the cache;
+  bool validated = false;
+  int64_t received_bytes = 0;
+  // how many redirects it followed, at most 20, and whether one went to
+  // another origin than the URL it came from;
+  uint32_t redirect_count = 0;
+  bool cross_origin_redirect = false;
+  // for the navigation, whether it restarted for Critical-CH, which Chrome
+  // makes a redirect to where it started;
+  bool restarted_for_critical_ch = false;
+  // when its first hop started, when the last redirect's headers ended, 0
+  // without one, and when the navigation restarted for Critical-CH, if no
+  // redirect came after.
+  int64_t first_request_start = 0;
+  int64_t last_redirect_end = 0;
+  int64_t critical_ch_restart = 0;
 };
 
 // Bytes of a response's body.
@@ -422,6 +474,14 @@ struct PageResponseEnded {
   uint64_t number = 0;
   // net::OK when all of the body has come.
   int32_t net_error = 0;
+  // What it took, as Chrome's network service tells Blink at its completion:
+  // the body's bytes as they came over the wire, before any content coding
+  // was undone, every byte received, headers included, and when it ended, a
+  // time of base::TimeTicks in microseconds, 0 for a request that the library
+  // refused before it started, as Blink fails such a fetch before it loads.
+  int64_t encoded_body_size = 0;
+  int64_t received_bytes = 0;
+  int64_t completion_time = 0;
 };
 
 // A frame from a Page, once checked. Which fields it uses depends on `type`.

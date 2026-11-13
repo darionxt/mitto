@@ -132,7 +132,7 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 9
+_PROTOCOL_VERSION = 10
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -660,6 +660,19 @@ def _request(
     )
 
 
+def _timing(
+    times: tuple[int, ...] = (0,) * 10,
+    flags: tuple[int, ...] = (0,) * 6,
+    received_bytes: int = 0,
+    redirect_count: int = 0,
+    ends: tuple[int, int, int] = (0, 0, 0),
+) -> bytes:
+    """The Performance Timeline's part of a response: //net's ten times of its last hop, its six flags (socket reused,
+    TAO passed, validated, cross-origin redirect, Critical-CH restart, opaque), the bytes that had come, its redirects,
+    and when its first hop started, its last redirect ended and the navigation restarted for Critical-CH."""
+    return struct.pack("<10q6BqI3q", *times, *flags, received_bytes, redirect_count, *ends)
+
+
 def _respond(
     session: _Session,
     number: int,
@@ -672,12 +685,14 @@ def _respond(
     cors: bool = False,
     headers: str = "",
     connection: tuple[int, float] = (0, 0.0),
+    timing: bytes | None = None,
 ) -> None:
     """Send the start of a response: for the navigation, `connection` is the rtt and downlink of its document."""
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
         struct.pack("<QiBBBBqId", number, status, int(redirected), int(cors), 0, 0, 0, *connection)
+        + (_timing() if timing is None else timing)
         + _sized(url.encode())
         + _sized(status_text.encode("latin-1"))
         + _sized(b"http/1.1")
@@ -690,8 +705,14 @@ def _body(session: _Session, number: int, data: bytes) -> None:
     session.send(_RESPONSE_BODY, struct.pack("<Q", number) + data)
 
 
+def _ended(number: int, net_error: int = 0, totals: tuple[int, int, int] = (0, 0, 0)) -> bytes:
+    """The payload of a Response ended: its net error, then its encoded body size, the bytes it received in all and
+    when it completed."""
+    return struct.pack("<Qi3q", number, net_error, *totals)
+
+
 def _end(session: _Session, number: int, net_error: int = 0) -> None:
-    session.send(_RESPONSE_ENDED, struct.pack("<Qi", number, net_error))
+    session.send(_RESPONSE_ENDED, _ended(number, net_error))
 
 
 def _nothing_comes(session: _Session, seconds: float = 0.3) -> bool:
@@ -1090,15 +1111,20 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
             "a body of request 5, which is not in progress",
             id="body-of-no-request",
         ),
-        pytest.param(
-            _RESPONSE_ENDED, struct.pack("<Qi", 0, 0), "the end of request 0, which is not in progress", id="end"
-        ),
+        pytest.param(_RESPONSE_ENDED, _ended(0), "the end of request 0, which is not in progress", id="end"),
         pytest.param(
             _COOKIES, struct.pack("<Q", 1) + b"a=b", "cookies for question 1, which no script waits for", id="cookies"
         ),
         pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
+        pytest.param(_RESPONSE_ENDED, _ended(0, 1), "the end of a response with the net error 1", id="positive-error"),
         pytest.param(
-            _RESPONSE_ENDED, struct.pack("<Qi", 0, 1), "the end of a response with the net error 1", id="positive-error"
+            _RESPONSE_ENDED, struct.pack("<Qi", 0, 0), "an end of a response of 12 bytes", id="end-without-totals"
+        ),
+        pytest.param(
+            _RESPONSE_ENDED,
+            _ended(0, 0, (-1, 0, 0)),
+            "the end of a response that //net cannot give",
+            id="negative-body-size",
         ),
     ],
 )
@@ -1110,6 +1136,32 @@ def test_a_page_refuses_what_a_session_should_not_send_of_its_requests(
     session.send(message_type, payload)
 
     assert session.refusal() == why
+
+
+@pytest.mark.parametrize(
+    "timing",
+    [
+        pytest.param(_timing(times=(-1,) + (0,) * 9), id="negative-time"),
+        pytest.param(_timing(flags=(2, 0, 0, 0, 0, 0)), id="flag-of-two"),
+        pytest.param(_timing(received_bytes=-1), id="negative-bytes"),
+        pytest.param(_timing(redirect_count=21), id="more-redirects-than-net-follows"),
+        pytest.param(_timing(ends=(0, -5, 0)), id="negative-redirect-end"),
+    ],
+)
+def test_a_page_refuses_a_response_whose_timing_net_cannot_give(session: _Session, timing: bytes) -> None:
+    session.start()
+
+    _respond(session, 0, _DOCUMENT_URL, "text/html", timing=timing)
+
+    assert session.refusal() == "a response whose timing //net cannot give"
+
+
+def test_a_page_refuses_a_response_both_cors_and_opaque(session: _Session) -> None:
+    session.start()
+
+    _respond(session, 0, _DOCUMENT_URL, "text/html", cors=True, timing=_timing(flags=(0, 0, 0, 0, 0, 1)))
+
+    assert session.refusal() == "a response whose timing //net cannot give"
 
 
 def test_a_document_of_a_session_runs_in_a_context_of_its_own_and_ends_waiting_calls(session: _Session) -> None:

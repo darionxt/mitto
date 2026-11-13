@@ -16,10 +16,13 @@
 #include "base/time/time.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/window.h"
+#include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
 
 namespace mitto {
@@ -83,42 +86,6 @@ ScriptType TypeOf(const HTMLScriptElement& element) {
   return lower == u"module" ? ScriptType::kModule : ScriptType::kOther;
 }
 
-// The values of each header line named `name`, joined by commas, as Blink's
-// ResourceResponse::HttpHeaderField() joins a header that comes more than
-// once. `headers` holds a line feed after each "name: value".
-std::string HeaderField(std::string_view headers, std::string_view name) {
-  std::vector<std::string_view> values;
-  for (const std::string_view line : base::SplitStringPiece(
-           headers, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const size_t colon = line.find(':');
-    if (colon != std::string_view::npos &&
-        base::EqualsCaseInsensitiveASCII(line.substr(0, colon), name)) {
-      values.push_back(
-          base::TrimString(line.substr(colon + 1), " \t", base::TRIM_ALL));
-    }
-  }
-  return base::JoinString(values, ", ");
-}
-
-// Blink's ResourceResponse::HttpContentType(): the MIME type of the last
-// media type in Content-Type that has one, in lower case, without parameters.
-// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_response.cc
-// Upstream: third_party/blink/renderer/platform/network/http_parsers.cc
-std::string HttpContentType(std::string_view headers) {
-  std::string mime_type;
-  const std::string field =
-      base::ToLowerASCII(HeaderField(headers, "content-type"));
-  for (const std::string_view value : base::SplitStringPiece(
-           field, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const std::string_view type = base::TrimString(
-        value.substr(0, value.find(';')), " \t", base::TRIM_ALL);
-    if (type.find('/') != std::string_view::npos && type != "*/*") {
-      mime_type = std::string(type);
-    }
-  }
-  return mime_type;
-}
-
 // Blink's ParseContentTypeOptionsHeader(), as the Fetch Standard splits the
 // header.
 bool IsNosniff(std::string_view headers) {
@@ -173,6 +140,23 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
                          "') is not executable."});
   }
   return std::nullopt;
+}
+
+// HTMLScriptElement::IsPotentiallyRenderBlocking() for a classic script that
+// the parser inserted: one with blocking="render", or without async and defer.
+// Upstream: third_party/blink/renderer/core/html/html_script_element.cc
+bool IsPotentiallyRenderBlocking(const HTMLScriptElement& element) {
+  if (const std::optional<std::u16string> blocking =
+          element.GetAttribute(u"blocking")) {
+    for (const std::u16string_view token :
+         base::SplitStringPiece(*blocking, u" \t\n\f\r", base::KEEP_WHITESPACE,
+                                base::SPLIT_WANT_NONEMPTY)) {
+      if (token == u"render") {
+        return true;
+      }
+    }
+  }
+  return !element.HasAttribute(u"async") && !element.HasAttribute(u"defer");
 }
 
 // Fires a trusted event of `type` at `target`, which does not bubble, as the
@@ -252,7 +236,8 @@ class DocumentLoader::ScriptFetch final : public PageRequests::Client {
 
   void Start() {
     number_ =
-        loader_->requests_->Start(PageRequestKind::kScript, url_.spec(), *this);
+        loader_->requests_->Start(PageRequestKind::kScript, url_.spec(), *this,
+                                  IsPotentiallyRenderBlocking(*element_));
   }
 
   bool ended() const { return ended_; }
@@ -320,6 +305,39 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   document_ = &runner_->CommitDocument(
       url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
+  // What DocumentLoader::CommitNavigation() takes from the navigation's
+  // timings and response, for the window's Performance Timeline and
+  // window.chrome. A restart for Critical-CH is a redirect to where the
+  // navigation started, after which the fetch starts again.
+  timing_ = &runner_->document_load_timing();
+  DocumentLoadTiming& timing = *timing_;
+  timing.has_response = true;
+  timing.redirect_count = static_cast<uint16_t>(
+      response.redirect_count + (response.restarted_for_critical_ch ? 1 : 0));
+  timing.has_cross_origin_redirect = response.cross_origin_redirect;
+  timing.fetch_start = TicksOf(response.timing.request_start);
+  if (timing.redirect_count > 0) {
+    timing.redirect_start = TicksOf(response.first_request_start);
+    timing.redirect_end = timing.fetch_start;
+  }
+  timing.critical_ch_restart = TicksOf(response.critical_ch_restart);
+  // CreateNavigationTimingInstance(): no start time, the document's URL, and
+  // a response that always passes the TAO check, whose cache state the bytes
+  // that had come with its headers decide.
+  PageResponseStarted navigation_response = response;
+  navigation_response.timing_allow_passed = true;
+  timing.navigation = CreateResourceTimingInfo(
+      base::TimeTicks(), base::UTF8ToUTF16(response.url), &navigation_response,
+      base::TimeTicks::Now());
+  timing.navigation.cache_state = response.validated ? CacheState::kValidated
+                                  : response.received_bytes == 0
+                                      ? CacheState::kLocal
+                                      : CacheState::kNone;
+  timing.connection_info = response.connection_info;
+  timing.alpn_negotiated_protocol = response.alpn_negotiated_protocol;
+  timing.was_fetched_via_spdy = response.was_fetched_via_spdy;
+  timing.was_alpn_negotiated = response.was_alpn_negotiated;
+  timing.dom_loading = base::TimeTicks::Now();
   document_->SetReadiness(Document::Readiness::kLoading);
   // Blink's Document::lastModifiedTime(): the response's Last-Modified, where
   // it parses.
@@ -330,21 +348,27 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       base::Time::FromString(last_modified.c_str(), &last_modified_time)) {
     document_->SetLastModified(last_modified_time);
   }
-  // What DocumentLoadTiming and the navigation's response keep, for
-  // window.chrome. The response's start is when the Page hears of it.
-  ChromeObjectData& chrome_object_data = runner_->chrome_object_data();
-  chrome_object_data.response_start = base::TimeTicks::Now();
-  chrome_object_data.connection_info = response.connection_info;
-  chrome_object_data.alpn_negotiated_protocol =
-      response.alpn_negotiated_protocol;
-  chrome_object_data.was_fetched_via_spdy = response.was_fetched_via_spdy;
-  chrome_object_data.was_alpn_negotiated = response.was_alpn_negotiated;
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
 }
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
+  body_bytes_ += bytes.size();
   waiting_body_.push_back(std::move(bytes));
   Pump();
+}
+
+void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
+  // WindowPerformance::OnBodyLoadFinished() and FinishedLoading(): the body's
+  // sizes, which the navigation's entry shows, and when it ended.
+  if (!timing_) {
+    return;
+  }
+  timing_->navigation.encoded_body_size =
+      static_cast<uint64_t>(ended.encoded_body_size);
+  timing_->navigation.decoded_body_size = body_bytes_;
+  timing_->response_end = ended.completion_time != 0
+                              ? TicksOf(ended.completion_time)
+                              : base::TimeTicks::Now();
 }
 
 void DocumentLoader::OnResponseEnded(int net_error) {
@@ -460,7 +484,17 @@ void DocumentLoader::OnScriptFetched(ScriptFetch& fetch) {
 void DocumentLoader::RunAfterParsing() {
   if (!after_parsing_started_) {
     after_parsing_started_ = true;
+    timing_->dom_interactive = base::TimeTicks::Now();
     document_->SetReadiness(Document::Readiness::kInteractive);
+    // Document::SetReadyState() tells Chrome's browser process, which answers
+    // with the navigation's confidence from a later task: high, as for any
+    // navigation once the browser has started, with its noise.
+    runner_->PostTask(base::BindOnce(
+        [](const cppgc::Persistent<DocumentLoadTiming>& timing) {
+          timing->high_confidence =
+              PerformanceTimingConfidence::DrawHighConfidence();
+        },
+        timing_));
   }
   while (!after_parsing_.empty()) {
     if (!after_parsing_.front()->ended()) {
@@ -484,24 +518,27 @@ void DocumentLoader::FireDOMContentLoaded() {
   init.bubbles = true;
   Event* const event = Event::Create(u"DOMContentLoaded", init);
   event->SetTrusted(true);
+  timing_->dom_content_loaded_event_start = base::TimeTicks::Now();
   // It reaches the document's listeners. Events that go through the tree and
   // on to the window are a Known Gap.
   document_->DispatchEvent(event);
-  runner_->chrome_object_data().dom_content_loaded_end = base::TimeTicks::Now();
+  timing_->dom_content_loaded_event_end = base::TimeTicks::Now();
   // Nothing else that a document loads holds its load event back yet.
   runner_->PostTask(
       base::BindOnce(&DocumentLoader::FireLoad, weak_factory_.GetWeakPtr()));
 }
 
 void DocumentLoader::FireLoad() {
+  timing_->dom_complete = base::TimeTicks::Now();
   document_->SetReadiness(Document::Readiness::kComplete);
   bindings::EventInit init;
   Event* const event = Event::Create(u"load", init);
   event->SetTrusted(true);
+  timing_->load_event_start = base::TimeTicks::Now();
   if (Window* const window = document_->DefaultView()) {
     window->DispatchEventWithTarget(event, document_.Get());
   }
-  runner_->chrome_object_data().load_end = base::TimeTicks::Now();
+  timing_->load_event_end = base::TimeTicks::Now();
   send_.Run(EncodeLoaded());
 }
 

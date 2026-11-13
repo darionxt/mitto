@@ -190,6 +190,34 @@ int32_t DecodeInt32(std::string_view bytes) {
   return static_cast<int32_t>(DecodeUint32(bytes));
 }
 
+std::string EncodeInt64(int64_t value) {
+  return EncodeUint64(static_cast<uint64_t>(value));
+}
+
+int64_t DecodeInt64(std::string_view bytes) {
+  return static_cast<int64_t>(DecodeUint64(bytes));
+}
+
+// The most redirects that //net follows, URLRequest's kMaxRedirects.
+constexpr uint32_t kMostRedirects = 20;
+
+// The fixed part of a response's payload, before its URL.
+constexpr size_t kResponseStartedFixedSize = 158;
+
+// The times of a PageLoadTiming, in the order they travel.
+std::array<int64_t PageLoadTiming::*, 10> LoadTimingTimes() {
+  return {&PageLoadTiming::request_start,
+          &PageLoadTiming::domain_lookup_start,
+          &PageLoadTiming::domain_lookup_end,
+          &PageLoadTiming::connect_start,
+          &PageLoadTiming::connect_end,
+          &PageLoadTiming::ssl_start,
+          &PageLoadTiming::send_start,
+          &PageLoadTiming::receive_headers_start,
+          &PageLoadTiming::receive_headers_end,
+          &PageLoadTiming::receive_non_informational_headers_start};
+}
+
 bool IsConsoleLevel(uint8_t level) {
   return level >= static_cast<uint8_t>(ConsoleLevel::kDebug) &&
          level <= static_cast<uint8_t>(ConsoleLevel::kError);
@@ -651,7 +679,7 @@ base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
 
 base::expected<PageResponseStarted, std::string> ReadResponseStarted(
     std::string_view bytes) {
-  if (bytes.size() < 36) {
+  if (bytes.size() < kResponseStartedFixedSize) {
     return base::unexpected(WrongSize("response", bytes.size()));
   }
   PageResponseStarted response;
@@ -666,7 +694,39 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   response.connection.rtt = DecodeUint32(bytes.substr(24, 4));
   response.connection.downlink =
       base::bit_cast<double>(DecodeUint64(bytes.substr(28, 8)));
-  bytes.remove_prefix(36);
+  size_t offset = 36;
+  bool times_valid = true;
+  for (int64_t PageLoadTiming::* time : LoadTimingTimes()) {
+    response.timing.*time = DecodeInt64(bytes.substr(offset, 8));
+    times_valid = times_valid && response.timing.*time >= 0;
+    offset += 8;
+  }
+  const uint8_t socket_reused = static_cast<uint8_t>(bytes[116]);
+  const uint8_t timing_allow_passed = static_cast<uint8_t>(bytes[117]);
+  const uint8_t validated = static_cast<uint8_t>(bytes[118]);
+  const uint8_t cross_origin_redirect = static_cast<uint8_t>(bytes[119]);
+  const uint8_t restarted = static_cast<uint8_t>(bytes[120]);
+  const uint8_t opaque = static_cast<uint8_t>(bytes[121]);
+  response.received_bytes = DecodeInt64(bytes.substr(122, 8));
+  response.redirect_count = DecodeUint32(bytes.substr(130, 4));
+  response.first_request_start = DecodeInt64(bytes.substr(134, 8));
+  response.last_redirect_end = DecodeInt64(bytes.substr(142, 8));
+  response.critical_ch_restart = DecodeInt64(bytes.substr(150, 8));
+  bytes.remove_prefix(kResponseStartedFixedSize);
+  if (!times_valid || socket_reused > 1 || timing_allow_passed > 1 ||
+      validated > 1 || cross_origin_redirect > 1 || restarted > 1 ||
+      opaque > 1 || (opaque == 1 && cors == 1) || response.received_bytes < 0 ||
+      response.redirect_count > kMostRedirects ||
+      response.first_request_start < 0 || response.last_redirect_end < 0 ||
+      response.critical_ch_restart < 0) {
+    return base::unexpected("a response whose timing //net cannot give");
+  }
+  response.timing.socket_reused = socket_reused == 1;
+  response.timing_allow_passed = timing_allow_passed == 1;
+  response.validated = validated == 1;
+  response.cross_origin_redirect = cross_origin_redirect == 1;
+  response.restarted_for_critical_ch = restarted == 1;
+  response.opaque = opaque == 1;
   std::string_view url;
   std::string_view status_text;
   std::string_view connection_info;
@@ -710,16 +770,25 @@ base::expected<PageResponseBody, std::string> ReadResponseBody(
 
 base::expected<PageResponseEnded, std::string> ReadResponseEnded(
     std::string_view payload) {
-  if (payload.size() != 12) {
-    return base::unexpected(WrongSize("end of a response", payload.size()));
+  if (payload.size() != 36) {
+    return base::unexpected(
+        base::StrCat({"an end of a response of ",
+                      base::NumberToString(payload.size()), " bytes"}));
   }
   PageResponseEnded ended;
   ended.number = DecodeUint64(payload.substr(0, 8));
   ended.net_error = DecodeInt32(payload.substr(8, 4));
+  ended.encoded_body_size = DecodeInt64(payload.substr(12, 8));
+  ended.received_bytes = DecodeInt64(payload.substr(20, 8));
+  ended.completion_time = DecodeInt64(payload.substr(28, 8));
   if (ended.net_error > 0) {
     return base::unexpected(
         base::StrCat({"the end of a response with the net error ",
                       base::NumberToString(ended.net_error)}));
+  }
+  if (ended.encoded_body_size < 0 || ended.received_bytes < 0 ||
+      ended.completion_time < 0) {
+    return base::unexpected("the end of a response that //net cannot give");
   }
   return ended;
 }
@@ -732,6 +801,9 @@ PageRequest& PageRequest::operator=(PageRequest&&) = default;
 PageRequest::~PageRequest() = default;
 
 PageResponseStarted::PageResponseStarted() = default;
+PageResponseStarted::PageResponseStarted(const PageResponseStarted&) = default;
+PageResponseStarted& PageResponseStarted::operator=(
+    const PageResponseStarted&) = default;
 PageResponseStarted::PageResponseStarted(PageResponseStarted&&) = default;
 PageResponseStarted& PageResponseStarted::operator=(PageResponseStarted&&) =
     default;
@@ -990,15 +1062,36 @@ std::string EncodeResponseStarted(const PageResponseStarted& response) {
   const char cors = response.cors ? 1 : 0;
   const char spdy = response.was_fetched_via_spdy ? 1 : 0;
   const char alpn = response.was_alpn_negotiated ? 1 : 0;
+  std::string timing;
+  for (int64_t PageLoadTiming::* time : LoadTimingTimes()) {
+    timing += EncodeInt64(response.timing.*time);
+  }
+  const std::array<char, 6> flags = {
+      response.timing.socket_reused ? '\1' : '\0',
+      response.timing_allow_passed ? '\1' : '\0',
+      response.validated ? '\1' : '\0',
+      response.cross_origin_redirect ? '\1' : '\0',
+      response.restarted_for_critical_ch ? '\1' : '\0',
+      response.opaque ? '\1' : '\0'};
   return EncodeFrame(
       PageMessage::kResponseStarted,
       base::StrCat(
-          {EncodeUint64(response.number), EncodeInt32(response.status),
-           std::string_view(&redirected, 1), std::string_view(&cors, 1),
-           std::string_view(&spdy, 1), std::string_view(&alpn, 1),
+          {EncodeUint64(response.number),
+           EncodeInt32(response.status),
+           std::string_view(&redirected, 1),
+           std::string_view(&cors, 1),
+           std::string_view(&spdy, 1),
+           std::string_view(&alpn, 1),
            EncodeUint64(static_cast<uint64_t>(response.navigation_start)),
            EncodeUint32(response.connection.rtt),
            EncodeUint64(base::bit_cast<uint64_t>(response.connection.downlink)),
+           timing,
+           std::string_view(flags.data(), flags.size()),
+           EncodeInt64(response.received_bytes),
+           EncodeUint32(response.redirect_count),
+           EncodeInt64(response.first_request_start),
+           EncodeInt64(response.last_redirect_end),
+           EncodeInt64(response.critical_ch_restart),
            EncodeUint32(static_cast<uint32_t>(response.url.size())),
            response.url,
            EncodeUint32(static_cast<uint32_t>(response.status_text.size())),
@@ -1007,7 +1100,8 @@ std::string EncodeResponseStarted(const PageResponseStarted& response) {
            response.connection_info,
            EncodeUint32(
                static_cast<uint32_t>(response.alpn_negotiated_protocol.size())),
-           response.alpn_negotiated_protocol, response.headers}));
+           response.alpn_negotiated_protocol,
+           response.headers}));
 }
 
 std::string EncodeResponseBody(uint64_t number, std::string_view bytes) {
@@ -1019,7 +1113,10 @@ std::string EncodeResponseBody(uint64_t number, std::string_view bytes) {
 std::string EncodeResponseEnded(const PageResponseEnded& ended) {
   return EncodeFrame(
       PageMessage::kResponseEnded,
-      base::StrCat({EncodeUint64(ended.number), EncodeInt32(ended.net_error)}));
+      base::StrCat({EncodeUint64(ended.number), EncodeInt32(ended.net_error),
+                    EncodeInt64(ended.encoded_body_size),
+                    EncodeInt64(ended.received_bytes),
+                    EncodeInt64(ended.completion_time)}));
 }
 
 std::string EncodeCookies(uint64_t answer, std::string_view line) {

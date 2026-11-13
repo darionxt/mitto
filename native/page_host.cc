@@ -360,6 +360,72 @@ void PageEvents::PushCallAfterEnd(uint64_t call) {
   event_waiting_.Signal();
 }
 
+namespace {
+
+// A time of base::TimeTicks as the messages carry it, 0 for a null one.
+int64_t Microseconds(base::TimeTicks time) {
+  return time.is_null() ? 0 : (time - base::TimeTicks()).InMicroseconds();
+}
+
+PageLoadTiming PageLoadTimingOf(const net::LoadTimingInfo& info) {
+  PageLoadTiming timing;
+  timing.request_start = Microseconds(info.request_start);
+  timing.domain_lookup_start =
+      Microseconds(info.connect_timing.domain_lookup_start);
+  timing.domain_lookup_end =
+      Microseconds(info.connect_timing.domain_lookup_end);
+  timing.connect_start = Microseconds(info.connect_timing.connect_start);
+  timing.connect_end = Microseconds(info.connect_timing.connect_end);
+  timing.ssl_start = Microseconds(info.connect_timing.ssl_start);
+  timing.send_start = Microseconds(info.send_start);
+  timing.receive_headers_start = Microseconds(info.receive_headers_start);
+  timing.receive_headers_end = Microseconds(info.receive_headers_end);
+  timing.receive_non_informational_headers_start =
+      Microseconds(info.receive_non_informational_headers_start);
+  timing.socket_reused = info.socket_reused;
+  return timing;
+}
+
+// The values of a response's `name` lines, joined as
+// net::HttpResponseHeaders::GetNormalizedHeader() joins them, or nullopt for
+// none.
+std::optional<std::string> HeaderValue(std::string_view lines,
+                                       std::string_view name) {
+  std::optional<std::string> value;
+  for (const std::string_view line : base::SplitStringPieceUsingSubstr(
+           lines, "\r\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    const size_t colon = line.find(':');
+    if (colon == std::string_view::npos ||
+        !base::EqualsCaseInsensitiveASCII(line.substr(0, colon), name)) {
+      continue;
+    }
+    const std::string_view item =
+        base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL);
+    value = value ? base::StrCat({*value, ", ", item}) : std::string(item);
+  }
+  return value;
+}
+
+// network::ParseTimingAllowOrigin() and TimingAllowOriginCheck(): whether a
+// Timing-Allow-Origin value lets `origin` see the timing.
+// Upstream: services/network/public/cpp/timing_allow_origin_parser.cc
+bool TimingAllowOriginAllows(const std::string& value,
+                             const url::Origin& origin) {
+  if (value == "*") {
+    return true;
+  }
+  const std::string serialized = origin.Serialize();
+  net::HttpUtil::ValuesIterator values(value, /*delimiter=*/',');
+  while (values.GetNext()) {
+    if (values.value() == "*" || values.value() == serialized) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
 // One request of a Page's, which hears how its job goes and sends that to the
 // Page, reading the body only as far as the Page has given credit.
 class PageHost::Request final : public RequestClient {
@@ -408,6 +474,62 @@ class PageHost::Request final : public RequestClient {
   bool started() const { return started_; }
   uint32_t credit() const { return credit_; }
 
+  // What the Performance Timeline needs of the hops so far.
+  bool timing_allow_passed() const { return !timing_allow_failed_; }
+  // Whether the response's tainting is opaque: a script's, which is a fetch of
+  // mode no-cors, once a hop has left the document's origin. A navigation's
+  // is basic.
+  bool opaque() const {
+    return !is_navigation() && !checks_.is_fetch && timing_cross_origin_;
+  }
+  uint32_t redirect_count() const { return redirect_count_; }
+  bool cross_origin_redirect() const { return cross_origin_redirect_; }
+  base::TimeTicks last_redirect_end() const { return last_redirect_end_; }
+  const RequestTotals& totals() const { return totals_; }
+
+  // CorsURLLoader's TAO check of the response that `event` describes, which
+  // fails for good once it fails, for a Page's document at
+  // `document_origin`. A navigation has no initiator, and a response of its
+  // own origin, which it always is to its document, passes.
+  // Upstream: services/network/cors/cors_url_loader.cc
+  void CheckTimingAllowOrigin(const RequestEvent& event,
+                              const url::Origin& document_origin) {
+    const GURL url(event.url);
+    // The Fetch Standard's response tainting stays once a hop has left the
+    // document's origin: cors for a fetch, opaque for a script.
+    timing_cross_origin_ =
+        timing_cross_origin_ || !document_origin.IsSameOriginWith(url);
+    if (timing_allow_failed_ || is_navigation()) {
+      return;
+    }
+    if (std::optional<std::string> value =
+            HeaderValue(event.headers, "Timing-Allow-Origin");
+        value &&
+        TimingAllowOriginAllows(
+            *value, timing_tainted_ ? url::Origin() : document_origin)) {
+      return;
+    }
+    timing_allow_failed_ = timing_cross_origin_;
+  }
+
+  // A redirect that the request follows: CorsURLLoader taints the origin of
+  // a hop from another origin than the document's to yet another, and
+  // DocumentLoadTiming::AddRedirect() counts it and whether it crossed
+  // origins.
+  void FollowRedirect(const RequestEvent& event,
+                      const url::Origin& document_origin) {
+    const GURL from(event.url);
+    const GURL to(event.new_url);
+    if (!url::IsSameOriginWith(from, to) &&
+        !document_origin.IsSameOriginWith(from)) {
+      timing_tainted_ = true;
+    }
+    ++redirect_count_;
+    cross_origin_redirect_ =
+        cross_origin_redirect_ || !url::IsSameOriginWith(from, to);
+    last_redirect_end_ = event.load_timing.receive_headers_end;
+  }
+
   void set_job(base::WeakPtr<RunningRequest> job) { job_ = std::move(job); }
   void set_started() { started_ = true; }
   void AddCredit(uint32_t bytes) { credit_ += bytes; }
@@ -433,7 +555,13 @@ class PageHost::Request final : public RequestClient {
     return host_->AllowsResponse(*this, event);
   }
   void OnResponseEvent(RequestEvent event) override {
+    const url::Origin document_origin =
+        url::Origin::Create(host_->document_url_);
+    CheckTimingAllowOrigin(event, document_origin);
     // The job follows each redirect, and the Page sees only where it ends.
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED) {
+      FollowRedirect(event, document_origin);
+    }
     if (event.type == MITTO_EVENT_RESPONSE_STARTED) {
       host_->OnResponseStarted(*this, event);
     }
@@ -444,6 +572,7 @@ class PageHost::Request final : public RequestClient {
     reading_ = false;
     host_->OnBodyRead(*this, size);
   }
+  void OnTotals(const RequestTotals& totals) override { totals_ = totals; }
   void OnFinished(int net_error) override {
     // The job goes after this, and so does this Request.
     job_ = nullptr;
@@ -465,6 +594,14 @@ class PageHost::Request final : public RequestClient {
   uint32_t credit_ = kBodyWindow;
   bool started_ = false;
   bool reading_ = false;
+  // For the Performance Timeline.
+  bool timing_allow_failed_ = false;
+  bool timing_cross_origin_ = false;
+  bool timing_tainted_ = false;
+  uint32_t redirect_count_ = 0;
+  bool cross_origin_redirect_ = false;
+  base::TimeTicks last_redirect_end_;
+  RequestTotals totals_;
 };
 
 PageHost::PageHost(scoped_refptr<PageEvents> events,
@@ -675,8 +812,9 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     response.redirected = event.redirected;
     response.cors = request.cors();
     if (request.is_navigation()) {
-      response.navigation_start =
-          (request.start() - base::TimeTicks()).InMicroseconds();
+      response.navigation_start = Microseconds(
+          options_.navigation_start.is_null() ? request.start()
+                                              : options_.navigation_start);
       response.connection = ConnectionOf(document_url_);
     }
     response.was_fetched_via_spdy = event.was_fetched_via_spdy;
@@ -691,6 +829,17 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
                                             ? kUnknownProtocol
                                             : event.alpn_negotiated_protocol;
     response.headers = HeadersForPage(event.headers);
+    response.timing = PageLoadTimingOf(event.load_timing);
+    response.timing_allow_passed = request.timing_allow_passed();
+    response.opaque = request.opaque();
+    response.validated = event.validated;
+    response.received_bytes = event.received_bytes;
+    response.redirect_count = request.redirect_count();
+    response.cross_origin_redirect = request.cross_origin_redirect();
+    response.restarted_for_critical_ch = event.restarted_for_critical_ch;
+    response.first_request_start = Microseconds(event.first_request_start);
+    response.last_redirect_end = Microseconds(request.last_redirect_end());
+    response.critical_ch_restart = Microseconds(event.critical_ch_restart);
     channel_->Send(EncodeResponseStarted(response));
   }
   request.ReadIfCredited();
@@ -781,6 +930,10 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
     PageResponseEnded ended;
     ended.number = number;
     ended.net_error = net_error;
+    const RequestTotals& totals = request.totals();
+    ended.encoded_body_size = totals.raw_body_bytes;
+    ended.received_bytes = totals.received_bytes;
+    ended.completion_time = Microseconds(totals.completion_time);
     channel_->Send(EncodeResponseEnded(ended));
   }
   requests_.erase(number);

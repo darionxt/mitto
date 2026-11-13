@@ -13,6 +13,7 @@
 #include "mitto/dom/crash_report_context.h"
 #include "mitto/dom/custom_element_registry.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/fetch_loader.h"
 #include "mitto/dom/fetcher.h"
@@ -79,6 +80,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(style_media_);
   visitor->Trace(navigation_);
   visitor->Trace(custom_elements_);
+  visitor->Trace(document_load_timing_);
 }
 
 v8::Local<v8::Value> Window::OpenerForBindings() const {
@@ -206,9 +208,29 @@ mitto::Performance* Window::Performance() {
   if (!performance_) {
     performance_ = Performance::Create(
         bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
-            ->time_origin());
+            ->time_origin(),
+        &GetDocumentLoadTiming());
   }
   return performance_.Get();
+}
+
+void Window::SetDocumentLoadTiming(DocumentLoadTiming* timing) {
+  document_load_timing_ = timing;
+}
+
+DocumentLoadTiming& Window::GetDocumentLoadTiming() {
+  if (!document_load_timing_) {
+    document_load_timing_ = bindings::MakeGarbageCollected<DocumentLoadTiming>(
+        bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+            ->time_origin());
+  }
+  return *document_load_timing_;
+}
+
+void Window::AddConsoleMessage(ConsoleLevel level, std::string text) {
+  if (console_sink_) {
+    console_sink_.Run(level, std::move(text));
+  }
 }
 
 int32_t Window::SetTimeout(v8::Local<v8::Function> handler,
