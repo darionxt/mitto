@@ -30,6 +30,8 @@ namespace {
 constexpr char16_t kInsecureOrigin[] =
     u"Only secure origins are allowed (see: https://goo.gl/Y0ZkNV).";
 constexpr char16_t kTimeoutExpired[] = u"Timeout expired";
+// PositionOptions' default timeout, 0xFFFFFFFF: none.
+constexpr uint32_t kNoTimeout = UINT32_MAX;
 
 }  // namespace
 
@@ -70,6 +72,11 @@ class GeoNotifier final : public cppgc::GarbageCollected<GeoNotifier> {
   // Blink's GeoNotifier::StartTimer(): the request's timeout.
   void StartTimer() { Start(base::Milliseconds(timeout_ms_)); }
   void Stop() { timer_.Stop(); }
+  // Whether the request's timer runs, and will end it or report its error.
+  bool WaitsOnTimer() const {
+    return timer_.IsRunning() &&
+           (fatal_code_ != 0 || timeout_ms_ != kNoTimeout);
+  }
 
   uint16_t fatal_code() const { return fatal_code_; }
   const std::u16string& fatal_message() const { return fatal_message_; }
@@ -151,6 +158,17 @@ void Geolocation::ClearWatch(int32_t watch_id) {
       return;
     }
   }
+}
+
+size_t Geolocation::TimerCount() const {
+  size_t count = 0;
+  for (const GeoNotifier* notifier = first_.Get(); notifier;
+       notifier = notifier->next()) {
+    if (notifier->WaitsOnTimer()) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 void Geolocation::StartRequest(GeoNotifier* notifier) {

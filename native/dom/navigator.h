@@ -17,6 +17,7 @@
 #ifndef MITTO_DOM_NAVIGATOR_H_
 #define MITTO_DOM_NAVIGATOR_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <optional>
@@ -88,6 +89,8 @@ class Navigator final : public bindings::ScriptWrappable {
   mitto::Permissions* Permissions();
   mitto::Geolocation* Geolocation();
   StorageManager* Storage();
+  // How many of navigator.geolocation's requests wait on a timer.
+  size_t GeolocationTimerCount() const;
   // A new array each time, of kItemsLengthCap nulls: no gamepad is there.
   std::vector<bindings::ScriptWrappable*> GetGamepads(
       bindings::ExceptionState& exception_state) const;

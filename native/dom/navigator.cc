@@ -222,6 +222,10 @@ StorageManager* Navigator::Storage() {
   return storage_.Get();
 }
 
+size_t Navigator::GeolocationTimerCount() const {
+  return geolocation_ ? geolocation_->TimerCount() : 0;
+}
+
 std::vector<bindings::ScriptWrappable*> Navigator::GetGamepads(
     bindings::ExceptionState& exception_state) const {
   // device::Gamepads::kItemsLengthCap. The "gamepad" policy allows any page

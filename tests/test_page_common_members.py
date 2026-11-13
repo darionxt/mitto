@@ -528,6 +528,14 @@ def test_a_watch_times_out_and_waits_on_until_it_is_cleared(program: Path) -> No
     assert _evaluate(program, script) == "value: number,true,true,1"
 
 
+def test_a_geolocation_timeout_keeps_the_script_running(program: Path) -> None:
+    # No timer of the window's is set while the request waits, yet its timeout comes.
+    script = """return await new Promise((resolve) =>
+        navigator.geolocation.getCurrentPosition(() => {}, (error) => resolve(error.code), {timeout: 100}))"""
+
+    assert _evaluate(program, script) == "value: 3"
+
+
 @pytest.mark.parametrize(("timeout", "fires"), [("-5", True), ("'x'", True), ("1e12", False)])
 def test_a_geolocation_timeout_is_clamped(program: Path, timeout: str, fires: bool) -> None:
     # PositionOptions' [Clamp] unsigned long: NaN and what is below 0 become 0, and what is above 2^32 - 1 that.

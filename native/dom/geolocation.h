@@ -11,6 +11,7 @@
 #ifndef MITTO_DOM_GEOLOCATION_H_
 #define MITTO_DOM_GEOLOCATION_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "mitto/bindings/dictionaries.h"
@@ -42,6 +43,11 @@ class Geolocation final : public bindings::ScriptWrappable {
                                    v8::Local<v8::Function> error_callback,
                                    const bindings::PositionOptions& options);
   void ClearWatch(int32_t watch_id);
+
+  // How many requests wait on a timer that will end them: a timeout, or an
+  // error reported from a task of its own. A request with no timeout ends only
+  // once a person answers the prompt, so it counts for none.
+  size_t TimerCount() const;
 
   // What a request's timer does once it fires.
   void Fire(GeoNotifier* notifier);
