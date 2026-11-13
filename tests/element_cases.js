@@ -10,6 +10,7 @@
   const XLINK = "http://www.w3.org/1999/xlink";
   const XML = "http://www.w3.org/XML/1998/namespace";
   const XMLNS = "http://www.w3.org/2000/xmlns/";
+  const HTML_NAMES = ["Div", "IMG", "a", "abbr", "acronym", "address", "annotation-xml", "applet", "area", "article", "aside", "audio", "b", "base", "basefont", "bdi", "bdo", "bgsound", "big", "blink", "blockquote", "body", "br", "button", "camera", "canvas", "caption", "center", "cite", "code", "col", "colgroup", "command", "credential", "custom-el", "data", "datalist", "dd", "del", "details", "dfn", "dialog", "dir", "div", "dl", "dt", "em", "embed", "fencedframe", "fieldset", "figcaption", "figure", "font", "foo", "footer", "form", "frame", "frameset", "geolocation", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "image", "img", "input", "ins", "install", "isindex", "kbd", "keygen", "label", "layer", "legend", "li", "link", "listing", "login", "main", "map", "mark", "marquee", "math", "menu", "menubar", "menuitem", "menulist", "meta", "meter", "microphone", "multicol", "my-element", "nav", "nextid", "nobr", "noembed", "noframes", "nolayer", "noscript", "object", "ol", "optgroup", "option", "output", "p", "param", "persistentwidget", "picture", "plaintext", "pre", "progress", "q", "rb", "rp", "rt", "rtc", "ruby", "s", "samp", "script", "search", "section", "select", "selectedcontent", "selectmenu", "slot", "small", "source", "spacer", "span", "strike", "strong", "style", "sub", "submenu", "summary", "sup", "svg", "table", "tbody", "td", "template", "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "tt", "u", "ul", "usermedia", "var", "video", "wbr", "xmp"];
   const show = (value) => {
     if (value === null) return "null";
     if (value === undefined) return "undefined";
@@ -606,5 +607,74 @@
   run("part", () => { const e = document.createElement("div"); e.part.add("x"); e.part = "y z"; return [e.getAttribute("part"), e.part.length, e.part === e.part].join("|"); });
   run("classList on svg", () => { const e = document.createElementNS("http://www.w3.org/2000/svg", "rect"); e.classList.add("q"); return e.getAttribute("class"); });
   run("classList quirks", () => { const e = document.createElement("div"); e.className = "A a"; return e.classList.length; });
+  // Every name's interface.
+  for (const name of HTML_NAMES) {
+    run(`html ${name}`, () => document.createElement(name));
+    run(`html ns ${name}`, () => document.createElementNS(HTML, name));
+  }
+  run("html interfaces", () => {
+    const names = ["a", "img", "input", "canvas", "video", "audio", "table", "td", "th", "col", "thead", "dialog", "details", "template", "q", "blockquote", "ins", "del", "button", "select", "option", "form"];
+    return names.map((n) => { const e = document.createElement(n); return n + ":" + Object.getPrototypeOf(e).constructor.name + ":" + e.tagName; }).join(",");
+  });
+  run("new HTMLAnchorElement", () => new HTMLAnchorElement());
+  run("Image", () => {
+    const i = new Image();
+    const j = new Image(3);
+    const k = new Image(3, 4);
+    return [i, i.nodeName, i.width, i.height, i.outerHTML, j.outerHTML, k.width, k.height, k.outerHTML, Object.getPrototypeOf(i) === HTMLImageElement.prototype, i instanceof Image, Image.prototype === HTMLImageElement.prototype, Image.name, Image.length, i.ownerDocument === document].map(String).join("|");
+  });
+  run("Image args", () => [new Image(-1).outerHTML, new Image(2 ** 31).outerHTML, new Image(2 ** 32 + 5).outerHTML, new Image("7", null).outerHTML, new Image(undefined, 2).outerHTML, new Image(1.9).width].join("|"));
+  run("Image as function", () => Image());
+  run("Image bad arg", () => new Image(Symbol()));
+  run("Audio", () => {
+    const a = new Audio();
+    const b = new Audio("x.mp3");
+    const c = new Audio(undefined);
+    const d = new Audio(null);
+    return [a, a.outerHTML, b.outerHTML, c.outerHTML, d.outerHTML, Audio.length, Audio.name, a instanceof HTMLMediaElement, Audio.prototype === HTMLAudioElement.prototype].map(String).join("|");
+  });
+  run("Audio as function", () => Audio());
+  run("Option", () => typeof Option + "|" + Option.length);
+  run("img width", () => {
+    const i = document.createElement("img");
+    const out = [i.width, i.height];
+    i.setAttribute("width", " 12px");
+    i.setAttribute("height", "-0");
+    out.push(i.width, i.height);
+    i.setAttribute("width", "4294967295");
+    i.setAttribute("height", "4294967296");
+    out.push(i.width, i.height);
+    i.setAttribute("width", "-3");
+    out.push(i.width);
+    i.width = 3000000000;
+    out.push(i.getAttribute("width"));
+    i.height = -1;
+    out.push(i.getAttribute("height"));
+    return out.join(",");
+  });
+  run("img reflected", () => { const i = document.createElement("img"); i.src = "  #a "; i.alt = "x"; i.hspace = 5; i.crossOrigin = "USE-credentials"; return [i.getAttribute("src"), i.alt, i.hspace, i.crossOrigin, i.loading, i.decoding, i.fetchPriority, i.referrerPolicy, i.useMap, i.isMap].join("|"); });
+  run("anchor href", () => {
+    const a = blank.createElementNS(HTML, "a");
+    const out = [a.href, String(a)];
+    a.setAttribute("href", " http://Example.COM/a b?x#y ");
+    out.push(a.href, String(a), a.toString(), JSON.stringify(a.href));
+    a.href = "#frag";
+    out.push(a.getAttribute("href"), a.href);
+    a.href = "http://[bad";
+    out.push(a.href);
+    return out.join("|");
+  });
+  run("anchor reflected", () => { const a = document.createElement("a"); a.target = "_blank"; a.download = "f"; a.rel = "noopener"; a.hreflang = "en"; a.type = "t"; a.referrerPolicy = "NO-REFERRER"; a.ping = " http://p "; return [a.target, a.download, a.rel, a.hreflang, a.type, a.referrerPolicy, a.ping, a.name, a.coords, a.charset, a.rev, a.shape, a.getAttributeNames().join(" ")].join("|"); });
+  run("area href", () => { const a = blank.createElementNS(HTML, "area"); a.href = "http://e.com/x"; return [a.href, String(a), a.alt, a.coords, a.shape, a.noHref].join("|"); });
+  run("table elements", () => { const t = document.createElement("td"); t.colSpan; return [document.createElement("th").tagName, t.abbr, t.headers, t.align, t.noWrap, document.createElement("col").span === undefined].join("|"); });
+  run("canvas", () => { const c = document.createElement("canvas"); const out = [c, c.width, c.height]; c.setAttribute("width", "-5"); out.push(c.width); c.setAttribute("width", " 20px"); out.push(c.width); c.width = 3000000000; out.push(c.getAttribute("width")); c.height = 7; out.push(c.height); return out.join("|"); });
+  run("media preload", () => { const v = document.createElement("video"); const out = [v.preload]; for (const x of ["none", "AUTO", "", "metadata", "bogus"]) { v.setAttribute("preload", x); out.push(v.preload); } v.preload = "Q"; out.push(v.getAttribute("preload"), document.createElement("audio").preload, new Audio().preload); return out.join(","); });
+  run("Image undefined", () => [new Image(undefined).outerHTML, new Image(undefined, undefined).outerHTML].join("|"));
+  run("video", () => { const v = document.createElement("video"); return [v, v.poster, v.playsInline, v.autoplay, v.controls, v.loop, v.muted, v.defaultMuted, v.preload, v.crossOrigin, v.src].map(String).join("|"); });
+  run("form controls exist", () => ["button", "input", "select", "textarea", "option", "optgroup", "fieldset", "legend", "label", "output", "datalist", "form", "meter", "progress"].map((n) => Object.prototype.toString.call(document.createElement(n))).join(","));
+  run("button reflected", () => { const b = document.createElement("button"); b.disabled = true; b.name = "n"; b.formNoValidate = true; return [b.disabled, b.name, b.autofocus, b.formTarget, b.getAttributeNames().join(" ")].join("|"); });
+  run("dialog details", () => { const d = document.createElement("dialog"); const s = document.createElement("details"); d.open = true; s.open = true; s.name = "g"; return [d.open, d.outerHTML, s.open, s.name, s.outerHTML].join("|"); });
+  run("parsed interfaces", () => { const d = document.createElement("div"); d.innerHTML = "<a href=x>a</a><img><canvas></canvas><table><tbody><tr><td>c</td></tr></tbody></table><video></video><dialog></dialog>"; const out = []; for (let n = d.firstChild; n; n = n.nextSibling) out.push(Object.prototype.toString.call(n)); return out.join(","); });
+  run("ol start", () => { const o = document.createElement("ol"); return [o.reversed, o.type, o.compact].join("|"); });
   return JSON.stringify(cases, null, 1);
 })()

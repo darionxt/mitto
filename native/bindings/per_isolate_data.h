@@ -97,6 +97,9 @@ class PerIsolateData {
   static std::unique_ptr<PerIsolateData> Create(v8::Isolate* isolate,
                                                 RuntimeFeatureSet features);
   static PerIsolateData* From(v8::Isolate* isolate);
+  // The features of the isolate's Page, or null for an isolate with no
+  // PerIsolateData, such as the tree builder's test has.
+  static const RuntimeFeatureSet* FeaturesOf(v8::Isolate* isolate);
 
   PerIsolateData(const PerIsolateData&) = delete;
   PerIsolateData& operator=(const PerIsolateData&) = delete;

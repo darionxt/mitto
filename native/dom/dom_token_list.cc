@@ -10,14 +10,11 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_dom_token_list.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_parser_idioms.h"
 
 namespace mitto {
 
 namespace {
-
-bool IsHTMLSpace(char16_t c) {
-  return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
-}
 
 bool CheckEmptyToken(const std::u16string& token,
                      bindings::ExceptionState& exception_state) {

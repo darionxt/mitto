@@ -1,9 +1,7 @@
 #include "mitto/dom/element.h"
 
 #include <algorithm>
-#include <limits>
 
-#include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -16,6 +14,7 @@
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/dom_token_list.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/markup_serializer.h"
@@ -27,55 +26,6 @@
 namespace mitto {
 
 namespace {
-
-bool IsHTMLSpace(char16_t c) {
-  return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
-}
-
-// Blink's StripLeadingAndTrailingHtmlSpaces().
-std::u16string_view StripHTMLSpaces(std::u16string_view value) {
-  while (!value.empty() && IsHTMLSpace(value.front())) {
-    value.remove_prefix(1);
-  }
-  while (!value.empty() && IsHTMLSpace(value.back())) {
-    value.remove_suffix(1);
-  }
-  return value;
-}
-
-// Blink's ParseHTMLInteger(): the HTML Standard's rules for parsing integers,
-// with what follows the digits ignored, and nothing for no digits or a value
-// beyond an int.
-std::optional<int32_t> ParseHTMLInteger(std::u16string_view value) {
-  while (!value.empty() && IsHTMLSpace(value.front())) {
-    value.remove_prefix(1);
-  }
-  bool negative = false;
-  if (!value.empty() && (value.front() == '-' || value.front() == '+')) {
-    negative = value.front() == '-';
-    value.remove_prefix(1);
-  }
-  if (value.empty() || value.front() < '0' || value.front() > '9') {
-    return std::nullopt;
-  }
-  int64_t result = 0;
-  for (const char16_t c : value) {
-    if (c < '0' || c > '9') {
-      break;
-    }
-    result = result * 10 + (c - '0');
-    if (result > int64_t{std::numeric_limits<int32_t>::max()} + 1) {
-      return std::nullopt;
-    }
-  }
-  if (negative) {
-    result = -result;
-  }
-  if (!base::IsValueInRangeForNumericType<int32_t>(result)) {
-    return std::nullopt;
-  }
-  return static_cast<int32_t>(result);
-}
 
 void ThrowInvalidAttributeName(const std::u16string& name,
                                bindings::ExceptionState& exception_state) {
