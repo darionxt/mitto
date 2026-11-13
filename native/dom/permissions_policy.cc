@@ -262,9 +262,10 @@ bool IsUnloadDeprecated(const DeprecatedUnload& seed, const GURL& url) {
   if (!seed.allow_list && !seed.by_bucket) {
     return true;
   }
-  // Only on http(s) pages, with an opaque origin's precursor for it.
-  const url::SchemeHostPort& tuple =
-      url::Origin::Create(url).GetTupleOrPrecursorTupleIfOpaque();
+  // Only on http(s) pages, with an opaque origin's precursor for it. The
+  // tuple is the origin's, which has to outlive it.
+  const url::Origin origin = url::Origin::Create(url);
+  const url::SchemeHostPort& tuple = origin.GetTupleOrPrecursorTupleIfOpaque();
   if (tuple.scheme() != url::kHttpScheme &&
       tuple.scheme() != url::kHttpsScheme) {
     return false;
