@@ -418,6 +418,45 @@ std::optional<std::set<std::string>> ReadFailures(const base::FilePath& path) {
   return failures;
 }
 
+// The position that TextPosition() gives right after the first start tag of
+// each input, which the tree builder hands a script element, with the input
+// whole and one code unit at a time. Returns how many are wrong.
+size_t CheckTextPositions() {
+  struct Case {
+    std::u16string_view input;
+    int line;
+    int column;
+  };
+  constexpr Case kCases[] = {
+      {u"ab\n<script src=x>x", 1, 14},
+      {u"\U0001F600<p>", 0, 5},
+      {u"<p\n>\n", 1, 1},
+  };
+  size_t problems = 0;
+  for (const Case& test : kCases) {
+    for (const size_t piece : {test.input.size(), size_t{1}}) {
+      HtmlTokenizer tokenizer((HtmlTokenizer::Options()));
+      std::optional<HtmlTokenizer::ZeroBasedPosition> position;
+      for (size_t i = 0; i < test.input.size() && !position; i += piece) {
+        tokenizer.Append(test.input.substr(i, piece));
+        HtmlToken token;
+        while (!position && tokenizer.NextToken(token)) {
+          if (token.type == HtmlToken::Type::kStartTag) {
+            position = tokenizer.TextPosition();
+          }
+        }
+      }
+      if (!position || position->line != test.line ||
+          position->column != test.column) {
+        ++problems;
+        printf("TextPosition() after the start tag of %s is wrong\n",
+               Quote(test.input).c_str());
+      }
+    }
+  }
+  return problems;
+}
+
 int Main() {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
@@ -459,7 +498,7 @@ int Main() {
     return 1;
   }
 
-  size_t problems = 0;
+  size_t problems = CheckTextPositions();
   size_t failures = 0;
   size_t listed_failures = 0;
   for (const Run& run : runs) {
