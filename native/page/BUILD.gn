@@ -58,6 +58,8 @@ executable("mitto_page") {
     "chrome_object.h",
     "document_loader.cc",
     "document_loader.h",
+    "idle_helper.cc",
+    "idle_helper.h",
     "mitto_page.cc",
     "page_fetcher.cc",
     "page_fetcher.h",

@@ -1,8 +1,6 @@
 #include "mitto/dom/idle_task_controller.h"
 
-#include <algorithm>
 #include <limits>
-#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -26,17 +24,11 @@ namespace {
 // WindowIdleTasksManager's kMaxCallbackId.
 constexpr uint32_t kMaxCallbackId = std::numeric_limits<int>::max();
 
-// IdleHelper's kMaximumIdlePeriodDuration, kMinimumIdlePeriodDuration and
-// kRetryEnableLongIdlePeriodDelay.
-constexpr base::TimeDelta kMaximumIdlePeriod = base::Milliseconds(50);
-constexpr base::TimeDelta kMinimumIdlePeriod = base::Milliseconds(1);
-constexpr base::TimeDelta kRetryIdlePeriodDelay = base::Milliseconds(1);
-
-scoped_refptr<base::SingleThreadTaskRunner> RunnerOf(EventLoop::Queue queue) {
+EventLoop& EventLoopOfPage() {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
-  return event_loop->TaskRunner(queue);
+  return *event_loop;
 }
 
 }  // namespace
@@ -83,14 +75,15 @@ uint32_t IdleTaskController::RequestIdleCallback(
   // timeout first, as a task of the idle task source, which Blink runs at the
   // normal priority.
   if (timeout_ms > 0) {
-    RunnerOf(EventLoop::Queue::kDefault)
+    EventLoopOfPage()
+        .TaskRunner(EventLoop::Queue::kDefault)
         ->PostDelayedTask(FROM_HERE,
                           base::BindOnce(&IdleTask::OnTimeout,
                                          task->timeout_factory.GetWeakPtr()),
                           base::Milliseconds(timeout_ms));
   }
   tasks_.emplace(id, std::move(task));
-  PostSchedulerIdleTask(id, base::TimeDelta());
+  PostSchedulerIdleTask(id);
   return id;
 }
 
@@ -101,34 +94,17 @@ void IdleTaskController::CancelIdleCallback(uint32_t id) {
   RemoveIdleTask(id);
 }
 
-void IdleTaskController::PostSchedulerIdleTask(uint32_t id,
-                                               base::TimeDelta delay) {
-  RunnerOf(EventLoop::Queue::kIdle)
-      ->PostDelayedTask(FROM_HERE,
-                        base::BindOnce(&IdleTaskController::SchedulerIdleTask,
-                                       weak_factory_.GetWeakPtr(), id),
-                        delay);
+void IdleTaskController::PostSchedulerIdleTask(uint32_t id) {
+  EventLoopOfPage().PostIdleTask(
+      FROM_HERE, base::BindOnce(&IdleTaskController::SchedulerIdleTask,
+                                weak_factory_.GetWeakPtr(), id));
 }
 
-void IdleTaskController::SchedulerIdleTask(uint32_t id) {
-  if (!tasks_.contains(id)) {
-    return;
-  }
-  // IdleHelper::ComputeNewLongIdlePeriodState(): a long idle period lasts
-  // until the next delayed task, and at most 50 milliseconds. One that would
-  // be shorter than a millisecond does not start, and Blink tries again a
-  // millisecond later.
-  const base::TimeTicks now = base::TimeTicks::Now();
-  base::TimeDelta duration = kMaximumIdlePeriod;
-  if (const std::optional<base::TimeTicks> next =
-          EventLoop::Get()->NextDelayedTaskTime()) {
-    duration = std::min(*next - now, kMaximumIdlePeriod);
-  }
-  if (duration < kMinimumIdlePeriod) {
-    PostSchedulerIdleTask(id, kRetryIdlePeriodDelay);
-    return;
-  }
-  RunIdleTask(id, now + duration, /*did_timeout=*/false);
+// ScriptedIdleTaskController::SchedulerIdleTask(): no Page is paused, and none
+// has the high priority work that would make it yield.
+void IdleTaskController::SchedulerIdleTask(uint32_t id,
+                                           base::TimeTicks deadline) {
+  RunIdleTask(id, deadline, /*did_timeout=*/false);
 }
 
 void IdleTaskController::TimeoutTask(uint32_t id) {

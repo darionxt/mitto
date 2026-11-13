@@ -46,20 +46,12 @@ TaskPriority PriorityOf(EventLoop::Queue queue) {
       return TaskPriority::kLowPriority;
     case EventLoop::Queue::kBackgroundContinuation:
       return TaskPriority::kLowPriorityContinuation;
-    case EventLoop::Queue::kIdle:
-      return TaskPriority::kBestEffortPriority;
   }
 }
 
 QueueName NameOf(EventLoop::Queue queue) {
-  switch (queue) {
-    case EventLoop::Queue::kDefault:
-      return QueueName::DEFAULT_TQ;
-    case EventLoop::Queue::kIdle:
-      return QueueName::IDLE_TQ;
-    default:
-      return QueueName::WEB_SCHEDULING_TQ;
-  }
+  return queue == EventLoop::Queue::kDefault ? QueueName::DEFAULT_TQ
+                                             : QueueName::WEB_SCHEDULING_TQ;
 }
 
 }  // namespace
@@ -80,16 +72,29 @@ PageScheduler::PageScheduler() {
         base::sequence_manager::TaskQueue::Spec(NameOf(queue)));
     queues_[i]->SetQueuePriority(PriorityOf(queue));
   }
+  control_queue_ = sequence_manager_->CreateTaskQueue(
+      TaskQueue::Spec(QueueName::CONTROL_TQ));
+  control_queue_->SetQueuePriority(TaskPriority::kControlPriority);
+  idle_queue_ =
+      sequence_manager_->CreateTaskQueue(TaskQueue::Spec(QueueName::IDLE_TQ));
+  idle_queue_->SetQueuePriority(TaskPriority::kBestEffortPriority);
   sequence_manager_->SetDefaultTaskQueue(
       queues_[static_cast<size_t>(Queue::kDefault)].get());
   sequence_manager_->BindToMessagePump(
       base::MessagePump::Create(base::MessagePumpType::DEFAULT));
+  idle_helper_ = std::make_unique<IdleHelper>(sequence_manager_.get(),
+                                              control_queue_->task_runner(),
+                                              idle_queue_.get());
+  // MainThreadSchedulerImpl::BeginFrameNotExpectedSoon(): a page that draws
+  // no frames has long idle periods from the start.
+  idle_helper_->EnableLongIdlePeriod();
   CHECK(!EventLoop::Get());
   EventLoop::Set(this);
 }
 
 PageScheduler::~PageScheduler() {
   EventLoop::Set(nullptr);
+  idle_helper_.reset();
 }
 
 const scoped_refptr<base::SingleThreadTaskRunner>& PageScheduler::task_runner()
@@ -102,13 +107,9 @@ scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::TaskRunner(
   return queues_[static_cast<size_t>(queue)]->task_runner();
 }
 
-std::optional<base::TimeTicks> PageScheduler::NextDelayedTaskTime() {
-  const std::optional<base::sequence_manager::WakeUp> wake_up =
-      sequence_manager_->GetNextDelayedWakeUp();
-  if (!wake_up) {
-    return std::nullopt;
-  }
-  return wake_up->time;
+void PageScheduler::PostIdleTask(const base::Location& from_here,
+                                 IdleTask task) {
+  idle_helper_->PostIdleTask(from_here, std::move(task));
 }
 
 }  // namespace mitto
