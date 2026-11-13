@@ -1,8 +1,9 @@
 // Loads the Page's document from the response of the navigation that its
 // Session makes when the Page opens, on the Page program's main thread: a new
-// context for it, the HTML parser fed as the body arrives, the document's
-// classic scripts in document order, and its readiness with DOMContentLoaded
-// and load, in their simplest form.
+// context for it, the HTML parser fed as the body arrives, decoded with the
+// encoding that Chrome works out for it (text_resource_decoder_builder.h), the
+// document's classic scripts in document order, each decoded as Blink decides,
+// and its readiness with DOMContentLoaded and load, in their simplest form.
 //
 // A script without src runs as soon as the parser reaches its end tag. One
 // with src is fetched through the Session as a script request, with the
@@ -41,25 +42,7 @@ class DocumentLoadTiming;
 class HTMLScriptElement;
 class HtmlDocumentParser;
 class ScriptRunner;
-
-// Decodes UTF-8 that arrives in pieces, as the Encoding Standard's UTF-8
-// decode does: a byte order mark at the start goes, and each byte sequence
-// that is not UTF-8 becomes U+FFFD. A sequence cut between two pieces waits
-// for the rest.
-// Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_utf8.cc
-class Utf8StreamDecoder {
- public:
-  Utf8StreamDecoder();
-  ~Utf8StreamDecoder();
-
-  std::u16string Decode(std::string_view bytes);
-  // What is left at the end of the stream.
-  std::u16string Flush();
-
- private:
-  std::string pending_;
-  bool started_ = false;
-};
+class TextResourceDecoder;
 
 class DocumentLoader final : public PageRequests::Client {
  public:
@@ -78,6 +61,10 @@ class DocumentLoader final : public PageRequests::Client {
 
  private:
   class ScriptFetch;
+
+  // Gives the parser what the decoder decoded, after the document has taken
+  // the decoder's encoding.
+  void AppendDecoded(std::u16string text);
 
   // Feeds the parser what has arrived, and runs each script it reaches, until
   // it waits for a script, needs more of the body, or has finished.
@@ -115,7 +102,9 @@ class DocumentLoader final : public PageRequests::Client {
   // How many bytes of the body have come, as decoded as the Page gets them.
   uint64_t body_bytes_ = 0;
   std::unique_ptr<HtmlDocumentParser> parser_;
-  Utf8StreamDecoder decoder_;
+  // Decodes the body as Blink's TextResourceDecoder does, with the encoding
+  // that the response, the document or Chrome's detector gives.
+  std::unique_ptr<TextResourceDecoder> decoder_;
   // Pieces of the body that have arrived and wait for the parser, which waits
   // for a script. The Session has no credit for them until the parser takes
   // them.

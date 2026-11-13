@@ -1,8 +1,10 @@
-// A decoder of one of the Encoding Standard's encodings, as Blink's TextCodec
-// is: it keeps what a stream leaves of a sequence from one call to the next,
-// and the registry makes one for each encoding (text_encoding_registry.h).
-// Only decoding is here, which TextDecoder needs. TextEncoder encodes UTF-8
-// alone (text_codec_utf8.h).
+// A decoder and encoder of one of the Encoding Standard's encodings, as Blink's
+// TextCodec is: it keeps what a stream leaves of a sequence from one call to
+// the next, and the registry makes one for each encoding
+// (text_encoding_registry.h). TextDecoder decodes with it. A document encodes
+// the query of a URL it resolves and the data of a form it submits with its
+// encoding, and writes what UnencodableHandling says for a character that the
+// encoding lacks. TextEncoder encodes UTF-8 alone (text_codec_utf8.h).
 //
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec.h
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec.cc
@@ -32,6 +34,21 @@ enum class FlushBehavior {
   kDataEof,
 };
 
+// What an encoder writes for a character that its encoding lacks, as Blink's
+// UnencodableHandling says.
+enum class UnencodableHandling {
+  // An XML character reference: U+06DE is "&#1758;".
+  kXmlCharRef,
+  // The same, with its characters escaped as a URL's query escapes them:
+  // U+06DE is "%26%231758%3B".
+  kUrlEncodedCharRef,
+  // A CSS escape (https://www.w3.org/TR/css-syntax-3/#escaping), with a
+  // space after it: U+06DE is "\6de ".
+  kCssEscape,
+  // None, for UTF-8 and UTF-16, which encode every character.
+  kNone,
+};
+
 // U+FFFD, which a decoder gives for each error unless it stops at one.
 inline constexpr char16_t kReplacementCharacter = 0xFFFD;
 
@@ -49,6 +66,15 @@ class TextCodec {
                                 FlushBehavior flush,
                                 bool stop_on_error,
                                 bool& saw_error) = 0;
+
+  // Encodes `text`, with what `handling` says for each character that the
+  // encoding lacks. Encoders keep nothing from one call to the next.
+  virtual std::string Encode(std::u16string_view text,
+                             UnencodableHandling handling) = 0;
+
+  // What `handling` gives for `code_point`, which must not be kNone.
+  static std::string GetUnencodableReplacement(int32_t code_point,
+                                               UnencodableHandling handling);
 };
 
 // What each codec gives the registry: the labels of its encodings, each with

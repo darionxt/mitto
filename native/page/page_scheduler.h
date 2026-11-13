@@ -62,6 +62,10 @@ class PageScheduler final : public EventLoop {
   const scoped_refptr<base::SingleThreadTaskRunner>& task_runner() const;
   // V8's own tasks, as gin posts them for Chrome's renderers.
   scoped_refptr<base::SingleThreadTaskRunner> V8TaskRunner() const;
+  // The compositor's queue, which TaskType::kMainThreadTaskQueueCompositor
+  // posts to, for what begins a frame to raise its priority as Blink's main
+  // thread scheduler does when rendering starves.
+  base::sequence_manager::TaskQueue* CompositorTaskQueue() const;
 
   // EventLoop:
   scoped_refptr<base::SingleThreadTaskRunner> TaskRunner(

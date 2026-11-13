@@ -5,13 +5,14 @@ import json
 import sys
 from pathlib import Path
 
-from tools.capture.cases import RESUMPTION_RUNS, RUNS, Case, Run
+from tools.capture.cases import RECORDING_RUNS, RESUMPTION_RUNS, Case, Run
 from tools.capture.devtools import PageClicker
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
 from tools.capture.probe import dumps_record, read_record
 from tools.capture.recording import Recording, raw_form
+from tools.capture.script_delta import dumps_script_delta, script_delta
 from tools.capture.script_normal_form import dumps_script_raw_record, script_normal_form
-from tools.capture.script_page import SCRIPT_RUNS, ScriptRun, posted_record
+from tools.capture.script_page import SCRIPT_RUNS, TOP_LEVEL_PAGE, ScriptRun, posted_record
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
 _RUNS_FILE = "runs.json"
@@ -38,7 +39,7 @@ def main() -> int:
     parser.add_argument(
         "--runs",
         nargs="+",
-        choices=[run.name for run in (*SCRIPT_RUNS, *RUNS, *RESUMPTION_RUNS)],
+        choices=[run.name for run in (*SCRIPT_RUNS, *RECORDING_RUNS, *RESUMPTION_RUNS)],
         metavar="RUN",
         help="which recordings to wait for (default: all of them)",
     )
@@ -51,11 +52,14 @@ def main() -> int:
     args = parser.parse_args()
     if not args.host.endswith(".localhost"):
         parser.error(f"{args.host!r} does not end in .localhost")
-    available: tuple[Run | ScriptRun, ...] = RESUMPTION_RUNS if args.tickets else (*SCRIPT_RUNS, *RUNS)
+    available: tuple[Run | ScriptRun, ...] = RESUMPTION_RUNS if args.tickets else (*SCRIPT_RUNS, *RECORDING_RUNS)
     names = args.runs or [run.name for run in available]
     runs = [run for run in available if run.name in names]
     if len(runs) != len(names):
         parser.error("--runs names a run that needs --tickets, or one that a server with --tickets cannot record")
+    if any(isinstance(run, ScriptRun) for run in runs) and TOP_LEVEL_PAGE not in runs:
+        # A later case's Baseline keeps what differs from the first's, from the same session.
+        parser.error(f"a run of a Script Fingerprint needs {TOP_LEVEL_PAGE.name} in the same session")
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -147,16 +151,18 @@ def _write(server: CaptureServer, run: Run | ScriptRun, out: Path) -> bool:
     raw_path = out / f"{run.name}.raw.json"
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(json.dumps(raw_form(recording), indent=2) + "\n", encoding="utf-8", newline="\n")
-    written = _write_form(recording, run, run.cases, out / f"{run.name}.json", raw_path)
+    written = _write_form(recording, run, run.cases, run.ordered, out / f"{run.name}.json", raw_path)
     if run.fresh_cases:
-        written = _write_form(recording, run, run.fresh_cases, out / f"{run.name}.fresh.json", raw_path) and written
+        written = _write_form(recording, run, run.fresh_cases, (), out / f"{run.name}.fresh.json", raw_path) and written
     return written
 
 
-def _write_form(recording: Recording, run: Run, cases: tuple[Case, ...], path: Path, raw_path: Path) -> bool:
+def _write_form(
+    recording: Recording, run: Run, cases: tuple[Case, ...], ordered: tuple[Case, ...], path: Path, raw_path: Path
+) -> bool:
     """Write the normal form of some of a run's cases. Returns whether it is complete."""
     try:
-        form = normal_form(recording, cases)
+        form = normal_form(recording, cases, ordered)
     except RecordingError as error:
         print(f"{run.label}: {error}. See {raw_path}.", file=sys.stderr)
         return False
@@ -172,7 +178,8 @@ def _write_form(recording: Recording, run: Run, cases: tuple[Case, ...], path: P
 
 
 def _write_script(server: CaptureServer, run: ScriptRun, out: Path) -> bool:
-    """Write the record that a run's page posted, raw and in its Normal Form. Returns whether the page posted one."""
+    """Write the record that a run's page posted, raw and in its Normal Form, or for a later Recording Case what of its
+    Normal Form differs from the first case's of this session. Returns whether the page posted one."""
     recording = server.recording(run.route, host=run.host)
     posted = posted_record(recording, run)
     if posted is None:
@@ -189,8 +196,20 @@ def _write_script(server: CaptureServer, run: ScriptRun, out: Path) -> bool:
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(dumps_script_raw_record(url, peers, record), encoding="utf-8", newline="\n")
     path = out / f"{run.name}.json"
-    path.write_text(dumps_record(script_normal_form(record, url)), encoding="utf-8", newline="\n")
-    print(f"{run.label}: wrote {path}", flush=True)
+    form = script_normal_form(record, url, run.machine_places)
+    if run == TOP_LEVEL_PAGE:
+        path.write_text(dumps_record(form), encoding="utf-8", newline="\n")
+        print(f"{run.label}: wrote {path}", flush=True)
+        return True
+    # A recording session takes the first case first, so its Normal Form is there.
+    first_path = out / f"{TOP_LEVEL_PAGE.name}.json"
+    try:
+        first = read_record(first_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        print(f"{run.label}: no Normal Form of the first case to keep what differs from: {error}", file=sys.stderr)
+        return False
+    path.write_text(dumps_script_delta(script_delta(first, form, TOP_LEVEL_PAGE.case)), encoding="utf-8", newline="\n")
+    print(f"{run.label}: wrote what differs from {first_path.name} to {path}", flush=True)
     return True
 
 

@@ -13,6 +13,7 @@
 #include <string>
 
 #include "mitto/dom/node.h"
+#include "v8/include/cppgc/member.h"
 
 namespace mitto {
 
@@ -25,9 +26,16 @@ class DocumentFragment : public Node {
   explicit DocumentFragment(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
   Element* GetElementById(const std::u16string& id) const;
+
+  // The template element whose contents this is, the host that the DOM
+  // standard's host-including ancestors go through, as Blink's
+  // TemplateContentDocumentFragment::Host().
+  Element* Host() const { return host_.Get(); }
+  void SetHost(Element* host) { host_ = host; }
 
   // Node's.
   uint16_t GetNodeType() const override;
@@ -35,6 +43,9 @@ class DocumentFragment : public Node {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+
+ private:
+  cppgc::Member<Element> host_;
 };
 
 }  // namespace mitto

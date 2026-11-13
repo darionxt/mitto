@@ -35,6 +35,7 @@ Open each address in a Chrome started that way. Chrome ignores `--ignore-certifi
 |---|---|
 | `recordings/http1.json`, `recordings/http2.json`, `recordings/http3.json` | The normal form of the main **Request Kinds** over each protocol |
 | `recordings/cases/*.json` | The normal form of the other **Recording Cases** |
+| `recordings/documents/*.json` | The normal form of [what a document requests](#documents) beside the main Request Kinds |
 | `recordings/*.raw.json`, `recordings/cases/*.raw.json` | The raw recording of each: every connection that came in by the same way, with the client's address, its ClientHello bytes, its Initial packets over QUIC, every frame and every request |
 | `recordings/script/page.json` | The [Normal Form of the Script Fingerprint](#the-normal-form-of-a-script-fingerprint) of a top-level page |
 | `recordings/script/page.raw.json` | What that page posted, with its address and the address of each client that reached it. It holds the values of the machine that recorded it, so it stays on that machine |
@@ -46,7 +47,7 @@ To check that a client records the same twice, record it into two directories an
 
 `--host` sets another name ending in `.localhost`. `--http1-port`, `--http2-port`, `--http3-port`, `--plain-http-port`, `--proxy-port` and `--script-port` set other ports. The normal form does not depend on any of them. `--runs` names the runs to wait for, such as `--runs http1 http2 http3`.
 
-`--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols. It never attaches to the page of a Script Fingerprint, which needs no click.
+`--click-in USER_DATA_DIRECTORY` does the clicking, in a Chrome with that directory and `--remote-debugging-port=0`. A navigation counts as the user's only with a user gesture, and Chrome sends `Sec-Fetch-User` only then, so a page cannot click for itself. This runs the page's own click on the page's own element through `Runtime.evaluate` with `userGesture`, which goes around the window's input. Every such call gives the page a user activation, whatever it runs, which lasts for seconds (`ThreadDebuggerCommonImpl::beginUserGesture()` in Blink), and a navigation that the page's own script then starts would count as the user's too. So it asks whether there is something to click without a gesture, and gives one only to the click. In headless Chrome 156 on macOS, real mouse events through `Input.dispatchMouseEvent` gave identical normal forms over all three protocols. It never attaches to the page of a Script Fingerprint, which needs no click.
 
 ## What the server does
 
@@ -93,6 +94,7 @@ Each main Request Kind makes one **Recording Case**, named after it. The other c
 | Cases over HTTP/1.1, HTTP/2, HTTP/3 | `cases/http1.json`, `cases/http2.json`, `cases/http3.json` | The port of that protocol | The table below |
 | Cases over plain HTTP | `cases/plain_http.json` | The plain HTTP port | `plain_http_navigation`, `plain_http_fetch`, `plain_http_script`, `plain_http_image` |
 | Cases through a proxy, over HTTP/1.1 and HTTP/2 | `cases/proxy_http1.json`, `cases/proxy_http2.json` | The proxy, to the port of that protocol | `proxy_connect`, `proxy_navigation` |
+| Documents over HTTP/1.1, HTTP/2, HTTP/3 | `documents/http1.json`, `documents/http2.json`, `documents/http3.json` | The port of that protocol | [Those below](#documents) |
 | Client hints over HTTP/1.1, HTTP/2, HTTP/3 | `cases/client_hints_http1.json`, `cases/client_hints_http2.json`, `cases/client_hints_http3.json` | The port of that protocol | [Those below](#client-hints) |
 | Client hints over plain HTTP | `cases/client_hints_plain_http.json` | The plain HTTP port | `client_hints_plain_http_fetch`, `client_hints_plain_http_navigation` |
 
@@ -112,7 +114,40 @@ The three runs over TLS go through the same pages, in this order, and the page a
 | `navigation_form_urlencoded`, `navigation_form_multipart` | A click on the button of a form, with names and values that take escaping. The second has a file |
 | `redirect_navigation_1` to `redirect_navigation_4` | A click on a link, with the same hops as the fetch |
 
-Every response under `/case/` allows every origin, because a request shows no sign of that and a page cannot go on without it. So the cases need no preflight, and each hop of a redirect also works with `Origin: null`.
+Every response under `/case/` allows every origin, because a request shows no sign of that and a page cannot go on without it. So the cases need no preflight, and each hop of a redirect also works with `Origin: null`. Only [the runs of documents](#documents) have a preflight, and answers for requests with credentials.
+
+### Documents
+
+The runs at `documents/` record what a document requests beside the main Request Kinds, and the navigations that it starts by itself: the Request Kinds that M8's pages make. Their files stay apart from `cases/`, because the Parity Checks of the wire replay each case in `cases/`, and they do not replay these yet. A recording session takes these runs after those above and before the client hints, whose asking would reach them. The three runs over TLS go through these pages in order, from `/case/documents-start`. Only the forms need a click. The page starts each other navigation by itself, with no user activation:
+
+| Recording Case | What makes it |
+|---|---|
+| `style`, `style_import`, `style_cross_site` | Stylesheets of the first page, the first of which `@import`s another |
+| `font`, `font_cross_site` | The fonts of that stylesheet's `@font-face` rules, which text of the page uses. The page lays the text out and waits for them. Their answer is no font, which Chrome finds out only after asking |
+| `module`, `module_static_import`, `module_dynamic_import`, `module_cross_site` | A module script that imports a second one statically and a third with `import()`, and one at another site |
+| `xhr_get`, `xhr_get_cross_site`, `xhr_post_text`, `xhr_get_sync`, `xhr_post_text_sync` | `XMLHttpRequest`, asynchronous and synchronous, without a body and with a string |
+| `worker`, `worker_import_scripts`, `worker_fetch`, `worker_module`, `worker_blob_fetch` | A classic dedicated worker, which calls `importScripts()` and `fetch()`, a module worker, and a worker from a `blob:` URL, which calls `fetch()`. The browser asks for a worker's script, with `User-Agent` after `Referer` as in its own requests. A worker's requests carry no client hints, and a `blob:` URL is no referrer |
+| `beacon_text`, `beacon_blob`, `beacon_form_data`, `beacon_text_cross_site` | `sendBeacon()` with a string, a `Blob` with no type and a `FormData` |
+| `fetch_later` | `fetchLater()`, whose request Chrome sends when the first page goes |
+| `preflight`, `fetch_post_json_cross_site` | `fetch()` with JSON to another site, and the preflight that Chrome sends first. Both go to one path, and each counts by a line that the other lacks, `Access-Control-Request-Method` and `Content-Type` |
+| `fetch_credentials_omit`, `fetch_credentials_same_origin`, `fetch_credentials_include` | `fetch()` with each `credentials` mode, to the other origin of the site, which has just set a cookie for each of these paths. A cookie of the same site is no third-party cookie, so Chrome's choice about those does not decide what goes |
+| `fetch_no_cors` | `fetch()` with `mode: "no-cors"` to another site |
+| `navigation_location`, `navigation_click`, `navigation_meta_refresh` | A navigation that the page starts through `location`, a link's `click()` and `<meta http-equiv="refresh">`, each from the page before |
+| `redirect_location_1`, `redirect_location_2` | One through `location`, whose hop goes to another site |
+| `frame_same_origin`, `frame_same_site`, `frame_cross_site` | The navigation of a frame at each origin |
+| `frame_script`, `frame_image`, `frame_fetch` | What the frame of the other site asks for: a script and an image of its markup, and a `fetch()` |
+| `frame_nested`, `frame_nested_fetch` | A frame of the page's origin inside the frame of the other site, and its `fetch()` with `credentials: "include"` to its own origin. The page has set a cookie of each `SameSite` for these two paths, and only `SameSite=None` goes, because a frame under one of another site is a third party's. Chrome says `Sec-Fetch-Storage-Access` only for a request whose credentials mode is `include` (`SetSecFetchStorageAccessHeader()` in `services/network`) |
+
+| `document_style`, `document_preload_style`, `document_preload_script`, `document_preload_image`, `document_preload_font`, `document_script`, `document_image_small`, `document_image`, `document_style_body`, `document_script_deferred` | What a document's markup asks for: stylesheets in its head and its body, preloads of a stylesheet, a script, an image and a font, a script that blocks the parser and a deferred one, and an image that says it is small and one that does not say its size |
+| `favicon` | `/favicon.ico`, which Chrome asks for by itself after that document has loaded, because it names no icon. Every other page names a `data:` icon. The page waits three seconds and then says that Chrome did not ask, which counts only if Chrome did not, as `{"refused": true}` |
+| `navigation_form_get`, `navigation_form_text`, `navigation_form_cross_site` | A click on the button of a form that GETs, which puts its fields in the query that stands for the case, one that POSTs `text/plain`, and one that POSTs urlencoded to another site |
+| `navigation_history_back` | `history.back()` to the page of an earlier step, which Chrome asks for again. The page in between sets a cookie for that page's path, so only this request carries it |
+
+The answer to the preflight allows `Content-Type`. Those to requests with credentials allow the page's origin with credentials, which an answer that allows every origin does not.
+
+Chrome 157 keeps a page whose answer says `Cache-Control: no-store` in its back/forward cache, for three minutes, and restores it unless its cookies changed (`kCacheControlNoStoreEnterBackForwardCache`, on by default at the level `kStoreAndRestoreUnlessCookieChange`). It keeps none whose scripts got a `no-store` answer. The page that the traversal goes back to is both, so Chrome asks for it again. A page that comes back from the cache says so, and the case is then missing. Cookies do not go by port, so that page also takes its cookie away again, and the run over the next protocol starts without it.
+
+`order` in [the normal form](#the-normal-form) lists the ten cases of the document's markup in the order Chrome opened their streams, over HTTP/2 and HTTP/3, where one connection carries them. Over HTTP/1.1 Chrome spreads them over connections, so the order in which they arrive is not Chrome's, and the normal form has none.
 
 ### Client hints
 
@@ -233,7 +268,8 @@ And an HTTP/3 connection like this:
 | `tls` | The ClientHello. Over QUIC it comes without TLS records, so it has no `record_version`. |
 | `http2` | Only for `h2`. `preface` holds the frames the client sent before its first request, without acknowledgements of what the server sent. |
 | `http3` | Only for `h3`. `streams` lists the unidirectional streams the client opened, and `control` the frames on its control stream, without those listed below. |
-| `requests` | One entry per Recording Case recorded, always in the order navigation, fetch, script, image and then those of [the tables above](#recording-cases). If a case was requested twice, the first request counts. `cookie` and `revalidation` only count a request with `Cookie` or `If-None-Match`, so the first request with one counts. |
+| `requests` | One entry per Recording Case recorded, always in the order navigation, fetch, script, image and then those of [the tables above](#recording-cases). If a case was requested twice, the first request counts. A case that has to carry a line only counts a request with it, so the first request with one counts: `Cookie` for `cookie` and `navigation_history_back`, `If-None-Match` for `revalidation`, `Access-Control-Request-Method` for `preflight` and `Content-Type` for `fetch_post_json_cross_site`. |
+| `order` | Only in [the files of documents](#documents) over HTTP/2 and HTTP/3. The names of the cases of the document's markup, in the order the client opened their streams. |
 
 An HTTP/1.1 request has `request_line` and `headers`. An HTTP/2 request has the `flags` of its HEADERS frame, the frame's `priority` if it has any, `headers` and, if there were any, `later_frames`: what the client sent on the stream after the headers, without the content of bodies or encoded header blocks. An HTTP/3 request has `headers` and, if there were any, `priority_updates`: the priorities that PRIORITY_UPDATE frames on the control stream gave it, in order. It also has `earlier_frames` and `later_frames`: what the client sent on the stream before and after the first headers, without the content of bodies or encoded header sections. On a connection that sent early data it has `early_data`, which lists what came before the client's Finished: `request` for the request itself, and the type of each other stream. It goes with the request, because what a client sends early depends on the request. Headers are written `name: value`, in the order sent and with the case sent, and repeated headers stay separate.
 
@@ -366,15 +402,28 @@ Merkle Tree Certificates would change the answer. With `VerifyMTCs` on, Chrome a
 
 The kit also records the **Script Fingerprint** of a real Chrome: what [the probe](runtime.md#the-probe) gives in a page. [baselines.md](baselines.md#the-script-fingerprint) says how a recording session records it with the wire, and a Parity Check of a Page compares with its Normal Form.
 
-### Its Recording Case
+### Its Recording Cases
 
-The first **Recording Case** is a top-level page, `/script/page` at `capture.test`, which [#207](https://github.com/darionxt/mitto/issues/207) chose: an HTTPS page at the case pages' name, which a page at `127.0.0.1` matches but for its origin, and which a plain `http://` page does not, since that is no secure context and has 250 fewer globals. Frames and workers come with M8. The run is `script/page`, the first in `runs.json`, and its start of Chrome has the flags of a case page: `--ignore-certificate-errors-spki-list`, `--host-resolver-rules` and `--no-proxy-server`. The first two make Chrome show its infobar of unsupported flags, which takes height from the viewport, and [the Normal Form](#the-normal-form-of-a-script-fingerprint) hides that with the window's sizes.
+The first **Recording Case** is a top-level page, `/script/page` at `capture.test`, which [#207](https://github.com/darionxt/mitto/issues/207) chose: an HTTPS page at the case pages' name, which a page at `127.0.0.1` matches but for its origin, and which a plain `http://` page does not, since that is no secure context and has 250 fewer globals. The run is `script/page`, the first in `runs.json`, and its start of Chrome has the flags of a case page: `--ignore-certificate-errors-spki-list`, `--host-resolver-rules` and `--no-proxy-server`. The first two make Chrome show its infobar of unsupported flags, which takes height from the viewport, and [the Normal Form](#the-normal-form-of-a-script-fingerprint) hides that with the window's sizes.
+
+Four more cases run the probe where else a page's scripts run, which [#264](https://github.com/darionxt/mitto/issues/264) chose with the owner. Each is a run of its own, after `script/page` and before the wire's, and starts Chrome at a top-level page at `capture.test` with the same flags. [`tools/capture/script_page.py`](../tools/capture/script_page.py) has their pages:
+
+| Run | Top-level page | Where the probe runs |
+| --- | --- | --- |
+| `script/same_origin_frame` | `/script/same-origin-frame` | A frame at `/script/same-origin-frame/frame`, the page's own origin |
+| `script/srcdoc_frame` | `/script/srcdoc-frame` | A frame whose document is its element's `srcdoc`: `about:srcdoc`, with the page's origin and no request, as a frame that a script writes into |
+| `script/cross_site_frame` | `/script/cross-site-frame` | A frame at `cross-site.test` on the same port, another site, which Chrome runs in a process of its own |
+| `script/worker` | `/script/worker` | A dedicated worker, `/script/worker/worker.js`, that the page starts |
+
+A frame runs the top-level page's markup and probe, so that what its Normal Form differs in is what being a frame changes: `top`, `parent` and `frameElement`, the address, the referrer and `location.ancestorOrigins`, its own viewport, and in a frame of another site the permissions policy, the permission states, `Notification.permission` and fullscreen. Its element takes the size that an iframe has by default, 300 by 150 pixels. A frame of another site gets that size from the browser a moment after it has loaded, so each frame's page waits until `innerWidth` is no longer 0, for at most five seconds, before it runs the probe. Each frame posts its record to its own path, such as `/script/same-origin-frame/record`, at its own origin.
+
+The worker's script declares nothing, which would be a property of its global object, runs the probe in a timer through an indirect eval as the page does, and posts the record to `/script/worker/record` with `fetch()` itself. In a worker, the probe walks the worker's global object, a `DedicatedWorkerGlobalScope`, and what it reaches, such as `WorkerNavigator`, and its third step leaves out `matchMedia()` and the permissions policy, which a worker does not have.
 
 The page holds the probe as a string. Once the load event is over, so that no event is being dispatched while the probe reads the window, it evaluates it as the Page program does, posts the record to `/script/record`, and says "Recorded". What it posts is the record's JSON text. The page sets nothing on the window, gives no element an id or a name, which would be properties of the window, and uses no regular expression, whose matches would change `RegExp`'s legacy statics, all of which the probe reads. Its markup is part of the case, since the probe reads `document.all`, the title and the like.
 
 Its start of Chrome must not have `--remote-debugging-port=0`, which turns on Blink's `AutomationControlled` and makes `navigator.webdriver` true. `record.ps1` gives it a fixed port, which changes nothing a page sees, and reads `chrome://version` through it only once the page has posted its record. Nothing attaches to the page itself.
 
-The route has a port of its own, `--script-port`, 8448 by default, over HTTP/1.1. The server's HTTP/2 sends no `WINDOW_UPDATE`, so a client can send it no more than 64 KiB. Over HTTP/1.1 it keeps a body of up to 16 MiB.
+The route has a port of its own, `--script-port`, 8448 by default, over HTTP/1.1, at each of the case pages' names. The server's HTTP/2 sends no `WINDOW_UPDATE`, so a client can send it no more than 64 KiB. Over HTTP/1.1 it keeps a body of up to 16 MiB.
 
 ### The Normal Form of a Script Fingerprint
 
@@ -400,15 +449,28 @@ It keeps everything else, because that is what a Page has to match: which interf
 | `key` and `id` of `navigation.currentEntry` | Random |
 | `usedJSHeapSize` and `totalJSHeapSize` of `performance.memory` | Precise in a renderer that is locked to a site, as each is on the desktop, at most every 50 ms, from a cache that `console.memory`'s rounded figures share (`WindowPerformance::memory()` and `HeapSizeCache` in Blink's `core/timing`). So what they give depends on how long the walk took after it read `console.memory` ([#210](https://github.com/darionxt/mitto/issues/210)) |
 
-The page's origin, name and port go behind `<origin>`, `<authority>` and `<host>` in every string, as on the wire, and `<port>` where a value is the port alone, as `location.port` is, with a port that is its scheme's own left out as a page leaves it out: `location`, `origin`, `document.URL`, `documentURI`, `baseURI` and `domain`, and `navigation.currentEntry.url`. A Page of a Parity Check loads the same page from a server on another port, which these hide. `console.memory`'s rounded figures, `RegExp`'s legacy statics and the error messages stay: [five sessions](baselines.md#the-script-fingerprint) gave the same, and the probe uses no regular expression ([runtime.md](runtime.md#the-probe)).
+The top-level page's origin, name and port go behind `<origin>`, `<authority>` and `<host>` in every string, as on the wire, and `<port>` where a value is the port alone, as `location.port` is, with a port that is its scheme's own left out as a page leaves it out: `location`, `origin`, `document.URL`, `documentURI`, `baseURI` and `domain`, and `navigation.currentEntry.url`. The other origin of its site and the other site, at the same scheme and port, go behind `<same-site-origin>`, `<same-site-authority>` and `<same-site-host>`, and `<cross-site-origin>`, `<cross-site-authority>` and `<cross-site-host>`, so that a frame of another site has its own address behind its own placeholders, and the top-level page's in its referrer. A Page of a Parity Check loads the same page from a server on another port, which these hide. `console.memory`'s rounded figures, `RegExp`'s legacy statics and the error messages stay: [five sessions](baselines.md#the-script-fingerprint) gave the same, and the probe uses no regular expression ([runtime.md](runtime.md#the-probe)).
 
 A place that a record lacks stays as it is, and so does a getter that threw at a place, since how it failed is the Runtime's and not the machine's. So a Page that lacks a member, or whose member throws, has a Normal Form all the same, which a Parity Check compares, and the failure shows in it.
+
+Where the probe runs decides which places are the machine's (`machine_places` of each run). A frame's viewport is its element's, so in a frame `innerWidth`, `innerHeight`, the sizes of `visualViewport` and `viewport.segments[0]`, the `orientation` that matches and whether `width`, `height` and `aspect-ratio` agree with the window stay in the Normal Form (`FRAME_MACHINE_PLACES`), and the rest of the table above is hidden as in a top-level page. A worker has no window, no screen, no `matchMedia()` and no memory figures: of the table, it has `navigator`'s `hardwareConcurrency` and `deviceMemory`, `navigator.connection`, the platform version and the time zone (`WORKER_MACHINE_PLACES`).
+
+### What a later case keeps
+
+The Baseline of a case after the first keeps only what differs from the first case's Normal Form, the top-level page's of the same Chrome Release, as [#210](https://github.com/darionxt/mitto/issues/210) chose. A recording session writes it from the two Normal Forms of that session, `script/page.json` and the later case's, with [`script_delta()`](../tools/capture/script_delta.py), and a Parity Check makes the case's Normal Form again from `script/page.json` and it. It holds `"differs from": "page"`, and:
+
+- `objects`: each object that differs. One that the top-level page lacks, such as the window of a frame's parent of another site, is written whole. One that both have is written with its path and each key whose value differs, and of its lists, `own`, `get` and `calls`, only the items that differ or are new. Its `gone` names what the later case lacks of it, a key such as `calls` or an item such as `get top`, and `own <order>` gives the order of its own keys where that is not the top-level page's with the new keys at the end.
+- `gone`: the path of each object that only the top-level page has.
+- `values`: each value of the probe's third step that differs or is new, whole, and `null` for one that the later case lacks.
+- `reports`, and any other key of a record, where it differs.
+
+Each item is on a line of its own, as in a Normal Form, so that two of them differ by lines. They do not keep the order of the objects, which no comparison reads. In Chrome 157.0.8103.51 headless on the Mac, they took 4 KB for each frame of the page's site, 6 KB for the frame of another site and 93 KB for the worker. The owner chose on 2026-11-13 that each may take 50 KB for a frame and 250 KB for the worker, for each Chrome Release, beside the 1.5 MB of the top-level page's.
 
 ### The form of a hidden value of a Script Fingerprint
 
 `SCRIPT_FORMS` in [`tools/capture/machine_forms.py`](../tools/capture/machine_forms.py) holds the form of each value that the Normal Form hides as `<machine>`, by its place in the record: what Chrome on Windows can give a page there, with the Persona's `en-US` locale, such as a whole number from 1 for a size, a scale that Windows offers for `devicePixelRatio`, `24` or `30` for `colorDepth`, a time zone of [`time_zones.json`](../src/mitto/time_zones.json) for `timeZone`, and `Date`'s strings as `en-US` writes them. [`tests/test_machine.py`](../tests/test_machine.py) holds each value that a page reads of a Machine to these forms, for drawn Machines and for values that no draw gives, and names the places whose value a Page works out by Chrome's own code from its start message, such as `Date`'s strings, which the Parity Checks compare with real Chrome's instead.
 
-The same command as for the wire checks real Chrome's values, in each `script/*.raw.json` under each directory. It also looks for each value of the machine in the Normal Form beside the raw record, in every place, the hidden ones aside: each text of four characters or more that is no keyword of Chrome's, such as a time zone's name, each number of 100 or more, such as a size or a heap limit, among what the getters and the third step gave, where an interface's constants are not, and each list of three numbers or more, such as the offsets. It prints how many it looked for and where one showed, never which:
+The same command as for the wire checks real Chrome's values, in each `script/*.raw.json` under each directory, at the places of the machine where that case's probe ran. It also looks for each value of the machine in the file beside the raw record that a Baseline is made of, the Normal Form of the top-level page and what a later case's differs in, in every place, the hidden ones aside: each text of four characters or more that is no keyword of Chrome's, such as a time zone's name, each number of 100 or more, such as a size or a heap limit, among what the getters and the third step gave, where an interface's constants are not, and each list of three numbers or more, such as the offsets. It prints how many it looked for and where one showed, never which:
 
 ```text
 recordings/a: pass, 600 values in 13 raw recordings, and 1 raw records of a Script Fingerprint
@@ -785,7 +847,8 @@ To reach the server over HTTP/3, a client needs `server.spki_hash` trusted and `
 
 `CaptureServer(tickets=True)` gives out tickets, and `RESUMPTION_RUNS` lists the runs that use them. `normal_form(recording, run.cases)` gives the resumed connections of such a run, and `normal_form(recording, run.fresh_cases)` the fresh ones. They cannot go in one normal form, because a normal form holds what its connections have in common.
 
-To reach a case page, a client needs `server.host_resolver_rules`, which a native Session takes as `host_resolver_rules` from `mitto._native`. `CASE_HOST` names the page, and `server.url(route, host=CASE_HOST, path=...)` and `server.recording(route, host=CASE_HOST)` go with it, so that the placeholders are the ones the Baselines have. `RUNS` lists every run, and `server.start_url(run)` and `server.chrome_flags(run)` say how to start one.
+To reach a case page, a client needs `server.host_resolver_rules`, which a native Session takes as `host_resolver_rules` from `mitto._native`. `CASE_HOST` names the page, and `server.url(route, host=CASE_HOST, path=...)` and `server.recording(route, host=CASE_HOST)` go with it, so that the placeholders are the ones the Baselines have. `RECORDING_RUNS` lists every run of the wire in the order a recording session takes them, `RUNS` those whose cases the Parity Checks replay, and `DOCUMENT_RUNS` [the others](#documents). `server.start_url(run)` and `server.chrome_flags(run)` say how to start one, and `normal_form(recording, run.cases, run.ordered)` gives a run's normal form with its `order`.
+
 
 ## Tests
 

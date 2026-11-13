@@ -280,6 +280,27 @@
     doc.appendChild(t);
     return [t.ownerDocument === doc, t.content.ownerDocument !== before, t.content.ownerDocument === doc, t.content.firstChild.ownerDocument === t.content.ownerDocument, t.content.ownerDocument instanceof HTMLDocument].join("|");
   });
+  run("template contents hold no template ancestor", () => {
+    const t = document.createElement("template");
+    let own = "none";
+    try { t.content.appendChild(t); } catch (e) { own = e.name; }
+    const t2 = document.createElement("template");
+    const d = document.createElement("div");
+    d.appendChild(t2);
+    let outer = "none";
+    try { t2.content.append(d); } catch (e) { outer = e.name + ": " + e.message; }
+    return [own, outer, t.content.childNodes.length].join("|");
+  });
+  run("outerHTML in a fragment", () => {
+    const f = document.createDocumentFragment();
+    const e = document.createElement("i");
+    f.appendChild(e);
+    e.outerHTML = "<b>x</b>y<p>z</p>";
+    const t = document.createElement("template");
+    t.innerHTML = "<p>a</p>";
+    t.content.firstChild.outerHTML = "<em>z</em>w";
+    return [[...f.childNodes].map((n) => n.nodeName).join(","), t.innerHTML].join("|");
+  });
   run("template content setter", () => { const t = document.createElement("template"); t.content = 1; return t.content; });
   run("template shadowRootMode", () => { const t = document.createElement("template"); const a = t.shadowRootMode; t.setAttribute("shadowrootmode", "OPEN"); const b = t.shadowRootMode; t.shadowRootMode = "x"; return [a, b, t.getAttribute("shadowrootmode"), t.shadowRootMode].join("|"); });
   run("svg in html serialize", () => {
@@ -298,5 +319,52 @@
   run("svg className", () => { const e = document.createElementNS(SVG, "circle"); return Object.prototype.toString.call(e.className); });
   run("mathml parts", () => { const e = document.createElementNS(MATHML, "mi"); return [e.namespaceURI, e.tagName, e instanceof MathMLElement, e instanceof HTMLElement].join(); });
   run("html in svg ns names", () => document.createElementNS(SVG, "div"));
+  // Reflected attributes of every kind. URLs resolve in a document of about:blank, whose base is the same in Chrome's
+  // case page and in the Page.
+  const blank = new Document();
+  for (const value of [null, "", "http://example.com/a b", "  http://example.com/x?y#z \n", "http://[bad", "//host/path", "x/y", "?q", "#f", "javascript:alert(1)", "\u00e9", "http://EXAMPLE.com:80/%7e", "data:,x", "about:blank?x"]) {
+    run(`link href ${JSON.stringify(value)}`, () => {
+      const e = blank.createElementNS(HTML, "link");
+      if (value !== null) e.setAttribute("href", value);
+      return e.href;
+    });
+  }
+  run("link href setter", () => { const e = blank.createElementNS(HTML, "link"); e.href = "  #rel "; return [e.getAttribute("href"), e.href].join("|"); });
+  run("link href absolute in page", () => { const e = document.createElement("link"); e.href = "https://example.com/../a/./b?c#d"; return e.href; });
+  run("link href no arg", () => { const e = document.createElement("link"); const d = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "href"); d.set.call(e); return e.getAttribute("href"); });
+  run("link href surrogate", () => { const e = document.createElement("link"); e.href = "http://a/\ud800"; return e.getAttribute("href").charCodeAt(9); });
+  for (const value of [null, "12", "  12abc", "-3", "+4", "2147483647", "2147483648", "-2147483648", "-2147483649", "abc", "", " ", "0x10", "1e3", " 12", "\t-0"]) {
+    run(`li value ${JSON.stringify(value)}`, () => {
+      const e = document.createElement("li");
+      if (value !== null) e.setAttribute("value", value);
+      return e.value;
+    });
+  }
+  for (const value of [-5, 3.9, -3.9, 2 ** 31, 2 ** 32 + 7, NaN, "8", null, true]) {
+    run(`li value set ${String(value)}`, () => { const e = document.createElement("li"); e.value = value; return e.getAttribute("value"); });
+  }
+  run("pre width", () => { const e = document.createElement("pre"); e.setAttribute("width", " 80px"); const a = e.width; e.width = -1; return [a, e.getAttribute("width")].join("|"); });
+  run("body bgColor null", () => { const e = document.createElement("body"); e.bgColor = null; e.text = null; e.link = undefined; return [e.getAttribute("bgcolor"), e.getAttribute("text"), e.getAttribute("link"), e.bgColor, e.vLink].map(String).join("|"); });
+  run("aria label", () => {
+    const e = document.createElement("div");
+    const before = e.ariaLabel;
+    e.ariaLabel = "x";
+    const set = e.getAttribute("aria-label");
+    e.ariaLabel = null;
+    const removed = e.hasAttribute("aria-label");
+    e.ariaLabel = undefined;
+    const undef = e.hasAttribute("aria-label");
+    e.setAttribute("aria-label", "y");
+    return [before, set, removed, undef, e.ariaLabel].map(String).join("|");
+  });
+  run("aria on svg", () => { const e = document.createElementNS(SVG, "rect"); e.ariaHidden = "true"; return [e.getAttribute("aria-hidden"), e.ariaHidden, e.ariaRowIndexText].map(String).join("|"); });
+  run("aria names", () => { const e = document.createElement("div"); e.ariaColIndex = "1"; e.ariaRoleDescription = "r"; e.ariaKeyShortcuts = "k"; e.role = "button"; return e.getAttributeNames().join(" "); });
+  run("aria no arg", () => { const d = Object.getOwnPropertyDescriptor(Element.prototype, "ariaLabel"); d.set.call(document.createElement("div")); });
+  run("meta name no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLMetaElement.prototype, "name"); d.set.call(document.createElement("meta")); });
+  run("script async no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, "noModule"); d.set.call(document.createElement("script")); });
+  run("body bgColor no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLBodyElement.prototype, "bgColor"); d.set.call(document.createElement("body")); });
+  run("li value no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLLIElement.prototype, "value"); const e = document.createElement("li"); d.set.call(e); return e.getAttribute("value"); });
+  run("link crossOrigin no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "crossOrigin"); const e = document.createElement("link"); d.set.call(e); return e.getAttribute("crossorigin"); });
+  run("link fetchPriority no arg", () => { const d = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "fetchPriority"); const e = document.createElement("link"); d.set.call(e); return e.getAttribute("fetchpriority"); });
   return JSON.stringify(cases, null, 1);
 })()

@@ -42,7 +42,7 @@ from tools.capture.script_normal_form import (
     machine_values_shown,
     read_script_raw_record,
 )
-from tools.capture.script_page import SCRIPT_DIRECTORY
+from tools.capture.script_page import SCRIPT_DIRECTORY, SCRIPT_RUNS, TOP_LEVEL_PAGE
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,11 +419,14 @@ class PlaceCount:
         return str(self.place)
 
 
-def count_script_forms(values: Iterable[tuple[Place, RecordValue]]) -> list[PlaceCount]:
-    """Count the values at each place, and those without its form, in the order of SCRIPT_FORMS.
+def count_script_forms(
+    values: Iterable[tuple[Place, RecordValue]], places: Iterable[Place] = tuple(SCRIPT_FORMS)
+) -> list[PlaceCount]:
+    """Count the values at each place, and those without its form, in the order of the places.
 
     Args:
         values: Each place and its value, as machine_values() gives them.
+        places: The places to count, those of the machine where the probe ran.
     """
     seen: Counter[Place] = Counter()
     misfits: Counter[Place] = Counter()
@@ -431,7 +434,7 @@ def count_script_forms(values: Iterable[tuple[Place, RecordValue]]) -> list[Plac
         seen[place] += 1
         if not SCRIPT_FORMS[place].fits(value):
             misfits[place] += 1
-    return [PlaceCount(place, seen[place], misfits[place]) for place in SCRIPT_FORMS]
+    return [PlaceCount(place, seen[place], misfits[place]) for place in places]
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,6 +447,8 @@ class ScriptRecordCheck:
         counts: The count of each place.
         sought: How many values of the machine it looked for in the Normal Form, or None with no Normal Form there.
         shown: Where in the Normal Form one of them showed.
+        own: For each place whose value the case decides, such as a frame's size, how many values it had and how many
+            of those were not the case's own.
     """
 
     raw_name: str
@@ -451,6 +456,7 @@ class ScriptRecordCheck:
     counts: list[PlaceCount]
     sought: int | None
     shown: list[str]
+    own: list[PlaceCount]
 
     @property
     def values(self) -> int:
@@ -458,32 +464,51 @@ class ScriptRecordCheck:
 
     @property
     def passed(self) -> bool:
-        has_misfits = any(count.misfits for count in self.counts)
+        has_misfits = any(count.misfits for count in (*self.counts, *self.own))
         return self.values > 0 and not has_misfits and self.sought is not None and not self.shown
 
 
 def check_script_records(directory: Path) -> list[ScriptRecordCheck]:
-    """Check each raw record of a Script Fingerprint under a directory, and its Normal Form beside it."""
+    """Check each raw record of a Script Fingerprint under a directory, and the file beside it that a Baseline is made of:
+    its Normal Form, or for a later Recording Case what of it differs from the first case's.
+
+    Each is held to the places of the machine where its probe ran, those of a top-level page for a record whose run is
+    not known."""
+    runs = {run.name: run for run in SCRIPT_RUNS}
     checks: list[ScriptRecordCheck] = []
     for path in sorted(directory.rglob(_RAW_RECORDINGS)):
         if not _is_script_record(directory, path):
             continue
         raw = read_script_raw_record(path.read_text(encoding="utf-8")).record
+        name = path.relative_to(directory).as_posix().removesuffix(_RAW_RECORDINGS[1:])
+        run = runs.get(name, TOP_LEVEL_PAGE)
         form_path = path.with_name(path.name.removesuffix(_RAW_RECORDINGS[1:]) + ".json")
         sought: int | None = None
         shown: list[str] = []
         if form_path.is_file():
-            sought, shown = machine_values_shown(raw, json.loads(form_path.read_text(encoding="utf-8")))
+            form = json.loads(form_path.read_text(encoding="utf-8"))
+            sought, shown = machine_values_shown(raw, form, run.machine_places, run.own_values)
         checks.append(
             ScriptRecordCheck(
                 path.relative_to(directory).as_posix(),
                 form_path.relative_to(directory).as_posix(),
-                count_script_forms(machine_values(raw)),
+                count_script_forms(machine_values(raw, run.machine_places), run.machine_places),
                 sought,
                 shown,
+                _count_own(raw, run.own_values),
             )
         )
     return checks
+
+
+def _count_own(raw: dict[str, RecordValue], own: Mapping[Place, RecordValue]) -> list[PlaceCount]:
+    """Count the values at each place whose value the case decides, and those that are not the case's own."""
+    counts: list[PlaceCount] = []
+    for place, expected in own.items():
+        found = [value for _, value in machine_values(raw, (place,))]
+        misfits = sum(json.dumps(value) != json.dumps(expected) for value in found)
+        counts.append(PlaceCount(place, len(found), misfits))
+    return counts
 
 
 def _is_script_record(directory: Path, path: Path) -> bool:
@@ -522,6 +547,12 @@ def _check_and_print(directory: Path) -> bool:
         for place_count in check.counts:
             description = SCRIPT_FORMS[place_count.place].description
             print(f"    {_outcome(place_count)}  {place_count.name}: {description}, {_amount(place_count)}")
+        own = {run.name: run.own_values for run in SCRIPT_RUNS}.get(check.raw_name.removesuffix(".raw.json"), {})
+        for place_count in check.own:
+            expected = json.dumps(own.get(place_count.place))
+            print(
+                f"    {_outcome(place_count)}  {place_count.name}: the case's own, {expected}, {_amount(place_count)}"
+            )
         if check.sought is None:
             print(f"    FAIL  no {check.form_name} to look in")
         elif check.shown:
