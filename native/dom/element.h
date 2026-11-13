@@ -18,6 +18,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "mitto/dom/node.h"
 
 namespace mitto {
@@ -86,6 +87,21 @@ class Element : public Node {
                                    const std::u16string& value);
   bool ReflectedBooleanAttribute(std::u16string_view name) const;
   void SetReflectedBooleanAttribute(std::u16string_view name, bool value);
+  // One that [ReflectOnly] limits to `keywords`, as bind_gen's
+  // make_reflect_process_keyword_state() reads it: the content attribute in
+  // lower case if it is one of them, and otherwise the default for a missing,
+  // an empty or another value, or null, for a nullable attribute, or "".
+  std::optional<std::u16string> ReflectedKeywordAttribute(
+      std::u16string_view name,
+      base::span<const std::u16string_view> keywords,
+      std::optional<std::u16string_view> missing_default,
+      std::optional<std::u16string_view> invalid_default,
+      std::optional<std::u16string_view> empty_default,
+      bool nullable) const;
+  // A nullable one, which null removes.
+  void SetReflectedNullableStringAttribute(
+      std::u16string_view name,
+      const std::optional<std::u16string>& value);
 
   // Node's.
   uint16_t GetNodeType() const override;

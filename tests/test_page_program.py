@@ -1126,6 +1126,26 @@ def test_a_document_of_a_session_runs_in_a_context_of_its_own_and_ends_waiting_c
     assert session.evaluate("[typeof before, document.body.innerHTML]") == (False, '["undefined","<p>new</p>"]')
 
 
+def test_notification_permission_is_denied_where_the_document_is_not_a_secure_context(session: _Session) -> None:
+    # The document's URL is not potentially trustworthy. Chrome 157 gave the same for a page at that URL, which a
+    # resolver rule sent to a local server: "denied" without a prompt, and the deprecated callback before the promise.
+    session.start()
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, b"<p>insecure</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, b"")
+    script = """(async () => {
+        const seen = [isSecureContext, Notification.permission];
+        const answer = Notification.requestPermission((permission) => seen.push("callback " + permission));
+        seen.push("returned");
+        seen.push("resolved " + await answer);
+        return seen;
+    })()"""
+
+    assert session.evaluate(script) == (False, '[false,"denied","returned","callback denied","resolved denied"]')
+
+
 def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(session: _Session) -> None:
     session.start()
     document = "﻿<p id=text>café 𝄞</p>".encode()

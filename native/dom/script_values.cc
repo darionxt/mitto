@@ -107,6 +107,13 @@ void ResolveFromTask(v8::Isolate* isolate,
       /*reject=*/false);
 }
 
+void ResolveFromTaskWith(
+    v8::Isolate* isolate,
+    v8::Local<v8::Promise::Resolver> resolver,
+    base::OnceCallback<v8::Local<v8::Value>(v8::Isolate*)> make_value) {
+  SettleFromTask(isolate, resolver, std::move(make_value), /*reject=*/false);
+}
+
 void RejectWithDOMExceptionFromTask(v8::Isolate* isolate,
                                     v8::Local<v8::Promise::Resolver> resolver,
                                     std::string name,
