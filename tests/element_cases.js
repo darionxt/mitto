@@ -680,6 +680,18 @@
   });
   run("anchor reflected", () => { const a = document.createElement("a"); a.target = "_blank"; a.download = "f"; a.rel = "noopener"; a.hreflang = "en"; a.type = "t"; a.referrerPolicy = "NO-REFERRER"; a.ping = " http://p "; return [a.target, a.download, a.rel, a.hreflang, a.type, a.referrerPolicy, a.ping, a.name, a.coords, a.charset, a.rev, a.shape, a.getAttributeNames().join(" ")].join("|"); });
   run("area href", () => { const a = blank.createElementNS(HTML, "area"); a.href = "http://e.com/x"; return [a.href, String(a), a.alt, a.coords, a.shape, a.noHref].join("|"); });
+  // A link's href that does not resolve is the attribute as it is, where a reflected URL loses its spaces.
+  run("href invalid spaces", () => {
+    const a = document.createElement("a");
+    a.setAttribute("href", " http://[bad ");
+    const area = document.createElement("area");
+    area.setAttribute("href", "\t http://[bad \n");
+    const link = document.createElement("link");
+    link.setAttribute("href", " http://[bad ");
+    const img = document.createElement("img");
+    img.setAttribute("src", " http://[bad ");
+    return JSON.stringify([a.href, String(a), area.href, link.href, img.src]);
+  });
   run("table elements", () => { const t = document.createElement("td"); t.colSpan; return [document.createElement("th").tagName, t.abbr, t.headers, t.align, t.noWrap, document.createElement("col").span === undefined].join("|"); });
   run("canvas", () => { const c = document.createElement("canvas"); const out = [c, c.width, c.height]; c.setAttribute("width", "-5"); out.push(c.width); c.setAttribute("width", " 20px"); out.push(c.width); c.width = 3000000000; out.push(c.getAttribute("width")); c.height = 7; out.push(c.height); return out.join("|"); });
   run("canvas large attribute", () => { const c = document.createElement("canvas"); c.setAttribute("width", "3000000000"); c.setAttribute("height", "2147483647"); const out = [c.width, c.height]; c.setAttribute("height", "2147483648"); out.push(c.height); return out.join("|"); });
