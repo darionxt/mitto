@@ -7,9 +7,11 @@
 
 #include "mitto/bindings/v8_event_target.h"
 #include "mitto/bindings/v8_html_body_element.h"
+#include "mitto/bindings/v8_message_port.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/html_body_element.h"
+#include "mitto/dom/message_port.h"
 #include "mitto/dom/window.h"
 #include "v8/include/v8-primitive.h"
 
@@ -98,6 +100,14 @@ bool SetEventHandler(v8::Isolate* isolate,
   }
   if (target) {
     target->SetAttributeEventHandler(isolate, type, handler);
+  }
+  // MessagePort's setters of onmessage and onmessageerror start the port,
+  // whatever they are set to, as Blink's do.
+  if (type == u"message" || type == u"messageerror") {
+    if (MessagePort* const port =
+            bindings::V8MessagePort::ToWrappable(isolate, receiver)) {
+      port->Start();
+    }
   }
   return true;
 }

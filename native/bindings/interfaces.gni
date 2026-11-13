@@ -82,6 +82,17 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "BroadcastChannel"
+    file = "broadcast_channel"
+
+    # onmessage and onmessageerror run as every event handler attribute does.
+    implemented = [
+      "name",
+      "postMessage",
+      "close",
+    ]
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -1079,6 +1090,26 @@ mitto_bindings_interfaces = [
     file = "memory_info"
   },
   {
+    name = "MessageChannel"
+    file = "message_channel"
+  },
+  {
+    name = "MessageEvent"
+    file = "message_event"
+  },
+  {
+    name = "MessagePort"
+    file = "message_port"
+
+    # onmessage and onmessageerror run as every event handler attribute does,
+    # and setting either starts the port (MessagePort::ListenersChanged()).
+    implemented = [
+      "postMessage",
+      "start",
+      "close",
+    ]
+  },
+  {
     name = "MimeType"
     file = "mime_type"
   },
@@ -1977,6 +2008,11 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "UserActivation"
+    file = "user_activation"
+    made_by_known_gaps = true
+  },
+  {
     name = "Viewport"
     file = "viewport"
     made_by_known_gaps = true
@@ -2067,6 +2103,8 @@ mitto_bindings_interfaces = [
       "event",
       "scheduler",
       "cookieStore",
+      "structuredClone",
+      "postMessage",
       "reportError",
     ]
   },
