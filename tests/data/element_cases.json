@@ -681,6 +681,7 @@
   "anchor href": "string:||http://example.com/a%20b?x#y|http://example.com/a%20b?x#y|http://example.com/a%20b?x#y|\"http://example.com/a%20b?x#y\"|#frag|about:blank#frag|http://[bad",
   "anchor reflected": "string:_blank|f|noopener|en|t|no-referrer| http://p ||||||target download rel hreflang type referrerpolicy ping",
   "area href": "string:http://e.com/x|http://e.com/x||||false",
+  "href invalid spaces": "string:[\" http://[bad \",\" http://[bad \",\"\\t http://[bad \\n\",\"http://[bad\",\"http://[bad\"]",
   "table elements": "string:TH||||false|false",
   "canvas": "string:[object HTMLCanvasElement]|300|150|300|20|300|7",
   "canvas large attribute": "string:300|2147483647|150",

@@ -22,7 +22,8 @@ class HTMLAreaElement final : public HTMLElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface. href, which toString() gives too, is the
-  // href attribute resolved as a URL, as Blink's Href() resolves it.
+  // href attribute resolved as a URL, as Blink's Href() resolves it, or the
+  // attribute as it is if it does not resolve.
   std::u16string Href() const;
   void SetHref(const std::u16string& value);
 };
