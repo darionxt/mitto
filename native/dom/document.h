@@ -17,10 +17,13 @@
 #include <string>
 #include <utility>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
+#include "url/gurl.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/v8-promise.h"
 
@@ -29,11 +32,13 @@ namespace mitto {
 class Comment;
 class CookieJar;
 class CustomElementRegistry;
+class DocumentScriptRunner;
 class DocumentType;
 class Element;
 class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
+class HTMLScriptElement;
 class Location;
 class PermissionsPolicy;
 class Text;
@@ -137,6 +142,8 @@ class Document : public Node {
       bindings::ExceptionState& exception_state);
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
+  // The script element whose classic script runs, and null outside one.
+  HTMLScriptElement* CurrentScriptForBinding() const;
 
   // Node's.
   uint16_t GetNodeType() const override;
@@ -152,7 +159,7 @@ class Document : public Node {
   // The window whose document this is, which defaultView gives.
   void SetWindow(Window* window) { window_ = window; }
   // The URL of the document, serialized, which URL and documentURI give.
-  void SetUrl(std::u16string url) { url_ = std::move(url); }
+  void SetUrl(std::u16string url);
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
   // Where document.cookie reaches the cookies of the document's Session. A
@@ -170,6 +177,44 @@ class Document : public Node {
   Element* CreateElement(const std::optional<std::u16string>& namespace_uri,
                          const std::optional<std::u16string>& prefix,
                          const std::u16string& local_name);
+  // When the document was made, as Blink's Document::GetStartTime().
+  base::TimeTicks StartTime() const { return start_time_; }
+
+  // The URLs a document resolves, as Blink's Document has them.
+  //
+  // The HTML Standard's document base URL: the frozen base URL of the first
+  // base element with an href in tree order, else the fallback base URL. A
+  // base URL that is not valid is none, and about:blank for those who read
+  // it.
+  const GURL& BaseURL() const;
+  // `url` parsed against the base URL.
+  GURL CompleteURL(std::u16string_view url) const;
+  // The document's URL, as no frame gives a document of a Page another.
+  GURL FallbackBaseURL() const { return GURL(url_); }
+  // Blink's Document::ProcessBaseElement(), once a base element comes, goes,
+  // or changes its href.
+  void ProcessBaseElement();
+
+  // What the document's scripts use.
+  //
+  // The async and in-order scripts, which it makes the first time.
+  DocumentScriptRunner& GetScriptRunner();
+  // The HTML Standard's currentScript, as Blink keeps it for scripts that
+  // run inside others.
+  void PushCurrentScript(HTMLScriptElement* element);
+  void PopCurrentScript(HTMLScriptElement* element);
+  // Whether no style sheet blocks scripts, which none does while a Page loads
+  // no style sheets.
+  bool IsScriptExecutionReady() const { return true; }
+  // What holds the load event back, such as an async script that has not
+  // run. Once nothing does, `check_completed`, which the Page's loader gives,
+  // runs from a task, as Blink's load event delay timer runs.
+  void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
+  void DecrementLoadEventDelayCount();
+  bool IsDelayingLoadEvent() const { return load_event_delay_count_ > 0; }
+  void SetCheckCompleted(base::RepeatingClosure check_completed) {
+    check_completed_ = std::move(check_completed);
+  }
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
@@ -180,7 +225,11 @@ class Document : public Node {
   HTMLCollection* Collection(cppgc::Member<HTMLCollection>& cached,
                              HTMLCollection::Type type);
 
+  // Blink's Document::UpdateBaseURL().
+  void UpdateBaseURL();
+
   const bool is_html_;
+  const base::TimeTicks start_time_ = base::TimeTicks::Now();
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
   std::u16string url_ = u"about:blank";
@@ -199,6 +248,15 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  // The frozen base URL of the first base element with an href, empty for
+  // none, and the base URL that it gives, empty for one that is not valid.
+  GURL base_element_url_;
+  GURL base_url_ = GURL("about:blank");
+  cppgc::Member<DocumentScriptRunner> script_runner_;
+  HeapVector<HTMLScriptElement> current_script_stack_;
+  int load_event_delay_count_ = 0;
+  bool load_event_check_pending_ = false;
+  base::RepeatingClosure check_completed_;
 };
 
 }  // namespace mitto

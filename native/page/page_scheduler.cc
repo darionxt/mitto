@@ -30,10 +30,119 @@ enum class TaskPriority : TaskQueue::QueuePriority {
   kPriorityCount = 11,
 };
 
-// FrameSchedulerImpl::ComputePriority() for each queue.
+// FrameSchedulerImpl::CreateQueueTraitsForTaskType(): the queue of each task
+// type, by its traits.
+PageScheduler::FrameQueue QueueOf(TaskType type) {
+  using FrameQueue = PageScheduler::FrameQueue;
+  switch (type) {
+    case TaskType::kJavascriptTimerDelayedLowNesting:
+    case TaskType::kJavascriptTimerDelayedHighNesting:
+    case TaskType::kIdleTask:
+      return FrameQueue::kThrottleable;
+    case TaskType::kInternalLoading:
+    case TaskType::kNetworking:
+    case TaskType::kNetworkingUnfreezable:
+      return FrameQueue::kLoading;
+    case TaskType::kNetworkingUnfreezableRenderBlockingLoading:
+      return FrameQueue::kRenderBlockingLoading;
+    case TaskType::kNetworkingControl:
+      return FrameQueue::kLoadingControl;
+    case TaskType::kLowPriorityScriptExecution:
+      return FrameQueue::kLowPriorityScriptExecution;
+    case TaskType::kJavascriptTimerImmediate:
+    case TaskType::kDOMManipulation:
+    case TaskType::kHistoryTraversal:
+    case TaskType::kEmbed:
+    case TaskType::kCanvasBlobSerialization:
+    case TaskType::kRemoteEvent:
+    case TaskType::kWebSocket:
+    case TaskType::kMicrotask:
+    case TaskType::kUnshippedPortMessage:
+    case TaskType::kPresentation:
+    case TaskType::kSensor:
+    case TaskType::kPerformanceTimeline:
+    case TaskType::kWebGL:
+    case TaskType::kWebGPU:
+    case TaskType::kInternalDefault:
+    case TaskType::kMiscPlatformAPI:
+    case TaskType::kFontLoading:
+    case TaskType::kApplicationLifeCycle:
+    case TaskType::kBackgroundFetch:
+    case TaskType::kPermission:
+    case TaskType::kStorage:
+    case TaskType::kClipboard:
+    case TaskType::kMachineLearning:
+    case TaskType::kFileReading:
+      return FrameQueue::kDeferrable;
+    case TaskType::kPostedMessage:
+    case TaskType::kUserInteraction:
+    case TaskType::kMediaElementEvent:
+    case TaskType::kInternalWebCrypto:
+    case TaskType::kDatabaseAccess:
+      return FrameQueue::kPausable;
+    case TaskType::kInternalContinueScriptLoading:
+      return FrameQueue::kInternalScriptContinuation;
+    case TaskType::kInternalNavigationAssociated:
+      return FrameQueue::kFreezable;
+    case TaskType::kInternalTest:
+    case TaskType::kWebLocks:
+      return FrameQueue::kUnpausable;
+    case TaskType::kInternalInspector:
+      return FrameQueue::kInspector;
+  }
+}
+
+// FrameSchedulerImpl::ComputePriority() for each queue of a page that is
+// visible.
+TaskPriority PriorityOf(PageScheduler::FrameQueue queue) {
+  using FrameQueue = PageScheduler::FrameQueue;
+  switch (queue) {
+    case FrameQueue::kInternalScriptContinuation:
+      return TaskPriority::kVeryHighPriority;
+    case FrameQueue::kRenderBlockingLoading:
+      return TaskPriority::kExtremelyHighPriority;
+    case FrameQueue::kLoadingControl:
+      return TaskPriority::kHighPriority;
+    case FrameQueue::kLowPriorityScriptExecution:
+      return TaskPriority::kLowPriority;
+    case FrameQueue::kLoading:
+    case FrameQueue::kThrottleable:
+    case FrameQueue::kDeferrable:
+    case FrameQueue::kPausable:
+    case FrameQueue::kUnpausable:
+    case FrameQueue::kFreezable:
+    case FrameQueue::kInspector:
+      return TaskPriority::kNormalPriority;
+  }
+}
+
+// MainThreadTaskQueue::NameForQueueType() for the queue type of each.
+QueueName NameOf(PageScheduler::FrameQueue queue) {
+  using FrameQueue = PageScheduler::FrameQueue;
+  switch (queue) {
+    case FrameQueue::kLoading:
+    case FrameQueue::kRenderBlockingLoading:
+    case FrameQueue::kLowPriorityScriptExecution:
+      return QueueName::FRAME_LOADING_TQ;
+    case FrameQueue::kLoadingControl:
+      return QueueName::FRAME_LOADING_CONTROL_TQ;
+    case FrameQueue::kThrottleable:
+      return QueueName::FRAME_THROTTLEABLE_TQ;
+    case FrameQueue::kDeferrable:
+      return QueueName::FRAME_DEFERRABLE_TQ;
+    case FrameQueue::kPausable:
+    case FrameQueue::kInternalScriptContinuation:
+    case FrameQueue::kFreezable:
+      return QueueName::FRAME_PAUSABLE_TQ;
+    case FrameQueue::kUnpausable:
+    case FrameQueue::kInspector:
+      return QueueName::FRAME_UNPAUSABLE_TQ;
+  }
+}
+
+// FrameSchedulerImpl::ComputePriority() for scheduler.postTask()'s queues.
 TaskPriority PriorityOf(EventLoop::Queue queue) {
   switch (queue) {
-    case EventLoop::Queue::kDefault:
     case EventLoop::Queue::kUserVisible:
       return TaskPriority::kNormalPriority;
     case EventLoop::Queue::kUserBlocking:
@@ -49,11 +158,6 @@ TaskPriority PriorityOf(EventLoop::Queue queue) {
   }
 }
 
-QueueName NameOf(EventLoop::Queue queue) {
-  return queue == EventLoop::Queue::kDefault ? QueueName::DEFAULT_TQ
-                                             : QueueName::WEB_SCHEDULING_TQ;
-}
-
 }  // namespace
 
 PageScheduler::PageScheduler() {
@@ -66,20 +170,33 @@ PageScheduler::PageScheduler() {
           .SetIsMainThread(true)
           .SetPrioritySettings(std::move(priorities))
           .Build());
-  for (size_t i = 0; i < kQueueCount; ++i) {
-    const Queue queue = static_cast<Queue>(i);
-    queues_[i] = sequence_manager_->CreateTaskQueue(
-        base::sequence_manager::TaskQueue::Spec(NameOf(queue)));
-    queues_[i]->SetQueuePriority(PriorityOf(queue));
+  const auto make_queue = [this](QueueName name, TaskPriority priority) {
+    TaskQueue::Handle queue =
+        sequence_manager_->CreateTaskQueue(TaskQueue::Spec(name));
+    queue->SetQueuePriority(priority);
+    return queue;
+  };
+  // MainThreadSchedulerImpl::ComputePriority(): the default queue, V8's and
+  // the compositor's run at the normal priority, the last while rendering is
+  // not starved.
+  default_queue_ =
+      make_queue(QueueName::DEFAULT_TQ, TaskPriority::kNormalPriority);
+  v8_queue_ = make_queue(QueueName::V8_TQ, TaskPriority::kNormalPriority);
+  compositor_queue_ =
+      make_queue(QueueName::COMPOSITOR_TQ, TaskPriority::kNormalPriority);
+  for (size_t i = 0; i < kFrameQueueCount; ++i) {
+    const FrameQueue queue = static_cast<FrameQueue>(i);
+    frame_queues_[i] = make_queue(NameOf(queue), PriorityOf(queue));
   }
-  control_queue_ = sequence_manager_->CreateTaskQueue(
-      TaskQueue::Spec(QueueName::CONTROL_TQ));
-  control_queue_->SetQueuePriority(TaskPriority::kControlPriority);
+  for (size_t i = 0; i < kWebSchedulingQueueCount; ++i) {
+    web_scheduling_queues_[i] = make_queue(QueueName::WEB_SCHEDULING_TQ,
+                                           PriorityOf(static_cast<Queue>(i)));
+  }
+  control_queue_ =
+      make_queue(QueueName::CONTROL_TQ, TaskPriority::kControlPriority);
   idle_queue_ =
-      sequence_manager_->CreateTaskQueue(TaskQueue::Spec(QueueName::IDLE_TQ));
-  idle_queue_->SetQueuePriority(TaskPriority::kBestEffortPriority);
-  sequence_manager_->SetDefaultTaskQueue(
-      queues_[static_cast<size_t>(Queue::kDefault)].get());
+      make_queue(QueueName::IDLE_TQ, TaskPriority::kBestEffortPriority);
+  sequence_manager_->SetDefaultTaskQueue(default_queue_.get());
   sequence_manager_->BindToMessagePump(
       base::MessagePump::Create(base::MessagePumpType::DEFAULT));
   idle_helper_ = std::make_unique<IdleHelper>(sequence_manager_.get(),
@@ -99,12 +216,27 @@ PageScheduler::~PageScheduler() {
 
 const scoped_refptr<base::SingleThreadTaskRunner>& PageScheduler::task_runner()
     const {
-  return queues_[static_cast<size_t>(Queue::kDefault)]->task_runner();
+  return default_queue_->task_runner();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::V8TaskRunner()
+    const {
+  return v8_queue_->task_runner();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner>
+PageScheduler::CompositorTaskRunner() const {
+  return compositor_queue_->task_runner();
+}
+
+scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::TaskRunner(
+    TaskType type) {
+  return frame_queues_[static_cast<size_t>(QueueOf(type))]->task_runner();
 }
 
 scoped_refptr<base::SingleThreadTaskRunner> PageScheduler::TaskRunner(
     Queue queue) {
-  return queues_[static_cast<size_t>(queue)]->task_runner();
+  return web_scheduling_queues_[static_cast<size_t>(queue)]->task_runner();
 }
 
 void PageScheduler::PostIdleTask(const base::Location& from_here,

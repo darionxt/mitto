@@ -121,6 +121,12 @@ class Element : public Node {
   bool HasHTMLTagName(std::u16string_view name) const {
     return IsHTMLElement() && local_name_ == name;
   }
+  // Called once the attribute `name` has changed from `old_value` to
+  // `new_value`, null for none, through the DOM and the parser alike, as
+  // Blink's Element::AttributeChanged() is.
+  virtual void AttributeChanged(std::u16string_view name,
+                                const std::u16string* old_value,
+                                const std::u16string* new_value) {}
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;

@@ -37,6 +37,7 @@ class PageFetcher::Request final : public PageRequests::Client,
     head.url = response.url;
     head.redirected = response.redirected;
     head.cors = response.cors;
+    head.opaque = response.opaque;
     head.headers = response.headers;
     client_->OnResponseStarted(head);
   }
@@ -87,13 +88,16 @@ void PageFetcher::Fetch(FetchRequestData data,
     return;
   }
   PageRequest page_request;
-  page_request.kind = PageRequestKind::kFetch;
+  page_request.kind = data.destination == FetchDestination::kScript
+                          ? PageRequestKind::kScript
+                          : PageRequestKind::kFetch;
   page_request.url = std::move(data.url);
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
   page_request.same_origin = data.same_origin;
-  started.set_number(requests_->Start(std::move(page_request), started));
+  started.set_number(
+      requests_->Start(std::move(page_request), started, data.render_blocking));
   open_.emplace(started.number(), std::move(request));
 }
 

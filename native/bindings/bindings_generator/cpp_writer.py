@@ -76,6 +76,8 @@ __all__ = ["WRITTEN", "ImplementedInterface", "write_bindings"]
 #   neither postMessage() nor structuredClone().
 # - V8EnableIndexOf and V8EnableIterableToList: interceptors that let V8 take its fast paths through an indexed
 #   collection, which give what V8's ordinary steps give over the indexed properties.
+# - URL: a reflected attribute that resolves its content attribute as a URL, which the class does itself, against its
+#   document's base URL, so the bindings only call it.
 # The others are followed by the install plan, by the context's install function, or here. A Known Gap needs none of
 # them: the install plan and its condition decide where it goes, and its callback only throws.
 WRITTEN = frozenset(
@@ -112,6 +114,7 @@ WRITTEN = frozenset(
         "SecureContext",
         "Serializable",
         "Transferable",
+        "URL",
         "Unscopable",
         "V8EnableIndexOf",
         "V8EnableIterableToList",

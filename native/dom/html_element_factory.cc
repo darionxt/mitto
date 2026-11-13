@@ -4,6 +4,7 @@
 #include <array>
 #include <string_view>
 
+#include "mitto/dom/html_base_element.h"
 #include "mitto/dom/html_body_element.h"
 #include "mitto/dom/html_br_element.h"
 #include "mitto/dom/html_div_element.h"
@@ -167,6 +168,9 @@ HTMLElement* CreateHTMLElement(Document& document,
   }
   if (name == u"link") {
     return HTMLLinkElement::Create(document);
+  }
+  if (name == u"base") {
+    return HTMLBaseElement::Create(document);
   }
   if (name == u"style") {
     return HTMLStyleElement::Create(document);

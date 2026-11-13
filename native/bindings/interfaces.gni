@@ -211,6 +211,7 @@ mitto_bindings_interfaces = [
       "prepend",
       "querySelector",
       "replaceChildren",
+      "currentScript",
       "get domain",
       "designMode",
       "scrollingElement",
@@ -361,6 +362,11 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HTMLBaseElement"
+    file = "html_base_element"
+    implemented = [ "href" ]
+  },
+  {
     name = "HTMLBodyElement"
     file = "html_body_element"
     implemented = []
@@ -435,7 +441,13 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLScriptElement"
     file = "html_script_element"
-    implemented = [ "text" ]
+    implemented = [
+      "src",
+      "async",
+      "text",
+      "supports",
+      "textContent",
+    ]
   },
   {
     name = "HTMLSpanElement"

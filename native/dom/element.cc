@@ -1,6 +1,7 @@
 #include "mitto/dom/element.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -121,11 +122,13 @@ void Element::SetAttributeWithoutValidation(std::u16string_view name,
                                             const std::u16string& value) {
   for (Attribute& attribute : attributes_) {
     if (attribute.name == name) {
-      attribute.value = value;
+      const std::u16string old_value = std::exchange(attribute.value, value);
+      AttributeChanged(name, &old_value, &value);
       return;
     }
   }
   attributes_.push_back({std::u16string(name), value});
+  AttributeChanged(name, nullptr, &value);
 }
 
 void Element::SetAttribute(const std::u16string& name,
@@ -145,7 +148,9 @@ void Element::RemoveAttribute(const std::u16string& name) {
                                     return attribute.name == lookup;
                                   });
   if (found != attributes_.end()) {
+    const Attribute removed = std::move(*found);
     attributes_.erase(found);
+    AttributeChanged(removed.name, &removed.value, nullptr);
   }
 }
 
@@ -245,7 +250,9 @@ void Element::SetReflectedBooleanAttribute(std::u16string_view name,
       attributes_.begin(), attributes_.end(),
       [name](const Attribute& attribute) { return attribute.name == name; });
   if (found != attributes_.end()) {
+    const Attribute removed = std::move(*found);
     attributes_.erase(found);
+    AttributeChanged(removed.name, &removed.value, nullptr);
   }
 }
 

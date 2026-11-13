@@ -19,6 +19,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/task/task_observer.h"
 #include "base/time/time.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/page_reporter.h"
 #include "mitto/page_messages.h"
@@ -43,6 +44,7 @@ class DocumentLoader;
 class PageFetcher;
 class PageRequests;
 class SessionCookieJar;
+class WindowTasks;
 
 // Fills `buffer` from the system's random source, which needs no file, for
 // V8's random numbers, as Chrome's renderers do.
@@ -95,8 +97,8 @@ class ScriptRunner final : public base::TaskObserver {
   // Runs `task` in the current context. What Blink does after each task
   // follows once the task that runs this ends.
   void RunTask(base::OnceClosure task);
-  // Runs `task` as RunTask() does, from a later task.
-  void PostTask(base::OnceClosure task);
+  // Runs `task` as RunTask() does, from a later task of `type`.
+  void PostTask(TaskType type, base::OnceClosure task);
   // Makes a new context, whose window has an empty document at `url`, in
   // place of the current one, and returns the document. Calls that wait for a
   // promise of the old context fail, as DevTools' do when a page navigates,
@@ -111,11 +113,6 @@ class ScriptRunner final : public base::TaskObserver {
   DocumentLoadTiming& document_load_timing() {
     return *chrome_object_data_.back()->load_timing;
   }
-  // Runs a classic script from `url` in the current context, inside a task,
-  // reports what it throws as an uncaught error, and then runs the microtasks
-  // it queued, as the HTML Standard cleans up after running a script.
-  void RunClassicScript(std::u16string_view source, const GURL& url);
-
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
                        bool was_blocked_or_low_priority) override;
@@ -177,6 +174,7 @@ class ScriptRunner final : public base::TaskObserver {
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;
   std::unique_ptr<PageFetcher> fetcher_;
+  std::unique_ptr<WindowTasks> window_tasks_;
   // What window.chrome of each window that the Page has made reads, the
   // current one's last. They live as long as the Page, for a callback of a
   // window that has gone.

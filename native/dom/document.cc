@@ -1,5 +1,7 @@
 #include "mitto/dom/document.h"
 
+#include "base/functional/bind.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -11,6 +13,7 @@
 #include "mitto/bindings/v8_document.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
+#include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
@@ -20,10 +23,12 @@
 #include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_script_element.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_tasks.h"
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -125,6 +130,8 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(applets_);
   visitor->Trace(all_);
   visitor->Trace(feature_policy_);
+  visitor->Trace(script_runner_);
+  current_script_stack_.Trace(visitor);
 }
 
 mitto::Location* Document::Location() const {
@@ -467,6 +474,122 @@ uint16_t Document::GetNodeType() const {
 
 std::u16string Document::NodeName() const {
   return u"#document";
+}
+
+void Document::SetUrl(std::u16string url) {
+  url_ = std::move(url);
+  UpdateBaseURL();
+}
+
+// Upstream: third_party/blink/renderer/core/dom/document.cc
+const GURL& Document::BaseURL() const {
+  static const base::NoDestructor<GURL> kBlank("about:blank");
+  return base_url_.is_empty() ? *kBlank : base_url_;
+}
+
+GURL Document::CompleteURL(std::u16string_view url) const {
+  // A document with no base URL resolves only an absolute URL.
+  return base_url_.is_valid() ? base_url_.Resolve(url) : GURL(url);
+}
+
+void Document::ProcessBaseElement() {
+  // The first href of a base element of the HTML namespace, in tree order.
+  const std::u16string* href = nullptr;
+  for (Node* node = FirstChild(); node && !href;
+       node = node->NextInTree(this)) {
+    if (node->IsElementNode()) {
+      const auto& element = static_cast<const Element&>(*node);
+      if (element.HasHTMLTagName(u"base")) {
+        href = element.FindAttribute(u"href");
+      }
+    }
+  }
+  GURL base_element_url;
+  if (href) {
+    const std::u16string_view stripped =
+        base::TrimString(*href, u" \t\n\f\r", base::TRIM_ALL);
+    if (!stripped.empty()) {
+      base_element_url = FallbackBaseURL().Resolve(stripped);
+      // A URL that is not valid keeps what it was given, as a KURL does.
+      if (!base_element_url.is_valid()) {
+        base_element_url = GURL(stripped);
+      }
+    }
+  }
+  if (!base_element_url.is_empty() &&
+      (base_element_url.SchemeIs("data") ||
+       base_element_url.SchemeIs("javascript")) &&
+      window_) {
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        base::StrCat({"'", base_element_url.scheme(),
+                      "' URLs may not be used as base URLs for a document."}));
+  }
+  if (base_element_url == base_element_url_) {
+    return;
+  }
+  // The HTML Standard's frozen base URL: the fallback base URL for a URL of
+  // data or javascript, or for a document whose scripts cannot run.
+  if (!base_element_url.SchemeIs("data") &&
+      !base_element_url.SchemeIs("javascript") && window_) {
+    base_element_url_ = base_element_url;
+  } else {
+    base_element_url_ = FallbackBaseURL();
+  }
+  UpdateBaseURL();
+}
+
+void Document::UpdateBaseURL() {
+  base_url_ =
+      !base_element_url_.is_empty() ? base_element_url_ : FallbackBaseURL();
+  if (!base_url_.is_valid()) {
+    base_url_ = GURL();
+  }
+}
+
+DocumentScriptRunner& Document::GetScriptRunner() {
+  if (!script_runner_) {
+    script_runner_ =
+        bindings::MakeGarbageCollected<DocumentScriptRunner>(*this);
+  }
+  return *script_runner_;
+}
+
+HTMLScriptElement* Document::CurrentScriptForBinding() const {
+  return current_script_stack_.empty() ? nullptr : current_script_stack_.back();
+}
+
+void Document::PushCurrentScript(HTMLScriptElement* element) {
+  current_script_stack_.push_back(element);
+}
+
+void Document::PopCurrentScript(HTMLScriptElement* element) {
+  CHECK_EQ(current_script_stack_.back(), element);
+  current_script_stack_.pop_back();
+}
+
+void Document::DecrementLoadEventDelayCount() {
+  CHECK_GT(load_event_delay_count_, 0);
+  if (--load_event_delay_count_ > 0 || load_event_check_pending_) {
+    return;
+  }
+  // CheckLoadEventSoon(): a timer of no delay on the DOM manipulation task
+  // source.
+  WindowTasks* const tasks = window_ ? window_->GetTasks() : nullptr;
+  if (!tasks || check_completed_.is_null()) {
+    return;
+  }
+  load_event_check_pending_ = true;
+  tasks->PostTask(TaskType::kDOMManipulation,
+                  base::BindOnce(
+                      [](const cppgc::WeakPersistent<Document>& document) {
+                        if (!document) {
+                          return;
+                        }
+                        document->load_event_check_pending_ = false;
+                        document->check_completed_.Run();
+                      },
+                      cppgc::WeakPersistent<Document>(this)));
 }
 
 }  // namespace mitto
