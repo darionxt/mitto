@@ -245,6 +245,15 @@
     outcome(() => document.createElementNS(html, "div", { is: "x-y" }).matches(":defined")),
     outcome(() => document.createElementNS("http://www.w3.org/2000/svg", "g", { is: "x-y" }).matches(":defined")),
     outcome(() => document.createElement("x-y").matches(":defined")),
+    // Only a valid custom element name leaves an element undefined.
+    ...["x-:y", "x-y.z", "x-\u00b7", "x-\u{1f600}", "font-face", "x-\u037e", "x-\u2000", "x-$"].map((name) =>
+      outcome(() => {
+        const element = document.createElement(name);
+        return [name, element.matches(":defined"), Object.prototype.toString.call(element)];
+      }),
+    ),
+    outcome(() => document.createElementNS(html, "x-Y").matches(":defined")),
+    outcome(() => parsed("<x-:y></x-:y>").matches(":defined")),
     outcome(() => {
       const element = document.createElement("div", { is: "x-y" });
       return [element.getAttribute("is"), element.outerHTML];

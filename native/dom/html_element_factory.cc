@@ -4,6 +4,7 @@
 #include <array>
 #include <string_view>
 
+#include "base/strings/string_util.h"
 #include "mitto/dom/html_body_element.h"
 #include "mitto/dom/html_br_element.h"
 #include "mitto/dom/html_div_element.h"
@@ -24,6 +25,7 @@
 #include "mitto/dom/html_title_element.h"
 #include "mitto/dom/html_ulist_element.h"
 #include "mitto/dom/html_unknown_element.h"
+#include "mitto/dom/qualified_name.h"
 
 // Upstream: third_party/blink/renderer/core/html/html_tag_names.json5
 // Upstream: third_party/blink/renderer/core/html/custom/custom_element.cc
@@ -111,40 +113,22 @@ constexpr auto kReservedCustomElementNames = std::to_array<std::u16string_view>(
     {u"annotation-xml", u"color-profile", u"font-face", u"font-face-format",
      u"font-face-name", u"font-face-src", u"font-face-uri", u"missing-glyph"});
 
-// The HTML Standard's PCENChar production, beyond '-', '.', digits, '_' and
-// lower-case ASCII letters, which the caller checks.
-bool IsPotentialCustomElementNameCharacter(char16_t c) {
-  return c == 0xB7 || (c >= 0xC0 && c <= 0xD6) || (c >= 0xD8 && c <= 0xF6) ||
-         (c >= 0xF8 && c <= 0x37D) || (c >= 0x37F && c <= 0x1FFF) ||
-         (c >= 0x200C && c <= 0x200D) || (c >= 0x203F && c <= 0x2040) ||
-         (c >= 0x2070 && c <= 0x218F) || (c >= 0x2C00 && c <= 0x2FEF) ||
-         (c >= 0x3001 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) ||
-         (c >= 0xFDF0 && c <= 0xFFFD) ||
-         // Surrogates, which make the code points from U+10000 on.
-         (c >= 0xD800 && c <= 0xDFFF);
-}
+}  // namespace
 
-// Blink's CustomElement::IsValidName().
 bool IsValidCustomElementName(std::u16string_view name) {
-  if (name.empty() || name[0] < 'a' || name[0] > 'z') {
+  // A hyphen after a lower-case ASCII letter, in a valid element local name
+  // with no upper-case ASCII letter, which no element of the HTML Standard,
+  // SVG or MathML has.
+  if (name.size() < 2 || name.find(u'-', 1) == std::u16string_view::npos ||
+      !base::IsAsciiLower(name[0]) || !IsValidElementLocalName(name) ||
+      std::any_of(name.begin(), name.end(),
+                  [](char16_t c) { return base::IsAsciiUpper(c); })) {
     return false;
   }
-  bool has_hyphen = false;
-  for (const char16_t c : name) {
-    if (c == '-') {
-      has_hyphen = true;
-    } else if (!(c == '.' || c == '_' || (c >= '0' && c <= '9') ||
-                 (c >= 'a' && c <= 'z') ||
-                 IsPotentialCustomElementNameCharacter(c))) {
-      return false;
-    }
-  }
-  return has_hyphen && std::find(kReservedCustomElementNames.begin(),
-                                 kReservedCustomElementNames.end(),
-                                 name) == kReservedCustomElementNames.end();
+  return std::find(kReservedCustomElementNames.begin(),
+                   kReservedCustomElementNames.end(),
+                   name) == kReservedCustomElementNames.end();
 }
-
-}  // namespace
 
 bool IsKnownHTMLElementName(const std::u16string& local_name) {
   return std::binary_search(kKnownNames.begin(), kKnownNames.end(),

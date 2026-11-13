@@ -2606,6 +2606,48 @@
    true,
    false,
    [
+    "x-:y",
+    false,
+    "[object HTMLElement]"
+   ],
+   [
+    "x-y.z",
+    false,
+    "[object HTMLElement]"
+   ],
+   [
+    "x-·",
+    false,
+    "[object HTMLElement]"
+   ],
+   [
+    "x-😀",
+    false,
+    "[object HTMLElement]"
+   ],
+   [
+    "font-face",
+    true,
+    "[object HTMLUnknownElement]"
+   ],
+   [
+    "x-;",
+    false,
+    "[object HTMLElement]"
+   ],
+   [
+    "x- ",
+    false,
+    "[object HTMLElement]"
+   ],
+   [
+    "x-$",
+    false,
+    "[object HTMLElement]"
+   ],
+   true,
+   false,
+   [
     null,
     "<div is=\"x-y\"></div>"
    ]

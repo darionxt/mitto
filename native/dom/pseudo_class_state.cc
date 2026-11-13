@@ -18,6 +18,7 @@
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/qualified_name.h"
@@ -1254,23 +1255,6 @@ std::optional<std::u16string> DocumentContentLanguage(
     }
   }
   return language;
-}
-
-bool IsValidCustomElementName(std::u16string_view name) {
-  if (name.empty() || !base::IsAsciiLower(name.front()) ||
-      name.find('-') == std::u16string_view::npos) {
-    return false;
-  }
-  for (const char16_t c : name) {
-    if (base::IsAsciiUpper(c) || c == 0 || IsHTMLSpace(c) || c == '/' ||
-        c == '>') {
-      return false;
-    }
-  }
-  return !IsOneOf(name,
-                  {u"annotation-xml", u"color-profile", u"font-face",
-                   u"font-face-src", u"font-face-uri", u"font-face-format",
-                   u"font-face-name", u"missing-glyph"});
 }
 
 }  // namespace
