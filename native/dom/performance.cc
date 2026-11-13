@@ -495,28 +495,28 @@ void Performance::AddResourceTiming(ResourceTimingInfo info,
     resource_timing_buffer_full_event_pending_ = true;
     v8::Isolate* const isolate = v8::Isolate::GetCurrent();
     // WindowPerformance's timers run on the performance timeline task source.
-    EventLoop::Get()
-        ->TaskRunner(TaskType::kPerformanceTimeline)
-        ->PostTask(
-            FROM_HERE,
-            base::BindOnce(
-                [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
-                   cppgc::Persistent<Performance> performance) {
-                  const v8::HandleScope handle_scope(isolate);
-                  const v8::Local<v8::Context> context =
-                      context_handle.Get(isolate);
-                  const v8::Context::Scope context_scope(context);
-                  // A window that has gone fires nothing.
-                  const Window* const window = bindings::V8Window::ToWrappable(
-                      isolate, context->Global());
-                  if (!window || !window->HasContext()) {
-                    return;
-                  }
-                  performance->FireResourceTimingBufferFull();
-                },
-                base::Unretained(isolate),
-                v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
-                cppgc::Persistent<Performance>(this)));
+    const scoped_refptr<base::SingleThreadTaskRunner> task_runner =
+        EventLoop::Get()->TaskRunner(TaskType::kPerformanceTimeline);
+    task_runner->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](v8::Isolate* isolate, v8::Global<v8::Context> context_handle,
+               cppgc::Persistent<Performance> performance) {
+              const v8::HandleScope handle_scope(isolate);
+              const v8::Local<v8::Context> context =
+                  context_handle.Get(isolate);
+              const v8::Context::Scope context_scope(context);
+              // A window that has gone fires nothing.
+              const Window* const window =
+                  bindings::V8Window::ToWrappable(isolate, context->Global());
+              if (!window || !window->HasContext()) {
+                return;
+              }
+              performance->FireResourceTimingBufferFull();
+            },
+            base::Unretained(isolate),
+            v8::Global<v8::Context>(isolate, isolate->GetCurrentContext()),
+            cppgc::Persistent<Performance>(this)));
   }
   resource_timing_secondary_buffer_.push_back(entry);
 }
