@@ -285,6 +285,8 @@ source_set("dom") {
     "quota_exceeded_error.h",
     "request.cc",
     "request.h",
+    "resolved_url.cc",
+    "resolved_url.h",
     "response.cc",
     "response.h",
     "scheduler.cc",
