@@ -1,7 +1,7 @@
 // The HTML Standard's Window, a Page's global object, with `window`, `self`,
-// `document`, `performance`, the timers, queueMicrotask() and fetch(),
-// `navigator` and `screen`, and the window's place and size as the Session's
-// Machine has them; its other members are Known Gaps.
+// `document`, `performance`, the timers, queueMicrotask(), fetch(), atob() and
+// btoa(), `navigator`, `screen` and `crypto`, and the window's place and size
+// as the Session's Machine has them; its other members are Known Gaps.
 //
 // A context's global object and its global proxy both wrap the Window, as in
 // Blink, so that a call whose receiver is either finds it. The window's
@@ -10,6 +10,7 @@
 // Upstream: third_party/blink/renderer/core/frame/dom_window.h
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.h
 // Upstream: third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+// Upstream: third_party/blink/renderer/modules/crypto/global_crypto.cc
 
 #ifndef MITTO_DOM_WINDOW_H_
 #define MITTO_DOM_WINDOW_H_
@@ -37,6 +38,7 @@ namespace mitto {
 
 class BarProp;
 class CrashReportContext;
+class Crypto;
 class CustomElementRegistry;
 class DOMTimerCoordinator;
 class Document;
@@ -87,6 +89,10 @@ class Window final : public WindowProperties {
                       bindings::ExceptionState& exception_state);
   void ClearInterval(int32_t handle);
   void QueueMicrotask(v8::Local<v8::Function> callback);
+  std::u16string Btoa(const std::u16string& data,
+                      bindings::ExceptionState& exception_state);
+  std::u16string Atob(const std::u16string& data,
+                      bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
                                const bindings::RequestInit& init,
                                bindings::ExceptionState& exception_state);
@@ -130,6 +136,7 @@ class Window final : public WindowProperties {
   mitto::StyleMedia* StyleMedia();
   mitto::Navigation* Navigation();
   CustomElementRegistry* CustomElements();
+  mitto::Crypto* Crypto();
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -199,6 +206,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::StyleMedia> style_media_;
   cppgc::Member<mitto::Navigation> navigation_;
   cppgc::Member<CustomElementRegistry> custom_elements_;
+  cppgc::Member<mitto::Crypto> crypto_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
   PageStart start_;

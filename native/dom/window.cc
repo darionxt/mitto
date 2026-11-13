@@ -1,9 +1,14 @@
 #include "mitto/dom/window.h"
 
+#include <stdint.h>
+
 #include <memory>
+#include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
 
+#include "base/base64.h"
 #include "base/check.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/per_isolate_data.h"
@@ -11,6 +16,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/bar_prop.h"
 #include "mitto/dom/crash_report_context.h"
+#include "mitto/dom/crypto.h"
 #include "mitto/dom/custom_element_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
@@ -41,6 +47,23 @@
 #include "v8/include/v8-promise.h"
 
 namespace mitto {
+
+namespace {
+
+// The string's code units as bytes, or nullopt if one is beyond Latin-1.
+std::optional<std::string> ToLatin1(const std::u16string& text) {
+  std::string bytes;
+  bytes.reserve(text.size());
+  for (const char16_t c : text) {
+    if (c > 0xFF) {
+      return std::nullopt;
+    }
+    bytes.push_back(static_cast<char>(c));
+  }
+  return bytes;
+}
+
+}  // namespace
 
 // static
 Window* Window::Create() {
@@ -80,6 +103,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(style_media_);
   visitor->Trace(navigation_);
   visitor->Trace(custom_elements_);
+  visitor->Trace(crypto_);
   visitor->Trace(document_load_timing_);
 }
 
@@ -170,6 +194,13 @@ mitto::Navigation* Window::Navigation() {
     navigation_ = Navigation::Create(this);
   }
   return navigation_.Get();
+}
+
+mitto::Crypto* Window::Crypto() {
+  if (!crypto_) {
+    crypto_ = mitto::Crypto::Create();
+  }
+  return crypto_.Get();
 }
 
 CustomElementRegistry* Window::CustomElements() {
@@ -280,6 +311,51 @@ size_t Window::TimerCount() const {
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
 void Window::QueueMicrotask(v8::Local<v8::Function> callback) {
   v8::Isolate::GetCurrent()->EnqueueMicrotask(callback);
+}
+
+// Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
+// Upstream: third_party/blink/renderer/platform/wtf/text/base64.cc
+std::u16string Window::Btoa(const std::u16string& data,
+                            bindings::ExceptionState& exception_state) {
+  const std::optional<std::string> bytes = ToLatin1(data);
+  if (!bytes) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        "The string to be encoded contains characters outside of the Latin1 "
+        "range.");
+    return {};
+  }
+  return base::ASCIIToUTF16(base::Base64Encode(*bytes));
+}
+
+// The Infra Standard's forgiving-base64 decode, as Blink's Base64Decode()
+// runs it: modp_b64's forgiving policy, and again without ASCII whitespace if
+// that fails, which base::Base64Decode() does the same way.
+std::u16string Window::Atob(const std::u16string& data,
+                            bindings::ExceptionState& exception_state) {
+  const std::optional<std::string> bytes = ToLatin1(data);
+  if (!bytes) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        "The string to be decoded contains characters outside of the Latin1 "
+        "range.");
+    return {};
+  }
+  std::string decoded;
+  if (!base::Base64Decode(*bytes, &decoded,
+                          base::Base64DecodePolicy::kForgiving)) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        "The string to be decoded is not correctly encoded.");
+    return {};
+  }
+  // Each byte is a code unit, as Blink's String of the bytes is Latin-1.
+  std::u16string text;
+  text.reserve(decoded.size());
+  for (const char byte : decoded) {
+    text.push_back(static_cast<uint8_t>(byte));
+  }
+  return text;
 }
 
 // Upstream: third_party/blink/renderer/core/fetch/global_fetch.cc

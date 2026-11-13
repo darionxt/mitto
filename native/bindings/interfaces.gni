@@ -65,6 +65,14 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "Crypto"
+    file = "crypto"
+
+    # SubtleCrypto's members are refused Known Gaps until the Runtime has
+    # WebCrypto (roadmap, M10).
+    missing = [ "subtle" ]
+  },
+  {
     name = "CustomElementRegistry"
     file = "custom_element_registry"
     made_by_known_gaps = true
@@ -670,6 +678,10 @@ mitto_bindings_interfaces = [
     implemented = [ "supportedContentEncodings" ]
   },
   {
+    name = "QuotaExceededError"
+    file = "quota_exceeded_error"
+  },
+  {
     name = "Request"
     file = "request"
     implemented = [
@@ -811,6 +823,9 @@ mitto_bindings_interfaces = [
       "styleMedia",
       "navigation",
       "customElements",
+      "crypto",
+      "atob",
+      "btoa",
     ]
   },
   {

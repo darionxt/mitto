@@ -47,6 +47,7 @@
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
@@ -541,6 +542,11 @@ int main(int argc, char** argv) {
   const base::AtExitManager at_exit_manager;
   // What //base reads of it is not on this command line.
   base::CommandLine::Init(0, nullptr);
+  // Each of Chrome's processes sets its base::Features, which also makes
+  // base::RandBytes() take BoringSSL's bytes, as crypto.getRandomValues()
+  // does, where macOS's getentropy() gives at most 256 at a time. A Page has
+  // each one's default.
+  base::FeatureList::SetInstance(std::make_unique<base::FeatureList>());
 
   // ICU reads its data from memory, as in Chrome's renderers, which map the
   // file that the browser gives them.

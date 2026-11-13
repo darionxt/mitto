@@ -58,6 +58,8 @@ DOMException::DOMException(const std::u16string& message,
                            const std::u16string& name)
     : message_(message), name_(name) {}
 
+DOMException::~DOMException() = default;
+
 // static
 bindings::PerIsolateData::DOMExceptionHooks DOMException::BindingsHooks() {
   bindings::PerIsolateData::DOMExceptionHooks hooks;
