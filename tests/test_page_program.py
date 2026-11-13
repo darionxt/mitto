@@ -132,7 +132,7 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 10
+_PROTOCOL_VERSION = 11
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -630,6 +630,10 @@ _RESPONSE_STARTED = 13
 _RESPONSE_BODY = 14
 _RESPONSE_ENDED = 15
 _COOKIES = 16
+_COOKIE_STORE_GET = 19
+_COOKIE_STORE_COOKIES = 22
+_COOKIE_STORE_STORED = 23
+_COOKIE_STORE_CHANGE = 24
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
 _DOCUMENT_URL = "http://www.example.test/page"
@@ -1114,6 +1118,36 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         pytest.param(_RESPONSE_ENDED, _ended(0), "the end of request 0, which is not in progress", id="end"),
         pytest.param(
             _COOKIES, struct.pack("<Q", 1) + b"a=b", "cookies for question 1, which no script waits for", id="cookies"
+        ),
+        pytest.param(
+            _COOKIE_STORE_COOKIES,
+            struct.pack("<QI", 3, 0),
+            "cookies for CookieStore question 3, which no script waits for",
+            id="cookie-store-cookies",
+        ),
+        pytest.param(
+            _COOKIE_STORE_STORED,
+            struct.pack("<QB", 4, 1),
+            "an answer for CookieStore question 4, which no script waits for",
+            id="cookie-store-stored",
+        ),
+        pytest.param(
+            _COOKIE_STORE_COOKIES,
+            struct.pack("<QI", 3, 1),
+            "cookies of a CookieStore that are not valid",
+            id="cookie-store-missing-cookie",
+        ),
+        pytest.param(
+            _COOKIE_STORE_STORED, struct.pack("<QB", 4, 2), "a CookieStore answer of 9 bytes", id="cookie-store-byte-2"
+        ),
+        pytest.param(
+            _COOKIE_STORE_CHANGE,
+            b"\x01\x08\x00" + bytes(8) + bytes(16),
+            "a change of cookies that is not valid",
+            id="cookie-store-unknown-flag",
+        ),
+        pytest.param(
+            _COOKIE_STORE_GET, struct.pack("<QB", 1, 1), "message type 19 only goes to a Session", id="cookie-store-get"
         ),
         pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
         pytest.param(_RESPONSE_ENDED, _ended(0, 1), "the end of a response with the net error 1", id="positive-error"),

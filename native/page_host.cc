@@ -29,6 +29,9 @@
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
+#include "net/cookies/cookie_access_delegate.h"
+#include "net/cookies/cookie_access_params.h"
+#include "net/cookies/cookie_change_dispatcher.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_options.h"
@@ -799,6 +802,8 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
   request.set_started();
   if (request.is_navigation()) {
     document_url_ = GURL(event.url);
+    // The old document's CookieStore listened over a pipe that went with it.
+    cookie_store_subscription_.reset();
     PageEvent navigated;
     navigated.type = MITTO_PAGE_EVENT_NAVIGATED;
     navigated.status = event.status;
@@ -1020,6 +1025,258 @@ void PageHost::OnSetCookie(const std::string& line) {
       /*cookie_access_result=*/std::nullopt);
 }
 
+namespace {
+
+// CookieChangeEvent::ToCookieListItem()'s same-site mode: the access's
+// effective one, or else the cookie's own, and none for an unspecified one.
+PageCookieSameSite SameSiteOf(const net::CanonicalCookie& cookie,
+                              net::CookieEffectiveSameSite effective) {
+  switch (effective) {
+    case net::CookieEffectiveSameSite::STRICT_MODE:
+      return PageCookieSameSite::kStrict;
+    case net::CookieEffectiveSameSite::LAX_MODE:
+    case net::CookieEffectiveSameSite::LAX_MODE_ALLOW_UNSAFE:
+      return PageCookieSameSite::kLax;
+    case net::CookieEffectiveSameSite::NO_RESTRICTION:
+      return PageCookieSameSite::kNoRestriction;
+    case net::CookieEffectiveSameSite::UNDEFINED:
+    case net::CookieEffectiveSameSite::COUNT:
+      break;
+  }
+  switch (cookie.SameSite()) {
+    case net::CookieSameSite::STRICT_MODE:
+      return PageCookieSameSite::kStrict;
+    case net::CookieSameSite::LAX_MODE:
+      return PageCookieSameSite::kLax;
+    case net::CookieSameSite::NO_RESTRICTION:
+      return PageCookieSameSite::kNoRestriction;
+    case net::CookieSameSite::UNSPECIFIED:
+      return PageCookieSameSite::kNone;
+  }
+}
+
+PageCookie ToPageCookie(const net::CanonicalCookie& cookie,
+                        net::CookieEffectiveSameSite effective) {
+  PageCookie page_cookie;
+  page_cookie.name = cookie.Name();
+  page_cookie.value = cookie.Value();
+  page_cookie.domain = cookie.Domain();
+  page_cookie.path = cookie.Path();
+  if (!cookie.ExpiryDate().is_null()) {
+    page_cookie.expires =
+        (cookie.ExpiryDate() - base::Time::UnixEpoch()).InMicroseconds();
+  }
+  page_cookie.secure = cookie.SecureAttribute();
+  page_cookie.same_site = SameSiteOf(cookie, effective);
+  page_cookie.partitioned = cookie.IsPartitioned();
+  return page_cookie;
+}
+
+net::CookieSameSite ToNetSameSite(PageCookieSameSite same_site) {
+  switch (same_site) {
+    case PageCookieSameSite::kLax:
+      return net::CookieSameSite::LAX_MODE;
+    case PageCookieSameSite::kNoRestriction:
+      return net::CookieSameSite::NO_RESTRICTION;
+    case PageCookieSameSite::kStrict:
+    case PageCookieSameSite::kNone:
+      return net::CookieSameSite::STRICT_MODE;
+  }
+}
+
+// MakeOptionsForGet() and MakeOptionsForSet() for the SCRIPT role.
+net::CookieOptions ScriptOptions(const GURL& url, bool set) {
+  const net::SiteForCookies site_for_cookies =
+      net::SiteForCookies::FromUrl(url);
+  net::CookieOptions options;
+  options.set_exclude_httponly();
+  options.set_same_site_cookie_context(
+      set ? net::cookie_util::ComputeSameSiteContextForScriptSet(
+                url, site_for_cookies,
+                /*force_ignore_site_for_cookies=*/false)
+          : net::cookie_util::ComputeSameSiteContextForScriptGet(
+                url, site_for_cookies, /*initiator=*/std::nullopt,
+                /*force_ignore_site_for_cookies=*/false));
+  return options;
+}
+
+}  // namespace
+
+// RestrictedCookieManager::GetAllForUrl(): the document's cookies that a
+// script may read, of the name asked for, or all of them.
+void PageHost::OnCookieStoreGet(PageCookieStoreGet get) {
+  if (!DocumentHasCookies()) {
+    SendCookieStoreCookies(get, {}, {});
+    return;
+  }
+  network_->cookie_store().GetCookieListWithOptionsAsync(
+      document_url_, ScriptOptions(document_url_, /*set=*/false),
+      net::CookiePartitionKeyCollection(DocumentPartitionKey()),
+      base::BindOnce(&PageHost::SendCookieStoreCookies,
+                     weak_factory_.GetWeakPtr(), std::move(get)));
+}
+
+void PageHost::SendCookieStoreCookies(
+    const PageCookieStoreGet& get,
+    const net::CookieAccessResultList& cookies,
+    const net::CookieAccessResultList& excluded) {
+  if (!channel_) {
+    return;
+  }
+  PageCookieStoreCookies answer;
+  answer.question = get.question;
+  for (const net::CookieWithAccessResult& item : cookies) {
+    if (!item.access_result.status.IsInclude() ||
+        (!get.all && item.cookie.Name() != get.name)) {
+      continue;
+    }
+    answer.cookies.push_back(
+        ToPageCookie(item.cookie, item.access_result.effective_same_site));
+  }
+  channel_->Send(EncodeCookieStoreCookies(answer));
+}
+
+// RestrictedCookieManager::SetCanonicalCookie(), both halves: the cookie is
+// made as the Page asked, made again from storage with the times of now, and
+// stored if the store takes it.
+void PageHost::OnCookieStoreSet(PageCookieStoreSet set) {
+  const uint64_t question = set.question;
+  const auto answer = [this, question](bool stored) {
+    if (channel_) {
+      channel_->Send(EncodeCookieStoreStored(question, stored));
+    }
+  };
+  if (!DocumentHasCookies()) {
+    answer(false);
+    return;
+  }
+  const std::optional<net::CookiePartitionKey> partition_key =
+      set.partitioned ? DocumentPartitionKey() : std::nullopt;
+  const base::Time expiry =
+      base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(set.expiry));
+  net::CookieInclusionStatus status;
+  std::unique_ptr<net::CanonicalCookie> cookie =
+      net::CanonicalCookie::CreateSanitizedCookie(
+          document_url_, set.name, set.value, set.domain, set.path,
+          /*creation_time=*/base::Time(), expiry,
+          /*last_access_time=*/base::Time(), /*secure=*/true,
+          /*http_only=*/false, ToNetSameSite(set.same_site),
+          net::COOKIE_PRIORITY_MEDIUM, partition_key, &status);
+  // IsCookieDomainValid(): the Page checks the domain first, so one that
+  // fails here comes from a Page that does not.
+  if ((cookie && !cookie->IsDomainMatch(document_url_.host())) ||
+      status.HasExclusionReason(net::CookieInclusionStatus::ExclusionReason::
+                                    EXCLUDE_DOMAIN_MISMATCH)) {
+    Refuse("a CookieStore cookie for another domain");
+    return;
+  }
+  if (!cookie) {
+    answer(false);
+    return;
+  }
+  // A URL with a leading dot, which no document has.
+  if (!net::cookie_util::DomainIsHostOnly(document_url_.host())) {
+    status.AddExclusionReason(
+        net::CookieInclusionStatus::ExclusionReason::EXCLUDE_INVALID_DOMAIN);
+  }
+  if (!status.IsInclude()) {
+    answer(false);
+    return;
+  }
+  const url::Origin origin = url::Origin::Create(document_url_);
+  const base::Time now = base::Time::Now();
+  std::unique_ptr<net::CanonicalCookie> sanitized =
+      net::CanonicalCookie::FromStorage(
+          cookie->Name(), cookie->Value(), cookie->Domain(), cookie->Path(),
+          now, cookie->ExpiryDate(), now, now, cookie->SecureAttribute(),
+          cookie->IsHttpOnly(), cookie->SameSite(), cookie->Priority(),
+          cookie->PartitionKey(),
+          GURL::SchemeIsCryptographic(origin.scheme())
+              ? net::CookieSourceScheme::kSecure
+              : net::CookieSourceScheme::kNonSecure,
+          origin.port(), cookie->SourceType(),
+          net::CanonicalCookieFromStorageCallSite::kRestrictedCookieManager);
+  // FromStorage() checks less than IsCanonical() does.
+  if (!sanitized || !sanitized->IsCanonical()) {
+    answer(false);
+    return;
+  }
+  network_->cookie_store().SetCanonicalCookieAsync(
+      std::move(sanitized), origin.GetURL(),
+      ScriptOptions(document_url_, /*set=*/true),
+      base::BindOnce(
+          [](base::WeakPtr<PageHost> host, uint64_t question,
+             net::CookieAccessResult result) {
+            if (host && host->channel_) {
+              host->channel_->Send(
+                  EncodeCookieStoreStored(question, result.status.IsInclude()));
+            }
+          },
+          weak_factory_.GetWeakPtr(), question),
+      net::CookieAccessResult(status));
+}
+
+// RestrictedCookieManager::AddChangeListener(), and dropping the listener's
+// pipe.
+void PageHost::OnCookieStoreListen(bool listen) {
+  if (!listen) {
+    cookie_store_subscription_.reset();
+    return;
+  }
+  if (cookie_store_subscription_ || !DocumentHasCookies()) {
+    return;
+  }
+  // The dispatcher stops calling once the subscription goes, which this
+  // owns.
+  cookie_store_subscription_ =
+      network_->cookie_store().GetChangeDispatcher().AddCallbackForUrl(
+          document_url_, DocumentPartitionKey(),
+          base::BindRepeating(&PageHost::OnCookieStoreChange,
+                              base::Unretained(this)));
+}
+
+// RestrictedCookieManager::Listener::OnCookieChange() and
+// CookieChangeEvent::ToEventInfo(): a change that the document's script may
+// see, but for an overwrite, which the insertion after it stands for.
+void PageHost::OnCookieStoreChange(const net::CookieChangeInfo& change) {
+  if (!channel_) {
+    return;
+  }
+  const net::CookieAccessDelegate* const delegate =
+      network_->cookie_store().cookie_access_delegate();
+  const bool trustworthy =
+      delegate && delegate->ShouldTreatUrlAsTrustworthy(document_url_);
+  if (!change.cookie
+           .IncludeForRequestURL(
+               document_url_, ScriptOptions(document_url_, /*set=*/false),
+               net::CookieAccessParams(change.access_result.access_semantics,
+                                       change.access_result.scope_semantics,
+                                       trustworthy))
+           .status.IsInclude()) {
+    return;
+  }
+  PageCookieStoreChange page_change;
+  switch (change.cause) {
+    case net::CookieChangeCause::INSERTED:
+    case net::CookieChangeCause::INSERTED_NO_VALUE_CHANGE_OVERWRITE:
+      page_change.deleted = false;
+      break;
+    case net::CookieChangeCause::EXPLICIT:
+    case net::CookieChangeCause::UNKNOWN_DELETION:
+    case net::CookieChangeCause::EXPIRED:
+    case net::CookieChangeCause::EVICTED:
+    case net::CookieChangeCause::EXPIRED_OVERWRITE:
+      page_change.deleted = true;
+      break;
+    case net::CookieChangeCause::OVERWRITE:
+    case net::CookieChangeCause::INSERTED_NO_CHANGE_OVERWRITE:
+      return;
+  }
+  page_change.cookie =
+      ToPageCookie(change.cookie, change.access_result.effective_same_site);
+  channel_->Send(EncodeCookieStoreChange(page_change));
+}
+
 void PageHost::Evaluate(uint64_t call, std::string script) {
   if (ended_) {
     events_->PushCallAfterEnd(call);
@@ -1139,12 +1396,24 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       PushReport(std::move(event));
       return;
     }
+    case PageMessage::kCookieStoreGet:
+      OnCookieStoreGet(std::move(frame->cookie_store_get));
+      return;
+    case PageMessage::kCookieStoreSet:
+      OnCookieStoreSet(std::move(frame->cookie_store_set));
+      return;
+    case PageMessage::kCookieStoreListen:
+      OnCookieStoreListen(frame->cookie_store_listen);
+      return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
     case PageMessage::kResponseBody:
     case PageMessage::kResponseEnded:
     case PageMessage::kCookies:
+    case PageMessage::kCookieStoreCookies:
+    case PageMessage::kCookieStoreStored:
+    case PageMessage::kCookieStoreChange:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }

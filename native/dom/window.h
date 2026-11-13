@@ -39,6 +39,7 @@ namespace mitto {
 
 class BarProp;
 class CrashReportContext;
+class CookieStore;
 class Crypto;
 class CustomElementRegistry;
 class DOMTimerCoordinator;
@@ -146,6 +147,8 @@ class Window final : public WindowProperties {
   // undefined outside one.
   v8::Local<v8::Value> Event() const;
   mitto::Crypto* Crypto();
+  // The window's cookie store, made the first time.
+  mitto::CookieStore* CookieStore();
 
   // What the Page uses.
   mitto::Document& GetDocument() const { return *document_; }
@@ -237,6 +240,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Navigation> navigation_;
   cppgc::Member<CustomElementRegistry> custom_elements_;
   cppgc::Member<mitto::Crypto> crypto_;
+  cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
   cppgc::Member<mitto::Event> current_event_;

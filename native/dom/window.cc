@@ -16,6 +16,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/bar_prop.h"
+#include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
 #include "mitto/dom/crypto.h"
 #include "mitto/dom/custom_element_registry.h"
@@ -107,6 +108,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(navigation_);
   visitor->Trace(custom_elements_);
   visitor->Trace(crypto_);
+  visitor->Trace(cookie_store_);
   visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
 }
@@ -232,6 +234,14 @@ mitto::Crypto* Window::Crypto() {
     crypto_ = mitto::Crypto::Create();
   }
   return crypto_.Get();
+}
+
+// GlobalCookieStore::cookieStore(): the window's supplement.
+mitto::CookieStore* Window::CookieStore() {
+  if (!cookie_store_) {
+    cookie_store_ = bindings::MakeGarbageCollected<mitto::CookieStore>(this);
+  }
+  return cookie_store_.Get();
 }
 
 CustomElementRegistry* Window::CustomElements() {

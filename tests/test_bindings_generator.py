@@ -253,10 +253,25 @@ def test_it_refuses_a_feature_it_cannot_read(entry: dict[str, object], message: 
 def test_the_cpp_writer_refuses_a_type_it_cannot_convert_and_names_it() -> None:
     types = TypeMapper(frozenset({"Event"}), frozenset())
 
-    with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type long long$"):
-        types.argument_type(IdlType(TypeKind.INTEGER, "long long"), "argument x of Thing.f")
+    with pytest.raises(UnhandledError, match=r"^argument x of Thing\.f: .* of type boolean\?$"):
+        types.argument_type(IdlType(TypeKind.BOOLEAN, "boolean", nullable=True), "argument x of Thing.f")
     with pytest.raises(UnhandledError, match=r"of type boolean\?$"):
         types.return_type(IdlType(TypeKind.BOOLEAN, "boolean", nullable=True), "attribute Thing.on")
+
+
+def test_64_bit_and_nullable_numbers_convert_with_null_for_null_and_undefined() -> None:
+    # CookieInit's expires and maxAge.
+    types = TypeMapper(frozenset({"Event"}), frozenset())
+    nullable_double = IdlType(TypeKind.FLOATING_POINT, "double", nullable=True)
+    nullable_long_long = IdlType(TypeKind.INTEGER, "long long", nullable=True)
+
+    assert types.argument_type(IdlType(TypeKind.INTEGER, "long long"), "x") == "int64_t"
+    assert types.argument_type(nullable_double, "x") == "std::optional<double>"
+    assert types.argument_type(nullable_long_long, "x") == "std::optional<int64_t>"
+    assert types.default_value(nullable_double, "null", "x") == "std::nullopt"
+    converted = "\n".join(types.from_v8(nullable_long_long, "info[0]", "value", Site(fail="return;"), "x"))
+    assert "if (!info[0]->IsNullOrUndefined()) {" in converted
+    assert "FromV8Integer(isolate, info[0], &value_value)" in converted
 
 
 def test_a_class_can_give_null_for_an_interface_without_a_class_whatever_the_idl_says() -> None:

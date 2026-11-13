@@ -104,12 +104,40 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->known_gap));
           CHECK_EQ(frame->known_gap.size(), payload.size());
           break;
+        case mitto::PageMessage::kCookieStoreGet: {
+          const mitto::PageCookieStoreGet& get = frame->cookie_store_get;
+          CHECK(base::IsStringUTF8AllowingNoncharacters(get.name));
+          CHECK(!get.all || get.name.empty());
+          CHECK_EQ(get.name.size() + 9, payload.size());
+          break;
+        }
+        case mitto::PageMessage::kCookieStoreSet: {
+          const mitto::PageCookieStoreSet& set = frame->cookie_store_set;
+          CHECK(base::IsStringUTF8AllowingNoncharacters(set.name));
+          CHECK(base::IsStringUTF8AllowingNoncharacters(set.value));
+          CHECK(base::IsStringUTF8AllowingNoncharacters(set.domain));
+          CHECK(base::IsStringUTF8AllowingNoncharacters(set.path));
+          CHECK_NE(set.same_site, mitto::PageCookieSameSite::kNone);
+          CHECK_LE(
+              static_cast<uint8_t>(set.same_site),
+              static_cast<uint8_t>(mitto::PageCookieSameSite::kNoRestriction));
+          CHECK_EQ(set.name.size() + set.value.size() + set.domain.size() +
+                       set.path.size() + 30,
+                   payload.size());
+          break;
+        }
+        case mitto::PageMessage::kCookieStoreListen:
+          CHECK_EQ(payload.size(), 1u);
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:
         case mitto::PageMessage::kResponseBody:
         case mitto::PageMessage::kResponseEnded:
         case mitto::PageMessage::kCookies:
+        case mitto::PageMessage::kCookieStoreCookies:
+        case mitto::PageMessage::kCookieStoreStored:
+        case mitto::PageMessage::kCookieStoreChange:
           // Only a Session sends these.
           NOTREACHED();
       }

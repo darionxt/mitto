@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <cmath>
 #include <limits>
 #include <optional>
 #include <string>
@@ -87,6 +88,31 @@ bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
     }
     *result = static_cast<T>(number);
   }
+  return true;
+}
+
+// The same for long long and unsigned long long, as Blink's ToInt64() and
+// ToUInt64() do: 0 for a value that is not finite, and otherwise its integer
+// part modulo 2 to the 64th, as WTF's doubleToInteger() takes it.
+template <typename T>
+bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
+  requires(std::is_integral_v<T> && sizeof(T) == 8)
+{
+  double number;
+  if (!value->NumberValue(isolate->GetCurrentContext()).To(&number)) {
+    return false;
+  }
+  uint64_t bits = 0;
+  if (std::isfinite(number)) {
+    // -2^64 < remainder < 2^64.
+    const double remainder = std::fmod(
+        std::trunc(number),
+        static_cast<double>(std::numeric_limits<uint64_t>::max()) + 1.0);
+    bits = remainder >= 0 ? static_cast<uint64_t>(remainder)
+                          : std::numeric_limits<uint64_t>::max() -
+                                static_cast<uint64_t>(-remainder) + 1;
+  }
+  *result = static_cast<T>(bits);
   return true;
 }
 
