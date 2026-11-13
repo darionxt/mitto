@@ -148,6 +148,10 @@ _AS_CHROME = {
         " await new Promise((resolve) => setTimeout(resolve, 50)); return log.join()",
         "value: timer,s:abort",
     ),
+    "a page waits for AbortSignal.timeout() alone": (
+        "return await new Promise((resolve) => { AbortSignal.timeout(10).onabort = (event) => resolve(event.type); })",
+        "value: abort",
+    ),
     "AbortSignal.timeout() without an argument": (
         "return AbortSignal.timeout()",
         "threw: TypeError: Failed to execute 'timeout' on 'AbortSignal': 1 argument required, but only 0 present.",
@@ -177,10 +181,12 @@ _AS_CHROME = {
             "value range."
         ),
     ),
+    # A larger timeout would keep the program, which waits for every timer, running past the test's limit.
     "AbortSignal.timeout() truncates": (
-        "return [AbortSignal.timeout(2 ** 53 - 1).aborted, AbortSignal.timeout(-0.9).aborted,"
-        " AbortSignal.timeout('7').aborted].join()",
-        "value: false,false,false",
+        "const s = AbortSignal.timeout(-0.9); const t = AbortSignal.timeout('7');"
+        " const before = [s.aborted, t.aborted];"
+        " await new Promise((resolve) => setTimeout(resolve, 50)); return [...before, s.aborted, t.aborted].join()",
+        "value: false,false,true,true",
     ),
     "AbortSignal.any() of nothing never aborts": (
         "const s = AbortSignal.any([]); return [s.aborted, s.reason, s instanceof AbortSignal].join()",

@@ -288,26 +288,26 @@ void Window::SetTimers(DOMTimerCoordinator* timers) {
   if (timers) {
     return;
   }
-  // The context goes: what goes with it hears so, each once.
-  std::map<uint64_t, base::OnceClosure> callbacks;
-  callbacks.swap(context_destroyed_callbacks_);
-  for (auto& [id, callback] : callbacks) {
-    std::move(callback).Run();
+  // The context goes, and with it the signals' timers.
+  std::map<uint64_t, base::OnceClosure> signal_timers;
+  signal_timers.swap(signal_timers_);
+  for (auto& [id, cancel] : signal_timers) {
+    std::move(cancel).Run();
   }
 }
 
-uint64_t Window::AddContextDestroyedCallback(base::OnceClosure callback) {
-  const uint64_t id = ++next_context_destroyed_callback_;
-  context_destroyed_callbacks_.emplace(id, std::move(callback));
+uint64_t Window::AddSignalTimer(base::OnceClosure cancel) {
+  const uint64_t id = ++next_signal_timer_;
+  signal_timers_.emplace(id, std::move(cancel));
   return id;
 }
 
-void Window::RemoveContextDestroyedCallback(uint64_t id) {
-  context_destroyed_callbacks_.erase(id);
+void Window::RemoveSignalTimer(uint64_t id) {
+  signal_timers_.erase(id);
 }
 
 size_t Window::TimerCount() const {
-  return timers_ ? timers_->size() : 0;
+  return (timers_ ? timers_->size() : 0) + signal_timers_.size();
 }
 
 // Upstream: third_party/blink/renderer/core/frame/universal_global_scope.cc
