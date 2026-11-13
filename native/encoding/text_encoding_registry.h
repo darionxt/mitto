@@ -28,6 +28,25 @@ namespace mitto {
 // label. As in Blink, no label is longer than 63 characters or has a
 // character beyond ASCII.
 std::string CanonicalTextEncodingName(std::u16string_view label);
+std::string CanonicalTextEncodingName(std::string_view label);
+
+// The canonical names of the encodings that Blink names in code.
+inline constexpr std::string_view kUtf8EncodingName = "UTF-8";
+inline constexpr std::string_view kUtf16LittleEndianEncodingName = "UTF-16LE";
+inline constexpr std::string_view kUtf16BigEndianEncodingName = "UTF-16BE";
+// What the label "latin1" names, which Blink calls Latin1Encoding().
+inline constexpr std::string_view kWindows1252EncodingName = "windows-1252";
+
+// Whether a code unit of the encoding can be wider than a byte, UTF-16's,
+// whose labels a <meta> and an XML declaration cannot give, and which forms
+// and URLs encode as UTF-8 instead: Blink's
+// TextEncoding::IsNonByteBasedEncoding().
+bool IsNonByteBasedEncoding(std::string_view canonical_name);
+
+// UTF-8 for an encoding that is not byte based, and otherwise the encoding
+// itself: Blink's TextEncoding::ClosestByteBasedEquivalent(), and
+// EncodingForFormSubmission(), which is the same.
+std::string_view ClosestByteBasedEquivalent(std::string_view canonical_name);
 
 // A new decoder of the encoding whose canonical name is `canonical_name`, which
 // CanonicalTextEncodingName() gave.

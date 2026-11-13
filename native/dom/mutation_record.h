@@ -18,6 +18,7 @@ namespace mitto {
 
 class Node;
 class NodeList;
+struct QualifiedName;
 
 class MutationRecord final : public bindings::ScriptWrappable {
  public:
@@ -30,11 +31,11 @@ class MutationRecord final : public bindings::ScriptWrappable {
                                          NodeList* removed_nodes,
                                          Node* previous_sibling,
                                          Node* next_sibling);
-  // A change to `target`'s attribute `name`, with no namespace, which had
-  // `old_value`, null if it had none.
+  // A change to `target`'s attribute `name`, which had `old_value`, null if
+  // it had none.
   static MutationRecord* CreateAttributes(
       Node* target,
-      const std::u16string& name,
+      const QualifiedName& name,
       const std::optional<std::u16string>& old_value);
   // A change to `target`'s data, which was `old_value`.
   static MutationRecord* CreateCharacterData(Node* target,
@@ -50,6 +51,7 @@ class MutationRecord final : public bindings::ScriptWrappable {
                  Node* previous_sibling,
                  Node* next_sibling,
                  const std::optional<std::u16string>& attribute_name,
+                 const std::optional<std::u16string>& attribute_namespace,
                  const std::optional<std::u16string>& old_value,
                  MutationRecord* record_with_old_value);
   ~MutationRecord() override;
@@ -77,6 +79,7 @@ class MutationRecord final : public bindings::ScriptWrappable {
   cppgc::Member<Node> previous_sibling_;
   cppgc::Member<Node> next_sibling_;
   const std::optional<std::u16string> attribute_name_;
+  const std::optional<std::u16string> attribute_namespace_;
   const std::optional<std::u16string> old_value_;
   // For a record with a null oldValue, the record that it stands for.
   cppgc::Member<MutationRecord> record_with_old_value_;

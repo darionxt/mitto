@@ -1058,6 +1058,34 @@ def test_a_class_with_a_window_alias_gives_the_window_both_names() -> None:
     assert '{"OldThing", &V8Thing::kWrapperTypeInfo, ExposedConstructInfo::Kind::kInterfaceObject' in source
 
 
+def test_a_class_declared_in_a_shared_header_is_included_from_it() -> None:
+    # svg_elements.h declares the classes of SVG that have nothing of their own, which interfaces.gni's `header` names.
+    part = _interface(name="Part", tag=3, max_subclass_tag=3)
+    thing = _interface(
+        attributes=(Attribute("part", IdlType(TypeKind.INTERFACE, "Part"), True, False, ExtendedAttributes(), ALWAYS),)
+    )
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Part", "Thing", "Window"),
+        exposed=tuple(ExposedConstruct(name, "interface", name, ALWAYS) for name in ("Part", "Thing", "Window")),
+    )
+    definitions = Definitions({"Part": part, "Thing": thing, "Window": window}, {}, {}, {}, frozenset())
+    implemented = [
+        ImplementedInterface("Part", "mitto/dom/parts.h"),
+        ImplementedInterface("Thing", "mitto/dom/thing.h"),
+        ImplementedInterface("Window", "mitto/dom/window.h"),
+    ]
+
+    files = write_bindings(definitions, [], implemented)
+
+    assert '#include "mitto/dom/parts.h"' in files["v8_part.cc"]
+    assert '#include "mitto/dom/parts.h"' in files["v8_thing.cc"]
+    assert "mitto/dom/part.h" not in files["v8_thing.cc"]
+
+
 def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() -> None:
     source = _bindings_of(
         _collection("indexed getter", "named getter"), ImplementedInterface("Thing", "mitto/dom/thing.h")

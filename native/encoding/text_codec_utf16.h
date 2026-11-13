@@ -1,6 +1,7 @@
-// UTF-16LE and UTF-16BE, as Blink's TextCodecUtf16 decodes them: a lone
-// surrogate gives U+FFFD, and a byte or a lead surrogate that a call leaves
-// waits for the next, or gives U+FFFD at the end of the data.
+// UTF-16LE and UTF-16BE, as Blink's TextCodecUtf16 decodes and encodes them:
+// in decoding, a lone surrogate gives U+FFFD, and a byte or a lead surrogate
+// that a call leaves waits for the next, or gives U+FFFD at the end of the
+// data. The encoder writes each code unit as it is, a lone surrogate too.
 //
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_utf16.h
 // Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_utf16.cc
@@ -31,6 +32,8 @@ class TextCodecUtf16 final : public TextCodec {
                         FlushBehavior flush,
                         bool stop_on_error,
                         bool& saw_error) override;
+  std::string Encode(std::u16string_view text,
+                     UnencodableHandling handling) override;
 
  private:
   const bool little_endian_;

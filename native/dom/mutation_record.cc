@@ -4,6 +4,7 @@
 #include "mitto/bindings/v8_mutation_record.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/node_list.h"
+#include "mitto/dom/qualified_name.h"
 
 namespace mitto {
 
@@ -15,17 +16,17 @@ MutationRecord* MutationRecord::CreateChildList(Node* target,
                                                 Node* next_sibling) {
   return bindings::MakeGarbageCollected<MutationRecord>(
       Kind::kChildList, target, added_nodes, removed_nodes, previous_sibling,
-      next_sibling, std::nullopt, std::nullopt, nullptr);
+      next_sibling, std::nullopt, std::nullopt, std::nullopt, nullptr);
 }
 
 // static
 MutationRecord* MutationRecord::CreateAttributes(
     Node* target,
-    const std::u16string& name,
+    const QualifiedName& name,
     const std::optional<std::u16string>& old_value) {
   return bindings::MakeGarbageCollected<MutationRecord>(
-      Kind::kAttributes, target, nullptr, nullptr, nullptr, nullptr, name,
-      old_value, nullptr);
+      Kind::kAttributes, target, nullptr, nullptr, nullptr, nullptr,
+      name.local_name, name.namespace_uri, old_value, nullptr);
 }
 
 // static
@@ -34,14 +35,14 @@ MutationRecord* MutationRecord::CreateCharacterData(
     const std::u16string& old_value) {
   return bindings::MakeGarbageCollected<MutationRecord>(
       Kind::kCharacterData, target, nullptr, nullptr, nullptr, nullptr,
-      std::nullopt, old_value, nullptr);
+      std::nullopt, std::nullopt, old_value, nullptr);
 }
 
 // static
 MutationRecord* MutationRecord::CreateWithNullOldValue(MutationRecord* record) {
   return bindings::MakeGarbageCollected<MutationRecord>(
       record->kind_, nullptr, nullptr, nullptr, nullptr, nullptr, std::nullopt,
-      std::nullopt, record);
+      std::nullopt, std::nullopt, record);
 }
 
 MutationRecord::MutationRecord(
@@ -52,6 +53,7 @@ MutationRecord::MutationRecord(
     Node* previous_sibling,
     Node* next_sibling,
     const std::optional<std::u16string>& attribute_name,
+    const std::optional<std::u16string>& attribute_namespace,
     const std::optional<std::u16string>& old_value,
     MutationRecord* record_with_old_value)
     : kind_(kind),
@@ -61,6 +63,7 @@ MutationRecord::MutationRecord(
       previous_sibling_(previous_sibling),
       next_sibling_(next_sibling),
       attribute_name_(attribute_name),
+      attribute_namespace_(attribute_namespace),
       old_value_(old_value),
       record_with_old_value_(record_with_old_value) {}
 
@@ -141,9 +144,10 @@ std::optional<std::u16string> MutationRecord::AttributeName() const {
 }
 
 std::optional<std::u16string> MutationRecord::AttributeNamespace() const {
-  // An attribute of the Runtime has no namespace: the methods that name one
-  // are Known Gaps.
-  return std::nullopt;
+  if (record_with_old_value_) {
+    return record_with_old_value_->AttributeNamespace();
+  }
+  return attribute_namespace_;
 }
 
 std::optional<std::u16string> MutationRecord::OldValue() const {

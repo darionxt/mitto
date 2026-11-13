@@ -1,5 +1,9 @@
 #include "mitto/dom/document.h"
 
+#include <algorithm>
+
+#include "base/check.h"
+#include "base/containers/span.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -12,6 +16,7 @@
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
@@ -21,10 +26,17 @@
 #include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/mathml_element.h"
 #include "mitto/dom/permissions_policy.h"
+#include "mitto/dom/qualified_name.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_element_factory.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
+#include "mitto/encoding/text_codec.h"
+#include "mitto/encoding/text_encoding_registry.h"
+#include "mitto/encoding/url_with_encoding.h"
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -32,35 +44,6 @@
 namespace mitto {
 
 namespace {
-
-// Blink's IsValidElementName(), the DOM standard's valid element local name.
-bool IsValidElementName(std::u16string_view name) {
-  if (name.empty()) {
-    return false;
-  }
-  const auto is_ascii_alpha = [](char16_t c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-  };
-  if (is_ascii_alpha(name[0])) {
-    for (const char16_t c : name.substr(1)) {
-      if (c == 0 || c == ' ' || c == '\t' || c == '\n' || c == '\f' ||
-          c == '\r' || c == '/' || c == '>') {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (name[0] < 0x80 && name[0] != ':' && name[0] != '_') {
-    return false;
-  }
-  for (const char16_t c : name.substr(1)) {
-    if (!is_ascii_alpha(c) && !(c >= '0' && c <= '9') && c != '-' && c != '.' &&
-        c != ':' && c != '_' && c < 0x80) {
-      return false;
-    }
-  }
-  return true;
-}
 
 void ThrowInvalidTagName(const std::u16string& name,
                          bindings::ExceptionState& exception_state) {
@@ -126,6 +109,8 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(applets_);
   visitor->Trace(all_);
   visitor->Trace(feature_policy_);
+  visitor->Trace(template_document_);
+  visitor->Trace(template_document_host_);
 }
 
 mitto::Location* Document::Location() const {
@@ -341,6 +326,49 @@ std::u16string Document::Title() const {
   return std::u16string();
 }
 
+std::u16string Document::CharacterSet() const {
+  return base::ASCIIToUTF16(encoding_);
+}
+
+void Document::SetEncoding(std::string_view encoding,
+                           bool detected_heuristically) {
+  DCHECK(!encoding.empty());
+  // The loader sets the encoding after each piece of the body, so the tree is
+  // searched only when windows-1252 gives way to another.
+  Element* title_element = nullptr;
+  if (encoding_ != encoding && encoding_ == kWindows1252EncodingName) {
+    // The first title element in tree order, as Blink keeps its title element.
+    for (Node* node = FirstChild(); node; node = node->NextInTree(this)) {
+      if (node->IsElementNode() &&
+          static_cast<Element*>(node)->HasHTMLTagName(u"title")) {
+        title_element = static_cast<Element*>(node);
+        break;
+      }
+    }
+  }
+  if (title_element && !title_element->FirstElementChild()) {
+    const std::u16string text = title_element->DescendantTextContent();
+    if (std::ranges::all_of(text, [](char16_t c) { return c <= 0xFF; })) {
+      std::string original_bytes(text.begin(), text.end());
+      bool saw_error = false;
+      const std::u16string decoded = NewTextCodec(encoding)->Decode(
+          base::as_byte_span(original_bytes), FlushBehavior::kDataEof,
+          /*stop_on_error=*/false, saw_error);
+      // textContent's setter: one Text node, or none for an empty string.
+      title_element->RemoveChildren();
+      if (!decoded.empty()) {
+        title_element->ParserAppendChild(Text::Create(*this, decoded));
+      }
+    }
+  }
+  encoding_ = std::string(encoding);
+  encoding_detected_heuristically_ = detected_heuristically;
+}
+
+GURL Document::CompleteUrl(std::u16string_view url) const {
+  return ResolveUrlWithEncoding(GURL(base::UTF16ToUTF8(url_)), url, encoding_);
+}
+
 void Document::SetTitle(const std::u16string& title) {
   Element* const root = DocumentElement();
   if (!root || !root->IsHTMLElement()) {
@@ -409,10 +437,67 @@ Text* Document::CreateTextNode(const std::u16string& data) {
   return Text::Create(*this, data);
 }
 
+DocumentFragment* Document::CreateDocumentFragment() {
+  return DocumentFragment::Create(*this);
+}
+
+Element* Document::CreateElementNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    bindings::ExceptionState& exception_state) {
+  // Blink's CreateQualifiedName(), then CreateRawElement().
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kElement,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+}
+
+Element* Document::CreateElementNS(
+    const std::optional<std::u16string>& namespace_uri,
+    const std::u16string& qualified_name,
+    const bindings::DOMStringOrElementCreationOptions& options,
+    bindings::ExceptionState& exception_state) {
+  const std::optional<QualifiedName> name = QualifiedName::Parse(
+      namespace_uri, qualified_name, QualifiedName::ParsingMode::kElement,
+      exception_state);
+  if (!name) {
+    return nullptr;
+  }
+  if (!name->HasValidNamespace()) {
+    exception_state.ThrowDOMException(
+        "NamespaceError",
+        base::StrCat({"The namespace URI provided ('",
+                      base::UTF16ToUTF8(namespace_uri.value_or(u"")),
+                      "') is not valid for the qualified name provided ('",
+                      base::UTF16ToUTF8(qualified_name), "')."}));
+    return nullptr;
+  }
+  // The options name a custom element registry or a customized built-in
+  // element, which need definitions that the Runtime, without custom
+  // elements, never has. Blink then checks the whole name.
+  if (!IsValidElementLocalName(qualified_name)) {
+    ThrowInvalidTagName(qualified_name, exception_state);
+    return nullptr;
+  }
+  return CreateElement(name->namespace_uri, name->prefix, name->local_name);
+}
+
 Element* Document::CreateElementForBinding(
     const std::u16string& local_name,
     bindings::ExceptionState& exception_state) {
-  if (!IsValidElementName(local_name)) {
+  if (!IsValidElementLocalName(local_name)) {
     ThrowInvalidTagName(local_name, exception_state);
     return nullptr;
   }
@@ -452,15 +537,39 @@ Element* Document::CreateElement(
     const std::optional<std::u16string>& namespace_uri,
     const std::optional<std::u16string>& prefix,
     const std::u16string& local_name) {
-  if (namespace_uri == html_names::kXhtmlNamespace && !prefix) {
-    return CreateHTMLElement(*this, local_name);
+  Element* element = nullptr;
+  if (namespace_uri == html_names::kXhtmlNamespace) {
+    element = CreateHTMLElement(*this, local_name);
+  } else if (namespace_uri == html_names::kSvgNamespace) {
+    element = CreateSVGElement(*this, local_name);
+  } else if (namespace_uri == html_names::kMathMlNamespace) {
+    element = MathMLElement::Create(*this, local_name);
+  } else {
+    return Element::Create(*this, namespace_uri, prefix, local_name);
   }
-  return Element::Create(*this, namespace_uri, prefix, local_name);
+  if (prefix) {
+    element->SetPrefixForCreateElementNS(prefix);
+  }
+  return element;
+}
+
+Document& Document::EnsureTemplateDocument() {
+  if (template_document_host_) {
+    return *this;
+  }
+  if (!template_document_) {
+    template_document_ = is_html_ ? CreateHTML() : Create();
+    template_document_->template_document_host_ = this;
+  }
+  return *template_document_;
 }
 
 Node* Document::CloneWithoutChildren(Document& document) const {
   Document* const copy = is_html_ ? CreateHTML() : Create();
   copy->SetCompatibilityMode(compat_mode_);
+  // Blink's CloneDataFromDocument() copies the encoding too.
+  copy->encoding_ = encoding_;
+  copy->encoding_detected_heuristically_ = encoding_detected_heuristically_;
   return copy;
 }
 

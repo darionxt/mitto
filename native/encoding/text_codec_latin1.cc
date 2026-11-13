@@ -2,7 +2,11 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string_view>
+
+#include "base/check_op.h"
+#include "third_party/icu/source/common/unicode/utf16.h"
 
 namespace mitto {
 
@@ -48,6 +52,45 @@ std::unique_ptr<TextCodec> NewWindowsLatin1Decoder(std::string_view) {
   return std::make_unique<TextCodecLatin1>();
 }
 
+// The byte of `code_point` in windows-1252, if it has one.
+std::optional<uint8_t> WindowsLatin1Byte(UChar32 code_point) {
+  const auto byte = static_cast<uint8_t>(code_point);
+  // Code points 00-7F and A0-FF are their own bytes.
+  if (byte == code_point && (code_point & 0xE0) != 0x80) {
+    return byte;
+  }
+  for (uint8_t candidate = 0x80; candidate < 0xA0; ++candidate) {
+    if (kTable[candidate] == code_point) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
+}
+
+// Encodes a string that has a character beyond ASCII. A lone surrogate is a
+// character that windows-1252 lacks, as in Blink.
+std::string EncodeComplexWindowsLatin1(std::u16string_view text,
+                                       UnencodableHandling handling) {
+  DCHECK_NE(handling, UnencodableHandling::kNone);
+  std::string result;
+  result.reserve(text.size());
+  const size_t length = text.size();
+  size_t i = 0;
+  while (i < length) {
+    UChar32 code_point;
+    U16_NEXT(text, i, length, code_point);
+    if (const std::optional<uint8_t> byte = WindowsLatin1Byte(code_point)) {
+      result.push_back(static_cast<char>(*byte));
+      continue;
+    }
+    const std::string replacement =
+        TextCodec::GetUnencodableReplacement(code_point, handling);
+    DCHECK(!replacement.empty());
+    result.append(replacement);
+  }
+  return result;
+}
+
 }  // namespace
 
 // static
@@ -81,6 +124,22 @@ std::u16string TextCodecLatin1::Decode(base::span<const uint8_t> bytes,
     result.push_back(kTable[byte]);
   }
   return result;
+}
+
+std::string TextCodecLatin1::Encode(std::u16string_view text,
+                                    UnencodableHandling handling) {
+  // Copies each code unit's low byte, and checks at once whether all are
+  // ASCII, which most strings are.
+  std::string result(text.size(), '\0');
+  char16_t ored = 0;
+  for (size_t i = 0; i < text.size(); ++i) {
+    result[i] = static_cast<char>(text[i]);
+    ored |= text[i];
+  }
+  if (!(ored & 0xFF80)) {
+    return result;
+  }
+  return EncodeComplexWindowsLatin1(text, handling);
 }
 
 }  // namespace mitto

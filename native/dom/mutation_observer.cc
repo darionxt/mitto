@@ -80,7 +80,7 @@ void CollectMatchingObservers(
     HeapVector<MutationObserverRegistration>& registry,
     const Node& target,
     MutationObserverOptions type,
-    const std::u16string* attribute_name,
+    const QualifiedName* attribute_name,
     std::vector<std::pair<MutationObserver*, MutationRecordDeliveryOptions>>&
         observers) {
   for (size_t i = 0; i < registry.size(); ++i) {
@@ -341,7 +341,7 @@ void MutationObserverRegistration::Trace(cppgc::Visitor* visitor) const {
 bool MutationObserverRegistration::ShouldReceiveMutationFrom(
     const Node& node,
     MutationObserverOptions type,
-    const std::u16string* attribute_name) const {
+    const QualifiedName* attribute_name) const {
   if (!(options_ & type)) {
     return false;
   }
@@ -352,8 +352,12 @@ bool MutationObserverRegistration::ShouldReceiveMutationFrom(
       !(options_ & MutationObserver::kAttributeFilter)) {
     return true;
   }
+  // A filter names attributes with no namespace.
+  if (attribute_name->namespace_uri) {
+    return false;
+  }
   return std::find(attribute_filter_.begin(), attribute_filter_.end(),
-                   *attribute_name) != attribute_filter_.end();
+                   attribute_name->local_name) != attribute_filter_.end();
 }
 
 void MutationObserverRegistration::ResetObservation(
@@ -441,7 +445,7 @@ MutationObserverInterestGroup::CreateForCharacterDataMutation(Node& target) {
 MutationObserverInterestGroup*
 MutationObserverInterestGroup::CreateForAttributesMutation(
     Node& target,
-    const std::u16string& attribute_name) {
+    const QualifiedName& attribute_name) {
   return CreateIfNeeded(target, MutationObserver::kMutationTypeAttributes,
                         MutationObserver::kAttributeOldValue, &attribute_name);
 }
@@ -451,7 +455,7 @@ MutationObserverInterestGroup* MutationObserverInterestGroup::CreateIfNeeded(
     Node& target,
     MutationObserverOptions type,
     MutationRecordDeliveryOptions old_value_flag,
-    const std::u16string* attribute_name) {
+    const QualifiedName* attribute_name) {
   if (!MayHaveMutationObservers()) {
     return nullptr;
   }
@@ -510,7 +514,7 @@ void MutationObserverInterestGroup::EnqueueMutationRecord(
 }
 
 void EnqueueAttributeMutation(Element& element,
-                              const std::u16string& name,
+                              const QualifiedName& name,
                               const std::optional<std::u16string>& old_value) {
   if (MutationObserverInterestGroup* const recipients =
           MutationObserverInterestGroup::CreateForAttributesMutation(element,

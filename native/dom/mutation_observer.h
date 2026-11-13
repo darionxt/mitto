@@ -27,6 +27,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/heap_vector.h"
+#include "mitto/dom/qualified_name.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
@@ -124,7 +125,7 @@ class MutationObserverRegistration final
   // for a change of attributes, is one that the registration observes.
   bool ShouldReceiveMutationFrom(const Node& node,
                                  MutationObserverOptions type,
-                                 const std::u16string* attribute_name) const;
+                                 const QualifiedName* attribute_name) const;
 
   // Observes anew, as observe() on the same node does.
   void ResetObservation(MutationObserverOptions options,
@@ -182,7 +183,7 @@ class MutationObserverInterestGroup final
       Node& target);
   static MutationObserverInterestGroup* CreateForAttributesMutation(
       Node& target,
-      const std::u16string& attribute_name);
+      const QualifiedName& attribute_name);
 
   explicit MutationObserverInterestGroup(
       MutationRecordDeliveryOptions old_value_flag);
@@ -199,7 +200,7 @@ class MutationObserverInterestGroup final
       Node& target,
       MutationObserverOptions type,
       MutationRecordDeliveryOptions old_value_flag,
-      const std::u16string* attribute_name);
+      const QualifiedName* attribute_name);
 
   HeapVector<MutationObserver> observers_;
   std::vector<MutationRecordDeliveryOptions> delivery_options_;
@@ -212,7 +213,7 @@ class MutationObserverInterestGroup final
 // CreateForCharacterDataMutation(), so that it keeps the old data only for an
 // observer.
 void EnqueueAttributeMutation(Element& element,
-                              const std::u16string& name,
+                              const QualifiedName& name,
                               const std::optional<std::u16string>& old_value);
 
 // Blink's Node::NotifyMutationObserversNodeWillDetach(): `node` is about to
