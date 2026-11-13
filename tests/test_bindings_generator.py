@@ -1127,6 +1127,43 @@ def test_a_put_forwards_setter_sets_the_forwarded_attribute_through_v8() -> None
     assert 'v8::String::NewFromUtf8Literal(isolate, "value"), info[0]' in setter
 
 
+def test_a_factory_function_with_behaviour_calls_the_class_and_the_window_installs_it() -> None:
+    # HTMLImageElement's [LegacyFactoryFunction=Image(optional unsigned long width, optional unsigned long height)].
+    width = Argument("width", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, None)
+    height = Argument("height", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, None)
+    image = Operation(
+        "Image", (width, height), IdlType(TypeKind.INTERFACE, "Thing"), False, ExtendedAttributes(), ALWAYS
+    )
+    group = OperationGroup("Image", (image,), False, 0, ExtendedAttributes(), ALWAYS)
+    thing = _interface(legacy_factory_functions=(group,))
+    exposed = (
+        ExposedConstruct("Thing", "interface", "Thing", ALWAYS),
+        ExposedConstruct("Window", "interface", "Window", ALWAYS),
+        ExposedConstruct("Image", "factory function", "Thing", ALWAYS, length=0),
+    )
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=exposed,
+    )
+    definitions = Definitions({"Thing": thing, "Window": window}, {}, {}, {}, frozenset())
+    implemented = [
+        ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("Image",)),
+        ImplementedInterface("Window", "mitto/dom/window.h"),
+    ]
+
+    files = write_bindings(definitions, [], implemented)
+
+    assert "static void ImageLegacyFactoryFunctionCallback(" in files["v8_thing.h"]
+    source = files["v8_thing.cc"]
+    assert "mitto::Thing::CreateForJSConstructor(arg1_width, arg2_height)" in source
+    assert "ExceptionMessages::ConstructorCalledAsFunction()" in source
+    assert "&V8Thing::ImageLegacyFactoryFunctionCallback}" in files["v8_window.cc"]
+
+
 def test_a_class_declared_in_a_shared_header_is_included_from_it() -> None:
     # svg_elements.h declares the classes of SVG that have nothing of their own, which interfaces.gni's `header` names.
     part = _interface(name="Part", tag=3, max_subclass_tag=3)
