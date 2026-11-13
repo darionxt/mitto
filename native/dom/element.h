@@ -21,10 +21,15 @@
 #include <vector>
 
 #include "base/containers/span.h"
+#include "mitto/dom/heap_vector.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/qualified_name.h"
 
 namespace mitto {
+
+class Attr;
+class DOMTokenList;
+class NamedNodeMap;
 
 class Element : public Node {
  public:
@@ -47,6 +52,7 @@ class Element : public Node {
   ~Element() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
   const std::optional<std::u16string>& NamespaceURI() const {
@@ -78,6 +84,18 @@ class Element : public Node {
   bool HasAttribute(const std::u16string& name) const;
   bool HasAttributeNS(const std::optional<std::u16string>& namespace_uri,
                       const std::u16string& local_name) const;
+  // The same NamedNodeMap and DOMTokenLists on every read.
+  NamedNodeMap* AttributesForBindings();
+  DOMTokenList* ClassList();
+  DOMTokenList* Part();
+  Attr* GetAttributeNode(const std::u16string& name);
+  Attr* GetAttributeNodeNS(const std::optional<std::u16string>& namespace_uri,
+                           const std::u16string& local_name);
+  Attr* SetAttributeNode(Attr* attr, bindings::ExceptionState& exception_state);
+  Attr* SetAttributeNodeNS(Attr* attr,
+                           bindings::ExceptionState& exception_state);
+  Attr* RemoveAttributeNode(Attr* attr,
+                            bindings::ExceptionState& exception_state);
   bool HasAttributes() const { return !attributes_.empty(); }
   std::u16string InnerHTML() const;
   void SetInnerHTML(const std::u16string& html,
@@ -164,6 +182,15 @@ class Element : public Node {
                                      const std::u16string& value);
   // Removes the attribute of `name`'s local name and namespace, if any.
   void RemoveAttribute(const QualifiedName& name);
+  // The node of the attribute of `name`'s local name and namespace, the same
+  // one for as long as the attribute is there, as Blink's EnsureAttr().
+  Attr* EnsureAttr(const QualifiedName& name);
+  // Removes the attribute that `name` or the qualified name `name` finds, and
+  // gives its node, which keeps its value, or null if there is none, as
+  // Blink's DetachAttribute() does for removeNamedItemNS() and
+  // removeNamedItem().
+  Attr* DetachAttribute(const QualifiedName& name);
+  Attr* DetachAttributeByQualifiedName(const std::u16string& name);
   // The DOM standard's "locate a namespace prefix" and "locate a namespace",
   // as Blink's Element::LocateNamespacePrefix() and Node::lookupNamespaceURI()
   // run them on an element.
@@ -180,6 +207,9 @@ class Element : public Node {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+  // The nodes of its attributes move with it, as Blink's
+  // Element::DidMoveToNewDocument() adopts them.
+  void DidMoveToNewDocument(Document& old_document) override;
 
  private:
   // The DOM standard: an HTML element of an HTML document matches attribute
@@ -200,7 +230,13 @@ class Element : public Node {
   void AppendAttributeInternal(const QualifiedName& name,
                                const std::u16string& value);
   void SetAttributeValueInternal(size_t index, const std::u16string& value);
+  // Detaches the attribute's node too, which keeps its value.
   void RemoveAttributeInternal(size_t index);
+  // The node of the attribute of `name`'s local name and namespace, if any.
+  Attr* AttrIfExists(const QualifiedName& name) const;
+  // Blink's DetachAttribute(): the node of the attribute at `index`, made if
+  // there is none, after the attribute goes.
+  Attr* DetachAttributeAt(size_t index);
   // Blink's InsertAdjacent(): inserts `node` where `where` says, and returns
   // it, or null if it went nowhere.
   Node* InsertAdjacent(const std::u16string& where,
@@ -214,6 +250,12 @@ class Element : public Node {
 
   QualifiedName tag_name_;
   std::vector<Attribute> attributes_;
+  // The nodes of the attributes that a page has asked for, as Blink's
+  // AttrNodeList.
+  HeapVector<Attr> attr_nodes_;
+  cppgc::Member<NamedNodeMap> attribute_map_;
+  cppgc::Member<DOMTokenList> class_list_;
+  cppgc::Member<DOMTokenList> part_;
 };
 
 }  // namespace mitto

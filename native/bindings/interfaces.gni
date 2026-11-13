@@ -46,6 +46,10 @@ mitto_bindings_interfaces = [
     missing = [ "onabort" ]
   },
   {
+    name = "Attr"
+    file = "attr"
+  },
+  {
     name = "BarProp"
     file = "bar_prop"
     made_by_known_gaps = true
@@ -132,6 +136,23 @@ mitto_bindings_interfaces = [
     file = "custom_event"
   },
   {
+    name = "DOMTokenList"
+    file = "dom_token_list"
+    made_by_known_gaps = true
+    implemented = [
+      "length",
+      "value",
+      "add",
+      "contains",
+      "item",
+      "remove",
+      "replace",
+      "supports",
+      "toggle",
+      "indexed getter",
+    ]
+  },
+  {
     name = "DOMException"
     file = "dom_exception"
   },
@@ -208,6 +229,8 @@ mitto_bindings_interfaces = [
       "lastElementChild",
       "childElementCount",
       "append",
+      "createAttribute",
+      "createAttributeNS",
       "createComment",
       "createDocumentFragment",
       "createElement",
@@ -304,6 +327,8 @@ mitto_bindings_interfaces = [
       "getAttribute",
       "getAttributeNS",
       "getAttributeNames",
+      "getAttributeNode",
+      "getAttributeNodeNS",
       "hasAttribute",
       "hasAttributeNS",
       "hasAttributes",
@@ -315,13 +340,19 @@ mitto_bindings_interfaces = [
       "remove",
       "removeAttribute",
       "removeAttributeNS",
+      "removeAttributeNode",
       "replaceChildren",
       "replaceWith",
       "setAttribute",
       "setAttributeNS",
+      "setAttributeNode",
+      "setAttributeNodeNS",
       "toggleAttribute",
       "webkitMatchesSelector",
       "children",
+      "attributes",
+      "classList",
+      "part",
     ]
   },
   {
@@ -604,6 +635,10 @@ mitto_bindings_interfaces = [
   {
     name = "MimeTypeArray"
     file = "mime_type_array"
+  },
+  {
+    name = "NamedNodeMap"
+    file = "named_node_map"
   },
   {
     name = "Navigation"
