@@ -623,8 +623,11 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLInputElement"
     file = "html_input_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [
+      "checked",
+      "indeterminate",
+      "type",
+    ]
   },
   {
     name = "HTMLInstallElement"

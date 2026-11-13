@@ -1,0 +1,87 @@
+<!doctype html><html><head><title>activation</title></head><body>
+<div id=boxes><input id=box type=checkbox><input id=r1 type=radio name=g checked><input id=r2 type=radio name=g><input id=r3 type=radio name=other></div>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const r = {};
+const log = [];
+const box = document.getElementById('box'), r1 = document.getElementById('r1'), r2 = document.getElementById('r2'), r3 = document.getElementById('r3');
+for (const type of ['click', 'input', 'change', 'DOMActivate']) {
+  document.addEventListener(type, e => log.push([type, e.target.id, e.constructor.name, e.bubbles, e.cancelable, e.composed, e.isTrusted, e.target.checked, e.target.indeterminate]));
+}
+const state = e => [e.checked, e.indeterminate, e.defaultChecked];
+// A checkbox's click toggles it before the listeners, then input and change.
+box.click();
+r.checkbox_click = [log.splice(0), state(box)];
+// A canceled click reverts the checkedness and the indeterminate flag, and fires neither.
+box.indeterminate = true;
+box.addEventListener('click', e => e.preventDefault(), {once: true});
+box.click();
+r.checkbox_canceled = [log.splice(0), state(box)];
+// Uncanceled with indeterminate: it goes false.
+box.click();
+r.checkbox_indeterminate = [log.splice(0), state(box)];
+// The checked attribute decides checkedness until it is dirty.
+const fresh = document.createElement('input');
+fresh.type = 'checkbox';
+const steps = [state(fresh)];
+fresh.setAttribute('checked', '');
+steps.push(state(fresh));
+fresh.removeAttribute('checked');
+steps.push(state(fresh));
+fresh.checked = false;
+fresh.setAttribute('checked', '');
+steps.push(state(fresh));
+fresh.defaultChecked = false;
+steps.push(state(fresh));
+r.dirty = steps;
+// A disconnected checkbox toggles with no input or change.
+const lone = document.createElement('input');
+lone.type = 'CheckBox';
+const lone_log = [];
+lone.addEventListener('click', e => lone_log.push(['click', e.target.checked]));
+lone.addEventListener('change', () => lone_log.push('change'));
+lone.click();
+r.disconnected = [lone_log, lone.checked];
+// A radio's click checks it and unchecks its group, then input and change.
+r2.click();
+r.radio_click = [log.splice(0), state(r1), state(r2), state(r3)];
+// A click on a checked radio fires neither.
+r2.click();
+r.radio_again = [log.splice(0), state(r2)];
+// A canceled click puts back the radio that was checked.
+r1.addEventListener('click', e => e.preventDefault(), {once: true});
+r1.click();
+r.radio_canceled = [log.splice(0), state(r1), state(r2)];
+// The checked property of a radio unchecks its group too, with no events.
+r1.checked = true;
+r.radio_property = [log.splice(0), state(r1), state(r2)];
+// A radio group of a detached tree.
+const tree = document.createElement('div');
+tree.innerHTML = '<input type=radio name=d checked><input type=radio name=d>';
+const [d1, d2] = tree.querySelectorAll ? [tree.firstChild, tree.lastChild] : [];
+d2.click();
+r.detached_radio = [d1.checked, d2.checked];
+// A page's MouseEvent: the left button toggles, another does not; an Event does not.
+const before = box.checked;
+box.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, button: 1}));
+const after_middle = box.checked;
+box.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+const after_left = box.checked;
+box.dispatchEvent(new Event('click', {bubbles: true, cancelable: true}));
+r.page_events = [before, after_middle, after_left, box.checked, log.splice(0)];
+// A text input's checked is a flag that a click does not touch.
+const text = document.createElement('input');
+document.body.appendChild(text);
+text.checked = true;
+text.click();
+r.text = [text.checked, log.splice(0).map(e => e[0])];
+// A disabled checkbox gets no click() at all.
+const off = document.createElement('input');
+off.type = 'checkbox';
+off.disabled = true;
+document.body.appendChild(off);
+off.click();
+r.disabled = [off.checked, log.splice(0).map(e => e[0])];
+done(r);
+</script>
+</body></html>

@@ -159,15 +159,6 @@ class HTMLIFrameElement final : public HTMLElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-class HTMLInputElement final : public HTMLElement {
- public:
-  static HTMLInputElement* Create(Document& document);
-
-  explicit HTMLInputElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
 class HTMLLabelElement final : public HTMLElement {
  public:
   static HTMLLabelElement* Create(Document& document);

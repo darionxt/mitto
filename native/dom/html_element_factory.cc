@@ -20,6 +20,7 @@
 #include "mitto/dom/html_heading_element.h"
 #include "mitto/dom/html_html_element.h"
 #include "mitto/dom/html_image_element.h"
+#include "mitto/dom/html_input_element.h"
 #include "mitto/dom/html_li_element.h"
 #include "mitto/dom/html_link_element.h"
 #include "mitto/dom/html_meta_element.h"
