@@ -308,7 +308,9 @@ A connection looks the same in every file of a protocol. `tls`, `quic`, `http2` 
 
 ### Documents
 
-[The cases of documents](capture.md#documents) have no Baselines yet. A recording session records them with the others, into `documents/`, which goes to `tests/baselines/RELEASE/documents/`. The wire's Parity Checks do not read that directory until they replay those cases. In headless Chrome 157.0.8103.51 on macOS, on 2026-11-13, two sessions gave the same three normal forms, and the checks of [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording held.
+[The cases of documents](capture.md#documents) have no Baselines yet. A recording session records them with the others, into `documents/`, which goes to `tests/baselines/RELEASE/documents/`. The wire's Parity Checks do not read that directory until they replay those cases.
+
+On 2026-11-13, two whole sessions of `record.ps1` with the installed Chrome 157.0.8103.39, windowed, gave the same three normal forms, and the checks of [`tests/capture/test_chrome.py`](../tests/capture/test_chrome.py) that only read a recording held for both. Chrome asked for `/favicon.ico` in each run. The thirteen files of the wire and `script/page.json` came out byte for byte the Baselines in `tests/baselines/157`, so neither these runs nor [the clicker's gesture for its click alone](capture.md#record-a-client) moves them. [The check of hidden values](capture.md#the-form-of-a-hidden-value) passed for both, with 600 values in 16 raw recordings, as before, because these runs carry no hint. In headless Chrome 157.0.8103.51 on macOS, the three normal forms differed from those only in `User-Agent`, `sec-ch-ua-platform` and `Accept-Language`, which follow the operating system and the locale, and had the same `order`.
 
 ### What differs between Chrome Releases
 
