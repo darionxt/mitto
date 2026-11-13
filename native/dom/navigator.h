@@ -38,6 +38,7 @@ namespace mitto {
 
 class Geolocation;
 class Keyboard;
+class MediaDevices;
 class MimeTypeArray;
 class LockManager;
 class NavigatorUAData;
@@ -104,6 +105,8 @@ class Navigator final : public bindings::ScriptWrappable {
   v8::Local<v8::Promise> GetBattery();
   // [SameObject], made the first time a page asks.
   mitto::Keyboard* Keyboard();
+  // [SameObject], of the Machine's media devices.
+  mitto::MediaDevices* MediaDevices();
   // NavigatorCPUPerformance: Chrome's tier of the processors, from their
   // number, as content::cpu_performance gives it for an AMD or Intel CPU of
   // none of the models it singles out.
@@ -118,6 +121,7 @@ class Navigator final : public bindings::ScriptWrappable {
   const int memory_;
   const int touch_points_;
   const PageConnection connection_values_;
+  const PageMediaDevices media_devices_;
   const std::string effective_type_;
   v8::TracedReference<v8::Array> languages_array_;
   v8::TracedReference<v8::Promise> battery_promise_;
@@ -128,6 +132,7 @@ class Navigator final : public bindings::ScriptWrappable {
   cppgc::Member<mitto::Geolocation> geolocation_;
   cppgc::Member<StorageManager> storage_;
   cppgc::Member<mitto::Keyboard> keyboard_;
+  cppgc::Member<mitto::MediaDevices> media_devices_object_;
   cppgc::Member<mitto::LockManager> locks_;
 };
 

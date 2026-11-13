@@ -114,6 +114,14 @@ def test_a_page_reports_the_time_zone_of_its_machine_and_the_locale_of_its_perso
         assert page.evaluate(_TIME_ZONE_AND_LOCALE) == expected
 
 
+@pytest.mark.parametrize(("camera", "kinds"), [(True, ["audioinput", "videoinput", "audiooutput"]), (False, [])])
+def test_a_page_lists_the_media_devices_of_its_machine(page_program: None, camera: bool, kinds: list[str]) -> None:
+    machine = mitto.Machine.draw(seed=1, audio_input=camera, video_input=camera, audio_output=camera)
+    script = "navigator.mediaDevices.enumerateDevices().then((devices) => devices.map((device) => device.kind))"
+    with mitto.Session(machine=machine) as session, _open_page(session) as page:
+        assert page.evaluate(script) == kinds
+
+
 # Members of interfaces that the Runtime implements behind a runtime-enabled feature that differs between Chrome Releases,
 # or that a variations seed switches, by the feature.
 _MEMBERS_BEHIND = {

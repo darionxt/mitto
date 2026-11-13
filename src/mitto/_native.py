@@ -60,6 +60,7 @@ __all__ = [
     "PageEventType",
     "PageFeatures",
     "PageLoaded",
+    "PageMediaDevices",
     "PageNavigated",
     "PageNavigator",
     "PageRequestTemplate",
@@ -1066,6 +1067,26 @@ class PageFeatures:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PageMediaDevices:
+    """The kinds of media device that the computer has, which navigator.mediaDevices.enumerateDevices() lists: the
+    "media_devices" of the "start" option of mitto_page_open().
+
+    Attributes:
+        audio_input: Whether it has a microphone, or another device that records sound.
+        video_input: Whether it has a camera.
+        audio_output: Whether it has something that plays sound.
+    """
+
+    audio_input: bool
+    video_input: bool
+    audio_output: bool
+
+    def to_option(self) -> dict[str, object]:
+        """Return the "media_devices" of the "start" option of mitto_page_open()."""
+        return {"audio_input": self.audio_input, "video_input": self.video_input, "audio_output": self.audio_output}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PageStart:
     """What a Page starts with, which it would otherwise read from the machine and the browser: the "start" option of
     mitto_page_open().
@@ -1101,6 +1122,7 @@ class PageStart:
         effective_type: The effective connection type of the network, such as "4g", as the ect hint says.
         navigator: What the browser tells the Page of itself.
         features: What the Persona's Chrome Release turns on and off.
+        media_devices: The kinds of media device that the computer has.
     """
 
     time_zone: str
@@ -1130,12 +1152,14 @@ class PageStart:
     effective_type: str
     navigator: PageNavigator
     features: PageFeatures
+    media_devices: PageMediaDevices
 
     def to_option(self) -> dict[str, object]:
         """Return the "start" option of mitto_page_open()."""
         option = {start_field.name: getattr(self, start_field.name) for start_field in fields(self)}
         option["navigator"] = self.navigator.to_option()
         option["features"] = self.features.to_option()
+        option["media_devices"] = self.media_devices.to_option()
         return option
 
 

@@ -870,6 +870,7 @@ WRONG_VALUES: dict[object, object] = {
     str: 5,
     str | None: 5,
     bool: "no",
+    bool | None: "no",
     int | None: "443",
     float | None: "5",
     float | mitto.Timeout | None: (3, 10),

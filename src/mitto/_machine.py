@@ -179,6 +179,9 @@ _GROUPS: dict[str, tuple[str, ...]] = {
     "time_zone": ("time_zone",),
     "processors": ("processors",),
     "touch_points": ("touch_points",),
+    "audio_input": ("audio_input",),
+    "video_input": ("video_input",),
+    "audio_output": ("audio_output",),
 }
 _WINDOWS = "windows"
 _WEIGHT = "weight"
@@ -199,6 +202,9 @@ _ADDED_AFTER_0_2 = frozenset(
         "time_zone",
         "processors",
         "touch_points",
+        "audio_input",
+        "video_input",
+        "audio_output",
     }
 )
 
@@ -250,6 +256,9 @@ class Machine:
         time_zone: The time zone, by the name that Chrome on Windows gives it, such as "America/New_York".
         processors: The number of logical processors.
         touch_points: How many touch points the touch screen takes, or 0 for none.
+        audio_input: Whether the computer has a microphone, or another device that records sound.
+        video_input: Whether it has a camera.
+        audio_output: Whether it has speakers, headphones or another device that plays sound.
         seed: What draw() drew it from, or None for a Machine that a caller made.
 
     Raises:
@@ -284,6 +293,9 @@ class Machine:
     time_zone: str
     processors: int
     touch_points: int
+    audio_input: bool
+    video_input: bool
+    audio_output: bool
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -325,6 +337,9 @@ class Machine:
         time_zone: str | None = None,
         processors: int | None = None,
         touch_points: int | None = None,
+        audio_input: bool | None = None,
+        video_input: bool | None = None,
+        audio_output: bool | None = None,
     ) -> Self:
         """Return a Machine drawn from the table that ships with mitto, with the values given here and the rest to fit them.
 
@@ -363,6 +378,9 @@ class Machine:
             time_zone: See memory.
             processors: See memory.
             touch_points: See memory.
+            audio_input: See memory.
+            video_input: See memory.
+            audio_output: See memory.
 
         Raises:
             TypeError: As Machine does, and if `seed` is not a whole number or None.
@@ -398,6 +416,9 @@ class Machine:
             "time_zone": time_zone,
             "processors": processors,
             "touch_points": touch_points,
+            "audio_input": audio_input,
+            "video_input": video_input,
+            "audio_output": audio_output,
         }
         fixed = {name: value for name, value in given.items() if value is not None}
         for name, value in fixed.items():
@@ -418,7 +439,8 @@ class Machine:
         if name != _MITTO_0_1:
             raise ValueError(f"no Machine is named {name!r}, only {_MITTO_0_1!r}")
         # A 1920 by 1080 display at 100%, a window that fills it on Windows 11 24H2, and a good connection. mitto 0.1 had
-        # no Runtime, so what only a page reads is what the table draws most often.
+        # no Runtime, so what only a page reads is what the table draws most often, and no camera, which it draws as
+        # often as one.
         return cls(
             memory=8,
             display_width=1920,
@@ -446,6 +468,9 @@ class Machine:
             time_zone="America/New_York",
             processors=8,
             touch_points=0,
+            audio_input=True,
+            video_input=False,
+            audio_output=True,
         )
 
 
@@ -598,6 +623,11 @@ def _require_whole_number(name: str, value: object) -> None:
         raise TypeError(f"{name} has to be a whole number, not {type(value).__name__}")
 
 
+def _require_true_or_false(name: str, value: object) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"{name} has to be True or False, not {type(value).__name__}")
+
+
 def _require_text(name: str, value: object) -> None:
     if not isinstance(value, str):
         raise TypeError(f"{name} has to be text, not {type(value).__name__}")
@@ -682,6 +712,9 @@ _CHECKS: dict[str, Callable[[str, object], None]] = {
     "time_zone": _check_time_zone,
     "processors": _check_whole_number_from(1, _MOST_PROCESSORS),
     "touch_points": _check_whole_number_from(0, _MOST_TOUCH_POINTS),
+    "audio_input": _require_true_or_false,
+    "video_input": _require_true_or_false,
+    "audio_output": _require_true_or_false,
 }
 
 

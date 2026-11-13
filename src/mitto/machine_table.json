@@ -184,6 +184,26 @@
       "rows": [
         {"touch_points": 0, "weight": 1000000}
       ]
+    },
+    "audio_input": {
+      "source": "The owner of mitto, where no public source has weights",
+      "rows": [
+        {"audio_input": true, "weight": 700000},
+        {"audio_input": false, "weight": 300000}
+      ]
+    },
+    "video_input": {
+      "source": "The owner of mitto, where no public source has weights",
+      "rows": [
+        {"video_input": true, "weight": 500000},
+        {"video_input": false, "weight": 500000}
+      ]
+    },
+    "audio_output": {
+      "source": "The owner of mitto, where no public source has weights",
+      "rows": [
+        {"audio_output": true, "weight": 1000000}
+      ]
     }
   }
 }

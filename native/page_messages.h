@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 12;
+inline constexpr uint32_t kPageProtocolVersion = 13;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -251,6 +251,14 @@ struct PageConnection {
   double downlink = 0;
 };
 
+// The kinds of media device that the Machine has, which
+// navigator.mediaDevices.enumerateDevices() lists one entry of each for.
+struct PageMediaDevices {
+  bool audio_input = false;
+  bool video_input = false;
+  bool audio_output = false;
+};
+
 // How the last hop of a request went, as //net's LoadTimingInfo has it and
 // Chrome's network service hands it to Blink for the Performance Timeline:
 // each a time of base::TimeTicks in microseconds, which every process of the
@@ -385,6 +393,7 @@ struct PageStart {
   PageConnection connection;
   // What the Persona's Chrome Release turns on and off.
   PageFeatures features;
+  PageMediaDevices media_devices;
 };
 
 // What a call to a Page gave back.

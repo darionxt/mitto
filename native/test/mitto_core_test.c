@@ -828,7 +828,8 @@ static const char kPageOptions[] =
     "\"features\": {\"enable_blink_features\": [], "
     "\"disable_blink_features\": [], \"v8_flags\": [], "
     "\"deprecated_unload\": {\"enabled\": false, \"allow_list\": null, "
-    "\"by_bucket\": null}}}}";
+    "\"by_bucket\": null}}, \"media_devices\": {\"audio_input\": true, "
+    "\"video_input\": false, \"audio_output\": true}}}";
 
 static MittoPage* g_page;
 static int64_t g_page_process;

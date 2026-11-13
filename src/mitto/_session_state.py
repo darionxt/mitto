@@ -19,6 +19,7 @@ from mitto._native import (
     MEMORY_CACHE,
     NativePage,
     NetworkQuality,
+    PageMediaDevices,
     PageRequestTemplate,
     PageStart,
     PrivateSettings,
@@ -173,6 +174,9 @@ class SessionState:
             effective_type=effective_connection_type(machine.round_trip_ms),
             navigator=page_navigator(self._persona, self._accept_language, machine),
             features=self._persona.page_features,
+            media_devices=PageMediaDevices(
+                audio_input=machine.audio_input, video_input=machine.video_input, audio_output=machine.audio_output
+            ),
         )
 
     def _page_request_template(self, kind: RequestKind, *, with_body: bool = False) -> PageRequestTemplate:

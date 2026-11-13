@@ -10,6 +10,7 @@
 #include "mitto/dom/geolocation.h"
 #include "mitto/dom/keyboard.h"
 #include "mitto/dom/lock_manager.h"
+#include "mitto/dom/media_devices.h"
 #include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
 #include "mitto/dom/network_information.h"
@@ -62,6 +63,7 @@ Navigator::Navigator(const PageStart& start, const PageConnection& connection)
       memory_(start.memory),
       touch_points_(start.touch_points),
       connection_values_(connection),
+      media_devices_(start.media_devices),
       effective_type_(start.effective_type) {}
 
 Navigator::~Navigator() = default;
@@ -81,6 +83,7 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(geolocation_);
   visitor->Trace(storage_);
   visitor->Trace(keyboard_);
+  visitor->Trace(media_devices_object_);
   visitor->Trace(locks_);
 }
 
@@ -263,6 +266,13 @@ mitto::Keyboard* Navigator::Keyboard() {
     keyboard_ = mitto::Keyboard::Create();
   }
   return keyboard_.Get();
+}
+
+mitto::MediaDevices* Navigator::MediaDevices() {
+  if (!media_devices_object_) {
+    media_devices_object_ = mitto::MediaDevices::Create(media_devices_);
+  }
+  return media_devices_object_.Get();
 }
 
 // Upstream: content/browser/cpu_performance/cpu_performance.cc

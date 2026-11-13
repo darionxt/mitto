@@ -487,6 +487,13 @@ mitto_bindings_interfaces = [
     file = "idle_deadline"
   },
   {
+    name = "InputDeviceInfo"
+    file = "input_device_info"
+
+    # The capabilities of a device that a page may not capture.
+    missing = [ "getCapabilities" ]
+  },
+  {
     name = "Keyboard"
     file = "keyboard"
 
@@ -527,6 +534,18 @@ mitto_bindings_interfaces = [
   {
     name = "LockManager"
     file = "lock_manager"
+  },
+  {
+    name = "MediaDeviceInfo"
+    file = "media_device_info"
+  },
+  {
+    name = "MediaDevices"
+    file = "media_devices"
+
+    # Capturing, its constraints and the device change event's handler, which
+    # the bindings run.
+    implemented = [ "enumerateDevices" ]
   },
   {
     name = "MediaSource"
@@ -612,6 +631,7 @@ mitto_bindings_interfaces = [
       "getBattery",
       "cpuPerformance",
       "keyboard",
+      "mediaDevices",
     ]
   },
   {
