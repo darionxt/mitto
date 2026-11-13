@@ -5,8 +5,9 @@
 .DESCRIPTION
     Starts Chrome from a new user data directory and lets its variations seed arrive. Then it starts the capture server
     and takes a new start of Chrome from that directory through each of the server's runs, so that field trials apply:
-    first the page whose Script Fingerprint it records, then the wire's runs. Chrome always runs on the desktop of
-    whoever is logged in at the machine, windowed, also when this script runs over SSH.
+    first the pages whose Script Fingerprint it records, a top-level page, its frames and a worker, then the wire's runs.
+    Chrome always runs on the desktop of whoever is logged in at the machine, windowed, also when this script runs over
+    SSH.
 
     The output directory gets what the capture server writes, and chrome.txt, which says which Chrome recorded it.
 
@@ -26,7 +27,7 @@
     Starts Chrome without a debugging port, so that it holds nothing but the flags of the procedure. This script reads
     chrome://version through that port, so chrome.txt then has no field trials or features, and nothing checks the
     groups of the studies that change what a page sees. The case pages get their clicks through it too, so this records
-    the Script Fingerprint and the main Request Kinds only.
+    the Script Fingerprint's cases and the main Request Kinds only.
 
 .PARAMETER NoVariationsSeed
     For a Chrome that fetches no variations seed, such as Chrome for Testing as it comes. The first start lasts as long
@@ -76,7 +77,9 @@ $NetworkNames = '(?i)quic|http|spdy|tls|ssl|encryptedclienthello|dns|network|soc
 # them off. chrome://version only lists overrides, so with none, only these lines of chrome.txt name them.
 $OnInChromesCode = @('PartitionConnectionsByNetworkIsolationKey', 'SplitCacheByNetworkIsolationKey')
 
-$RunsWithoutClicks = @('script/page', 'http1', 'http2', 'http3')
+# The runs of the Script Fingerprint, the first case first, whose files later cases keep what differs from.
+$ScriptRuns = @('script/page', 'script/same_origin_frame', 'script/srcdoc_frame', 'script/cross_site_frame', 'script/worker')
+$RunsWithoutClicks = $ScriptRuns + @('http1', 'http2', 'http3')
 $RunsFile = 'runs.json'
 $CertificateFlag = '--ignore-certificate-errors-spki-list'
 # A recording start of the wire has a debugging port with no fixed number, through which the server clicks the case pages
@@ -308,12 +311,13 @@ function Get-PageStudyGroups($Page) {
 }
 
 function Assert-ScriptRecording([string]$Name) {
-    # The page must stay on this machine too, and its Chrome must have the en-US locale.
-    $raw = [IO.File]::ReadAllText((Join-Path $Out "$Name.raw.json")) | ConvertFrom-Json
+    # The page must stay on this machine too, and its Chrome must have the en-US locale. The raw record says so for each
+    # case, also for a later one, whose own file keeps only what differs from the first case's.
+    $text = [IO.File]::ReadAllText((Join-Path $Out "$Name.raw.json"))
+    $raw = $text | ConvertFrom-Json
     $peers = @($raw.peers | Sort-Object -Unique)
     $elsewhere = @($peers | Where-Object { $_ -notin '127.0.0.1', '::1' })
     if ($peers.Count -eq 0 -or $elsewhere.Count -gt 0) { throw "$Name has peers other than loopback: $($peers -join ', ')" }
-    $text = [IO.File]::ReadAllText((Join-Path $Out "$Name.json"))
     if (-not $text.Contains('["language", "en-US"]')) { throw "$Name was not recorded with the en-US locale." }
     Write-Step "$Name peers: $($peers -join ', '); navigator.language is en-US"
 }

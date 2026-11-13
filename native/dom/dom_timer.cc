@@ -52,6 +52,14 @@ TimerSchedule ScheduleTimer(int nesting_level, base::TimeDelta timeout) {
       timeout < kMinimumInterval) {
     timeout = kMinimumInterval;
   }
+  // DOMTimer::DOMTimer(): its task type by its nesting level and timeout.
+  if (schedule.nesting_level > kMaxTimerNestingLevel) {
+    schedule.task_type = TaskType::kJavascriptTimerDelayedHighNesting;
+  } else if (timeout.is_zero()) {
+    schedule.task_type = TaskType::kJavascriptTimerImmediate;
+  } else {
+    schedule.task_type = TaskType::kJavascriptTimerDelayedLowNesting;
+  }
   // No clamp to 1 millisecond: setTimeout() has none, and setInterval() none
   // since SetIntervalWithoutClamp, which stable has on.
   schedule.delay = timeout;
@@ -96,6 +104,10 @@ class DOMTimerCoordinator::DOMTimer {
     next_fire_time_ = schedule.delay.is_zero()
                           ? base::TimeTicks()
                           : base::TimeTicks::Now() + schedule.delay;
+    // DOMTimer::MoveToNewTaskRunner(): the queue of its task type.
+    if (EventLoop* const event_loop = EventLoop::Get()) {
+      timer_.SetTaskRunner(event_loop->TaskRunner(schedule.task_type));
+    }
     Arm();
   }
 

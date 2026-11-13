@@ -8,10 +8,11 @@ from pathlib import Path
 from tools.capture.cases import RECORDING_RUNS, RESUMPTION_RUNS, Case, Run
 from tools.capture.devtools import PageClicker
 from tools.capture.normal_form import RecordingError, dumps_normal_form, normal_form
-from tools.capture.probe import dumps_record, read_record
+from tools.capture.probe import RecordValue, dumps_record, read_record
 from tools.capture.recording import Recording, raw_form
+from tools.capture.script_delta import dumps_script_delta, script_delta
 from tools.capture.script_normal_form import dumps_script_raw_record, script_normal_form
-from tools.capture.script_page import SCRIPT_RUNS, ScriptRun, posted_record
+from tools.capture.script_page import SCRIPT_RUNS, TOP_LEVEL_PAGE, ScriptRun, posted_record
 from tools.capture.server import DEFAULT_HOST, CaptureServer
 
 _RUNS_FILE = "runs.json"
@@ -56,6 +57,9 @@ def main() -> int:
     runs = [run for run in available if run.name in names]
     if len(runs) != len(names):
         parser.error("--runs names a run that needs --tickets, or one that a server with --tickets cannot record")
+    if any(isinstance(run, ScriptRun) for run in runs) and TOP_LEVEL_PAGE not in runs:
+        # A later case's Baseline keeps what differs from the first's, from the same session.
+        parser.error(f"a run of a Script Fingerprint needs {TOP_LEVEL_PAGE.name} in the same session")
 
     out: Path = args.out
     out.mkdir(parents=True, exist_ok=True)
@@ -103,15 +107,43 @@ def _record(server: CaptureServer, runs: list[Run | ScriptRun], out: Path) -> in
     print("Ctrl-C stops early.", flush=True)
     pending = list(runs)
     failed = False
+    # The first case's Normal Form, once written, which a later case's file keeps what differs from. Records come in
+    # the order their pages post them, so a later case waits for it.
+    first: dict[str, RecordValue] | None = None
     try:
         while pending:
             for run in list(pending):
-                if server.wait_for_page(run.route, _POLL_SECONDS / len(pending), done_path=run.done_path):
+                if _waits_for_the_first_case(run, pending):
+                    continue
+                if not server.wait_for_page(run.route, _POLL_SECONDS / len(pending), done_path=run.done_path):
+                    continue
+                pending.remove(run)
+                if isinstance(run, ScriptRun):
+                    form = _write_script(server, run, out, first)
+                    first = form if run == TOP_LEVEL_PAGE else first
+                    failed = form is None or failed
+                else:
                     failed = not _write(server, run, out) or failed
-                    pending.remove(run)
     except KeyboardInterrupt:
+        _say_what_waited(server, pending)
         return 130
     return 1 if failed else 0
+
+
+def _waits_for_the_first_case(run: Run | ScriptRun, pending: list[Run | ScriptRun]) -> bool:
+    """Whether a run is a later Recording Case of a Script Fingerprint whose first case has not been written yet."""
+    return isinstance(run, ScriptRun) and run != TOP_LEVEL_PAGE and TOP_LEVEL_PAGE in pending
+
+
+def _say_what_waited(server: CaptureServer, pending: list[Run | ScriptRun]) -> None:
+    """Name each later case whose record came but was not written, because the first case's never did."""
+    for run in pending:
+        if _waits_for_the_first_case(run, pending) and server.wait_for_page(run.route, 0, done_path=run.done_path):
+            print(
+                f"{run.label}: its record came, but nothing was written for it, since {TOP_LEVEL_PAGE.label} never"
+                " posted one to keep what differs from",
+                file=sys.stderr,
+            )
 
 
 def _quoted(flag: str) -> str:
@@ -139,10 +171,8 @@ def _runs_form(server: CaptureServer, runs: list[Run | ScriptRun]) -> dict[str, 
     }
 
 
-def _write(server: CaptureServer, run: Run | ScriptRun, out: Path) -> bool:
+def _write(server: CaptureServer, run: Run, out: Path) -> bool:
     """Write a run's recordings. Returns whether they make a complete normal form."""
-    if isinstance(run, ScriptRun):
-        return _write_script(server, run, out)
     recording = server.recording(run.route, host=run.host)
     raw_path = out / f"{run.name}.raw.json"
     raw_path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,27 +203,52 @@ def _write_form(
     return True
 
 
-def _write_script(server: CaptureServer, run: ScriptRun, out: Path) -> bool:
-    """Write the record that a run's page posted, raw and in its Normal Form. Returns whether the page posted one."""
+def _write_script(
+    server: CaptureServer, run: ScriptRun, out: Path, first: dict[str, RecordValue] | None
+) -> dict[str, RecordValue] | None:
+    """Write the record that a run's page posted, raw and in its Normal Form, or for a later Recording Case what of its
+    Normal Form differs from the first case's.
+
+    Args:
+        server: The server whose route has the record.
+        run: The run.
+        out: The output directory.
+        first: The first case's Normal Form, written earlier in this session, or None if its page posted no record.
+
+    Returns:
+        The run's Normal Form, or None if nothing was written for it.
+    """
     recording = server.recording(run.route, host=run.host)
     posted = posted_record(recording, run)
     if posted is None:
         print(f"{run.label}: the page posted no record", file=sys.stderr)
-        return False
+        return None
     try:
         record = read_record(posted.decode("utf-8"))
     except ValueError as error:
         print(f"{run.label}: the page posted no record of the probe: {error}", file=sys.stderr)
-        return False
+        return None
     url = server.start_url(run)
     peers = sorted({connection.peer for connection in recording.connections if connection.peer is not None})
     raw_path = out / f"{run.name}.raw.json"
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path.write_text(dumps_script_raw_record(url, peers, record), encoding="utf-8", newline="\n")
     path = out / f"{run.name}.json"
-    path.write_text(dumps_record(script_normal_form(record, url)), encoding="utf-8", newline="\n")
-    print(f"{run.label}: wrote {path}", flush=True)
-    return True
+    form = script_normal_form(record, url, run.machine_places)
+    if run == TOP_LEVEL_PAGE:
+        path.write_text(dumps_record(form), encoding="utf-8", newline="\n")
+        print(f"{run.label}: wrote {path}", flush=True)
+        return form
+    if first is None:
+        print(
+            f"{run.label}: wrote only {raw_path}, since {TOP_LEVEL_PAGE.label} has no Normal Form to keep what"
+            " differs from",
+            file=sys.stderr,
+        )
+        return None
+    path.write_text(dumps_script_delta(script_delta(first, form, TOP_LEVEL_PAGE.case)), encoding="utf-8", newline="\n")
+    print(f"{run.label}: wrote what differs from {TOP_LEVEL_PAGE.name}.json to {path}", flush=True)
+    return form
 
 
 if __name__ == "__main__":

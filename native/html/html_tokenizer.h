@@ -179,6 +179,15 @@ class HtmlTokenizer {
   // HTML namespace, which lets <![CDATA[ open a CDATA section.
   void SetAllowCdata(bool value) { allow_cdata_ = value; }
 
+  // Where the next input character is, from zero, in UTF-16 code units, as
+  // Blink's HTMLDocumentParser::GetTextPosition() gives it: right after the
+  // token that NextToken() gave last, such as a script's start tag.
+  struct ZeroBasedPosition {
+    int line;
+    int column;
+  };
+  ZeroBasedPosition TextPosition() const;
+
   // The parse errors since the last call, in the order they happened, if
   // Options::collect_parse_errors is on.
   std::vector<ParseError> TakeParseErrors();

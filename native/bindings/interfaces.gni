@@ -461,8 +461,7 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLBaseElement"
     file = "html_base_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [ "href" ]
   },
   {
     name = "HTMLBodyElement"

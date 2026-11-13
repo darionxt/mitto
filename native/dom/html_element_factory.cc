@@ -10,6 +10,7 @@
 #include "mitto/dom/html_anchor_element.h"
 #include "mitto/dom/html_area_element.h"
 #include "mitto/dom/html_audio_element.h"
+#include "mitto/dom/html_base_element.h"
 #include "mitto/dom/html_body_element.h"
 #include "mitto/dom/html_br_element.h"
 #include "mitto/dom/html_canvas_element.h"
