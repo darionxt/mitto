@@ -1339,6 +1339,9 @@ class HtmlTreeBuilder {
           continue;
         case Mode::kAfterBody:
         case Mode::kAfterAfterBody:
+          // Blink inserts the whitespace in the current node without
+          // reconstructing the active formatting elements, where the standard
+          // takes it by the "in body" rules, which would.
           InsertText(TakeLeadingWhitespace(text));
           if (text.empty()) {
             return;
