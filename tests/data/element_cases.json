@@ -184,6 +184,8 @@
   "fragment clone": "string:[object DocumentFragment]|2|true|0|true",
   "fragment querySelector": "string:[object HTMLElement]|2|i|b",
   "fragment adopted": "string:true|true",
+  "fragment alone empties before checks": "string:HierarchyRequestError|0|HierarchyRequestError|0|1",
+  "fragment appended to itself": "string:2|b",
   "template content": "string:[object DocumentFragment]|true|false|null|true|about:blank|CSS1Compat|0|0|null",
   "template document shared": "string:true|true",
   "template innerHTML": "string:0|2|<p>a</p><b>c</b>|<template><p>a</p><b>c</b></template>|true|",
