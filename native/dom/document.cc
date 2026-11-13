@@ -586,10 +586,9 @@ const GURL& Document::BaseUrl() const {
 }
 
 GURL Document::CompleteUrl(std::u16string_view url) const {
-  // A document with no base URL resolves only an absolute URL.
-  return base_url_.is_valid()
-             ? ResolveUrlWithEncoding(base_url_, url, encoding_)
-             : GURL(url);
+  // A document with no base URL resolves only an absolute URL, whose query is
+  // still in the document's encoding.
+  return ResolveUrlWithEncoding(base_url_, url, encoding_);
 }
 
 void Document::ProcessBaseElement() {

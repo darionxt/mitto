@@ -1030,3 +1030,20 @@ def test_a_request_parses_its_url_against_the_base_url_in_utf_8_whatever_the_doc
             "windows-1252",
             server.url("/sub/r?q=%C3%A9"),
         ]
+
+
+def test_a_document_without_a_base_url_keeps_its_encoding_for_an_absolute_url(
+    session: mitto.Session, server: _PageServer
+) -> None:
+    # An invalid base leaves the document with none: Blink's KURL(null base, url, encoding) resolves only an absolute
+    # URL, its query still in the document's encoding. What Chrome 157.0.8103.51 asked for, by hand.
+    server.routes["/"] = _Route(
+        f"<base href='http://['><script src='{server.url('/s.js?q=\u00e9')}'></script>".encode("windows-1252"),
+        headers=[("Content-Type", "text/html; charset=windows-1252")],
+    )
+    server.routes["/s.js?q=%E9"] = _Route(b"window.ran = true;", headers=[("Content-Type", "text/javascript")])
+    url = server.url("/")
+
+    with _open_page(session, url) as page:
+        assert page.evaluate("[document.baseURI, window.ran]") == ["about:blank", True]
+    assert [path for path, _ in server.requests] == ["/", "/s.js?q=%E9"]
