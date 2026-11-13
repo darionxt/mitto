@@ -443,6 +443,20 @@
     e.setAttributeNodeNS(a);
     return [e.getAttributeNS("http://www.w3.org/1999/xlink", "href"), e.outerHTML].join("|");
   });
+  // Blink makes the replaced attribute's node with the new name, unless a page asked for its node before.
+  run("setAttributeNodeNS other prefix", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "old");
+    const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
+    return [r.name, r.prefix, r.value, r.ownerElement, e.attributes[0].name].join("|");
+  });
+  run("setAttributeNodeNS other prefix asked", () => {
+    const e = document.createElement("div");
+    e.setAttributeNS("urn:x", "p:a", "old");
+    e.getAttributeNodeNS("urn:x", "a");
+    const r = e.setAttributeNodeNS(document.createAttributeNS("urn:x", "q:a"));
+    return [r.name, r.prefix, r.value, e.attributes[0].name].join("|");
+  });
   run("removeAttributeNode", () => {
     const e = document.createElement("div");
     e.setAttribute("title", "a");

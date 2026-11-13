@@ -279,6 +279,8 @@
   "setAttributeNode other document": "string:true|",
   "setAttributeNode wrong type": "threw TypeError: Failed to execute 'setAttributeNode' on 'Element': parameter 1 is not of type 'Attr'.",
   "setAttributeNodeNS": "string:#x|<use xlink:href=\"#x\"></use>",
+  "setAttributeNodeNS other prefix": "string:q:a|q|old||q:a",
+  "setAttributeNodeNS other prefix asked": "string:p:a|p|old|q:a",
   "removeAttributeNode": "string:true|null|a|false",
   "removeAttributeNode other": "threw NotFoundError: Failed to execute 'removeAttributeNode' on 'Element': The node provided is owned by another element.",
   "removeAttributeNode twice": "threw NotFoundError: Failed to execute 'removeAttributeNode' on 'Element': The node provided is owned by another element.",
