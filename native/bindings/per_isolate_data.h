@@ -181,6 +181,11 @@ class PerIsolateData {
     return dom_exception_hooks_;
   }
 
+  // What OmitExceptionContextScope sets: whether an error that leaves a
+  // binding call now gets no context in front of its message.
+  void set_omit_exception_context(bool omit) { omit_exception_context_ = omit; }
+  bool omit_exception_context() const { return omit_exception_context_; }
+
   // What DictionaryConversionScope keeps.
   void PushDictionaryContext(std::string_view dictionary_name);
   void SetDictionaryPropertyName(std::string_view property_name);
@@ -204,6 +209,7 @@ class PerIsolateData {
   std::vector<v8::Eternal<v8::Private>> known_gap_privates_;
   ObjectHooks object_hooks_;
   std::vector<DictionaryContext> dictionary_contexts_;
+  bool omit_exception_context_ = false;
 };
 
 }  // namespace mitto::bindings

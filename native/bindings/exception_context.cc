@@ -54,6 +54,9 @@ void ApplyContextToException(v8::Isolate* isolate,
 
 void OnExceptionPropagation(v8::ExceptionPropagationMessage message) {
   v8::Isolate* const isolate = message.GetIsolate();
+  if (PerIsolateData::From(isolate)->omit_exception_context()) {
+    return;
+  }
   const v8::Local<v8::Object> exception = message.GetException();
   const v8::ExceptionContext context_type = message.GetExceptionContext();
   std::string class_name = ToUtf8(isolate, message.GetInterfaceName());
@@ -100,6 +103,15 @@ DictionaryConversionScope::DictionaryConversionScope(
 
 DictionaryConversionScope::~DictionaryConversionScope() {
   data_->PopDictionaryContext();
+}
+
+OmitExceptionContextScope::OmitExceptionContextScope(v8::Isolate* isolate)
+    : data_(PerIsolateData::From(isolate)) {
+  data_->set_omit_exception_context(true);
+}
+
+OmitExceptionContextScope::~OmitExceptionContextScope() {
+  data_->set_omit_exception_context(false);
 }
 
 void DictionaryConversionScope::SetCurrentPropertyName(

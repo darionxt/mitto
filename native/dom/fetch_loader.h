@@ -1,6 +1,8 @@
 // One fetch() of a page's: it settles fetch()'s promise with a Response once
 // the response starts, or rejects it, and then brings the Response its body.
-// The Fetcher owns it until the request ends.
+// The Fetcher owns it until the request ends. Its request's signal rejects
+// the promise with its reason and cancels the request, as Blink's
+// FetchManager::Loader::Abort() does.
 //
 // Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
 // Upstream: third_party/blink/renderer/core/fetch/fetch_response_data.cc
@@ -21,16 +23,19 @@
 
 namespace mitto {
 
+class AbortSignal;
 class Response;
 
 class FetchLoader final : public FetchClient {
  public:
   // `resolver` is fetch()'s, in `context`. The response of a HEAD request,
-  // `head`, has a null body.
+  // `head`, has a null body. `signal` is the request's, which has not
+  // aborted.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
               v8::Local<v8::Promise::Resolver> resolver,
-              bool head);
+              bool head,
+              AbortSignal* signal);
 
   FetchLoader(const FetchLoader&) = delete;
   FetchLoader& operator=(const FetchLoader&) = delete;
@@ -50,6 +55,8 @@ class FetchLoader final : public FetchClient {
   // Called during garbage collection, which may not run scripts or free
   // handles, so it cancels the request from a later task.
   void ResponseCollected();
+  // The request's signal aborted. Destroys this.
+  void Abort();
 
  private:
   void Cancel();
@@ -59,6 +66,8 @@ class FetchLoader final : public FetchClient {
   v8::Global<v8::Promise::Resolver> resolver_;
   const bool head_;
   raw_ptr<FetchController> controller_ = nullptr;
+  // The request's signal, which the request keeps while it runs.
+  cppgc::Persistent<AbortSignal> signal_;
   // The Response, which a script may let go until it reads the body.
   cppgc::WeakPersistent<Response> response_;
   // The Response while a script reads its body.

@@ -30,6 +30,18 @@
 # class's MaplikeEntries() or SetlikeValues().
 mitto_bindings_interfaces = [
   {
+    name = "AbortController"
+    file = "abort_controller"
+  },
+  {
+    name = "AbortSignal"
+    file = "abort_signal"
+    made_by_known_gaps = true
+
+    # The bindings run its event handler attribute.
+    missing = [ "onabort" ]
+  },
+  {
     name = "BarProp"
     file = "bar_prop"
     made_by_known_gaps = true
@@ -631,6 +643,7 @@ mitto_bindings_interfaces = [
       "method",
       "url",
       "headers",
+      "signal",
     ]
   },
   {
@@ -673,6 +686,26 @@ mitto_bindings_interfaces = [
     file = "style_media"
     made_by_known_gaps = true
     implemented = [ "type" ]
+  },
+  {
+    name = "TaskController"
+    file = "task_controller"
+
+    # Changing a TaskSignal's priority, and its prioritychange event, which
+    # nothing in the Runtime would act on yet.
+    missing = [ "setPriority" ]
+  },
+  {
+    name = "TaskSignal"
+    file = "task_signal"
+    made_by_known_gaps = true
+
+    # The bindings run its event handler attribute. Changing the priority,
+    # which fires prioritychange, is a Known Gap of TaskController.
+    missing = [
+      "any",
+      "onprioritychange",
+    ]
   },
   {
     name = "Text"

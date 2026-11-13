@@ -10,6 +10,7 @@
 // too, and one that a page's own function throws does not.
 //
 // Upstream: third_party/blink/renderer/bindings/core/v8/v8_initializer.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h
 // Upstream: third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.cc
 
 #ifndef MITTO_BINDINGS_EXCEPTION_CONTEXT_H_
@@ -41,6 +42,21 @@ class DictionaryConversionScope {
 
   // The member that the conversion reads now.
   void SetCurrentPropertyName(std::string_view property_name);
+
+ private:
+  const raw_ptr<PerIsolateData> data_;
+};
+
+// While one exists, an error that leaves a binding call keeps its message as it
+// is, as Blink's OmitExceptionContextInformation does where a call throws a
+// value that a page gave, such as AbortSignal.throwIfAborted()'s reason.
+class OmitExceptionContextScope {
+ public:
+  explicit OmitExceptionContextScope(v8::Isolate* isolate);
+  OmitExceptionContextScope(const OmitExceptionContextScope&) = delete;
+  OmitExceptionContextScope& operator=(const OmitExceptionContextScope&) =
+      delete;
+  ~OmitExceptionContextScope();
 
  private:
   const raw_ptr<PerIsolateData> data_;

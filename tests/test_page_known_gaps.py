@@ -131,10 +131,10 @@ _AS_CHROME = {
         "threw: TypeError: Failed to execute 'createImageBitmap' on 'Window': 1 argument required, but only 0 present.",
     ),
     "an object of EventTarget's behind an interface without a class": (
-        """const signal = new AbortController().signal;
+        """const reader = new FileReader();
         let calls = 0;
-        signal.addEventListener('x', () => calls++);
-        signal.dispatchEvent(new Event('x'));
+        reader.addEventListener('x', () => calls++);
+        reader.dispatchEvent(new Event('x'));
         return calls;""",
         "value: 1",
     ),
@@ -143,12 +143,12 @@ _AS_CHROME = {
         "value: ping,true,false",
     ),
     "an event handler keeps an object, and null for anything else": (
-        """const signal = new AbortController().signal;
+        """const reader = new FileReader();
         const handler = () => {};
-        signal.onabort = handler;
-        const kept = signal.onabort === handler;
-        signal.onabort = 5;
-        return [kept, signal.onabort].join();""",
+        reader.onabort = handler;
+        const kept = reader.onabort === handler;
+        reader.onabort = 5;
+        return [kept, reader.onabort].join();""",
         "value: true,",
     ),
 }
@@ -164,20 +164,20 @@ def test_a_known_gap_checks_and_converts_as_chrome_does(program: Path, script: s
     [
         pytest.param("return window.name === ''", "value: true", id="string"),
         pytest.param("return new Highlight().priority", "value: 0", id="integer"),
-        pytest.param("return new AbortController().signal.aborted", "value: false", id="boolean"),
-        pytest.param("return new AbortController().signal.reason", "value: undefined", id="any"),
+        pytest.param("return new DOMMatrix().is2D", "value: false", id="boolean"),
+        pytest.param("return indexedDB.open('x').result", "value: undefined", id="any"),
         pytest.param("return new Highlight().type", "value: highlight", id="first value of an enumeration"),
         pytest.param("return document.body.childNodes instanceof NodeList", "value: true", id="interface"),
         pytest.param(
             "return document.implementation === document.implementation", "value: true", id="the same object each time"
         ),
         pytest.param(
-            "const c = new AbortController(); return c.signal === c.signal && c.signal instanceof AbortSignal",
+            "const c = new MessageChannel(); return c.port1 === c.port1 && c.port1 instanceof MessagePort",
             "value: true",
             id="the same object on one receiver",
         ),
         pytest.param(
-            "return new AbortController().signal !== new AbortController().signal",
+            "return new MessageChannel().port1 !== new MessageChannel().port1",
             "value: true",
             id="another object on another receiver",
         ),

@@ -6,6 +6,10 @@ import("//mitto/bindings/generated_files.gni")
 
 source_set("dom") {
   sources = [
+    "abort_controller.cc",
+    "abort_controller.h",
+    "abort_signal.cc",
+    "abort_signal.h",
     "bar_prop.cc",
     "bar_prop.h",
     "character_data.cc",
@@ -172,6 +176,10 @@ source_set("dom") {
     "selector_query.h",
     "style_media.cc",
     "style_media.h",
+    "task_controller.cc",
+    "task_controller.h",
+    "task_signal.cc",
+    "task_signal.h",
     "text.cc",
     "text.h",
     "text_decoder.cc",

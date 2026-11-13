@@ -5,6 +5,7 @@ A local server serves each page and its scripts, and records what each request c
 and needs a native library with the Page program beside it, as CI's native job installs it on every Host.
 """
 
+import contextlib
 import http.server
 import socket
 import threading
@@ -32,12 +33,16 @@ _JAVASCRIPT = "text/javascript"
 
 @dataclass
 class _Route:
-    """What the server answers for one path: a status, header lines and a body, or a function that writes the body."""
+    """What the server answers for one path: a status, header lines and a body, or a function that writes the body.
+
+    With `hold`, the server answers only once it is set.
+    """
 
     body: bytes = b""
     status: int = 200
     headers: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     write: Callable[[http.server.BaseHTTPRequestHandler], None] | None = None
+    hold: threading.Event | None = None
 
 
 class _PageServer:
@@ -65,6 +70,8 @@ class _PageServer:
                     server.requests.append((self.path, list(self.headers.items())))
                     server.requested.notify_all()
                 route = server.routes.get(self.path, _Route(b"not here", 404, [("Content-Type", "text/plain")]))
+                if route.hold is not None:
+                    route.hold.wait(_TIMEOUT_SECONDS)
                 self.send_response(route.status)
                 for name, value in route.headers:
                     self.send_header(name, value)
@@ -571,6 +578,101 @@ def test_a_fetch_that_cannot_reach_its_server_rejects_with_failed_to_fetch(
         pytest.raises(mitto.MittoError, match=r"^Uncaught \(in promise\) TypeError: Failed to fetch$"),
     ):
         page.evaluate(f"fetch('{_refused_url()}')", timeout=_TIMEOUT_SECONDS)
+
+
+# What Chrome 157.0.8103.51 gave when a signal aborted a fetch() at each point, from a page of a local server whose
+# /silent never answers, /drip sends a part of its body and then waits, and /small sends its whole body at once.
+_FETCH_ABORTS = {
+    "before the response": (
+        "const c = new AbortController(); const p = fetch('/silent', {signal: c.signal});"
+        " setTimeout(() => c.abort(), 200);"
+        " try { await p; return 'resolved'; } catch (e) { return [e.name, e.message, e === c.signal.reason].join(); }",
+        "AbortError,signal is aborted without reason,true",
+    ),
+    "a timeout before the response": (
+        "try { await fetch('/silent', {signal: AbortSignal.timeout(200)}); return 'resolved'; }"
+        " catch (e) { return [e.name, e.message].join(); }",
+        "TimeoutError,signal timed out",
+    ),
+    "after the response, before a read": (
+        "const c = new AbortController(); const r = await fetch('/drip', {signal: c.signal}); c.abort('why');"
+        " const out = [r.bodyUsed]; for (let i = 0; i < 2; i++) {"
+        " try { await r.text(); out.push('read'); } catch (e) { out.push(String(e), r.bodyUsed); } }"
+        " return out.join();",
+        "false,why,false,why,false",
+    ),
+    "during a read": (
+        "const c = new AbortController(); const r = await fetch('/drip', {signal: c.signal}); const t = r.text();"
+        " c.abort('why'); try { await t; return 'read'; } catch (e) { return [String(e), r.bodyUsed].join(); }",
+        "why,true",
+    ),
+    "during an arrayBuffer read, with the default reason": (
+        "const c = new AbortController(); const r = await fetch('/drip', {signal: c.signal});"
+        " const t = r.arrayBuffer(); c.abort(); try { await t; return 'read'; }"
+        " catch (e) { return [e.name, e.message, e === c.signal.reason].join(); }",
+        "AbortError,signal is aborted without reason,true",
+    ),
+    "after the whole body came, before a read": (
+        "const c = new AbortController(); const r = await fetch('/small', {signal: c.signal});"
+        " await new Promise((resolve) => setTimeout(resolve, 300)); c.abort('late');"
+        " try { return await r.text(); } catch (e) { return 'rejected ' + e; }",
+        "rejected late",
+    ),
+    "after a read": (
+        "const c = new AbortController(); const r = await fetch('/small', {signal: c.signal});"
+        " const text = await r.text(); c.abort('late'); return [text, r.bodyUsed].join();",
+        "small,true",
+    ),
+    "a json read after abort": (
+        "const c = new AbortController(); const r = await fetch('/small', {signal: c.signal}); c.abort('late');"
+        " try { await r.json(); return 'read'; } catch (e) { return String(e); }",
+        "late",
+    ),
+    "a HEAD request's unread body after abort": (
+        "const c = new AbortController(); const r = await fetch('/small', {method: 'HEAD', signal: c.signal});"
+        " c.abort('late'); try { return JSON.stringify(await r.text()); } catch (e) { return 'rejected ' + e; }",
+        "rejected late",
+    ),
+    "a Request's signal": (
+        "const c = new AbortController(); const p = fetch(new Request('/silent', {signal: c.signal}));"
+        " c.abort('via request'); try { await p; return 'resolved'; } catch (e) { return String(e); }",
+        "via request",
+    ),
+    "init's signal over the Request's": (
+        "const a = new AbortController(); const b = new AbortController();"
+        " const p = fetch(new Request('/silent', {signal: a.signal}), {signal: b.signal}); a.abort('a');"
+        " setTimeout(() => b.abort('b'), 100); try { await p; return 'resolved'; } catch (e) { return String(e); }",
+        "b",
+    ),
+}
+
+
+def test_a_fetchs_signal_aborts_it_as_in_chrome(session: mitto.Session, server: _PageServer) -> None:
+    release = threading.Event()
+
+    def drip(handler: http.server.BaseHTTPRequestHandler) -> None:
+        handler.wfile.write(b"first")
+        handler.wfile.flush()
+        release.wait(_TIMEOUT_SECONDS)
+        # The Session may have cancelled the request.
+        with contextlib.suppress(OSError):
+            handler.wfile.write(b"rest")
+
+    server.routes["/silent"] = _Route(b"never", headers=[("Content-Type", "text/plain")], hold=release)
+    server.routes["/drip"] = _Route(headers=[("Content-Type", "text/plain")], write=drip)
+    server.routes["/small"] = _Route(b"small", headers=[("Content-Type", "text/plain")])
+    url = server.page("/", "<p>abort</p>")
+
+    try:
+        with _open_page(session, url) as page:
+            outcomes = {
+                name: page.evaluate(f"(async () => {{ {script} }})()", timeout=_TIMEOUT_SECONDS)
+                for name, (script, _) in _FETCH_ABORTS.items()
+            }
+            assert page.uncaught_errors == []
+    finally:
+        release.set()
+    assert outcomes == {name: chrome for name, (_, chrome) in _FETCH_ABORTS.items()}
 
 
 def test_a_body_that_no_script_reads_holds_the_server_back_until_one_does(

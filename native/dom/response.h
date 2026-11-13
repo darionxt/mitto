@@ -2,11 +2,14 @@
 // text(), json() and arrayBuffer() wait for all of it, and give the Session
 // credit for more only once one of them reads, so that a body that no script
 // reads slows the server down, as a full Mojo data pipe does in Chrome. Its
-// stream, clone(), blob(), formData() and bytes() are Known Gaps.
+// request's signal errors a body that has not all been read, as the abort of
+// Blink's BodyStreamBuffer does. Its stream, clone(), blob(), formData() and
+// bytes() are Known Gaps.
 //
 // Upstream: third_party/blink/renderer/core/fetch/response.h
 // Upstream: third_party/blink/renderer/core/fetch/response.cc
 // Upstream: third_party/blink/renderer/core/fetch/body.cc
+// Upstream: third_party/blink/renderer/core/fetch/body_stream_buffer.cc
 
 #ifndef MITTO_DOM_RESPONSE_H_
 #define MITTO_DOM_RESPONSE_H_
@@ -30,6 +33,7 @@
 
 namespace mitto {
 
+class AbortSignal;
 class FetchLoader;
 class Headers;
 
@@ -81,6 +85,10 @@ class Response final : public bindings::ScriptWrappable {
   v8::Local<v8::Promise> Text(bindings::ExceptionState& exception_state);
 
   // What its FetchLoader tells it.
+  //
+  // The signal of the request, whose abort errors a body that is not all read
+  // yet with its reason.
+  void FollowSignal(AbortSignal* signal);
   void AppendBody(std::string_view bytes);
   // The body ended: 0 when all of it came, and otherwise a net error.
   void EndBody(int net_error);
@@ -105,6 +113,8 @@ class Response final : public bindings::ScriptWrappable {
     kLoading,
     kComplete,
     kFailed,
+    // The request's signal aborted before all of the body was read.
+    kAborted,
   };
   enum class ReadAs {
     kArrayBuffer,
@@ -120,6 +130,8 @@ class Response final : public bindings::ScriptWrappable {
   // The whole body, which this gives up, or nullopt if it failed.
   std::optional<std::string> TakeBody();
   void Dispose();
+  // The request's signal aborted.
+  void AbortBody();
 
   ResponseType type_ = ResponseType::kDefault;
   int32_t status_ = 200;
@@ -130,6 +142,9 @@ class Response final : public bindings::ScriptWrappable {
   BodyState body_state_ = BodyState::kNull;
   std::string body_;
   bool body_used_ = false;
+  // Whether a script read a null body, which Chrome's empty stream would have
+  // used up, so that an abort leaves it alone.
+  bool null_body_read_ = false;
   // The promise of the read that waits for the rest of the body.
   v8::TracedReference<v8::Promise::Resolver> reader_;
   ReadAs reader_read_as_ = ReadAs::kText;
@@ -137,8 +152,12 @@ class Response final : public bindings::ScriptWrappable {
   base::OnceCallback<void(std::optional<std::string>)> whole_body_reader_;
   // What brings the body while it loads.
   raw_ptr<FetchLoader> loader_ = nullptr;
+  cppgc::Member<AbortSignal> signal_;
+  // What a read of an aborted body rejects with.
+  v8::TracedReference<v8::Value> abort_reason_;
 
   friend class FetchLoader;
+  friend class AbortBodyAlgorithm;
 };
 
 }  // namespace mitto
