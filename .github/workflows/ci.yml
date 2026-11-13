@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # ready_for_review starts the full run when a draft is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   # The nightly run calls these jobs to build from nothing.
@@ -30,8 +32,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux x86_64, macOS arm64 and Windows x64. macos-latest often gets no runner.
-        runner: [ubuntu-latest, xcode-27, windows-2025-vs2026]
+        # Linux x86_64, macOS arm64 and Windows x64. macos-latest often gets no runner. A draft pull request runs Linux
+        # only: it is not in the merge queue yet, and macOS and Windows runners are few.
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.draft && '["ubuntu-latest"]' || '["ubuntu-latest", "xcode-27", "windows-2025-vs2026"]') }}
         # The oldest supported Python and the newest released one.
         python: ["3.12", "3.15"]
     env:
@@ -54,6 +57,8 @@ jobs:
 
   native:
     name: Native core on ${{ matrix.runner }}
+    # A draft pull request builds nothing: it runs once it is marked ready for review, at the head of the merge queue.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ${{ matrix.runner }}
     # From nothing, as in the nightly run, the library takes 13 to 42 minutes, the Runtime 58 to 107 more and the tests
     # 9 to 12.

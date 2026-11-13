@@ -6,7 +6,7 @@ message, or else the form that real Chrome's values have, in tools/capture/machi
 Machine's values", says why.
 """
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from fractions import Fraction
 from typing import Final
 
@@ -21,6 +21,7 @@ from tools.capture.script_normal_form import (
     DATE_TIME_FORMAT,
     DATE_TIME_FORMAT_HOURS,
     HIGH_ENTROPY_VALUES,
+    MACHINE_PLACES,
     MEDIA_AGREEMENT,
     MEDIA_INTEGERS,
     MEDIA_KEYWORDS,
@@ -144,7 +145,9 @@ THE_MACHINES = "<machine>: the Machine's"
 NOT_THE_MACHINES = "<machine>: not the Machine's"
 
 
-def machine_misses(record: dict[str, RecordValue], machine: Machine) -> Iterator[tuple[Place, str, str]]:
+def machine_misses(
+    record: dict[str, RecordValue], machine: Machine, places: Iterable[Place] = MACHINE_PLACES
+) -> Iterator[tuple[Place, str, str]]:
     """Yield each place of the machine at which a Page's record does not give what Chrome gives for its Machine.
 
     Each comes with what Chrome gives there and what the Page gave, said without the value, since a Session draws a
@@ -155,8 +158,10 @@ def machine_misses(record: dict[str, RecordValue], machine: Machine) -> Iterator
     Args:
         record: What the probe gave in the Page, before its Normal Form.
         machine: The Machine of the Page's Session.
+        places: The places of the machine where the probe ran, such as those of a frame, whose own viewport is not the
+            Machine's.
     """
-    for place, value in machine_values(record):
+    for place, value in machine_values(record, places):
         if isinstance(value, list) and len(value) == 2 and value[0] == "throws":
             continue
         read = PAGE_READS.get(place)

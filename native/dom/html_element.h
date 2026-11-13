@@ -48,6 +48,9 @@ class HTMLElement : public Element {
   // contenteditable makes it so, or the designMode of the document it is
   // connected to does.
   bool IsContentEditableForBinding() const;
+  // Fires a click at the element, which runs its activation behaviour, as
+  // Blink's HTMLElement::click() does for a script.
+  void Click() { DispatchSimulatedClick(); }
 
   // Element's: the summary of its parent details, its first summary child,
   // is focusable, as Blink's HTMLSummaryElement is.

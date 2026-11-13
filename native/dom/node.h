@@ -37,9 +37,13 @@ class ExceptionState;
 
 class Document;
 class Element;
+class Event;
+class EventDispatchHandlingState;
 class HTMLCollection;
 class Node;
 class NodeList;
+class NodeListsNodeData;
+class NodeMutationObserverData;
 
 // Nodes that C++ holds between allocations. A vector's buffer is not on the
 // C++ heap, where the collector would see its members, so each is persistent.
@@ -114,7 +118,7 @@ class Node : public EventTarget {
                      bindings::ExceptionState& exception_state);
   Node* RemoveChild(Node* child, bindings::ExceptionState& exception_state);
 
-  // The document's URL, as the base URL of a document without <base>.
+  // The node document's base URL.
   std::u16string BaseURI() const;
   // The same live list of the children on every read, as Blink keeps it.
   NodeList* ChildNodes();
@@ -142,6 +146,19 @@ class Node : public EventTarget {
   void Remove(bindings::ExceptionState& exception_state);
   Element* QuerySelector(const std::u16string& selectors,
                          bindings::ExceptionState& exception_state);
+  // A static list of what matches, as Blink's StaticNodeList.
+  NodeList* QuerySelectorAll(const std::u16string& selectors,
+                             bindings::ExceptionState& exception_state);
+
+  // The members of Document and Element that give live collections of the
+  // elements under the node, the same while a page keeps one.
+  HTMLCollection* GetElementsByTagName(const std::u16string& qualified_name);
+  HTMLCollection* GetElementsByTagNameNS(
+      const std::optional<std::u16string>& namespace_uri,
+      const std::u16string& local_name);
+  HTMLCollection* GetElementsByClassName(const std::u16string& class_names);
+  // The cache of those collections.
+  NodeListsNodeData& EnsureNodeLists();
 
   // What the DOM and the parser use.
 
@@ -189,13 +206,91 @@ class Node : public EventTarget {
   // Takes out every child.
   void RemoveChildren();
 
+  // The DOM standard's "ensure pre-insertion validity" of `node` before
+  // `next`, with Blink's checks and messages, as Range's insertNode() runs it.
+  bool EnsurePreInsertionValidity(
+      Node* node,
+      const Node* next,
+      bindings::ExceptionState& exception_state) const;
+
   // A copy of this node, in `document`, with its children if `deep`.
   Node* Clone(Document& document, bool deep) const;
+
+  // EventTarget:
+  Node* ToNode() override;
+
+  // A click's activation behaviour, as Blink's Node splits the DOM
+  // Standard's hooks (event_dispatcher.h): whether the node has any, its
+  // legacy-pre-activation behaviour before the listeners run, which may hand
+  // the rest a state, such as a checkbox's before it toggled, then what runs
+  // before DOMActivate, which may mark the click as handled, and what runs
+  // after it. A canceled click still runs the part before DOMActivate, which
+  // reverts what legacy-pre-activation behaviour did.
+  virtual bool HasActivationBehavior() const;
+  virtual EventDispatchHandlingState* LegacyPreActivationBehavior(Event& event);
+  virtual void RunActivationBehaviorBeforeDOMActivate(
+      Event& event,
+      EventDispatchHandlingState* state) {}
+  virtual void RunActivationBehavior(Event& event,
+                                     EventDispatchHandlingState* state) {}
+  // Whether it is a form control that is disabled, which gets no simulated
+  // click.
+  virtual bool IsDisabledFormControl() const;
+  // What runs once nothing canceled a trusted event or a click at this node
+  // or below it, as Blink's Node::DefaultEventHandler(): a click at its
+  // target fires DOMActivate there, and one that a listener cancels marks
+  // the click as handled.
+  virtual void DefaultEventHandler(Event& event);
+  // Fires the click of the HTML Standard's click(), as Blink's
+  // DispatchSimulatedClick() does for a script.
+  void DispatchSimulatedClick();
+
+  // The registrations of the MutationObservers that observe the node
+  // (mutation_observer.h), null until the first.
+  NodeMutationObserverData* MutationObserverData() const {
+    return mutation_observer_data_.Get();
+  }
+  NodeMutationObserverData& EnsureMutationObserverData();
 
   // Gives this node and those inside it `document` as their node document,
   // and runs DidMoveToNewDocument() on each that moves, as Blink's
   // Document::AdoptIfNeeded() does.
   void SetTreeDocument(Document& document);
+
+  // The DOM standard's insertion, removing, children changed and
+  // post-connection steps, which a subclass gives itself, as Blink's Node and
+  // ContainerNode call them: after every change to a tree, through the DOM's
+  // algorithms and the parser's alike.
+
+  // What InsertedInto() asks for.
+  enum class InsertionNotificationRequest {
+    kInsertionDone,
+    // DidNotifySubtreeInsertionsToDocument() too, once every node that the
+    // insertion inserts is in.
+    kInsertionShouldCallDidNotifySubtreeInsertions,
+  };
+  // How a node's children changed.
+  enum class ChildrenChangeType {
+    kElementInserted,
+    kNonElementInserted,
+    kElementRemoved,
+    kNonElementRemoved,
+  };
+
+  // Called on this node and each node inside it once the insertion that put
+  // it into `insertion_point`'s tree is done, in tree order.
+  virtual InsertionNotificationRequest InsertedInto(Node& insertion_point);
+  // The post-connection steps of a node that asked for them and is still
+  // connected, once every node of the insertion is in.
+  virtual void DidNotifySubtreeInsertionsToDocument() {}
+  // Called on this node and each node inside it once it has left
+  // `insertion_point`, its old parent or an ancestor of it.
+  virtual void RemovedFrom(Node& insertion_point) {}
+  // Called once `child` has been inserted into this node's children or
+  // removed from them, by the parser if `by_parser`.
+  virtual void ChildrenChanged(ChildrenChangeType type,
+                               Node& child,
+                               bool by_parser) {}
 
  protected:
   // `document` is the node document, null for a Document itself, which then
@@ -213,6 +308,9 @@ class Node : public EventTarget {
   // What a node does once it and its tree move to another document, from
   // `old_document`, as Blink's Node::DidMoveToNewDocument().
   virtual void DidMoveToNewDocument(Document& old_document) {}
+
+  // EventTarget: through the tree.
+  DispatchEventResult DispatchEventInternal(Event* event) override;
 
  private:
   // The DOM standard's "ensure pre-insertion validity" with Blink's checks
@@ -239,6 +337,19 @@ class Node : public EventTarget {
   void InsertNodeVector(const NodeVector& nodes,
                         Node* next,
                         bindings::ExceptionState& exception_state);
+  // Puts `child`, which has no parent, among the children, before `next` or
+  // at the end, and takes it out, telling no one.
+  void LinkChild(Node& child, Node* next);
+  void UnlinkChild(Node& child);
+  // Blink's ContainerNode::NotifyNodeInserted(): InsertedInto() for `child`
+  // and each node inside it, which collects into `post_connection` those that
+  // ask for their post-connection steps.
+  void NotifyNodeInserted(Node& child, NodeVector& post_connection);
+  // Blink's ContainerNode::DidInsertNodeVector(): the children changed steps
+  // of each of `children`, then the post-connection steps.
+  void DidInsertNodes(const NodeVector& children,
+                      const NodeVector& post_connection,
+                      bool by_parser);
 
   cppgc::Member<Node> parent_;
   cppgc::Member<Node> first_child_;
@@ -248,6 +359,8 @@ class Node : public EventTarget {
   cppgc::Member<Document> document_;
   cppgc::Member<NodeList> child_nodes_;
   cppgc::Member<HTMLCollection> children_;
+  cppgc::Member<NodeListsNodeData> node_lists_;
+  cppgc::Member<NodeMutationObserverData> mutation_observer_data_;
 };
 
 }  // namespace mitto

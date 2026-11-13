@@ -4,9 +4,10 @@ docs/parity.md, "The Script Fingerprint", says how a gap reads and how its kind 
 """
 
 import difflib
+import functools
 import json
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final, cast
@@ -79,9 +80,7 @@ PERSONA_PLACES: Final[tuple[Place, ...]] = (
 """Each place whose value the Persona decides, and with it each place within it, but those of MACHINE_PLACES, such as
 the platform version among the high entropy values or the time zone among Intl's resolved options."""
 
-_MACHINE_GETTERS = frozenset(place for place in MACHINE_PLACES if isinstance(place, Getter))
 _PERSONA_GETTERS = frozenset(place for place in PERSONA_PLACES if isinstance(place, Getter))
-_MACHINE_VALUES = tuple(place for place in MACHINE_PLACES if isinstance(place, Computed))
 _PERSONA_VALUES = tuple(place for place in PERSONA_PLACES if isinstance(place, Computed))
 
 _LISTS = ("own", "get", "calls")
@@ -160,31 +159,43 @@ def field_of(place: Place) -> str:
     return _value_field(place.key, place.keys)
 
 
-def place_kind(place: Place) -> GapKind:
-    """Return the kind of a gap in what a getter or the probe's third step gave at a place."""
+def place_kind(place: Place, machine_places: Iterable[Place] = MACHINE_PLACES) -> GapKind:
+    """Return the kind of a gap in what a getter or the probe's third step gave at a place, where the places of the
+    machine are machine_places, such as those of a frame, whose own viewport is not the machine's."""
+    machine_getters, machine_values = _machine(tuple(machine_places))
     if isinstance(place, Getter):
-        if place in _MACHINE_GETTERS:
+        if place in machine_getters:
             return GapKind.MACHINE
         return GapKind.PERSONA if place in _PERSONA_GETTERS else GapKind.BEHAVIOUR
-    if any(_within(place, machine) for machine in _MACHINE_VALUES):
+    if any(_within(place, machine) for machine in machine_values):
         return GapKind.MACHINE
     if any(_within(place, persona) for persona in _PERSONA_VALUES):
         return GapKind.PERSONA
     return GapKind.BEHAVIOUR
 
 
+@functools.cache
+def _machine(places: tuple[Place, ...]) -> tuple[frozenset[Getter], tuple[Computed, ...]]:
+    getters = frozenset(place for place in places if isinstance(place, Getter))
+    return getters, tuple(place for place in places if isinstance(place, Computed))
+
+
 def _within(place: Computed, outer: Computed) -> bool:
     return place.key == outer.key and place.keys[: len(outer.keys)] == outer.keys
 
 
-def script_differences(baseline: _Form, mitto: _Form) -> Iterator[ScriptDifference]:
+def script_differences(
+    baseline: _Form, mitto: _Form, machine_places: Iterable[Place] = MACHINE_PLACES
+) -> Iterator[ScriptDifference]:
     """Yield every field in which a Page's Normal Form differs from a Baseline, with its kind.
 
     Objects compare by their path: one that a side lacks is one difference, with its kind, tag and prototype. Within an
     object, each key compares whole but its lists, whose items compare by their key, with one more difference for the
     order of the items both have. The values of the third step compare key by key, into their objects. Each is in the
-    order of the Baseline, then what only the Page has.
+    order of the Baseline, then what only the Page has. The places of the machine where the probe ran, machine_places,
+    decide which gaps are the machine's.
     """
+    kind = functools.partial(place_kind, machine_places=tuple(machine_places))
     baseline_objects = _objects(baseline)
     mitto_objects = _objects(mitto)
     baseline_edges = _edges(baseline_objects.values())
@@ -192,13 +203,13 @@ def script_differences(baseline: _Form, mitto: _Form) -> Iterator[ScriptDifferen
     for path, entry in baseline_objects.items():
         other = mitto_objects.get(path)
         if other is None:
-            yield ScriptDifference(path, _reach_kind(path, baseline_edges), _head(entry), None)
+            yield ScriptDifference(path, _reach_kind(path, baseline_edges, kind), _head(entry), None)
         else:
-            yield from _object_differences(path, entry, other, mitto_edges)
+            yield from _object_differences(path, entry, other, mitto_edges, kind)
     for path, entry in mitto_objects.items():
         if path not in baseline_objects:
-            yield ScriptDifference(path, _reach_kind(path, mitto_edges), None, _head(entry))
-    yield from _values_differences(_dict(baseline.get("values")), _dict(mitto.get("values")))
+            yield ScriptDifference(path, _reach_kind(path, mitto_edges, kind), None, _head(entry))
+    yield from _values_differences(_dict(baseline.get("values")), _dict(mitto.get("values")), kind)
     for key in _keys(baseline, mitto):
         if key in ("objects", "values") or same_json(baseline.get(key), mitto.get(key)):
             continue
@@ -274,7 +285,11 @@ def _items(entry: _Entry, section: str) -> list[list[RecordValue]]:
     return [item for item in items if isinstance(item, list) and item]
 
 
-def _reach_kind(path: str, edges: Mapping[str, _Edge]) -> GapKind:
+type _PlaceKind = Callable[[Place], GapKind]
+"""What decides the kind of a gap at a place, as place_kind() does with the places of the machine of one case."""
+
+
+def _reach_kind(path: str, edges: Mapping[str, _Edge], kind: _PlaceKind) -> GapKind:
     """Return the kind of a gap in an object, or in what it holds as data: that of the nearest getter on the way the walk
     reached it, or a shape if the walk reached it through own properties and prototypes alone."""
     seen: set[str] = set()
@@ -282,13 +297,13 @@ def _reach_kind(path: str, edges: Mapping[str, _Edge]) -> GapKind:
         seen.add(path)
         parent, section, key = edges[path]
         if section == "get":
-            return place_kind(Getter(parent, key))
+            return kind(Getter(parent, key))
         path = parent
     return GapKind.SHAPE
 
 
 def _object_differences(
-    path: str, baseline: _Entry, mitto: _Entry, edges: Mapping[str, _Edge]
+    path: str, baseline: _Entry, mitto: _Entry, edges: Mapping[str, _Edge], kind: _PlaceKind
 ) -> Iterator[ScriptDifference]:
     for key in _keys(baseline, mitto):
         if key in ("path", *_LISTS) or same_json(baseline.get(key), mitto.get(key)):
@@ -303,9 +318,9 @@ def _object_differences(
 
         def kind_of(name: str, section: str = section) -> GapKind:
             if section == "get":
-                return place_kind(Getter(path, name))
+                return kind(Getter(path, name))
             if section == "own" and baseline.get("kind") == "instance" and (holds_data or _is_index(name)):
-                return _reach_kind(path, edges)
+                return _reach_kind(path, edges, kind)
             return GapKind.SHAPE
 
         for name, item in baseline_items.items():
@@ -324,8 +339,8 @@ def _object_differences(
                 )
         order = _moved(list(baseline_items), list(mitto_items))
         if order is not None:
-            kind = _reach_kind(path, edges) if section == "own" and holds_data else GapKind.SHAPE
-            yield ScriptDifference(f"{path} {section} {_ORDER}", kind, *order)
+            order_kind = _reach_kind(path, edges, kind) if section == "own" and holds_data else GapKind.SHAPE
+            yield ScriptDifference(f"{path} {section} {_ORDER}", order_kind, *order)
 
 
 def _identified(items: list[list[RecordValue]]) -> dict[str, list[RecordValue]]:
@@ -376,15 +391,17 @@ def _moved(baseline: list[str], mitto: list[str]) -> tuple[RecordValue, RecordVa
     )
 
 
-def _values_differences(baseline: dict[str, RecordValue], mitto: dict[str, RecordValue]) -> Iterator[ScriptDifference]:
+def _values_differences(
+    baseline: dict[str, RecordValue], mitto: dict[str, RecordValue], kind: _PlaceKind
+) -> Iterator[ScriptDifference]:
     for key in _keys(baseline, mitto):
         baseline_entry, mitto_entry = baseline.get(key), mitto.get(key)
         if same_json(baseline_entry, mitto_entry):
             continue
         if _is_value(baseline_entry) and _is_value(mitto_entry):
-            yield from _value_differences(key, (), _dict(baseline_entry)["value"], _dict(mitto_entry)["value"])
+            yield from _value_differences(key, (), _dict(baseline_entry)["value"], _dict(mitto_entry)["value"], kind)
         else:
-            yield ScriptDifference(_value_field(key, ()), place_kind(Computed(key)), baseline_entry, mitto_entry)
+            yield ScriptDifference(_value_field(key, ()), kind(Computed(key)), baseline_entry, mitto_entry)
 
 
 def _is_value(entry: RecordValue) -> bool:
@@ -393,15 +410,15 @@ def _is_value(entry: RecordValue) -> bool:
 
 
 def _value_differences(
-    key: str, parts: tuple[str, ...], baseline: RecordValue, mitto: RecordValue
+    key: str, parts: tuple[str, ...], baseline: RecordValue, mitto: RecordValue, kind: _PlaceKind
 ) -> Iterator[ScriptDifference]:
     if same_json(baseline, mitto):
         return
     if isinstance(baseline, dict) and isinstance(mitto, dict):
         for part in _keys(baseline, mitto):
-            yield from _value_differences(key, (*parts, part), baseline.get(part), mitto.get(part))
+            yield from _value_differences(key, (*parts, part), baseline.get(part), mitto.get(part), kind)
         return
-    yield ScriptDifference(_value_field(key, parts), place_kind(Computed(key, parts)), baseline, mitto)
+    yield ScriptDifference(_value_field(key, parts), kind(Computed(key, parts)), baseline, mitto)
 
 
 def _value_field(key: str, parts: tuple[str, ...]) -> str:

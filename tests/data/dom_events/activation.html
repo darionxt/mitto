@@ -1,0 +1,196 @@
+<!doctype html><html><head><title>activation</title></head><body>
+<div id=parsed><input id=p1 type=radio name=p checked><input id=p2 type=radio name=p checked></div>
+<div id=boxes><input id=box type=checkbox><input id=r1 type=radio name=g checked><input id=r2 type=radio name=g><input id=r3 type=radio name=other></div>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const r = {};
+const log = [];
+const box = document.getElementById('box'), r1 = document.getElementById('r1'), r2 = document.getElementById('r2'), r3 = document.getElementById('r3');
+for (const type of ['click', 'input', 'change', 'DOMActivate']) {
+  document.addEventListener(type, e => log.push([type, e.target.id, e.constructor.name, e.bubbles, e.cancelable, e.composed, e.isTrusted, e.target.checked, e.target.indeterminate]));
+}
+const state = e => [e.checked, e.indeterminate, e.defaultChecked];
+// A checkbox's click toggles it before the listeners, then input and change.
+box.click();
+r.checkbox_click = [log.splice(0), state(box)];
+// A canceled click reverts the checkedness and the indeterminate flag, and fires neither.
+box.indeterminate = true;
+box.addEventListener('click', e => e.preventDefault(), {once: true});
+box.click();
+r.checkbox_canceled = [log.splice(0), state(box)];
+// Uncanceled with indeterminate: it goes false.
+box.click();
+r.checkbox_indeterminate = [log.splice(0), state(box)];
+// The checked attribute decides checkedness until it is dirty.
+const fresh = document.createElement('input');
+fresh.type = 'checkbox';
+const steps = [state(fresh)];
+fresh.setAttribute('checked', '');
+steps.push(state(fresh));
+fresh.removeAttribute('checked');
+steps.push(state(fresh));
+fresh.checked = false;
+fresh.setAttribute('checked', '');
+steps.push(state(fresh));
+fresh.defaultChecked = false;
+steps.push(state(fresh));
+r.dirty = steps;
+// A disconnected checkbox toggles with no input or change.
+const lone = document.createElement('input');
+lone.type = 'CheckBox';
+const lone_log = [];
+lone.addEventListener('click', e => lone_log.push(['click', e.target.checked]));
+lone.addEventListener('change', () => lone_log.push('change'));
+lone.click();
+r.disconnected = [lone_log, lone.checked];
+// A radio's click checks it and unchecks its group, then input and change.
+r2.click();
+r.radio_click = [log.splice(0), state(r1), state(r2), state(r3)];
+// A click on a checked radio fires neither.
+r2.click();
+r.radio_again = [log.splice(0), state(r2)];
+// A canceled click puts back the radio that was checked.
+r1.addEventListener('click', e => e.preventDefault(), {once: true});
+r1.click();
+r.radio_canceled = [log.splice(0), state(r1), state(r2)];
+// The checked property of a radio unchecks its group too, with no events.
+r1.checked = true;
+r.radio_property = [log.splice(0), state(r1), state(r2)];
+// A radio group of a detached tree.
+const tree = document.createElement('div');
+tree.innerHTML = '<input type=radio name=d checked><input type=radio name=d>';
+const [d1, d2] = tree.querySelectorAll ? [tree.firstChild, tree.lastChild] : [];
+d2.click();
+r.detached_radio = [d1.checked, d2.checked];
+// A page's MouseEvent: the left button toggles, another does not; an Event does not.
+const before = box.checked;
+box.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, button: 1}));
+const after_middle = box.checked;
+box.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+const after_left = box.checked;
+box.dispatchEvent(new Event('click', {bubbles: true, cancelable: true}));
+r.page_events = [before, after_middle, after_left, box.checked, log.splice(0)];
+// A text input's checked is a flag that a click does not touch.
+const text = document.createElement('input');
+document.body.appendChild(text);
+text.checked = true;
+text.click();
+r.text = [text.checked, log.splice(0).map(e => e[0])];
+// A disabled checkbox gets no click() at all.
+const off = document.createElement('input');
+off.type = 'checkbox';
+off.disabled = true;
+document.body.appendChild(off);
+off.click();
+r.disabled = [off.checked, log.splice(0).map(e => e[0])];
+// Of the checked radio buttons that the parser inserts into a group, the last stays checked.
+const p1 = document.getElementById('p1'), p2 = document.getElementById('p2');
+r.parsed = [state(p1), state(p2)];
+const radio = (name, checked) => {
+  const e = document.createElement('input');
+  e.type = 'radio';
+  e.name = name;
+  if (checked) e.checked = true;
+  return e;
+};
+// A checked radio button that is inserted unchecks the group's checked one.
+const i1 = radio('i', true), i2 = radio('i', true);
+document.body.append(i1);
+document.body.append(i2);
+r.inserted = [i1.checked, i2.checked];
+// Of a subtree, the last checked one stays checked; before, in a tree that is neither connected nor a form's, both
+// were.
+const sub = document.createElement('div');
+const s1 = radio('i', true), s2 = radio('i', true);
+sub.append(s1);
+sub.append(s2);
+const sub_before = [s1.checked, s2.checked];
+document.body.append(sub);
+r.subtree = [sub_before, i2.checked, s1.checked, s2.checked];
+// So of the nodes of one append().
+const m1 = radio('i', true), m2 = radio('i', true);
+document.body.append(m1, m2);
+r.appended = [s2.checked, m1.checked, m2.checked];
+// A form keeps its groups while it is not connected.
+const form = document.createElement('form');
+const f1 = radio('f', true), f2 = radio('f', true);
+form.append(f1);
+form.append(f2);
+r.form = [f1.checked, f2.checked];
+// A form's group is not its tree's.
+const outside = radio('f', true);
+document.body.append(outside);
+document.body.append(form);
+r.form_and_tree = [outside.checked, f1.checked, f2.checked];
+// A new name joins the new group, and unchecks its checked one.
+const n1 = radio('n', true), n2 = radio('m', true);
+document.body.append(n1, n2);
+n2.name = 'n';
+r.renamed = [n1.checked, n2.checked];
+// So does a type that makes it a radio button.
+const t1 = radio('t', true);
+const t2 = document.createElement('input');
+t2.type = 'checkbox';
+t2.name = 't';
+t2.checked = true;
+document.body.append(t1, t2);
+t2.type = 'radio';
+r.retyped = [t1.checked, t2.checked];
+// A rename in a tree that is neither connected nor a form's unchecks nothing.
+const loose = document.createElement('div');
+const l1 = radio('l', true), l2 = radio('k', true);
+loose.append(l1, l2);
+l2.name = 'l';
+r.loose_renamed = [l1.checked, l2.checked];
+// The checked attribute of a radio button whose checkedness is not dirty checks it and unchecks the group's checked
+// one; removing it leaves the group unchecked, and the attribute does nothing once the checkedness is dirty.
+const a1 = radio('a', true);
+const a2 = document.createElement('input');
+a2.type = 'radio';
+a2.name = 'a';
+document.body.append(a1, a2);
+a2.setAttribute('checked', '');
+const attribute_set = [a1.checked, a2.checked];
+a2.removeAttribute('checked');
+const attribute_removed = [a1.checked, a2.checked];
+a1.setAttribute('checked', '');
+r.attribute = [attribute_set, attribute_removed, a1.checked, a2.checked];
+// In a tree that is neither connected nor a form's, the attribute unchecks the tree's checked one.
+const lt = document.createElement('div');
+const lt1 = radio('lt', true);
+const lt2 = document.createElement('input');
+lt2.type = 'radio';
+lt2.name = 'lt';
+lt.append(lt1, lt2);
+lt2.setAttribute('checked', '');
+r.loose_attribute = [lt1.checked, lt2.checked];
+// A copy keeps the checkedness, whether it is dirty, and the indeterminate flag.
+const original = document.createElement('input');
+original.type = 'checkbox';
+original.setAttribute('checked', '');
+original.checked = false;
+original.indeterminate = true;
+const copy = original.cloneNode();
+const copied = [copy.checked, copy.indeterminate];
+copy.removeAttribute('checked');
+copy.setAttribute('checked', '');
+r.clone = [copied, copy.checked, original.cloneNode(true).checked];
+// A copy of a checked radio button that is inserted unchecks the group's checked one.
+const g = radio('g2', true);
+document.body.append(g);
+const g_copy = g.cloneNode();
+document.body.append(g_copy);
+r.clone_radio = [g.checked, g_copy.checked];
+// The pseudo-classes read the checkedness that an input keeps, and a checkbox's indeterminate flag.
+const q = document.createElement('div');
+q.innerHTML = '<input type=checkbox id=qc checked><input type=radio name=q id=q1 checked><input type=radio name=q id=q2>' +
+  '<input type=radio name=q3 id=q3><input type=radio id=q4>';
+document.body.append(q);
+q.querySelector('#qc').checked = false;
+q.querySelector('#qc').indeterminate = true;
+q.querySelector('#q2').checked = true;
+const ids = selector => Array.from(q.querySelectorAll(selector), e => e.id);
+r.pseudo = [ids(':checked'), ids(':indeterminate'), ids(':default'), log.splice(0).length];
+done(r);
+</script>
+</body></html>

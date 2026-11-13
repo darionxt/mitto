@@ -108,6 +108,8 @@ WRITTEN = frozenset(
         "LegacyWindowAlias",
         "NewObject",
         "NoAllocDirectCall",
+        # A Page's window has one context, which is the node's own.
+        "NodeWrapInOwnContext",
         "NotEnumerable",
         "PutForwards",
         "RaisesException",
@@ -532,6 +534,12 @@ class _InterfaceWriter:
         self.callbacks.append("\n".join(lines))
         return name
 
+    def _stringifier(self) -> str:
+        """A stringifier operation's toString(), which gives the class's ToString(), as Blink's gives its stringifier
+        operation's."""
+        body = [*self._receiver(), "info.GetReturnValue().Set(ToV8String(isolate, impl->ToString()));"]
+        return self._add_callback("StringifierCallback", body)
+
     def _missing(self, name: str, has_receiver: bool = True, lenient: bool = False) -> str:
         """A Known Gap's callback, which known_gap.h has for every member, with the member's MemberInfo as its data."""
         return {
@@ -855,21 +863,27 @@ class _InterfaceWriter:
         ]
 
     def _overloads_by_type(
-        self, overloads: list[Operation], where: str
+        self, overloads: list[Operation], where: str, count: int | None = None
     ) -> tuple[list[str], str, list[str], Operation, Operation] | None:
         """For two overloads that take the same arguments but one, which is a string in one and a callback function, as
         setTimeout() has, a dictionary, as CookieStore's get() has, or a sequence, as PresentationRequest's constructor
-        has, in the other: the statements before the test of Web IDL's overload resolution that chooses the other
-        overload for the value given there, the test, the statements after the overload it chooses, and the two
-        overloads, the one that the test chooses first."""
+        has, in the other, or a sequence in one and a dictionary in the other, as MessagePort's postMessage() has: the
+        statements before the test of Web IDL's overload resolution that chooses the other overload for the value given
+        there, the test, the statements after the overload it chooses, and the two overloads, the one that the test
+        chooses first. With `count`, only the first `count` arguments of each are compared, for a call given that
+        many."""
         if len(overloads) != 2:
             return None
         first, second = overloads
-        if len(first.arguments) != len(second.arguments):
+        if count is None:
+            if len(first.arguments) != len(second.arguments):
+                return None
+            count = len(first.arguments)
+        if len(first.arguments) < count or len(second.arguments) < count:
             return None
         differing = [
             index
-            for index, (a, b) in enumerate(zip(first.arguments, second.arguments, strict=True))
+            for index, (a, b) in enumerate(zip(first.arguments[:count], second.arguments[:count], strict=True))
             if self.types.reduce(a.idl_type).syntax != self.types.reduce(b.idl_type).syntax
         ]
         if len(differing) != 1:
@@ -893,6 +907,21 @@ class _InterfaceWriter:
             before = ["bool iterator_threw = false;"]
             test = f"info[{index}]->IsArray() || IsIterableObject(isolate, info[{index}], &iterator_threw)"
             after = ["if (iterator_threw) {", "  return;", "}"]
+        elif kinds == {TypeKind.SEQUENCE, TypeKind.DICTIONARY}:
+            # An object with an @@iterator chooses the sequence, as above, undefined, null and any other object the
+            # dictionary, and nothing else either, which fails overload resolution.
+            chosen_kind = TypeKind.SEQUENCE
+            before = ["bool iterator_threw = false;"]
+            test = f"info[{index}]->IsArray() || IsIterableObject(isolate, info[{index}], &iterator_threw)"
+            after = [
+                "if (iterator_threw) {",
+                "  return;",
+                "}",
+                f"if (!info[{index}]->IsNullOrUndefined() && !info[{index}]->IsObject()) {{",
+                '  exception_state.ThrowTypeError("Overload resolution failed.");',
+                "  return;",
+                "}",
+            ]
         else:
             return None
         if self.types.reduce(first.arguments[index].idl_type).kind is chosen_kind:
@@ -986,6 +1015,9 @@ class _InterfaceWriter:
             body += after
             body += call(other_overload, where, False)
             return body
+        by_count = self._dispatch_by_count(overloads, where, call, deferred_receiver)
+        if by_count is not None:
+            return by_count
         # Web IDL's overload resolution, for overloads that differ in how many arguments they take: the one that takes
         # the most of those given.
         counts = [len(overload.arguments) for overload in overloads]
@@ -1008,6 +1040,58 @@ class _InterfaceWriter:
             body += _indent(call(overload, where, False))
             body += ["  return;", "}"]
         body += call(ordered[-1], where, False)
+        return body
+
+    def _dispatch_by_count(
+        self,
+        overloads: list[Operation],
+        where: str,
+        call: Callable[[Operation, str, bool], list[str]],
+        deferred_receiver: list[str],
+    ) -> list[str] | None:
+        """Web IDL's overload resolution for two overloads with optional arguments whose numbers of arguments overlap, as
+        Window's postMessage() has: by how many arguments the call gives, as the effective overload set has them, then
+        by type at the distinguishing argument where both take that many, as bind_gen's dispatcher does. None for any
+        other overloads."""
+        if len(overloads) != 2 or any(
+            argument.is_variadic for overload in overloads for argument in overload.arguments
+        ):
+            return None
+        if not any(argument.is_optional for overload in overloads for argument in overload.arguments):
+            return None
+
+        def required(overload: Operation) -> int:
+            return sum(1 for argument in overload.arguments if not argument.is_optional)
+
+        fewest = min(required(overload) for overload in overloads)
+        most = max(len(overload.arguments) for overload in overloads)
+        body: list[str] = []
+        if fewest:
+            body += [
+                f"if (info.Length() < {fewest}) {{",
+                f"  exception_state.ThrowTypeError(ExceptionMessages::NotEnoughArguments({fewest}, info.Length()));",
+                "  return;",
+                "}",
+            ]
+        body += deferred_receiver
+        for count in range(most, fewest - 1, -1):
+            takers = [overload for overload in overloads if required(overload) <= count <= len(overload.arguments)]
+            if not takers:
+                return None
+            if len(takers) == 1:
+                calls = call(takers[0], where, False)
+            else:
+                by_type = self._overloads_by_type(takers, where, count)
+                if by_type is None:
+                    return None
+                before, test, after, chosen_overload, other_overload = by_type
+                calls = [*before, f"if ({test}) {{", *_indent(call(chosen_overload, where, False)), "  return;", "}"]
+                calls += [*after, *call(other_overload, where, False)]
+            if count == fewest:
+                body += calls
+            else:
+                comparison = ">=" if count == most else "=="
+                body += [f"if (info.Length() {comparison} {count}) {{", *_indent(calls), "  return;", "}"]
         return body
 
     def constructor(self) -> str:
@@ -1181,7 +1265,11 @@ class _InterfaceWriter:
             reduced = self.types.reduce(return_type)
             # Blink's test of whether the class has the named property: what its getter gives says so.
             value = "result"
-            if reduced.kind is TypeKind.INTERFACE or (reduced.kind is TypeKind.STRING and reduced.nullable):
+            if (
+                reduced.kind is TypeKind.INTERFACE
+                or (reduced.kind is TypeKind.STRING and reduced.nullable)
+                or (reduced.kind is TypeKind.UNION and reduced.nullable)
+            ):
                 not_found = "!result"
             elif reduced.kind is TypeKind.STRING:
                 # Blink's getter gives a null String for none; the class gives an empty std::optional.
@@ -1365,11 +1453,13 @@ class _InterfaceWriter:
                 "}",
             ]
         if member is None and property_.name == "toString" and self.interface.stringifier is not None:
+            # A stringifier attribute's getter, or a stringifier operation's ToString().
+            callback = self.stringifier() if self.interface.stringifier else self._stringifier()
             install = "InstallOperationOnObject" if on_objects else "InstallOperation"
             first = "isolate, context" if on_objects else "isolate"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(property_.name)}, kInterfaceName, "
-                f"{self.stringifier()}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
+                f"{callback}, 0, {self._attributes(property_)}, v8::SideEffectType::kHasSideEffect);"
             ]
         if isinstance(member, ExposedConstruct):
             if member not in self.constructs:
@@ -1634,7 +1724,7 @@ class _InterfaceWriter:
         )
         _check_written(f"interface {interface.name}", interface.extended_attributes)
         factory_functions = [self.legacy_factory_function(group) for group in self._factory_functions_with_behaviour()]
-        if interface.stringifier is not None and self._stringifier_attribute() is None:
+        if interface.stringifier and self._stringifier_attribute() is None:
             raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its stringifier")
         if interface.collection is not None and self._collection_with_behaviour() is None:
             collection_members = [attribute.name for attribute in interface.collection.attributes]

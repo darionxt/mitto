@@ -4,6 +4,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "mitto/bindings/dictionaries.h"
+#include "mitto/bindings/interfaces_without_class.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/wrapper_type_info.h"
 #include "mitto/dom/event.h"
@@ -37,6 +38,17 @@ class EventOfInterface final : public Event {
     return info_;
   }
 
+  // Event:
+  bool IsMouseEvent() const override {
+    for (const bindings::WrapperTypeInfo* info = info_; info;
+         info = info->parent) {
+      if (info == &bindings::V8MouseEvent::kWrapperTypeInfo) {
+        return true;
+      }
+    }
+    return false;
+  }
+
  private:
   const raw_ptr<const bindings::WrapperTypeInfo> info_;
 };
@@ -62,6 +74,12 @@ bindings::ScriptWrappable* CreateEvent(const bindings::WrapperTypeInfo& info,
 
 bindings::PerIsolateData::ObjectHooks ObjectsBehindHooks() {
   return {&CreateEventTarget, &CreateEvent};
+}
+
+Event* CreateEventOfInterface(const bindings::WrapperTypeInfo& info,
+                              const std::u16string& type,
+                              const bindings::EventInit& init) {
+  return bindings::MakeGarbageCollected<EventOfInterface>(info, type, init);
 }
 
 }  // namespace mitto

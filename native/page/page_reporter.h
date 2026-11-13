@@ -1,5 +1,7 @@
 // Tells a Page's Session what the Page's scripts write to the console and
-// which errors they leave uncaught, as Blink tells its browser process.
+// which errors they leave uncaught, as Blink tells its browser process, once
+// the window's error and unhandledrejection listeners have had them
+// (error_reporting.h).
 
 #ifndef MITTO_PAGE_PAGE_REPORTER_H_
 #define MITTO_PAGE_PAGE_REPORTER_H_
@@ -17,6 +19,7 @@
 #include "v8/include/v8-inspector.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-message.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-promise.h"
 #include "v8/include/v8-value.h"
@@ -57,7 +60,8 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   // Says that `context` has gone, as Blink does when a frame's document goes.
   void ContextDestroyed(v8::Local<v8::Context> context);
 
-  // A promise rejected with no handler, and why.
+  // A promise rejected with no handler, and why, as Blink's
+  // RejectedPromises::Message holds it.
   struct Rejection {
     Rejection();
     Rejection(Rejection&&);
@@ -66,6 +70,11 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
 
     v8::Global<v8::Promise> promise;
     v8::Global<v8::Value> reason;
+    // Whether it fires events at the window: not for a script whose errors
+    // are muted.
+    bool fires_events = false;
+    // Whether the Session heard of it, once it is reported.
+    bool reported_to_session = false;
   };
 
   // Takes the promises rejected with no handler since the last time, which
@@ -73,13 +82,18 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   std::vector<Rejection> TakeUnhandledRejections();
 
   // Reports each of `rejections` that still has no handler, as Blink does from
-  // the task that it queues for them.
+  // the task that it queues for them: unhandledrejection at the window, and
+  // unless a listener canceled it, the Session, as a console says it:
+  // "Uncaught (in promise) ...".
   void ReportUnhandledRejections(v8::Local<v8::Context> context,
                                  std::vector<Rejection> rejections);
 
-  // Reports `exception`, which a script threw and nothing caught, as a
-  // console does: "Uncaught TypeError: ...".
-  void ReportException(v8::Local<v8::Value> exception);
+  // Reports `exception`, which a script threw and nothing caught: the
+  // window's error event, and unless a listener canceled it, the Session, as
+  // a console says it: "Uncaught TypeError: ...". `message`, V8's message of
+  // it, says where it was thrown; without one, V8 makes one.
+  void ReportException(v8::Local<v8::Value> exception,
+                       v8::Local<v8::Message> message = {});
 
   // v8_inspector::V8InspectorClient:
   v8::MaybeLocal<v8::Value> memoryInfo(v8::Isolate* isolate,
@@ -99,11 +113,21 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   static void OnMessage(v8::Local<v8::Message> message,
                         v8::Local<v8::Value> exception);
 
+  // Blink's RejectedPromises::HandlerAdded(): a handler that comes for a
+  // promise before its report takes it out, and one that comes after
+  // fires rejectionhandled from a later task.
+  void HandlerAdded(v8::Local<v8::Promise> promise);
+  // Fires rejectionhandled for `rejection`, as Blink's RevokeNow() does.
+  void Revoke(Rejection rejection);
+
   const raw_ptr<v8::Isolate> isolate_;
   const SendFrame send_;
   std::unique_ptr<v8_inspector::V8Inspector> inspector_;
   // The promises rejected with no handler since the last report.
   std::vector<Rejection> rejections_;
+  // Those reported with no handler, held weakly, at most the last 1000, as
+  // Blink's reported_as_errors_, for a handler that comes later.
+  std::vector<Rejection> reported_rejections_;
   // The newest context, for an error reported where none is entered.
   v8::Global<v8::Context> context_;
 };

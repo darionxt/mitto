@@ -66,15 +66,17 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/error_reporting.h"
+#include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
-#include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/chrome_object.h"
-#include "mitto/page/page_scheduler.h"
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_platform.h"
+#include "mitto/page/page_scheduler.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_channel.h"
 #include "mitto/page/v8_flags.h"
@@ -194,15 +196,18 @@ std::optional<std::string> ToUtf8(v8::Isolate* isolate,
   return std::string(UNSAFE_BUFFERS(std::string_view(*text, text.length())));
 }
 
-// Writes what a timer or a microtask threw, which nothing caught, as a console
-// shows it.
+// Writes what a timer, a microtask or a listener threw, which nothing caught,
+// as a console shows it, once the window's error listeners have had it.
 void PrintUncaught(v8::Local<v8::Message> message,
                    v8::Local<v8::Value> exception) {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::TryCatch try_catch(isolate);
-  const std::optional<std::string> text =
-      ToUtf8(isolate, isolate->GetCurrentContext(), exception);
-  WriteLine(stderr, "Uncaught " + text.value_or("exception"));
+  mitto::ReportUncaughtError(
+      isolate, message, exception, [isolate](v8::Local<v8::Value> uncaught) {
+        const v8::TryCatch try_catch(isolate);
+        const std::optional<std::string> text =
+            ToUtf8(isolate, isolate->GetCurrentContext(), uncaught);
+        WriteLine(stderr, "Uncaught " + text.value_or("exception"));
+      });
 }
 
 // The command line's client of V8's inspector, which a Page's console has as
@@ -332,7 +337,7 @@ base::expected<v8::Isolate*, std::string> StartV8ForSession(
 
 // The event loop of the command line: after each task, a microtask
 // checkpoint, as in a Page, and the end of the loop once no task is ready and
-// no timer is set.
+// no timer is set, and no callback waits for an idle period or a frame.
 class CommandLineLoop final : public base::TaskObserver {
  public:
   CommandLineLoop(v8::Isolate* isolate, base::RunLoop& run_loop)
@@ -355,6 +360,7 @@ class CommandLineLoop final : public base::TaskObserver {
     v8::MicrotasksScope::PerformCheckpoint(isolate_);
     if (mitto::Window::Current().TimerCount() == 0 &&
         mitto::Window::Current().IdleCallbackCount() == 0 &&
+        mitto::Window::Current().AnimationFrameCallbackCount() == 0 &&
         mitto::Window::Current().ScheduledTaskCount() == 0) {
       run_loop_->QuitWhenIdle();
     }
@@ -389,9 +395,16 @@ bool RunScript(v8::Isolate* isolate,
   mitto::Window::Current().SetTimers(&timers);
   mitto::IdleTaskController idle_tasks(isolate, context);
   mitto::Window::Current().SetIdleTasks(&idle_tasks);
+  mitto::AnimationFrameController animation_frames(isolate, context);
+  mitto::Window::Current().SetAnimationFrames(&animation_frames);
   mitto::Window::Current().SetDocumentLoadTiming(chrome_data.load_timing.Get());
   isolate->AddMessageListenerWithErrorLevel(&PrintUncaught,
                                             v8::Isolate::kMessageError);
+  mitto::bindings::PerIsolateData::From(isolate)->SetExceptionReporter(
+      base::BindRepeating(
+          [](v8::Local<v8::Value> exception, v8::Local<v8::Message> message) {
+            PrintUncaught(message, exception);
+          }));
 
   v8::Global<v8::Value> result;
   v8::Global<v8::Value> exception;
@@ -412,11 +425,20 @@ bool RunScript(v8::Isolate* isolate,
             v8::Local<v8::String> source_string;
             v8::Local<v8::Script> script;
             v8::Local<v8::Value> value;
+            // As DevTools compiles what it evaluates: with no name, and
+            // errors that the window's error listeners see as they are.
+            v8::ScriptOrigin origin(
+                v8::String::Empty(isolate), /*resource_line_offset=*/0,
+                /*resource_column_offset=*/0,
+                /*resource_is_shared_cross_origin=*/true,
+                /*script_id=*/-1, /*source_map_url=*/v8::Local<v8::Value>(),
+                /*resource_is_opaque=*/true);
             if (v8::String::NewFromUtf8(isolate, source.data(),
                                         v8::NewStringType::kNormal,
                                         base::checked_cast<int>(source.size()))
                     .ToLocal(&source_string) &&
-                v8::Script::Compile(context, source_string).ToLocal(&script) &&
+                v8::Script::Compile(context, source_string, &origin)
+                    .ToLocal(&script) &&
                 script->Run(context).ToLocal(&value)) {
               result->Reset(isolate, value);
               return;
@@ -430,6 +452,7 @@ bool RunScript(v8::Isolate* isolate,
   run_loop.Run();
   mitto::Window::Current().SetTimers(nullptr);
   mitto::Window::Current().SetIdleTasks(nullptr);
+  mitto::Window::Current().SetAnimationFrames(nullptr);
   chrome_data.detached = true;
 
   const v8::TryCatch try_catch(isolate);
@@ -569,10 +592,10 @@ int main(int argc, char** argv) {
     mitto::ServeSession(
         *std::move(session),
         base::BindOnce(&StartV8ForSession, base::Unretained(&v8),
-                       main_thread->task_runner(),
+                       main_thread->V8TaskRunner(),
                        mitto::SplitJsFlags(js_flags)));
   } else {
-    StartV8(v8, main_thread->task_runner(), kMemoryGib, {},
+    StartV8(v8, main_thread->V8TaskRunner(), kMemoryGib, {},
             mitto::SplitJsFlags(js_flags), *std::move(features));
     finished = RunScript(v8.isolate, html.value_or(""), argument);
   }
