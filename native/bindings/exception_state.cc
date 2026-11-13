@@ -36,6 +36,12 @@ void ExceptionState::ThrowDOMException(std::string_view name,
   isolate_->ThrowException(hooks.create(isolate_, name, message));
 }
 
+void ExceptionState::ThrowDOMException(v8::Local<v8::Value> exception) {
+  CHECK(!had_exception_);
+  had_exception_ = true;
+  isolate_->ThrowException(exception);
+}
+
 void ThrowTypeError(v8::Isolate* isolate, std::string_view message) {
   isolate->ThrowException(
       v8::Exception::TypeError(ToV8StringFromUtf8(isolate, message)));

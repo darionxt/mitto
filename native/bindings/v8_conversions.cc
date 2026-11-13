@@ -12,6 +12,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_messages.h"
+#include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -95,6 +96,36 @@ bool FromV8NullableUSVString(v8::Isolate* isolate,
   }
   *result = std::move(string);
   return true;
+}
+
+bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
+                                   std::string_view type_name,
+                                   ExceptionState& exception_state) {
+  // A view that V8 keeps on its heap has no buffer of its own yet, and so is
+  // neither shared nor resizable.
+  if (!view->HasBuffer()) {
+    return true;
+  }
+  const v8::Local<v8::ArrayBuffer> buffer = view->Buffer();
+  if (buffer->GetBackingStore()->IsShared()) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"The provided ", type_name, " value must not be shared."}));
+    return false;
+  }
+  if (buffer->IsResizableByUserJavaScript()) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"The provided ", type_name, " value must not be resizable."}));
+    return false;
+  }
+  return true;
+}
+
+v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
+                                        std::optional<double> number) {
+  if (!number) {
+    return v8::Null(isolate);
+  }
+  return v8::Number::New(isolate, *number);
 }
 
 v8::Local<v8::Value> ToV8NullableString(

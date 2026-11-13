@@ -416,6 +416,29 @@ def test_an_enforce_range_integer_and_an_item_of_a_sequence_convert_as_blinks_do
         types.argument_type(dataclasses.replace(milliseconds, extended_attributes=_extended("Clamp")), "a")
 
 
+def test_the_cpp_types_of_what_crypto_takes_and_returns() -> None:
+    types = TypeMapper(frozenset(), frozenset())
+    view = IdlType(TypeKind.BUFFER_SOURCE, "ArrayBufferView")
+    quota = IdlType(TypeKind.FLOATING_POINT, "double", nullable=True)
+
+    # A view goes to the class and back as it is, once Blink's checks of NotShared<DOMArrayBufferView> pass.
+    assert types.argument_type(view, "a") == "v8::Local<v8::ArrayBufferView>"
+    assert types.return_type(view, "a") == "v8::Local<v8::ArrayBufferView>"
+    assert types.to_v8(view, "x") == "x"
+    lines = types.from_v8(view, "value", "array", Site(fail="return;", argument_index=1), "a")
+    assert lines[:3] == [
+        "if (!value->IsArrayBufferView()) {",
+        '  exception_state.ThrowTypeError(ExceptionMessages::ArgumentNotOfType(1, "ArrayBufferView"));',
+        "  return;",
+    ]
+    assert 'if (!CheckArrayBufferViewNotShared(array, "ArrayBufferView", exception_state)) {' in lines
+    # A nullable double is null or a Number.
+    assert types.return_type(quota, "a") == "std::optional<double>"
+    assert types.to_v8(quota, "x") == "ToV8NullableNumber(isolate, x)"
+    with pytest.raises(UnhandledError, match="does not handle an argument of type"):
+        types.argument_type(dataclasses.replace(view, nullable=True), "a")
+
+
 def test_an_enumeration_converts_only_to_its_strings() -> None:
     types = TypeMapper(frozenset(), frozenset(), {"RequestMode": ("navigate", "cors")})
     lines = types.from_v8(IdlType(TypeKind.ENUMERATION, "RequestMode"), "value", "mode", Site(fail="return;"), "a")
@@ -585,7 +608,8 @@ def test_a_known_gap_keeps_todays_error_where_its_default_would_be_unsafe() -> N
     assert gaps.default_is_safe(IdlType(TypeKind.SEQUENCE, "sequence", members=(interface("Node"),)))
     assert not gaps.default_is_safe(IdlType(TypeKind.PROMISE, "Promise", members=(interface("Attr"),)))
     assert gaps.default_is_safe(IdlType(TypeKind.UNION, "x", members=(interface("Node"), interface("Plain"))))
-    assert gaps.refuses(_interface(name="Crypto"), _attribute("subtle"))
+    assert gaps.refuses(_interface(name="SubtleCrypto"), _attribute("digest"))
+    assert not gaps.refuses(_interface(name="Crypto"), _attribute("subtle"))
     assert gaps.refuses(_interface(name="Attr"), None)
     assert not gaps.refuses(_interface(name="AbortSignal"), None)
 

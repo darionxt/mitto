@@ -5,6 +5,7 @@
 // Upstream: third_party/blink/renderer/bindings/core/v8/to_v8_traits.h
 // Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 // Upstream: third_party/blink/renderer/bindings/core/v8/script_iterator.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/native_value_traits_buffer_sources.cc
 
 #ifndef MITTO_BINDINGS_V8_CONVERSIONS_H_
 #define MITTO_BINDINGS_V8_CONVERSIONS_H_
@@ -25,6 +26,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/wrapper_type_info.h"
+#include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function-callback.h"
@@ -183,6 +185,14 @@ bool IterateRecord(
     std::string_view type_name,
     base::FunctionRef<bool(v8::Local<v8::Value>, v8::Local<v8::Value>)> each);
 
+// The checks of NativeValueTraits<NotShared<T>> once `view` is a view of the
+// type that `type_name` names, such as "ArrayBufferView": its buffer may be
+// neither shared nor resizable. Throws a TypeError for one that is, and
+// returns false then.
+bool CheckArrayBufferViewNotShared(v8::Local<v8::ArrayBufferView> view,
+                                   std::string_view type_name,
+                                   ExceptionState& exception_state);
+
 v8::Local<v8::String> ToV8String(v8::Isolate* isolate,
                                  std::u16string_view text);
 
@@ -194,6 +204,9 @@ v8::Local<v8::Value> ToV8NullableByteString(
     const std::optional<std::string>& bytes);
 v8::Local<v8::Value> ToV8ByteStringArray(v8::Isolate* isolate,
                                          const std::vector<std::string>& texts);
+// The number, or null.
+v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
+                                        std::optional<double> number);
 // The string, or null.
 v8::Local<v8::Value> ToV8NullableString(
     v8::Isolate* isolate,
