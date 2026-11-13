@@ -487,6 +487,21 @@ mitto_bindings_interfaces = [
     file = "idle_deadline"
   },
   {
+    name = "Keyboard"
+    file = "keyboard"
+
+    # Keyboard Lock needs full screen and a user's activation.
+    missing = [
+      "lock",
+      "unlock",
+    ]
+  },
+  {
+    name = "KeyboardLayoutMap"
+    file = "keyboard_layout_map"
+    implemented = [ "maplike" ]
+  },
+  {
     name = "Location"
     file = "location"
     made_by_known_gaps = true
@@ -596,6 +611,7 @@ mitto_bindings_interfaces = [
       "locks",
       "getBattery",
       "cpuPerformance",
+      "keyboard",
     ]
   },
   {

@@ -527,6 +527,30 @@ def test_get_battery_gives_a_desktop_with_no_battery(program: Path) -> None:
     )
 
 
+# keyboard.getLayoutMap() of the US layout, which Windows sets up for the en-US locale of every Persona, from Chrome
+# 157 on Windows: the 48 writing system keys that write something, in the order that Blink's HashMap of them iterates.
+_US_LAYOUT_MAP = 'value: [["KeyK","k"],["KeyG","g"],["Digit2","2"],["Digit0","0"],["KeyV","v"],["KeyA","a"],["Backquote","`"],["KeyL","l"],["IntlBackslash","\\\\"],["Quote","\'"],["KeyW","w"],["Digit8","8"],["KeyM","m"],["KeyH","h"],["Period","."],["Digit7","7"],["Digit1","1"],["KeyP","p"],["KeyD","d"],["KeyF","f"],["KeyO","o"],["KeyQ","q"],["KeyC","c"],["KeyN","n"],["BracketLeft","["],["KeyZ","z"],["KeyY","y"],["Digit3","3"],["Digit6","6"],["Digit5","5"],["KeyX","x"],["Slash","/"],["Backslash","\\\\"],["Comma",","],["Minus","-"],["Digit4","4"],["KeyB","b"],["KeyT","t"],["Digit9","9"],["KeyS","s"],["KeyI","i"],["KeyU","u"],["Equal","="],["KeyJ","j"],["Semicolon",";"],["KeyR","r"],["BracketRight","]"],["KeyE","e"]]'
+
+
+def test_the_keyboard_layout_map_is_chromes_us_layout(program: Path) -> None:
+    script = "return JSON.stringify([...(await navigator.keyboard.getLayoutMap()).entries()])"
+
+    assert _evaluate(program, script) == _US_LAYOUT_MAP
+
+
+def test_layout_map_calls_share_a_promise_until_the_browser_answers(program: Path) -> None:
+    # KeyboardLayout: the calls before the answer share its promise, and a later call asks again for a new map.
+    script = """const keyboard = navigator.keyboard;
+        const first = keyboard.getLayoutMap();
+        const second = keyboard.getLayoutMap();
+        const map = await first;
+        const third = keyboard.getLayoutMap();
+        return JSON.stringify([first === second, third !== first, (await third) !== map, keyboard === navigator.keyboard,
+            map.size, map.get("KeyQ"), map.has("IntlRo"), Object.prototype.toString.call(map)])"""
+
+    assert _evaluate(program, script) == 'value: [true,true,true,true,48,"q",false,"[object KeyboardLayoutMap]"]'
+
+
 def test_random_values_differ_from_call_to_call(program: Path) -> None:
     script = (
         "const seen = new Set(); for (let i = 0; i < 64; i++) { "

@@ -8,6 +8,7 @@
 #include "mitto/bindings/v8_navigator.h"
 #include "mitto/dom/battery_manager.h"
 #include "mitto/dom/geolocation.h"
+#include "mitto/dom/keyboard.h"
 #include "mitto/dom/lock_manager.h"
 #include "mitto/dom/mime_type_array.h"
 #include "mitto/dom/navigator_ua_data.h"
@@ -79,6 +80,7 @@ void Navigator::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(permissions_);
   visitor->Trace(geolocation_);
   visitor->Trace(storage_);
+  visitor->Trace(keyboard_);
   visitor->Trace(locks_);
 }
 
@@ -254,6 +256,13 @@ v8::Local<v8::Promise> Navigator::GetBattery() {
     battery_promise_.Reset(isolate, resolver->GetPromise());
   }
   return battery_promise_.Get(isolate);
+}
+
+mitto::Keyboard* Navigator::Keyboard() {
+  if (!keyboard_) {
+    keyboard_ = mitto::Keyboard::Create();
+  }
+  return keyboard_.Get();
 }
 
 // Upstream: content/browser/cpu_performance/cpu_performance.cc
