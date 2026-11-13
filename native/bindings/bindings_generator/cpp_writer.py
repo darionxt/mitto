@@ -757,17 +757,22 @@ class _InterfaceWriter:
                 return self._missing_promise(name, group.name, has_receiver=not group.is_static)
             return self._missing(name, has_receiver=not group.is_static)
         body: list[str] = []
+        overloads = self._reachable_overloads(group)
+        if not overloads:
+            raise UnhandledError(f"{where}: no overload of {group.name}() can be called")
+        # What goes after the check of how many arguments the call has, for overloads.
+        deferred_receiver: list[str] = []
         if self.returns_promise(group):
             # Web IDL: an error before the operation returns rejects the promise it returns.
             body.append("ExceptionToRejectPromiseScope reject_promise_scope(info);")
-            if not group.is_static:
+            if not group.is_static and len(overloads) > 1:
+                # bind_gen's overload dispatcher counts the arguments before the overload checks its receiver.
+                deferred_receiver = self._promise_receiver()
+            elif not group.is_static:
                 body += self._promise_receiver()
         elif not group.is_static:
             body += self._receiver()
         body.append(self._exception_state())
-        overloads = self._reachable_overloads(group)
-        if not overloads:
-            raise UnhandledError(f"{where}: no overload of {group.name}() can be called")
         if len(overloads) == 1:
             body += self._call(overloads[0], where, check_length=True)
             return self._add_callback(name, body)
@@ -785,6 +790,7 @@ class _InterfaceWriter:
                     "  return;",
                     "}",
                 ]
+            body += deferred_receiver
             # Web IDL's overload resolution at the distinguishing argument.
             body += [f"if ({test}) {{"]
             body += _indent(self._call(chosen_overload, where, check_length=False))
@@ -807,6 +813,7 @@ class _InterfaceWriter:
                 "  return;",
                 "}",
             ]
+        body += deferred_receiver
         for overload in ordered[:-1]:
             body += [f"if (info.Length() >= {len(overload.arguments)}) {{"]
             body += _indent(self._call(overload, where, check_length=False))

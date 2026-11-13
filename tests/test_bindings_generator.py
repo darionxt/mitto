@@ -886,6 +886,25 @@ def test_overloads_that_return_promises_choose_a_dictionary_for_undefined_null_a
     assert "info.Length() <" not in source
 
 
+def test_overloads_that_return_promises_count_the_arguments_before_checking_the_receiver() -> None:
+    # LockManager's request(): Chrome rejects a call of no arguments on another object for the arguments.
+    promise = IdlType(TypeKind.PROMISE, "Promise", members=(IdlType(TypeKind.ANY, "any"),))
+    name = Argument("name", IdlType(TypeKind.STRING, "DOMString"), False, False, None)
+    flag = Argument("flag", BOOLEAN, False, False, None)
+    overloads = (
+        Operation("request", (name,), promise, False, ExtendedAttributes(), ALWAYS),
+        Operation("request", (name, flag), promise, False, ExtendedAttributes(), ALWAYS),
+    )
+    interface = _interface(
+        operation_groups=(OperationGroup("request", overloads, False, 1, ExtendedAttributes(), ALWAYS),)
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("request",)))
+
+    body = source[source.index("void RequestOperationCallback") :]
+    assert body.index("if (info.Length() < 1) {") < body.index("Illegal invocation")
+
+
 def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() -> None:
     source = _bindings_of(
         _collection("indexed getter", "named getter"), ImplementedInterface("Thing", "mitto/dom/thing.h")
