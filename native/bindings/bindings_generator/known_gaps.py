@@ -3,7 +3,7 @@
 A Known Gap runs Chrome's checks and converts its arguments, tells the Session, and gives its type's default. The
 generator refuses by name, so that it keeps today's error, a Known Gap whose default would be unsafe or impossible:
 
-- a member of Crypto or SubtleCrypto, whose default would be predictable random values or keys;
+- a member of SubtleCrypto, whose default would be predictable keys or results;
 - one whose default would be an object of an interface that has a C++ class, or that inherits from one, whose class's
   members would find no object behind it. Two kinds of interface are the exception. One whose nearest ancestor with a
   class is EventTarget or Event: its objects get that class's object behind them, so that addEventListener(),
@@ -41,7 +41,7 @@ EVENT_HANDLER_CALLBACKS = frozenset(
     {"EventHandlerNonNull", "OnErrorEventHandlerNonNull", "OnBeforeUnloadEventHandlerNonNull"}
 )
 
-_REFUSED_OWNERS = frozenset({"Crypto", "SubtleCrypto"})
+_REFUSED_OWNERS = frozenset({"SubtleCrypto"})
 
 
 class KnownGaps:
