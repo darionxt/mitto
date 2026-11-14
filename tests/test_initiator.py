@@ -516,6 +516,22 @@ def test_a_workers_script_to_another_origin_fails_and_sends_nothing(servers: Ser
     assert servers.received == []
 
 
+@pytest.mark.parametrize("origin", [None, "https://www.other.test"], ids=["removed", "given"])
+def test_a_workers_script_to_another_origin_fails_whatever_the_caller_does_to_origin(
+    servers: Servers, origin: str | None
+) -> None:
+    with new_session() as session, pytest.raises(RequestError) as caught:
+        session.get(
+            servers.https(CROSS_SITE, "/worker.js"),
+            kind="worker",
+            headers={"Origin": origin},
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert caught.value.net_error == ERR_FAILED
+    assert servers.received == []
+
+
 def test_a_workers_script_does_not_follow_a_redirect_to_another_origin(servers: Servers) -> None:
     with new_session() as session, pytest.raises(RequestError) as caught:
         session.get(

@@ -238,6 +238,12 @@ void FetchRules::ConfigureRequest(net::URLRequest& request) {
       params_.mode == RequestMode::kNavigate && !IsSubframeNavigation() &&
       net::HttpUtil::IsMethodSafe(request.method());
 
+  // Whether the request leaves its page's origin counts whatever a caller
+  // does to Origin: it decides the CORS rules and what mode same-origin
+  // refuses.
+  if (params_.mode != RequestMode::kNavigate) {
+    SetCorsFlagIfNeeded(url);
+  }
   if (!IsFixed(net::HttpRequestHeaders::kOrigin)) {
     std::optional<std::string> origin;
     if (params_.mode == RequestMode::kNavigate) {
@@ -249,7 +255,6 @@ void FetchRules::ConfigureRequest(net::URLRequest& request) {
                      : url::Origin().Serialize();
       }
     } else {
-      SetCorsFlagIfNeeded(url);
       // CorsURLLoader::MaybeSetOriginHeader() writes over Blink's line where
       // it needs one, and leaves it alone elsewhere.
       if (ShouldIncludeOriginHeader(request.method()) || OriginIsBlinksLine()) {
