@@ -30,7 +30,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 18;
+inline constexpr uint32_t kPageProtocolVersion = 19;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -199,6 +199,49 @@ enum class PageRequestKind : uint8_t {
   kScript = 1,
   kFetch = 2,
   kNavigation = 3,
+  kImage = 4,
+  kStyle = 5,
+  kFont = 6,
+  kModule = 7,
+  kXhr = 8,
+  kWorker = 9,
+  kBeacon = 10,
+  kIframe = 11,
+  kFavicon = 12,
+};
+
+// What a Page's request says of its mode, as Fetch names it, where 0 leaves
+// the Request Kind's own.
+enum class PageRequestMode : uint8_t {
+  kKindDefault = 0,
+  kNavigate = 1,
+  kSameOrigin = 2,
+  kNoCors = 3,
+  kCors = 4,
+};
+
+// What a Page's request says of its credentials mode, where 0 leaves the
+// Request Kind's own.
+enum class PageCredentialsMode : uint8_t {
+  kKindDefault = 0,
+  kOmit = 1,
+  kSameOrigin = 2,
+  kInclude = 3,
+};
+
+// A referrer policy, as the Referrer Policy standard names it, where 0 leaves
+// the document's: strict-origin-when-cross-origin, which no page of a Page
+// changes yet.
+enum class PageReferrerPolicy : uint8_t {
+  kDocument = 0,
+  kNoReferrer = 1,
+  kNoReferrerWhenDowngrade = 2,
+  kOrigin = 3,
+  kOriginWhenCrossOrigin = 4,
+  kSameOrigin = 5,
+  kStrictOrigin = 6,
+  kStrictOriginWhenCrossOrigin = 7,
+  kUnsafeUrl = 8,
 };
 
 // The level of a console message, as the console method that wrote it says.
@@ -457,10 +500,13 @@ struct PageEvaluated {
 // not say its URL.
 //
 // Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
-// of flags, 1 for a fetch of mode same-origin, 2 for a navigation that the
-// user activated and 4 for a navigation that reloads, the URL, the method and
-// the header lines, each after its size as a 32-bit number, and then a byte
-// that is 1 if a body follows, which is the rest.
+// of flags, 2 for a navigation that the user activated, 4 for a navigation
+// that reloads, 8 for a request that outlives its document, 16 for a
+// synchronous one and 32 for one with no referrer, then a byte each of the
+// mode, the credentials mode, the referrer policy, the priority and whether
+// it is incremental, the target as a 64-bit number, the URL, the method, the
+// header lines and the referrer, each after its size as a 32-bit number, and
+// then a byte that is 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -479,14 +525,36 @@ struct PageRequest {
   std::string headers;
   // None with GET or HEAD.
   std::optional<std::string> body;
-  // A fetch of mode same-origin, which no hop may take to another origin.
-  bool same_origin = false;
   // A navigation whose document had transient user activation, which sends
   // Sec-Fetch-User.
   bool user_activation = false;
   // A navigation that reloads the document, as location.reload() does, which
   // validates what the cache holds.
   bool reload = false;
+  // A request that outlives its document, as fetch()'s keepalive and
+  // sendBeacon() make one: the Session finishes it after the document or the
+  // Page has gone.
+  bool keepalive = false;
+  // A synchronous request, which Blink gives the highest priority.
+  bool synchronous = false;
+  // A request that sends no Referer at all, as fetch()'s referrer: "" asks.
+  bool no_referrer = false;
+  // Its mode, credentials mode and referrer policy, each the kind's own or
+  // the document's by default.
+  PageRequestMode mode = PageRequestMode::kKindDefault;
+  PageCredentialsMode credentials = PageCredentialsMode::kKindDefault;
+  PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
+  // 0 for the kind's own priority, or 1 and net::RequestPriority, from 1 for
+  // THROTTLED to 6 for HIGHEST, as Blink works one out.
+  uint8_t priority = 0;
+  // 0 for the kind's own, 1 for a response that is not used as it arrives,
+  // and 2 for one that is.
+  uint8_t incremental = 0;
+  // For a frame's navigation, the document that it replaces. 0 otherwise.
+  uint64_t target = 0;
+  // In UTF-8: a URL of the document's origin that Referer starts from, as
+  // fetch()'s referrer asks, or empty for the document's own URL.
+  std::string referrer;
 };
 
 // How much more of a request's body a Page has taken.

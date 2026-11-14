@@ -35,10 +35,8 @@ __all__ = ["ABOUT_BLANK", "SessionState"]
 ABOUT_BLANK = "about:blank"
 """The URL of a Page that navigates nowhere, as a new tab's first document needs no request."""
 
-# The Request Kinds of what a Page asks its Session for: its navigation, its classic scripts and its scripts' fetch().
-_PAGE_REQUEST_KINDS = (RequestKind.NAVIGATION, RequestKind.SCRIPT, RequestKind.FETCH)
-# The template of a Page's fetch() with a body, beside one per Request Kind.
-_FETCH_WITH_BODY = "fetch_with_body"
+# What follows the name of a Request Kind for the template of a request of that kind with a body.
+_WITH_BODY = "_with_body"
 
 
 class SessionState:
@@ -135,9 +133,13 @@ class SessionState:
         start = self._page_start()
         if url == ABOUT_BLANK:
             return self.native.open_page(start)
-        requests = {kind.value: self._page_request_template(kind) for kind in _PAGE_REQUEST_KINDS}
-        # A fetch() with a body sends the lines that one has, with its Content-Type where the Persona puts it.
-        requests[_FETCH_WITH_BODY] = self._page_request_template(RequestKind.FETCH, with_body=True)
+        requests = {kind.value: self._page_request_template(kind) for kind in RequestKind}
+        # A request with a body sends the lines that one has, with its Content-Type where the Persona puts it.
+        requests |= {
+            kind.value + _WITH_BODY: self._page_request_template(kind, with_body=True)
+            for kind in RequestKind
+            if self._persona.takes_body(kind)
+        }
         return self.native.open_page(start, url=url, requests=requests)
 
     def _page_start(self) -> PageStart:

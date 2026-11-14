@@ -107,7 +107,10 @@ PageCacheResponse ToPageCacheResponse(const Response& response) {
   page_response.status = response.Status();
   page_response.status_text = response.StatusText();
   const std::u16string type = response.Type();
-  page_response.type = type == u"basic" ? 0 : type == u"cors" ? 1 : 2;
+  page_response.type = type == u"basic"    ? 0
+                       : type == u"cors"   ? 1
+                       : type == u"opaque" ? 4
+                                           : 2;
   // Each name once, the first of its values, as the mojom's map holds them.
   std::set<std::string> seen;
   for (const auto& [name, value] : response.Headers()->list()) {

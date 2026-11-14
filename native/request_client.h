@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/functional/callback.h"
 #include "base/time/time.h"
 #include "mitto/request_channel.h"
 #include "net/base/io_buffer.h"
@@ -71,6 +72,16 @@ class RunningRequest {
   // Ends the request, and tells its client nothing more, because the client
   // is going.
   virtual void Abandon() = 0;
+
+  // Goes on to the request's end with no client, reading and dropping what
+  // its response holds, because its client is going and the request outlives
+  // it, as Chrome's KeepAliveURLLoader finishes a keepalive request after its
+  // renderer has gone. `allows_response` takes the place of the client's
+  // AllowsResponse(), so that the request's checks go on with it, as the
+  // network service's CORS checks go on without the renderer.
+  // Upstream: content/browser/loader/keep_alive_url_loader.h
+  virtual void Detach(
+      base::RepeatingCallback<bool(const RequestEvent&)> allows_response) = 0;
 
  protected:
   virtual ~RunningRequest() = default;

@@ -161,6 +161,10 @@ struct MittoSession final : public mitto::PageNetwork {
       mitto::RequestOptions options,
       std::optional<std::vector<char>> body) override;
   net::CookieStore& cookie_store() override;
+  const scoped_refptr<mitto::KeepaliveInFlight>& keepalive_in_flight()
+      override {
+    return keepalive_requests;
+  }
   const mitto::NetworkQuality* GetNetworkQuality() const override;
   void BroadcastFromPage(const mitto::PageHost& from,
                          const url::Origin& origin,
@@ -185,6 +189,10 @@ struct MittoSession final : public mitto::PageNetwork {
   mitto::ClientHintsStore client_hints_store;
   // What earlier CORS preflights allowed, as a network context keeps it.
   mitto::PreflightCache preflight_cache;
+  // The keepalive requests of the Session's Pages in flight, which may
+  // outlive their Pages.
+  const scoped_refptr<mitto::KeepaliveInFlight> keepalive_requests =
+      base::MakeRefCounted<mitto::KeepaliveInFlight>();
   // What rtt and downlink are worked out from, if anything.
   std::optional<mitto::NetworkQuality> network_quality;
   // Stands for what //net reads from a server's ALPS. For tests only.
@@ -419,9 +427,15 @@ class RequestJob final : public net::URLRequest::Delegate,
       read_wanted_ = true;
       return;
     }
+    // A read that a client asked for before it let the request go may still
+    // be under way, and the next waits for it.
+    if (read_in_progress_) {
+      return;
+    }
     const int result =
         request_->Read(client_->read_buffer(), client_->read_size());
     if (result == net::ERR_IO_PENDING) {
+      read_in_progress_ = true;
       StartReadTimer();
       return;
     }
@@ -440,6 +454,14 @@ class RequestJob final : public net::URLRequest::Delegate,
   void Abandon() override {
     client_ = nullptr;
     Finish(net::ERR_ABORTED);
+  }
+
+  void Detach(base::RepeatingCallback<bool(const RequestEvent&)>
+                  allows_response) override {
+    owned_detached_client_ =
+        std::make_unique<DetachedClient>(*this, std::move(allows_response));
+    client_ = owned_detached_client_.get();
+    ReadBody();
   }
 
   void Cancel() { Finish(net::ERR_ABORTED); }
@@ -564,6 +586,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   }
 
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override {
+    read_in_progress_ = false;
     read_timer_.Stop();
     if (bytes_read <= 0) {
       Finish(bytes_read);
@@ -916,9 +939,43 @@ class RequestJob final : public net::URLRequest::Delegate,
     session_->jobs.erase(session_->jobs.find(this));
   }
 
+  // What a request that has outlived its client tells instead: nothing, as
+  // it reads what is left of the response and drops it.
+  class DetachedClient final : public RequestClient {
+   public:
+    DetachedClient(
+        RequestJob& job,
+        base::RepeatingCallback<bool(const RequestEvent&)> allows_response)
+        : job_(job),
+          allows_response_(std::move(allows_response)),
+          buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kReadSize)) {}
+
+    void OnResponseEvent(RequestEvent event) override {}
+    bool AllowsResponse(const RequestEvent& event) override {
+      return allows_response_.Run(event);
+    }
+    net::IOBuffer* read_buffer() override { return buffer_.get(); }
+    int read_size() const override { return kReadSize; }
+    void OnBodyRead(size_t size) override {
+      // From a later task, so that reads that complete at once do not nest.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&RequestJob::ReadBody,
+                                    job_->weak_ptr_factory_.GetWeakPtr()));
+    }
+    void OnFinished(int net_error) override {}
+
+   private:
+    static constexpr int kReadSize = 64 * 1024;
+    const raw_ref<RequestJob> job_;
+    const base::RepeatingCallback<bool(const RequestEvent&)> allows_response_;
+    const scoped_refptr<net::IOBufferWithSize> buffer_;
+  };
+
   const raw_ref<MittoSession> session_;
   // The client of a request of the C API's, which goes with the job.
   const std::unique_ptr<RequestClient> owned_client_;
+  // The client of a request that has outlived its own.
+  std::unique_ptr<RequestClient> owned_detached_client_;
   raw_ptr<RequestClient> client_;
   // Where a stream body comes from, if the request has one.
   const scoped_refptr<RequestChannel> stream_channel_;
@@ -948,6 +1005,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   bool restarted_for_critical_ch_ = false;
   bool response_started_ = false;
   bool read_wanted_ = false;
+  bool read_in_progress_ = false;
   bool proxy_auth_answered_ = false;
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;

@@ -223,9 +223,12 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
 
   if (!IsFixed(net::HttpRequestHeaders::kReferer)) {
     // Blink's SecurityPolicy::GenerateReferrer(), and //net from there on.
-    request.set_referrer_policy(kDefaultReferrerPolicy);
+    const net::ReferrerPolicy policy =
+        params_.referrer_policy.value_or(kDefaultReferrerPolicy);
+    request.set_referrer_policy(policy);
     request.SetReferrer(net::URLRequestJob::ComputeReferrerForPolicy(
-                            kDefaultReferrerPolicy, page_, url)
+                            policy, params_.referrer_source.value_or(page_),
+                            url)
                             .spec());
   }
 }
