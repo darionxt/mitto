@@ -390,15 +390,17 @@ Measured for Chromium 157.0.8103.39, in a directory where the library's build ha
 
 ### Sizes
 
-Measured for Chromium 157.0.8103.39, `mitto-chromium-157.0.8103.39-3.tar.xz`. The archive is the same for every Host: 34.3 MiB compressed, 278 MiB unpacked, 20,063 files. Of those, 17,619 are in every slice. The Windows slice alone adds 815, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API, the Linux slice alone 262 and the macOS slice alone 289.
+Measured for Chromium 157.0.8103.39, `mitto-chromium-157.0.8103.39-4.tar.xz`. The archive is the same for every Host: 36.0 MiB compressed, 289 MiB unpacked, 20,116 files. Of those, 17,672 are in every slice. The Windows slice alone adds 815, such as `base/win`, nasm, which BoringSSL's assembly needs there, and the Rust crates of Windows' API, the Linux slice alone 262 and the macOS slice alone 289.
 
 | Slice | Files | Unpacked |
 | --- | --- | --- |
-| Linux x86_64, from five builds | 18,957 | 232 MiB |
-| macOS arm64, from two builds | 18,930 | 231 MiB |
-| Windows x64, from two builds | 18,492 | 256 MiB |
+| Linux x86_64, from eight builds | 19,010 | 242 MiB |
+| macOS arm64, from two builds | 18,983 | 241 MiB |
+| Windows x64, from two builds | 18,545 | 267 MiB |
 
 [The Runtime](#build-the-runtime)'s build reads 7,084 files that the native core's builds do not, 79 MiB unpacked, which make the archive 9.2 MiB larger than the 25.1 MiB of the export before it: V8, 3,122 files and 65 MiB, of which its two builtins profiles, `x64.profile` and `x64-rl.profile`, are 10.7 MB; Blink's IDL files and the scripts that read them, 2,229, with the Python projects that those scripts import, `tools/idl_parser`, ply, pyjson5, jinja2 and markupsafe; llvm-libc, 1,067; the Rust crates of V8's Temporal and libm, 547; and highway, fast_float, fp16 and dragonbox. The toolchain of Linux and macOS was measured for Chromium 157.0.8103.27, and is the same for 157.0.8103.39.
+
+SQLite, in which the native core keeps the storage of pages, adds 53 files on every Host, 10.3 MiB unpacked, which make the archive 1.7 MiB larger than the 34.3 MiB of the export before it: Chromium's `sql/`, 36 files; `third_party/sqlite`, 13, of which SQLite's amalgamation `sqlite3.c` is 9.6 MB; the `.gni` of libprotobuf-mutator that `third_party/sqlite/BUILD.gn` imports, with that project's license and README; and the histograms of `sql/`, from which `sql/BUILD.gn` generates a header.
 
 | Toolchain package | Comes from | Linux x86_64: download | unpacked | macOS arm64: download | unpacked | Windows x64: download | unpacked |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -504,7 +506,7 @@ The fuzz targets have a build of their own because Chromium's fuzzing builds def
 
 The tree builder's fuzz target, `html_tree_builder_fuzzer`, makes its nodes on V8's C++ heap as the Page program does, so it builds in `runtime-fuzz`, with `args.gn` followed by `runtime_args.gn` and the fuzz build's args, and V8's Perfetto tracing kept on as in the Page program, since a fuzzing build would switch V8 to tracing files of its own that the export does not hold. Its first byte picks a fragment's context element, from a list that reaches every insertion mode, or a document, which must get the same tree whole and in pieces, and its seeds in [`native/test/html_tree_builder_corpus`](../native/test/html_tree_builder_corpus) start each insertion mode.
 
-`runtime-asan` and `runtime-ubsan` add the sanitizer's arguments to [the Runtime](#build-the-runtime)'s, `args.gn` followed by `runtime_args.gn`, so each builds `//mitto:runtime` without the library in a directory of its own, as `runtime` does. Under UndefinedBehaviorSanitizer V8 turns on every check of `-fsanitize=undefined` for its own code, where Chromium picks a few (`v8/BUILD.gn`). The source export's Linux slice traces both, but `mitto-chromium-157.0.8103.39-3.tar.xz` was made before they existed and builds them all the same. To run the Page program's tests against one of them:
+`runtime-asan` and `runtime-ubsan` add the sanitizer's arguments to [the Runtime](#build-the-runtime)'s, `args.gn` followed by `runtime_args.gn`, so each builds `//mitto:runtime` without the library in a directory of its own, as `runtime` does. Under UndefinedBehaviorSanitizer V8 turns on every check of `-fsanitize=undefined` for its own code, where Chromium picks a few (`v8/BUILD.gn`). The source export's Linux slice traces both. To run the Page program's tests against one of them:
 
 ```bash
 export MITTO_PAGE_PROGRAM=/absolute/path/to/new/directory/chromium-<tag>/src/out/runtime-asan/mitto_page
@@ -952,7 +954,7 @@ The script collects those paths, runs `tools/workspace/compare` on them, and the
 - `native/page` or `native/bindings` starts to depend on a target outside the Runtime's build graph, as for `native/` below;
 - `native/` starts to depend on a target outside the current build graph. Until then, `native/` can include any header that a target in the graph declares, because the export keeps those even when nothing includes them yet. A build that needs something else stops with a missing file.
 
-What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan`, `fuzz`, `runtime-asan`, `runtime-ubsan` and `runtime-fuzz` on Linux. The last three were added after `mitto-chromium-157.0.8103.39-3.tar.xz`, whose Linux slice did not trace them, and they build from it all the same. The steps took about three and a half hours on 2026-11-10, on machines that had built the native core and the Runtime before, and most of it on the machine that runs Linux and Windows in turn. The slices took 36 minutes on Linux for its five builds, 29 minutes on macOS with `-j 5` and 33 minutes on Windows. The builds from the archive in step 4 took 48 minutes on Linux, 29 minutes on macOS and 33 minutes on Windows, before the tests.
+What a build reads differs per Host, and `gn` on Linux knows nothing of the inputs of macOS or Windows, so each Host contributes a **slice**. A slice covers every build configuration that the Host has: the plain one and the Runtime's, `runtime`, on every Host, and also `asan`, `ubsan`, `fuzz`, `runtime-asan`, `runtime-ubsan` and `runtime-fuzz` on Linux. `mitto-chromium-157.0.8103.39-4.tar.xz` is the first export whose Linux slice traces the last three. Its steps took about five hours on 2026-11-14, on machines that had built the native core and the Runtime before, and most of it on the machine that runs Linux and Windows in turn. The slices took 91 minutes on Linux for its eight builds, 43 minutes on macOS with `-j 5` and 35 minutes on Windows. The builds from the archive in step 4 took 114 minutes on Linux, 30 minutes on macOS and 35 minutes on Windows, before the tests.
 
 1. On each Host, in a workspace [set up by the bootstrap script](#set-up-the-workspace), from the same commit of this repository, with the bootstrap script run again from that commit:
 
