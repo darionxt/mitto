@@ -430,6 +430,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     Finish(net::ERR_ABORTED);
   }
 
+  void Detach() override {
+    owned_detached_client_ = std::make_unique<DetachedClient>(*this);
+    client_ = owned_detached_client_.get();
+    ReadBody();
+  }
+
   void Cancel() { Finish(net::ERR_ABORTED); }
 
   // BodyStream::Delegate:
@@ -903,9 +909,37 @@ class RequestJob final : public net::URLRequest::Delegate,
     session_->jobs.erase(session_->jobs.find(this));
   }
 
+  // What a request that has outlived its client tells instead: nothing, as
+  // it reads what is left of the response and drops it.
+  class DetachedClient final : public RequestClient {
+   public:
+    explicit DetachedClient(RequestJob& job)
+        : job_(job),
+          buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kReadSize)) {}
+
+    void OnResponseEvent(RequestEvent event) override {}
+    bool AllowsResponse(const RequestEvent& event) override { return true; }
+    net::IOBuffer* read_buffer() override { return buffer_.get(); }
+    int read_size() const override { return kReadSize; }
+    void OnBodyRead(size_t size) override {
+      // From a later task, so that reads that complete at once do not nest.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&RequestJob::ReadBody,
+                                    job_->weak_ptr_factory_.GetWeakPtr()));
+    }
+    void OnFinished(int net_error) override {}
+
+   private:
+    static constexpr int kReadSize = 64 * 1024;
+    const raw_ref<RequestJob> job_;
+    const scoped_refptr<net::IOBufferWithSize> buffer_;
+  };
+
   const raw_ref<MittoSession> session_;
   // The client of a request of the C API's, which goes with the job.
   const std::unique_ptr<RequestClient> owned_client_;
+  // The client of a request that has outlived its own.
+  std::unique_ptr<RequestClient> owned_detached_client_;
   raw_ptr<RequestClient> client_;
   // Where a stream body comes from, if the request has one.
   const scoped_refptr<RequestChannel> stream_channel_;

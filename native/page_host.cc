@@ -25,6 +25,7 @@
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
 #include "mitto/ready_requests.h"
+#include "mitto/sec_header_helpers.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
@@ -639,11 +640,11 @@ class PageHost::Request final : public RequestClient {
 
   // What the Performance Timeline needs of the hops so far.
   bool timing_allow_passed() const { return !timing_allow_failed_; }
-  // Whether the response's tainting is opaque: a script's, which is a fetch of
-  // mode no-cors, once a hop has left the document's origin. A navigation's
-  // is basic.
+  // Whether the response's tainting is opaque: that of a request of mode
+  // no-cors, such as a script's or a fetch() that asks for it, once a hop has
+  // left the document's origin. A navigation's is basic.
   bool opaque() const {
-    return !is_navigation() && !checks_.is_fetch && timing_cross_origin_;
+    return !is_navigation() && checks_.no_cors && timing_cross_origin_;
   }
   uint32_t redirect_count() const { return redirect_count_; }
   bool cross_origin_redirect() const { return cross_origin_redirect_; }
@@ -694,6 +695,13 @@ class PageHost::Request final : public RequestClient {
   }
 
   void set_job(base::WeakPtr<RunningRequest> job) { job_ = std::move(job); }
+  // Lets the job go on without this Request, if it is still running.
+  void DetachJob() {
+    if (job_) {
+      job_->Detach();
+      job_.reset();
+    }
+  }
   void set_started() { started_ = true; }
   void AddCredit(uint32_t bytes) { credit_ += bytes; }
   base::span<const uint8_t> TakeRead(size_t size) {
@@ -836,7 +844,8 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
                          " requests at once"}));
     return;
   }
-  const bool is_fetch = asked.kind == PageRequestKind::kFetch;
+  const bool is_fetch = asked.kind == PageRequestKind::kFetch ||
+                        asked.kind == PageRequestKind::kXhr;
   const bool is_navigation = asked.kind == PageRequestKind::kNavigation;
   if (is_navigation) {
     PageEvent started;
@@ -852,6 +861,17 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
       : without_body != options_.requests.end() ? &without_body->second
                                                 : nullptr;
   GURL url(asked.url);
+  // The Page names only a referrer of its document's origin, as Fetch makes
+  // any other the document's own URL.
+  GURL referrer;
+  if (!asked.referrer.empty()) {
+    referrer = GURL(asked.referrer);
+    if (!referrer.is_valid() ||
+        !url::Origin::Create(document_url).IsSameOriginWith(referrer)) {
+      Refuse("a request whose referrer is not a URL of its document's origin");
+      return;
+    }
+  }
   // The script's own lines, each name once, with its values joined, in the
   // order the names first come, as Fetch combines them.
   std::vector<std::pair<std::string, std::string>> lines;
@@ -882,7 +902,7 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     // A document that the Session did not load, such as about:blank, has no
     // Initiator that a request can name.
     net_error = net::ERR_ACCESS_DENIED;
-  } else if (is_fetch && asked.mode == PageRequestMode::kSameOrigin &&
+  } else if (asked.mode == PageRequestMode::kSameOrigin &&
              !url::Origin::Create(document_url).IsSameOriginWith(url)) {
     // A cross-origin fetch of mode same-origin fails, as in Chrome. Another
     // has the CORS check held to its response, after the preflight that the
@@ -924,16 +944,21 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     headers.SetHeader(name, value);
     options.fetch->fixed_headers.insert(base::ToLowerASCII(name));
   }
+  const RequestMode options_mode = options.fetch->mode;
+  const CredentialsMode options_credentials = options.fetch->credentials_mode;
   std::optional<std::vector<char>> body;
   if (asked.body) {
     body.emplace(asked.body->begin(), asked.body->end());
   }
   StartRequest(asked.number, url::Origin::Create(document_url), std::move(url),
                std::move(headers), std::move(options), std::move(body),
-               FetchChecks{.is_fetch = is_fetch,
-                           .same_origin =
-                               asked.mode == PageRequestMode::kSameOrigin,
-                           .is_navigation = is_navigation});
+               FetchChecks{
+                   .is_fetch = is_fetch,
+                   .same_origin = options_mode == RequestMode::kSameOrigin,
+                   .no_cors = options_mode == RequestMode::kNoCors,
+                   .credentials = options_credentials == CredentialsMode::kInclude,
+                   .keepalive = asked.keepalive,
+                   .is_navigation = is_navigation});
 }
 
 void PageHost::OnCancel(uint64_t number) {
@@ -1061,7 +1086,7 @@ PageConnection PageHost::ConnectionOf(const GURL& url) const {
 
 bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   const FetchChecks& checks = request.checks();
-  if (!checks.is_fetch) {
+  if (!checks.is_fetch || checks.no_cors) {
     return true;
   }
   // Upstream: services/network/cors/cors_url_loader.cc
@@ -1069,9 +1094,10 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   // The Fetch Standard's CORS check, on each response of a fetch whose
   // response tainting is cors, redirects included, before the redirect is
   // followed or any of the response goes to the Page, as Chrome's network
-  // service does it. A Page's cross-origin fetches have no credentials, so
-  // Access-Control-Allow-Origin has to name the request's origin, which a
-  // tainted one serializes as "null", or be "*".
+  // service does it. Access-Control-Allow-Origin has to name the request's
+  // origin, which a tainted one serializes as "null", or be "*" for one
+  // without credentials. One with credentials also needs
+  // Access-Control-Allow-Credentials: true, in lower case.
   const url::Origin& document_origin = request.document_origin();
   request.Reach(GURL(event.url), document_origin);
   // A redirect to another origin of a fetch of mode same-origin is not
@@ -1087,21 +1113,34 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   const std::string origin =
       request.tainted() ? std::string("null") : document_origin.Serialize();
   std::optional<std::string> allowed;
+  std::optional<std::string> allow_credentials;
   for (const std::string_view line : base::SplitStringPieceUsingSubstr(
            event.headers, "\r\n", base::KEEP_WHITESPACE,
            base::SPLIT_WANT_NONEMPTY)) {
     const size_t colon = line.find(':');
-    if (colon == std::string_view::npos ||
-        !base::EqualsCaseInsensitiveASCII(line.substr(0, colon),
-                                          "access-control-allow-origin")) {
+    if (colon == std::string_view::npos) {
+      continue;
+    }
+    const std::string_view name = line.substr(0, colon);
+    std::optional<std::string>* const slot =
+        base::EqualsCaseInsensitiveASCII(name, "access-control-allow-origin")
+            ? &allowed
+        : base::EqualsCaseInsensitiveASCII(name,
+                                           "access-control-allow-credentials")
+            ? &allow_credentials
+            : nullptr;
+    if (!slot) {
       continue;
     }
     // More than one line is a failure, as a value that lists more than one.
-    if (allowed) {
+    if (*slot) {
       return false;
     }
-    allowed = std::string(
+    *slot = std::string(
         base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL));
+  }
+  if (checks.credentials) {
+    return allowed == origin && allow_credentials == "true";
   }
   return allowed && (*allowed == "*" || *allowed == origin);
 }
@@ -1149,7 +1188,13 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
 }
 
 void PageHost::AbandonRequests() {
-  // Each Request abandons its job as it goes.
+  // A keepalive request goes on without its Page, and the Session finishes
+  // it. Each other Request abandons its job as it goes.
+  for (auto& [number, request] : requests_) {
+    if (request->checks().keepalive) {
+      request->DetachJob();
+    }
+  }
   requests_.clear();
 }
 

@@ -72,6 +72,13 @@ class RunningRequest {
   // is going.
   virtual void Abandon() = 0;
 
+  // Goes on to the request's end with no client, reading and dropping what
+  // its response holds, because its client is going and the request outlives
+  // it, as Chrome's KeepAliveURLLoader finishes a keepalive request after its
+  // renderer has gone.
+  // Upstream: content/browser/loader/keep_alive_url_loader.h
+  virtual void Detach() = 0;
+
  protected:
   virtual ~RunningRequest() = default;
 };

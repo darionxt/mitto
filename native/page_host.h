@@ -303,10 +303,19 @@ class PageHost final : public PageChannel::Delegate {
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
   struct FetchChecks {
-    // A fetch, whose responses from another origin pass the CORS check.
+    // A fetch or an XMLHttpRequest, whose responses from another origin pass
+    // the CORS check unless its mode is no-cors.
     bool is_fetch = false;
     // Mode same-origin: no hop may go to another origin.
     bool same_origin = false;
+    // Mode no-cors: a response from another origin is opaque, and needs no
+    // CORS check.
+    bool no_cors = false;
+    // Credentials mode include, whose CORS check wants the request's own
+    // origin and Access-Control-Allow-Credentials.
+    bool credentials = false;
+    // A request that outlives its document and its Page.
+    bool keepalive = false;
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
