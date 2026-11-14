@@ -6,11 +6,13 @@
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/document_loader.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "url/origin.h"
 
 namespace mitto {
 namespace {
@@ -102,8 +104,21 @@ Document& PageFrame::CommitNavigation(DocumentLoader& loader,
     old_document.DispatchUnloadEvents();
   }
   current_ = std::move(committing);
-  return runner_->CommitDocument(current_->number(), url, navigation_start,
-                                 connection);
+  const GURL old_url(old_document.UrlForBinding());
+  const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
+  const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
+  Document& document = runner_->CommitDocument(current_->number(), url,
+                                               navigation_start, connection);
+  // The old document's unload times go to a new one of its origin, as
+  // Blink's UnloadEventTimingInfo carries them.
+  DocumentLoadTiming& timing = runner_->document_load_timing();
+  timing.unload_event_start = unload_event_start;
+  timing.unload_event_end = unload_event_end;
+  timing.has_same_origin_as_previous_document =
+      url::IsSameOriginWith(old_url, url);
+  timing.is_reload =
+      current_->number() != kNavigationRequest && provisional_request_.reload;
+  return document;
 }
 
 void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader) {
