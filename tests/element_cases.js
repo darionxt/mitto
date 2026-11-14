@@ -1300,5 +1300,202 @@
     return [i.createDocument(null, "") instanceof XMLDocument, i.createDocument(null, "") instanceof Document, i.createHTMLDocument() instanceof HTMLDocument, Object.getPrototypeOf(i.createDocument(null, "")) === XMLDocument.prototype].join("|");
   });
   run("XMLDocument constructor", () => new XMLDocument());
+  // SVG's animated strings, booleans, enumerations, integers and numbers.
+  const SVG_ANIMATED = [["a","target","String","target"],["clipPath","clipPathUnits","Enumeration","clipPathUnits"],["feFuncR","type","Enumeration","type"],["feFuncR","slope","Number","slope"],["feFuncR","intercept","Number","intercept"],["feFuncR","amplitude","Number","amplitude"],["feFuncR","exponent","Number","exponent"],["feFuncR","offset","Number","offset"],["rect","className","String","class"],["feBlend","in1","String","in"],["feBlend","in2","String","in2"],["feBlend","mode","Enumeration","mode"],["feColorMatrix","in1","String","in"],["feColorMatrix","type","Enumeration","type"],["feComponentTransfer","in1","String","in"],["feComposite","in2","String","in2"],["feComposite","in1","String","in"],["feComposite","operator","Enumeration","operator"],["feComposite","k1","Number","k1"],["feComposite","k2","Number","k2"],["feComposite","k3","Number","k3"],["feComposite","k4","Number","k4"],["feConvolveMatrix","in1","String","in"],["feConvolveMatrix","orderX","Integer","order"],["feConvolveMatrix","orderY","Integer","order"],["feConvolveMatrix","divisor","Number","divisor"],["feConvolveMatrix","bias","Number","bias"],["feConvolveMatrix","targetX","Integer","targetX"],["feConvolveMatrix","targetY","Integer","targetY"],["feConvolveMatrix","edgeMode","Enumeration","edgeMode"],["feConvolveMatrix","kernelUnitLengthX","Number","kernelUnitLength"],["feConvolveMatrix","kernelUnitLengthY","Number","kernelUnitLength"],["feConvolveMatrix","preserveAlpha","Boolean","preserveAlpha"],["feDiffuseLighting","in1","String","in"],["feDiffuseLighting","surfaceScale","Number","surfaceScale"],["feDiffuseLighting","diffuseConstant","Number","diffuseConstant"],["feDiffuseLighting","kernelUnitLengthX","Number","kernelUnitLength"],["feDiffuseLighting","kernelUnitLengthY","Number","kernelUnitLength"],["feDisplacementMap","in1","String","in"],["feDisplacementMap","in2","String","in2"],["feDisplacementMap","scale","Number","scale"],["feDisplacementMap","xChannelSelector","Enumeration","xChannelSelector"],["feDisplacementMap","yChannelSelector","Enumeration","yChannelSelector"],["feDistantLight","azimuth","Number","azimuth"],["feDistantLight","elevation","Number","elevation"],["feDropShadow","in1","String","in"],["feDropShadow","dx","Number","dx"],["feDropShadow","dy","Number","dy"],["feDropShadow","stdDeviationX","Number","stdDeviation"],["feDropShadow","stdDeviationY","Number","stdDeviation"],["feGaussianBlur","in1","String","in"],["feGaussianBlur","stdDeviationX","Number","stdDeviation"],["feGaussianBlur","stdDeviationY","Number","stdDeviation"],["feMergeNode","in1","String","in"],["feMorphology","in1","String","in"],["feMorphology","operator","Enumeration","operator"],["feMorphology","radiusX","Number","radius"],["feMorphology","radiusY","Number","radius"],["feOffset","in1","String","in"],["feOffset","dx","Number","dx"],["feOffset","dy","Number","dy"],["fePointLight","x","Number","x"],["fePointLight","y","Number","y"],["fePointLight","z","Number","z"],["feSpecularLighting","in1","String","in"],["feSpecularLighting","surfaceScale","Number","surfaceScale"],["feSpecularLighting","specularConstant","Number","specularConstant"],["feSpecularLighting","specularExponent","Number","specularExponent"],["feSpecularLighting","kernelUnitLengthX","Number","kernelUnitLength"],["feSpecularLighting","kernelUnitLengthY","Number","kernelUnitLength"],["feSpotLight","x","Number","x"],["feSpotLight","y","Number","y"],["feSpotLight","z","Number","z"],["feSpotLight","pointsAtX","Number","pointsAtX"],["feSpotLight","pointsAtY","Number","pointsAtY"],["feSpotLight","pointsAtZ","Number","pointsAtZ"],["feSpotLight","specularExponent","Number","specularExponent"],["feSpotLight","limitingConeAngle","Number","limitingConeAngle"],["feTile","in1","String","in"],["feTurbulence","baseFrequencyX","Number","baseFrequency"],["feTurbulence","baseFrequencyY","Number","baseFrequency"],["feTurbulence","numOctaves","Integer","numOctaves"],["feTurbulence","seed","Number","seed"],["feTurbulence","stitchTiles","Enumeration","stitchTiles"],["feTurbulence","type","Enumeration","type"],["filter","filterUnits","Enumeration","filterUnits"],["filter","primitiveUnits","Enumeration","primitiveUnits"],["feFlood","result","String","result"],["path","pathLength","Number","pathLength"],["linearGradient","gradientUnits","Enumeration","gradientUnits"],["linearGradient","spreadMethod","Enumeration","spreadMethod"],["marker","markerUnits","Enumeration","markerUnits"],["mask","maskUnits","Enumeration","maskUnits"],["mask","maskContentUnits","Enumeration","maskContentUnits"],["pattern","patternUnits","Enumeration","patternUnits"],["pattern","patternContentUnits","Enumeration","patternContentUnits"],["stop","offset","Number","offset"],["text","lengthAdjust","Enumeration","lengthAdjust"],["textPath","method","Enumeration","method"],["textPath","spacing","Enumeration","spacing"],["a","href","String","href"],["textPath","side","Enumeration","side"]];
+  const svg = (name) => document.createElementNS(SVG, name);
+  const each = (f) => SVG_ANIMATED.map(([tag, member, kind, attribute]) => {
+    try {
+      return tag + "." + member + "=" + f(svg(tag), member, kind, attribute);
+    } catch (e) {
+      return tag + "." + member + " threw " + e.name + ": " + e.message;
+    }
+  }).join(" | ");
+  run("svg animated defaults", () => each((e, m) => [Object.prototype.toString.call(e[m]), e[m] === e[m], JSON.stringify(e[m].baseVal), JSON.stringify(e[m].animVal)].join("/")));
+  run("svg animated invalid", () => each((e, m, kind, a) => { if (kind === "String") return "-"; e.setAttribute(a, "bad"); return e[m].baseVal; }));
+  run("svg animated empty", () => each((e, m, kind, a) => { e.setAttribute(a, ""); return JSON.stringify(e[m].baseVal); }));
+  run("svg animated enumerations", () => each((e, m, kind, a) => {
+    if (kind !== "Enumeration") return "-";
+    const out = [];
+    for (let v = 1; v < 20; v++) {
+      try { e[m].baseVal = v; out.push(e.getAttribute(a) + ":" + e[m].baseVal + ":" + e[m].animVal); } catch (x) { out.push(x.message); break; }
+    }
+    return out.join(",");
+  }));
+  run("svg animated set", () => each((e, m, kind, a) => {
+    const value = { String: "v w", Boolean: true, Enumeration: 1, Integer: 7, Number: 2.25 }[kind];
+    e[m].baseVal = value;
+    return [e.getAttribute(a), e[m].baseVal, e[m].animVal, e.attributes.length].join(",");
+  }));
+  run("svg animated prototypes", () => ["String", "Boolean", "Enumeration", "Integer", "Number"].map((k) => {
+    const I = window["SVGAnimated" + k];
+    let made;
+    try { new I(); made = "made"; } catch (x) { made = x.name + ": " + x.message; }
+    return [k, I.length, Object.getOwnPropertyNames(I.prototype).join(" "), made].join("/");
+  }).join(" | "));
+  run("svg number parse", () => {
+    const p = svg("path");
+    return ["5", " 5", "5 ", "\t5\n", "5,", "5 ,", ",5", "1e2", "1E2", "1e+2", "1e-2", "1e", "1ex", "1em", "abc", "-1.5", "+.5e-1", "-.5", "0x10", "1.", ".", ".e1", "5px", "Infinity", "NaN", "1e38", "1e39", "3e38", "1e-50", "3.14159265358979", "0.1", "123456789012", "00012", "1 2", "+-1", "--1", "1.5.5", "\u00a05"].map((v) => { p.setAttribute("pathLength", v); return JSON.stringify(v) + "=" + p.pathLength.baseVal; }).join(",");
+  });
+  run("svg number set", () => {
+    const p = svg("path");
+    return [0.1, 1 / 3, 2 / 3, 1e20, -0, 123456789, 1e-7, 2.5, 100, 1e6, 999999.5, 1234567, 0.000123, 0.00001234, -42.125, 3e38, "7", true, null].map((v) => { p.pathLength.baseVal = v; return String(v) + "=" + p.getAttribute("pathLength") + "/" + p.pathLength.baseVal; }).join(",");
+  });
+  run("svg number errors", () => {
+    const p = svg("path");
+    const out = [];
+    for (const v of [NaN, Infinity, -Infinity, "x", undefined, {}]) {
+      try { p.pathLength.baseVal = v; out.push("ok " + p.getAttribute("pathLength")); } catch (x) { out.push(x.name + ": " + x.message); }
+    }
+    return out.join(",");
+  });
+  run("svg number percentage", () => {
+    const s = svg("stop");
+    return ["50%", "0.5", "150%", "-1", "2", "bad", "50 %", " 50%", "50% ", "50%%", "%", "1e2%", "50,"].map((v) => { s.setAttribute("offset", v); return JSON.stringify(v) + "=" + s.offset.baseVal; }).concat([(s.offset.baseVal = 0.25, s.getAttribute("offset"))]).join(",");
+  });
+  run("svg integer parse", () => {
+    const t = svg("feTurbulence");
+    return ["3", "3.7", "-2", "1e1", "abc", " 4", "4 ", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "07", "-0", "+-1", "1 2", "\u00a06", "6\u3000", "\v8"].map((v) => { t.setAttribute("numOctaves", v); return JSON.stringify(v) + "=" + t.numOctaves.baseVal; }).join(",");
+  });
+  run("svg integer set", () => {
+    const t = svg("feTurbulence");
+    return [3.7, -2.5, 2147483648, 4294967297, "9", NaN, Infinity].map((v) => { t.numOctaves.baseVal = v; return String(v) + "=" + t.numOctaves.baseVal + "/" + t.getAttribute("numOctaves"); }).join(",");
+  });
+  run("svg number pairs", () => {
+    const g = svg("feGaussianBlur");
+    const out = ["3", "3 4", "3,4", "3 , 4", "3 4 5", "bad", "3 bad", " 2  5 ", "3,", ",3", "", "1e1 2e1"].map((v) => { g.setAttribute("stdDeviation", v); return JSON.stringify(v) + "=" + g.stdDeviationX.baseVal + "," + g.stdDeviationY.baseVal; });
+    g.setAttribute("stdDeviation", "1 2");
+    const x = g.stdDeviationX;
+    x.baseVal = 7;
+    out.push(g.getAttribute("stdDeviation"), g.stdDeviationY.baseVal);
+    g.setAttribute("stdDeviation", "3");
+    g.stdDeviationY.baseVal = 8;
+    out.push(g.getAttribute("stdDeviation"));
+    g.stdDeviationX.baseVal = 8;
+    out.push(g.getAttribute("stdDeviation"));
+    g.setStdDeviation(5, 6);
+    out.push(g.getAttribute("stdDeviation"), x === g.stdDeviationX, g.stdDeviationX !== g.stdDeviationY);
+    return out.join(",");
+  });
+  run("svg order", () => {
+    const c = svg("feConvolveMatrix");
+    const out = ["3", "3 2", "2.5", "2.9 1.1", "0", "-1 2", "2 0", "bad", "1e1", "4,4", "2147483648"].map((v) => { c.setAttribute("order", v); return JSON.stringify(v) + "=" + c.orderX.baseVal + "," + c.orderY.baseVal; });
+    c.removeAttribute("order");
+    c.orderX.baseVal = 4;
+    out.push(c.getAttribute("order"));
+    c.orderY.baseVal = 4;
+    out.push(c.getAttribute("order"));
+    c.orderX.baseVal = 0;
+    out.push(c.getAttribute("order"), c.orderX.baseVal, c.orderY.baseVal);
+    return out.join(",");
+  });
+  run("svg boolean", () => {
+    const c = svg("feConvolveMatrix");
+    const b = c.preserveAlpha;
+    const out = ["true", "false", "TRUE", "", "yes", " true", "1"].map((v) => { c.setAttribute("preserveAlpha", v); return JSON.stringify(v) + "=" + b.baseVal; });
+    for (const v of [true, 0, "x", "", null]) { b.baseVal = v; out.push(c.getAttribute("preserveAlpha") + ":" + b.baseVal); }
+    return out.join(",");
+  });
+  run("svg enumeration values", () => {
+    const b = svg("feBlend");
+    const out = ["multiply", "MULTIPLY", "bad", "", "hue", " screen"].map((v) => { b.setAttribute("mode", v); return JSON.stringify(v) + "=" + b.mode.baseVal; });
+    for (const v of [0, 1, 16, 17, -1, 65536, 65537, 2.5, "3", NaN]) {
+      try { b.mode.baseVal = v; out.push(v + "=" + b.mode.baseVal + ":" + b.getAttribute("mode")); } catch (x) { out.push(v + " " + x.name + ": " + x.message); }
+    }
+    const c = svg("feComposite");
+    c.setAttribute("operator", "lighter");
+    out.push(c.operator.baseVal, c.operator.animVal);
+    return out.join(",");
+  });
+  run("svg class name", () => {
+    const r = svg("rect");
+    const c = r.className;
+    const out = [String(c), c.baseVal === ""];
+    r.setAttribute("class", "a b");
+    out.push(c.baseVal, c.animVal);
+    c.baseVal = "x y";
+    out.push(r.getAttribute("class"), r.classList.length, r.classList.contains("y"), r.matches(".x"));
+    c.baseVal = null;
+    out.push(r.getAttribute("class"));
+    r.removeAttribute("class");
+    out.push(JSON.stringify(c.baseVal));
+    const h = document.createElement("div");
+    out.push(typeof h.className, Object.getOwnPropertyDescriptor(SVGElement.prototype, "className").set === undefined);
+    out.push((function () { "use strict"; try { c.animVal = "q"; return "no error"; } catch (x) { return x.name; } })());
+    return out.join(",");
+  });
+  run("svg href", () => {
+    const out = [];
+    const a = svg("a");
+    out.push(JSON.stringify(a.href.baseVal));
+    a.setAttributeNS(XLINK, "xlink:href", "x");
+    out.push(a.href.baseVal);
+    a.setAttribute("href", "y");
+    out.push(a.href.baseVal, a.href.animVal);
+    a.removeAttribute("href");
+    out.push(a.href.baseVal);
+    a.href.baseVal = "z";
+    out.push(a.getAttribute("href"), a.getAttributeNS(XLINK, "href"), a.attributes.length);
+    a.removeAttributeNS(XLINK, "href");
+    out.push(JSON.stringify(a.href.baseVal));
+    a.href.baseVal = "w";
+    out.push(a.getAttribute("href"), a.attributes.length);
+    for (const name of ["use", "image", "linearGradient", "radialGradient", "pattern", "filter", "textPath", "feImage", "script", "mpath"]) {
+      const e = svg(name);
+      e.setAttributeNS(XLINK, "xlink:href", "#x");
+      out.push(name + ":" + e.href.baseVal);
+    }
+    out.push("href" in svg("rect"), "result" in svg("rect"), "result" in svg("feFlood"));
+    return out.join(",");
+  });
+  run("svg animated strings", () => {
+    const b = svg("feBlend");
+    b.in1.baseVal = "SourceGraphic";
+    b.in2.baseVal = 5;
+    b.result.baseVal = "r";
+    return [b.getAttribute("in"), b.getAttribute("in1"), b.in2.baseVal, b.getAttribute("in2"), b.getAttribute("result"), b.attributes.length].join(",");
+  });
+  run("svg animated after attribute", () => {
+    const f = svg("feFuncR");
+    const s = f.slope;
+    const out = [s.baseVal];
+    f.setAttribute("slope", "2");
+    out.push(s.baseVal);
+    s.baseVal = 1 / 3;
+    out.push(f.getAttribute("slope"), s.baseVal);
+    f.setAttribute("slope", "0.333333");
+    out.push(s.baseVal);
+    f.setAttributeNS(null, "slope", "4");
+    out.push(s.baseVal);
+    f.attributes.getNamedItem("slope").value = "5";
+    out.push(s.baseVal);
+    f.removeAttribute("slope");
+    out.push(s.baseVal);
+    f.setAttributeNS("urn:x", "x:slope", "6");
+    out.push(s.baseVal);
+    f.innerHTML = "";
+    f.setAttribute("SLOPE", "7");
+    out.push(s.baseVal, f.attributes.length);
+    return out.join(",");
+  });
+  run("svg animated copies", () => {
+    const f = svg("feFuncR");
+    f.slope.baseVal = 1 / 3;
+    const copy = f.cloneNode();
+    return [copy.getAttribute("slope"), copy.slope.baseVal, copy.slope === f.slope, f.slope.baseVal].join(",");
+  });
+  run("svg animated mutations", () => {
+    const r = svg("rect");
+    const p = svg("path");
+    const f = svg("feGaussianBlur");
+    const o = new MutationObserver(() => {});
+    for (const e of [r, p, f]) o.observe(e, { attributes: true, attributeOldValue: true });
+    r.className.baseVal = "a";
+    p.pathLength.baseVal = 3;
+    f.stdDeviationX.baseVal = 2;
+    const quiet = o.takeRecords().length;
+    r.setAttribute("class", "b");
+    p.getAttribute("pathLength");
+    return [quiet, o.takeRecords().map((x) => x.attributeName + ":" + x.oldValue).join(" ")].join(",");
+  });
   return JSON.stringify(cases, null, 1);
 })()

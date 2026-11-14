@@ -130,9 +130,12 @@ std::optional<size_t> Element::FindAttributeIndex(
 }
 
 void Element::AppendAttributeInternal(const QualifiedName& name,
-                                      const std::u16string& value) {
+                                      const std::u16string& value,
+                                      bool record) {
   // Blink's WillModifyAttribute(): a record for observers, before the change.
-  EnqueueAttributeMutation(*this, name, std::nullopt);
+  if (record) {
+    EnqueueAttributeMutation(*this, name, std::nullopt);
+  }
   IncrementDomTreeVersion();
   attributes_.push_back({name, value});
   // The hook reads the attribute as it is stored.
@@ -141,11 +144,14 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
 }
 
 void Element::SetAttributeValueInternal(size_t index,
-                                        const std::u16string& value) {
+                                        const std::u16string& value,
+                                        bool record) {
   // Blink's WillModifyAttribute(): a record for observers, before the change,
   // also when the value stays the same.
-  EnqueueAttributeMutation(*this, attributes_[index].name,
-                           attributes_[index].value);
+  if (record) {
+    EnqueueAttributeMutation(*this, attributes_[index].name,
+                             attributes_[index].value);
+  }
   IncrementDomTreeVersion();
   const std::u16string old_value =
       std::exchange(attributes_[index].value, value);
@@ -382,6 +388,15 @@ void Element::SetAttributeWithoutValidation(const QualifiedName& name,
     return;
   }
   AppendAttributeInternal(name, value);
+}
+
+void Element::SetSynchronizedLazyAttribute(const QualifiedName& name,
+                                           const std::u16string& value) {
+  if (const std::optional<size_t> index = FindAttributeIndex(name)) {
+    SetAttributeValueInternal(*index, value, /*record=*/false);
+    return;
+  }
+  AppendAttributeInternal(name, value, /*record=*/false);
 }
 
 void Element::RemoveAttribute(const QualifiedName& name) {

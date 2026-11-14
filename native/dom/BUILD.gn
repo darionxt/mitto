@@ -362,6 +362,8 @@ source_set("dom") {
     "style_media.h",
     "subresource_integrity.cc",
     "subresource_integrity.h",
+    "svg_animated_values.cc",
+    "svg_animated_values.h",
     "svg_element.cc",
     "svg_element.h",
     "svg_element_factory.cc",
