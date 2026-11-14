@@ -42,6 +42,7 @@
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/storage.h"
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
 #include "mitto/dom/visual_viewport.h"
@@ -117,6 +118,8 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
   visitor->Trace(cookie_store_);
+  visitor->Trace(local_storage_);
+  visitor->Trace(session_storage_);
   visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
 }

@@ -30,6 +30,7 @@
 #include "mitto/page_messages.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
+#include "mitto/storage/storage_key.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -46,6 +47,8 @@ namespace mitto {
 
 class PageHost;
 class ReadyRequests;
+class SessionStorageNamespace;
+class StorageContext;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
 // header lines in their order, and its options, with no Initiator, which the
@@ -93,6 +96,11 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json);
 // Upstream: services/network/network_context.h
 inline constexpr size_t kMaxPageRequests = 2700;
 
+// How many storage areas a Page may have bound at once. A document binds at
+// most one of localStorage and one of sessionStorage, and lets them go when
+// it no longer uses them, so a Page that binds more is refused.
+inline constexpr size_t kMaxPageStorageAreas = 1000;
+
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
 class PageNetwork {
@@ -119,6 +127,9 @@ class PageNetwork {
   virtual void BroadcastFromPage(const PageHost& from,
                                  const url::Origin& origin,
                                  const PageBroadcast& broadcast) = 0;
+
+  // The Session's storage, which all its Pages share.
+  virtual StorageContext& storage_context() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -295,6 +306,13 @@ class PageHost final : public PageChannel::Delegate {
   // The URL of the Page's top-level document, or an empty one before the Page
   // has made one.
   GURL TopDocumentUrl() const;
+  // What a document's localStorage and sessionStorage ask, as Chrome's
+  // storage service answers a renderer: an area takes its storage key from the
+  // URL that the library loaded the document at that binds it.
+  void OnStorageBind(const PageStorageBind& bind, const GURL& document_url);
+  void OnStorageGetAll(const PageStorageGetAll& get_all);
+  void OnStorageMutation(PageMessage type, PageStorageMutation mutation);
+  void OnStorageUnbind(uint64_t area);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -346,6 +364,14 @@ class PageHost final : public PageChannel::Delegate {
   static std::optional<net::CookiePartitionKey> DocumentPartitionKey(
       const GURL& document_url);
 
+  // The storage key of a document at `document_url`, which the Page names no
+  // part of: its origin's, first party, since a Page's documents are all
+  // top-level. None for a document of an opaque origin, which has no storage.
+  static std::optional<StorageKey> DocumentStorageKey(const GURL& document_url);
+
+  // Lets go of every storage area that the Page bound.
+  void ReleaseStorage();
+
   // What navigator.connection gives a document at `url`: what the renderer
   // process of its site gives for its host, as for a subresource to it.
   PageConnection ConnectionOf(const GURL& url) const;
@@ -390,6 +416,13 @@ class PageHost final : public PageChannel::Delegate {
   // the document's URL.
   std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;
   GURL cookie_store_url_;
+  // The storage areas that the Page has bound, by number, the largest number
+  // it has used, and its sessionStorage, which lasts as long as the Page.
+  class StorageArea;
+  std::map<uint64_t, std::unique_ptr<StorageArea>> storage_areas_;
+  uint64_t last_storage_area_ = 0;
+  uint64_t last_storage_observer_ = 0;
+  std::unique_ptr<SessionStorageNamespace> session_storage_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

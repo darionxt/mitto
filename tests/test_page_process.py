@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 16
+_PROTOCOL_VERSION = 17
 
 
 def _script_request(number: int, url: str) -> str:
@@ -235,7 +235,7 @@ def _fetch_request(
 
 
 # The hello, and the Page's initial about:blank, document 1.
-_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(27, struct.pack('<QB', 1, 0))"
+_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QB', 1, 0))"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
@@ -325,13 +325,13 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(27, struct.pack
         ),
         pytest.param(
             "document-numbered-again",
-            f"{_HELLO}\nsend(27, struct.pack('<QB', 1, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QB', 1, 0))",
             "the library refused a message from the Page: a document numbered 1, after one numbered 1",
             id="document-numbered-again",
         ),
         pytest.param(
             "document-of-no-response",
-            f"{_HELLO}\nsend(27, struct.pack('<QBQ', 2, 1, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 1, 0))",
             "the library refused a message from the Page: a document of navigation 0, which has no response",
             id="document-of-no-response",
         ),

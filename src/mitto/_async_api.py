@@ -534,6 +534,7 @@ class AsyncSession:
         proxy: str | None = None,
         cache: str | os.PathLike[str] | None = None,
         _settings: PrivateSettings | None = None,
+        _storage: str | os.PathLike[str] | None = None,
     ) -> None:
         """Keep the arguments for when this opens, which is when they are checked. See Session() for what they mean.
 
@@ -547,6 +548,7 @@ class AsyncSession:
             proxy: As for Session().
             cache: As for Session().
             _settings: Settings that only tests need, which are not part of the public API.
+            _storage: As for Session(). Private until the Runtime ships.
         """
         # A proxy's URL may hold a password, which Python keeps only until the native core has it.
         self._arguments: dict[str, Any] = {
@@ -559,6 +561,7 @@ class AsyncSession:
             "proxy": proxy,
             "cache": cache,
             "settings": _settings,
+            "storage": _storage,
         }
         self._loop: asyncio.AbstractEventLoop | None = None
         self._opening: asyncio.Task[_Opened] | None = None

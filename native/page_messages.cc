@@ -189,8 +189,9 @@ uint64_t DecodeUint64(std::string_view bytes) {
 }
 
 bool IsKnown(uint32_t type) {
-  return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kDocumentCommitted);
+  return (type >= static_cast<uint32_t>(PageMessage::kHello) &&
+          type <= static_cast<uint32_t>(PageMessage::kStorageAllDeleted)) ||
+         type == static_cast<uint32_t>(PageMessage::kDocumentCommitted);
 }
 
 // The frame of a message that names `document`, which comes first.
@@ -991,6 +992,174 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
   return committed;
 }
 
+bool IsStorageKind(uint8_t kind) {
+  return kind == static_cast<uint8_t>(PageStorageKind::kLocal) ||
+         kind == static_cast<uint8_t>(PageStorageKind::kSession);
+}
+
+std::string EncodeStorageSource(const PageStorageSource& source) {
+  return base::StrCat({EncodeUint64(source.token.high()),
+                       EncodeUint64(source.token.low()),
+                       EncodeSized(source.page_url)});
+}
+
+// Takes a PageStorageSource from the start of `bytes`. Returns false if
+// `bytes` does not hold one.
+bool TakeStorageSource(std::string_view& bytes, PageStorageSource& source) {
+  if (bytes.size() < 16) {
+    return false;
+  }
+  const uint64_t high = DecodeUint64(bytes.substr(0, 8));
+  const uint64_t low = DecodeUint64(bytes.substr(8, 8));
+  bytes.remove_prefix(16);
+  std::string_view page_url;
+  if (!TakeSized(bytes, page_url) || !IsText(page_url)) {
+    return false;
+  }
+  source.token = base::Token(high, low);
+  source.page_url = std::string(page_url);
+  return true;
+}
+
+base::expected<PageStorageBind, std::string> ReadStorageBind(
+    std::string_view payload) {
+  if (payload.size() != 17) {
+    return base::unexpected(WrongSize("storage area", payload.size()));
+  }
+  PageStorageBind bind;
+  bind.area = DecodeUint64(payload.substr(0, 8));
+  const uint8_t kind = static_cast<uint8_t>(payload[8]);
+  bind.observer = DecodeUint64(payload.substr(9, 8));
+  if (!IsStorageKind(kind)) {
+    return base::unexpected(base::StrCat(
+        {"a storage area of the unknown kind ", base::NumberToString(kind)}));
+  }
+  bind.kind = static_cast<PageStorageKind>(kind);
+  return bind;
+}
+
+base::expected<PageStorageMutation, std::string> ReadStorageMutation(
+    PageMessage type,
+    std::string_view payload) {
+  PageStorageMutation mutation;
+  if (payload.size() < 8) {
+    return base::unexpected(WrongSize("change to storage", payload.size()));
+  }
+  mutation.area = DecodeUint64(payload.substr(0, 8));
+  payload.remove_prefix(8);
+  if (type == PageMessage::kStorageDeleteAll) {
+    if (payload.size() < 8) {
+      return base::unexpected(WrongSize("change to storage", payload.size()));
+    }
+    mutation.observer = DecodeUint64(payload.substr(0, 8));
+    payload.remove_prefix(8);
+  }
+  if (!TakeStorageSource(payload, mutation.source)) {
+    return base::unexpected("a change to storage that is not valid");
+  }
+  switch (type) {
+    case PageMessage::kStoragePut: {
+      std::string_view key;
+      if (!TakeSized(payload, key)) {
+        return base::unexpected("a change to storage that is not valid");
+      }
+      mutation.key = std::string(key);
+      mutation.value = std::string(payload);
+      break;
+    }
+    case PageMessage::kStorageDelete:
+      mutation.key = std::string(payload);
+      break;
+    default:
+      if (!payload.empty()) {
+        return base::unexpected("a change to storage that is not valid");
+      }
+  }
+  return mutation;
+}
+
+base::expected<PageStorageEntries, std::string> ReadStorageEntries(
+    std::string_view payload) {
+  if (payload.size() < 9 || static_cast<uint8_t>(payload[8]) > 1) {
+    return base::unexpected(
+        WrongSize("storage area's entries", payload.size()));
+  }
+  PageStorageEntries entries;
+  entries.area = DecodeUint64(payload.substr(0, 8));
+  entries.last = payload[8] == 1;
+  payload.remove_prefix(9);
+  while (!payload.empty()) {
+    std::string_view key;
+    std::string_view value;
+    if (!TakeSized(payload, key) || !TakeSized(payload, value)) {
+      return base::unexpected("a storage area's entries that are not valid");
+    }
+    entries.entries.emplace_back(key, value);
+  }
+  return entries;
+}
+
+// Takes what follows a byte that is 1 if it does, as an old value.
+bool TakeOldValue(std::string_view bytes,
+                  std::optional<std::string>& old_value) {
+  if (bytes.empty() || static_cast<uint8_t>(bytes[0]) > 1 ||
+      (bytes[0] == 0 && bytes.size() != 1)) {
+    return false;
+  }
+  if (bytes[0] == 1) {
+    old_value = std::string(bytes.substr(1));
+  }
+  return true;
+}
+
+base::expected<PageStorageEvent, std::string> ReadStorageEvent(
+    PageMessage type,
+    std::string_view payload) {
+  PageStorageEvent event;
+  if (payload.size() < 8) {
+    return base::unexpected(WrongSize("storage event", payload.size()));
+  }
+  event.observer = DecodeUint64(payload.substr(0, 8));
+  payload.remove_prefix(8);
+  if (type == PageMessage::kStorageAllDeleted) {
+    if (payload.empty() || static_cast<uint8_t>(payload[0]) > 1) {
+      return base::unexpected("a storage event that is not valid");
+    }
+    event.was_nonempty = payload[0] == 1;
+    payload.remove_prefix(1);
+  }
+  if (!TakeStorageSource(payload, event.source)) {
+    return base::unexpected("a storage event that is not valid");
+  }
+  bool valid = true;
+  switch (type) {
+    case PageMessage::kStorageKeyChanged: {
+      std::string_view key;
+      std::string_view new_value;
+      valid = TakeSized(payload, key) && TakeSized(payload, new_value) &&
+              TakeOldValue(payload, event.old_value);
+      event.key = std::string(key);
+      event.new_value = std::string(new_value);
+      break;
+    }
+    case PageMessage::kStorageKeyChangeFailed:
+      event.key = std::string(payload);
+      break;
+    case PageMessage::kStorageKeyDeleted: {
+      std::string_view key;
+      valid = TakeSized(payload, key) && TakeOldValue(payload, event.old_value);
+      event.key = std::string(key);
+      break;
+    }
+    default:
+      valid = payload.empty();
+  }
+  if (!valid) {
+    return base::unexpected("a storage event that is not valid");
+  }
+  return event;
+}
+
 base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
   if (payload.size() != 12) {
     return base::unexpected(WrongSize("credit", payload.size()));
@@ -1163,6 +1332,32 @@ PageBroadcast& PageBroadcast::operator=(const PageBroadcast&) = default;
 PageBroadcast::PageBroadcast(PageBroadcast&&) = default;
 PageBroadcast& PageBroadcast::operator=(PageBroadcast&&) = default;
 PageBroadcast::~PageBroadcast() = default;
+
+PageStorageSource::PageStorageSource() = default;
+PageStorageSource::PageStorageSource(const PageStorageSource&) = default;
+PageStorageSource& PageStorageSource::operator=(const PageStorageSource&) =
+    default;
+PageStorageSource::~PageStorageSource() = default;
+
+PageStorageMutation::PageStorageMutation() = default;
+PageStorageMutation::PageStorageMutation(PageStorageMutation&&) = default;
+PageStorageMutation& PageStorageMutation::operator=(PageStorageMutation&&) =
+    default;
+PageStorageMutation::~PageStorageMutation() = default;
+
+PageStorageEntries::PageStorageEntries() = default;
+PageStorageEntries::PageStorageEntries(PageStorageEntries&&) = default;
+PageStorageEntries& PageStorageEntries::operator=(PageStorageEntries&&) =
+    default;
+PageStorageEntries::~PageStorageEntries() = default;
+
+PageStorageEvent::PageStorageEvent() = default;
+PageStorageEvent::PageStorageEvent(const PageStorageEvent&) = default;
+PageStorageEvent& PageStorageEvent::operator=(const PageStorageEvent&) =
+    default;
+PageStorageEvent::PageStorageEvent(PageStorageEvent&&) = default;
+PageStorageEvent& PageStorageEvent::operator=(PageStorageEvent&&) = default;
+PageStorageEvent::~PageStorageEvent() = default;
 
 PageResponseBody::PageResponseBody() = default;
 PageResponseBody::PageResponseBody(PageResponseBody&&) = default;
@@ -1606,9 +1801,132 @@ bool NamesDocument(PageMessage type) {
     case PageMessage::kCookieStoreSet:
     case PageMessage::kCookieStoreListen:
     case PageMessage::kBroadcast:
+    case PageMessage::kStorageBind:
       return true;
     default:
       return false;
+  }
+}
+
+std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind) {
+  const char kind = static_cast<char>(bind.kind);
+  return EncodeDocumentFrame(
+      PageMessage::kStorageBind, document,
+      base::StrCat({EncodeUint64(bind.area), std::string_view(&kind, 1),
+                    EncodeUint64(bind.observer)}));
+}
+
+std::string EncodeStorageGetAll(const PageStorageGetAll& get_all) {
+  return EncodeFrame(PageMessage::kStorageGetAll,
+                     base::StrCat({EncodeUint64(get_all.area),
+                                   EncodeUint64(get_all.observer)}));
+}
+
+bool StorageMutationFits(const PageStorageMutation& mutation) {
+  // The area, the observer, the token and three sizes.
+  constexpr size_t kFixed = 8 + 8 + 16 + 4 + 4;
+  return mutation.source.page_url.size() <= kMaxPayloadSize - kFixed &&
+         mutation.key.size() <=
+             kMaxPayloadSize - kFixed - mutation.source.page_url.size() &&
+         mutation.value.size() <= kMaxPayloadSize - kFixed -
+                                      mutation.source.page_url.size() -
+                                      mutation.key.size();
+}
+
+std::string EncodeStorageMutation(PageMessage type,
+                                  const PageStorageMutation& mutation) {
+  switch (type) {
+    case PageMessage::kStoragePut:
+      return EncodeFrame(
+          type, base::StrCat({EncodeUint64(mutation.area),
+                              EncodeStorageSource(mutation.source),
+                              EncodeSized(mutation.key), mutation.value}));
+    case PageMessage::kStorageDelete:
+      return EncodeFrame(
+          type,
+          base::StrCat({EncodeUint64(mutation.area),
+                        EncodeStorageSource(mutation.source), mutation.key}));
+    case PageMessage::kStorageDeleteAll:
+      return EncodeFrame(type,
+                         base::StrCat({EncodeUint64(mutation.area),
+                                       EncodeUint64(mutation.observer),
+                                       EncodeStorageSource(mutation.source)}));
+    default:
+      NOTREACHED();
+  }
+}
+
+std::string EncodeStorageUnbind(uint64_t area) {
+  return EncodeFrame(PageMessage::kStorageUnbind, EncodeUint64(area));
+}
+
+std::vector<std::string> EncodeStorageEntries(
+    uint64_t area,
+    const std::vector<std::pair<std::string, std::string>>& entries) {
+  // The area and the byte that says whether the frame is the last.
+  constexpr size_t kFixed = 9;
+  std::vector<std::string> frames;
+  std::string payload;
+  for (const auto& [key, value] : entries) {
+    if (key.size() + value.size() > kMaxPayloadSize - kFixed - 8) {
+      continue;
+    }
+    const size_t size = 8 + key.size() + value.size();
+    if (payload.size() + size > kMaxPayloadSize - kFixed) {
+      frames.push_back(
+          EncodeFrame(PageMessage::kStorageEntries,
+                      base::StrCat({EncodeUint64(area),
+                                    std::string_view("\0", 1), payload})));
+      payload.clear();
+    }
+    base::StrAppend(&payload, {EncodeSized(key), EncodeSized(value)});
+  }
+  frames.push_back(EncodeFrame(
+      PageMessage::kStorageEntries,
+      base::StrCat({EncodeUint64(area), std::string_view("\1", 1), payload})));
+  return frames;
+}
+
+bool StorageEventFits(const PageStorageEvent& event) {
+  // The observer, the token, four sizes and a byte.
+  constexpr size_t kFixed = 8 + 16 + 4 + 4 + 4 + 1;
+  const size_t size = event.source.page_url.size() + event.key.size() +
+                      event.new_value.size() +
+                      (event.old_value ? event.old_value->size() : 0);
+  return size <= kMaxPayloadSize - kFixed;
+}
+
+std::string EncodeStorageEvent(PageMessage type,
+                               const PageStorageEvent& event) {
+  const std::string old_value =
+      event.old_value
+          ? base::StrCat({std::string_view("\1", 1), *event.old_value})
+          : std::string(1, '\0');
+  switch (type) {
+    case PageMessage::kStorageKeyChanged:
+      return EncodeFrame(
+          type, base::StrCat({EncodeUint64(event.observer),
+                              EncodeStorageSource(event.source),
+                              EncodeSized(event.key),
+                              EncodeSized(event.new_value), old_value}));
+    case PageMessage::kStorageKeyChangeFailed:
+      return EncodeFrame(
+          type, base::StrCat({EncodeUint64(event.observer),
+                              EncodeStorageSource(event.source), event.key}));
+    case PageMessage::kStorageKeyDeleted:
+      return EncodeFrame(type,
+                         base::StrCat({EncodeUint64(event.observer),
+                                       EncodeStorageSource(event.source),
+                                       EncodeSized(event.key), old_value}));
+    case PageMessage::kStorageAllDeleted: {
+      const char was_nonempty = event.was_nonempty ? 1 : 0;
+      return EncodeFrame(type,
+                         base::StrCat({EncodeUint64(event.observer),
+                                       std::string_view(&was_nonempty, 1),
+                                       EncodeStorageSource(event.source)}));
+    }
+    default:
+      NOTREACHED();
   }
 }
 
@@ -1779,6 +2097,42 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.committed = *committed;
       return frame;
     }
+    case PageMessage::kStorageBind: {
+      base::expected<PageStorageBind, std::string> bind =
+          ReadStorageBind(payload);
+      if (!bind.has_value()) {
+        return base::unexpected(std::move(bind).error());
+      }
+      frame.storage_bind = *bind;
+      return frame;
+    }
+    case PageMessage::kStorageGetAll:
+      if (payload.size() != 16) {
+        return base::unexpected(
+            WrongSize("question for a storage area", payload.size()));
+      }
+      frame.storage_get_all.area =
+          DecodeUint64(std::string_view(payload).substr(0, 8));
+      frame.storage_get_all.observer =
+          DecodeUint64(std::string_view(payload).substr(8, 8));
+      return frame;
+    case PageMessage::kStoragePut:
+    case PageMessage::kStorageDelete:
+    case PageMessage::kStorageDeleteAll: {
+      base::expected<PageStorageMutation, std::string> mutation =
+          ReadStorageMutation(frame.type, payload);
+      if (!mutation.has_value()) {
+        return base::unexpected(std::move(mutation).error());
+      }
+      frame.storage_mutation = *std::move(mutation);
+      return frame;
+    }
+    case PageMessage::kStorageUnbind:
+      if (payload.size() != 8) {
+        return base::unexpected(WrongSize("storage area", payload.size()));
+      }
+      frame.storage_unbind = DecodeUint64(payload);
+      return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1789,6 +2143,11 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
     case PageMessage::kBroadcastReceived:
+    case PageMessage::kStorageEntries:
+    case PageMessage::kStorageKeyChanged:
+    case PageMessage::kStorageKeyChangeFailed:
+    case PageMessage::kStorageKeyDeleted:
+    case PageMessage::kStorageAllDeleted:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -1910,6 +2269,27 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.broadcast = *std::move(broadcast);
       return frame;
     }
+    case PageMessage::kStorageEntries: {
+      base::expected<PageStorageEntries, std::string> entries =
+          ReadStorageEntries(payload);
+      if (!entries.has_value()) {
+        return base::unexpected(std::move(entries).error());
+      }
+      frame.storage_entries = *std::move(entries);
+      return frame;
+    }
+    case PageMessage::kStorageKeyChanged:
+    case PageMessage::kStorageKeyChangeFailed:
+    case PageMessage::kStorageKeyDeleted:
+    case PageMessage::kStorageAllDeleted: {
+      base::expected<PageStorageEvent, std::string> event =
+          ReadStorageEvent(frame.type, payload);
+      if (!event.has_value()) {
+        return base::unexpected(std::move(event).error());
+      }
+      frame.storage_event = *std::move(event);
+      return frame;
+    }
     case PageMessage::kEvaluated:
     case PageMessage::kConsole:
     case PageMessage::kUncaughtError:
@@ -1925,6 +2305,12 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kCookieStoreListen:
     case PageMessage::kBroadcast:
     case PageMessage::kDocumentCommitted:
+    case PageMessage::kStorageBind:
+    case PageMessage::kStorageGetAll:
+    case PageMessage::kStoragePut:
+    case PageMessage::kStorageDelete:
+    case PageMessage::kStorageDeleteAll:
+    case PageMessage::kStorageUnbind:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

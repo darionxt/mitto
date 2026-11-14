@@ -83,6 +83,8 @@ executable("mitto_page") {
     "session_channel.h",
     "session_cookie_jar.cc",
     "session_cookie_jar.h",
+    "session_storage_backend.cc",
+    "session_storage_backend.h",
     "v8_flags.cc",
     "v8_flags.h",
     "wall_clock_clamper.cc",

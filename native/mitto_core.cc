@@ -68,6 +68,7 @@
 #include "mitto/session_settings.h"
 #include "mitto/socks5_auth_socket_factory.h"
 #include "mitto/ssl_config_service_mojo.h"
+#include "mitto/storage/storage_context.h"
 #include "mitto/stub_resolver_config_reader.h"
 #include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
@@ -157,6 +158,7 @@ struct MittoSession final : public mitto::PageNetwork {
   void BroadcastFromPage(const mitto::PageHost& from,
                          const url::Origin& origin,
                          const mitto::PageBroadcast& broadcast) override;
+  mitto::StorageContext& storage_context() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -177,6 +179,9 @@ struct MittoSession final : public mitto::PageNetwork {
   std::optional<mitto::NetworkQuality> network_quality;
   // Stands for what //net reads from a server's ALPS. For tests only.
   std::map<url::Origin, std::string> accept_ch_via_alps;
+  // What its Pages store, with the lock on its directory, if it has one.
+  // Before `pages`, which unbind its areas as they go.
+  std::unique_ptr<mitto::StorageContext> storage;
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
   mitto::ReadyRequests ready_requests;
@@ -848,6 +853,10 @@ const mitto::NetworkQuality* MittoSession::GetNetworkQuality() const {
   return base::OptionalToPtr(network_quality);
 }
 
+mitto::StorageContext& MittoSession::storage_context() {
+  return *storage;
+}
+
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
                                      const url::Origin& origin,
                                      const mitto::PageBroadcast& broadcast) {
@@ -910,6 +919,23 @@ int LockHttpCacheDirectory(const base::FilePath& directory,
   NOTREACHED();
 }
 
+// Makes `directory` if it does not exist and takes a lock on it, for the
+// Session's storage: Chrome's storage service holds a profile's files alone.
+int LockStorageDirectory(const base::FilePath& directory, DirectoryLock& lock) {
+  if (!base::CreateDirectory(directory)) {
+    return net::ERR_FAILED;
+  }
+  switch (lock.Take(directory)) {
+    case DirectoryLock::Result::kTaken:
+      return net::OK;
+    case DirectoryLock::Result::kHeld:
+      return net::ERR_ACCESS_DENIED;
+    case DirectoryLock::Result::kFailed:
+      return net::ERR_FAILED;
+  }
+  NOTREACHED();
+}
+
 // Blockfile is what ChooseCacheType() in //components picks on Windows, the
 // system of every Persona, while macOS and Linux get the simple backend there.
 // It shows on the wire. Its writes never finish at once, so over HTTP/2 a 304
@@ -950,10 +976,13 @@ bool RetriesRefusedConnects(const SessionSettings& settings) {
 std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     SessionSettings settings,
     DirectoryLock http_cache_directory_lock,
+    DirectoryLock storage_directory_lock,
     net::HostResolverManager* host_resolver_manager,
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
   session->http_cache_directory_lock = std::move(http_cache_directory_lock);
+  session->storage = std::make_unique<StorageContext>(
+      settings.storage_directory, std::move(storage_directory_lock));
   session->cert_net_fetcher =
       base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
@@ -1086,19 +1115,43 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
 
   std::unique_ptr<MittoSession> CreateSession(
       SessionSettings settings,
-      DirectoryLock http_cache_directory_lock) {
+      DirectoryLock http_cache_directory_lock,
+      DirectoryLock storage_directory_lock) {
     std::unique_ptr<MittoSession> session;
     RunAndWait(base::BindOnce(
         [](NetworkCore* core, SessionSettings settings,
            DirectoryLock http_cache_directory_lock,
+           DirectoryLock storage_directory_lock,
            std::unique_ptr<MittoSession>* session) {
           *session = CreateSessionOnNetworkThread(
               std::move(settings), std::move(http_cache_directory_lock),
+              std::move(storage_directory_lock),
               core->host_resolver_manager_.get(), core->doh_probes_start_time_);
         },
         base::Unretained(this), std::move(settings),
-        std::move(http_cache_directory_lock), base::Unretained(&session)));
+        std::move(http_cache_directory_lock), std::move(storage_directory_lock),
+        base::Unretained(&session)));
     return session;
+  }
+
+  // Waits until `session`'s storage has opened, and returns a net error if it
+  // cannot, which a later write would otherwise lose without a word.
+  int OpenStorage(MittoSession& session) {
+    bool opened = false;
+    base::WaitableEvent done;
+    PostTask(base::BindOnce(
+        [](MittoSession* session, bool* opened, base::WaitableEvent* done) {
+          session->storage->Open(base::BindOnce(
+              [](bool* opened, base::WaitableEvent* done, bool result) {
+                *opened = result;
+                done->Signal();
+              },
+              base::Unretained(opened), base::Unretained(done)));
+        },
+        base::Unretained(&session), base::Unretained(&opened),
+        base::Unretained(&done)));
+    done.Wait();
+    return opened ? net::OK : net::ERR_FAILED;
   }
 
   // Waits until `session`'s HTTP cache, if any, can take its first request, and
@@ -1139,22 +1192,28 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   }
 
   // Ends the Session's requests and Pages and destroys it, and then waits for
-  // each Page process to end.
+  // each Page process to end, and for its storage to be written and closed.
   void DestroySession(std::unique_ptr<MittoSession> session) {
     std::vector<scoped_refptr<PageProcess>> processes;
+    base::WaitableEvent storage_closed;
     RunAndWait(base::BindOnce(
         [](std::unique_ptr<MittoSession> session,
-           std::vector<scoped_refptr<PageProcess>>* processes) {
+           std::vector<scoped_refptr<PageProcess>>* processes,
+           base::WaitableEvent* storage_closed) {
           session->CancelJobs();
           for (const std::unique_ptr<PageHost>& page : session->pages) {
             processes->push_back(page->process());
             page->EndWithSession();
           }
+          session->storage->WhenClosed(base::BindOnce(
+              &base::WaitableEvent::Signal, base::Unretained(storage_closed)));
         },
-        std::move(session), base::Unretained(&processes)));
+        std::move(session), base::Unretained(&processes),
+        base::Unretained(&storage_closed)));
     for (const scoped_refptr<PageProcess>& process : processes) {
       process->WaitForExit(kPageExitGrace);
     }
+    storage_closed.Wait();
   }
 
   // Starts the Page program with `theirs` as its end of the channel, on a
@@ -1451,9 +1510,21 @@ int32_t mitto_session_create(const char* settings,
       return result;
     }
   }
+  mitto::DirectoryLock storage_directory_lock;
+  if (parsed->storage_directory) {
+    const int result = mitto::LockStorageDirectory(*parsed->storage_directory,
+                                                   storage_directory_lock);
+    if (result != net::OK) {
+      return result;
+    }
+  }
   std::unique_ptr<MittoSession> created = core.CreateSession(
-      std::move(*parsed), std::move(http_cache_directory_lock));
-  const int result = core.OpenHttpCache(*created);
+      std::move(*parsed), std::move(http_cache_directory_lock),
+      std::move(storage_directory_lock));
+  int result = core.OpenHttpCache(*created);
+  if (result == net::OK) {
+    result = core.OpenStorage(*created);
+  }
   if (result != net::OK) {
     core.DestroySession(std::move(created));
     return result;

@@ -154,6 +154,30 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                   : 9u);
           break;
         }
+        case mitto::PageMessage::kStorageBind:
+          CHECK_EQ(payload.size(), 25u);
+          CHECK(frame->storage_bind.kind == mitto::PageStorageKind::kLocal ||
+                frame->storage_bind.kind == mitto::PageStorageKind::kSession);
+          break;
+        case mitto::PageMessage::kStorageGetAll:
+          CHECK_EQ(payload.size(), 16u);
+          break;
+        case mitto::PageMessage::kStoragePut:
+        case mitto::PageMessage::kStorageDelete:
+        case mitto::PageMessage::kStorageDeleteAll: {
+          const mitto::PageStorageMutation& mutation = frame->storage_mutation;
+          CHECK(base::IsStringUTF8AllowingNoncharacters(
+              mutation.source.page_url));
+          CHECK(mitto::StorageMutationFits(mutation));
+          // Read back, it is the same frame.
+          CHECK_EQ(mitto::EncodeStorageMutation(frame->type, mutation)
+                       .substr(mitto::kFrameHeaderSize),
+                   payload);
+          break;
+        }
+        case mitto::PageMessage::kStorageUnbind:
+          CHECK_EQ(payload.size(), 8u);
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:
@@ -164,6 +188,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kCookieStoreStored:
         case mitto::PageMessage::kCookieStoreChange:
         case mitto::PageMessage::kBroadcastReceived:
+        case mitto::PageMessage::kStorageEntries:
+        case mitto::PageMessage::kStorageKeyChanged:
+        case mitto::PageMessage::kStorageKeyChangeFailed:
+        case mitto::PageMessage::kStorageKeyDeleted:
+        case mitto::PageMessage::kStorageAllDeleted:
           // Only a Session sends these.
           NOTREACHED();
       }

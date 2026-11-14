@@ -111,6 +111,10 @@ _ERR_IO_PENDING = -1
 # What mitto_session_create() returns for settings that it refuses, and when another Session has a directory for a cache.
 _ERR_INVALID_ARGUMENT = -4
 _ERR_CACHE_LOCK_TIMEOUT = -409
+# What mitto_session_create() returns when another Session has the storage directory, and when storage cannot be kept
+# there.
+_ERR_ACCESS_DENIED = -10
+_ERR_FAILED = -2
 
 # What mitto_page_open() returns when no Page program lies beside the library, and mitto_page_evaluate() for too long a
 # script.
@@ -427,8 +431,12 @@ def _check_proxy(proxy: str) -> None:
         raise ValueError("a proxy is a URL whose scheme is http, https or socks5")
 
 
-def _cache_error(library: ctypes.CDLL, http_cache: str | None, net_error: int) -> OSError:
+def _directory_error(library: ctypes.CDLL, http_cache: str | None, storage: str | None, net_error: int) -> OSError:
     """Return the error for a net error from mitto_session_create() that is not about the form of its settings."""
+    if net_error == _ERR_ACCESS_DENIED:
+        return OSError(errno.EBUSY, "another Session has this storage directory open", storage)
+    if net_error == _ERR_FAILED:
+        return OSError(f"cannot keep storage in {storage}")
     if net_error == _ERR_CACHE_LOCK_TIMEOUT:
         return OSError(errno.EBUSY, "another Session has this cache open", http_cache)
     name: bytes = library.mitto_net_error_name(net_error)
@@ -1262,6 +1270,7 @@ class Session:
         accept_ch_via_alps: Mapping[str, str] | None = None,
         refused_connects: int = 0,
         http_cache: str | None = None,
+        storage: str | None = None,
         network_quality: NetworkQuality | None = None,
     ) -> None:
         """Create the Session.
@@ -1299,13 +1308,16 @@ class Session:
             http_cache: Keep responses as Chrome's HTTP cache does: MEMORY_CACHE until this Session closes, or the absolute
                 path of a directory for later Sessions too. //net only touches its subdirectory Cache_Data there. None keeps
                 no responses.
+            storage: The absolute path of a directory where the native core keeps what this Session's Pages store, as
+                Chrome's storage service does for a profile, for later Sessions too. None keeps it in memory until this
+                Session closes, as Chrome's Incognito mode does.
             network_quality: What the rtt and downlink of a request made for a page are worked out from on each hop, with
                 Chrome's noise for its host. None leaves them as the request's headers say.
 
         Raises:
             ValueError: If the native core refuses the settings. The message leaves out `proxy`, which may hold a password.
-            OSError: If a cache cannot be kept in the directory of `http_cache`, or another Session has it open, in any
-                process.
+            OSError: If a cache cannot be kept in the directory of `http_cache`, or storage in that of `storage`, or
+                another Session has either open, in any process.
             NativeLibraryError: If the native library cannot be used.
         """
         # Before the library, so that this fault is named whether or not there is one.
@@ -1330,6 +1342,8 @@ class Session:
             settings_dict["proxy"] = proxy
         if http_cache is not None:
             settings_dict["http_cache"] = http_cache
+        if storage is not None:
+            settings_dict["storage"] = storage
         if network_quality is not None:
             settings_dict["network_quality"] = network_quality.to_setting()
         settings = json.dumps(settings_dict).encode()
@@ -1339,7 +1353,7 @@ class Session:
             shown = settings_dict if proxy is None else {**settings_dict, "proxy": "<not shown>"}
             raise ValueError(f"the native core refused the settings {shown!r} with net error {net_error}")
         if net_error != 0:
-            raise _cache_error(self._library, http_cache, net_error)
+            raise _directory_error(self._library, http_cache, storage, net_error)
 
     def __enter__(self) -> Self:
         return self

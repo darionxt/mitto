@@ -86,6 +86,10 @@ struct SessionSettings {
   // what Chrome calls http_cache_directory before
   // PopulateHttpCacheDirectories() adds Cache_Data to it.
   std::optional<base::FilePath> http_cache_directory;
+
+  // The directory that the Session keeps its Pages' storage in, which is
+  // absolute, or nothing to keep it in memory.
+  std::optional<base::FilePath> storage_directory;
 };
 
 // Reads the JSON format described at mitto_session_create() in mitto.h. Returns
