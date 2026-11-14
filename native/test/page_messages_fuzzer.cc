@@ -83,6 +83,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           break;
         case mitto::PageMessage::kRequest:
           CHECK_NE(frame->request.number, mitto::kNavigationRequest);
+          // Only a fetch has a mode, and only a navigation the rest.
+          CHECK(!frame->request.same_origin ||
+                frame->request.kind == mitto::PageRequestKind::kFetch);
+          CHECK((!frame->request.user_activation && !frame->request.reload) ||
+                frame->request.kind == mitto::PageRequestKind::kNavigation);
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
           CHECK(mitto::IsHttpToken(frame->request.method));
           CHECK(!mitto::IsForbiddenMethod(frame->request.method));
@@ -149,6 +154,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           // the document's ID.
           CHECK_EQ(mitto::EncodeCacheStorageCall(frame->cache_storage_call),
                    std::string_view(payload).substr(8));
+          break;
+        case mitto::PageMessage::kSameDocumentNavigation:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(
+              frame->same_document_url));
+          CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
           break;
         case mitto::PageMessage::kDocumentCommitted: {
           const mitto::PageDocumentCommitted& committed = frame->committed;

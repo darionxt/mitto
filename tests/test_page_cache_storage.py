@@ -78,8 +78,8 @@ def server_origin() -> Iterator[str]:
 
 @pytest.mark.usefixtures("page_program")
 def test_the_cache_api_stores_matches_and_fails_as_chrome_s(server_origin: str) -> None:
-    script = (_TESTS / "cache_storage_cases.js").read_text()
-    expected = json.loads((_TESTS / "data" / "cache_storage_cases.json").read_text())
+    script = (_TESTS / "cache_storage_cases.js").read_text(encoding="utf-8")
+    expected = json.loads((_TESTS / "data" / "cache_storage_cases.json").read_text(encoding="utf-8"))
 
     with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
         outcome = page.evaluate(script, timeout=_TIMEOUT_SECONDS)
@@ -162,3 +162,24 @@ def test_a_call_too_large_for_a_frame_fails_without_ending_the_page(server_origi
 
     assert outcome != "opened"
     assert alive == 2
+
+
+@pytest.mark.usefixtures("page_program")
+def test_the_next_document_reaches_caches_after_a_navigation_in_the_middle_of_a_put(server_origin: str) -> None:
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        # The old document's put goes with it, with what it held, as the next document comes.
+        page.evaluate(
+            "(async () => { const c = await caches.open('nav');"
+            " c.put('/res/big', new Response(new Uint8Array(128 << 20)));"
+            " await new Promise((resolve) => setTimeout(resolve, 0)); await caches.has('nav');"
+            " location.href = '/next'; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        page.wait_for_navigation(timeout=_TIMEOUT_SECONDS)
+        outcome = page.evaluate(
+            "(async () => { const c = await caches.open('nav'); await c.put('/res/small', new Response('small'));"
+            " return [location.pathname, await caches.keys(), await (await c.match('/res/small')).text()]; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert outcome == ["/next", ["nav"], "small"]

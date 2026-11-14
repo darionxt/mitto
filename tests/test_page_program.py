@@ -136,7 +136,8 @@ _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
-_PROTOCOL_VERSION = 17
+_SAME_DOCUMENT_NAVIGATION = 71
+_PROTOCOL_VERSION = 18
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -801,8 +802,10 @@ def _respond(
     headers: str = "",
     connection: tuple[int, float] = (0, 0.0),
     timing: bytes | None = None,
+    referrer: str = "",
 ) -> None:
-    """Send the start of a response: for the navigation, `connection` is the rtt and downlink of its document."""
+    """Send the start of a response: for the navigation, `connection` is the rtt and downlink of its document, and
+    `referrer` the Referer that its last hop sent."""
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
@@ -812,6 +815,7 @@ def _respond(
         + _sized(status_text.encode("latin-1"))
         + _sized(b"http/1.1")
         + _sized(b"unknown")
+        + _sized(referrer.encode())
         + lines,
     )
 
@@ -924,7 +928,9 @@ def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -
 
 
 _FETCH_KIND = 2
+_NAVIGATION_KIND = 3
 _CANCEL = 17
+_ERR_ABORTED = -3
 
 
 def _loaded(session: _Session) -> None:
@@ -1175,6 +1181,18 @@ def test_a_fetch_whose_body_cannot_fit_in_a_frame_rejects_and_the_page_goes_on(s
     assert session.close() == 0
 
 
+def test_a_document_gives_the_referer_that_its_navigation_sent_last(session: _Session) -> None:
+    session.start()
+    _respond(session, 0, _DOCUMENT_URL, "text/html", referrer="http://www.example.test/")
+    _body(session, 0, b"<p>referred</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, _DOCUMENT)
+
+    assert session.evaluate("document.referrer") == (False, '"http://www.example.test/"')
+    assert session.close() == 0
+
+
 def test_a_fetch_whose_body_fills_a_frame_after_its_documents_id_is_sent_and_one_byte_more_rejects(
     session: _Session,
 ) -> None:
@@ -1270,7 +1288,7 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
             "a body of request 5, which is not in progress",
             id="body-of-no-request",
         ),
-        pytest.param(_RESPONSE_ENDED, _ended(0), "the end of request 0, which is not in progress", id="end"),
+        pytest.param(_RESPONSE_ENDED, _ended(5), "the end of request 5, which is not in progress", id="end"),
         pytest.param(
             _COOKIES, struct.pack("<Q", 1) + b"a=b", "cookies for question 1, which no script waits for", id="cookies"
         ),
@@ -1777,3 +1795,51 @@ def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(sessi
 
     assert session.evaluate("document.getElementById('text').textContent") == (False, '"café 𝄞"')
     assert session.evaluate("document.body.firstChild.nodeName") == (False, '"P"')
+
+
+def test_a_document_starts_a_navigation_that_its_session_makes_and_whose_response_takes_its_place(
+    session: _Session,
+) -> None:
+    session.start()
+    _loaded(session)
+
+    # The navigation goes to the Session before the script's result, from the document that started it.
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"location.href = '/next'; 'set'")
+    assert session.receive() == (_REQUEST, _request(1, _NAVIGATION_KIND, "http://www.example.test/next"))
+    assert session.evaluated() == (1, False, '"set"')
+
+    document = b"<title>Next</title>"
+    _respond(session, 1, "http://www.example.test/next", "text/html")
+    _body(session, 1, document)
+    assert session.receive() == (_CREDIT, struct.pack("<QI", 1, len(document)))
+    assert session.documents[-1] == struct.pack("<QBQ", 3, 1, 1)
+    _end(session, 1)
+    assert session.receive() == (_LOADED, struct.pack("<Q", 3))
+    assert session.evaluate("[document.URL, document.title]", call=2) == (
+        False,
+        '["http://www.example.test/next","Next"]',
+    )
+    assert session.close() == 0
+
+
+def test_a_navigation_within_the_document_tells_the_session_its_new_url(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"location.hash = 'part'; location.href")
+    assert session.receive() == (_SAME_DOCUMENT_NAVIGATION, _DOCUMENT + f"{_DOCUMENT_URL}#part".encode())
+    assert session.evaluated() == (1, False, f'"{_DOCUMENT_URL}#part"')
+    assert session.close() == 0
+
+
+def test_a_navigation_that_ends_with_no_response_keeps_the_document(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+
+    session.send(_EVALUATE, struct.pack("<Q", 1) + b"window.marker = 'kept'; location.href = '/nothing'")
+    assert session.receive()[0] == _REQUEST
+    assert session.evaluated() == (1, False, '"/nothing"')
+    session.send(_RESPONSE_ENDED, _ended(1, _ERR_ABORTED))
+    assert session.evaluate("[window.marker, document.URL]", call=2) == (False, f'["kept","{_DOCUMENT_URL}"]')
+    assert session.documents == [struct.pack("<QB", 1, 0), struct.pack("<QBQ", 2, 1, 0)]
+    assert session.close() == 0

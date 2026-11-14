@@ -64,6 +64,7 @@ class IdleTaskController;
 class Location;
 class MediaQueryList;
 class Navigation;
+class NavigationClient;
 class Navigator;
 class Performance;
 class Scheduler;
@@ -221,6 +222,13 @@ class Window final : public WindowProperties {
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
   Fetcher* GetFetcher() const { return fetcher_; }
+  // What a navigation of the window's frame to another document asks the
+  // Session through. Without one, as in the Page program given a script or
+  // once the context is gone, such a navigation does not start.
+  void SetNavigationClient(NavigationClient* client) {
+    navigation_client_ = client;
+  }
+  NavigationClient* GetNavigationClient() const { return navigation_client_; }
   // The tasks of the window's context, which the Page program keeps, and
   // which go with it: without them, a task posted to the window never runs.
   void SetTasks(WindowTasks* tasks) { tasks_ = tasks; }
@@ -330,6 +338,7 @@ class Window final : public WindowProperties {
   uint64_t document_id_ = kNoDocument;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
+  raw_ptr<NavigationClient> navigation_client_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
   std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;

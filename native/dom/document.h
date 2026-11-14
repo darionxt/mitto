@@ -111,10 +111,14 @@ class Document : public Node {
   Element* ScrollingElement() const;
   Element* ActiveElement() const;
   // What a page of a tab in front reads, which a document of no window is
-  // not, as Blink's documents without a page say.
-  bool Hidden() const { return !window_; }
+  // not, as Blink's documents without a page say, nor one that a navigation
+  // unloads, from its visibilitychange on, as Blink's IsPageVisible() says.
+  bool Hidden() const {
+    return !window_ || load_event_progress_ >=
+                           LoadEventProgress::kUnloadVisibilityChangeInProgress;
+  }
   std::u16string VisibilityState() const {
-    return window_ ? u"visible" : u"hidden";
+    return Hidden() ? u"hidden" : u"visible";
   }
   std::u16string VisibilityStateAsString() const { return VisibilityState(); }
   // What a top-level page that permissions policy allows them reads, and a
@@ -223,6 +227,11 @@ class Document : public Node {
   void SetEncoding(std::string_view encoding, bool detected_heuristically);
   // The time of its response's Last-Modified, which lastModified gives.
   void SetLastModified(base::Time time) { last_modified_ = time; }
+  // The referrer of the navigation that loaded the document, which referrer
+  // gives: none for one that the browser started, and for one that a document
+  // started, what its request sent as Referer.
+  const std::u16string& Referrer() const { return referrer_; }
+  void SetReferrer(std::u16string referrer) { referrer_ = std::move(referrer); }
   // Where document.cookie reaches the cookies of the document's Session. A
   // document that has a window and no jar has an opaque origin, as about:blank
   // has in a new tab, and its cookie attribute throws.
@@ -296,6 +305,59 @@ class Document : public Node {
     check_completed_ = std::move(check_completed);
   }
 
+  // What a navigation does to the document, as Blink's Document has it.
+  //
+  // Blink's LoadEventProgress: how far the document is through its load event
+  // and, once a navigation leaves it, through being unloaded.
+  enum class LoadEventProgress {
+    kLoadEventNotRun,
+    kLoadEventInProgress,
+    kLoadEventCompleted,
+    kBeforeUnloadEventInProgress,
+    kBeforeUnloadEventHandled,
+    kPageHideInProgress,
+    kUnloadVisibilityChangeInProgress,
+    kUnloadEventInProgress,
+    kUnloadEventHandled,
+  };
+  LoadEventProgress GetLoadEventProgress() const {
+    return load_event_progress_;
+  }
+  void SetLoadEventProgress(LoadEventProgress progress) {
+    load_event_progress_ = progress;
+  }
+  bool LoadEventFinished() const {
+    return load_event_progress_ >= LoadEventProgress::kLoadEventCompleted;
+  }
+  // Whether beforeunload, pagehide, the visibilitychange of unloading or
+  // unload is being dispatched, while which no navigation starts.
+  bool PageDismissalEventBeingDispatched() const;
+  // Whether it is the Page's initial about:blank, whose load finished as it
+  // was made, as Blink's initial empty document's does.
+  bool IsInitialEmptyDocument() const { return initial_empty_; }
+  void SetInitialEmptyDocument();
+  // Document::DispatchBeforeUnloadEvent(): fires beforeunload at the window,
+  // with the document as its target, if the document has a body. Returns
+  // whether the navigation goes on, which it does even when the page cancels
+  // the event: Chrome asks the user to stay only on a page that the user has
+  // activated, which a page in a Page never is, and says so in the console.
+  bool DispatchBeforeUnloadEvent();
+  // Document::Abort(): stops the parser, so that nothing more of the body is
+  // parsed, and makes the document complete, with readystatechange, whose
+  // load event then never fires, as a navigation that starts while it loads
+  // has it.
+  void Abort();
+  // Document::DispatchUnloadEvents(): stops the parser, then fires pagehide
+  // at the window, visibilitychange at the document while the page is
+  // visible, and unload at the window, once a navigation's document is about
+  // to take its place.
+  void DispatchUnloadEvents();
+  // What stops the parser of the document that a Page loads, which its loader
+  // gives.
+  void SetCancelParsing(base::RepeatingClosure cancel_parsing) {
+    cancel_parsing_ = std::move(cancel_parsing);
+  }
+
   // The live ranges and node iterators of the document, which the DOM tells
   // as its trees change, made when one is first attached.
   AttachedTraversals& Traversals();
@@ -332,6 +394,10 @@ class Document : public Node {
   std::optional<base::Time> last_modified_;
   // A document that no parser is loading is complete, as Blink's starts.
   Readiness readiness_ = Readiness::kComplete;
+  LoadEventProgress load_event_progress_ = LoadEventProgress::kLoadEventNotRun;
+  std::u16string referrer_;
+  bool initial_empty_ = false;
+  base::RepeatingClosure cancel_parsing_;
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;

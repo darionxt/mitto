@@ -40,13 +40,6 @@ bool IsForbiddenMethod(std::string_view method);
 // Upstream: services/network/public/cpp/cors/cors.cc
 bool IsCorsSafelistedMethod(std::string_view method);
 
-// Whether a cross-origin request may carry the line `name`: `value` that a
-// script set without a CORS preflight. Only the Fetch Standard's safelisted
-// names count; a range is not counted as simple.
-// Upstream: services/network/public/cpp/cors/cors.cc
-bool IsCorsSafelistedRequestHeader(std::string_view name,
-                                   std::string_view value);
-
 // The response header names that a script reads of a cross-origin response
 // beside those that Access-Control-Expose-Headers names.
 // Upstream: services/network/public/cpp/cors/cors.cc

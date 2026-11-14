@@ -63,6 +63,9 @@ struct RequestEvent {
   base::TimeTicks first_request_start;
   base::TimeTicks critical_ch_restart;
   bool restarted_for_critical_ch = false;
+  // The Referer that the last hop sent, which //net keeps through each
+  // redirect, so that a page's navigation gives it to its document.
+  std::string referrer;
 };
 
 // Carries one request's events and body from the network thread to whichever

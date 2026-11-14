@@ -85,6 +85,9 @@ class Event : public bindings::ScriptWrappable {
   // Whether it is an ErrorEvent, whose error at a window an `onerror`
   // handler takes as five arguments.
   virtual bool IsErrorEvent() const;
+  // Whether it is a BeforeUnloadEvent, whose returnValue an `onbeforeunload`
+  // handler sets.
+  virtual bool IsBeforeUnloadEvent() const;
 
   // What a dispatch reads and sets.
   bool IsBeingDispatched() const { return phase_ != Phase::kNone; }

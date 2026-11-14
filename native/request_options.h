@@ -25,6 +25,7 @@ enum class RequestMode {
 
 // The values of network::mojom::CredentialsMode that a Request Kind has.
 enum class CredentialsMode {
+  kOmit,
   kSameOrigin,
   kInclude,
 };
@@ -75,6 +76,10 @@ struct RequestOptions {
 
   // False makes a redirect the response, as mitto_request_start() describes.
   bool follow_redirects = true;
+
+  // A Page's reload, which validates what the cache holds: //net's
+  // LOAD_VALIDATE_CACHE. No option of the C API's sets it.
+  bool validate_cache = false;
 
   // A stream body follows, of `stream_body_size` bytes if that is known, as
   // mitto_request_start() describes.

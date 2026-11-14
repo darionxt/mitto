@@ -296,6 +296,11 @@ class PageHost final : public PageChannel::Delegate {
   // A document that the Page has made, which takes the place of the one
   // before it.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);
+  // A navigation within document `document` that gave it the URL `url`.
+  void OnSameDocumentNavigation(uint64_t document, const std::string& url);
+  // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
+  // with `net_error`, and `status` for one that kept the document.
+  void PushNavigated(std::string url, int32_t status, int32_t net_error);
   // The URL that the library loaded document `document` at, or null after
   // refusing a message that names a document that is not the Page's.
   const GURL* DocumentUrl(uint64_t document, uint32_t type);
@@ -311,11 +316,11 @@ class PageHost final : public PageChannel::Delegate {
   struct FetchChecks {
     // A fetch, whose responses from another origin pass the CORS check.
     bool is_fetch = false;
-    // The script set a line that a hop to another origin would need a CORS
-    // preflight for.
-    bool unsafe_lines = false;
     // Mode same-origin: no hop may go to another origin.
     bool same_origin = false;
+    // A navigation, whose response the Page makes a document of, unless it
+    // is a 204, a 205 or a download.
+    bool is_navigation = false;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
@@ -399,9 +404,13 @@ class PageHost final : public PageChannel::Delegate {
   std::map<uint64_t, GURL> documents_;
   // The largest ID the Page has given a document.
   uint64_t last_document_id_ = kNoDocument;
-  // The final URLs of the navigations whose responses the Page has and has
-  // not made a document of yet, by number.
-  std::map<uint64_t, GURL> navigation_responses_;
+  // The navigations whose responses the Page has and has not made a document
+  // of yet, by number: the final URL and the status.
+  struct NavigationResponse {
+    GURL url;
+    int32_t status = 0;
+  };
+  std::map<uint64_t, NavigationResponse> navigation_responses_;
   // While a document's CookieStore listens: what tells it of each change, and
   // the document's URL.
   std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;

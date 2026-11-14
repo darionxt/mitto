@@ -68,6 +68,13 @@ uint64_t PageRequests::Start(PageRequest request,
   return request.number;
 }
 
+uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
+  request.number = next_number_++;
+  open_[request.number].client = &client;
+  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
+  return request.number;
+}
+
 void PageRequests::Cancel(uint64_t number) {
   const auto found = open_.find(number);
   if (found == open_.end() || !found->second.client) {
@@ -132,6 +139,11 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
 
 PageRequests::Open* PageRequests::Find(uint64_t number,
                                        std::string_view message) {
+  if (number == kNavigationRequest && !navigation_seen_ && navigation_client_) {
+    // The Session makes the navigation itself, at most once.
+    navigation_seen_ = true;
+    open_[kNavigationRequest].client = navigation_client_;
+  }
   const auto found = open_.find(number);
   if (found == open_.end()) {
     refuse_.Run(
@@ -143,12 +155,6 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
 }
 
 void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
-  if (response.number == kNavigationRequest && !navigation_seen_ &&
-      navigation_client_) {
-    // The Session makes the navigation itself, at most once.
-    navigation_seen_ = true;
-    open_[kNavigationRequest].client = navigation_client_;
-  }
   Open* const open = Find(response.number, "a response");
   if (!open) {
     return;

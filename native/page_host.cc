@@ -23,7 +23,7 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "mitto/header_rules.h"
+#include "mitto/mime_types.h"
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
 #include "mitto/ready_requests.h"
@@ -42,6 +42,7 @@
 #include "net/cookies/cookie_store.h"
 #include "net/cookies/cookie_util.h"
 #include "net/cookies/site_for_cookies.h"
+#include "net/http/http_content_disposition.h"
 #include "net/http/http_util.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -412,6 +413,35 @@ std::optional<std::string> HeaderValue(std::string_view lines,
   return value;
 }
 
+// NavigationRequest::OnResponseStarted() and download_utils::MustDownload():
+// Chrome makes no document of a navigation's response that is a 204 or a 205,
+// nor of a download, which is one that Content-Disposition says is an
+// attachment, or whose MIME type Chrome does not show. One with no MIME type
+// is sniffed, which the Page reads as HTML.
+// Upstream: content/browser/renderer_host/navigation_request.cc
+// Upstream: content/browser/loader/navigation_url_loader_impl.cc
+// Upstream: content/browser/loader/download_utils_impl.cc
+bool MakesDocument(const RequestEvent& event) {
+  if (event.status == 204 || event.status == 205) {
+    return false;
+  }
+  if (const std::optional<std::string> disposition =
+          HeaderValue(event.headers, "Content-Disposition");
+      disposition && net::HttpContentDisposition(*disposition, std::string())
+                         .is_attachment()) {
+    return false;
+  }
+  std::string mime_type;
+  std::string charset;
+  bool had_charset = false;
+  if (const std::optional<std::string> content_type =
+          HeaderValue(event.headers, "Content-Type")) {
+    net::HttpUtil::ParseContentType(*content_type, &mime_type, &charset,
+                                    &had_charset, nullptr);
+  }
+  return mime_type.empty() || IsSupportedMimeType(mime_type);
+}
+
 // network::ParseTimingAllowOrigin() and TimingAllowOriginCheck(): whether a
 // Timing-Allow-Origin value lets `origin` see the timing.
 // Upstream: services/network/public/cpp/timing_allow_origin_parser.cc
@@ -444,6 +474,7 @@ class PageHost::Request final : public RequestClient {
       : host_(host),
         number_(number),
         document_origin_(std::move(document_origin)),
+        first_url_(url),
         last_url_(std::move(url)),
         checks_(checks),
         start_(base::TimeTicks::Now()),
@@ -460,7 +491,14 @@ class PageHost::Request final : public RequestClient {
   }
 
   uint64_t number() const { return number_; }
-  bool is_navigation() const { return number_ == kNavigationRequest; }
+  bool is_navigation() const { return checks_.is_navigation; }
+  // The URL the request started at.
+  const GURL& first_url() const { return first_url_; }
+  // A navigation whose response the Page makes no document of, such as a
+  // download, whose body the library reads to its end and drops, as Chrome's
+  // download manager reads it.
+  bool keeps_document() const { return keeps_document_; }
+  void set_keeps_document() { keeps_document_ = true; }
   // The origin of the document that asked, opaque for a navigation.
   const url::Origin& document_origin() const { return document_origin_; }
   const FetchChecks& checks() const { return checks_; }
@@ -594,6 +632,8 @@ class PageHost::Request final : public RequestClient {
   const raw_ref<PageHost> host_;
   const uint64_t number_;
   const url::Origin document_origin_;
+  const GURL first_url_;
+  bool keeps_document_ = false;
   // The URL of the hop the request is at.
   GURL last_url_;
   const FetchChecks checks_;
@@ -649,7 +689,7 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, url::Origin(), *options_.url,
                  options_.navigation->headers, std::move(navigation_options),
-                 std::nullopt, FetchChecks());
+                 std::nullopt, FetchChecks{.is_navigation = true});
   }
   return true;
 }
@@ -684,10 +724,18 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     return;
   }
   const bool is_fetch = asked.kind == PageRequestKind::kFetch;
+  const bool is_navigation = asked.kind == PageRequestKind::kNavigation;
+  if (is_navigation) {
+    PageEvent started;
+    started.type = MITTO_PAGE_EVENT_NAVIGATION_STARTED;
+    started.url = asked.url;
+    Push(std::move(started));
+  }
   const std::optional<PageRequestTemplate>& request_template =
-      !is_fetch    ? options_.script
-      : asked.body ? options_.fetch_with_body
-                   : options_.fetch;
+      is_navigation ? options_.navigation
+      : !is_fetch   ? options_.script
+      : asked.body  ? options_.fetch_with_body
+                    : options_.fetch;
   GURL url(asked.url);
   // The script's own lines, each name once, with its values joined, in the
   // order the names first come, as Fetch combines them.
@@ -707,10 +755,6 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
       base::StrAppend(&same->second, {", ", value});
     }
   }
-  bool unsafe_lines = false;
-  for (const auto& [name, value] : lines) {
-    unsafe_lines |= !IsCorsSafelistedRequestHeader(name, value);
-  }
   // These fail as such a request fails in Chrome, and the Page goes on.
   int net_error = net::OK;
   if (!url.is_valid()) {
@@ -723,23 +767,21 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     // A document that the Session did not load, such as about:blank, has no
     // Initiator that a request can name.
     net_error = net::ERR_ACCESS_DENIED;
-  } else if (is_fetch &&
+  } else if (is_fetch && asked.same_origin &&
              !url::Origin::Create(document_url).IsSameOriginWith(url)) {
-    // A cross-origin fetch, which the CORS check holds to its response. One
-    // of mode same-origin fails, as in Chrome. One that would need a CORS
-    // preflight first is a Known Gap: the preflight is a request that no
-    // Persona records yet.
-    if (asked.same_origin) {
-      net_error = net::ERR_FAILED;
-    } else if (!IsCorsSafelistedMethod(asked.method) || unsafe_lines) {
-      net_error = net::ERR_NOT_IMPLEMENTED;
-    }
+    // A cross-origin fetch of mode same-origin fails, as in Chrome. Another
+    // has the CORS check held to its response, after the preflight that the
+    // library makes when it needs one.
+    net_error = net::ERR_FAILED;
   }
   if (net_error != net::OK) {
     PageResponseEnded ended;
     ended.number = asked.number;
     ended.net_error = net_error;
     channel_->Send(EncodeResponseEnded(ended));
+    if (is_navigation) {
+      PushNavigated(asked.url, 0, net_error);
+    }
     return;
   }
   // The script's lines take the places of the Persona's lines of their names,
@@ -749,6 +791,10 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
   RequestOptions options = request_template->options;
   options.method = asked.method;
   options.fetch->initiator = document_url;
+  // A navigation that the document starts sends Sec-Fetch-User only with the
+  // user's activation, which the browser checks the renderer's word for.
+  options.fetch->has_user_activation = asked.user_activation;
+  options.validate_cache = asked.reload;
   if (asked.body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
             entry.first, net::HttpRequestHeaders::kContentType);
@@ -766,11 +812,18 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
   StartRequest(asked.number, url::Origin::Create(document_url), std::move(url),
                std::move(headers), std::move(options), std::move(body),
                FetchChecks{.is_fetch = is_fetch,
-                           .unsafe_lines = unsafe_lines,
-                           .same_origin = asked.same_origin});
+                           .same_origin = asked.same_origin,
+                           .is_navigation = is_navigation});
 }
 
 void PageHost::OnCancel(uint64_t number) {
+  // A navigation that the Page let go after its response came, before it
+  // made a document of it, as when another takes its place, has ended too.
+  if (const auto pending = navigation_responses_.find(number);
+      pending != navigation_responses_.end()) {
+    PushNavigated(pending->second.url.spec(), 0, net::ERR_ABORTED);
+    navigation_responses_.erase(pending);
+  }
   const auto found = requests_.find(number);
   if (found == requests_.end()) {
     // The request may have ended since the Page let it go.
@@ -779,6 +832,12 @@ void PageHost::OnCancel(uint64_t number) {
                            ", which the Page has not asked for"}));
     }
     return;
+  }
+  // A navigation that the Page let go before its response, as when another
+  // takes its place, has ended.
+  if (found->second->is_navigation() && !found->second->started()) {
+    PushNavigated(found->second->first_url().possibly_invalid_spec(), 0,
+                  net::ERR_ABORTED);
   }
   // The Request abandons its job as it goes.
   requests_.erase(found);
@@ -812,14 +871,26 @@ void PageHost::OnCredit(const PageCredit& credit) {
 
 void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
   request.set_started();
+  if (request.is_navigation() && !MakesDocument(event)) {
+    // NavigationRequest::OnResponseStarted() drops a navigation whose response
+    // is no document, and the Page keeps its document. A download goes on
+    // without it.
+    request.set_keeps_document();
+    PushNavigated(event.url, event.status, net::ERR_ABORTED);
+    // The Page's frame lets its navigation go.
+    if (channel_) {
+      PageResponseEnded ended;
+      ended.number = request.number();
+      ended.net_error = net::ERR_ABORTED;
+      channel_->Send(EncodeResponseEnded(ended));
+    }
+    request.ReadIfCredited();
+    return;
+  }
   if (request.is_navigation()) {
-    // The document that the Page makes of it, which it tells the library of.
-    navigation_responses_[request.number()] = GURL(event.url);
-    PageEvent navigated;
-    navigated.type = MITTO_PAGE_EVENT_NAVIGATED;
-    navigated.status = event.status;
-    navigated.url = event.url;
-    Push(std::move(navigated));
+    // The document that the Page makes of it, which it tells the library of,
+    // and the caller hears of then.
+    navigation_responses_[request.number()] = {GURL(event.url), event.status};
   }
   if (channel_) {
     PageResponseStarted response;
@@ -828,9 +899,11 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     response.redirected = event.redirected;
     response.cors = request.cors();
     if (request.is_navigation()) {
-      response.navigation_start = Microseconds(
-          options_.navigation_start.is_null() ? request.start()
-                                              : options_.navigation_start);
+      response.navigation_start =
+          Microseconds(request.number() == kNavigationRequest &&
+                               !options_.navigation_start.is_null()
+                           ? options_.navigation_start
+                           : request.start());
       response.connection = ConnectionOf(GURL(event.url));
     }
     response.was_fetched_via_spdy = event.was_fetched_via_spdy;
@@ -856,6 +929,9 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     response.first_request_start = Microseconds(event.first_request_start);
     response.last_redirect_end = Microseconds(request.last_redirect_end());
     response.critical_ch_restart = Microseconds(event.critical_ch_restart);
+    if (request.is_navigation()) {
+      response.referrer = event.referrer;
+    }
     channel_->Send(EncodeResponseStarted(response));
   }
   request.ReadIfCredited();
@@ -888,15 +964,11 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   // tainted one serializes as "null", or be "*".
   const url::Origin& document_origin = request.document_origin();
   request.Reach(GURL(event.url), document_origin);
-  // A redirect to another origin of a request that would need a CORS
-  // preflight there is not followed: the preflight is a Known Gap, and
-  // following without it would send what the script asked for to a server
-  // that has not agreed to it.
-  // Nor is one of mode same-origin, as in Chrome.
-  if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
-      !document_origin.IsSameOriginWith(GURL(event.new_url)) &&
-      (checks.same_origin || !IsCorsSafelistedMethod(event.new_method) ||
-       checks.unsafe_lines)) {
+  // A redirect to another origin of a fetch of mode same-origin is not
+  // followed, as in Chrome. The library asks the next origin first for one
+  // that would need a CORS preflight there.
+  if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED && checks.same_origin &&
+      !document_origin.IsSameOriginWith(GURL(event.new_url))) {
     return false;
   }
   if (!request.cors()) {
@@ -926,6 +998,12 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
 
 void PageHost::OnBodyRead(Request& request, size_t size) {
   const base::span<const uint8_t> bytes = request.TakeRead(size);
+  if (request.keeps_document()) {
+    // A download's body goes nowhere.
+    request.AddCredit(static_cast<uint32_t>(size));
+    request.ReadIfCredited();
+    return;
+  }
   if (channel_) {
     channel_->Send(
         EncodeResponseBody(request.number(), base::as_string_view(bytes)));
@@ -935,13 +1013,18 @@ void PageHost::OnBodyRead(Request& request, size_t size) {
 
 void PageHost::OnRequestFinished(Request& request, int net_error) {
   const uint64_t number = request.number();
-  if (request.is_navigation() && !request.started()) {
-    // The Page keeps its document, and hears nothing of this.
-    PageEvent navigated;
-    navigated.type = MITTO_PAGE_EVENT_NAVIGATED;
-    navigated.net_error = net_error == net::OK ? net::ERR_FAILED : net_error;
-    navigated.url = options_.url->possibly_invalid_spec();
-    Push(std::move(navigated));
+  if (request.keeps_document()) {
+    // The Page heard that it ended when its response started.
+  } else if (request.is_navigation() && !request.started()) {
+    // The Page keeps its document, and its frame lets the navigation go.
+    PushNavigated(request.first_url().possibly_invalid_spec(), 0,
+                  net_error == net::OK ? net::ERR_FAILED : net_error);
+    if (channel_) {
+      PageResponseEnded ended;
+      ended.number = number;
+      ended.net_error = net_error == net::OK ? net::ERR_FAILED : net_error;
+      channel_->Send(EncodeResponseEnded(ended));
+    }
   } else if (channel_) {
     PageResponseEnded ended;
     ended.number = number;
@@ -1394,6 +1477,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     return;
   }
   GURL url;
+  std::optional<int32_t> navigated_status;
   switch (committed.source) {
     case PageDocumentSource::kInitialEmpty:
       // The Page's first document, before any other.
@@ -1411,7 +1495,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
                              ", which has no response"}));
         return;
       }
-      url = std::move(found->second);
+      url = std::move(found->second.url);
+      navigated_status = found->second.status;
       navigation_responses_.erase(found);
       break;
     }
@@ -1420,7 +1505,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   // It takes the place of the top-level document, the only one a Page has,
   // whose messages all came before this.
   documents_.clear();
-  documents_.emplace(committed.document, std::move(url));
+  documents_.emplace(committed.document, url);
   // The old document's Cache API goes with it, as its pipes go with its
   // context in Chrome: its puts that wait for a body fail, and what it held
   // is let go. The new document's numbers go on from its.
@@ -1430,6 +1515,43 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   }
   // The old document's CookieStore listened over a pipe that went with it.
   cookie_store_subscription_.reset();
+  // The navigation's document has taken the place of the Page's, after every
+  // message of the old one, its load among them.
+  if (navigated_status) {
+    PushNavigated(url.spec(), *navigated_status, net::OK);
+  }
+}
+
+void PageHost::OnSameDocumentNavigation(uint64_t document,
+                                        const std::string& url) {
+  // The browser checks a renderer's same-document URL as
+  // CanChangeToUrlForHistoryApi() does: of the document's origin, or only its
+  // fragment changed, as about:blank's can.
+  GURL& document_url = documents_.find(document)->second;
+  const GURL new_url(url);
+  if (!new_url.is_valid() ||
+      (!url::Origin::Create(document_url)
+            .IsSameOriginWith(url::Origin::Create(new_url)) &&
+       document_url.GetWithoutRef() != new_url.GetWithoutRef())) {
+    Refuse("a same-document navigation to another origin");
+    return;
+  }
+  document_url = new_url;
+  PageEvent changed;
+  changed.type = MITTO_PAGE_EVENT_URL_CHANGED;
+  changed.url = new_url.spec();
+  Push(std::move(changed));
+}
+
+void PageHost::PushNavigated(std::string url,
+                             int32_t status,
+                             int32_t net_error) {
+  PageEvent navigated;
+  navigated.type = MITTO_PAGE_EVENT_NAVIGATED;
+  navigated.status = status;
+  navigated.net_error = net_error;
+  navigated.url = std::move(url);
+  Push(std::move(navigated));
 }
 
 const GURL* PageHost::DocumentUrl(uint64_t document, uint32_t type) {
@@ -1571,6 +1693,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     case PageMessage::kCacheStorage:
       OnCacheStorage(std::move(frame->cache_storage_call), document_url);
+      return;
+    case PageMessage::kSameDocumentNavigation:
+      OnSameDocumentNavigation(frame->document, frame->same_document_url);
       return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:

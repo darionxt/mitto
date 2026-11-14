@@ -82,6 +82,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "BeforeUnloadEvent"
+    file = "before_unload_event"
+  },
+  {
     name = "BroadcastChannel"
     file = "broadcast_channel"
 
@@ -327,6 +331,7 @@ mitto_bindings_interfaces = [
       "rootElement",
       "customElementRegistry",
       "lastModified",
+      "referrer",
       "images",
       "embeds",
       "plugins",
@@ -1089,6 +1094,10 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HashChangeEvent"
+    file = "hash_change_event"
+  },
+  {
     name = "Headers"
     file = "headers"
 
@@ -1144,19 +1153,9 @@ mitto_bindings_interfaces = [
     file = "location"
     made_by_known_gaps = true
 
-    # Navigating, through its setters and methods, is a Known Gap.
-    implemented = [
-      "get href",
-      "origin",
-      "get protocol",
-      "get host",
-      "get hostname",
-      "get port",
-      "get pathname",
-      "get search",
-      "get hash",
-      "toString",
-    ]
+    # ancestorOrigins gives the empty list of a top-level page, as a Known Gap
+    # does.
+    missing = [ "ancestorOrigins" ]
   },
   {
     name = "Lock"
@@ -1397,6 +1396,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "PageTransitionEvent"
+    file = "page_transition_event"
+  },
+  {
     name = "Performance"
     file = "performance"
 
@@ -1601,6 +1604,11 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "SVGAngle"
+    file = "svg_angle"
+    header = "svg_geometry"
+  },
+  {
     name = "SVGAnimateElement"
     file = "svg_animate_element"
     header = "svg_elements"
@@ -1617,6 +1625,11 @@ mitto_bindings_interfaces = [
     file = "svg_animate_transform_element"
     header = "svg_elements"
     implemented = []
+  },
+  {
+    name = "SVGAnimatedAngle"
+    file = "svg_animated_angle"
+    header = "svg_geometry"
   },
   {
     name = "SVGAnimatedBoolean"
@@ -1652,6 +1665,16 @@ mitto_bindings_interfaces = [
     name = "SVGAnimatedNumberList"
     file = "svg_animated_number_list"
     header = "svg_lists"
+  },
+  {
+    name = "SVGAnimatedPreserveAspectRatio"
+    file = "svg_animated_preserve_aspect_ratio"
+    header = "svg_geometry"
+  },
+  {
+    name = "SVGAnimatedRect"
+    file = "svg_animated_rect"
+    header = "svg_geometry"
   },
   {
     name = "SVGAnimatedString"
@@ -1941,6 +1964,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "preserveAspectRatio",
     ]
   },
   {
@@ -2136,6 +2160,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "preserveAspectRatio",
     ]
   },
   {
@@ -2188,6 +2213,12 @@ mitto_bindings_interfaces = [
       "refY",
       "markerWidth",
       "markerHeight",
+      "orientType",
+      "orientAngle",
+      "setOrientToAuto",
+      "setOrientToAngle",
+      "viewBox",
+      "preserveAspectRatio",
     ]
   },
   {
@@ -2241,19 +2272,46 @@ mitto_bindings_interfaces = [
       "height",
       "requiredExtensions",
       "systemLanguage",
+      "viewBox",
+      "preserveAspectRatio",
     ]
+  },
+  {
+    name = "SVGPoint"
+    file = "svg_point"
+    header = "svg_geometry"
+    made_by_known_gaps = true
+
+    # Until SVGMatrix comes.
+    missing = [ "matrixTransform" ]
+  },
+  {
+    name = "SVGPointList"
+    file = "svg_point_list"
+    header = "svg_geometry"
   },
   {
     name = "SVGPolygonElement"
     file = "svg_polygon_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "points",
+      "animatedPoints",
+    ]
   },
   {
     name = "SVGPolylineElement"
     file = "svg_polyline_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "points",
+      "animatedPoints",
+    ]
+  },
+  {
+    name = "SVGPreserveAspectRatio"
+    file = "svg_preserve_aspect_ratio"
+    header = "svg_geometry"
   },
   {
     name = "SVGRadialGradientElement"
@@ -2267,6 +2325,12 @@ mitto_bindings_interfaces = [
       "fy",
       "fr",
     ]
+  },
+  {
+    name = "SVGRect"
+    file = "svg_rect"
+    header = "svg_geometry"
+    made_by_known_gaps = true
   },
   {
     name = "SVGRectElement"
@@ -2292,6 +2356,11 @@ mitto_bindings_interfaces = [
       "height",
       "createSVGLength",
       "createSVGNumber",
+      "createSVGAngle",
+      "createSVGPoint",
+      "createSVGRect",
+      "viewBox",
+      "preserveAspectRatio",
     ]
   },
   {
@@ -2337,7 +2406,10 @@ mitto_bindings_interfaces = [
     name = "SVGSymbolElement"
     file = "svg_symbol_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "viewBox",
+      "preserveAspectRatio",
+    ]
   },
   {
     name = "SVGTSpanElement"
@@ -2406,7 +2478,10 @@ mitto_bindings_interfaces = [
     name = "SVGViewElement"
     file = "svg_view_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "viewBox",
+      "preserveAspectRatio",
+    ]
   },
   {
     name = "Scheduler"
