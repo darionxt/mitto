@@ -408,6 +408,30 @@ def test_a_union_with_a_boolean_takes_a_boolean_default() -> None:
     assert types.default_value(union, "false", "a") == "BooleanOrImportNodeOptions(false)"
 
 
+def test_the_cpp_types_of_url_search_params() -> None:
+    # Its constructor's optional (sequence<sequence<USVString>> or record<USVString, USVString> or USVString)
+    # init = "", and getAll()'s sequence<USVString>.
+    string = IdlType(TypeKind.STRING, "USVString")
+    pairs = IdlType(
+        TypeKind.SEQUENCE,
+        "sequence<sequence<USVString>>",
+        members=(IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(string,)),),
+    )
+    record = IdlType(TypeKind.RECORD, "record<USVString, USVString>", members=(string, string))
+    union = IdlType(TypeKind.UNION, "x", members=(pairs, record, string))
+    types = TypeMapper(frozenset(), frozenset(), {})
+
+    assert (
+        types.default_value(union, '""', "a")
+        == 'USVStringSequenceSequenceOrUSVStringUSVStringRecordOrUSVString(std::u16string(u""))'
+    )
+    with pytest.raises(UnhandledError, match="default value"):
+        types.default_value(dataclasses.replace(union, members=(pairs, record)), '""', "b")
+    values = IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(string,))
+    assert types.return_type(values, "c") == "std::vector<std::u16string>"
+    assert types.to_v8(values, "x") == "ToV8StringArray(isolate, x)"
+
+
 def test_a_sequence_takes_an_empty_list_for_its_default() -> None:
     # OTPCredentialRequestOptions' transports.
     types = TypeMapper(frozenset(), frozenset(), {"OTPCredentialTransportType": ("sms",)})
