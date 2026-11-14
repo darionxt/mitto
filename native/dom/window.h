@@ -230,8 +230,12 @@ class Window final : public WindowProperties {
   void SetAnimationFrames(AnimationFrameController* animation_frames) {
     animation_frames_ = animation_frames;
   }
-  // How many animation frame callbacks wait for a frame.
+  // How many animation frame callbacks and events wait for a frame.
   size_t AnimationFrameCallbackCount() const;
+  // `event` fires at `target` in the next animation frame, before its
+  // callbacks, as Blink's Document::EnqueueAnimationFrameEvent() does. Nothing
+  // fires in a window with no frames.
+  void EnqueueAnimationFrameEvent(EventTarget& target, mitto::Event& event);
   // How many scheduler.postTask() callbacks and scheduler.yield()
   // continuations wait.
   size_t ScheduledTaskCount() const;

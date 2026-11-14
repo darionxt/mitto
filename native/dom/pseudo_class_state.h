@@ -51,6 +51,8 @@ bool IsInRange(const Element& element);
 bool IsOutOfRange(const Element& element);
 bool IsDefined(const Element& element);
 bool IsOpen(const Element& element);
+// A dialog that showModal() opened, as no fullscreen element is.
+bool IsModal(const Element& element);
 // :-internal-text-field, which Blink lets an author's selector name.
 bool IsTextField(const Element& element);
 // :dir(rtl) for true, :dir(ltr) for false.

@@ -18,6 +18,7 @@
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_dialog_element.h"
 #include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_input_element.h"
 #include "mitto/dom/html_names.h"
@@ -1468,6 +1469,11 @@ bool IsOpen(const Element& element) {
   return (element.HasHTMLTagName(u"details") ||
           element.HasHTMLTagName(u"dialog")) &&
          HasAttribute(element, u"open");
+}
+
+bool IsModal(const Element& element) {
+  return element.HasHTMLTagName(u"dialog") &&
+         static_cast<const HTMLDialogElement&>(element).IsModal();
 }
 
 bool IsTextField(const Element& element) {
