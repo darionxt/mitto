@@ -18,6 +18,7 @@
 #include "mitto/bindings/v8_svg_animated_string.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_geometry.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "v8/include/cppgc/visitor.h"
 
@@ -281,6 +282,85 @@ std::optional<std::vector<float>> ParseSVGNumberList(
   return numbers;
 }
 
+std::optional<std::array<float, 4>> ParseSVGRect(std::u16string_view value) {
+  std::array<float, 4> numbers;
+  if (!ParseNumber(value, numbers[0]) || !ParseNumber(value, numbers[1]) ||
+      !ParseNumber(value, numbers[2]) ||
+      !ParseNumber(value, numbers[3], kAllowLeadingWhitespace)) {
+    return std::nullopt;
+  }
+  SkipSpaces(value);
+  if (!value.empty()) {
+    return std::nullopt;
+  }
+  return numbers;
+}
+
+std::optional<std::vector<std::array<float, 2>>> ParseSVGPoints(
+    std::u16string_view value) {
+  std::vector<std::array<float, 2>> points;
+  SkipSpaces(value);
+  std::array<float, 2> pair = {0, 0};
+  size_t count = 0;
+  while (!value.empty()) {
+    if (!ParseNumber(value, pair[count % 2], /*mode=*/0)) {
+      return std::nullopt;
+    }
+    ++count;
+    if (count % 2 == 0) {
+      points.push_back(pair);
+    }
+    SkipSpaces(value);
+    if (!value.empty() && value.front() == ',') {
+      value.remove_prefix(1);
+      SkipSpaces(value);
+    }
+  }
+  return points;
+}
+
+// ParseValue() and StringToAngleType(): a number, then deg, rad, grad, turn
+// or nothing, then only spaces.
+std::optional<std::pair<float, uint8_t>> ParseSVGAngle(
+    std::u16string_view value) {
+  float number = 0;
+  if (!ParseNumber(value, number, kAllowLeadingWhitespace)) {
+    return std::nullopt;
+  }
+  constexpr uint8_t kUnspecified = 1;
+  constexpr uint8_t kDeg = 2;
+  constexpr uint8_t kRad = 3;
+  constexpr uint8_t kGrad = 4;
+  constexpr uint8_t kTurn = 5;
+  if (value.empty()) {
+    return std::pair(number, kUnspecified);
+  }
+  uint8_t unit = 0;
+  size_t skip = 0;
+  if (IsHTMLSpace(value.front())) {
+    unit = kUnspecified;
+    skip = 1;
+  } else if (value.substr(0, 3) == u"deg") {
+    unit = kDeg;
+    skip = 3;
+  } else if (value.substr(0, 3) == u"rad") {
+    unit = kRad;
+    skip = 3;
+  } else if (value.substr(0, 4) == u"grad") {
+    unit = kGrad;
+    skip = 4;
+  } else if (value.substr(0, 4) == u"turn") {
+    unit = kTurn;
+    skip = 4;
+  }
+  value.remove_prefix(skip);
+  SkipSpaces(value);
+  if (!unit || !value.empty()) {
+    return std::nullopt;
+  }
+  return std::pair(number, unit);
+}
+
 // DoubleToStringConverter::ToStringWithFixedPrecision() of WTF's dtoa.cc.
 std::u16string SVGNumberToString(float value) {
   char buffer[128];
@@ -438,13 +518,26 @@ SVGAnimatedEnumeration* SVGAnimatedEnumeration::Create(
       element, attribute, map, initial_value);
 }
 
+// static
+SVGAnimatedEnumeration* SVGAnimatedEnumeration::CreateForAngle(
+    SVGElement& element,
+    SVGAnimatedAngle& angle) {
+  static constexpr std::u16string_view kOrientTypes[] = {u"auto", u"angle",
+                                                         u"auto-start-reverse"};
+  static constexpr SVGEnumerationMap kOrientTypeMap = {kOrientTypes, 2};
+  return bindings::MakeGarbageCollected<SVGAnimatedEnumeration>(
+      element, u"orient", kOrientTypeMap, SVGAngleValue::kAngle, &angle);
+}
+
 SVGAnimatedEnumeration::SVGAnimatedEnumeration(SVGElement& element,
                                                std::u16string_view attribute,
                                                const SVGEnumerationMap& map,
-                                               uint16_t initial_value)
+                                               uint16_t initial_value,
+                                               SVGAnimatedAngle* angle)
     : SVGAnimatedPropertyBase(element, attribute, SVGPairHalf::kNone),
       map_(map),
-      initial_value_(initial_value) {}
+      initial_value_(initial_value),
+      angle_(angle) {}
 
 SVGAnimatedEnumeration::~SVGAnimatedEnumeration() = default;
 
@@ -453,7 +546,16 @@ const bindings::WrapperTypeInfo* SVGAnimatedEnumeration::GetWrapperTypeInfo()
   return &bindings::V8SVGAnimatedEnumeration::kWrapperTypeInfo;
 }
 
+void SVGAnimatedEnumeration::Trace(cppgc::Visitor* visitor) const {
+  SVGAnimatedPropertyBase::Trace(visitor);
+  visitor->Trace(angle_);
+}
+
 uint16_t SVGAnimatedEnumeration::BaseVal() {
+  if (angle_) {
+    const uint16_t orient = angle_->BaseValue().orient;
+    return orient <= map_->max_exposed_value ? orient : 0;
+  }
   EnsureFresh();
   return value_ <= map_->max_exposed_value ? value_ : 0;
 }
@@ -471,6 +573,13 @@ void SVGAnimatedEnumeration::SetBaseVal(
         {"The enumeration value provided (", base::NumberToString(value),
          ") is larger than the largest allowed value (",
          base::NumberToString(map_->max_exposed_value), ")."}));
+    return;
+  }
+  if (angle_) {
+    // SVGAngle::OrientTypeChanged(), then the angle's attribute.
+    SVGAngleValue angle = angle_->BaseValue();
+    angle.SetOrient(static_cast<SVGAngleValue::Orient>(value));
+    angle_->SetBaseValue(angle);
     return;
   }
   EnsureFresh();

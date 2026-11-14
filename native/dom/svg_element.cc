@@ -61,6 +61,47 @@ SVGStringList* SVGElement::SystemLanguage() {
   return value;
 }
 
+SVGAnimatedRect* SVGElement::ViewBox() {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(u"viewBox", SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedRect*>(value);
+  }
+  SVGAnimatedRect* const value = SVGAnimatedRect::Create(*this);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedPreserveAspectRatio* SVGElement::PreserveAspectRatio() {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(u"preserveAspectRatio", SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedPreserveAspectRatio*>(value);
+  }
+  SVGAnimatedPreserveAspectRatio* const value =
+      SVGAnimatedPreserveAspectRatio::Create(*this);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedAngle* SVGElement::AnimatedOrient() {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(u"orient", SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedAngle*>(value);
+  }
+  SVGAnimatedAngle* const value = SVGAnimatedAngle::Create(*this);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedPointList* SVGElement::AnimatedPointList() {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(u"points", SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedPointList*>(value);
+  }
+  SVGAnimatedPointList* const value = SVGAnimatedPointList::Create(*this);
+  animated_values_.push_back(value);
+  return value;
+}
+
 SVGAnimatedNumberList* SVGElement::AnimatedNumberList(
     std::u16string_view attribute) {
   if (SVGAnimatedPropertyBase* const value =
