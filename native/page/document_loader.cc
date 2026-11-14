@@ -17,6 +17,7 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/script_loader.h"
@@ -25,8 +26,10 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
+#include "mitto/page/page_frame.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
+#include "url/url_util.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
 
@@ -49,22 +52,72 @@ void PerformMicrotaskCheckpoint() {
 
 DocumentLoader::DocumentLoader(ScriptRunner& runner,
                                PageRequests& requests,
-                               SendFrame send)
-    : runner_(runner), requests_(requests), send_(std::move(send)) {}
+                               SendFrame send,
+                               PageFrame& frame,
+                               uint64_t number)
+    : runner_(runner),
+      requests_(requests),
+      send_(std::move(send)),
+      frame_(frame),
+      number_(number) {}
 
-DocumentLoader::~DocumentLoader() = default;
+DocumentLoader::~DocumentLoader() {
+  if (document_) {
+    document_->SetCancelParsing(base::RepeatingClosure());
+  }
+}
+
+void DocumentLoader::StopLoading() {
+  CancelParsing();
+  if (response_started_ && !body_ended_) {
+    body_ended_ = true;
+    requests_->Cancel(number_);
+  }
+}
+
+void DocumentLoader::CancelParsing() {
+  if (parsing_cancelled_ || !parser_) {
+    return;
+  }
+  parsing_cancelled_ = true;
+  // The parser stays, since it may be on the stack below the script that
+  // cancels it, and never runs again. What it would have run goes.
+  if (parser_blocking_script_) {
+    parser_blocking_script_->StopWatchingForLoad();
+    parser_blocking_script_ = nullptr;
+  }
+  for (const cppgc::Persistent<PendingScript>& script :
+       scripts_after_parsing_) {
+    script->StopWatchingForLoad();
+  }
+  scripts_after_parsing_.clear();
+  parsing_finished_ = true;
+  stopping_ = true;
+  // What has come and waits is taken, so that the Session reads on.
+  for (const std::string& bytes : waiting_body_) {
+    requests_->TookBody(number_, bytes.size());
+  }
+  waiting_body_.clear();
+}
 
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
-  // The document of the response takes the place of about:blank's, in a
-  // context of its own, as Blink makes a new window for a tab's first
-  // navigation, whose about:blank has an opaque origin.
+  response_started_ = true;
+  // The document of the response takes the place of the frame's, in a
+  // context of its own, once the old one has unloaded, as Blink makes a new
+  // window for a tab's first navigation, whose about:blank has an opaque
+  // origin, and for each later one.
   url_ = GURL(response.url);
   // The Session's base::TimeTicks, which the Page's clock shares.
-  document_ = &runner_->CommitDocument(
-      response.number, url_,
+  document_ = &frame_->CommitNavigation(
+      *this, url_,
       base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
   document_id_ = document_->DefaultView()->DocumentId();
+  // The Referer that the navigation's last hop sent, as //net kept it through
+  // its redirects.
+  document_->SetReferrer(base::UTF8ToUTF16(response.referrer));
+  document_->SetCancelParsing(base::BindRepeating(
+      &DocumentLoader::CancelParsing, weak_factory_.GetWeakPtr()));
   // What DocumentLoader::CommitNavigation() takes from the navigation's
   // timings and response, for the window's Performance Timeline and
   // window.chrome. A restart for Critical-CH is a redirect to where the
@@ -135,6 +188,10 @@ void DocumentLoader::AppendDecoded(std::u16string text) {
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
+  if (parsing_cancelled_) {
+    requests_->TookBody(number_, bytes.size());
+    return;
+  }
   waiting_body_.push_back(std::move(bytes));
   // HTMLDocumentParser::Append(): the parser takes it from a task of its own.
   SchedulePumpTokenizer();
@@ -155,6 +212,12 @@ void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
 }
 
 void DocumentLoader::OnResponseEnded(int net_error) {
+  if (!response_started_) {
+    // No document: a 204, a download, a failure, or another navigation that
+    // took its place. The frame keeps its document and lets this go.
+    frame_->NavigationEndedWithoutDocument(*this);
+    return;
+  }
   // After a response, a body that stops short still makes a document of what
   // came, as in Chrome. HTMLDocumentParser::Finish(): a parser that is to go
   // on from a task ends then.
@@ -182,14 +245,14 @@ void DocumentLoader::SchedulePumpTokenizer() {
 }
 
 void DocumentLoader::PumpTokenizerIfPossible() {
-  if (!parser_ || IsPaused() || stopping_) {
+  if (!parser_ || IsPaused() || stopping_ || parsing_cancelled_) {
     return;
   }
   if (PumpTokenizer()) {
     SchedulePumpTokenizer();
     return;
   }
-  if (!IsPaused() && parser_finished_) {
+  if (!parsing_cancelled_ && !IsPaused() && parser_finished_) {
     PrepareToStopParsing();
   }
 }
@@ -211,7 +274,8 @@ bool DocumentLoader::PumpTokenizer() {
   while (true) {
     while (HTMLScriptElement* const script = parser_->Pump()) {
       ProcessScriptElement(*script);
-      if (IsPaused()) {
+      // The script may have started a navigation, which stopped the parser.
+      if (parsing_cancelled_ || IsPaused()) {
         return false;
       }
       if (should_yield()) {
@@ -222,7 +286,10 @@ bool DocumentLoader::PumpTokenizer() {
       const std::string bytes = std::move(waiting_body_.front());
       waiting_body_.pop_front();
       AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
-      requests_->TookBody(kNavigationRequest, bytes.size());
+      requests_->TookBody(number_, bytes.size());
+      if (parsing_cancelled_) {
+        return false;
+      }
       if (should_yield()) {
         return true;
       }
@@ -297,6 +364,9 @@ void DocumentLoader::PendingScriptFinished() {
 }
 
 void DocumentLoader::NotifyScriptLoaded() {
+  if (parsing_cancelled_) {
+    return;
+  }
   if (stopping_) {
     AttemptToRunDeferredScriptsAndEnd();
     return;
@@ -327,7 +397,8 @@ void DocumentLoader::PrepareToStopParsing() {
 }
 
 void DocumentLoader::AttemptToRunDeferredScriptsAndEnd() {
-  if (parsing_finished_ || !ExecuteScriptsWaitingForParsing()) {
+  if (parsing_finished_ || !ExecuteScriptsWaitingForParsing() ||
+      parsing_cancelled_) {
     return;
   }
   FinishedParsing();
@@ -387,11 +458,16 @@ void DocumentLoader::FinishedParsing() {
 
 void DocumentLoader::CheckCompleted() {
   // Document::ShouldComplete(), with what a Page's documents hold back: the
-  // async and in-order scripts.
-  if (!parsing_finished_ || load_fired_ || document_->IsDelayingLoadEvent()) {
+  // async and in-order scripts. A document that a navigation stopped, or that
+  // has fired beforeunload, never fires its load event.
+  if (!parsing_finished_ || load_fired_ || document_->IsDelayingLoadEvent() ||
+      document_->GetLoadEventProgress() !=
+          Document::LoadEventProgress::kLoadEventNotRun) {
     return;
   }
   load_fired_ = true;
+  document_->SetLoadEventProgress(
+      Document::LoadEventProgress::kLoadEventInProgress);
   timing_->dom_complete = base::TimeTicks::Now();
   document_->SetReadiness(Document::Readiness::kComplete);
   bindings::EventInit init;
@@ -402,6 +478,18 @@ void DocumentLoader::CheckCompleted() {
     window->DispatchEventWithTarget(event, document_.Get());
   }
   timing_->load_event_end = base::TimeTicks::Now();
+  if (document_->GetLoadEventProgress() ==
+      Document::LoadEventProgress::kLoadEventInProgress) {
+    document_->SetLoadEventProgress(
+        Document::LoadEventProgress::kLoadEventCompleted);
+  }
+  // LocalDOMWindow::DispatchLoadAndPageshowEvents(): pageshow right after
+  // load, at the window with the document as its target.
+  if (Window* const window = document_->DefaultView()) {
+    window->DispatchEventWithTarget(
+        PageTransitionEvent::CreateTrusted(u"pageshow", /*persisted=*/false),
+        document_.Get());
+  }
   send_.Run(EncodeLoaded(document_id_));
 }
 

@@ -74,6 +74,7 @@
 #include "net/base/completion_once_callback.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
+#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/network_change_notifier.h"
@@ -595,6 +596,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     request->set_method(method);
     request->SetExtraRequestHeaders(headers);
     request->SetPriorityIncremental(options_.priority_incremental);
+    // A reload validates what the cache holds, as NavigationRequest's
+    // LoadFlagsForNavigation() has it, so //net sends Cache-Control:
+    // max-age=0 once it goes to the network.
+    if (options_.validate_cache) {
+      request->SetLoadFlags(request->load_flags() | net::LOAD_VALIDATE_CACHE);
+    }
     return request;
   }
 
@@ -757,6 +764,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.first_request_start = first_request_start_;
     event.critical_ch_restart = critical_ch_restart_;
     event.restarted_for_critical_ch = restarted_for_critical_ch_;
+    event.referrer = request_->referrer();
     return event;
   }
 
@@ -2015,6 +2023,10 @@ int32_t mitto_page_next_event(MittoPage* page,
   if (next.type == MITTO_PAGE_EVENT_NAVIGATED) {
     event->status = next.status;
     event->net_error = next.net_error;
+  }
+  if (next.type == MITTO_PAGE_EVENT_NAVIGATED ||
+      next.type == MITTO_PAGE_EVENT_NAVIGATION_STARTED ||
+      next.type == MITTO_PAGE_EVENT_URL_CHANGED) {
     event->url = mitto::CopyToNewBuffer(next.url);
     event->url_size = next.url.size();
   }

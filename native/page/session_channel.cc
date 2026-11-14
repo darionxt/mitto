@@ -242,6 +242,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreListen:
       case PageMessage::kBroadcast:
       case PageMessage::kDocumentCommitted:
+      case PageMessage::kSameDocumentNavigation:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }

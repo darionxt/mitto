@@ -28,8 +28,8 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
-#include "mitto/page/document_loader.h"
 #include "mitto/page/page_fetcher.h"
+#include "mitto/page/page_frame.h"
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -136,8 +136,8 @@ std::optional<std::string> ScriptRunner::Start(
   cookie_jar_ = &cookie_jar;
   cookie_jar_->SetSend(send_);
   requests_ = std::make_unique<PageRequests>(send_, std::move(refuse));
-  loader_ = std::make_unique<DocumentLoader>(*this, *requests_, send_);
-  requests_->SetNavigationClient(*loader_);
+  frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar);
+  frame_->ExpectOpeningNavigation();
   // As Blink sets the time zone that its browser process reads.
   // Upstream: third_party/blink/renderer/core/timezone/timezone_controller.cc
   std::unique_ptr<icu::TimeZone> time_zone(icu::TimeZone::createTimeZone(
@@ -221,7 +221,11 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   window.SetIdleTasks(idle_tasks_.get());
   window.SetAnimationFrames(animation_frames_.get());
   window.SetFetcher(fetcher_.get());
+  window.SetNavigationClient(frame_.get());
   window.SetTasks(window_tasks_.get());
+  if (source == PageDocumentSource::kInitialEmpty) {
+    window.GetDocument().SetInitialEmptyDocument();
+  }
   window.SetStart(start_, connection);
   window.SetDocumentId(committed.document);
   window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
@@ -380,6 +384,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
     Window::Current().SetIdleTasks(nullptr);
     Window::Current().SetAnimationFrames(nullptr);
     Window::Current().SetFetcher(nullptr);
+    Window::Current().SetNavigationClient(nullptr);
     Window::Current().SetTasks(nullptr);
   }
   timers_.reset();

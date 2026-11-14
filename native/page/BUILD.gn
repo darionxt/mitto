@@ -65,6 +65,8 @@ executable("mitto_page") {
     "mitto_page.cc",
     "page_fetcher.cc",
     "page_fetcher.h",
+    "page_frame.cc",
+    "page_frame.h",
     "page_isolate.cc",
     "page_isolate.h",
     "page_platform.cc",

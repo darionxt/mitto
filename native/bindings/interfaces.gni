@@ -82,6 +82,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "BeforeUnloadEvent"
+    file = "before_unload_event"
+  },
+  {
     name = "BroadcastChannel"
     file = "broadcast_channel"
 
@@ -303,6 +307,7 @@ mitto_bindings_interfaces = [
       "rootElement",
       "customElementRegistry",
       "lastModified",
+      "referrer",
       "images",
       "embeds",
       "plugins",
@@ -1065,6 +1070,10 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HashChangeEvent"
+    file = "hash_change_event"
+  },
+  {
     name = "Headers"
     file = "headers"
 
@@ -1120,19 +1129,9 @@ mitto_bindings_interfaces = [
     file = "location"
     made_by_known_gaps = true
 
-    # Navigating, through its setters and methods, is a Known Gap.
-    implemented = [
-      "get href",
-      "origin",
-      "get protocol",
-      "get host",
-      "get hostname",
-      "get port",
-      "get pathname",
-      "get search",
-      "get hash",
-      "toString",
-    ]
+    # ancestorOrigins gives the empty list of a top-level page, as a Known Gap
+    # does.
+    missing = [ "ancestorOrigins" ]
   },
   {
     name = "Lock"
@@ -1371,6 +1370,10 @@ mitto_bindings_interfaces = [
       "permission",
       "requestPermission",
     ]
+  },
+  {
+    name = "PageTransitionEvent"
+    file = "page_transition_event"
   },
   {
     name = "Performance"

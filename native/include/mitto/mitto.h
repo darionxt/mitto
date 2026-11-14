@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 11
+#define MITTO_ABI_VERSION 12
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -82,9 +82,15 @@
 // An error that no script caught, such as a promise rejected with no handler.
 // The Page goes on.
 #define MITTO_PAGE_EVENT_UNCAUGHT_ERROR 4
-// The navigation that mitto_page_open() started has its response, after any
-// redirects, and the document it loads takes the place of about:blank's; or
-// it failed before a response, and the Page keeps about:blank.
+// A navigation has its response, after any redirects, and the Page has made
+// the document that takes the place of its own, after every event of the old
+// one; or it ended with no document, as one whose response is a 204 or a
+// download does, with the net error ERR_ABORTED and the response's status,
+// and the Page keeps its document; or another took its place before the Page
+// made its document, with ERR_ABORTED and the status 0; or it failed before a
+// response, and the Page keeps its document. Each
+// navigation has one: the one that mitto_page_open() started, and each that
+// a MITTO_PAGE_EVENT_NAVIGATION_STARTED said, in the order they started.
 #define MITTO_PAGE_EVENT_NAVIGATED 5
 // The window's load event has been dispatched: the document and its classic
 // scripts have loaded and run.
@@ -93,6 +99,13 @@
 // Gap, for the first time: each document reports each one once, as Chrome's
 // use counters count a feature. The Page goes on.
 #define MITTO_PAGE_EVENT_KNOWN_GAP 7
+// The document started a navigation to another document, such as through
+// location or a link, which the Session makes. A MITTO_PAGE_EVENT_NAVIGATED
+// says how it ends.
+#define MITTO_PAGE_EVENT_NAVIGATION_STARTED 8
+// A navigation within the document, such as one to a fragment, gave it
+// another URL, with no request.
+#define MITTO_PAGE_EVENT_URL_CHANGED 9
 
 // The level of a console message, as the console method that wrote it says:
 // console.debug(), console.log(), console.info(), console.warn() and
@@ -218,14 +231,17 @@ typedef struct MittoPageEvent {
   size_t message_size;
   // CONSOLE: one of the MITTO_PAGE_CONSOLE values.
   int32_t level;
-  // NAVIGATED with no net error: the response's HTTP status code.
+  // NAVIGATED with no net error, or with ERR_ABORTED for a navigation that
+  // ended with no document: the response's HTTP status code.
   int32_t status;
   // NAVIGATED: 0 if the navigation has a response, and otherwise the negative
   // Chromium net error code that it failed with, as a request's
   // MITTO_EVENT_FINISHED says.
   int32_t net_error;
   // NAVIGATED: the URL of the document, after any redirects, or the URL that
-  // the navigation failed at, in UTF-8 with a trailing NUL byte.
+  // the navigation failed or ended at. NAVIGATION_STARTED: the URL that it
+  // goes to. URL_CHANGED: the document's new URL. In UTF-8 with a trailing
+  // NUL byte.
   char* url;
   size_t url_size;
 } MittoPageEvent;

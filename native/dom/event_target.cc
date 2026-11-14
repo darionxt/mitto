@@ -12,11 +12,13 @@
 #include "mitto/bindings/v8_event_target.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
+#include "mitto/dom/before_unload_event.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
@@ -235,15 +237,35 @@ void CallListener(v8::Isolate* isolate,
   }
 }
 
+// Blink's check in EventTarget::AddEventListenerInternal(): an unload listener
+// that the permissions policy of the executing window's document does not
+// allow, as where the seed deprecates unload, is refused, and the console
+// reports the violation each time.
+bool AllowsUnloadListener(const std::u16string& type) {
+  if (type != u"unload") {
+    return true;
+  }
+  Window& window = Window::Current();
+  PermissionsPolicy* const policy = window.GetDocument().FeaturePolicy();
+  if (!policy || policy->AllowsFeature(u"unload", std::nullopt)) {
+    return true;
+  }
+  window.AddConsoleMessage(
+      ConsoleLevel::kError,
+      "Permissions policy violation: unload is not allowed in this document.");
+  return false;
+}
+
 // Runs an event handler attribute's handler, as Blink's
 // JSEventHandler::InvokeInternal() does: nothing for one that cannot be
 // called, which a page can set; the current target for `this`; and for an
 // ErrorEvent of type error at a window, the HTML Standard's special error
 // event handling: five arguments, the event's message, filename, lineno, colno
 // and error, and a return value of true cancels the event. For any other
-// event, the event is its argument, and a return value of false cancels it.
-// Chrome's special handling of beforeunload concerns an event that the
-// Runtime does not fire yet.
+// event, the event is its argument, and a return value of false cancels it,
+// but for beforeunload, whose handler is an OnBeforeUnloadEventHandler: a
+// return value that is not null or undefined, as a string, cancels a
+// BeforeUnloadEvent and becomes its returnValue if that is empty.
 void CallAttributeHandler(v8::Isolate* isolate,
                           v8::Local<v8::Object> handler,
                           EventTarget& current_target,
@@ -283,6 +305,30 @@ void CallAttributeHandler(v8::Isolate* isolate,
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
       bindings::ReportException(isolate, try_catch.Exception(),
                                 try_catch.Message());
+    }
+    return;
+  }
+  if (result->IsNullOrUndefined()) {
+    return;
+  }
+  if (event->Type() == u"beforeunload") {
+    // The return value converted to DOMString?, as Web IDL converts a
+    // callback's, which reports what the conversion throws.
+    const v8::TryCatch conversion(isolate);
+    std::u16string text;
+    if (!bindings::FromV8String(isolate, result, &text)) {
+      if (conversion.HasCaught() && conversion.CanContinue()) {
+        bindings::ReportException(isolate, conversion.Exception(),
+                                  conversion.Message());
+      }
+      return;
+    }
+    if (event->IsBeforeUnloadEvent()) {
+      auto* const before_unload = static_cast<BeforeUnloadEvent*>(event);
+      event->PreventDefault();
+      if (before_unload->ReturnValue().empty()) {
+        before_unload->SetReturnValue(text);
+      }
     }
     return;
   }
@@ -367,6 +413,9 @@ void EventTarget::AddEventListener(
   // A signal that has aborted adds nothing, as in Blink before anything else.
   AbortSignal* const signal = SignalOf(options);
   if (signal && signal->Aborted()) {
+    return;
+  }
+  if (!AllowsUnloadListener(type)) {
     return;
   }
   // Blink makes a target's EventTargetData here, before it checks for the same
@@ -512,6 +561,9 @@ void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
   }
   // Blink's EventTarget::SetAttributeEventListener() adds it as any listener,
   // which makes the target's EventTargetData.
+  if (!AllowsUnloadListener(type)) {
+    return;
+  }
   has_event_target_data_ = true;
   EventListenerEntry* const entry =
       bindings::MakeGarbageCollected<EventListenerEntry>(

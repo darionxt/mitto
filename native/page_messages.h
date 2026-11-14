@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 16;
+inline constexpr uint32_t kPageProtocolVersion = 17;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -175,6 +175,10 @@ enum class PageMessage : uint32_t {
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
   kDocumentCommitted = 70,
+  // To the Session: the ID of a document, and the URL in UTF-8 that a
+  // navigation within it gave it, such as one to a fragment, which is of the
+  // document's origin.
+  kSameDocumentNavigation = 71,
 };
 
 // Whether a message of `type` names the document it comes from: each of the
@@ -182,10 +186,11 @@ enum class PageMessage : uint32_t {
 bool NamesDocument(PageMessage type);
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
-// that opens it.
+// that opens it: a navigation is one that its document starts.
 enum class PageRequestKind : uint8_t {
   kScript = 1,
   kFetch = 2,
+  kNavigation = 3,
 };
 
 // The level of a console message, as the console method that wrote it says.
@@ -444,9 +449,10 @@ struct PageEvaluated {
 // not say its URL.
 //
 // Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
-// that is 1 for a fetch of mode same-origin, the URL, the method and the
-// header lines, each after its size as a 32-bit number, and then a byte that is
-// 1 if a body follows, which is the rest.
+// of flags, 1 for a fetch of mode same-origin, 2 for a navigation that the
+// user activated and 4 for a navigation that reloads, the URL, the method and
+// the header lines, each after its size as a 32-bit number, and then a byte
+// that is 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -467,6 +473,12 @@ struct PageRequest {
   std::optional<std::string> body;
   // A fetch of mode same-origin, which no hop may take to another origin.
   bool same_origin = false;
+  // A navigation whose document had transient user activation, which sends
+  // Sec-Fetch-User.
+  bool user_activation = false;
+  // A navigation that reloads the document, as location.reload() does, which
+  // validates what the cache holds.
+  bool reload = false;
 };
 
 // How much more of a request's body a Page has taken.
@@ -532,6 +544,10 @@ struct PageResponseStarted {
   // a name of at most 64 characters.
   std::string connection_info;
   std::string alpn_negotiated_protocol;
+  // For the navigation of a document, the Referer that its last hop sent, as
+  // //net kept it through each redirect, which the document gives as
+  // document.referrer: empty for none and for every other request.
+  std::string referrer;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;
@@ -730,6 +746,8 @@ struct FrameFromPage {
   PageBroadcast broadcast;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
+  // kSameDocumentNavigation: the document's new URL.
+  std::string same_document_url;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -828,6 +846,9 @@ bool BroadcastFits(const PageBroadcast& broadcast);
 std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
+// `url` is at most kMaxPayloadSize - 8 bytes.
+std::string EncodeSameDocumentNavigation(uint64_t document,
+                                         std::string_view url);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

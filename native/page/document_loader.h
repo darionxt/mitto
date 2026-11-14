@@ -1,6 +1,8 @@
-// Loads the Page's document from the response of the navigation that its
-// Session makes when the Page opens, on the Page program's main thread: a new
-// context for it, the HTML parser fed as the body arrives, decoded with the
+// Loads a document of the Page from the response of a navigation, the one
+// that its Session makes when the Page opens or one that its document starts,
+// on the Page program's main thread: a new context for it, which the Page's
+// frame makes once the old document has unloaded (page_frame.h), the HTML
+// parser fed as the body arrives, decoded with the
 // encoding that Chrome works out for it (text_resource_decoder_builder.h), the
 // scripts that the parser runs, and the document's readiness with
 // DOMContentLoaded and load, as Blink's HTMLDocumentParser and
@@ -12,7 +14,9 @@
 // which goes on from a task of a very high priority once the script is
 // ready, and the parser after it from a later task. Deferred scripts run
 // after parsing, each from a task of its own, then DOMContentLoaded fires,
-// and load once nothing holds it back, such as an async script.
+// and load once nothing holds it back, such as an async script, with pageshow
+// after it. A navigation that the document starts while it loads stops the
+// parser, and no load event fires.
 //
 // Upstream: third_party/blink/renderer/core/loader/document_loader.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_document_parser.cc
@@ -41,26 +45,43 @@ class Document;
 class DocumentLoadTiming;
 class HTMLScriptElement;
 class HtmlDocumentParser;
+class PageFrame;
 class PendingScript;
 class ScriptRunner;
 class TextResourceDecoder;
 
 class DocumentLoader final : public PageRequests::Client {
  public:
-  DocumentLoader(ScriptRunner& runner, PageRequests& requests, SendFrame send);
+  // Loads the response of navigation `number` into a document of `frame`.
+  DocumentLoader(ScriptRunner& runner,
+                 PageRequests& requests,
+                 SendFrame send,
+                 PageFrame& frame,
+                 uint64_t number);
 
   DocumentLoader(const DocumentLoader&) = delete;
   DocumentLoader& operator=(const DocumentLoader&) = delete;
 
   ~DocumentLoader() override;
 
+  uint64_t number() const { return number_; }
+  // DocumentLoader::StopLoading(), once another document takes the place of
+  // this one's: the parser stops, and so does the body, if it still comes.
+  void StopLoading();
+
   // PageRequests::Client, for the navigation:
   void OnResponseStarted(const PageResponseStarted& response) override;
   void OnResponseBody(std::string bytes) override;
   void OnResponseTotals(const PageResponseEnded& ended) override;
+  // A navigation that ends with no response tells the frame, which lets this
+  // go: nothing may come after it.
   void OnResponseEnded(int net_error) override;
 
  private:
+  // Document::CancelParsing(): the parser stops where it is, and the scripts
+  // that it waited for, or that wait for the end of parsing, never run. What
+  // more of the body comes is taken and dropped.
+  void CancelParsing();
   // Gives the parser what the decoder decoded, after the document has taken
   // the decoder's encoding.
   void AppendDecoded(std::u16string text);
@@ -105,6 +126,10 @@ class DocumentLoader final : public PageRequests::Client {
   const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;
   const SendFrame send_;
+  const raw_ref<PageFrame> frame_;
+  const uint64_t number_;
+  bool response_started_ = false;
+  bool parsing_cancelled_ = false;
 
   GURL url_;
   cppgc::Persistent<Document> document_;
