@@ -69,6 +69,7 @@ const bindings::WrapperTypeInfo* Element::GetWrapperTypeInfo() const {
 void Element::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   attr_nodes_.Trace(visitor);
+  token_lists_.Trace(visitor);
   visitor->Trace(attribute_map_);
   visitor->Trace(class_list_);
   visitor->Trace(part_);
@@ -210,6 +211,20 @@ NamedNodeMap* Element::AttributesForBindings() {
     attribute_map_ = NamedNodeMap::Create(*this);
   }
   return attribute_map_.Get();
+}
+
+DOMTokenList* Element::EnsureTokenList(
+    std::u16string_view attribute_name,
+    DOMTokenList::SupportedTokens supported_tokens) {
+  for (size_t i = 0; i < token_lists_.size(); ++i) {
+    if (token_lists_[i]->AttributeName() == attribute_name) {
+      return token_lists_[i];
+    }
+  }
+  DOMTokenList* const list = DOMTokenList::Create(
+      *this, std::u16string(attribute_name), supported_tokens);
+  token_lists_.push_back(list);
+  return list;
 }
 
 DOMTokenList* Element::ClassList() {
@@ -629,6 +644,12 @@ std::u16string Element::InnerHTML() const {
 
 std::u16string Element::OuterHTML() const {
   return SerializeNode(*this);
+}
+
+std::u16string Element::GetHTML(
+    const bindings::GetHTMLOptions& options,
+    bindings::ExceptionState& exception_state) const {
+  return SerializeChildren(*this);
 }
 
 NodeVector Element::ParseFragment(const std::u16string& html,

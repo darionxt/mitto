@@ -282,6 +282,10 @@ class TypeMapper:
             # Empty for null, when the type is nullable.
             return "v8::Local<v8::Function>"
         if kind is TypeKind.SEQUENCE and not idl_type.nullable:
+            if self._holds_no_object(idl_type.members[0]):
+                # Always empty: no object is of an interface without a class, as no ShadowRoot is for
+                # GetHTMLOptions' shadowRoots.
+                return "const std::vector<bindings::ScriptWrappable*>&"
             element = self.value_type(idl_type.members[0], where)
             return f"const std::vector<{element}>&"
         if kind is TypeKind.RECORD and not idl_type.nullable:
@@ -294,6 +298,11 @@ class TypeMapper:
         if kind is TypeKind.UNION and not idl_type.nullable:
             self._register_union(idl_type, where)
             return f"const {union_name(idl_type)}&"
+        if kind is TypeKind.UNION and not any(member.kind is TypeKind.DICTIONARY for member in idl_type.members):
+            # Empty for null, and for undefined, which Web IDL converts to null for a nullable union without a
+            # dictionary, as HTMLElement's hidden takes them.
+            self._register_union(dataclasses.replace(idl_type, nullable=False), where)
+            return f"const std::optional<{union_name(idl_type)}>&"
         raise self._refuse(idl_type, where, "an argument")
 
     def value_type(self, idl_type: IdlType, where: str) -> str:
@@ -313,14 +322,19 @@ class TypeMapper:
         idl_type = self.reduce(idl_type)
         kind = idl_type.kind
         # The class gives null as a value of its own for a nullable frozen array.
-        nullable_ok = kind in (
-            TypeKind.INTERFACE,
-            TypeKind.ANY,
-            TypeKind.STRING,
-            TypeKind.FROZEN_ARRAY,
-            TypeKind.FLOATING_POINT,
-            TypeKind.CALLBACK_INTERFACE,
-        ) or self._is_union_of_classes(idl_type)
+        nullable_ok = (
+            kind
+            in (
+                TypeKind.INTERFACE,
+                TypeKind.ANY,
+                TypeKind.STRING,
+                TypeKind.FROZEN_ARRAY,
+                TypeKind.FLOATING_POINT,
+                TypeKind.CALLBACK_INTERFACE,
+            )
+            or self._is_union_of_classes(idl_type)
+            or self._is_union_of_values(idl_type)
+        )
         if idl_type.nullable and not nullable_ok:
             raise self._refuse(idl_type, where, "a return value")
         if kind is TypeKind.UNDEFINED:
@@ -367,6 +381,10 @@ class TypeMapper:
             for member in idl_type.members:
                 self.used_interfaces.add(member.name)
             return "bindings::ScriptWrappable*"
+        if self._is_union_of_values(idl_type):
+            # The value of one of its members, or null, which the class makes, as Blink's class makes the union's Ret
+            # for HTMLElement's hidden.
+            return "v8::Local<v8::Value>"
         if kind is TypeKind.INTERFACE and idl_type.name in self._implemented:
             self.used_interfaces.add(idl_type.name)
             return f"mitto::{idl_type.name}*"
@@ -428,6 +446,8 @@ class TypeMapper:
             return expression
         if kind is TypeKind.INTERFACE or self._is_union_of_classes(idl_type):
             return f"ToV8(isolate, {expression})"
+        if self._is_union_of_values(idl_type):
+            return expression
         if kind is TypeKind.CALLBACK_INTERFACE:
             return f"ToV8NullableObject(isolate, {expression})"
         if kind is TypeKind.SEQUENCE:
@@ -442,6 +462,20 @@ class TypeMapper:
         """Whether the type is a union whose members are all interfaces with a class."""
         return idl_type.kind is TypeKind.UNION and all(
             member.kind is TypeKind.INTERFACE and member.name in self._implemented and not member.nullable
+            for member in idl_type.members
+        )
+
+    def _holds_no_object(self, idl_type: IdlType) -> bool:
+        """Whether the type is an interface without a class, which no value converts to."""
+        reduced = self.reduce(idl_type)
+        return reduced.kind is TypeKind.INTERFACE and not reduced.nullable and reduced.name not in self._implemented
+
+    @staticmethod
+    def _is_union_of_values(idl_type: IdlType) -> bool:
+        """Whether the type is a union whose members are all booleans, numbers or strings."""
+        return idl_type.kind is TypeKind.UNION and all(
+            member.kind in (TypeKind.BOOLEAN, TypeKind.INTEGER, TypeKind.FLOATING_POINT, TypeKind.STRING)
+            and not member.nullable
             for member in idl_type.members
         )
 
@@ -585,6 +619,18 @@ class TypeMapper:
             if idl_type.nullable:
                 raise self._refuse(idl_type, where, "a value")
             element_type = idl_type.members[0]
+            if self._holds_no_object(element_type):
+                # Any item fails to convert, with NativeValue()'s message, as an item does.
+                not_of_type = Site(fail="", element=True).not_of_type(self.reduce(element_type).name)
+                return [
+                    f"{cpp_type} {target};",
+                    f"if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value>) {{",
+                    f"      exception_state.ThrowTypeError({not_of_type});",
+                    "      return false;",
+                    "    })) {",
+                    f"  {site.fail}",
+                    "}",
+                ]
             element = self._name("element")
             item = self._name("item")
             inner = self.from_v8(element_type, item, element, Site(fail="return false;", element=True), where)
@@ -716,6 +762,14 @@ class TypeMapper:
                 lines.append("} else {")
             lines += [f"  exception_state.ThrowTypeError({site.not_of_type('Object')});", f"  {site.fail}", "}"]
             return lines
+        if kind is TypeKind.UNION and idl_type.nullable:
+            return [
+                f"{cpp_type} {target};",
+                f"if (!{value}->IsNullOrUndefined() &&",
+                f"    !FromV8(isolate, {value}, exception_state, &{target}.emplace())) {{",
+                f"  {site.fail}",
+                "}",
+            ]
         if kind in (TypeKind.DICTIONARY, TypeKind.UNION):
             return [
                 f"{cpp_type} {target};",

@@ -34,6 +34,7 @@ class AttachedTraversals;
 class Attr;
 class Comment;
 class CookieJar;
+class DOMImplementation;
 class DocumentFragment;
 class CustomElementRegistry;
 class DocumentScriptRunner;
@@ -84,7 +85,7 @@ class Document : public Node {
   // The name of the document's encoding, which charset and inputEncoding give
   // too.
   std::u16string CharacterSet() const;
-  std::u16string ContentType() const;
+  std::u16string ContentType() const { return content_type_; }
   DocumentType* Doctype() const;
   Element* DocumentElement() const { return FirstElementChild(); }
   std::u16string Title() const;
@@ -143,6 +144,8 @@ class Document : public Node {
   // a document without a window, as Blink has no execution context to make it
   // from.
   PermissionsPolicy* FeaturePolicy();
+  // The document's own, the same object on every read.
+  DOMImplementation* Implementation();
   Attr* CreateAttribute(const std::u16string& local_name,
                         bindings::ExceptionState& exception_state);
   Attr* CreateAttributeNS(const std::optional<std::u16string>& namespace_uri,
@@ -287,6 +290,14 @@ class Document : public Node {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+  // A new document of the same class, which a copy starts from, as Blink's
+  // CloneDocumentWithoutChildren() makes it.
+  virtual Document* CloneDocumentWithoutChildren() const;
+  // The MIME type that contentType gives, which an XML document sets as Blink's
+  // SetMimeType() does.
+  void SetContentType(std::u16string content_type) {
+    content_type_ = std::move(content_type);
+  }
 
  private:
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
@@ -297,6 +308,7 @@ class Document : public Node {
                              HTMLCollection::Type type);
 
   const bool is_html_;
+  std::u16string content_type_;
   const base::TimeTicks start_time_ = base::TimeTicks::Now();
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
@@ -318,6 +330,7 @@ class Document : public Node {
   cppgc::Member<HTMLCollection> applets_;
   cppgc::Member<HTMLAllCollection> all_;
   cppgc::Member<PermissionsPolicy> feature_policy_;
+  cppgc::Member<DOMImplementation> implementation_;
   cppgc::Member<AttachedTraversals> traversals_;
   cppgc::Member<Document> template_document_;
   // The document whose template document this is.

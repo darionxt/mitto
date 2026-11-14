@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "base/containers/span.h"
+#include "mitto/dom/dom_token_list.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/qualified_name.h"
@@ -29,7 +30,6 @@ namespace mitto {
 
 class Attr;
 class DOMStringMap;
-class DOMTokenList;
 class NamedNodeMap;
 
 class Element : public Node {
@@ -89,6 +89,10 @@ class Element : public Node {
   NamedNodeMap* AttributesForBindings();
   DOMTokenList* ClassList();
   DOMTokenList* Part();
+  // The same list of the content attribute `attribute_name` on every read,
+  // as Blink's element classes keep relList, sandbox and the rest.
+  DOMTokenList* EnsureTokenList(std::u16string_view attribute_name,
+                                DOMTokenList::SupportedTokens supported_tokens);
   // HTMLOrForeignElement's dataset, the same object on every read.
   DOMStringMap* Dataset();
   Attr* GetAttributeNode(const std::u16string& name);
@@ -104,6 +108,10 @@ class Element : public Node {
   void SetInnerHTML(const std::u16string& html,
                     bindings::ExceptionState& exception_state);
   std::u16string OuterHTML() const;
+  // The markup of its children, as innerHTML gives it. The options name
+  // shadow roots to serialize, which the Runtime has none of yet.
+  std::u16string GetHTML(const bindings::GetHTMLOptions& options,
+                         bindings::ExceptionState& exception_state) const;
   void SetOuterHTML(const std::u16string& html,
                     bindings::ExceptionState& exception_state);
   Element* Closest(const std::u16string& selectors,
@@ -278,6 +286,7 @@ class Element : public Node {
   // The nodes of the attributes that a page has asked for, as Blink's
   // AttrNodeList.
   HeapVector<Attr> attr_nodes_;
+  HeapVector<DOMTokenList> token_lists_;
   cppgc::Member<NamedNodeMap> attribute_map_;
   cppgc::Member<DOMTokenList> class_list_;
   cppgc::Member<DOMTokenList> part_;
