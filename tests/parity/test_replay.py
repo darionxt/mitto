@@ -93,6 +93,22 @@ def test_no_run_records_a_case_over_a_protocol_it_does_not_have() -> None:
     assert run_of("no_such_case", HTTP1) is None
 
 
+def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of_m8() -> None:
+    waiting = {name: replay.made_by_a_page for name, replay in REPLAYS.items() if replay.made_by_a_page is not None}
+
+    assert set(waiting) <= {case.name for case in DOCUMENT_CASES}
+    assert set(waiting.values()) <= {279, 280, 283, 284, 285, 289}
+
+
+def test_a_check_skips_a_case_that_only_a_page_makes() -> None:
+    def recorder(baseline: Baseline) -> dict[str, Json]:
+        raise AssertionError(f"{baseline.case} was replayed")
+
+    baseline = Baseline(_RELEASE, "document_style", HTTP2, {"request": None})
+
+    assert find_gaps([baseline], recorder) == []
+
+
 def test_only_a_later_hop_and_what_opens_a_tunnel_ask_for_another_case() -> None:
     starts = {name: replay.start for name, replay in REPLAYS.items() if replay.start is not None}
 

@@ -12,7 +12,7 @@ from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
-from tools.parity.replay import needs_cache, proxy_of, replay, run_of, session_settings
+from tools.parity.replay import made_by_a_page, needs_cache, proxy_of, replay, run_of, session_settings
 
 BASELINES_DIRECTORY = Path(__file__).parents[2] / "tests" / "baselines"
 
@@ -193,7 +193,8 @@ def as_recorded(case: Case, recording: Recording) -> Case:
 def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> list[Gap]:
     """Make the request of each Baseline, and return every gap in the order of the Baselines and of their fields.
 
-    A request that gets no response has nothing to compare, so it is one gap, in the field "response".
+    A request that gets no response has nothing to compare, so it is one gap, in the field "response". A Baseline of a
+    case that only a page makes, until a Page makes it (made_by_a_page()), is left out.
 
     Raises:
         BaselineError: No Persona presents the Chrome Release of a Baseline, or no run records its Recording Case.
@@ -202,6 +203,8 @@ def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> lis
     """
     gaps: list[Gap] = []
     for baseline in baselines:
+        if made_by_a_page(baseline.case) is not None:
+            continue
         try:
             recorded = recorder(baseline)
         except RequestError as error:

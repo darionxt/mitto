@@ -64,6 +64,9 @@ class Replay:
         page_host: The name of that page, or nothing for the name the case's run starts at.
         cache: Whether the Session has a cache in a directory, as the Chrome that recorded the case had, for a case that
             needs one to show what it is about.
+        made_by_a_page: The issue that makes a Page make this request, for a case that only a page makes in a way that a
+            caller cannot say, such as a navigation that no user started. No check replays it until that issue
+            replays it through a Page and clears this.
     """
 
     kind: RequestKind
@@ -77,6 +80,7 @@ class Replay:
     page: str | None = None
     page_host: str | None = None
     cache: bool = False
+    made_by_a_page: int | None = None
 
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
@@ -154,9 +158,9 @@ def _client_hints_replays() -> dict[str, Replay]:
 def _document_replays() -> dict[str, Replay]:
     """Return what produces each case of the documents runs, as far as a Session reaches.
 
-    A page's own request names its page as the Initiator here, as a caller's does. What only a page in a Page can say of a
-    request, such as that it comes from a worker or from a frame of another site, or that no user started a navigation,
-    shows as gaps until a Page makes these requests itself.
+    A page's own request names its page as the Initiator here, as a caller's does. A case that only a page makes in a way a
+    caller cannot say, such as a worker's request, one of a frame of another site, a navigation that no user started, or
+    what a document's markup asks for in Blink's order and priorities, names the issue that makes a Page make it.
     """
     start = DOCUMENTS_START_PATH
     frame = _PATHS["frame_cross_site"]
@@ -173,13 +177,13 @@ def _document_replays() -> dict[str, Replay]:
         "xhr_get": Replay(RequestKind.XHR, page=start),
         "xhr_get_cross_site": Replay(RequestKind.XHR, host=CROSS_SITE_HOST, page=start),
         "xhr_post_text": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
-        "xhr_get_sync": Replay(RequestKind.XHR, page=start),
-        "xhr_post_text_sync": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
+        "xhr_get_sync": Replay(RequestKind.XHR, page=start, made_by_a_page=283),
+        "xhr_post_text_sync": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start, made_by_a_page=283),
         "worker": Replay(RequestKind.WORKER, page=start),
-        "worker_import_scripts": Replay(RequestKind.SCRIPT, page=_PATHS["worker"]),
-        "worker_fetch": Replay(RequestKind.FETCH, page=_PATHS["worker"]),
+        "worker_import_scripts": Replay(RequestKind.SCRIPT, page=_PATHS["worker"], made_by_a_page=289),
+        "worker_fetch": Replay(RequestKind.FETCH, page=_PATHS["worker"], made_by_a_page=289),
         "worker_module": Replay(RequestKind.WORKER, page=start),
-        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start),
+        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start, made_by_a_page=289),
         "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
         "beacon_blob": Replay(RequestKind.BEACON, _POST, body={"data": b"blob body"}, page=start),
         "beacon_form_data": Replay(
@@ -213,36 +217,50 @@ def _document_replays() -> dict[str, Replay]:
             page=start,
         ),
         "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start),
-        "navigation_location": Replay(RequestKind.NAVIGATION, page=start),
-        "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"]),
-        "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"]),
+        "navigation_location": Replay(RequestKind.NAVIGATION, page=start, made_by_a_page=279),
+        "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], made_by_a_page=279),
+        "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], made_by_a_page=279),
         "redirect_location_1": Replay(
-            RequestKind.NAVIGATION, start="redirect_location_1", page=_PATHS["navigation_meta_refresh"]
+            RequestKind.NAVIGATION,
+            start="redirect_location_1",
+            page=_PATHS["navigation_meta_refresh"],
+            made_by_a_page=279,
         ),
         "redirect_location_2": Replay(
-            RequestKind.NAVIGATION, start="redirect_location_1", page=_PATHS["navigation_meta_refresh"]
+            RequestKind.NAVIGATION,
+            start="redirect_location_1",
+            page=_PATHS["navigation_meta_refresh"],
+            made_by_a_page=279,
         ),
         "frame_same_origin": Replay(RequestKind.IFRAME, page=DOCUMENTS_FRAMES_PATH),
         "frame_same_site": Replay(RequestKind.IFRAME, host=SAME_SITE_HOST, page=DOCUMENTS_FRAMES_PATH),
         "frame_cross_site": Replay(RequestKind.IFRAME, host=CROSS_SITE_HOST, page=DOCUMENTS_FRAMES_PATH),
-        "frame_script": Replay(RequestKind.SCRIPT, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST),
-        "frame_image": Replay(RequestKind.IMAGE, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST),
-        "frame_fetch": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST),
+        "frame_script": Replay(
+            RequestKind.SCRIPT, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST, made_by_a_page=285
+        ),
+        "frame_image": Replay(
+            RequestKind.IMAGE, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST, made_by_a_page=285
+        ),
+        "frame_fetch": Replay(
+            RequestKind.FETCH, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST, made_by_a_page=285
+        ),
         # The page of the frames sets a cookie of each SameSite for these two.
         "frame_nested": Replay(
             RequestKind.IFRAME, asks=(DOCUMENTS_FRAMES_PATH,), page=frame, page_host=CROSS_SITE_HOST
         ),
-        "frame_nested_fetch": Replay(RequestKind.FETCH, asks=(DOCUMENTS_FRAMES_PATH,), page=_PATHS["frame_nested"]),
-        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH),
-        "document_preload_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH),
-        "document_preload_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH),
-        "document_preload_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH),
-        "document_preload_font": Replay(RequestKind.FONT, page=DOCUMENT_PATH),
-        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH),
-        "document_image_small": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH),
-        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH),
-        "document_style_body": Replay(RequestKind.STYLE, page=DOCUMENT_PATH),
-        "document_script_deferred": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH),
+        "frame_nested_fetch": Replay(
+            RequestKind.FETCH, asks=(DOCUMENTS_FRAMES_PATH,), page=_PATHS["frame_nested"], made_by_a_page=285
+        ),
+        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_preload_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_preload_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_preload_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_preload_font": Replay(RequestKind.FONT, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_image_small": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_style_body": Replay(RequestKind.STYLE, page=DOCUMENT_PATH, made_by_a_page=284),
+        "document_script_deferred": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH, made_by_a_page=284),
         "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH),
         "navigation_form_get": Replay(RequestKind.NAVIGATION, page=DOCUMENTS_FORMS_PATH),
         "navigation_form_text": Replay(
@@ -264,6 +282,7 @@ def _document_replays() -> dict[str, Replay]:
             asks=(HISTORY_COOKIE_SET_PATH,),
             page=_PATHS["navigation_form_cross_site"],
             page_host=CROSS_SITE_HOST,
+            made_by_a_page=280,
         ),
     }
 
@@ -346,6 +365,11 @@ def run_of(case: str, protocol: str) -> Run | None:
 def proxy_of(server: CaptureServer, run: Run) -> str | None:
     """Return the proxy that the Chrome of a run went through, or None if it went directly."""
     return server.proxy_url if run.route in _PROXIED_ROUTES else None
+
+
+def made_by_a_page(case: str) -> int | None:
+    """Return the issue that makes a Page make a Recording Case, until which no check replays it, or None."""
+    return REPLAYS[case].made_by_a_page
 
 
 def needs_cache(case: str) -> bool:

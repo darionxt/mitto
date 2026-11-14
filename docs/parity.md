@@ -54,24 +54,24 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 | `client_hints_*` | A navigation to the page that asks, as `asks` in its `Replay` says, and then the case, as for the cases above | Nothing |
-| The cases of documents | The case's path at its name, with the Request Kind of what asked for it, from the page that asked for it, which its `Referer` names: a stylesheet for its `@import` and fonts, a module for what it imports, the cross-site frame for what it asks for. `asks` sets the cookies that a case carries first, as the case's run did | What only a page in a Page can say of a request, as [below](#what-a-session-cannot-replay-of-a-document) |
+| The cases of documents | The case's path at its name, with the Request Kind of what asked for it, from the page that asked for it, which its `Referer` names: a stylesheet for its `@import` and fonts, a module for what it imports, the cross-site frame for what it asks for. `asks` sets the cookies that a case carries first, as the case's run did | What only a page can say of a request, whose cases a check skips, as [below](#what-a-session-cannot-replay-of-a-document) |
 
 The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
 
 ### What a Session cannot replay of a document
 
-A Session replays the cases of documents as a caller would make them, and a Page makes some of them in ways a caller cannot say. Those show as Known Gaps, which go when a Page makes the request itself, through the private API, as [the Script Fingerprint's checks](#the-script-fingerprint) run, or when a caller can say it:
+A Session replays the cases of documents as a caller would make them. A page makes some of them in ways that a caller cannot say, and a check skips those until a Page makes the request itself, through the private API, as [the Script Fingerprint's checks](#the-script-fingerprint) run. `made_by_a_page` in each such case's `Replay` names the issue that does it, and `python -m tools.parity` lists them as skipped:
 
-| Cases | What a Session cannot say | Who closes them |
+| Cases | What a caller cannot say | Who makes a Page make them |
 | --- | --- | --- |
-| `preflight` | That the request after it needs a CORS preflight, which the library does not make yet | [#282](https://github.com/darionxt/mitto/issues/282) |
-| `fetch_credentials_include`, `fetch_no_cors` | A `credentials` mode and a `mode` of `fetch()` | [#282](https://github.com/darionxt/mitto/issues/282) |
 | `navigation_location`, `navigation_click`, `navigation_meta_refresh`, `redirect_location_*` | That no user started the navigation, so it has no `Sec-Fetch-User` | [#279](https://github.com/darionxt/mitto/issues/279) |
 | `navigation_history_back` | That it traverses history, without a user's activation | [#280](https://github.com/darionxt/mitto/issues/280) |
 | `xhr_get_sync`, `xhr_post_text_sync` | That the request is synchronous, which Blink gives the highest priority | [#283](https://github.com/darionxt/mitto/issues/283) |
 | `worker_import_scripts`, `worker_fetch`, `worker_blob_fetch` | That a worker asks for it, which sends no hints, at the worker's priority, and with no `Referer` from a `blob:` worker | [#289](https://github.com/darionxt/mitto/issues/289) |
 | `frame_script`, `frame_image`, `frame_fetch`, `frame_nested_fetch` | That a frame of another site asks for it, whose site for cookies is no site | [#285](https://github.com/darionxt/mitto/issues/285) |
-| `document_*`, `favicon` | The priority that Blink gives what a document's markup asks for, and over HTTP/2 and HTTP/3 the order in which it asks | [#284](https://github.com/darionxt/mitto/issues/284) |
+| `document_*` | The priority that Blink gives what a document's markup asks for, and over HTTP/2 and HTTP/3 the order in which it asks | [#284](https://github.com/darionxt/mitto/issues/284) |
+
+The other cases of documents, the frames' own navigations, `frame_nested` and `favicon` among them, have checks now, and what a Session cannot replay of them yet is in the known-gaps list, as for any case.
 
 `order`, which a normal form of documents holds over HTTP/2 and HTTP/3, belongs to the fingerprint of each case it names, and to no other, so it shows only in the `document_*` cases.
 
