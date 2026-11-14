@@ -336,6 +336,30 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack
             id="document-of-no-response",
         ),
         pytest.param(
+            "storage-of-opaque-origin",
+            f"{_HELLO}\nsend(27, struct.pack('<QQBQ', 1, 1, 1, 1))",
+            "the library refused a message from the Page: a storage area of a document that has no storage key",
+            id="storage-of-opaque-origin",
+        ),
+        pytest.param(
+            "storage-unbound-question",
+            f"{_HELLO}\nsend(28, struct.pack('<QQ', 5, 6))",
+            "the library refused a message from the Page: a question for a storage area that is not bound",
+            id="storage-unbound-question",
+        ),
+        pytest.param(
+            "storage-unbound-change",
+            f"{_HELLO}\nsend(30, struct.pack('<QQQI', 5, 1, 2, 0) + b'\\x01k')",
+            "the library refused a message from the Page: a change to a storage area that is not bound",
+            id="storage-unbound-change",
+        ),
+        pytest.param(
+            "storage-unbound-unbind",
+            f"{_HELLO}\nsend(32, struct.pack('<Q', 3))",
+            "the library refused a message from the Page: a storage area that is not bound",
+            id="storage-unbound-unbind",
+        ),
+        pytest.param(
             "page-refuses",
             f"{_HELLO}\nsend(2, 'it does not like you'.encode())",
             "the Page refused a message from the library: it does not like you",

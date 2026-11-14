@@ -936,6 +936,82 @@ def _loaded(session: _Session) -> None:
     assert session.receive() == (_LOADED, _DOCUMENT)
 
 
+# The storage messages of native/page_messages.h.
+_STORAGE_BIND = 27
+_STORAGE_GET_ALL = 28
+_STORAGE_PUT = 29
+_STORAGE_ENTRIES = 33
+_STORAGE_KEY_CHANGED = 34
+_STORAGE_KEY_CHANGE_FAILED = 35
+# A byte that says Latin-1, as Blink writes a key or value of localStorage that fits, or UTF-16.
+_LATIN_1 = b"\x01"
+_UTF_16 = b"\x00"
+
+
+def _storage_source(token: bytes, url: str) -> bytes:
+    return token + _sized(url.encode())
+
+
+def test_a_page_keeps_local_storage_in_its_session(session: _Session) -> None:
+    session.start()
+    _loaded(session)
+
+    # The first read binds the area for the document, with its observer, and waits for all it holds, which may come
+    # in more than one frame.
+    session.send(
+        _EVALUATE, struct.pack("<Q", 1) + rb"[localStorage.getItem('k'), localStorage.getItem('\u00e9\u65e5')]"
+    )
+    assert session.receive() == (_STORAGE_BIND, _DOCUMENT + struct.pack("<QBQ", 1, 1, 1))
+    assert session.receive() == (_STORAGE_GET_ALL, struct.pack("<QQ", 1, 2))
+    session.send(_STORAGE_ENTRIES, struct.pack("<QB", 1, 0) + _sized(_LATIN_1 + b"k") + _sized(_LATIN_1 + b"v"))
+    session.send(
+        _STORAGE_ENTRIES,
+        struct.pack("<QB", 1, 1) + _sized(_UTF_16 + "é日".encode("utf-16-le")) + _sized(_LATIN_1 + b"\xe9"),
+    )
+    assert session.evaluated() == (1, False, '["v","é"]')
+
+    # A write goes on its own, with the window's token and its document's URL.
+    assert session.evaluate(
+        "localStorage.setItem('n', '\u00e9'); addEventListener('storage', (e) => "
+        "(window.heard = [e.key, e.oldValue, e.newValue, e.url, e.storageArea === localStorage]))"
+        "; localStorage.n"
+    ) == (False, '"é"')
+    message_type, payload = session.receive()
+    assert message_type == _STORAGE_PUT
+    token = payload[8:24]
+    assert payload == struct.pack("<Q", 1) + _storage_source(token, _DOCUMENT_URL) + _sized(_LATIN_1 + b"n") + (
+        _LATIN_1 + b"\xe9"
+    )
+
+    # Another Page's change reaches the window, and one for the observer that the read replaced does not.
+    other = bytes(range(16))
+    for observer, value in ((1, b"stale"), (2, b"w")):
+        session.send(
+            _STORAGE_KEY_CHANGED,
+            struct.pack("<Q", observer)
+            + _storage_source(other, "http://www.example.test/other")
+            + _sized(_LATIN_1 + b"k")
+            + _sized(_LATIN_1 + value)
+            + b"\x01"
+            + _LATIN_1
+            + b"v",
+        )
+    assert session.evaluate("new Promise((r) => setTimeout(() => r([localStorage.k, window.heard]), 50))") == (
+        False,
+        '["w",["k","v","w","http://www.example.test/other",true]]',
+    )
+
+    # The Session refuses the window's own write for the quota, so the key goes back to what it was.
+    session.send(
+        _STORAGE_KEY_CHANGE_FAILED, struct.pack("<Q", 2) + _storage_source(token, _DOCUMENT_URL) + _LATIN_1 + b"n"
+    )
+    assert session.evaluate("new Promise((r) => setTimeout(() => r(localStorage.getItem('n')), 50))") == (
+        False,
+        "null",
+    )
+    assert session.close() == 0
+
+
 # What a page reads of the browser and the machine, from what the Page starts with.
 _NAVIGATOR_AND_SCREEN = """
     ({
@@ -1271,6 +1347,21 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         ),
         pytest.param(
             _COOKIE_STORE_GET, struct.pack("<QB", 1, 1), "message type 19 only goes to a Session", id="cookie-store-get"
+        ),
+        pytest.param(
+            _STORAGE_ENTRIES,
+            struct.pack("<QB", 9, 1),
+            "entries of storage area 9, which no script waits for",
+            id="storage-entries",
+        ),
+        pytest.param(
+            _STORAGE_KEY_CHANGED,
+            struct.pack("<Q", 1) + bytes(16) + _sized(b"") + _sized(b"k"),
+            "a storage event that is not valid",
+            id="storage-event-without-value",
+        ),
+        pytest.param(
+            _STORAGE_BIND, struct.pack("<QQBQ", 1, 1, 1, 1), "message type 27 only goes to a Session", id="storage-bind"
         ),
         pytest.param(_REQUEST, struct.pack("<QB", 1, 1) + b"x", "message type 8 only goes to a Session", id="request"),
         pytest.param(_RESPONSE_ENDED, _ended(0, 1), "the end of a response with the net error 1", id="positive-error"),
