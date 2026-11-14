@@ -82,6 +82,9 @@ class SVGAElement final : public SVGGraphicsElement {
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   int32_t DefaultTabIndex() const override;
+  DOMTokenList* RelList() {
+    return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
+  }
 };
 
 class SVGAnimateElement final : public SVGAnimationElement {

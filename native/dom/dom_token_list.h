@@ -30,13 +30,23 @@ class Element;
 
 class DOMTokenList : public bindings::ScriptWrappable {
  public:
+  // The tokens that supports() takes, as Blink's subclasses of DOMTokenList
+  // validate them: none, those of RelList for the element's name, those of
+  // HTMLIFrameElementSandbox, and BlockingAttribute's "render".
+  enum class SupportedTokens { kNone, kRel, kSandbox, kBlocking };
+
   // The list of `element`'s content attribute `attribute_name`, of no
-  // namespace, which has no supported tokens.
-  static DOMTokenList* Create(Element& element, std::u16string attribute_name);
+  // namespace.
+  static DOMTokenList* Create(
+      Element& element,
+      std::u16string attribute_name,
+      SupportedTokens supported_tokens = SupportedTokens::kNone);
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);
 
-  DOMTokenList(Element* element, std::u16string attribute_name);
+  DOMTokenList(Element* element,
+               std::u16string attribute_name,
+               SupportedTokens supported_tokens = SupportedTokens::kNone);
   ~DOMTokenList() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -61,6 +71,9 @@ class DOMTokenList : public bindings::ScriptWrappable {
   std::u16string Value() const;
   void SetValue(const std::u16string& value);
 
+  // The content attribute that the list reads and writes.
+  const std::u16string& AttributeName() const { return attribute_name_; }
+
  protected:
   // The DOM standard's validation steps, Blink's ValidateTokenValue(), for a
   // token in lower case: a list with no supported tokens throws.
@@ -79,6 +92,7 @@ class DOMTokenList : public bindings::ScriptWrappable {
 
   const cppgc::Member<Element> element_;
   const std::u16string attribute_name_;
+  const SupportedTokens supported_tokens_;
 };
 
 }  // namespace mitto

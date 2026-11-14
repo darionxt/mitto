@@ -25,6 +25,10 @@ class HTMLAnchorElementBase : public HTMLElement {
   // The members of HTMLHyperlinkElementUtils.
   std::u16string Href() const;
   void SetHref(const std::u16string& value);
+  // relList, of the link types that Blink's RelList supports.
+  DOMTokenList* RelList() {
+    return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
+  }
   std::u16string Origin() const;
   std::u16string Protocol() const;
   void SetProtocol(const std::u16string& value);
