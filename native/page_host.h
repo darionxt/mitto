@@ -347,7 +347,9 @@ class PageHost final : public PageChannel::Delegate {
   // answers it, always for the document that the Session loaded.
   void OnCookieStoreGet(PageCookieStoreGet get, const CookieContext& context);
   void OnCookieStoreSet(PageCookieStoreSet set, const CookieContext& context);
-  void OnCookieStoreListen(bool listen, const CookieContext& context);
+  void OnCookieStoreListen(bool listen,
+                           uint64_t document,
+                           const CookieContext& context);
   // A message of one of the document's BroadcastChannels, for the Session's
   // other Pages of the document's origin, which the library takes from the
   // document it loaded, not from the Page.
@@ -367,6 +369,9 @@ class PageHost final : public PageChannel::Delegate {
   // Context `id`, or null after refusing a message of `type` that names a
   // context that is not the Page's.
   const Context* ContextOf(uint64_t id, uint32_t type);
+  // The URL that what a context asks for is judged by: its own, or its
+  // origin's for a frame's initial about:blank or a worker of a blob: URL.
+  static GURL ContextUrl(const Context& context);
   // Context `id` and each context under it: the documents of its frames, the
   // workers it started, and theirs.
   std::set<uint64_t> ContextsUnder(uint64_t id) const;
@@ -447,7 +452,8 @@ class PageHost final : public PageChannel::Delegate {
   void SendCookieStoreCookies(const PageCookieStoreGet& get,
                               const net::CookieAccessResultList& cookies,
                               const net::CookieAccessResultList& excluded);
-  void OnCookieStoreChange(const net::CookieChangeInfo& change);
+  void OnCookieStoreChange(uint64_t document,
+                           const net::CookieChangeInfo& change);
 
   // Whether a document at `document_url` can have cookies, which only one that
   // the Session loaded over HTTP or HTTPS can.
@@ -526,10 +532,18 @@ class PageHost final : public PageChannel::Delegate {
     int32_t status = 0;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
-  // While a document's CookieStore listens: what tells it of each change, and
-  // what the document's cookie calls are made for.
-  std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;
-  CookieContext cookie_store_context_;
+  // The documents whose CookieStores listen, by ID: what tells each of each
+  // change, and what its cookie calls are made for.
+  struct CookieStoreListener {
+    CookieStoreListener();
+    CookieStoreListener(CookieStoreListener&&);
+    CookieStoreListener& operator=(CookieStoreListener&&);
+    ~CookieStoreListener();
+
+    std::unique_ptr<net::CookieChangeSubscription> subscription;
+    CookieContext context;
+  };
+  std::map<uint64_t, CookieStoreListener> cookie_store_listeners_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

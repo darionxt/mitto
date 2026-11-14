@@ -1630,40 +1630,46 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set,
 
 // RestrictedCookieManager::AddChangeListener(), and dropping the listener's
 // pipe.
-void PageHost::OnCookieStoreListen(bool listen, const CookieContext& context) {
+void PageHost::OnCookieStoreListen(bool listen,
+                                   uint64_t document,
+                                   const CookieContext& context) {
   if (!listen) {
-    cookie_store_subscription_.reset();
+    cookie_store_listeners_.erase(document);
     return;
   }
-  if (cookie_store_subscription_ || !DocumentHasCookies(context.url)) {
+  if (cookie_store_listeners_.contains(document) ||
+      !DocumentHasCookies(context.url)) {
     return;
   }
-  cookie_store_context_ = context;
+  CookieStoreListener& listener = cookie_store_listeners_[document];
+  listener.context = context;
   // The dispatcher stops calling once the subscription goes, which this
   // owns.
-  cookie_store_subscription_ =
+  listener.subscription =
       network_->cookie_store().GetChangeDispatcher().AddCallbackForUrl(
           context.url, context.partition_key,
           base::BindRepeating(&PageHost::OnCookieStoreChange,
-                              base::Unretained(this)));
+                              base::Unretained(this), document));
 }
 
 // RestrictedCookieManager::Listener::OnCookieChange() and
 // CookieChangeEvent::ToEventInfo(): a change that the document's script may
 // see, but for an overwrite, which the insertion after it stands for.
-void PageHost::OnCookieStoreChange(const net::CookieChangeInfo& change) {
-  if (!channel_) {
+void PageHost::OnCookieStoreChange(uint64_t document,
+                                   const net::CookieChangeInfo& change) {
+  const auto listener = cookie_store_listeners_.find(document);
+  if (!channel_ || listener == cookie_store_listeners_.end()) {
     return;
   }
+  const CookieContext& context = listener->second.context;
   const net::CookieAccessDelegate* const delegate =
       network_->cookie_store().cookie_access_delegate();
-  const bool trustworthy = delegate && delegate->ShouldTreatUrlAsTrustworthy(
-                                           cookie_store_context_.url);
+  const bool trustworthy =
+      delegate && delegate->ShouldTreatUrlAsTrustworthy(context.url);
   if (!change.cookie
            .IncludeForRequestURL(
-               cookie_store_context_.url,
-               ScriptOptions(cookie_store_context_.url,
-                             cookie_store_context_.site_for_cookies,
+               context.url,
+               ScriptOptions(context.url, context.site_for_cookies,
                              /*set=*/false),
                net::CookieAccessParams(change.access_result.access_semantics,
                                        change.access_result.scope_semantics,
@@ -1672,6 +1678,7 @@ void PageHost::OnCookieStoreChange(const net::CookieChangeInfo& change) {
     return;
   }
   PageCookieStoreChange page_change;
+  page_change.document = document;
   switch (change.cause) {
     case net::CookieChangeCause::INSERTED:
     case net::CookieChangeCause::INSERTED_NO_VALUE_CHANGE_OVERWRITE:
@@ -1883,7 +1890,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     cache_storage_.reset();
   }
   // The old document's CookieStore listened over a pipe that went with it.
-  cookie_store_subscription_.reset();
+  cookie_store_listeners_.clear();
   // The navigation's document has taken the place of the Page's, after every
   // message of the old one, its load among them.
   if (navigated_status) {
@@ -1928,6 +1935,16 @@ void PageHost::PushNavigated(std::string url,
   Push(std::move(navigated));
 }
 
+// static
+GURL PageHost::ContextUrl(const Context& context) {
+  // A frame's initial about:blank and a worker of a blob: URL speak for their
+  // origin, which is HTTP or HTTPS where they have one to speak for.
+  if (context.url.SchemeIsHTTPOrHTTPS() || context.origin.opaque()) {
+    return context.url;
+  }
+  return context.origin.GetURL();
+}
+
 const PageHost::Context* PageHost::ContextOf(uint64_t id, uint32_t type) {
   const auto found = contexts_.find(id);
   if (found == contexts_.end()) {
@@ -1954,6 +1971,8 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   LetKeepaliveRequestsGo(&ids);
   for (const uint64_t id : ids) {
     contexts_.erase(id);
+    // Its CookieStore listened over a pipe that went with it.
+    cookie_store_listeners_.erase(id);
   }
   std::erase_if(frame_navigation_responses_, [&ids](const auto& entry) {
     return ids.contains(entry.second.parent) ||
@@ -2048,6 +2067,13 @@ GURL PageHost::TopDocumentUrl() const {
   return GURL();
 }
 
+PageHost::CookieStoreListener::CookieStoreListener() = default;
+PageHost::CookieStoreListener::CookieStoreListener(CookieStoreListener&&) =
+    default;
+PageHost::CookieStoreListener& PageHost::CookieStoreListener::operator=(
+    CookieStoreListener&&) = default;
+PageHost::CookieStoreListener::~CookieStoreListener() = default;
+
 PageHost::CookieContext::CookieContext() = default;
 PageHost::CookieContext::CookieContext(const CookieContext&) = default;
 PageHost::CookieContext& PageHost::CookieContext::operator=(
@@ -2058,7 +2084,7 @@ PageHost::CookieContext PageHost::CookieContextOf(uint64_t id) const {
   const Context& context = contexts_.at(id);
   const FrameTree tree = FrameTreeOf(id);
   CookieContext cookies;
-  cookies.url = context.url;
+  cookies.url = ContextUrl(context);
   cookies.site_for_cookies =
       tree.cross_site ? net::SiteForCookies()
                       : net::SiteForCookies::FromOrigin(tree.top_frame_origin);
@@ -2162,7 +2188,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
                            " of a worker, which only a document sends"}));
       return;
     }
-    document_url = context->url;
+    document_url = ContextUrl(*context);
   }
   switch (frame->type) {
     case PageMessage::kHello:
@@ -2262,7 +2288,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
                        CookieContextOf(frame->document));
       return;
     case PageMessage::kCookieStoreListen:
-      OnCookieStoreListen(frame->cookie_store_listen,
+      OnCookieStoreListen(frame->cookie_store_listen, frame->document,
                           CookieContextOf(frame->document));
       return;
     case PageMessage::kBroadcast:

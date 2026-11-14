@@ -334,8 +334,7 @@ _DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
         pytest.param(
             "unknown-document",
             f"{_HELLO}\nsend(10, struct.pack('<QQ', 5, 1))",
-            "the library refused a message from the Page: message type 10 of context 5, which is not one of the"
-            " Page's",
+            "the library refused a message from the Page: message type 10 of context 5, which is not one of the Page's",
             id="unknown-document",
         ),
         pytest.param(

@@ -1063,12 +1063,13 @@ base::expected<PageCookieStoreCookies, std::string> ReadCookieStoreCookies(
 
 base::expected<PageCookieStoreChange, std::string> ReadCookieStoreChange(
     std::string_view payload) {
-  if (payload.empty() || static_cast<uint8_t>(payload[0]) > 1) {
+  if (payload.size() < 9 || static_cast<uint8_t>(payload[8]) > 1) {
     return base::unexpected("a change of cookies that is not valid");
   }
   PageCookieStoreChange change;
-  change.deleted = payload[0] == 1;
-  std::string_view bytes = payload.substr(1);
+  change.document = DecodeUint64(payload.substr(0, 8));
+  change.deleted = payload[8] == 1;
+  std::string_view bytes = payload.substr(9);
   std::optional<PageCookie> cookie = TakeCookie(bytes);
   if (!cookie || !bytes.empty()) {
     return base::unexpected("a change of cookies that is not valid");
@@ -1096,8 +1097,8 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
   return broadcast;
 }
 
-// A document that the Page has made: its ID, a byte for its source, and for a
-// navigation's response the navigation's number.
+// A document that the Page has made: its ID, a byte for its source, its
+// parent, and for a navigation's response the navigation's number.
 base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     std::string_view payload) {
   if (payload.size() != 17 && payload.size() != 25) {
@@ -1748,7 +1749,8 @@ std::string EncodeCookieStoreStored(uint64_t answer, bool stored) {
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change) {
   const char deleted = change.deleted ? 1 : 0;
   return EncodeFrame(PageMessage::kCookieStoreChange,
-                     base::StrCat({std::string_view(&deleted, 1),
+                     base::StrCat({EncodeUint64(change.document),
+                                   std::string_view(&deleted, 1),
                                    EncodeCookie(change.cookie)}));
 }
 

@@ -1367,7 +1367,7 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         ),
         pytest.param(
             _COOKIE_STORE_CHANGE,
-            b"\x01\x08\x00" + bytes(8) + bytes(16),
+            _DOCUMENT + b"\x01\x08\x00" + bytes(8) + bytes(16),
             "a change of cookies that is not valid",
             id="cookie-store-unknown-flag",
         ),

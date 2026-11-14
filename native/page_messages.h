@@ -162,7 +162,7 @@ enum class PageMessage : uint32_t {
   // To the Page: the number of a kCookieStoreSet, as a 64-bit number, and a
   // byte, 1 if the cookie was stored and 0 if not.
   kCookieStoreStored = 23,
-  // To the Page, while the CookieStore listens: a change to the document's
+  // To the Page, while a document's CookieStore listens: a change to its
   // cookies, as PageCookieStoreChange says.
   kCookieStoreChange = 24,
   // To the Session: the ID of the document, and a message of one of its
@@ -797,7 +797,9 @@ struct PageCookieStoreCookies {
 
 // A change to the document's cookies that a CookieStore hears of: a cookie
 // that was set, or one that went, whose value and expiry it does not hand on.
+// Its payload names the document whose CookieStore listens first.
 struct PageCookieStoreChange {
+  uint64_t document = kNoDocument;
   bool deleted = false;
   PageCookie cookie;
 };

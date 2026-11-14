@@ -98,7 +98,29 @@ _FAKE_PAGE = textwrap.dedent(
     send(100, struct.pack("<QQBBQ", 5, 2, 1, 0, 3))
     send(8, request(5, 4, 2, "{worker_fetch}"))
     wait_for_end(4)
-    send(5, struct.pack("<QB", call, 0) + b"null")
+    # A frame's initial about:blank, of the top-level document's origin, whose CookieStore listens beside the
+    # top-level document's. Each hears of a change, until the frame goes.
+    send(70, struct.pack("<QBQ", 6, 0, 2))
+    send(21, struct.pack("<QB", 2, 1))
+    send(21, struct.pack("<QB", 6, 1))
+    changes = []
+
+    def wait_for_changes(count):
+        while len(changes) < count:
+            message_type, payload = receive()
+            if message_type == 24:
+                changes.append(struct.unpack_from("<Q", payload)[0])
+
+    send(11, struct.pack("<Q", 2) + b"a=1")
+    wait_for_changes(2)
+    send(101, struct.pack("<Q", 6))
+    send(11, struct.pack("<Q", 2) + b"b=1")
+    wait_for_changes(3)
+    # A worker of a blob: URL of the document's origin, which broadcasts as that origin.
+    send(100, struct.pack("<QQBBQ", 7, 2, 2, 0, 0) + b"{blob}")
+    send(25, struct.pack("<Q", 7) + sized(b"channel") + b"\\x00" + b"data")
+    result = "[" + ",".join(str(document) for document in sorted(changes[:2])) + "," + str(changes[2]) + "]"
+    send(5, struct.pack("<QB", call, 0) + result.encode())
     while channel.recv(65536):
         pass
     """
@@ -114,7 +136,7 @@ _SESSION = textwrap.dedent(
     with mitto.Session() as session:
         session.get(sys.argv[2])
         with session._open_page(sys.argv[1], timeout=60) as page:
-            page.evaluate("contexts", timeout=60)
+            print(page.evaluate("contexts", timeout=60))
     """
 )
 
@@ -182,7 +204,8 @@ def _value(lines: list[tuple[str, str]], name: str) -> str | None:
     return next((value for line_name, value in lines if line_name.lower() == name.lower()), None)
 
 
-def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> None:
+def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> str:
+    """Run the fake Page in a Session of its own, and return what its call gave, as Python prints it."""
     library = _native.find_library()
     assert library is not None
     directory = tmp_path / "library"
@@ -198,16 +221,20 @@ def _run_page(tmp_path: Path, top: _Server, frame_site: _Server) -> None:
             frame_fetch=frame_site.url("/frame-fetch"),
             worker=top.url("/worker.js"),
             worker_fetch=top.url("/worker-fetch"),
+            blob=top.url("/blob-1").replace("http://", "blob:http://"),
         )
     )
     page_program.chmod(0o755)
     environment = {**os.environ, _native.LIBRARY_ENV_VAR: str(copy)}
-    subprocess.run(
+    finished = subprocess.run(
         [sys.executable, "-c", _SESSION, top.url("/page"), frame_site.url("/set")],
         env=environment,
         check=True,
+        capture_output=True,
+        text=True,
         timeout=_TIMEOUT_SECONDS,
     )
+    return finished.stdout.strip()
 
 
 def test_a_frames_requests_have_its_place_in_the_frame_tree(tmp_path: Path, top: _Server, frame_site: _Server) -> None:
@@ -248,3 +275,12 @@ def test_a_workers_requests_send_no_client_hints_and_its_script_as_referrer(
     with mitto.Session() as session:
         session.get(top.url("/worker-fetch"), kind="fetch", initiator=top.url("/page"))
     assert _value(top.headers_of("/worker-fetch")[-1], "sec-ch-ua") is not None
+
+
+def test_each_documents_cookie_store_listens_on_its_own_and_a_blob_worker_speaks_for_its_origin(
+    tmp_path: Path, top: _Server, frame_site: _Server
+) -> None:
+    # The top-level document and a frame's about:blank of its origin each hear of the change to the cookie that the
+    # document set, under their own IDs, and once the frame goes only the document hears. The broadcast of a worker of
+    # a blob: URL goes as its origin's, where the library would refuse one of a URL that is not HTTP or HTTPS.
+    assert _run_page(tmp_path, top, frame_site) == "[2, 6, 2]"
