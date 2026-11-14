@@ -15,7 +15,13 @@
 
 namespace mitto {
 
-// A request of a page's, once fetch() has checked it.
+// The Fetch Standard's request destination: none for fetch().
+enum class FetchDestination {
+  kEmpty,
+  kScript,
+};
+
+// A request of a page's, once fetch() or a script element has checked it.
 struct FetchRequestData {
   FetchRequestData();
   FetchRequestData(FetchRequestData&&);
@@ -30,6 +36,10 @@ struct FetchRequestData {
   std::optional<std::string> body;
   // Mode same-origin, which no hop may take to another origin.
   bool same_origin = false;
+  FetchDestination destination = FetchDestination::kEmpty;
+  // Whether it blocks rendering, which its entry of the Performance Timeline
+  // says.
+  bool render_blocking = false;
 };
 
 // A response, after any redirects.
@@ -47,6 +57,9 @@ struct FetchResponseHead {
   // Whether its tainting is cors, as the Session worked it out: a hop went to
   // another origin than the document's.
   bool cors = false;
+  // Whether its tainting is opaque: a script's, of mode no-cors, whose hops
+  // left the document's origin.
+  bool opaque = false;
   // Each "name: value" and a line feed, without Set-Cookie.
   std::string headers;
 };
