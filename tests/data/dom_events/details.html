@@ -62,6 +62,22 @@ const toggles = el => {
   r.across_parents = [c.firstChild.open, other.firstChild.open];
   c.remove();
   other.remove();
+  // A tree's root is in no group, as Blink's search starts after it.
+  const outer = document.createElement('details');
+  outer.name = 'g';
+  outer.open = true;
+  const inner = document.createElement('details');
+  inner.name = 'g';
+  outer.appendChild(inner);
+  inner.open = true;
+  const outerToo = document.createElement('details');
+  outerToo.name = 'g';
+  outerToo.open = true;
+  const innerToo = document.createElement('details');
+  innerToo.name = 'g';
+  innerToo.open = true;
+  outerToo.appendChild(innerToo);
+  r.root_of_tree = [outer.open, inner.open, outerToo.open, innerToo.open];
   // A click on the main summary opens and closes its details, and on another summary does nothing.
   const clicks = [];
   for (const type of ['click', 'DOMActivate']) document.addEventListener(type, e => clicks.push([type, e.target.localName || e.target.nodeName, e.defaultPrevented]));
@@ -79,10 +95,10 @@ const toggles = el => {
   await tick();
   r.summary_events = log.splice(0);
   // Not when the click is on a control of its own in the summary.
-  d.innerHTML = '<summary>s<button>b</button><span>x</span><a href=#f>l</a><a>n</a><label>q</label><input type=checkbox><em><b>e</b></em></summary>';
+  d.innerHTML = '<summary>s<button>b</button><span>x</span><a href=#f>l</a><a>n</a><label>q</label><input type=checkbox><em><b>e</b></em><button><i>bi</i></button><button disabled><u>du</u></button><label><s>ls</s></label><a href=#f><q>aq</q></a><select><option>o</option></select></summary>';
   const s = d.firstChild;
   const after = [];
-  for (const sel of ['button', 'span', 'a[href]', 'a:not([href])', 'label', 'input', 'b']) {
+  for (const sel of ['button', 'span', 'a[href]', 'a:not([href])', 'label', 'input', 'b', 'i', 'u', 's', 'q', 'option']) {
     d.open = false;
     s.querySelector(sel).click();
     after.push(sel + '=' + d.open);

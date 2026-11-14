@@ -105,6 +105,12 @@
   true,
   false
  ],
+ "root_of_tree": [
+  true,
+  true,
+  true,
+  true
+ ],
  "summary": [
   true,
   true,
@@ -163,7 +169,12 @@
    "a:not([href])=true",
    "label=false",
    "input=false",
-   "b=true"
+   "b=true",
+   "i=false",
+   "u=false",
+   "s=false",
+   "q=false",
+   "option=true"
   ],
   true
  ],

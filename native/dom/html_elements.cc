@@ -67,6 +67,10 @@ const bindings::WrapperTypeInfo* HTMLButtonElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLButtonElement::kWrapperTypeInfo;
 }
 
+bool HTMLButtonElement::HasActivationBehavior() const {
+  return true;
+}
+
 int32_t HTMLButtonElement::DefaultTabIndex() const {
   return 0;
 }
