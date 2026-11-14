@@ -127,6 +127,28 @@ class SessionLink final : public PageChannel::Delegate
     if (refused_) {
       return;
     }
+    // A storage event too large for a frame comes as parts before its own
+    // frame, whose payload follows them.
+    if (hello_received_ &&
+        type == static_cast<uint32_t>(PageMessage::kStoragePart)) {
+      if (payload.size() > kMaxStorageEventSize - storage_part_.size()) {
+        Refuse("parts of a storage event larger than any");
+        return;
+      }
+      storage_part_.append(payload);
+      return;
+    }
+    if (!storage_part_.empty()) {
+      if (type < static_cast<uint32_t>(PageMessage::kStorageKeyChanged) ||
+          type > static_cast<uint32_t>(PageMessage::kStorageAllDeleted)) {
+        Refuse("parts of a storage event before a message that is not one");
+        return;
+      }
+      std::string joined = std::move(storage_part_);
+      storage_part_ = std::string();
+      joined.append(payload);
+      payload = std::move(joined);
+    }
     base::expected<FrameFromSession, std::string> frame =
         ReadFrameFromSession(type, std::move(payload));
     if (!frame.has_value()) {
@@ -293,6 +315,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kStorageDelete:
       case PageMessage::kStorageDeleteAll:
       case PageMessage::kStorageUnbind:
+      case PageMessage::kStoragePart:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -461,6 +484,8 @@ class SessionLink final : public PageChannel::Delegate
   const raw_ref<SessionStorageBackend> storage_backend_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
+  // The parts of a storage event that its frame has not yet come for.
+  std::string storage_part_;
   bool started_ = false;
   bool refused_ = false;
 #if BUILDFLAG(IS_MAC)

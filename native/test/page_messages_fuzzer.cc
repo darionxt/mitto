@@ -239,6 +239,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kStorageKeyChangeFailed:
         case mitto::PageMessage::kStorageKeyDeleted:
         case mitto::PageMessage::kStorageAllDeleted:
+        case mitto::PageMessage::kStoragePart:
         case mitto::PageMessage::kCacheStorageAnswer:
           // Only a Session sends these.
           NOTREACHED();

@@ -959,6 +959,7 @@ _STORAGE_PUT = 29
 _STORAGE_ENTRIES = 33
 _STORAGE_KEY_CHANGED = 34
 _STORAGE_KEY_CHANGE_FAILED = 35
+_STORAGE_PART = 38
 # A byte that says Latin-1, as Blink writes a key or value of localStorage that fits, or UTF-16.
 _LATIN_1 = b"\x01"
 _UTF_16 = b"\x00"
@@ -1509,6 +1510,25 @@ def test_a_page_refuses_what_a_session_should_not_send_of_its_requests(
     session.send(message_type, payload)
 
     assert session.refusal() == why
+
+
+def test_a_page_refuses_parts_of_a_storage_event_before_another_message(session: _Session) -> None:
+    session.start()
+
+    session.send(_STORAGE_PART, b"part")
+    session.send(_COOKIES, struct.pack("<Q", 1) + b"a=b")
+
+    assert session.refusal() == "parts of a storage event before a message that is not one"
+
+
+def test_a_page_refuses_parts_larger_than_any_storage_event(session: _Session) -> None:
+    session.start()
+
+    # 48 MiB, where the largest event that a change to an area makes is about 20 MiB.
+    for _ in range(3):
+        session.send(_STORAGE_PART, bytes(_MAX_PAYLOAD_SIZE))
+
+    assert session.refusal() == "parts of a storage event larger than any"
 
 
 @pytest.mark.parametrize(

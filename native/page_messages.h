@@ -199,6 +199,10 @@ enum class PageMessage : uint32_t {
   kStorageKeyChangeFailed = 35,
   kStorageKeyDeleted = 36,
   kStorageAllDeleted = 37,
+  // To the Page: the next part of the payload of a storage event that does not
+  // fit in one frame, as Chrome's pipes carry messages far larger than a frame.
+  // The Page joins the parts and the payload of the event that follows them.
+  kStoragePart = 38,
   // To the Session: what the document's CacheStorage or one of its Caches
   // asks, as cache_storage_messages.h says.
   kCacheStorage = 40,
@@ -227,6 +231,11 @@ enum class PageMessage : uint32_t {
 // mojom::StorageArea says, counted as Blink counts it: two bytes for each
 // character of its keys and values.
 inline constexpr size_t kPerStorageAreaQuota = 10 * 1024 * 1024;
+
+// The most that the payload of a storage event, joined from its parts, holds:
+// more than the largest that a change to an area of the quota makes, with its
+// key and both values, and the writer's URL.
+inline constexpr size_t kMaxStorageEventSize = 4 * kPerStorageAreaQuota;
 
 // Whether an area is of localStorage or sessionStorage.
 enum class PageStorageKind : uint8_t {
@@ -1071,6 +1080,8 @@ struct FrameFromSession {
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
   // kStorageAllDeleted.
   PageStorageEvent storage_event;
+  // kStoragePart: a part of the next event's payload.
+  std::string storage_part;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -1155,11 +1166,14 @@ std::string EncodeStorageUnbind(uint64_t area);
 std::vector<std::string> EncodeStorageEntries(
     uint64_t area,
     const std::vector<std::pair<std::string, std::string>>& entries);
-// Whether an event fits in a frame.
+// Whether an event's payload is at most kMaxStorageEventSize bytes.
 bool StorageEventFits(const PageStorageEvent& event);
-// The event fits in a frame. `type` is kStorageKeyChanged,
-// kStorageKeyChangeFailed, kStorageKeyDeleted or kStorageAllDeleted.
-std::string EncodeStorageEvent(PageMessage type, const PageStorageEvent& event);
+// Returns the frames of an event that fits: one, or parts of type
+// kStoragePart and then the event's frame with the rest. `type` is
+// kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted or
+// kStorageAllDeleted.
+std::vector<std::string> EncodeStorageEvent(PageMessage type,
+                                            const PageStorageEvent& event);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

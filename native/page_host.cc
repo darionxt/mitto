@@ -1013,10 +1013,13 @@ class PageHost::StorageArea {
     }
 
     void Send(PageMessage type, const PageStorageEvent& event) {
-      // The area's keys and values fit, since it holds no more than its quota,
-      // and a source that does not leaves the Page that sent it without word.
-      if (host_->channel_ && StorageEventFits(event)) {
-        host_->channel_->Send(EncodeStorageEvent(type, event));
+      // An event fits, in parts if it is larger than a frame, since the area
+      // holds no more than its quota and the writer's URL came in a frame.
+      if (!host_->channel_ || !StorageEventFits(event)) {
+        return;
+      }
+      for (std::string& frame : EncodeStorageEvent(type, event)) {
+        host_->channel_->Send(std::move(frame));
       }
     }
 
@@ -2616,6 +2619,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kStorageKeyChangeFailed:
     case PageMessage::kStorageKeyDeleted:
     case PageMessage::kStorageAllDeleted:
+    case PageMessage::kStoragePart:
     case PageMessage::kCacheStorageAnswer:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();

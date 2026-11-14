@@ -190,7 +190,7 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return (type >= static_cast<uint32_t>(PageMessage::kHello) &&
-          type <= static_cast<uint32_t>(PageMessage::kStorageAllDeleted)) ||
+          type <= static_cast<uint32_t>(PageMessage::kStoragePart)) ||
          (type >= static_cast<uint32_t>(PageMessage::kCacheStorage) &&
           type <= static_cast<uint32_t>(PageMessage::kCacheStorageAnswer)) ||
          (type >= static_cast<uint32_t>(PageMessage::kDocumentCommitted) &&
@@ -2121,47 +2121,61 @@ std::vector<std::string> EncodeStorageEntries(
   return frames;
 }
 
-bool StorageEventFits(const PageStorageEvent& event) {
-  // The observer, the token, four sizes and a byte.
-  constexpr size_t kFixed = 8 + 16 + 4 + 4 + 4 + 1;
-  const size_t size = event.source.page_url.size() + event.key.size() +
-                      event.new_value.size() +
-                      (event.old_value ? event.old_value->size() : 0);
-  return size <= kMaxPayloadSize - kFixed;
-}
+namespace {
 
-std::string EncodeStorageEvent(PageMessage type,
-                               const PageStorageEvent& event) {
+// The payload of an event, as one frame of its type holds it.
+std::string StorageEventPayload(PageMessage type,
+                                const PageStorageEvent& event) {
   const std::string old_value =
       event.old_value
           ? base::StrCat({std::string_view("\1", 1), *event.old_value})
           : std::string(1, '\0');
   switch (type) {
     case PageMessage::kStorageKeyChanged:
-      return EncodeFrame(
-          type, base::StrCat({EncodeUint64(event.observer),
-                              EncodeStorageSource(event.source),
-                              EncodeSized(event.key),
-                              EncodeSized(event.new_value), old_value}));
+      return base::StrCat(
+          {EncodeUint64(event.observer), EncodeStorageSource(event.source),
+           EncodeSized(event.key), EncodeSized(event.new_value), old_value});
     case PageMessage::kStorageKeyChangeFailed:
-      return EncodeFrame(
-          type, base::StrCat({EncodeUint64(event.observer),
-                              EncodeStorageSource(event.source), event.key}));
+      return base::StrCat({EncodeUint64(event.observer),
+                           EncodeStorageSource(event.source), event.key});
     case PageMessage::kStorageKeyDeleted:
-      return EncodeFrame(type,
-                         base::StrCat({EncodeUint64(event.observer),
-                                       EncodeStorageSource(event.source),
-                                       EncodeSized(event.key), old_value}));
+      return base::StrCat({EncodeUint64(event.observer),
+                           EncodeStorageSource(event.source),
+                           EncodeSized(event.key), old_value});
     case PageMessage::kStorageAllDeleted: {
       const char was_nonempty = event.was_nonempty ? 1 : 0;
-      return EncodeFrame(type,
-                         base::StrCat({EncodeUint64(event.observer),
-                                       std::string_view(&was_nonempty, 1),
-                                       EncodeStorageSource(event.source)}));
+      return base::StrCat({EncodeUint64(event.observer),
+                           std::string_view(&was_nonempty, 1),
+                           EncodeStorageSource(event.source)});
     }
     default:
       NOTREACHED();
   }
+}
+
+}  // namespace
+
+bool StorageEventFits(const PageStorageEvent& event) {
+  // The observer, the token, four sizes and a byte.
+  constexpr size_t kFixed = 8 + 16 + 4 + 4 + 4 + 1;
+  const size_t size = event.source.page_url.size() + event.key.size() +
+                      event.new_value.size() +
+                      (event.old_value ? event.old_value->size() : 0);
+  return size <= kMaxStorageEventSize - kFixed;
+}
+
+std::vector<std::string> EncodeStorageEvent(PageMessage type,
+                                            const PageStorageEvent& event) {
+  const std::string payload = StorageEventPayload(type, event);
+  std::string_view rest = payload;
+  std::vector<std::string> frames;
+  while (rest.size() > kMaxPayloadSize) {
+    frames.push_back(EncodeFrame(PageMessage::kStoragePart,
+                                 rest.substr(0, kMaxPayloadSize)));
+    rest.remove_prefix(kMaxPayloadSize);
+  }
+  frames.push_back(EncodeFrame(type, rest));
+  return frames;
 }
 
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(
@@ -2415,6 +2429,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kStorageKeyChangeFailed:
     case PageMessage::kStorageKeyDeleted:
     case PageMessage::kStorageAllDeleted:
+    case PageMessage::kStoragePart:
     case PageMessage::kCacheStorageAnswer:
       return base::unexpected(WrongWay(type, "a Page"));
   }
@@ -2573,6 +2588,11 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.storage_event = *std::move(event);
       return frame;
     }
+    case PageMessage::kStoragePart:
+      // The Page joins the parts with the event that follows them before it
+      // reads that, and reads a part alone only for its type.
+      frame.storage_part = std::move(payload);
+      return frame;
     case PageMessage::kEvaluated:
     case PageMessage::kConsole:
     case PageMessage::kUncaughtError:
