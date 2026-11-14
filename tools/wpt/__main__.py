@@ -11,7 +11,7 @@ from pathlib import Path
 from tools.wpt.check import check, list_differences, run_tests
 from tools.wpt.chrome import ChromeError, record
 from tools.wpt.copying import copy_tests, write_tests
-from tools.wpt.counts import count_by, table
+from tools.wpt.counts import count_by, count_by_owner, owner_table, table
 from tools.wpt.differences import (
     DifferencesError,
     dumps_differences,
@@ -19,6 +19,7 @@ from tools.wpt.differences import (
     loads_differences,
 )
 from tools.wpt.files import CHROME_FILE, DIFFERENCES_FILE, TESTS_FILE, WPT_ROOT
+from tools.wpt.owners import NO_OWNER, move, owner_of
 from tools.wpt.results import (
     ChromeResult,
     ResultsError,
@@ -74,7 +75,16 @@ def main() -> int:
 
     commands.add_parser("serve", help="serve the tests on their names until interrupted, to open one by hand")
 
-    commands.add_parser("counts", help="print how many tests and subtests differ, by directory and part")
+    commands.add_parser("counts", help="print how many tests and subtests differ, by owner, part and directory")
+
+    owner = commands.add_parser("owner", help="print how many differences a ticket owns, which is none once it closes")
+    owner.add_argument("ticket", help=f'such as "#283", or "{NO_OWNER}" for those that no ticket owns')
+    owner.add_argument("--list", action="store_true", help="also print each of them")
+
+    give = commands.add_parser("move", help="give a ticket the differences that its missing behaviour causes")
+    give.add_argument("ticket", help='such as "#283"')
+    give.add_argument("tests", nargs="*", metavar="PREFIX", help="only those of the tests whose address starts so")
+    give.add_argument("--outcome", help="only those whose outcome in a Page contains this text")
 
     args = parser.parse_args()
     # So that a runner that is told to stop still stops its server and its Chrome on the way out.
@@ -91,6 +101,10 @@ def main() -> int:
                 return _record(args)
             case "serve":
                 return _serve()
+            case "owner":
+                return _print_owner(args.ticket, args.list)
+            case "move":
+                return _move(args.ticket, args.tests, args.outcome)
             case _:
                 return _print_counts()
     except (ListedTestsError, ResultsError, DifferencesError, ServerError, ChromeError, OSError) as error:
@@ -172,9 +186,45 @@ def _print_counts() -> int:
     tests = loads_tests(TESTS_FILE.read_text(encoding="utf-8"))
     chrome = loads_chrome_results(CHROME_FILE.read_text(encoding="utf-8"))
     listed = loads_differences(DIFFERENCES_FILE.read_text(encoding="utf-8"))
+    print("\n".join(owner_table(count_by_owner(chrome, listed))))
+    print()
     print("\n".join(table(count_by(tests, chrome, listed, by_part=True), "Part")))
     print()
     print("\n".join(table(count_by(tests, chrome, listed), "Directory")))
+    return 0
+
+
+def _print_owner(ticket: str, each: bool) -> int:
+    chrome = loads_chrome_results(CHROME_FILE.read_text(encoding="utf-8"))
+    owned = [d for d in loads_differences(DIFFERENCES_FILE.read_text(encoding="utf-8")) if owner_of(d) == ticket]
+    if each:
+        for difference in owned:
+            where = difference.test if difference.subtest is None else f"{difference.test}, {difference.subtest}"
+            print(f"{where}: {difference.mitto}")
+    count = count_by_owner(chrome, owned).get(ticket)
+    if count is None:
+        print(f"{ticket} owns no difference.")
+    else:
+        print(
+            f"{ticket} owns {_counted(count.differences, 'difference')} in {_counted(count.tests, 'test')}, "
+            f"{_counted(count.differing_subtests, 'subtest')}."
+        )
+    return 0
+
+
+def _counted(number: int, thing: str) -> str:
+    return f"{number:,} {thing}" if number == 1 else f"{number:,} {thing}s"
+
+
+def _move(ticket: str, prefixes: Sequence[str], outcome: str | None) -> int:
+    listed = loads_differences(DIFFERENCES_FILE.read_text(encoding="utf-8"))
+    try:
+        written, moved = move(listed, ticket, prefixes, outcome)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    DIFFERENCES_FILE.write_text(dumps_differences(written), encoding="utf-8")
+    print(f"Gave {ticket} {_counted(moved, 'difference')} in {DIFFERENCES_FILE}.")
     return 0
 
 

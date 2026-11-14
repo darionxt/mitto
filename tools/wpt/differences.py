@@ -2,14 +2,16 @@
 keeps, as the Parity Checks keep their Known Gaps."""
 
 import json
+import re
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from tools.wpt.results import CRASH, PASS, TIMEOUT, ChromeResult, RunResult, Subtest
 
 __all__ = [
     "FLAKY",
+    "TICKET",
     "Difference",
     "DifferencesError",
     "Mismatches",
@@ -26,6 +28,9 @@ _NOTHING = "(nothing)"
 FLAKY = "FLAKY"
 """What the list says a Page gives for a test whose result varies between runs or Hosts."""
 
+TICKET = re.compile(r"#[1-9][0-9]*")
+"""What a ticket that owns a difference looks like, such as "#283"."""
+
 
 class DifferencesError(Exception):
     """A list of differences cannot be read."""
@@ -41,16 +46,20 @@ class Difference:
         chrome: Chrome's outcome, such as "PASS", "FAIL: assert_true: expected true", "TIMEOUT" or "222 subtests", or
             None where Chrome had no such subtest.
         mitto: The Page's outcome, in the same form, or None where the Page did not run such a subtest.
+        owner: The ticket whose missing behaviour causes it, such as "#283", where that is not the ticket of the
+            test's part of M8 (tools.wpt.owners). It takes no part in comparing differences.
     """
 
     test: str
     subtest: str | None
     chrome: str | None
     mitto: str | None
+    owner: str | None = field(default=None, compare=False)
 
     def __str__(self) -> str:
         where = self.test if self.subtest is None else f"{self.test}, {self.subtest}"
-        return f"{where}\n  Chrome: {self.chrome or _NOTHING}\n  mitto:  {self.mitto or _NOTHING}"
+        text = f"{where}\n  Chrome: {self.chrome or _NOTHING}\n  mitto:  {self.mitto or _NOTHING}"
+        return text if self.owner is None else f"{text}\n  owner:  {self.owner}"
 
 
 def differences_of(chrome: Iterable[ChromeResult], result: RunResult) -> list[Difference]:
@@ -136,9 +145,21 @@ _WHOLE_TEST = frozenset({TIMEOUT, CRASH, FLAKY})
 def dumps_differences(differences: Iterable[Difference]) -> str:
     """Write a list of differences as text, one per line in the order of the tests, so that one that closes is one line
     that goes."""
-    ordered = sorted(differences, key=lambda d: (d.test, d.subtest is not None, d.subtest or "", d.chrome or ""))
-    lines = [json.dumps(asdict(difference)) for difference in ordered]
+    lines = [json.dumps(_entry(difference)) for difference in sorted(differences, key=_order)]
     return "[\n" + ",\n".join(lines) + "\n]\n" if lines else "[]\n"
+
+
+def _entry(difference: Difference) -> dict[str, str | None]:
+    entry = {
+        "test": difference.test,
+        "subtest": difference.subtest,
+        "chrome": difference.chrome,
+        "mitto": difference.mitto,
+    }
+    # Only a line that another ticket owns says so.
+    if difference.owner is not None:
+        entry["owner"] = difference.owner
+    return entry
 
 
 def loads_differences(text: str) -> list[Difference]:
@@ -151,9 +172,13 @@ def loads_differences(text: str) -> list[Difference]:
         entries = json.loads(text)
         if not isinstance(entries, list):
             raise TypeError("it is not a list")
-        return [Difference(**entry) for entry in cast(list[dict[str, Any]], entries)]
+        differences = [Difference(**entry) for entry in cast(list[dict[str, Any]], entries)]
     except (ValueError, TypeError) as error:
         raise DifferencesError(f"not a list of differences: {error}") from error
+    for difference in differences:
+        if difference.owner is not None and not TICKET.fullmatch(str(difference.owner)):
+            raise DifferencesError(f'{difference.test}: owner {difference.owner!r} is not a ticket such as "#283"')
+    return differences
 
 
 @dataclass(frozen=True, slots=True)

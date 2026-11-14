@@ -1,6 +1,7 @@
 """Tests of the web-platform-tests harness: how it compares a Page's results with Chrome's, and the repository's files
 of tests, Chrome's results and the list of differences. They need no native library."""
 
+import dataclasses
 import json
 import shutil
 from collections.abc import Sequence
@@ -10,7 +11,7 @@ import pytest
 
 from tools.wpt.check import SHORT_SECONDS, check, expected_timeouts, list_differences, run_tests
 from tools.wpt.copying import copy_tests
-from tools.wpt.counts import count_by, table
+from tools.wpt.counts import count_by, count_by_owner, owner_table, table
 from tools.wpt.differences import (
     Difference,
     DifferencesError,
@@ -24,6 +25,7 @@ from tools.wpt.differences import (
 )
 from tools.wpt.files import CHROME_FILE, DIFFERENCES_FILE, TESTS_FILE, WPT_ROOT
 from tools.wpt.needs import TESTDRIVER, needs_of
+from tools.wpt.owners import NO_OWNER, keep_owners, move, owner_of
 from tools.wpt.parts import DIRECTORIES, PARTS, directory_of, part_of
 from tools.wpt.reporter.collect import result_key
 from tools.wpt.results import (
@@ -273,7 +275,17 @@ def test_the_list_reads_back_in_the_order_of_the_tests() -> None:
     assert dumps_differences([]) == "[]\n"
 
 
-@pytest.mark.parametrize("text", ["", "{}", '["a"]', '[{"test": "a"}]'])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "{}",
+        '["a"]',
+        '[{"test": "a"}]',
+        '[{"test": "a", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "283"}]',
+        '[{"test": "a", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "reason": "XHR"}]',
+    ],
+)
 def test_a_bad_list_is_refused(text: str) -> None:
     with pytest.raises(DifferencesError):
         loads_differences(text)
@@ -560,3 +572,105 @@ def test_a_test_marked_flaky_stays_marked_and_is_not_compared() -> None:
     assert outcome
     assert flaky_tests(written) == {TEST}
     assert differing_subtests(recorded[TEST], [flaky(TEST)]) == 1
+
+
+# Who owns a difference
+
+ENCODING = "encoding/legacy-mb-korean/euc-kr/euckr-decode.html"
+
+
+def test_a_difference_is_its_parts_unless_its_line_names_another_ticket() -> None:
+    assert owner_of(DIFFERENCE) == "#274"
+    assert owner_of(Difference(ENCODING, None, "OK", "TIMEOUT", "#285")) == "#285"
+    assert owner_of(Difference("fetch/stale-while-revalidate/fetch.any.html", None, "OK", "TIMEOUT")) == NO_OWNER
+
+
+def test_only_a_line_that_another_ticket_owns_names_it_and_its_owner_takes_no_part_in_comparing() -> None:
+    owned = Difference(ENCODING, None, "OK", "TIMEOUT", "#285")
+    text = dumps_differences([owned, DIFFERENCE])
+
+    assert [json.loads(line.rstrip(",")) for line in text.splitlines()[1:3]] == [
+        {"test": TEST, "subtest": "a", "chrome": "PASS", "mitto": "FAIL: no"},
+        {"test": ENCODING, "subtest": None, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
+    ]
+    assert [d.owner for d in loads_differences(text)] == [None, "#285"]
+    assert owned == Difference(ENCODING, None, "OK", "TIMEOUT")
+    assert not mismatches([Difference(ENCODING, None, "OK", "TIMEOUT")], [owned], {ENCODING: None})
+    assert str(owned).endswith("\n  owner:  #285")
+
+
+def test_a_list_written_again_keeps_each_lines_owner() -> None:
+    listed = [
+        Difference(ENCODING, None, "OK", "TIMEOUT", "#285"),
+        Difference(TEST, "a", "PASS", "FAIL: no", "#283"),
+        Difference(TEST, "b", "PASS", "FAIL: no", "#283"),
+    ]
+    written = [
+        Difference(ENCODING, None, "OK", "TIMEOUT"),
+        Difference(TEST, "a", "PASS", "FAIL: other"),
+        Difference(TEST, "c", "PASS", "FAIL: no"),
+    ]
+
+    kept = keep_owners(written, listed)
+
+    assert kept == written
+    assert [d.owner for d in kept] == ["#285", "#283", None]
+
+
+def test_runs_written_into_the_list_keep_the_owner_of_a_flaky_mark() -> None:
+    recorded = {TEST: [chrome(*passing("a"))]}
+    run = [RunResult(TEST, "TIMEOUT")]
+    marked = dataclasses.replace(flaky(TEST), owner="#283")
+
+    written, _ = list_differences([run], recorded, [marked])
+
+    assert [d.owner for d in written] == ["#283"]
+
+
+def test_moving_differences_gives_them_a_ticket_and_moving_them_back_takes_it_away() -> None:
+    listed = [
+        Difference(ENCODING, None, "OK", "TIMEOUT"),
+        Difference("encoding/api-basics.any.html", "a", "PASS", "FAIL: Not implemented."),
+        DIFFERENCE,
+    ]
+
+    by_prefix, moved = move(listed, "#285", ["encoding/legacy-mb-"])
+    assert moved == 1
+    assert [d.owner for d in by_prefix] == ["#285", None, None]
+    by_outcome, moved = move(by_prefix, "#283", outcome="Not implemented")
+    assert moved == 1
+    assert [d.owner for d in by_outcome] == ["#285", "#283", None]
+    back, moved = move(by_outcome, "#268", ["encoding/"])
+    assert moved == 2
+    assert [d.owner for d in back] == [None, None, None]
+
+
+@pytest.mark.parametrize(
+    ("ticket", "prefixes", "error"),
+    [("285", ["encoding/"], "not a ticket"), ("#285", [], "say which differences to move")],
+)
+def test_a_move_needs_a_ticket_and_what_to_move(ticket: str, prefixes: list[str], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        move([DIFFERENCE], ticket, prefixes)
+
+
+def test_counts_by_owner_go_by_the_ticket_that_owns_each_difference() -> None:
+    recorded = {TEST: [chrome(*passing("a", "b"))], ENCODING: [chrome(*passing(*"abc"))]}
+    listed = [
+        Difference(TEST, "a", "PASS", "FAIL: no"),
+        Difference(TEST, "b", "PASS", "FAIL: no", "#283"),
+        Difference(ENCODING, None, "OK", "TIMEOUT", "#285"),
+        Difference("fetch/a.html", "a", "PASS", "FAIL: no"),
+    ]
+
+    counts = count_by_owner(recorded, listed)
+
+    assert list(counts) == ["#274", "#283", "#285", NO_OWNER]
+    assert (counts["#285"].differences, counts["#285"].tests, counts["#285"].differing_subtests) == (1, 1, 3)
+    lines = list(owner_table(counts))
+    assert lines[2] == "| #274 Element interfaces | 1 | 1 | 1 |"
+    assert lines[-1] == "| All | 4 | 4 | 6 |"
+    assert list(count_by_owner(recorded, [Difference(TEST, "a", "PASS", "x", "#1000"), DIFFERENCE])) == [
+        "#274",
+        "#1000",
+    ]

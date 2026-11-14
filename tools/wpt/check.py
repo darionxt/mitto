@@ -5,6 +5,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from tools.wpt.differences import Difference, Mismatches, differences_of, flaky, flaky_tests, mismatches
+from tools.wpt.owners import keep_owners
 from tools.wpt.pages import run_in_pages
 from tools.wpt.results import TIMEOUT, ChromeResult, RunResult
 from tools.wpt.server import WptServer
@@ -137,8 +138,10 @@ def list_differences(
     that Chrome has no result for.
 
     A test whose runs disagree is flaky: the list marks it, and holds none of its differences. A test that the list
-    marks already stays marked, since agreeing runs do not show that it no longer varies.
+    marks already stays marked, since agreeing runs do not show that it no longer varies. Each line keeps its owner, as
+    keep_owners() gives it.
     """
+    listed = list(listed)
     by_test: dict[str, set[frozenset[Difference]]] = {}
     unrecorded: set[str] = set()
     for run in runs:
@@ -155,4 +158,4 @@ def list_differences(
     for test, seen in by_test.items():
         if test not in marked and test not in unrecorded:
             written += next(iter(seen))
-    return written, sorted(unrecorded)
+    return keep_owners(written, listed), sorted(unrecorded)

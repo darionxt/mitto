@@ -61,11 +61,11 @@ Before they compare, messages have what differs from run to run replaced by a pl
 
 ## The list of differences
 
-`tests/wpt/differences.json` holds each difference, one per line, with the keys `test`, `subtest`, `chrome` and `mitto`. `subtest` is `null` for the test as a whole: its harness status, or how many subtests ran, such as `"222 subtests"`. `chrome` and `mitto` are each side's outcome, such as `"PASS"`, `"FAIL: assert_true: expected true got false"` or `"TIMEOUT"`, and `null` for a subtest that one side did not run. A test with no line matches Chrome, and `grep '"test": "dom/nodes/' tests/wpt/differences.json` lists a directory's.
+`tests/wpt/differences.json` holds each difference, one per line, with the keys `test`, `subtest`, `chrome` and `mitto`, and `owner` on a line that another ticket owns ([below](#who-owns-a-difference)). `subtest` is `null` for the test as a whole: its harness status, or how many subtests ran, such as `"222 subtests"`. `chrome` and `mitto` are each side's outcome, such as `"PASS"`, `"FAIL: assert_true: expected true got false"` or `"TIMEOUT"`, and `null` for a subtest that one side did not run. A test with no line matches Chrome, and `grep '"test": "dom/nodes/' tests/wpt/differences.json` lists a directory's.
 
 A test whose result in a Page varies between runs or Hosts, such as one that depends on timing, has one line whose `mitto` is `"FLAKY"`, with `subtest` and `chrome` `null`, and none of its differences: a run does not compare it.
 
-A run fails on a difference that is not in the list and on one in the list that is gone. A difference whose outcome has changed counts as both, so the list always says exactly how a Page differs from Chrome. There is one list for every **Host**. Each of M8's tickets empties its part of it, and M8's exit leaves only the differences of tests that need what a later milestone gives.
+A run fails on a difference that is not in the list and on one in the list that is gone. A difference whose outcome has changed counts as both, so the list always says exactly how a Page differs from Chrome. There is one list for every **Host**. Each of M8's tickets empties what it owns, and M8's exit leaves only the differences of tests that need what a later milestone gives.
 
 To write the list again from what the Page does now, with every test at its full timeout:
 
@@ -73,7 +73,7 @@ To write the list again from what the Page does now, with every test at its full
 uv run python -m tools.wpt differences
 ```
 
-It takes about 80 minutes on the Mac with its 12 Pages at once, and prints how many tests and subtests differ in each part of M8 and each directory. `--from FILE ...` writes it from the results of earlier runs instead, such as those that CI's job keeps on each Host, and marks a test flaky where they disagree. Those runs gave 3 seconds to each test that the list had run out of time, so such a test stays out of time in the list even if it now finishes later than that. A test that the list marks stays marked: delete its line by hand once it no longer varies. A prefix writes only the part of those tests. `uv run python -m tools.wpt counts` prints the counts of the list as it is. Read the diff before you commit it: fixing something only removes lines, and an added line means the Page moved away from Chrome.
+It takes about 80 minutes on the Mac with its 12 Pages at once, and prints how many differences each ticket owns, and how many tests and subtests differ in each part of M8 and each directory. `--from FILE ...` writes it from the results of earlier runs instead, such as those that CI's job keeps on each Host, and marks a test flaky where they disagree. Those runs gave 3 seconds to each test that the list had run out of time, so such a test stays out of time in the list even if it now finishes later than that. A test that the list marks stays marked: delete its line by hand once it no longer varies. A prefix writes only the part of those tests. `uv run python -m tools.wpt counts` prints the counts of the list as it is. Read the diff before you commit it: fixing something only removes lines, and an added line means the Page moved away from Chrome.
 
 A pull request that changes what a Page does changes the list in the same pull request. Its `wpt` job fails until then, and keeps the results that write the list for every Host at once, from the run's number, into a directory to delete afterwards:
 
@@ -83,6 +83,26 @@ uv run python -m tools.wpt differences --from wpt-results/*/wpt-results.json
 ```
 
 How many subtests differ counts each subtest whose outcome differs, each that one side ran and the other did not, and all of Chrome's subtests of a test that ran out of time or crashed on one side only.
+
+## Who owns a difference
+
+Each difference has an owner: the ticket whose missing behaviour causes it, which empties it. That is the ticket of the test's part of M8, as [`parts.py`](../tools/wpt/parts.py) maps them, unless the line names another, such as `"owner": "#283"` for a test of `encoding/` that needs XHR. A test in no part has no owner until a line names one. A ticket closes once it owns no difference, which one command shows:
+
+```bash
+uv run python -m tools.wpt owner '#268'
+```
+
+It prints how many differences, tests and subtests the ticket owns, and `--list` prints each difference too. `none` in place of a ticket stands for the differences that no ticket owns.
+
+A ticket whose own differences come from what another ticket makes gives them to that ticket, and its closing comment says why:
+
+```bash
+uv run python -m tools.wpt move '#285' encoding/legacy-mb-
+```
+
+That gives #285 every difference of the tests whose address starts with a prefix. `--outcome TEXT` moves only those whose outcome in a Page contains the text, with or without prefixes. Moving differences back to the ticket of their part takes the owner off their lines. Editing a line by hand does the same as `move`.
+
+Writing the list again keeps each line's owner. A line whose outcome has changed keeps the owner of the line it replaces, for the same subtest, and any other new line belongs to its part's ticket. `counts` prints what each ticket owns before the other counts, where a test whose differences have two owners counts once for each.
 
 ## Chrome's results
 

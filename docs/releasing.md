@@ -223,7 +223,7 @@ Last, with the same library and Page program, write the list of differences of [
 uv run python -m tools.wpt differences
 ```
 
-A test whose result changed against the list is a new test, a changed test, a change in Chrome or a change in the Runtime. The diffs of `tests.json` and `chrome.json` from steps 2 and 4 tell which. Fix the Runtime where a Page should follow, or keep the difference, and say which in the run's pull request. A difference of a test that needs what a later milestone gives stays.
+A test whose result changed against the list is a new test, a changed test, a change in Chrome or a change in the Runtime. The diffs of `tests.json` and `chrome.json` from steps 2 and 4 tell which. Fix the Runtime where a Page should follow, or keep the difference, and say which in the run's pull request. A difference of a test that needs what a later milestone gives stays. Each line keeps its owner, and a new difference belongs to the ticket of its test's part, or to the one that the run gives it with `move` ([wpt.md](wpt.md#who-owns-a-difference)).
 
 ### 10. The version
 
