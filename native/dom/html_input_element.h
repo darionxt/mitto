@@ -43,6 +43,28 @@ class HTMLInputElement final : public HTMLElement {
   void SetIndeterminate(bool indeterminate) {
     is_indeterminate_ = indeterminate;
   }
+  // The content attribute's positive integer up to 2147483647, else 20;
+  // setting 0 throws.
+  uint32_t Size() const;
+  void SetSize(uint32_t size, bindings::ExceptionState& exception_state);
+  int32_t MaxLength() const;
+  void SetMaxLength(int32_t length, bindings::ExceptionState& exception_state);
+  int32_t MinLength() const;
+  void SetMinLength(int32_t length, bindings::ExceptionState& exception_state);
+  std::u16string FormAction() const;
+  void SetFormAction(const std::u16string& action);
+  std::u16string FormEnctype() const;
+  void SetFormEnctype(const std::u16string& enctype);
+  std::u16string FormMethod() const;
+  void SetFormMethod(const std::u16string& method);
+  std::u16string IDLExposedAutofillValue() const;
+  void SetIDLExposedAutofillValue(const std::u16string& value);
+  // An image button's size from its content attribute, as ImageInputType
+  // gives it with no layout box, and 0 for any other type.
+  uint32_t Width() const;
+  void SetWidth(uint32_t width);
+  uint32_t Height() const;
+  void SetHeight(uint32_t height);
 
   // Node:
   bool HasActivationBehavior() const override;

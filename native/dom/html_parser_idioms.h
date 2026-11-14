@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace mitto {
@@ -37,6 +38,16 @@ std::optional<uint32_t> ParseHTMLClampedNonNegativeInteger(
     std::u16string_view value,
     uint32_t min,
     uint32_t max);
+
+// Blink's ParseHTMLFloatingPointNumber(), which meter and progress read their
+// numbers with: leading HTML spaces skipped, then the longest number that
+// begins the rest, a "+" and what follows it allowed, and nothing for none or
+// an infinite one. -0 is 0.
+std::optional<double> ParseHTMLFloatingPointNumber(std::u16string_view value);
+
+// Blink's SerializeForNumberType(), String::NumberToStringECMAScript(): a
+// number as JavaScript's Number#toString() writes it, and -0 as "0".
+std::u16string SerializeForNumberType(double value);
 
 }  // namespace mitto
 

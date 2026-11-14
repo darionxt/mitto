@@ -1,7 +1,11 @@
 #include "mitto/dom/html_parser_idioms.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <string>
+
+#include "base/third_party/double_conversion/double-conversion/double-conversion.h"
 
 namespace mitto {
 
@@ -119,6 +123,41 @@ std::optional<uint32_t> ParseHTMLClampedNonNegativeInteger(
     case NumberParsingResult::kSuccess:
       return std::clamp(result, min, max);
   }
+}
+
+std::optional<double> ParseHTMLFloatingPointNumber(std::u16string_view value) {
+  value = SkipHTMLSpaces(value);
+  if (value.empty() || !(IsAsciiDigit(value.front()) || value.front() == '+' ||
+                         value.front() == '-' || value.front() == '.')) {
+    return std::nullopt;
+  }
+  // WTF's ParseDouble() reads ASCII alone: the number ends where it does.
+  std::string ascii;
+  for (const char16_t c : value) {
+    if (c > 0x7f) {
+      break;
+    }
+    ascii.push_back(static_cast<char>(c));
+  }
+  const double_conversion::StringToDoubleConverter converter(
+      double_conversion::StringToDoubleConverter::ALLOW_TRAILING_JUNK, 0.0,
+      std::numeric_limits<double>::quiet_NaN(), nullptr, nullptr);
+  int processed = 0;
+  const double number = converter.StringToDouble(
+      ascii.data(), static_cast<int>(ascii.size()), &processed);
+  if (!processed || !std::isfinite(number)) {
+    return std::nullopt;
+  }
+  return number == 0 ? 0 : number;
+}
+
+std::u16string SerializeForNumberType(double value) {
+  char buffer[128];
+  double_conversion::StringBuilder builder(buffer, sizeof(buffer));
+  double_conversion::DoubleToStringConverter::EcmaScriptConverter().ToShortest(
+      value == 0 ? 0 : value, &builder);
+  const std::string text(builder.Finalize());
+  return std::u16string(text.begin(), text.end());
 }
 
 }  // namespace mitto
