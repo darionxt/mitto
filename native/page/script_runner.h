@@ -39,6 +39,7 @@ namespace mitto {
 
 class DOMTimerCoordinator;
 class AnimationFrameController;
+class CacheStorageHost;
 class IdleTaskController;
 class Document;
 class DocumentLoader;
@@ -89,6 +90,12 @@ class ScriptRunner final : public base::TaskObserver {
   void Evaluate(uint64_t call, std::string_view script);
 
   // What the Session sends of the Page's requests, each as a task.
+  // Where the documents that the Session loads over HTTP or HTTPS reach its
+  // Cache API, which outlives this.
+  void SetCacheStorageHost(CacheStorageHost& host) {
+    cache_storage_host_ = &host;
+  }
+
   void OnResponseStarted(PageResponseStarted response);
   void OnResponseBody(PageResponseBody body);
   void OnResponseEnded(PageResponseEnded ended);
@@ -169,6 +176,7 @@ class ScriptRunner final : public base::TaskObserver {
   // The calls that wait for a promise to settle.
   std::set<uint64_t> waiting_calls_;
   raw_ptr<SessionCookieJar> cookie_jar_ = nullptr;
+  raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
   std::unique_ptr<DocumentLoader> loader_;
   // The current window's timers and what its fetch() goes through.

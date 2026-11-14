@@ -24,11 +24,13 @@
 #include "base/values.h"
 #include "mitto/header_rules.h"
 #include "mitto/mitto.h"
+#include "mitto/page_cache_storage.h"
 #include "mitto/ready_requests.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
+#include "net/base/url_util.h"
 #include "net/cookies/cookie_access_delegate.h"
 #include "net/cookies/cookie_access_params.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -619,6 +621,7 @@ PageHost::PageHost(scoped_refptr<PageEvents> events,
       network_(network) {}
 
 PageHost::~PageHost() {
+  cache_storage_.reset();
   AbandonRequests();
 }
 
@@ -1290,6 +1293,45 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast) {
   network_->BroadcastFromPage(*this, origin, broadcast);
 }
 
+void PageHost::OnCacheStorage(PageCacheStorageCall call) {
+  if (!cache_storage_) {
+    cache_storage_ = std::make_unique<PageCacheStorage>(
+        network_->cache_storage(), network_->storage_quota(),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string frame) {
+              if (host && host->channel_ && !host->refused_by_library_) {
+                host->channel_->Send(std::move(frame));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string why) {
+              if (host && !host->refused_by_library_) {
+                host->Refuse(std::move(why));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        // The PageCacheStorage goes with this.
+        base::BindRepeating(&PageHost::DocumentCacheStorageKey,
+                            base::Unretained(this)));
+  }
+  cache_storage_->OnCall(std::move(call));
+}
+
+std::optional<std::string> PageHost::DocumentCacheStorageKey() const {
+  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
+  // an origin that is not opaque, of a potentially trustworthy URL.
+  if (!DocumentHasCookies()) {
+    return std::nullopt;
+  }
+  if (!document_url_.SchemeIs(url::kHttpsScheme) &&
+      !net::IsLocalhost(document_url_)) {
+    return std::nullopt;
+  }
+  // StorageKey::Serialize() of a first-party key: the origin and a slash.
+  return url::Origin::Create(document_url_).GetURL().spec();
+}
+
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
   if (!channel_ || ended_ || refused_by_library_ || !DocumentHasCookies() ||
@@ -1430,6 +1472,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kBroadcast:
       OnBroadcast(frame->broadcast);
       return;
+    case PageMessage::kCacheStorage:
+      OnCacheStorage(std::move(frame->cache_storage_call));
+      return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1440,6 +1485,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
     case PageMessage::kBroadcastReceived:
+    case PageMessage::kCacheStorageAnswer:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }

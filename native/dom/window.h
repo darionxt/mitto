@@ -50,6 +50,7 @@ namespace mitto {
 class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
+class CacheStorage;
 class CookieStore;
 class Crypto;
 class CustomElementRegistry;
@@ -175,6 +176,10 @@ class Window final : public WindowProperties {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // GlobalCacheStorage::caches(): the window's CacheStorage, made the first
+  // time, or null after throwing a SecurityError for a document whose origin
+  // may not reach caches.
+  mitto::CacheStorage* Caches(bindings::ExceptionState& exception_state);
   // window_messaging.cc: a structured clone of `value`, and a message to the
   // window itself, which frames will extend to other windows.
   v8::Local<v8::Value> StructuredClone(
@@ -307,6 +312,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Crypto> crypto_;
   cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CookieStore> cookie_store_;
+  cppgc::Member<mitto::CacheStorage> caches_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
   cppgc::Member<mitto::Event> current_event_;

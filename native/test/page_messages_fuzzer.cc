@@ -137,6 +137,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                    payload.size());
           break;
         }
+        case mitto::PageMessage::kCacheStorage:
+          // What the reader takes is exactly what the writer writes.
+          CHECK_EQ(mitto::EncodeCacheStorageCall(frame->cache_storage_call),
+                   payload);
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:
@@ -147,6 +152,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kCookieStoreStored:
         case mitto::PageMessage::kCookieStoreChange:
         case mitto::PageMessage::kBroadcastReceived:
+        case mitto::PageMessage::kCacheStorageAnswer:
           // Only a Session sends these.
           NOTREACHED();
       }

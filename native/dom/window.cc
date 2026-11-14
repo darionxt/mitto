@@ -19,6 +19,7 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/bar_prop.h"
+#include "mitto/dom/cache_storage.h"
 #include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
 #include "mitto/dom/crypto.h"
@@ -117,6 +118,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
   visitor->Trace(cookie_store_);
+  visitor->Trace(caches_);
   visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
 }
@@ -280,6 +282,22 @@ mitto::CookieStore* Window::CookieStore() {
     cookie_store_ = bindings::MakeGarbageCollected<mitto::CookieStore>(this);
   }
   return cookie_store_.Get();
+}
+
+mitto::CacheStorage* Window::Caches(
+    bindings::ExceptionState& exception_state) {
+  // GlobalCacheStorage::CanCreateCacheStorage(): a document whose origin is
+  // opaque, as one that the Session did not load over HTTP or HTTPS has, may
+  // not.
+  if (!GetDocument().GetCacheStorageHost()) {
+    exception_state.ThrowDOMException("SecurityError",
+                                      "Access to cache storage is denied.");
+    return nullptr;
+  }
+  if (!caches_) {
+    caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
+  }
+  return caches_.Get();
 }
 
 // DOMScheduler::scheduler(): the window's supplement.

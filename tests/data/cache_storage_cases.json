@@ -1,0 +1,278 @@
+{
+ "shape": [
+  "[object CacheStorage]",
+  true,
+  [
+   "constructor",
+   "delete",
+   "has",
+   "keys",
+   "match",
+   "open"
+  ],
+  [
+   "add",
+   "addAll",
+   "constructor",
+   "delete",
+   "keys",
+   "match",
+   "matchAll",
+   "put"
+  ]
+ ],
+ "empty": [
+  [],
+  false,
+  false,
+  null,
+  [
+   "ok",
+   "undefined"
+  ]
+ ],
+ "open": [
+  "[object Cache]",
+  false,
+  [
+   "a",
+   "b"
+  ],
+  true
+ ],
+ "putMade": [
+  "ok",
+  "undefined"
+ ],
+ "matchMade": {
+  "type": "default",
+  "url": "",
+  "redirected": false,
+  "status": 201,
+  "ok": true,
+  "statusText": "Made",
+  "headers": [
+   [
+    "content-type",
+    "text/plain"
+   ],
+   [
+    "x-one",
+    "1"
+   ]
+  ],
+  "bodyUsed": false,
+  "text": "made body"
+ },
+ "matchMadeSearch": [
+  null,
+  201,
+  201
+ ],
+ "matchPost": [
+  null,
+  201,
+  [],
+  [],
+  false
+ ],
+ "empty_bodies": [
+  {
+   "type": "default",
+   "url": "",
+   "redirected": false,
+   "status": 200,
+   "ok": true,
+   "statusText": "",
+   "headers": [
+    [
+     "content-type",
+     "text/plain;charset=UTF-8"
+    ]
+   ],
+   "bodyUsed": false,
+   "text": ""
+  },
+  {
+   "type": "default",
+   "url": "",
+   "redirected": false,
+   "status": 204,
+   "ok": true,
+   "statusText": "",
+   "headers": [],
+   "bodyUsed": false,
+   "text": ""
+  }
+ ],
+ "fetchedUsed": true,
+ "matchFetched": {
+  "type": "basic",
+  "url": "/res/a",
+  "redirected": false,
+  "status": 200,
+  "ok": true,
+  "statusText": "OK",
+  "headers": [
+   [
+    "content-type",
+    "text/plain"
+   ],
+   [
+    "x-a",
+    "1"
+   ]
+  ],
+  "bodyUsed": false,
+  "text": "body a"
+ },
+ "keys": [
+  "/res/made?x=1",
+  "/res/empty",
+  "/res/none",
+  "/res/a#frag"
+ ],
+ "keysWithFragment": [
+  [
+   "/res/a#frag",
+   "GET"
+  ]
+ ],
+ "keysAfterReplace": [
+  "/res/empty",
+  "/res/none",
+  "/res/a#frag",
+  "/res/made?x=1"
+ ],
+ "matchAll": [
+  "",
+  "",
+  "body a",
+  "again"
+ ],
+ "matchAllSearch": 1,
+ "vary": [
+  200,
+  null,
+  null,
+  200,
+  "one"
+ ],
+ "putErrors": {
+  "scheme": "TypeError TypeError: Failed to execute 'put' on 'Cache': Request scheme 'data' is unsupported",
+  "method": "TypeError TypeError: Failed to execute 'put' on 'Cache': Request method 'POST' is unsupported",
+  "varyStar": "TypeError TypeError: Failed to execute 'put' on 'Cache': Vary header contains *",
+  "partial": "TypeError TypeError: Failed to execute 'put' on 'Cache': Partial response (status code 206) is unsupported",
+  "used": "TypeError TypeError: Failed to execute 'put' on 'Cache': Response body is already used",
+  "badUrl": "TypeError TypeError: Failed to execute 'put' on 'Cache': Failed to parse URL from http://[",
+  "noResponse": "TypeError TypeError: Failed to execute 'put' on 'Cache': 2 arguments required, but only 1 present.",
+  "notResponse": "TypeError TypeError: Failed to execute 'put' on 'Cache': parameter 2 is not of type 'Response'."
+ },
+ "afterPutErrors": [
+  "/res/empty",
+  "/res/none",
+  "/res/a#frag",
+  "/res/made?x=1"
+ ],
+ "add": [
+  [
+   "ok",
+   "undefined"
+  ],
+  "TypeError TypeError: Failed to execute 'add' on 'Cache': Request failed",
+  "TypeError TypeError: Failed to execute 'add' on 'Cache': Vary header contains *",
+  [
+   "ok",
+   "undefined"
+  ],
+  [
+   "ok",
+   "undefined"
+  ],
+  "DOMException InvalidStateError: Failed to execute 'addAll' on 'Cache': Cache.addAll(): duplicate requests (/res/e)",
+  "TypeError TypeError: Failed to execute 'addAll' on 'Cache': Request failed",
+  "TypeError TypeError: Failed to execute 'add' on 'Cache': Request method 'POST' is unsupported"
+ ],
+ "afterAdd": [
+  "/res/empty",
+  "/res/none",
+  "/res/a#frag",
+  "/res/made?x=1",
+  "/res/b",
+  "/res/c",
+  "/res/d"
+ ],
+ "addedText": "body c",
+ "delete": [
+  true,
+  false,
+  false,
+  true,
+  [
+   "/res/empty",
+   "/res/none",
+   "/res/a#frag",
+   "/res/b",
+   "/res/d"
+  ]
+ ],
+ "cachesMatch": [
+  "body b",
+  "from b",
+  null,
+  null
+ ],
+ "big": [
+  3145745,
+  true
+ ],
+ "bytes": [
+  300000,
+  true
+ ],
+ "deleteCache": [
+  true,
+  [
+   "a"
+  ],
+  false,
+  "from b",
+  false
+ ],
+ "reopened": [
+  [],
+  [
+   "a",
+   "b"
+  ]
+ ],
+ "names": [
+  [
+   97
+  ],
+  [
+   98
+  ],
+  [
+   233,
+   128512
+  ],
+  [
+   108,
+   111,
+   110,
+   101,
+   32,
+   55296
+  ]
+ ],
+ "hasLone": true,
+ "estimate": [
+  true,
+  [
+   "caches"
+  ],
+  10737418240
+ ],
+ "cleared": []
+}

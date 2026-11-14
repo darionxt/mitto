@@ -93,6 +93,30 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Cache"
+    file = "cache"
+    implemented = [
+      "match",
+      "matchAll",
+      "add",
+      "addAll",
+      "put",
+      "delete",
+      "keys",
+    ]
+  },
+  {
+    name = "CacheStorage"
+    file = "cache_storage"
+    implemented = [
+      "match",
+      "has",
+      "open",
+      "delete",
+      "keys",
+    ]
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -2132,6 +2156,7 @@ mitto_bindings_interfaces = [
     file = "window"
     implemented = [
       "window",
+      "caches",
       "webkitRequestFileSystem",
       "self",
       "document",

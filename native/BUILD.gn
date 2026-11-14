@@ -65,6 +65,8 @@ source_set("string_hasher") {
 
 source_set("page_channel") {
   sources = [
+    "cache_storage_messages.cc",
+    "cache_storage_messages.h",
     "page_channel.h",
     "page_messages.cc",
     "page_messages.h",
@@ -75,7 +77,10 @@ source_set("page_channel") {
     sources += [ "page_channel_posix.cc" ]
   }
   public_deps = [ ":header_rules" ]
-  deps = [ "//base" ]
+  deps = [
+    "//base",
+    "//url",
+  ]
 }
 
 shared_library("mitto_core") {
@@ -83,6 +88,16 @@ shared_library("mitto_core") {
   sources = [
     "body_stream.cc",
     "body_stream.h",
+    "cache_storage/cache_storage.cc",
+    "cache_storage/cache_storage.h",
+    "cache_storage/cache_storage_cache.cc",
+    "cache_storage/cache_storage_cache.h",
+    "cache_storage/cache_storage_context.cc",
+    "cache_storage/cache_storage_context.h",
+    "cache_storage/cache_storage_scheduler.cc",
+    "cache_storage/cache_storage_scheduler.h",
+    "cache_storage/cache_storage_types.cc",
+    "cache_storage/cache_storage_types.h",
     "client_hints.cc",
     "client_hints.h",
     "connect_retrying_socket_factory.cc",
@@ -103,6 +118,8 @@ shared_library("mitto_core") {
     "network_quality.h",
     "network_session_configurator.cc",
     "network_session_configurator.h",
+    "page_cache_storage.cc",
+    "page_cache_storage.h",
     "page_host.cc",
     "page_host.h",
     "page_launcher.cc",
@@ -124,6 +141,8 @@ shared_library("mitto_core") {
     "socks5_auth_socket_factory.h",
     "ssl_config_service_mojo.cc",
     "ssl_config_service_mojo.h",
+    "storage_quota.cc",
+    "storage_quota.h",
     "stub_resolver_config_reader.cc",
     "stub_resolver_config_reader.h",
   ]

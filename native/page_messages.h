@@ -19,6 +19,7 @@
 
 #include "base/containers/span.h"
 #include "base/types/expected.h"
+#include "mitto/cache_storage_messages.h"
 
 namespace base {
 class DictValue;
@@ -29,7 +30,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 15;
+inline constexpr uint32_t kPageProtocolVersion = 16;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -160,6 +161,12 @@ enum class PageMessage : uint32_t {
   // To the Page: a message of a BroadcastChannel of another Page of the
   // Session whose document is of the same origin, as PageBroadcast says.
   kBroadcastReceived = 26,
+  // To the Session: what the document's CacheStorage or one of its Caches
+  // asks, as cache_storage_messages.h says.
+  kCacheStorage = 27,
+  // To the Page: what the Session answers the Cache API, as
+  // cache_storage_messages.h says.
+  kCacheStorageAnswer = 28,
 };
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
@@ -687,6 +694,8 @@ struct FrameFromPage {
   bool cookie_store_listen = false;
   // kBroadcast.
   PageBroadcast broadcast;
+  // kCacheStorage.
+  PageCacheStorageCall cache_storage_call;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -726,6 +735,8 @@ struct FrameFromSession {
   PageCookieStoreChange cookie_store_change;
   // kBroadcastReceived.
   PageBroadcast broadcast;
+  // kCacheStorageAnswer.
+  PageCacheStorageAnswer cache_storage_answer;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most

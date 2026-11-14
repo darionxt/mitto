@@ -135,7 +135,7 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 15
+_PROTOCOL_VERSION = 16
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.

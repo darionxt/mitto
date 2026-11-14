@@ -44,8 +44,11 @@ class CookieStore;
 
 namespace mitto {
 
+class CacheStorageContext;
+class PageCacheStorage;
 class PageHost;
 class ReadyRequests;
+class StorageQuota;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
 // header lines in their order, and its options, with no Initiator, which the
@@ -119,6 +122,10 @@ class PageNetwork {
   virtual void BroadcastFromPage(const PageHost& from,
                                  const url::Origin& origin,
                                  const PageBroadcast& broadcast) = 0;
+  // The Session's Cache API, which its Pages share, and the quota of its
+  // storage.
+  virtual CacheStorageContext& cache_storage() = 0;
+  virtual StorageQuota& storage_quota() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -285,6 +292,8 @@ class PageHost final : public PageChannel::Delegate {
   // other Pages of the document's origin, which the library takes from the
   // document it loaded, not from the Page.
   void OnBroadcast(const PageBroadcast& broadcast);
+  // What the document's Cache API asks, which PageCacheStorage serves.
+  void OnCacheStorage(PageCacheStorageCall call);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -332,6 +341,10 @@ class PageHost final : public PageChannel::Delegate {
   // The partition of the document's cookies, as Chrome's
   // RestrictedCookieManager for a top-level frame has it.
   std::optional<net::CookiePartitionKey> DocumentPartitionKey() const;
+  // The storage key of the document, as StorageKey::Serialize() writes it, if
+  // it may reach the Cache API: one of an HTTP or HTTPS URL in a secure
+  // context. A top-level document's key is its origin, first party.
+  std::optional<std::string> DocumentCacheStorageKey() const;
 
   // What navigator.connection gives a document at `url`: what the renderer
   // process of its site gives for its host, as for a subresource to it.
@@ -381,6 +394,8 @@ class PageHost final : public PageChannel::Delegate {
   bool ended_ = false;
   // The calls in progress, which the Page answers in any order.
   std::set<uint64_t> calls_;
+  // The document's Cache API, from its first call.
+  std::unique_ptr<PageCacheStorage> cache_storage_;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

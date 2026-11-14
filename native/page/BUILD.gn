@@ -79,6 +79,8 @@ executable("mitto_page") {
     "resource_timing.h",
     "script_runner.cc",
     "script_runner.h",
+    "session_cache_storage.cc",
+    "session_cache_storage.h",
     "session_channel.cc",
     "session_channel.h",
     "session_cookie_jar.cc",

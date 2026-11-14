@@ -401,6 +401,7 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
   // there; another's origin is opaque to them.
   if (url.SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(cookie_jar_);
+    document->SetCacheStorageHost(cache_storage_host_);
   }
   Window::Current().SetDocument(document);
   return *document;
