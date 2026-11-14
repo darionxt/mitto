@@ -813,6 +813,9 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
 }
 
 void PageHost::OnCancel(uint64_t number) {
+  // A navigation that the Page let go after its response came, before it
+  // made a document of it, gives none.
+  navigation_responses_.erase(number);
   const auto found = requests_.find(number);
   if (found == requests_.end()) {
     // The request may have ended since the Page let it go.
@@ -1592,6 +1595,12 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnSetCookie(frame->cookie_line, document_url);
       return;
     case PageMessage::kLoaded: {
+      // A document whose place the response of a navigation takes, as the
+      // caller has heard already, loaded before the Page made the new one:
+      // the caller waits for no load of it.
+      if (!navigation_responses_.empty()) {
+        return;
+      }
       PageEvent event;
       event.type = MITTO_PAGE_EVENT_LOADED;
       Push(std::move(event));

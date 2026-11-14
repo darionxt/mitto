@@ -329,6 +329,30 @@ def test_a_page_opens_when_its_document_stops_loading_for_a_navigation_that_keep
         assert page.evaluate("[document.readyState, document.getElementById('after')]") == ["complete", None]
 
 
+def test_a_navigation_ends_once_its_own_document_has_loaded_and_not_the_one_it_left(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The second document's script waits on the server, so its load comes well after the first document's.
+    hold = threading.Event()
+    server.routes["/slow.js"] = _Route(b"window.slow = 1;", headers=[("Content-Type", "text/javascript")], hold=hold)
+    second = server.page("/second", "<title>Second</title><script src=/slow.js></script>")
+    # The load listener runs on until the navigation's response has come, so the first document's load ends after it.
+    first = server.page(
+        "/first",
+        "<script>addEventListener('load', () => {"
+        "  location.href = '/second'; const end = Date.now() + 1000; while (Date.now() < end);"
+        "});</script>",
+    )
+    release = threading.Timer(2.0, hold.set)
+    release.start()
+
+    with _open_page(session, first) as page:
+        assert page.url == second
+        assert page.evaluate("[document.title, document.readyState, window.slow]") == ["Second", "complete", 1]
+        assert _next(page).url == second
+    release.cancel()
+
+
 def test_a_javascript_url_runs_from_a_task_and_navigates_nowhere(session: mitto.Session, server: _Server) -> None:
     url = server.page("/", "<body>")
 
