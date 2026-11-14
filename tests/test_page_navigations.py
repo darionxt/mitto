@@ -361,6 +361,78 @@ def test_a_javascript_url_runs_from_a_task_and_navigates_nowhere(session: mitto.
     assert server.paths() == ["/"]
 
 
+def test_an_error_in_a_javascript_url_reaches_the_window_from_a_task(session: mitto.Session, server: _Server) -> None:
+    url = server.page("/", "<body>")
+
+    with _open_page(session, url) as page:
+        # The script's errors are not muted, as a script of another origin's are.
+        assert page.evaluate(
+            "new Promise((resolve) => {"
+            "  let reported = false;"
+            "  addEventListener('error', (e) => resolve([e.error instanceof SyntaxError, reported]), {once: true});"
+            "  location.href = 'javascript:%+#@?'; reported = true;"
+            "})"
+        ) == [True, True]
+
+
+def test_target_matches_the_element_that_the_fragment_indicates(session: mitto.Session, server: _Server) -> None:
+    url = server.page("/", "<div id=one>1</div><a name=two>2</a><div id='\u00e9'>3</div><div id=moved>4</div>")
+    target = "document.querySelector(':target')?.textContent ?? null"
+
+    # Once the document has parsed, and after each navigation within it: an ID, a link's name, the fragment
+    # percent-decoded as UTF-8, and nothing for a fragment that indicates nothing.
+    with _open_page(session, url + "#one") as page:
+        assert page.evaluate(target) == "1"
+        assert page.evaluate(f"location.hash = 'two'; {target}") == "2"
+        assert page.evaluate(f"location.hash = '%C3%A9'; {target}") == "3"
+        assert page.evaluate(f"location.hash = 'nothing'; {target}") is None
+        # The target stays with its element as it moves, and in another document it is none of that one's.
+        assert page.evaluate(
+            "location.hash = 'moved'; const moved = document.getElementById('moved');"
+            "const other = document.implementation.createHTMLDocument();"
+            "other.body.append(other.adoptNode(moved)); const away = moved.matches(':target');"
+            "document.body.append(document.adoptNode(moved)); [away, moved.matches(':target')]"
+        ) == [False, True]
+
+
+def test_lang_takes_the_content_language_header_and_a_meta_whose_removal_leaves_it(
+    session: mitto.Session, server: _Server
+) -> None:
+    header = server.page("/header", "<title>Header</title>", [("Content-Language", " fr-CA , en")])
+    meta = server.page("/meta", "<meta http-equiv=content-language content=de-DE>", [("Content-Language", "fr-CA")])
+    lang = "document.documentElement.matches(':lang({})')"
+
+    with _open_page(session, header) as page:
+        assert page.evaluate(lang.format("fr-CA")) is True
+    with _open_page(session, meta) as page:
+        assert page.evaluate(f"document.querySelector('meta').remove(); {lang.format('de-DE')}") is True
+
+
+def test_a_new_document_gets_pagereveal_before_its_first_animation_frame(
+    session: mitto.Session, server: _Server
+) -> None:
+    # A frame asked for in the head waits for the body, while a script holds up the parser, so the listener that comes
+    # after that script hears pagereveal.
+    hold = threading.Event()
+    server.routes["/slow.js"] = _Route(b"", headers=[("Content-Type", "text/javascript")], hold=hold)
+    url = server.page(
+        "/",
+        "<script>window.seen = []; requestAnimationFrame(() => seen.push('rAF'));</script>"
+        "<script src=/slow.js></script>"
+        "<script>addEventListener('pagereveal',"
+        " (e) => seen.push([e.constructor.name, e.bubbles, e.cancelable, e.isTrusted]));</script><body>",
+    )
+    release = threading.Timer(0.5, hold.set)
+    release.start()
+
+    with _open_page(session, url) as page:
+        assert page.evaluate("new Promise((resolve) => requestAnimationFrame(() => resolve(seen)))") == [
+            ["PageRevealEvent", False, False, True],
+            "rAF",
+        ]
+    release.cancel()
+
+
 def test_location_refuses_a_url_that_does_not_resolve(session: mitto.Session, server: _Server) -> None:
     url = server.page("/", "<body>")
 

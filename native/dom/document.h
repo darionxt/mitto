@@ -367,6 +367,11 @@ class Document : public Node {
   // Document::FinishedParsing(), once the parser is done: DOMContentLoaded,
   // a microtask checkpoint, then CheckCompleted() for a document of a window.
   void FinishedParsing();
+  // Document::WillInsertBody(), as the parser inserts the body: a document
+  // with something to show begins rendering, as
+  // BeginLifecycleUpdatesIfRenderingReady() does with no stylesheet to wait
+  // for.
+  void WillInsertBody();
   // Document::CheckCompleted(): complete, and the window's load event, once
   // parsing has finished and nothing holds the load event back.
   void CheckCompleted();
@@ -419,6 +424,25 @@ class Document : public Node {
   // The refresh that the document's response or a meta element asks for,
   // made the first time.
   HttpRefreshScheduler& GetHttpRefreshScheduler();
+
+  // The element that :target matches, which the fragment of the document's
+  // URL indicates, as Blink's CSS target.
+  Element* CssTarget() const { return css_target_.Get(); }
+  // LocalFrameView::ProcessUrlFragment(), as ElementFragmentAnchor::TryCreate()
+  // runs it: the CSS target becomes the element that the fragment of `url`
+  // indicates, or none, once the document has finished parsing and after each
+  // navigation within it.
+  void ProcessUrlFragment(const GURL& url);
+
+  // The language that the response's Content-Language and a content-language
+  // meta give the document, as Blink's Document::SetContentLanguage() keeps
+  // it: the last that was set, which removing the meta leaves.
+  const std::optional<std::u16string>& ContentLanguage() const {
+    return content_language_;
+  }
+  void SetContentLanguage(std::u16string language) {
+    content_language_ = std::move(language);
+  }
 
   // The live ranges and node iterators of the document, which the DOM tells
   // as its trees change, made when one is first attached.
@@ -480,12 +504,14 @@ class Document : public Node {
   std::u16string referrer_;
   bool initial_empty_ = false;
   std::unique_ptr<HttpRefreshScheduler> http_refresh_scheduler_;
+  std::optional<std::u16string> content_language_;
   base::TimeTicks unload_event_start_;
   base::TimeTicks unload_event_end_;
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   cppgc::Member<Window> window_;
+  cppgc::Member<Element> css_target_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;
   cppgc::Member<HTMLCollection> links_;
