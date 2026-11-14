@@ -62,7 +62,7 @@ void MaybeDisallowFetchForDocWrittenScript(const GURL& url,
   // domain, is a first party's. Hosts with no registrable domain, such as
   // localhost and IP addresses, are compared as hosts alone.
   const std::string document_host = base::UTF16ToUTF8(document.Domain());
-  const std::string request_host = url.host();
+  const std::string request_host(url.host());
   if (request_host == document_host) {
     return;
   }
@@ -126,14 +126,12 @@ void DocWrittenScriptScanner::Scan(std::u16string_view source,
         ++template_count_;
       }
     }
-    if (template_count_) {
-      continue;
-    }
+    // HTMLPreloadScanner updates the tokenizer's state for every start tag.
     if (const std::optional<HtmlTokenizer::State> state =
             SpeculativeStateForTag(token.name)) {
       tokenizer_.SetState(*state);
     }
-    if (token.name != u"script") {
+    if (template_count_ || token.name != u"script") {
       continue;
     }
     // The scanner fetches a classic or module script with src, but a classic
