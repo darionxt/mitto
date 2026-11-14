@@ -261,6 +261,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCacheStorage:
       case PageMessage::kDocumentCommitted:
       case PageMessage::kSameDocumentNavigation:
+      case PageMessage::kWorkerStarted:
+      case PageMessage::kContextGone:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
