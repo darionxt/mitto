@@ -34,6 +34,7 @@ SAME_SITE = "other.example.test"
 CROSS_SITE = "www.other.test"
 ANOTHER_SITE = "www.third.test"
 
+ERR_FAILED = -2
 ERR_INVALID_ARGUMENT = -4
 ERR_INVALID_URL = -300
 ERR_UNKNOWN_URL_SCHEME = -302
@@ -470,6 +471,72 @@ def test_a_fetch_says_null_once_a_redirect_leaves_another_origin_for_a_third(ser
     assert [received.header("Origin") for received in servers.received] == [None, origin, "null", "null"]
 
 
+@pytest.mark.parametrize("kind", [mitto.RequestKind.FONT, mitto.RequestKind.MODULE])
+@pytest.mark.parametrize("host", [HOST, SAME_SITE, CROSS_SITE])
+def test_an_element_in_cors_mode_says_the_origin_of_its_page_wherever_it_goes(
+    servers: Servers, kind: mitto.RequestKind, host: str
+) -> None:
+    with new_session() as session:
+        session.get(servers.https(host), kind=kind, initiator=servers.https(HOST, "/page"))
+
+    assert servers.received[0].header("Origin") == servers.https(HOST).removesuffix("/")
+    # Blink holds it in its map, ahead of the lines that it adds itself.
+    assert servers.received[0].names.index("Origin") < servers.received[0].names.index("User-Agent")
+
+
+@pytest.mark.parametrize("kind", [mitto.RequestKind.XHR, mitto.RequestKind.BEACON])
+def test_a_page_request_of_another_kind_gets_its_origin_where_a_fetch_does(
+    servers: Servers, kind: mitto.RequestKind
+) -> None:
+    with new_session() as session:
+        session.get(servers.https(HOST), kind=kind, initiator=servers.https(HOST, "/page"))
+        session.post(servers.https(HOST), kind=kind, data="text", initiator=servers.https(HOST, "/page"))
+
+    assert [received.header("Origin") for received in servers.received] == [None, servers.https().removesuffix("/")]
+
+
+def test_a_workers_script_to_its_pages_origin_says_same_origin(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(servers.https(HOST, "/worker.js"), kind="worker", initiator=servers.https(HOST, "/page"))
+
+    received = servers.received[0]
+    assert (received.header("Sec-Fetch-Mode"), received.header("Sec-Fetch-Dest")) == ("same-origin", "worker")
+    assert received.header("Origin") is None
+    assert received.names.index("User-Agent") == received.names.index("Referer") + 1
+
+
+@pytest.mark.parametrize("host", [SAME_SITE, CROSS_SITE])
+def test_a_workers_script_to_another_origin_fails_and_sends_nothing(servers: Servers, host: str) -> None:
+    with new_session() as session, pytest.raises(RequestError) as caught:
+        session.get(servers.https(host, "/worker.js"), kind="worker", initiator=servers.https(HOST, "/page"))
+
+    assert caught.value.net_error == ERR_FAILED
+    assert servers.received == []
+
+
+def test_a_workers_script_does_not_follow_a_redirect_to_another_origin(servers: Servers) -> None:
+    with new_session() as session, pytest.raises(RequestError) as caught:
+        session.get(
+            redirect(servers.https(HOST, "/worker.js"), servers.https(SAME_SITE, "/worker.js")),
+            kind="worker",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert caught.value.net_error == ERR_FAILED
+    assert [received.path.partition("?")[0] for received in servers.received] == ["/worker.js"]
+
+
+def test_a_workers_script_follows_a_redirect_within_its_origin(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(
+            redirect(servers.https(HOST, "/first.js"), servers.https(HOST, "/worker.js")),
+            kind="worker",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert [received.path.partition("?")[0] for received in servers.received] == ["/first.js", "/worker.js"]
+
+
 def test_a_script_gets_no_origin_on_a_redirect(servers: Servers) -> None:
     with new_session() as session:
         session.get(
@@ -608,6 +675,34 @@ def test_a_cross_site_navigation_says_nothing_of_storage_access_because_it_becom
         session.get(servers.https(CROSS_SITE), kind="navigation", initiator=servers.https(HOST, "/page"))
 
     assert servers.received[0].header("Sec-Fetch-Storage-Access") is None
+
+
+def test_a_cross_site_frame_says_its_storage_access(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(servers.https(CROSS_SITE), kind="iframe", initiator=servers.https(HOST, "/page"))
+
+    assert servers.received[0].header("Sec-Fetch-Storage-Access") == "active"
+    names = servers.received[0].names
+    assert names.index("Sec-Fetch-Storage-Access") == names.index("Sec-Fetch-Dest") + 1
+
+
+@pytest.mark.parametrize("host", [HOST, SAME_SITE])
+def test_a_frame_of_the_pages_site_says_nothing_of_storage_access(servers: Servers, host: str) -> None:
+    with new_session() as session:
+        session.get(servers.https(host), kind="iframe", initiator=servers.https(HOST, "/page"))
+
+    assert servers.received[0].header("Sec-Fetch-Storage-Access") is None
+
+
+def test_a_frame_keeps_the_site_of_its_page_on_each_hop(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(
+            chain(servers.https(HOST), servers.https(CROSS_SITE), servers.https(SAME_SITE, "/end")),
+            kind="iframe",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert [received.header("Sec-Fetch-Storage-Access") for received in servers.received] == [None, "active", None]
 
 
 def test_storage_access_follows_each_hop_of_a_script(servers: Servers) -> None:
@@ -877,6 +972,20 @@ def _cookie_names(received: Received) -> set[str]:
         ("fetch", HOST, {"strict", "lax", "none"}),
         ("fetch", SAME_SITE, set[str]()),
         ("fetch", CROSS_SITE, set[str]()),
+        # So do an XMLHttpRequest, and an element in cors mode, which Chrome asks for anonymously.
+        ("xhr", SAME_SITE, set[str]()),
+        ("font", HOST, {"strict", "lax", "none"}),
+        ("font", CROSS_SITE, set[str]()),
+        ("module", SAME_SITE, set[str]()),
+        # The rest of a page's subresources go as a script does.
+        ("style", SAME_SITE, {"strict", "lax", "none"}),
+        ("style", CROSS_SITE, {"none"}),
+        ("beacon", CROSS_SITE, {"none"}),
+        ("favicon", CROSS_SITE, {"none"}),
+        ("worker", HOST, {"strict", "lax", "none"}),
+        # A frame stays in its page, so a frame of another site gets no cookie that keeps to its site.
+        ("iframe", SAME_SITE, {"strict", "lax", "none"}),
+        ("iframe", CROSS_SITE, {"none"}),
     ],
 )
 def test_which_samesite_cookies_a_request_sends(servers: Servers, kind: str, host: str, expected: set[str]) -> None:
@@ -927,6 +1036,8 @@ def test_a_navigation_the_browser_started_sends_every_cookie(servers: Servers) -
         ("fetch", HOST, {"strict", "lax", "none"}),
         ("fetch", SAME_SITE, set[str]()),
         ("fetch", CROSS_SITE, set[str]()),
+        ("iframe", SAME_SITE, {"strict", "lax", "none"}),
+        ("iframe", CROSS_SITE, {"none"}),
     ],
 )
 def test_which_samesite_cookies_a_response_sets(servers: Servers, kind: str, host: str, expected: set[str]) -> None:

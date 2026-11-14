@@ -3,8 +3,8 @@
 The lines of each Request Kind come from its Baselines over HTTP/1.1, which has the case Chrome writes, with what //net
 adds taken away, and its priority from the priority header over HTTP/2. A hint that follows the machine gets a placeholder,
 which a Session fills from its Machine. What no Baseline can hold comes from this module: the credentials mode of each
-kind, and a Content-Type for a body that no Recording Case sends. Where a Baseline does hold a Content-Type, it has to
-agree.
+kind, where a kind's hints go when no Recording Case of that kind has them, and a Content-Type for a body that no Recording
+Case sends. Where a Baseline does hold a Content-Type, it has to agree.
 """
 
 import json
@@ -22,6 +22,7 @@ from tools.capture.recording import Json
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 
 __all__ = [
+    "KIND_CASES",
     "PAGE_FEATURES_KEY",
     "PERSONAS_DIRECTORY",
     "PersonaDataError",
@@ -52,8 +53,10 @@ _PLACEHOLDERS = {"content-type": "<content-type>", "origin": "<origin>"}
 _CONTENT_TYPE = "content-type"
 _SEC_FETCH_SITE = "sec-fetch-site"
 _USER_AGENT = "user-agent"
+_REFERER = "referer"
 _ACCEPT_LANGUAGE = "accept-language"
 _PRIORITY = "priority"
+_FETCH_METADATA_PREFIX = "sec-fetch-"
 
 # A request without a body can send Origin too, so it is not a line that only a body adds.
 _NOT_ONLY_WITH_A_BODY = frozenset({"origin"})
@@ -80,25 +83,42 @@ class _BodySource:
 
 @dataclass(frozen=True, slots=True)
 class _KindSource:
-    """Which Recording Cases make one Request Kind of a Persona. The kind's own case has the kind's name.
+    """Which Recording Cases make one Request Kind of a Persona.
 
     Attributes:
         credentials_mode: Whether the kind sends credentials, which no Baseline shows: as a page's fetch() does unless it
             asks otherwise, or as an element does.
         lines: The case whose lines, in their order, the kind's lines start from.
         hints: The case in which every hint goes, whose hints come after the lines of `lines`, or None if `lines` holds
-            the hints in their places already.
+            the hints in their places already, or the kind sends none.
+        hints_in_navigation_order: Whether the hints of `hints` take the places that a navigation gives them among the
+            lines of `lines`, as the browser adds them to a frame's navigation, rather than going after those lines.
         body: What a body adds, or None if the kind has no body.
+        own: The kind's own case, a request of the kind to its page's origin with no Content-Type, which gives the value
+            of Sec-Fetch-Site that goes without an Initiator and the kind's priority. None for the case of the kind's
+            name.
     """
 
     credentials_mode: str
     lines: str
     hints: str | None = None
+    hints_in_navigation_order: bool = False
     body: _BodySource | None = None
+    own: str | None = None
 
 
-# A navigation sends its hints in an order of its own. A subresource has its lines in the order they go with no hint, and
-# then the hints, because the native core works out where each goes. See docs/persona.md.
+# What a fetch(), an XMLHttpRequest and a beacon give each kind of body.
+_SUBRESOURCE_CONTENT_TYPES = {
+    "text": "text/plain;charset=UTF-8",
+    "form": "application/x-www-form-urlencoded;charset=UTF-8",
+    "json": "application/json",
+    "multipart": f"multipart/form-data; boundary={_BOUNDARY_PLACEHOLDER}",
+}
+
+# A navigation sends its hints in an order of its own, and so does a frame's, which the browser makes the same way. A
+# subresource has its lines in the order they go with no hint, and then the hints, because the native core works out where
+# each goes. Blink's subresources share one map of lines, so a kind with no Recording Case of its own with every hint takes
+# them from a kind that has one. A worker's script comes from the browser, which sends it no hints. See docs/persona.md.
 _KINDS = {
     "navigation": _KindSource(
         credentials_mode="include",
@@ -117,27 +137,58 @@ _KINDS = {
         credentials_mode="same-origin",
         lines="fetch_post_text_same_origin",
         hints="client_hints_fetch_post",
-        body=_BodySource(
-            "fetch_post_text_same_origin",
-            {
-                "text": "text/plain;charset=UTF-8",
-                "form": "application/x-www-form-urlencoded;charset=UTF-8",
-                "json": "application/json",
-                "multipart": f"multipart/form-data; boundary={_BOUNDARY_PLACEHOLDER}",
-            },
-        ),
+        body=_BodySource("fetch_post_text_same_origin", _SUBRESOURCE_CONTENT_TYPES),
     ),
     "script": _KindSource(credentials_mode="include", lines="script", hints="client_hints_script"),
     "image": _KindSource(credentials_mode="include", lines="image", hints="client_hints_image"),
+    "style": _KindSource(credentials_mode="include", lines="style", hints="client_hints_script"),
+    # An element in cors mode is anonymous unless it asks otherwise, as a font and a module script always are.
+    "font": _KindSource(credentials_mode="same-origin", lines="font", hints="client_hints_script"),
+    "module": _KindSource(credentials_mode="same-origin", lines="module", hints="client_hints_script"),
+    "xhr": _KindSource(
+        credentials_mode="same-origin",
+        lines="xhr_post_text",
+        hints="client_hints_fetch_post",
+        body=_BodySource("xhr_post_text", _SUBRESOURCE_CONTENT_TYPES),
+        own="xhr_get",
+    ),
+    "worker": _KindSource(credentials_mode="same-origin", lines="worker"),
+    # A beacon always has a body, which a Blob with no type sends with no Content-Type. A page writes JSON as text.
+    "beacon": _KindSource(
+        credentials_mode="include",
+        lines="beacon_text",
+        hints="client_hints_fetch_post",
+        body=_BodySource("beacon_text", {**_SUBRESOURCE_CONTENT_TYPES, "json": "text/plain;charset=UTF-8"}),
+        own="beacon_blob",
+    ),
+    "iframe": _KindSource(
+        credentials_mode="include",
+        lines="frame_same_origin",
+        hints="client_hints_navigation",
+        hints_in_navigation_order=True,
+        own="frame_same_origin",
+    ),
+    "favicon": _KindSource(credentials_mode="include", lines="favicon", hints="client_hints_image"),
 }
+
+KIND_CASES = {kind: source.own or kind for kind, source in _KINDS.items()}
+"""The Recording Case of each Request Kind's own request, to its page's origin with no Content-Type, by the kind's name."""
 
 # The Recording Cases that hold a Content-Type: of which kind, and for what kind of body.
 _RECORDED_CONTENT_TYPES = {
     "navigation_form_urlencoded": ("navigation", "form"),
     "navigation_form_multipart": ("navigation", "multipart"),
+    "navigation_form_text": ("navigation", "text"),
+    "navigation_form_cross_site": ("navigation", "form"),
     "fetch_post_text_same_origin": ("fetch", "text"),
     "fetch_post_text_cross_site": ("fetch", "text"),
     "fetch_post_json_same_origin": ("fetch", "json"),
+    "fetch_post_json_cross_site": ("fetch", "json"),
+    "xhr_post_text": ("xhr", "text"),
+    "xhr_post_text_sync": ("xhr", "text"),
+    "beacon_text": ("beacon", "text"),
+    "beacon_text_cross_site": ("beacon", "text"),
+    "beacon_form_data": ("beacon", "multipart"),
 }
 
 
@@ -228,17 +279,29 @@ class _Requests:
         return [line for line in headers if isinstance(line, str)]
 
     def lines(self, case: str) -> list[str]:
-        """Return the header lines of a case's request over HTTP/1.1, but for those that //net adds."""
-        return [line for line in self.headers(case) if _name(line) not in _ADDED_BY_NET]
+        """Return the header lines of a case's request over HTTP/1.1, but for those that //net adds.
+
+        A User-Agent after Referer is //net's too: the browser makes such a request with none, as it makes a worker's
+        script, and //net adds the Persona's after the Referer that it sets.
+        """
+        headers = self.headers(case)
+        names = [_name(line) for line in headers]
+        added = _ADDED_BY_NET
+        if _USER_AGENT in names and _REFERER in names and names.index(_USER_AGENT) > names.index(_REFERER):
+            added = added | {_USER_AGENT}
+        return [line for line in headers if _name(line) not in added]
 
 
 def _kind_data(found: _Requests, kind: str, source: _KindSource) -> dict[str, Json]:
     lines = found.lines(source.lines)
-    if source.hints is not None:
+    if source.hints is not None and source.hints_in_navigation_order:
+        lines = _in_navigation_order(lines, found.lines(source.hints), source.hints)
+    elif source.hints is not None:
         lines = _with_hints(lines, found.lines(source.hints), source.hints)
-    own = found.lines(kind)
+    own_case = source.own or kind
+    own = found.lines(own_case)
     values = {**_PLACEHOLDERS, _SEC_FETCH_SITE: _value(own, _SEC_FETCH_SITE)}
-    priority, incremental = _priority(found.headers(kind, HTTP2), kind)
+    priority, incremental = _priority(found.headers(own_case, HTTP2), kind)
     data: dict[str, Json] = {
         "credentials_mode": source.credentials_mode,
         "priority": priority.name,
@@ -264,6 +327,30 @@ def _with_hints(lines: list[str], hinted: list[str], case: str) -> list[str]:
     after = {_name(line) for line in hinted[places[-1] + 1 :]}
     at = next((number for number, line in enumerate(lines) if _name(line) in after), len(lines))
     return [*lines[:at], *(hinted[number] for number in places), *lines[at:]]
+
+
+def _in_navigation_order(lines: list[str], hinted: list[str], case: str) -> list[str]:
+    """Return the lines with the hints of a navigation's case where every hint goes, each in the place it has there.
+
+    Fetch Metadata that only the navigation has, such as Sec-Fetch-User, stays out: the native core sets those lines from
+    what the request is.
+
+    Raises:
+        PersonaDataError: A line of `lines` is not in the navigation's case, or not in the order it has there.
+    """
+    own = {_name(line): line for line in lines}
+    if not own.keys() <= {_name(line) for line in hinted}:
+        raise PersonaDataError(
+            f"{case} lacks a line of the kind: {sorted(own.keys() - {_name(line) for line in hinted})}"
+        )
+    merged = [
+        own.get(_name(line), line)
+        for line in hinted
+        if _name(line) in own or not _name(line).startswith(_FETCH_METADATA_PREFIX)
+    ]
+    if [line for line in merged if _name(line) in own] != lines:
+        raise PersonaDataError(f"{case} has the lines of the kind in another order")
+    return merged
 
 
 def _line(line: str, values: Mapping[str, str]) -> str:

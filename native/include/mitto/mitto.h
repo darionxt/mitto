@@ -644,9 +644,13 @@ MITTO_EXPORT void mitto_session_end_waits(MittoSession* session);
 //   and no more, and counts as a navigation that the browser started.
 //
 // In "fetch":
-// - "mode" is "navigate", "cors" or "no-cors", and "destination" is what
-//   Sec-Fetch-Dest says. "credentials_mode" is "same-origin" or "include". All
-//   three are required.
+// - "mode" is "navigate", "same-origin", "cors" or "no-cors", and
+//   "destination" is what Sec-Fetch-Dest says. "credentials_mode" is
+//   "same-origin" or "include". All three are required. A "same-origin" that
+//   starts at or is redirected to another origin than the page's finishes with
+//   ERR_FAILED and sends nothing there. A "navigate" with the destination
+//   "iframe" or "frame" is the navigation of a frame whose parent is the page,
+//   and otherwise one of a top-level page.
 // - "has_user_activation" says whether Sec-Fetch-User goes. The default is false.
 // - "initiator" is the URL of the page the request comes from, which counts as a
 //   top-level page. It decides Sec-Fetch-Site, Referer and Origin, which SameSite

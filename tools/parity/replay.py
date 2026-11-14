@@ -6,16 +6,24 @@ gains something a case needs, the replay here passes it on, and those gaps leave
 
 from dataclasses import dataclass, field
 
-from mitto import Session
+from mitto import RequestKind, Session
 from mitto._native import PrivateSettings
 from mitto._request import BodyOptions
 from tools.capture import (
     CASES,
     CLIENT_HINTS_PLAIN_HTTP_START_PATH,
     COOKIE_SET_PATH,
+    CREDENTIALS_COOKIE_SET_PATH,
     CROSS_SITE_HOST,
+    DOCUMENT_CASES,
+    DOCUMENT_PATH,
+    DOCUMENT_RUNS,
+    DOCUMENTS_FORMS_PATH,
+    DOCUMENTS_FRAMES_PATH,
+    DOCUMENTS_START_PATH,
     FORMS_PATH,
     HINTS_ASKED,
+    HISTORY_COOKIE_SET_PATH,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -26,13 +34,14 @@ from tools.capture import (
     SAME_SITE_HOST,
     START_PATH,
     CaptureServer,
-    RequestKind,
     Run,
 )
 
-_PATHS = {case.name: case.path for case in CASES}
+_PATHS = {case.name: case.path for case in (*CASES, *DOCUMENT_CASES)}
 _POST = "POST"
 _TEXT: BodyOptions = {"data": "text body"}
+_JSON: BodyOptions = {"json": {"json": "body"}}
+_FORM_FIELDS = {"name": "mitto", "a b&c": "d e&f+g"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +55,9 @@ class Replay:
         start: The name of the case to ask for, if asking for that is what makes this one: the first hop of a redirect
             chain for a later hop, and what goes through a tunnel for what opens the tunnel.
         before: The paths to ask for first, on the same Session and with the same kind.
-        asks: The paths to navigate to first, on the same Session and from no page, so that their origin asks for hints.
+        asks: The paths to navigate to first, on the same Session and from no page, so that their origin asks for hints,
+            or so that they set the cookies that the case carries.
+        asks_host: The name to navigate to for `asks`, or nothing for the name the case's run starts at.
         body: What makes the body, from what the page's form or script gives Chrome in tools/capture/cases.py.
         page: The path of the page the request came from in tools/capture/cases.py, or nothing for what a request with no
             Initiator is.
@@ -61,6 +72,7 @@ class Replay:
     start: str | None = None
     before: tuple[str, ...] = ()
     asks: tuple[str, ...] = ()
+    asks_host: str | None = None
     body: BodyOptions = field(default_factory=BodyOptions)
     page: str | None = None
     page_host: str | None = None
@@ -139,6 +151,123 @@ def _client_hints_replays() -> dict[str, Replay]:
     return replays
 
 
+def _document_replays() -> dict[str, Replay]:
+    """Return what produces each case of the documents runs, as far as a Session reaches.
+
+    A page's own request names its page as the Initiator here, as a caller's does. What only a page in a Page can say of a
+    request, such as that it comes from a worker or from a frame of another site, or that no user started a navigation,
+    shows as gaps until a Page makes these requests itself.
+    """
+    start = DOCUMENTS_START_PATH
+    frame = _PATHS["frame_cross_site"]
+    return {
+        "style": Replay(RequestKind.STYLE, page=start),
+        "style_import": Replay(RequestKind.STYLE, page=_PATHS["style"]),
+        "style_cross_site": Replay(RequestKind.STYLE, host=CROSS_SITE_HOST, page=start),
+        "font": Replay(RequestKind.FONT, page=_PATHS["style"]),
+        "font_cross_site": Replay(RequestKind.FONT, host=CROSS_SITE_HOST, page=_PATHS["style"]),
+        "module": Replay(RequestKind.MODULE, page=start),
+        "module_static_import": Replay(RequestKind.MODULE, page=_PATHS["module"]),
+        "module_dynamic_import": Replay(RequestKind.MODULE, page=_PATHS["module"]),
+        "module_cross_site": Replay(RequestKind.MODULE, host=CROSS_SITE_HOST, page=start),
+        "xhr_get": Replay(RequestKind.XHR, page=start),
+        "xhr_get_cross_site": Replay(RequestKind.XHR, host=CROSS_SITE_HOST, page=start),
+        "xhr_post_text": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
+        "xhr_get_sync": Replay(RequestKind.XHR, page=start),
+        "xhr_post_text_sync": Replay(RequestKind.XHR, _POST, body=_TEXT, page=start),
+        "worker": Replay(RequestKind.WORKER, page=start),
+        "worker_import_scripts": Replay(RequestKind.SCRIPT, page=_PATHS["worker"]),
+        "worker_fetch": Replay(RequestKind.FETCH, page=_PATHS["worker"]),
+        "worker_module": Replay(RequestKind.WORKER, page=start),
+        "worker_blob_fetch": Replay(RequestKind.FETCH, page=start),
+        "beacon_text": Replay(RequestKind.BEACON, _POST, body=_TEXT, page=start),
+        "beacon_blob": Replay(RequestKind.BEACON, _POST, body={"data": b"blob body"}, page=start),
+        "beacon_form_data": Replay(
+            RequestKind.BEACON, _POST, body={"data": {"name": "mitto"}, "files": {}}, page=start
+        ),
+        "beacon_text_cross_site": Replay(RequestKind.BEACON, _POST, host=CROSS_SITE_HOST, body=_TEXT, page=start),
+        "fetch_later": Replay(RequestKind.FETCH, page=start),
+        "preflight": Replay(
+            RequestKind.FETCH, _POST, host=CROSS_SITE_HOST, start="fetch_post_json_cross_site", body=_JSON, page=start
+        ),
+        "fetch_post_json_cross_site": Replay(RequestKind.FETCH, _POST, host=CROSS_SITE_HOST, body=_JSON, page=start),
+        "fetch_credentials_omit": Replay(
+            RequestKind.FETCH,
+            host=SAME_SITE_HOST,
+            asks=(CREDENTIALS_COOKIE_SET_PATH,),
+            asks_host=SAME_SITE_HOST,
+            page=start,
+        ),
+        "fetch_credentials_same_origin": Replay(
+            RequestKind.FETCH,
+            host=SAME_SITE_HOST,
+            asks=(CREDENTIALS_COOKIE_SET_PATH,),
+            asks_host=SAME_SITE_HOST,
+            page=start,
+        ),
+        "fetch_credentials_include": Replay(
+            RequestKind.FETCH,
+            host=SAME_SITE_HOST,
+            asks=(CREDENTIALS_COOKIE_SET_PATH,),
+            asks_host=SAME_SITE_HOST,
+            page=start,
+        ),
+        "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start),
+        "navigation_location": Replay(RequestKind.NAVIGATION, page=start),
+        "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"]),
+        "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"]),
+        "redirect_location_1": Replay(
+            RequestKind.NAVIGATION, start="redirect_location_1", page=_PATHS["navigation_meta_refresh"]
+        ),
+        "redirect_location_2": Replay(
+            RequestKind.NAVIGATION, start="redirect_location_1", page=_PATHS["navigation_meta_refresh"]
+        ),
+        "frame_same_origin": Replay(RequestKind.IFRAME, page=DOCUMENTS_FRAMES_PATH),
+        "frame_same_site": Replay(RequestKind.IFRAME, host=SAME_SITE_HOST, page=DOCUMENTS_FRAMES_PATH),
+        "frame_cross_site": Replay(RequestKind.IFRAME, host=CROSS_SITE_HOST, page=DOCUMENTS_FRAMES_PATH),
+        "frame_script": Replay(RequestKind.SCRIPT, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST),
+        "frame_image": Replay(RequestKind.IMAGE, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST),
+        "frame_fetch": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=frame, page_host=CROSS_SITE_HOST),
+        # The page of the frames sets a cookie of each SameSite for these two.
+        "frame_nested": Replay(
+            RequestKind.IFRAME, asks=(DOCUMENTS_FRAMES_PATH,), page=frame, page_host=CROSS_SITE_HOST
+        ),
+        "frame_nested_fetch": Replay(RequestKind.FETCH, asks=(DOCUMENTS_FRAMES_PATH,), page=_PATHS["frame_nested"]),
+        "document_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH),
+        "document_preload_style": Replay(RequestKind.STYLE, page=DOCUMENT_PATH),
+        "document_preload_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH),
+        "document_preload_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH),
+        "document_preload_font": Replay(RequestKind.FONT, page=DOCUMENT_PATH),
+        "document_script": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH),
+        "document_image_small": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH),
+        "document_image": Replay(RequestKind.IMAGE, page=DOCUMENT_PATH),
+        "document_style_body": Replay(RequestKind.STYLE, page=DOCUMENT_PATH),
+        "document_script_deferred": Replay(RequestKind.SCRIPT, page=DOCUMENT_PATH),
+        "favicon": Replay(RequestKind.FAVICON, page=DOCUMENT_PATH),
+        "navigation_form_get": Replay(RequestKind.NAVIGATION, page=DOCUMENTS_FORMS_PATH),
+        "navigation_form_text": Replay(
+            RequestKind.NAVIGATION,
+            _POST,
+            body={"data": "name=mitto\r\na b&c=d e&f+g\r\n"},
+            page=_PATHS["navigation_form_get"],
+        ),
+        "navigation_form_cross_site": Replay(
+            RequestKind.NAVIGATION,
+            _POST,
+            host=CROSS_SITE_HOST,
+            body={"data": _FORM_FIELDS},
+            page=_PATHS["navigation_form_text"],
+        ),
+        # The traversal goes back to an entry that the form of the other site made, and carries what the next page set.
+        "navigation_history_back": Replay(
+            RequestKind.NAVIGATION,
+            asks=(HISTORY_COOKIE_SET_PATH,),
+            page=_PATHS["navigation_form_cross_site"],
+            page_host=CROSS_SITE_HOST,
+        ),
+    }
+
+
 REPLAYS = {
     RequestKind.NAVIGATION.value: Replay(RequestKind.NAVIGATION),
     RequestKind.FETCH.value: Replay(RequestKind.FETCH),
@@ -154,9 +283,7 @@ REPLAYS = {
         page=_PATHS["navigation_link_same_site"],
         page_host=SAME_SITE_HOST,
     ),
-    "navigation_form_urlencoded": Replay(
-        RequestKind.NAVIGATION, _POST, body={"data": {"name": "mitto", "a b&c": "d e&f+g"}}, page=FORMS_PATH
-    ),
+    "navigation_form_urlencoded": Replay(RequestKind.NAVIGATION, _POST, body={"data": _FORM_FIELDS}, page=FORMS_PATH),
     "navigation_form_multipart": Replay(
         RequestKind.NAVIGATION,
         _POST,
@@ -187,6 +314,7 @@ REPLAYS = {
     "proxy_connect": Replay(RequestKind.NAVIGATION, start="proxy_navigation"),
     "proxy_navigation": Replay(RequestKind.NAVIGATION),
     **_client_hints_replays(),
+    **_document_replays(),
 }
 """How to replay each Recording Case, by its name."""
 
@@ -200,7 +328,7 @@ _PROTOCOLS = {
 }
 """The protocol of what comes in by each route."""
 
-_RUNS = {(case.name, _PROTOCOLS[run.route]): run for run in RUNS for case in run.cases}
+_RUNS = {(case.name, _PROTOCOLS[run.route]): run for run in (*RUNS, *DOCUMENT_RUNS) for case in run.cases}
 
 _PROXIED_ROUTES = frozenset({PROXIED_HTTP1, PROXIED_HTTP2})
 
@@ -248,7 +376,7 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
     if steps.page is not None:
         initiator = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
     for path in steps.asks:
-        session.get(server.url(run.route, host=run.host, path=path), kind=RequestKind.NAVIGATION.value)
+        session.get(server.url(run.route, host=steps.asks_host or run.host, path=path), kind=RequestKind.NAVIGATION)
     for path in steps.before:
         session.get(server.url(run.route, host=run.host, path=path), kind=kind, initiator=initiator)
     path = _PATHS[steps.start or case]

@@ -2,7 +2,7 @@
 
 import json
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Container, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
@@ -19,6 +19,7 @@ BASELINES_DIRECTORY = Path(__file__).parents[2] / "tests" / "baselines"
 _RAW_SUFFIX = ".raw.json"
 _REQUESTS = "requests"
 _REQUEST = "request"
+_ORDER = "order"
 _RESPONSE_FIELD = "response"
 _A_RESPONSE = "a response"
 
@@ -53,29 +54,39 @@ class Baseline:
     fingerprint: dict[str, Json]
 
 
-def fingerprint(form: dict[str, Json], case: str) -> dict[str, Json]:
+def fingerprint(form: dict[str, Json], case: str, ordered: Container[str] = ()) -> dict[str, Json]:
     """Return the part of a normal form that is about one Recording Case.
 
     That is everything about its connection, and that case's entry in "requests" as "request". The entry is None if the
-    normal form has none.
+    normal form has none. The order of the cases whose order counts is about each of those cases, and about no other.
+
+    Args:
+        form: A normal form.
+        case: The name of the Recording Case.
+        ordered: The names of the cases whose order on the wire counts, as their run says.
     """
-    connection = {key: value for key, value in form.items() if key != _REQUESTS}
+    connection = {key: value for key, value in form.items() if key not in (_REQUESTS, _ORDER)}
     requests = form.get(_REQUESTS)
-    return {**connection, _REQUEST: requests.get(case) if isinstance(requests, dict) else None}
+    found: dict[str, Json] = {**connection, _REQUEST: requests.get(case) if isinstance(requests, dict) else None}
+    if case in ordered and _ORDER in form:
+        found[_ORDER] = form[_ORDER]
+    return found
 
 
 def load_baselines(directory: Path) -> list[Baseline]:
     """Read the Baselines from directory, in a fixed order.
 
-    Each file named RELEASE/NAME.json or RELEASE/cases/NAME.json holds a normal form, with one Baseline for each Recording
-    Case in it. Other files, such as raw recordings and notes on where a Baseline came from, are left alone.
+    Each file named RELEASE/NAME.json, RELEASE/cases/NAME.json or RELEASE/documents/NAME.json holds a normal form, with
+    one Baseline for each Recording Case in it. Other files, such as raw recordings and notes on where a Baseline came
+    from, are left alone.
 
     Raises:
         BaselineError: A file is not a normal form, or two files hold the same Baseline.
     """
     baselines: list[Baseline] = []
     seen: dict[tuple[str, str, str], Path] = {}
-    for path in sorted((*directory.glob("*/*.json"), *directory.glob("*/cases/*.json"))):
+    found = (*directory.glob("*/*.json"), *directory.glob("*/cases/*.json"), *directory.glob("*/documents/*.json"))
+    for path in sorted(found):
         if path.name.endswith(_RAW_SUFFIX):
             continue
         for baseline in _read_baselines(path, path.relative_to(directory).parts[0]):
@@ -99,10 +110,13 @@ def _read_baselines(path: Path, release: str) -> list[Baseline]:
     requests = form.get(_REQUESTS)
     if not isinstance(protocol, str) or not isinstance(requests, dict) or not requests:
         raise BaselineError(f"{path} is not a normal form with a protocol and requests")
+    baselines: list[Baseline] = []
     for case in requests:
-        if run_of(case, protocol) is None:
+        run = run_of(case, protocol)
+        if run is None:
             raise BaselineError(f"{path} holds an unknown Recording Case: {case} over {protocol}")
-    return [Baseline(release, case, protocol, fingerprint(form, case)) for case in requests]
+        baselines.append(Baseline(release, case, protocol, fingerprint(form, case, _names(run.ordered))))
+    return baselines
 
 
 def _persona_of(release: str) -> str:
@@ -156,7 +170,12 @@ def record(baseline: Baseline) -> dict[str, Json]:
     cases = [as_recorded(case, recording) for case in run.cases]
     if not any(_was_recorded(case, recording) for case in cases):
         return {**baseline.fingerprint, _REQUEST: refused}
-    return fingerprint(normal_form(recording, cases), baseline.case)
+    ordered = [case for case in cases if case.name in _names(run.ordered)]
+    return fingerprint(normal_form(recording, cases, ordered), baseline.case, _names(run.ordered))
+
+
+def _names(cases: Iterable[Case]) -> frozenset[str]:
+    return frozenset(case.name for case in cases)
 
 
 def _was_recorded(case: Case, recording: Recording) -> bool:

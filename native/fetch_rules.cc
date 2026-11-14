@@ -39,10 +39,12 @@ bool NeedsHTTPOrigin(std::string_view method) {
 }
 
 // The lines of a subresource that Blink holds in its HTTPHeaderMap, in the
-// order they go in: Content-Type comes with the request, then
-// FrameFetchContext::AddClientHintsIfNecessary() adds hints in this order, and
-// PrepareRequest() adds User-Agent. The rest come later, from outside the map.
+// order they go in: Origin, for an element in cors mode, and Content-Type come
+// with the request, then FrameFetchContext::AddClientHintsIfNecessary() adds
+// hints in this order, and PrepareRequest() adds User-Agent. The rest come
+// later, from outside the map.
 constexpr auto kHTTPHeaderMapInsertionOrder = std::to_array<std::string_view>({
+    "origin",
     "content-type",
     "device-memory",
     "sec-ch-device-memory",
@@ -74,7 +76,12 @@ constexpr auto kHTTPHeaderMapInsertionOrder = std::to_array<std::string_view>({
     "user-agent",
 });
 
-bool IsInHTTPHeaderMap(std::string_view name) {
+// Whether Blink holds a line of this name in its HTTPHeaderMap. Origin is
+// there only where Blink sets it.
+bool IsInHTTPHeaderMap(std::string_view name, bool origin_in_map) {
+  if (base::EqualsCaseInsensitiveASCII(name, net::HttpRequestHeaders::kOrigin)) {
+    return origin_in_map;
+  }
   return std::ranges::any_of(
       kHTTPHeaderMapInsertionOrder, [name](std::string_view listed) {
         return base::EqualsCaseInsensitiveASCII(listed, name);
@@ -83,11 +90,11 @@ bool IsInHTTPHeaderMap(std::string_view name) {
 
 // Puts what Blink holds in its HTTPHeaderMap in the order the map gives it,
 // ahead of everything else, which keeps its order.
-void SortAsHTTPHeaderMap(net::URLRequest& request) {
+void SortAsHTTPHeaderMap(net::URLRequest& request, bool origin_in_map) {
   const net::HttpRequestHeaders& headers = request.extra_request_headers();
   std::vector<std::string_view> names;
   for (std::string_view listed : kHTTPHeaderMapInsertionOrder) {
-    if (headers.HasHeader(listed)) {
+    if (headers.HasHeader(listed) && IsInHTTPHeaderMap(listed, origin_in_map)) {
       names.push_back(listed);
     }
   }
@@ -103,11 +110,15 @@ void SortAsHTTPHeaderMap(net::URLRequest& request) {
   }
   for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
        headers.GetHeaderVector()) {
-    if (!IsInHTTPHeaderMap(header.key)) {
+    if (!IsInHTTPHeaderMap(header.key, origin_in_map)) {
       sorted.SetHeader(header.key, header.value);
     }
   }
   request.SetExtraRequestHeaders(sorted);
+}
+
+bool IsFrameDestination(std::string_view destination) {
+  return destination == "iframe" || destination == "frame";
 }
 
 // A navigation's request before the network service sees it has no Fetch
@@ -160,10 +171,19 @@ FetchRules::FetchRules(FetchParams params,
   if (params_.initiator) {
     page_ = *params_.initiator;
     initiator_ = url::Origin::Create(page_);
-  } else if (params_.mode != RequestMode::kNavigate) {
+  } else if (params_.mode != RequestMode::kNavigate || IsSubframeNavigation()) {
     initiator_ = url::Origin::Create(url);
     page_ = initiator_->GetURL();
   }
+}
+
+bool FetchRules::IsSubframeNavigation() const {
+  return params_.mode == RequestMode::kNavigate &&
+         IsFrameDestination(params_.destination);
+}
+
+bool FetchRules::OriginIsBlinksLine() const {
+  return params_.mode == RequestMode::kCors && params_.destination != "empty";
 }
 
 FetchRules::~FetchRules() = default;
@@ -171,7 +191,20 @@ FetchRules::~FetchRules() = default;
 void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
   const GURL& url = request.url();
 
-  if (params_.mode == RequestMode::kNavigate) {
+  if (IsSubframeNavigation()) {
+    // What NavigationRequest gives a frame's navigation:
+    // RenderFrameHostImpl::ComputeIsolationInfoForNavigation(), from the
+    // parent up, which here is a top-level page. The site for cookies stays
+    // the parent's on each hop, and //net moves only the frame's origin, so a
+    // frame of another site gets no SameSite cookie but None.
+    // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
+    const net::SiteForCookies site_for_cookies =
+        net::SiteForCookies::FromOrigin(*initiator_);
+    request.set_site_for_cookies(site_for_cookies);
+    request.set_isolation_info(net::IsolationInfo::Create(
+        net::IsolationInfo::RequestType::kSubFrame, *initiator_,
+        url::Origin::Create(url), site_for_cookies));
+  } else if (params_.mode == RequestMode::kNavigate) {
     SetUpTopLevelNavigation(request);
   } else {
     // A page counts as a top-level one, since nothing says it has a parent. A
@@ -199,9 +232,10 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
 void FetchRules::ConfigureRequest(net::URLRequest& request) {
   const GURL& url = request.url();
   ConfigureSiteAndReferrer(request);
-  // content::CreateContentBrowserURLLoaderThrottles().
+  // content::CreateContentBrowserURLLoaderThrottles(), for the outermost main
+  // frame only.
   has_critical_client_hints_throttle_ =
-      params_.mode == RequestMode::kNavigate &&
+      params_.mode == RequestMode::kNavigate && !IsSubframeNavigation() &&
       net::HttpUtil::IsMethodSafe(request.method());
 
   if (!IsFixed(net::HttpRequestHeaders::kOrigin)) {
@@ -216,7 +250,9 @@ void FetchRules::ConfigureRequest(net::URLRequest& request) {
       }
     } else {
       SetCorsFlagIfNeeded(url);
-      if (ShouldIncludeOriginHeader(request.method())) {
+      // CorsURLLoader::MaybeSetOriginHeader() writes over Blink's line where
+      // it needs one, and leaves it alone elsewhere.
+      if (ShouldIncludeOriginHeader(request.method()) || OriginIsBlinksLine()) {
         origin = OriginHeaderValue();
       }
     }
@@ -284,7 +320,7 @@ void FetchRules::ConfigureClientHints(net::URLRequest& request) {
   // With no hint added, the Persona's order is what the map gives, and leaving
   // it alone keeps a caller's lines where they are.
   if (added_a_hint_that_is_not_sent_by_default) {
-    SortAsHTTPHeaderMap(request);
+    SortAsHTTPHeaderMap(request, OriginIsBlinksLine());
   }
 }
 
@@ -293,7 +329,7 @@ bool FetchRules::ShouldAddClientHint(
     std::string_view name,
     const EnabledClientHints& additional_hints) const {
   const bool sent_by_default = IsClientHintSentByDefault(name);
-  if (params_.mode == RequestMode::kNavigate) {
+  if (params_.mode == RequestMode::kNavigate && !IsSubframeNavigation()) {
     // ShouldAddClientHints() and ClientHintsExtendedData, where a navigation's
     // page is the top frame that is about to commit.
     const url::Origin origin = url::Origin::Create(url);
@@ -301,9 +337,10 @@ bool FetchRules::ShouldAddClientHint(
            (sent_by_default || client_hints_store_->IsEnabled(origin, name) ||
             additional_hints.contains(base::ToLowerASCII(name)));
   }
-  // FrameFetchContext::ShouldSendClientHint(). The page's origin decides, and
-  // with no permissions policy of its own the page only lets its own origin
-  // have anything but what goes by default.
+  // FrameFetchContext::ShouldSendClientHint(), and for a frame's navigation
+  // ClientHintsExtendedData, whose main frame is the page. The page's origin
+  // decides, and with no permissions policy of its own the page only lets its
+  // own origin have anything but what goes by default.
   return net::IsUrlPotentiallyTrustworthy(url) &&
          (sent_by_default ||
           (initiator_->IsSameOriginWith(url) &&
@@ -366,7 +403,10 @@ bool FetchRules::MaybeRestartWithHints(const GURL& url,
 std::optional<FetchRules::Restart> FetchRules::OnConnected(
     const net::URLRequest& request,
     std::string_view accept_ch_frame) {
-  if (params_.mode != RequestMode::kNavigate || accept_ch_frame.empty()) {
+  // A frame's hints follow its page's origin, which the frame in ALPS does not
+  // speak for.
+  if (params_.mode != RequestMode::kNavigate || IsSubframeNavigation() ||
+      accept_ch_frame.empty()) {
     return std::nullopt;
   }
   const std::optional<EnabledClientHints> frame_hints =
@@ -451,8 +491,9 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   if (!MaybeRestartWithHints(request.url(), parsed)) {
     // NavigationRequest::OnResponseStarted() commits nothing for these, and it
     // is at the commit that a final response counts.
+    // Only the outermost main frame parses Accept-CH.
     const int response_code = response_headers->response_code();
-    if (response_code != net::HTTP_NO_CONTENT &&
+    if (!IsSubframeNavigation() && response_code != net::HTTP_NO_CONTENT &&
         response_code != net::HTTP_RESET_CONTENT) {
       ParseAndPersistAcceptCHForNavigation(origin, parsed);
     }
@@ -525,7 +566,8 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
       !initiator_->IsSameOriginWith(request.url())) {
     tainted_ = true;
   }
-  if (params_.mode == RequestMode::kCors) {
+  if (params_.mode == RequestMode::kCors ||
+      params_.mode == RequestMode::kSameOrigin) {
     SetCorsFlagIfNeeded(new_url);
     if (ShouldIncludeOriginHeader(redirect_info.new_method) &&
         !IsFixed(net::HttpRequestHeaders::kOrigin)) {
@@ -593,7 +635,8 @@ void FetchRules::SetRequestCredentials(net::URLRequest& request,
 }
 
 void FetchRules::SetCorsFlagIfNeeded(const GURL& url) {
-  if (params_.mode == RequestMode::kCors &&
+  if ((params_.mode == RequestMode::kCors ||
+       params_.mode == RequestMode::kSameOrigin) &&
       !initiator_->IsSameOriginWith(url)) {
     fetch_cors_flag_ = true;
   }

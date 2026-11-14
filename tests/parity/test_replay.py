@@ -8,7 +8,19 @@ from typing import Any, Self
 import pytest
 
 from mitto import RequestError, Session
-from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, CaptureServer, Case, Run, normal_form
+from tools.capture import (
+    CASES,
+    DOCUMENT_CASES,
+    DOCUMENT_RUNS,
+    HTTP1,
+    HTTP2,
+    HTTP3,
+    RUNS,
+    CaptureServer,
+    Case,
+    Run,
+    normal_form,
+)
 from tools.capture.cases import PROXY_CONNECT
 from tools.capture.http1 import Http1Request
 from tools.capture.recording import ConnectionRecord, Json, Recording
@@ -66,10 +78,10 @@ class _FailingSession:
 
 
 def test_every_recording_case_has_a_replay() -> None:
-    assert set(REPLAYS) == {case.name for case in CASES}
+    assert set(REPLAYS) == {case.name for case in (*CASES, *DOCUMENT_CASES)}
 
 
-@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
+@pytest.mark.parametrize("run", [*RUNS, *DOCUMENT_RUNS], ids=lambda run: run.name)
 def test_each_case_of_a_run_finds_the_run_by_its_name_and_protocol(run: Run) -> None:
     for case in run.cases:
         assert run_of(case.name, protocol_of(run.route)) is run
@@ -89,6 +101,9 @@ def test_only_a_later_hop_and_what_opens_a_tunnel_ask_for_another_case() -> None
         **{f"client_hints_redirect_fetch_{hop}": "client_hints_redirect_fetch_1" for hop in range(1, 5)},
         **{f"client_hints_redirect_navigation_{hop}": "client_hints_redirect_navigation_1" for hop in range(1, 6)},
         "proxy_connect": "proxy_navigation",
+        **{f"redirect_location_{hop}": "redirect_location_1" for hop in range(1, 3)},
+        # A preflight is what the request that needs it makes first.
+        "preflight": "fetch_post_json_cross_site",
     }
 
 

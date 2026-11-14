@@ -19,6 +19,7 @@ from mitto._native import LIBRARY_ENV_VAR, PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS, load_persona
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
 from tools.capture import (
+    DOCUMENT_RUNS,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -87,13 +88,13 @@ def test_each_release_has_a_baseline_of_every_recording_case_of_every_run() -> N
 
     assert found == {
         (release, case.name, protocol_of(run.route))
-        for release, run in itertools.product(WINDOWS_PERSONAS, RUNS)
+        for release, run in itertools.product(WINDOWS_PERSONAS, (*RUNS, *DOCUMENT_RUNS))
         for case in run.cases
     }
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
+@pytest.mark.parametrize("run", [*RUNS, *DOCUMENT_RUNS], ids=lambda run: run.name)
 def test_each_release_has_every_recording_case_of_every_run(release: str, run: Run) -> None:
     text = (BASELINES_DIRECTORY / release / f"{run.name}.json").read_text(encoding="utf-8")
 

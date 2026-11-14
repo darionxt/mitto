@@ -57,6 +57,8 @@ std::string_view RequestModeToString(RequestMode mode) {
   switch (mode) {
     case RequestMode::kNavigate:
       return "navigate";
+    case RequestMode::kSameOrigin:
+      return "same-origin";
     case RequestMode::kCors:
       return "cors";
     case RequestMode::kNoCors:
