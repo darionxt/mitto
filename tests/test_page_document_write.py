@@ -369,12 +369,13 @@ _CASES["error_positions"] = Case(
 
 # Chrome's intervention warns of a script of another site that blocks the parser and that a write inserts, twice in a
 # write that leaves the parser waiting, and fetches it, as the desktop's settings block nothing. A script of the same
-# site, an async or deferred one and one that the DOM inserts get no warning. The scripts other than the first two run
-# in no fixed order, so the case logs only that they ran.
+# site, an async or deferred one and one that the DOM inserts get no warning. The async scripts may run before the
+# first, while the parser waits for it, so the case logs only that they all ran.
 _CASES["intervention"] = Case(
     {
         "/": _page(
             "<body><script>"
+            "window.ran = [];"
             "const other = 'http://localhost:' + location.port;"
             "document.write('<script src=' + other + '/x.js><\\/script>');"
             "document.write('<script src=/same.js><\\/script>');"
@@ -386,7 +387,7 @@ _CASES["intervention"] = Case(
             "addEventListener('load', () => { log(ran.sort().join(',')); setTimeout(() => finish(logged), 50); });"
             "</script>"
         ),
-        "/x.js": _js("window.ran = ['x'];"),
+        "/x.js": _js("ran.push('x');"),
         "/same.js": _js("ran.push('same');"),
         "/async.js": _js("ran.push('async');"),
         "/defer.js": _js("ran.push('defer');"),
