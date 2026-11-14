@@ -399,6 +399,31 @@ Chrome 157's Normal Form has 2,150 objects, and those of Chrome 155 and 156 have
 
 So between the Chrome Releases of the Supported Window, an older Persona's `page_features` covers every member that differs, and what it cannot give is the order of those members. The [Parity Checks of the Script Fingerprint](parity.md#the-script-fingerprint) show that order as gaps of those Personas, of the kind `shape`.
 
+### Its Baselines in frames and workers
+
+`same_origin_frame.json`, `srcdoc_frame.json`, `cross_site_frame.json` and `worker.json` in `tests/baselines/RELEASE/script/` come from two whole sessions of each Chrome Release, recorded on 2026-11-14 through `record.ps1` with [the same builds](#where-each-chrome-release-comes-from) on the same machine: 157.0.8103.39 installed, and 155 and 156 unpacked. They are the sessions that recorded [the documents](#documents), and all six got the seed whose serial number names `20261113-170055.076000`.
+
+- **Each case.** Both sessions of each Chrome Release gave the same five files of the Script Fingerprint, byte for byte. Their `page.json` was byte for byte [the Baseline already there](#its-baselines), which a seed of the day before had given, so each later case's file keeps what differs from the committed `page.json`, and neither the newer seed nor the later cases' starts moved what a top-level page sees. Each file is within [its budget](capture.md#what-a-later-case-keeps), 50 KB for a frame and 250 KB for the worker:
+
+  | Chrome | `same_origin_frame.json` | `srcdoc_frame.json` | `cross_site_frame.json` | `worker.json` |
+  |---|---:|---:|---:|---:|
+  | 155 | 3,965 | 3,868 | 6,073 | 92,485 |
+  | 156 | 3,965 | 3,868 | 6,073 | 92,485 |
+  | 157 | 3,965 | 3,868 | 6,073 | 92,884 |
+
+- **The studies that change what a page sees.** None of the five starts of any session drew a group other than `Default`. In Chrome 157, `FencedFramesDeprecation` and `UniversalOptOutSettings` were `Default`, and in Chrome 155 and 156 neither applies, as [before](#its-baselines). None of the six named a group of `V8Turbolev`, which every session of the seed of 2026-11-12 had as `Default` in all three Chrome Releases: this seed no longer holds it for them, or put none of these directories in it. What a top-level page sees came out the same all the same.
+- **The check of hidden values.** [It](capture.md#the-form-of-a-hidden-value-of-a-script-fingerprint) passed for all six: 73 values in the top-level page, 61 in each frame and 21 in the worker, each in its form, every frame's own size exactly 300 by 150, and none of the values of the machine that it looked for in the five files.
+
+### What differs from Chrome 157 in frames and workers
+
+- **A frame.** Each frame's file is the same in all three Chrome Releases, byte for byte. So a frame's Normal Form differs between them exactly as [the top-level page's](#what-differs-from-chrome-157-in-a-page) does, and being a frame adds nothing that an older Persona has to turn off.
+- **The worker.** Chrome 155's and 156's Normal Forms of the worker are the same, but for what the Persona decides: the four interface objects that moved in 156 are not in a worker. Against Chrome 157's they differ in the three ways a page's does, in what a worker has:
+  - **What the Persona decides.** `navigator.userAgent` and `appVersion`, `navigator.userAgentData.brands` and what `getHighEntropyValues()` gives, as in a page.
+  - **What Chrome 157 added behind runtime-enabled features.** Of `CanvasDrawElement`, the interface object `ElementImage`, 3 members of `OffscreenCanvas.prototype`, `drawElementImage` of `OffscreenCanvasRenderingContext2D`, `texElementSubImage2D` of both WebGL contexts and `drawElementImageToTexture` of `GPUQueue`. Of `WebTransportReliability`, `reliability` of `WebTransport.prototype` and `WebTransport.supportsReliableOnly`, and of `WebTransportHeaders`, `responseHeaders`. These are features of [the page's table](#what-differs-from-chrome-157-in-a-page), which the older Persona's `page_features` already turns off, and a worker has nothing else that differs.
+  - **The order of members.** `ProgressEvent`, `Lock` and `LockManager` on the global, and in prototypes `onerror` of `Worker`, both readers of `ReadableStream` and members of `ServiceWorkerRegistration`, moved as in a page. Two more moves of the same kind are on interfaces that only a worker has. `mediaCapabilities` and `permissions` of `WorkerNavigator` come first in 157, as those of `Navigator` do. Of `WorkerGlobalScope`, `isSecureContext`, `crossOriginIsolated`, `scheduler` and the operations of the `WindowOrWorkerGlobalScope` mixin but `createImageBitmap` and `fetch`, 12 members, come after `constructor` in 155 and 156 and before it in 157. The getters of the worker's global and of its `navigator` follow. [persona.md](persona.md#what-an-older-persona-cannot-turn-off) lists these two with the page's as Known Gaps of the older Personas.
+
+So in frames and workers too, an older Persona's `page_features` covers every member that differs, and what it cannot give is the order of members. A Page has no frames and no workers yet, so the Parity Checks [skip these cases](parity.md#the-script-fingerprint) until it does.
+
 ## The seed of 2026-11-07
 
 Later on 2026-11-07, three more sessions of each Chrome Release were recorded through `record.ps1`, with [the same builds](#where-each-chrome-release-comes-from) on the same machine. Each session recorded Chrome 155, 156 and 157 in turn, so Chrome 157 checks each session's seed. All nine gave normal forms byte for byte the same as `tests/baselines` in all thirteen files, so the Baselines stay as they are, `chrome.txt` included, and so do the Personas. None of them drew [the field trial that reaches the wire](#chrome-157).
