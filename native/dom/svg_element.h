@@ -16,6 +16,7 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/svg_animated_values.h"
+#include "mitto/dom/svg_length.h"
 
 namespace mitto {
 
@@ -67,6 +68,10 @@ class SVGElement : public Element {
   SVGAnimatedNumber* AnimatedNumberHalf(std::u16string_view attribute,
                                         SVGPairHalf half,
                                         float initial_value);
+  SVGAnimatedLength* AnimatedLength(std::u16string_view attribute,
+                                    SVGLengthMode mode,
+                                    SVGAnimatedLength::Initial initial,
+                                    bool text_length = false);
 
  private:
   SVGAnimatedPropertyBase* FindAnimated(std::u16string_view attribute,

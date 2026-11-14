@@ -4,6 +4,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
@@ -264,6 +265,20 @@ std::optional<float> ParseSVGNumber(std::u16string_view value) {
     return std::nullopt;
   }
   return number;
+}
+
+std::optional<std::vector<float>> ParseSVGNumberList(
+    std::u16string_view value) {
+  std::vector<float> numbers;
+  SkipSpaces(value);
+  while (!value.empty()) {
+    float number = 0;
+    if (!ParseNumber(value, number)) {
+      return std::nullopt;
+    }
+    numbers.push_back(number);
+  }
+  return numbers;
 }
 
 // DoubleToStringConverter::ToStringWithFixedPrecision() of WTF's dtoa.cc.

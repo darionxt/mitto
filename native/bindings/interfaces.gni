@@ -1610,6 +1610,11 @@ mitto_bindings_interfaces = [
     header = "svg_animated_values"
   },
   {
+    name = "SVGAnimatedLength"
+    file = "svg_animated_length"
+    header = "svg_length"
+  },
+  {
     name = "SVGAnimatedNumber"
     file = "svg_animated_number"
     header = "svg_animated_values"
@@ -1629,7 +1634,11 @@ mitto_bindings_interfaces = [
     name = "SVGCircleElement"
     file = "svg_circle_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "cx",
+      "cy",
+      "r",
+    ]
   },
   {
     name = "SVGClipPathElement"
@@ -1677,7 +1686,12 @@ mitto_bindings_interfaces = [
     name = "SVGEllipseElement"
     file = "svg_ellipse_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "cx",
+      "cy",
+      "rx",
+      "ry",
+    ]
   },
   {
     name = "SVGFEBlendElement"
@@ -1688,6 +1702,10 @@ mitto_bindings_interfaces = [
       "in2",
       "mode",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1698,6 +1716,10 @@ mitto_bindings_interfaces = [
       "in1",
       "type",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1707,6 +1729,10 @@ mitto_bindings_interfaces = [
     implemented = [
       "in1",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1722,6 +1748,10 @@ mitto_bindings_interfaces = [
       "k3",
       "k4",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1741,6 +1771,10 @@ mitto_bindings_interfaces = [
       "kernelUnitLengthY",
       "preserveAlpha",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1754,6 +1788,10 @@ mitto_bindings_interfaces = [
       "kernelUnitLengthX",
       "kernelUnitLengthY",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1767,6 +1805,10 @@ mitto_bindings_interfaces = [
       "xChannelSelector",
       "yChannelSelector",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1790,6 +1832,10 @@ mitto_bindings_interfaces = [
       "stdDeviationY",
       "setStdDeviation",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1798,6 +1844,10 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1834,6 +1884,10 @@ mitto_bindings_interfaces = [
       "stdDeviationY",
       "setStdDeviation",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1843,6 +1897,10 @@ mitto_bindings_interfaces = [
     implemented = [
       "href",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1851,6 +1909,10 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1871,6 +1933,10 @@ mitto_bindings_interfaces = [
       "radiusX",
       "radiusY",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1882,6 +1948,10 @@ mitto_bindings_interfaces = [
       "dx",
       "dy",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1906,6 +1976,10 @@ mitto_bindings_interfaces = [
       "kernelUnitLengthX",
       "kernelUnitLengthY",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1930,6 +2004,10 @@ mitto_bindings_interfaces = [
     implemented = [
       "in1",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1944,6 +2022,10 @@ mitto_bindings_interfaces = [
       "stitchTiles",
       "type",
       "result",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -1954,13 +2036,22 @@ mitto_bindings_interfaces = [
       "filterUnits",
       "primitiveUnits",
       "href",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
     name = "SVGForeignObjectElement"
     file = "svg_foreign_object_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "width",
+      "height",
+    ]
   },
   {
     name = "SVGGElement"
@@ -1998,19 +2089,38 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "href",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
+  },
+  {
+    name = "SVGLength"
+    file = "svg_length"
+    made_by_known_gaps = true
   },
   {
     name = "SVGLineElement"
     file = "svg_line_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x1",
+      "y1",
+      "x2",
+      "y2",
+    ]
   },
   {
     name = "SVGLinearGradientElement"
     file = "svg_linear_gradient_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x1",
+      "y1",
+      "x2",
+      "y2",
+    ]
   },
   {
     name = "SVGMPathElement"
@@ -2026,6 +2136,10 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "markerUnits",
+      "refX",
+      "refY",
+      "markerWidth",
+      "markerHeight",
     ]
   },
   {
@@ -2035,6 +2149,10 @@ mitto_bindings_interfaces = [
     implemented = [
       "maskUnits",
       "maskContentUnits",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -2057,6 +2175,10 @@ mitto_bindings_interfaces = [
       "patternUnits",
       "patternContentUnits",
       "href",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
@@ -2075,19 +2197,39 @@ mitto_bindings_interfaces = [
     name = "SVGRadialGradientElement"
     file = "svg_radial_gradient_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "cx",
+      "cy",
+      "r",
+      "fx",
+      "fy",
+      "fr",
+    ]
   },
   {
     name = "SVGRectElement"
     file = "svg_rect_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "width",
+      "height",
+      "rx",
+      "ry",
+    ]
   },
   {
     name = "SVGSVGElement"
     file = "svg_svg_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "width",
+      "height",
+      "createSVGLength",
+    ]
   },
   {
     name = "SVGScriptElement"
@@ -2141,6 +2283,7 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "lengthAdjust",
+      "textLength",
     ]
   },
   {
@@ -2158,6 +2301,7 @@ mitto_bindings_interfaces = [
       "spacing",
       "side",
       "href",
+      "startOffset",
     ]
   },
   {
@@ -2178,6 +2322,10 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "href",
+      "x",
+      "y",
+      "width",
+      "height",
     ]
   },
   {
