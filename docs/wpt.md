@@ -102,7 +102,15 @@ uv run python -m tools.wpt move '#285' encoding/legacy-mb-
 
 That gives #285 every difference of the tests whose address starts with a prefix. `--outcome TEXT` moves only those whose outcome in a Page contains the text, with or without prefixes. Moving differences back to the ticket of their part takes the owner off their lines. Editing a line by hand does the same as `move`.
 
-Writing the list again keeps each line's owner. A line whose outcome has changed keeps the owner of the line it replaces, for the same subtest, and any other new line belongs to its part's ticket. `counts` prints what each ticket owns before the other counts, where a test whose differences have two owners counts once for each.
+A difference whose cause is behaviour that the [roadmap](roadmap.md) or #259's Decisions put in a later milestone belongs to that milestone, such as `"owner": "M9"` for `innerText`, which needs style and layout, and one whose cause is what the roadmap leaves out, such as media playback, WebSocket, WebRTC, WebGPU's behaviour or service workers, belongs to `"out"`. A line names such an owner only where the roadmap or #259 puts the behaviour there: what an M8 ticket covers belongs to that ticket. `move` takes them as it takes a ticket:
+
+```bash
+uv run python -m tools.wpt move M9 html/dom/elements/the-innertext-and-outertext-properties/
+```
+
+They stay listed past M8. `counts` lists them after the tickets' total, on which M8's exit is judged, so that a ticket's count never holds them.
+
+Writing the list again keeps each line's owner. A line whose outcome has changed keeps the owner of the line it replaces, for the same subtest, and any other new line belongs to its part's ticket. `counts` prints what each owner owns before the other counts, where a test whose differences have two owners counts once for each.
 
 ## Chrome's results
 
