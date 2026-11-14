@@ -10,11 +10,7 @@ needs a native library with the Page program beside it, as CI's native job insta
 
 import base64
 import hashlib
-import http.server
-import threading
-import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -22,7 +18,7 @@ import pytest
 import mitto
 from mitto import _native
 from mitto._page import Page
-from tests.local_server import QuietServer
+from tests.script_pages import Case, Route, ScriptServer
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -50,41 +46,20 @@ _PRELUDE = (
 )
 
 
-@dataclass
-class _Route:
-    """What the server answers for one path.
-
-    With `hold`, the answer waits for that mark. With `pieces`, the body goes out piece by piece, each once the marks
-    that it names, separated by commas, have come, and the connection closes at the end.
-    """
-
-    body: str = ""
-    content_type: str = _JAVASCRIPT
-    status: int = 200
-    headers: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
-    hold: str | None = None
-    pieces: list[tuple[str | None, str]] | None = None
-
-
-@dataclass
-class _Case:
-    routes: dict[str, _Route]
-
-
-def _page(markup: str, pieces: list[tuple[str | None, str]] | None = None) -> _Route:
+def _page(markup: str, pieces: list[tuple[str | None, str]] | None = None) -> Route:
     if pieces is not None:
-        return _Route(content_type=_HTML, pieces=[(None, _PRELUDE + markup), *pieces])
-    return _Route(_PRELUDE + markup, _HTML)
+        return Route(content_type=_HTML, pieces=[(None, _PRELUDE + markup), *pieces])
+    return Route(_PRELUDE + markup, _HTML)
 
 
-def _js(source: str, hold: str | None = None, status: int = 200) -> _Route:
-    return _Route(source, _JAVASCRIPT, status, hold=hold)
+def _js(source: str, hold: str | None = None, status: int = 200) -> Route:
+    return Route(source, _JAVASCRIPT, status, hold=hold)
 
 
-_CASES: dict[str, _Case] = {}
+_CASES: dict[str, Case] = {}
 
 # Parser-blocking, deferred and async scripts, with the timers and microtasks they queue, readiness and its events.
-_CASES["parser_order"] = _Case(
+_CASES["parser_order"] = Case(
     {
         "/": _page(
             "<script>"
@@ -113,7 +88,7 @@ _CASES["parser_order"] = _Case(
 )
 
 # Async scripts run as each arrives: during parsing, and after DOMContentLoaded, and load waits for them.
-_CASES["async_order"] = _Case(
+_CASES["async_order"] = Case(
     {
         "/": _page(
             "<script>"
@@ -131,7 +106,7 @@ _CASES["async_order"] = _Case(
 )
 
 # DOMContentLoaded, complete and load once the body ends, against timers.
-_CASES["readiness"] = _Case(
+_CASES["readiness"] = Case(
     {
         "/": _page(
             "<script>"
@@ -149,7 +124,7 @@ _CASES["readiness"] = _Case(
 )
 
 # Scripts that the DOM inserts: inline ones at once, external ones as soon as each arrives, async=false in order.
-_CASES["inserted_order"] = _Case(
+_CASES["inserted_order"] = Case(
     {
         "/": _page(
             "<script>"
@@ -181,7 +156,7 @@ _CASES["inserted_order"] = _Case(
 )
 
 # When an inserted script runs, and when it does not.
-_CASES["inserted_cases"] = _Case(
+_CASES["inserted_cases"] = Case(
     {
         "/": _page(
             "<body><script>"
@@ -225,7 +200,7 @@ _CASES["inserted_cases"] = _Case(
 )
 
 # A script that leaves the document, or goes to another, while it is fetched.
-_CASES["inserted_moved"] = _Case(
+_CASES["inserted_moved"] = Case(
     {
         "/": _page(
             "<script>"
@@ -272,7 +247,7 @@ _TYPES = [
     ("event alone", "event=onclick"),
     ("for alone", "for=document"),
 ]
-_CASES["script_types"] = _Case(
+_CASES["script_types"] = Case(
     {
         "/": _page(
             "".join(f"<script {attributes}>log({label!r})</script>" for label, attributes in _TYPES) + "<script>"
@@ -297,7 +272,7 @@ _EVENTS = [
     ("no type", "/untyped.js"),
     ("redirected", "/redirect.js"),
 ]
-_CASES["load_and_error"] = _Case(
+_CASES["load_and_error"] = Case(
     {
         "/": _page(
             "<script>"
@@ -319,22 +294,22 @@ _CASES["load_and_error"] = _Case(
         "/ok.js": _js("log('ok ran ' + current()); Promise.resolve().then(() => log('microtask from ok'));"),
         "/missing.js": _js("log('not found ran')", status=404),
         "/error.js": _js("log('server error ran')", status=500),
-        "/html.js": _Route("log('text/html ran')", _HTML_TYPE),
-        "/plain.js": _Route("log('text/plain ran')", "text/plain"),
-        "/plain-nosniff.js": _Route(
+        "/html.js": Route("log('text/html ran')", _HTML_TYPE),
+        "/plain.js": Route("log('text/plain ran')", "text/plain"),
+        "/plain-nosniff.js": Route(
             "log('text/plain with nosniff ran')", "text/plain", headers=[("X-Content-Type-Options", "nosniff")]
         ),
-        "/image.js": _Route("log('image/png ran')", "image/png"),
-        "/csv.js": _Route("log('text/csv ran')", "text/csv"),
-        "/untyped.js": _Route("log('no type ran')", ""),
-        "/redirect.js": _Route(status=302, headers=[("Location", "/ok2.js")]),
+        "/image.js": Route("log('image/png ran')", "image/png"),
+        "/csv.js": Route("log('text/csv ran')", "text/csv"),
+        "/untyped.js": Route("log('no type ran')", ""),
+        "/redirect.js": Route(status=302, headers=[("Location", "/ok2.js")]),
         "/ok2.js": _js("log('redirected ran ' + current())"),
         "/last.js": _js("log('last ran'); setTimeout(() => finish(logged), 100);"),
     }
 )
 
 # A connected script with neither src nor text: an empty src prepares nothing, a real one later does.
-_CASES["empty_src_set"] = _Case(
+_CASES["empty_src_set"] = Case(
     {
         "/": _page(
             "<script>"
@@ -354,7 +329,7 @@ _CASES["empty_src_set"] = _Case(
 )
 
 # <base> for the URLs that a document resolves.
-_CASES["base_url"] = _Case(
+_CASES["base_url"] = Case(
     {
         "/": _page(
             "<base id=b0><base id=b1 href='  /sub/dir/  '><base id=b2 href='/other/'>"
@@ -387,13 +362,13 @@ _CASES["base_url"] = _Case(
             "</script>"
         ),
         "/sub/dir/b.js": _js("log('b ' + current());"),
-        "/sub/dir/f.json": _Route("sub", "application/json"),
+        "/sub/dir/f.json": Route("sub", "application/json"),
         "/late/l.js": _js("log('l ' + document.currentScript.src);"),
     }
 )
 
 # document.currentScript where it is set, and where it is null.
-_CASES["current_script"] = _Case(
+_CASES["current_script"] = Case(
     {
         "/": _page(
             "<script id=s1>"
@@ -444,7 +419,7 @@ _INTEGRITY = [
     ("wrong with options", _digest("sha384", _WRONG) + "?foo=bar"),
     ("wrong without padding", _digest("sha384", _WRONG).rstrip("=")),
 ]
-_CASES["integrity"] = _Case(
+_CASES["integrity"] = Case(
     {
         "/": _page(
             "<script>"
@@ -472,7 +447,7 @@ _CASES["integrity"] = _Case(
 )
 
 # Chrome runs an async script of another site at a low priority while a page loads: after the tasks before it.
-_CASES["cross_site_async"] = _Case(
+_CASES["cross_site_async"] = Case(
     {
         "/": _page(
             "<script>"
@@ -495,113 +470,9 @@ _CASES["cross_site_async"] = _Case(
 )
 
 
-class _BacklogServer(QuietServer):
-    """A local server that queues as many connections as a page opens at once.
-
-    A case such as `integrity` opens a connection for each of some twenty scripts, and socketserver's backlog of five
-    refuses the rest on a busy macOS runner, which a script reports as an error.
-    """
-
-    request_queue_size = 128
-
-
-class _ScriptServer:
-    """A local server for one case at a time, which records the path of each request it gets, in order.
-
-    A request for /mark/NAME sets the mark NAME, and sending a route's whole response sets served:PATH.
-    """
-
-    def __init__(self) -> None:
-        self.case = _Case({})
-        self.requests: list[str] = []
-        self._marks: dict[str, threading.Event] = {}
-        self._lock = threading.Lock()
-        server = self
-
-        class Handler(http.server.BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
-
-            def do_POST(self) -> None:
-                self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                server.answer(self, 200, "text/plain", b"ok")
-
-            def do_GET(self) -> None:
-                server.serve(self)
-
-            def log_message(self, format: str, *args: Any) -> None:
-                pass
-
-        self._server = _BacklogServer(("127.0.0.1", 0), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-
-    def url(self, path: str = "/") -> str:
-        return f"http://127.0.0.1:{self._server.server_port}{path}"
-
-    def mark(self, name: str) -> threading.Event:
-        with self._lock:
-            return self._marks.setdefault(name, threading.Event())
-
-    def answer(self, handler: http.server.BaseHTTPRequestHandler, status: int, content_type: str, body: bytes) -> None:
-        handler.send_response(status)
-        handler.send_header("Content-Type", content_type)
-        handler.send_header("Content-Length", str(len(body)))
-        handler.end_headers()
-        handler.wfile.write(body)
-
-    def serve(self, handler: http.server.BaseHTTPRequestHandler) -> None:
-        path = handler.path
-        with self._lock:
-            self.requests.append(path)
-        if path.startswith("/mark/"):
-            self.mark(path.removeprefix("/mark/")).set()
-            self.answer(handler, 200, "text/plain", b"ok")
-            return
-        route = self.case.routes.get(path)
-        if route is None:
-            self.answer(handler, 404, "text/plain", b"not here")
-            return
-        if route.hold:
-            self.mark(route.hold).wait(_TIMEOUT_SECONDS)
-        served = self.mark(f"served:{path}")
-        if route.pieces is not None:
-            handler.send_response(route.status)
-            handler.send_header("Content-Type", route.content_type)
-            handler.send_header("Connection", "close")
-            handler.end_headers()
-            for hold, piece in route.pieces:
-                if hold:
-                    for name in hold.split(","):
-                        self.mark(name).wait(_TIMEOUT_SECONDS)
-                    # As long as the run in Chrome gave it to take what came before.
-                    time.sleep(0.2)
-                handler.wfile.write(piece.encode())
-                handler.wfile.flush()
-            handler.close_connection = True
-            return
-        handler.send_response(route.status)
-        if route.content_type:
-            handler.send_header("Content-Type", route.content_type)
-        for name, value in route.headers:
-            handler.send_header(name, value)
-        body = route.body.encode()
-        handler.send_header("Content-Length", str(len(body)))
-        handler.end_headers()
-        handler.wfile.write(body)
-        handler.wfile.flush()
-        served.set()
-
-    def __enter__(self) -> "_ScriptServer":
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc_info: object) -> None:
-        self._server.shutdown()
-        self._server.server_close()
-
-
 @pytest.fixture
-def server() -> Iterator[_ScriptServer]:
-    with _ScriptServer() as script_server:
+def server() -> Iterator[ScriptServer]:
+    with ScriptServer() as script_server:
         yield script_server
 
 
@@ -621,7 +492,7 @@ def session(native_library: Any) -> Iterator[mitto.Session]:
         yield session
 
 
-def _run(session: mitto.Session, server: _ScriptServer, name: str) -> tuple[Page, list[str]]:
+def _run(session: mitto.Session, server: ScriptServer, name: str) -> tuple[Page, list[str]]:
     """Open case `name`'s page and return the Page and what the page logged, with the server's origin as {origin}."""
     server.case = _CASES[name]
     page = session._open_page(server.url(), timeout=_TIMEOUT_SECONDS)  # pyright: ignore[reportPrivateUsage]
@@ -630,7 +501,7 @@ def _run(session: mitto.Session, server: _ScriptServer, name: str) -> tuple[Page
     return page, [line.replace(origin, "{origin}") for line in logged]
 
 
-def _console_errors(page: Page, server: _ScriptServer) -> set[str]:
+def _console_errors(page: Page, server: ScriptServer) -> set[str]:
     """Return the console's errors, each once, with the origin of the server and of its other name written short."""
     origin = server.url("").rstrip("/")
     other = origin.replace("127.0.0.1", "localhost")
@@ -870,7 +741,7 @@ _CHROME_CONSOLE: dict[str, list[str]] = {
 
 
 @pytest.mark.parametrize("name", sorted(_CHROME))
-def test_scripts_run_in_the_order_chrome_gives(session: mitto.Session, server: _ScriptServer, name: str) -> None:
+def test_scripts_run_in_the_order_chrome_gives(session: mitto.Session, server: ScriptServer, name: str) -> None:
     page, logged = _run(session, server, name)
     with page:
         assert logged == _CHROME[name]
@@ -878,7 +749,7 @@ def test_scripts_run_in_the_order_chrome_gives(session: mitto.Session, server: _
 
 
 def test_an_async_script_of_another_site_waits_only_on_a_machine_of_three_gigabytes_or_more(
-    native_library: Any, server: _ScriptServer
+    native_library: Any, server: ScriptServer
 ) -> None:
     # ClassicPendingScript::IsEligibleForLowPriorityAsyncScriptExecution() holds the low priority to a machine of 3 GB
     # or more, so on one of 2 the script runs among the tasks of the normal priority, as the same site\'s does.
@@ -892,7 +763,7 @@ def test_an_async_script_of_another_site_waits_only_on_a_machine_of_three_gigaby
 
 
 def test_a_script_whose_type_cannot_run_or_whose_digest_fails_says_why_in_the_console(
-    session: mitto.Session, server: _ScriptServer
+    session: mitto.Session, server: ScriptServer
 ) -> None:
     page, _ = _run(session, server, "load_and_error")
     with page:
@@ -905,7 +776,7 @@ def test_a_script_whose_type_cannot_run_or_whose_digest_fails_says_why_in_the_co
 
 
 def test_a_document_resolves_its_scripts_and_fetches_against_its_base_url(
-    session: mitto.Session, server: _ScriptServer
+    session: mitto.Session, server: ScriptServer
 ) -> None:
     page, _ = _run(session, server, "base_url")
     with page:
