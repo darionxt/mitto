@@ -9,7 +9,17 @@ from collections.abc import AsyncIterable, Buffer, Iterable, Mapping
 from typing import TypedDict, cast
 
 from mitto._arguments import require_type
-from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
+from mitto._body import (
+    BodyEncoding,
+    EncodedBody,
+    FileFields,
+    QueryParams,
+    RequestData,
+    StreamBody,
+    encode_body,
+    encode_query,
+    with_declared_size,
+)
 from mitto._native import encode_url
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
@@ -44,6 +54,8 @@ _SAME_ORIGIN = "same-origin"
 
 # What Fetch allows a request of mode no-cors to have as its method.
 _NO_CORS_METHODS = frozenset({"GET", "HEAD", "POST"})
+# The MIME types of a CORS-safelisted Content-Type, the only one that a request in mode no-cors takes.
+_NO_CORS_CONTENT_TYPES = frozenset({"application/x-www-form-urlencoded", "multipart/form-data", "text/plain"})
 
 # The kinds that navigate, whose mode is navigate and whose credentials are always included.
 _NAVIGATIONS = frozenset({RequestKind.NAVIGATION, RequestKind.IFRAME})
@@ -237,7 +249,12 @@ def build_request(
     if body is not None:
         # This takes the place of the Persona's line, as a caller's would. Having no type removes the line, while a type
         # that a caller gives for bytes still goes where Chrome puts it.
-        changes.setdefault(_CONTENT_TYPE.lower(), (_CONTENT_TYPE, persona.content_type(request_kind, body)))
+        content_type = persona.content_type(request_kind, body)
+        if fetch.mode == _NO_CORS and not _is_no_cors_safelisted_content_type(content_type):
+            # Blink's request-no-cors guard drops a Content-Type such as JSON's, so the body goes as the text it is,
+            # with the type that Chrome gives text.
+            content_type = persona.content_type(request_kind, EncodedBody(b"", BodyEncoding.TEXT))
+        changes.setdefault(_CONTENT_TYPE.lower(), (_CONTENT_TYPE, content_type))
     return BuiltRequest(
         url=url,
         method=method,
@@ -287,6 +304,16 @@ def _with_fetch(
             fetch, mode=mode or fetch.mode, credentials_mode=credentials or fetch.credentials_mode
         ),
     )
+
+
+def _is_no_cors_safelisted_content_type(content_type: str | None) -> bool:
+    """Return whether a request in mode no-cors takes this Content-Type that the library gives a body, or none.
+
+    Upstream: services/network/public/cpp/cors/cors.cc
+    """
+    if content_type is None:
+        return True
+    return content_type.split(";", 1)[0].strip().lower() in _NO_CORS_CONTENT_TYPES
 
 
 def _with_size_from_headers(body: StreamBody, changes: dict[str, tuple[str, str | None]]) -> StreamBody:
