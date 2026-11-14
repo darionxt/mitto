@@ -160,6 +160,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
               frame->same_document_url));
           CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
           break;
+        case mitto::PageMessage::kIndexedDb:
+          CHECK_EQ(mitto::EncodeIndexedDbCall(frame->indexed_db_call),
+                   std::string_view(payload).substr(8));
+          break;
         case mitto::PageMessage::kDocumentCommitted: {
           const mitto::PageDocumentCommitted& committed = frame->committed;
           CHECK_NE(committed.document, mitto::kNoDocument);
@@ -181,6 +185,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kCookieStoreChange:
         case mitto::PageMessage::kBroadcastReceived:
         case mitto::PageMessage::kCacheStorageAnswer:
+        case mitto::PageMessage::kIndexedDbCallback:
           // Only a Session sends these.
           NOTREACHED();
       }

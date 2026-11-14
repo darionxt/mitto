@@ -40,6 +40,7 @@ namespace mitto {
 class DOMTimerCoordinator;
 class AnimationFrameController;
 class CacheStorageHost;
+class IndexedDbHost;
 class IdleTaskController;
 class Document;
 class PageFetcher;
@@ -95,6 +96,9 @@ class ScriptRunner final : public base::TaskObserver {
   void SetCacheStorageHost(CacheStorageHost& host) {
     cache_storage_host_ = &host;
   }
+  // Where the documents that the Session loads over HTTP or HTTPS reach its
+  // IndexedDB, which outlives this.
+  void SetIndexedDbHost(IndexedDbHost& host) { indexed_db_host_ = &host; }
 
   void OnResponseStarted(PageResponseStarted response);
   void OnResponseBody(PageResponseBody body);
@@ -183,6 +187,7 @@ class ScriptRunner final : public base::TaskObserver {
   std::set<uint64_t> waiting_calls_;
   raw_ptr<SessionCookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
+  raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
   // The Page's frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;

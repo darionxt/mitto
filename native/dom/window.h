@@ -60,6 +60,7 @@ class DocumentLoadTiming;
 class Fetcher;
 class Event;
 class History;
+class IDBFactory;
 class IdleTaskController;
 class Location;
 class MediaQueryList;
@@ -181,6 +182,10 @@ class Window final : public WindowProperties {
   // time, or null after throwing a SecurityError for a document whose origin
   // may not reach caches.
   mitto::CacheStorage* Caches(bindings::ExceptionState& exception_state);
+  // GlobalIndexedDB::indexedDB(): the window's IDBFactory, made the first
+  // time, which a document whose origin may not reach IndexedDB has too: its
+  // calls throw.
+  IDBFactory* IndexedDB();
   // window_messaging.cc: a structured clone of `value`, and a message to the
   // window itself, which frames will extend to other windows.
   v8::Local<v8::Value> StructuredClone(
@@ -340,6 +345,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<mitto::CacheStorage> caches_;
+  cppgc::Member<IDBFactory> indexed_db_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
   cppgc::Member<mitto::Event> current_event_;

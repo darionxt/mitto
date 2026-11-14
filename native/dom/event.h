@@ -133,6 +133,11 @@ class Event : public bindings::ScriptWrappable {
   void SetInvocationTargetInShadowTree(bool value) {
     invocation_target_in_shadow_tree_ = value;
   }
+  // The DOM Standard's legacyOutputDidListenersThrowFlag: whether a listener
+  // threw while the event was dispatched, which IndexedDB reads to abort the
+  // request's transaction, as Blink's JSBasedEventListener::Invoke() sets it.
+  bool LegacyDidListenersThrow() const { return legacy_did_listeners_throw_; }
+  void LegacySetDidListenersThrowFlag() { legacy_did_listeners_throw_ = true; }
 
   // The event that this one stands for, as a click's DOMActivate does.
   void SetUnderlyingEvent(const Event* event);
@@ -161,6 +166,7 @@ class Event : public bindings::ScriptWrappable {
   bool fire_only_non_capture_listeners_at_target_ = false;
   bool invocation_target_in_shadow_tree_ = false;
   bool copy_event_path_from_underlying_event_ = false;
+  bool legacy_did_listeners_throw_ = false;
   PassiveMode handling_passive_ = PassiveMode::kNotPassiveDefault;
   Phase phase_ = Phase::kNone;
   const base::TimeTicks created_;

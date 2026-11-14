@@ -1,0 +1,1157 @@
+{
+ "shape": [
+  "[object IDBFactory]",
+  true,
+  [
+   "IDBFactory",
+   "function",
+   [
+    "cmp",
+    "constructor",
+    "databases",
+    "deleteDatabase",
+    "open"
+   ]
+  ],
+  [
+   "IDBOpenDBRequest",
+   "function",
+   [
+    "constructor",
+    "onblocked",
+    "onupgradeneeded"
+   ]
+  ],
+  [
+   "IDBRequest",
+   "function",
+   [
+    "constructor",
+    "error",
+    "onerror",
+    "onsuccess",
+    "readyState",
+    "result",
+    "source",
+    "transaction"
+   ]
+  ],
+  [
+   "IDBDatabase",
+   "function",
+   [
+    "close",
+    "constructor",
+    "createObjectStore",
+    "deleteObjectStore",
+    "name",
+    "objectStoreNames",
+    "onabort",
+    "onclose",
+    "onerror",
+    "onversionchange",
+    "transaction",
+    "version"
+   ]
+  ],
+  [
+   "IDBTransaction",
+   "function",
+   [
+    "abort",
+    "commit",
+    "constructor",
+    "db",
+    "durability",
+    "error",
+    "mode",
+    "objectStore",
+    "objectStoreNames",
+    "onabort",
+    "oncomplete",
+    "onerror"
+   ]
+  ],
+  [
+   "IDBObjectStore",
+   "function",
+   [
+    "add",
+    "autoIncrement",
+    "clear",
+    "constructor",
+    "count",
+    "createIndex",
+    "delete",
+    "deleteIndex",
+    "get",
+    "getAll",
+    "getAllKeys",
+    "getAllRecords",
+    "getKey",
+    "index",
+    "indexNames",
+    "keyPath",
+    "name",
+    "openCursor",
+    "openKeyCursor",
+    "put",
+    "transaction"
+   ]
+  ],
+  [
+   "IDBIndex",
+   "function",
+   [
+    "constructor",
+    "count",
+    "get",
+    "getAll",
+    "getAllKeys",
+    "getAllRecords",
+    "getKey",
+    "keyPath",
+    "multiEntry",
+    "name",
+    "objectStore",
+    "openCursor",
+    "openKeyCursor",
+    "unique"
+   ]
+  ],
+  [
+   "IDBCursor",
+   "function",
+   [
+    "advance",
+    "constructor",
+    "continue",
+    "continuePrimaryKey",
+    "delete",
+    "direction",
+    "key",
+    "primaryKey",
+    "request",
+    "source",
+    "update"
+   ]
+  ],
+  [
+   "IDBCursorWithValue",
+   "function",
+   [
+    "constructor",
+    "value"
+   ]
+  ],
+  [
+   "IDBKeyRange",
+   "function",
+   [
+    "constructor",
+    "includes",
+    "lower",
+    "lowerOpen",
+    "upper",
+    "upperOpen"
+   ]
+  ],
+  [
+   "IDBVersionChangeEvent",
+   "function",
+   [
+    "constructor",
+    "dataLoss",
+    "dataLossMessage",
+    "newVersion",
+    "oldVersion"
+   ]
+  ],
+  [
+   "IDBRecord",
+   "function",
+   [
+    "constructor",
+    "key",
+    "primaryKey",
+    "value"
+   ]
+  ],
+  [
+   "DOMStringList",
+   "function",
+   [
+    "constructor",
+    "contains",
+    "item",
+    "length"
+   ]
+  ]
+ ],
+ "emptyDatabases": [],
+ "cmp": [
+  [
+   "ok",
+   -1
+  ],
+  [
+   "ok",
+   1
+  ],
+  [
+   "ok",
+   0
+  ],
+  [
+   "ok",
+   1
+  ],
+  [
+   "ok",
+   -1
+  ],
+  [
+   "ok",
+   1
+  ],
+  [
+   "ok",
+   1
+  ],
+  [
+   "ok",
+   1
+  ],
+  [
+   "ok",
+   1
+  ],
+  [
+   "ok",
+   -1
+  ],
+  [
+   "ok",
+   -1
+  ],
+  [
+   "ok",
+   -1
+  ],
+  [
+   "ok",
+   -1
+  ]
+ ],
+ "cmpErrors": [
+  "DOMException DataError: Failed to execute 'cmp' on 'IDBFactory': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'cmp' on 'IDBFactory': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'cmp' on 'IDBFactory': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'cmp' on 'IDBFactory': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'cmp' on 'IDBFactory': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'cmp' on 'IDBFactory': The parameter is not a valid key.",
+  "TypeError TypeError: Failed to execute 'cmp' on 'IDBFactory': 2 arguments required, but only 1 present."
+ ],
+ "keyRange": [
+  [
+   "ok",
+   [
+    3,
+    3,
+    false,
+    false
+   ]
+  ],
+  [
+   "ok",
+   [
+    "a",
+    null,
+    true,
+    true
+   ]
+  ],
+  [
+   "ok",
+   [
+    null,
+    [
+     1,
+     2
+    ],
+    true,
+    false
+   ]
+  ],
+  [
+   "ok",
+   [
+    true,
+    false,
+    true,
+    false
+   ]
+  ],
+  "DOMException DataError: Failed to execute 'bound' on 'IDBKeyRange': The lower key is greater than the upper key.",
+  "DOMException DataError: Failed to execute 'bound' on 'IDBKeyRange': The lower key and upper key are equal and one of the bounds is open.",
+  "DOMException DataError: Failed to execute 'only' on 'IDBKeyRange': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'lowerBound' on 'IDBKeyRange': The parameter is not a valid key.",
+  "DOMException DataError: Failed to execute 'includes' on 'IDBKeyRange': The parameter is not a valid key.",
+  "TypeError TypeError: Failed to construct 'IDBKeyRange': Illegal constructor"
+ ],
+ "openErrors": [
+  "TypeError TypeError: Failed to execute 'open' on 'IDBFactory': The version provided must not be 0.",
+  "TypeError TypeError: Failed to execute 'open' on 'IDBFactory': Value is outside the 'unsigned long long' value range.",
+  "TypeError TypeError: Failed to execute 'open' on 'IDBFactory': Value is outside the 'unsigned long long' value range.",
+  "TypeError TypeError: Failed to execute 'open' on 'IDBFactory': Value is not of type 'unsigned long long'.",
+  "TypeError TypeError: Failed to execute 'deleteDatabase' on 'IDBFactory': 1 argument required, but only 0 present."
+ ],
+ "firstOpen": [
+  [
+   "upgradeneeded",
+   0,
+   1,
+   "versionchange",
+   1,
+   "done",
+   "[object IDBVersionChangeEvent]"
+  ],
+  [
+   "store",
+   "s",
+   "id",
+   false,
+   [],
+   [
+    "s"
+   ],
+   [
+    "s"
+   ],
+   "default"
+  ],
+  [
+   "indexes",
+   [
+    "by_name",
+    "by_tag",
+    "compound",
+    "unique_mail"
+   ],
+   true,
+   true,
+   [
+    "name",
+    "id"
+   ]
+  ],
+  [
+   "createErrors",
+   "DOMException ConstraintError: Failed to execute 'createObjectStore' on 'IDBDatabase': An object store with the specified name already exists.",
+   "DOMException SyntaxError: Failed to execute 'createObjectStore' on 'IDBDatabase': The keyPath option is not a valid key path.",
+   "DOMException InvalidAccessError: Failed to execute 'createObjectStore' on 'IDBDatabase': The autoIncrement option was set but the keyPath option was empty or an array.",
+   "DOMException InvalidAccessError: Failed to execute 'createObjectStore' on 'IDBDatabase': The autoIncrement option was set but the keyPath option was empty or an array.",
+   "DOMException ConstraintError: Failed to execute 'createIndex' on 'IDBObjectStore': An index with the specified name already exists.",
+   "DOMException SyntaxError: Failed to execute 'createIndex' on 'IDBObjectStore': The keyPath argument contains an invalid key path.",
+   "DOMException InvalidAccessError: Failed to execute 'createIndex' on 'IDBObjectStore': The keyPath argument was an array and the multiEntry option is true.",
+   "DOMException NotFoundError: Failed to execute 'index' on 'IDBObjectStore': The specified index was not found.",
+   "DOMException NotFoundError: Failed to execute 'deleteObjectStore' on 'IDBDatabase': The specified object store was not found."
+  ],
+  [
+   "success",
+   1,
+   [
+    "auto",
+    "kp",
+    "plain",
+    "s"
+   ]
+  ]
+ ],
+ "db": [
+  "a",
+  1,
+  [
+   "auto",
+   "kp",
+   "plain",
+   "s"
+  ],
+  "[object DOMStringList]",
+  true,
+  "auto",
+  null,
+  4
+ ],
+ "databases": [
+  {
+   "name": "a",
+   "version": 1
+  }
+ ],
+ "transactionErrors": [
+  "DOMException NotFoundError: Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found.",
+  "DOMException InvalidAccessError: Failed to execute 'transaction' on 'IDBDatabase': The storeNames parameter was empty.",
+  "TypeError TypeError: Failed to execute 'transaction' on 'IDBDatabase': The mode provided ('versionchange') is not one of 'readonly' or 'readwrite'.",
+  "TypeError TypeError: Failed to execute 'transaction' on 'IDBDatabase': The provided value 'bad' is not a valid enum value of type IDBTransactionMode.",
+  "DOMException NotFoundError: Failed to execute 'objectStore' on 'IDBTransaction': The specified object store was not found.",
+  "DOMException InvalidStateError: Failed to execute 'createObjectStore' on 'IDBDatabase': The database is not running a version change transaction.",
+  "DOMException InvalidStateError: Failed to execute 'deleteObjectStore' on 'IDBDatabase': The database is not running a version change transaction.",
+  [
+   "ok",
+   [
+    [
+     "auto",
+     "s"
+    ],
+    "readwrite",
+    "strict",
+    true,
+    null
+   ]
+  ],
+  "TypeError TypeError: Failed to execute 'transaction' on 'IDBDatabase': Failed to read the 'durability' property from 'IDBTransactionOptions': The provided value 'bad' is not a valid enum value of type IDBTransactionDurability."
+ ],
+ "writes": [
+  [
+   "success",
+   1
+  ],
+  [
+   "success",
+   2
+  ],
+  [
+   "success",
+   3
+  ],
+  [
+   "error",
+   "DOMException ConstraintError: Key already exists in the object store."
+  ],
+  [
+   "error",
+   "DOMException ConstraintError: Unable to add key to index 'unique_mail': at least one key does not satisfy the uniqueness requirements."
+  ],
+  "DOMException DataError: Failed to execute 'put' on 'IDBObjectStore': Evaluating the object store's key path did not yield a value.",
+  "DOMException DataError: Failed to execute 'put' on 'IDBObjectStore': Evaluating the object store's key path yielded a value that is not a valid key.",
+  "DOMException DataCloneError: Failed to execute 'put' on 'IDBObjectStore': f() {} could not be cloned.",
+  "DOMException DataError: Failed to execute 'put' on 'IDBObjectStore': The object store uses in-line keys and the key parameter was provided.",
+  [
+   "success",
+   1
+  ],
+  [
+   "success",
+   2
+  ],
+  [
+   "success",
+   10
+  ],
+  [
+   "success",
+   11
+  ],
+  [
+   "success",
+   2.5
+  ],
+  [
+   "success",
+   12
+  ],
+  [
+   "success",
+   "str"
+  ],
+  [
+   "success",
+   13
+  ],
+  [
+   "success",
+   1
+  ],
+  [
+   "success",
+   7
+  ],
+  [
+   "success",
+   8
+  ],
+  [
+   "success",
+   {
+    "k": {
+     "x": 1
+    },
+    "v": 1
+   }
+  ],
+  [
+   "success",
+   [
+    {
+     "k": {
+      "x": 1
+     },
+     "v": 1
+    },
+    {
+     "k": {
+      "x": 7
+     },
+     "v": 2
+    },
+    {
+     "v": 3,
+     "k": {
+      "x": 8
+     }
+    }
+   ]
+  ],
+  "DOMException DataError: Failed to execute 'put' on 'IDBObjectStore': A generated key could not be inserted into the value.",
+  [
+   "success",
+   [
+    {
+     "number": "-Infinity"
+    },
+    -1,
+    0,
+    1e-300,
+    3,
+    {
+     "number": "Infinity"
+    },
+    {
+     "date": -5
+    },
+    {
+     "date": 10
+    },
+    "",
+    "a",
+    "b",
+    {
+     "binary": []
+    },
+    {
+     "binary": [
+      1,
+      255
+     ]
+    },
+    {
+     "binary": [
+      2
+     ]
+    },
+    [],
+    [
+     1
+    ],
+    [
+     1,
+     "a"
+    ],
+    [
+     []
+    ]
+   ]
+  ],
+  [
+   "success",
+   [
+    0,
+    1e-300,
+    3,
+    {
+     "number": "Infinity"
+    }
+   ]
+  ],
+  [
+   "success",
+   18
+  ],
+  [
+   "success",
+   9
+  ],
+  [
+   "success",
+   3
+  ],
+  [
+   "success",
+   [
+    1,
+    "a"
+   ]
+  ],
+  [
+   "success",
+   {
+    "number": "-Infinity"
+   }
+  ],
+  [
+   "success",
+   "undefined"
+  ],
+  [
+   "success",
+   [
+    {
+     "number": "-Infinity"
+    },
+    -1,
+    0
+   ]
+  ],
+  "TypeError TypeError: Failed to execute 'getAll' on 'IDBObjectStore': Value is outside the 'unsigned long' value range.",
+  "TypeError TypeError: Failed to execute 'get' on 'IDBObjectStore': 1 argument required, but only 0 present.",
+  "DOMException DataError: Failed to execute 'get' on 'IDBObjectStore': The parameter is not a valid key.",
+  [
+   "success",
+   "values"
+  ],
+  [
+   "success",
+   {
+    "d": {
+     "date": 1
+    },
+    "m": {
+     "map": [
+      [
+       1,
+       "a"
+      ]
+     ]
+    },
+    "s": {
+     "set": [
+      2
+     ]
+    },
+    "b": {
+     "view": "Uint16Array",
+     "bytes": [
+      1,
+      0,
+      2,
+      0
+     ]
+    },
+    "n": {
+     "number": "NaN"
+    },
+    "nested": {
+     "a": [
+      1,
+      {
+       "b": 2
+      }
+     ]
+    }
+   }
+  ],
+  [
+   "success",
+   "large"
+  ],
+  [
+   "success",
+   200000
+  ]
+ ],
+ "writesDone": "complete",
+ "reads": [
+  [
+   "success",
+   {
+    "id": 1,
+    "name": "one",
+    "tags": [
+     "x",
+     "y",
+     "x"
+    ],
+    "mail": "a@b"
+   }
+  ],
+  [
+   "success",
+   1
+  ],
+  [
+   "success",
+   [
+    {
+     "id": 1,
+     "name": "one",
+     "tags": [
+      "x",
+      "y",
+      "x"
+     ],
+     "mail": "a@b"
+    },
+    {
+     "id": 3,
+     "name": "one",
+     "tags": [],
+     "mail": "c@b"
+    }
+   ]
+  ],
+  [
+   "success",
+   [
+    1,
+    3,
+    2
+   ]
+  ],
+  [
+   "success",
+   [
+    1,
+    1,
+    2
+   ]
+  ],
+  [
+   "success",
+   2
+  ],
+  [
+   "success",
+   [
+    {
+     "id": 1,
+     "name": "one",
+     "tags": [
+      "x",
+      "y",
+      "x"
+     ],
+     "mail": "a@b"
+    },
+    {
+     "id": 3,
+     "name": "one",
+     "tags": [],
+     "mail": "c@b"
+    },
+    {
+     "id": 2,
+     "name": "two",
+     "tags": "y",
+     "mail": "b@b"
+    }
+   ]
+  ],
+  [
+   "success",
+   [
+    1,
+    2,
+    3
+   ]
+  ],
+  [
+   "next",
+   [
+    [
+     "one",
+     1,
+     1,
+     "next",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ],
+    [
+     "one",
+     3,
+     3,
+     "next",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ],
+    [
+     "two",
+     2,
+     2,
+     "next",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ]
+   ]
+  ],
+  [
+   "prev",
+   [
+    [
+     "two",
+     2,
+     2,
+     "prev",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ],
+    [
+     "one",
+     3,
+     3,
+     "prev",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ],
+    [
+     "one",
+     1,
+     1,
+     "prev",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ]
+   ]
+  ],
+  [
+   "nextunique",
+   [
+    [
+     "one",
+     1,
+     1,
+     "nextunique",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ],
+    [
+     "two",
+     2,
+     2,
+     "nextunique",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ]
+   ]
+  ],
+  [
+   "prevunique",
+   [
+    [
+     "two",
+     2,
+     2,
+     "prevunique",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ],
+    [
+     "one",
+     1,
+     1,
+     "prevunique",
+     "[object IDBCursorWithValue]",
+     true,
+     true
+    ]
+   ]
+  ],
+  [
+   [
+    3,
+    3,
+    false
+   ],
+   [
+    2,
+    2,
+    false
+   ]
+  ],
+  [
+   [
+    "one",
+    1
+   ],
+   "DOMException DataError: Failed to execute 'continue' on 'IDBCursor': The parameter is less than or equal to this cursor's position.",
+   "DOMException InvalidStateError: Failed to execute 'continue' on 'IDBCursor': The cursor is being iterated or has iterated past its end.",
+   [
+    "one",
+    3
+   ],
+   "DOMException DataError: Failed to execute 'continuePrimaryKey' on 'IDBCursor': The parameter is less than or equal to this cursor's position.",
+   [
+    "two",
+    2
+   ],
+   "DOMException ReadOnlyError: Failed to execute 'update' on 'IDBCursor': The record may not be updated inside a read-only transaction.",
+   "DOMException ReadOnlyError: Failed to execute 'delete' on 'IDBCursor': The record may not be deleted inside a read-only transaction.",
+   "TypeError TypeError: Failed to execute 'advance' on 'IDBCursor': A count argument with value 0 (zero) was supplied, must be greater than 0."
+  ]
+ ],
+ "readsDone": "complete",
+ "cursorWrites": [
+  [
+   "DOMException DataError: Failed to execute 'update' on 'IDBCursor': The effective object store of this cursor uses in-line keys and evaluating the key path of the value parameter results in a different value than the cursor's effective key.",
+   [
+    "updated",
+    1
+   ],
+   [
+    "deleted",
+    "undefined"
+   ]
+  ],
+  [
+   "success",
+   [
+    {
+     "id": 1,
+     "name": "uno",
+     "tags": [
+      "x",
+      "y",
+      "x"
+     ],
+     "mail": "a@b"
+    },
+    {
+     "id": 3,
+     "name": "one",
+     "tags": [],
+     "mail": "c@b"
+    }
+   ]
+  ]
+ ],
+ "cursorWritesDone": "complete",
+ "abort": [
+  "abort null",
+  [
+   "DOMException InvalidStateError: Failed to execute 'abort' on 'IDBTransaction': The transaction has finished.",
+   "DOMException TransactionInactiveError: Failed to execute 'get' on 'IDBObjectStore': The transaction has finished.",
+   [
+    "r1 error",
+    "DOMException AbortError: The transaction was aborted, so the request cannot be fulfilled."
+   ],
+   [
+    "r2 error",
+    "DOMException AbortError: The transaction was aborted, so the request cannot be fulfilled."
+   ]
+  ],
+  "done",
+  [
+   "ok",
+   "undefined"
+  ],
+  "DOMException AbortError: The transaction was aborted, so the request cannot be fulfilled."
+ ],
+ "errorAborts": [
+  "abort DOMException ConstraintError: Key already exists in the object store.",
+  [
+   [
+    "request error",
+    "DOMException ConstraintError: Key already exists in the object store.",
+    true,
+    true
+   ],
+   [
+    "transaction error",
+    true,
+    null
+   ],
+   [
+    "database error",
+    true
+   ]
+  ]
+ ],
+ "commit": [
+  "DOMException TransactionInactiveError: Failed to execute 'put' on 'IDBObjectStore': The transaction has finished.",
+  "DOMException InvalidStateError: Failed to execute 'commit' on 'IDBTransaction': The transaction has finished.",
+  "complete",
+  [
+   "success",
+   "c"
+  ]
+ ],
+ "readOnly": [
+  "DOMException ReadOnlyError: Failed to execute 'put' on 'IDBObjectStore': The transaction is read-only.",
+  "DOMException ReadOnlyError: Failed to execute 'clear' on 'IDBObjectStore': The transaction is read-only.",
+  "complete"
+ ],
+ "inactive": [
+  "DOMException InvalidStateError: Failed to execute 'objectStore' on 'IDBTransaction': The transaction has finished.",
+  "complete"
+ ],
+ "handlerThrew": "abort DOMException AbortError: Uncaught exception in event handler.",
+ "versionChange": [
+  [
+   [
+    "versionchange",
+    1,
+    2
+   ],
+   [
+    "closing"
+   ],
+   "DOMException InvalidStateError: Failed to execute 'transaction' on 'IDBDatabase': The database connection is closing."
+  ],
+  [
+   [
+    "blocked",
+    1,
+    2
+   ],
+   [
+    "upgradeneeded",
+    1,
+    2,
+    "versionchange",
+    2,
+    "done",
+    "[object IDBVersionChangeEvent]"
+   ],
+   [
+    "stores in upgrade",
+    [
+     "auto",
+     "kp",
+     "plain",
+     "s"
+    ]
+   ],
+   [
+    "success",
+    2,
+    [
+     "auto",
+     "kp",
+     "renamed"
+    ]
+   ]
+  ],
+  [
+   "auto",
+   "kp",
+   "renamed"
+  ],
+  [
+   "by_name2",
+   "compound",
+   "unique_mail"
+  ]
+ ],
+ "abortedUpgrade": [
+  [
+   [
+    "upgradeneeded",
+    2,
+    3,
+    "versionchange",
+    3,
+    "done",
+    "[object IDBVersionChangeEvent]"
+   ],
+   [
+    "error",
+    "DOMException AbortError: Version change transaction was aborted in upgradeneeded event handler."
+   ]
+  ],
+  []
+ ],
+ "lowerVersion": [
+  [
+   "error",
+   "DOMException VersionError: The requested version (1) is less than the existing version (2)."
+  ]
+ ],
+ "reopen": [
+  [
+   [
+    "success",
+    2,
+    [
+     "auto",
+     "kp",
+     "renamed"
+    ]
+   ]
+  ],
+  2
+ ],
+ "deleteBlocked": [
+  [
+   [
+    "versionchange",
+    5,
+    null
+   ],
+   "closing"
+  ],
+  [
+   [
+    "blocked",
+    5,
+    null
+   ],
+   [
+    "success",
+    5,
+    null,
+    "undefined"
+   ]
+  ],
+  [
+   [
+    "success",
+    0,
+    null,
+    "undefined"
+   ]
+  ],
+  [
+   {
+    "name": "a",
+    "version": 2
+   }
+  ]
+ ],
+ "events": [
+  [
+   "ok",
+   [
+    "versionchange",
+    2,
+    3,
+    false
+   ]
+  ],
+  [
+   "ok",
+   [
+    0,
+    null
+   ]
+  ]
+ ]
+}

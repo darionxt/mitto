@@ -35,6 +35,7 @@ class AttachedTraversals;
 class Attr;
 class Comment;
 class CacheStorageHost;
+class IndexedDbHost;
 class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
@@ -245,6 +246,10 @@ class Document : public Node {
     cache_storage_host_ = host;
   }
   CacheStorageHost* GetCacheStorageHost() const { return cache_storage_host_; }
+  // Where the document reaches its Session's IndexedDB, or null if its
+  // origin may not.
+  void SetIndexedDbHost(IndexedDbHost* host) { indexed_db_host_ = host; }
+  IndexedDbHost* GetIndexedDbHost() const { return indexed_db_host_; }
   Readiness GetReadiness() const { return readiness_; }
   // Sets the readiness, and fires readystatechange at the document for
   // interactive and complete, as Blink's Document::SetReadyState() does.
@@ -412,6 +417,7 @@ class Document : public Node {
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
+  raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   cppgc::Member<Window> window_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;
