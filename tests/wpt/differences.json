@@ -9128,7 +9128,7 @@
 {"test": "encoding/remove-only-one-bom.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
 {"test": "encoding/replacement-encodings.any.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#283"},
 {"test": "encoding/replacement-encodings.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
-{"test": "encoding/sharedarraybuffer.https.html", "subtest": "decoding SharedArrayBuffer", "chrome": "FAIL: Failed to execute 'decode' on 'TextDecoder': The provided ArrayBufferView value must not be shared.", "mitto": "FAIL: SharedArrayBuffer is not defined"},
+{"test": "encoding/sharedarraybuffer.https.html", "subtest": "decoding SharedArrayBuffer", "chrome": "FAIL: Failed to execute 'decode' on 'TextDecoder': The provided ArrayBufferView value must not be shared.", "mitto": "FAIL: SharedArrayBuffer is not defined", "owner": "#277"},
 {"test": "encoding/single-byte-decoder-iframe.window.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
 {"test": "encoding/single-byte-decoder.any.html?XMLHttpRequest", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#283"},
 {"test": "encoding/streams/backpressure.any.html", "subtest": "additional writes should wait for backpressure to be relieved for class TextDecoderStream", "chrome": "PASS", "mitto": "FAIL: assert_array_equals: writes should not happen before read2 expected property 2 to be \"paused\" but got \"write2\" (expected array [\"read1\", \"write1\", \"paused\", \"read2\", \"write2\"] got [\"read1\", \"write1\", \"write2\", \"paused\", \"read2\"])"},
