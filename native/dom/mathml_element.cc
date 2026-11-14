@@ -26,6 +26,17 @@ const bindings::WrapperTypeInfo* MathMLElement::GetWrapperTypeInfo() const {
   return &bindings::V8MathMLElement::kWrapperTypeInfo;
 }
 
+void MathMLElement::DidCloneAttributes() {
+  for (const Attribute& attribute : attributes()) {
+    if (const std::u16string_view event =
+            EventNameForAttributeName(attribute.name);
+        !event.empty()) {
+      SetElementAttributeEventListenerFromScriptBody(
+          *this, event, attribute.name, &attribute.value);
+    }
+  }
+}
+
 void MathMLElement::AttributeChanged(const QualifiedName& name,
                                      const std::u16string* old_value,
                                      const std::u16string* new_value) {

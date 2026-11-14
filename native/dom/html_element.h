@@ -89,12 +89,20 @@ class HTMLElement : public Element {
                         const std::u16string* new_value) override;
 
  protected:
+  // Element's: the copy's event handler content attributes set handlers, as
+  // Blink's CloneAttributesFrom() runs them through AttributeChanged().
+  void DidCloneAttributes() override;
+
   // The window's event whose handler the content attribute `name` sets in
   // place of the element's, as a body's and a frameset's do, or empty.
   virtual std::u16string_view WindowEventNameForAttributeName(
       const QualifiedName& name) const;
 
  private:
+  // The handler that the event handler content attribute `name` sets, with
+  // `value`, null for none.
+  void ParseEventHandlerAttribute(const QualifiedName& name,
+                                  const std::u16string* value);
   // Whether it is a summary that is the first summary child of a details
   // element, as Blink's IsMainSummary() says.
   bool IsMainSummary() const;

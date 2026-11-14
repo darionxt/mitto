@@ -30,6 +30,11 @@ class MathMLElement : public Element {
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+
+ protected:
+  // Element's: the copy's event handler content attributes set handlers, as
+  // Blink's CloneAttributesFrom() runs them through AttributeChanged().
+  void DidCloneAttributes() override;
 };
 
 }  // namespace mitto

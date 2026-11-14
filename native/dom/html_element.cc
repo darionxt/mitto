@@ -50,19 +50,28 @@ void HTMLElement::AttributeChanged(const QualifiedName& name,
                                    const std::u16string* old_value,
                                    const std::u16string* new_value) {
   Element::AttributeChanged(name, old_value, new_value);
+  ParseEventHandlerAttribute(name, new_value);
+}
+
+void HTMLElement::DidCloneAttributes() {
+  for (const Attribute& attribute : attributes()) {
+    ParseEventHandlerAttribute(attribute.name, &attribute.value);
+  }
+}
+
+void HTMLElement::ParseEventHandlerAttribute(const QualifiedName& name,
+                                             const std::u16string* value) {
   // Blink's HTMLBodyElement's and HTMLFrameSetElement's ParseAttribute() set
   // the window's handlers, before HTMLElement::ParseAttribute() sets the
   // element's.
   if (const std::u16string_view event = WindowEventNameForAttributeName(name);
       !event.empty()) {
-    SetWindowAttributeEventListenerFromScriptBody(*this, event, name,
-                                                  new_value);
+    SetWindowAttributeEventListenerFromScriptBody(*this, event, name, value);
     return;
   }
   if (const std::u16string_view event = EventNameForAttributeName(name);
       !event.empty()) {
-    SetElementAttributeEventListenerFromScriptBody(*this, event, name,
-                                                   new_value);
+    SetElementAttributeEventListenerFromScriptBody(*this, event, name, value);
   }
 }
 
