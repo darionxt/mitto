@@ -194,7 +194,7 @@ void ResolvedURL::ReplaceComponents(const url::Replacements<char>& replacements,
   }
 }
 
-void ResolvedURL::SetProtocol(std::u16string_view protocol) {
+bool ResolvedURL::SetProtocol(std::u16string_view protocol) {
   // Blink's KURL::SetProtocol(): what comes before the first ':', which must
   // be a scheme, and a special URL keeps a special scheme.
   const std::string new_protocol =
@@ -203,7 +203,7 @@ void ResolvedURL::SetProtocol(std::u16string_view protocol) {
   url::Component component;
   if (!url::CanonicalizeScheme(new_protocol, &canonical, &component) ||
       component.is_empty()) {
-    return;
+    return false;
   }
   const std::u16string old_protocol = Protocol();
   if (IsSpecialScheme(old_protocol)) {
@@ -211,22 +211,23 @@ void ResolvedURL::SetProtocol(std::u16string_view protocol) {
         base::UTF8ToUTF16(std::string_view(canonical.view())
                               .substr(0, static_cast<size_t>(component.len)));
     if (!IsSpecialScheme(canonical_protocol)) {
-      return;
+      return true;
     }
     const bool new_is_file = canonical_protocol == u"file";
     const bool old_is_file = old_protocol == u"file";
     if (new_is_file && !old_is_file &&
         (HasPort() || parsed_.username.is_nonempty() ||
          parsed_.password.is_nonempty())) {
-      return;
+      return true;
     }
     if (!new_is_file && old_is_file && parsed_.host.is_empty()) {
-      return;
+      return true;
     }
   }
   url::Replacements<char> replacements;
   replacements.SetSchemeStr(new_protocol);
   ReplaceComponents(replacements);
+  return true;
 }
 
 void ResolvedURL::SetUser(std::u16string_view user) {
