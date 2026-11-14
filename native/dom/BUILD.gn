@@ -71,6 +71,8 @@ source_set("dom") {
     "dom_rect.h",
     "dom_rect_read_only.cc",
     "dom_rect_read_only.h",
+    "dom_implementation.cc",
+    "dom_implementation.h",
     "dom_string_map.cc",
     "dom_string_map.h",
     "dom_token_list.cc",
@@ -396,6 +398,8 @@ source_set("dom") {
     "window_task.h",
     "window_tasks.cc",
     "window_tasks.h",
+    "xml_document.cc",
+    "xml_document.h",
   ]
 
   # What //mitto/bindings:generate_bindings writes for these classes and for

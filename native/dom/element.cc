@@ -631,6 +631,12 @@ std::u16string Element::OuterHTML() const {
   return SerializeNode(*this);
 }
 
+std::u16string Element::GetHTML(
+    const bindings::GetHTMLOptions& options,
+    bindings::ExceptionState& exception_state) const {
+  return SerializeChildren(*this);
+}
+
 NodeVector Element::ParseFragment(const std::u16string& html,
                                   Element& context,
                                   bindings::ExceptionState& exception_state) {

@@ -104,6 +104,10 @@ class Element : public Node {
   void SetInnerHTML(const std::u16string& html,
                     bindings::ExceptionState& exception_state);
   std::u16string OuterHTML() const;
+  // The markup of its children, as innerHTML gives it. The options name
+  // shadow roots to serialize, which the Runtime has none of yet.
+  std::u16string GetHTML(const bindings::GetHTMLOptions& options,
+                         bindings::ExceptionState& exception_state) const;
   void SetOuterHTML(const std::u16string& html,
                     bindings::ExceptionState& exception_state);
   Element* Closest(const std::u16string& selectors,
