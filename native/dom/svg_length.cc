@@ -624,8 +624,9 @@ SVGLength* SVGLength::Create() {
 
 // static
 SVGLength* SVGLength::ForItem(SVGListItem<SVGLengthValue>& item,
-                              bool read_only) {
-  return bindings::MakeGarbageCollected<SVGLength>(item, read_only);
+                              bool read_only,
+                              SVGAnimatedListBase* binding) {
+  return bindings::MakeGarbageCollected<SVGLength>(item, read_only, binding);
 }
 
 // static
@@ -648,8 +649,10 @@ SVGLength::SVGLength(SVGAnimatedLength* owner, bool is_anim_val)
                   : bindings::MakeGarbageCollected<SVGListItem<SVGLengthValue>>(
                         SVGLengthValue::Literal(0, CssUnit::kNumber))) {}
 
-SVGLength::SVGLength(SVGListItem<SVGLengthValue>& item, bool read_only)
-    : is_anim_val_(read_only), item_(&item) {}
+SVGLength::SVGLength(SVGListItem<SVGLengthValue>& item,
+                     bool read_only,
+                     SVGAnimatedListBase* binding)
+    : is_anim_val_(read_only), item_(&item), binding_(binding) {}
 
 SVGLength::~SVGLength() = default;
 
@@ -661,10 +664,13 @@ void SVGLength::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(owner_);
   visitor->Trace(item_);
+  visitor->Trace(binding_);
 }
 
-SVGListItem<SVGLengthValue>* SVGLength::ItemToInsert() const {
-  if (item_ && !item_->owner && !is_anim_val_) {
+SVGListItem<SVGLengthValue>* SVGLength::ItemToInsert(
+    SVGAnimatedListBase& list) {
+  if (!owner_ && !is_anim_val_ && !binding_ && !item_->owner) {
+    binding_ = &list;
     return item_.Get();
   }
   return bindings::MakeGarbageCollected<SVGListItem<SVGLengthValue>>(Target());
@@ -689,14 +695,14 @@ SVGElement* SVGLength::ContextElement() const {
   if (owner_) {
     return &owner_->Element();
   }
-  return item_->owner ? &item_->owner->Element() : nullptr;
+  return binding_ ? &binding_->Element() : nullptr;
 }
 
 SVGLengthMode SVGLength::Mode() const {
   if (owner_) {
     return owner_->Mode();
   }
-  return item_->owner ? item_->owner->LengthMode() : SVGLengthMode::kOther;
+  return binding_ ? binding_->LengthMode() : SVGLengthMode::kOther;
 }
 
 bool SVGLength::ThrowIfImmutable(

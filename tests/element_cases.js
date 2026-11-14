@@ -1655,6 +1655,27 @@
     out.push(L.appendItem(L.getItem(0)).value, m.getAttribute("values"), L.length);
     return out.join(",");
   });
+  run("svg list items after the attribute", () => {
+    const m = svg("feColorMatrix");
+    m.setAttribute("values", "1 2");
+    const L = m.values.baseVal;
+    const n = L.getItem(0);
+    m.setAttribute("values", "3 4");
+    L.appendItem(n);
+    const out = [m.getAttribute("values"), tryIt(() => { n.value = 9; return m.getAttribute("values"); })];
+    const t = svg("text");
+    t.setAttribute("x", "5%");
+    const length = t.x.baseVal.getItem(0);
+    const s = svg("svg");
+    s.setAttribute("width", "200");
+    (document.body || document.documentElement).appendChild(s);
+    s.appendChild(t);
+    out.push(tryIt(() => length.value));
+    t.setAttribute("x", "1");
+    out.push(tryIt(() => length.value), tryIt(() => { t.x.baseVal.insertItemBefore(length, 0); return t.getAttribute("x"); }), tryIt(() => { length.valueAsString = "7mm"; return t.getAttribute("x"); }));
+    s.remove();
+    return out.join(" | ");
+  });
   run("svg number list operations", () => {
     const m = svg("feColorMatrix");
     const s = svg("svg");

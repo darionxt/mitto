@@ -188,9 +188,9 @@ TearOff* SVGTearOffList<Owner, TearOff, Value>::Initialize(
   if (ThrowIfReadOnly(exception_state)) {
     return nullptr;
   }
-  SVGListItem<Value>* const item = new_item->ItemToInsert();
+  SVGListItem<Value>* const item = new_item->ItemToInsert(*owner_);
   owner_->ResetItems(*item);
-  return TearOff::ForItem(*item, /*read_only=*/false);
+  return TearOff::ForItem(*item, /*read_only=*/false, owner_.Get());
 }
 
 template <typename Owner, typename TearOff, typename Value>
@@ -200,7 +200,7 @@ TearOff* SVGTearOffList<Owner, TearOff, Value>::GetItem(
   if (ThrowIfOutOfRange(index, exception_state)) {
     return nullptr;
   }
-  return TearOff::ForItem(*owner_->Items()[index], read_only_);
+  return TearOff::ForItem(*owner_->Items()[index], read_only_, owner_.Get());
 }
 
 template <typename Owner, typename TearOff, typename Value>
@@ -211,9 +211,9 @@ TearOff* SVGTearOffList<Owner, TearOff, Value>::InsertItemBefore(
   if (ThrowIfReadOnly(exception_state)) {
     return nullptr;
   }
-  SVGListItem<Value>* const item = new_item->ItemToInsert();
+  SVGListItem<Value>* const item = new_item->ItemToInsert(*owner_);
   owner_->InsertItem(index, *item);
-  return TearOff::ForItem(*item, /*read_only=*/false);
+  return TearOff::ForItem(*item, /*read_only=*/false, owner_.Get());
 }
 
 template <typename Owner, typename TearOff, typename Value>
@@ -225,9 +225,9 @@ TearOff* SVGTearOffList<Owner, TearOff, Value>::ReplaceItem(
       ThrowIfOutOfRange(index, exception_state)) {
     return nullptr;
   }
-  SVGListItem<Value>* const item = new_item->ItemToInsert();
+  SVGListItem<Value>* const item = new_item->ItemToInsert(*owner_);
   owner_->ReplaceItem(index, *item);
-  return TearOff::ForItem(*item, /*read_only=*/false);
+  return TearOff::ForItem(*item, /*read_only=*/false, owner_.Get());
 }
 
 template <typename Owner, typename TearOff, typename Value>
@@ -238,7 +238,10 @@ TearOff* SVGTearOffList<Owner, TearOff, Value>::RemoveItem(
       ThrowIfOutOfRange(index, exception_state)) {
     return nullptr;
   }
-  return TearOff::ForItem(*owner_->RemoveItem(index), /*read_only=*/false);
+  // A removed item's object is of no list, as Blink's CreateDetached() makes
+  // it.
+  return TearOff::ForItem(*owner_->RemoveItem(index), /*read_only=*/false,
+                          nullptr);
 }
 
 template <typename Owner, typename TearOff, typename Value>
@@ -248,9 +251,9 @@ TearOff* SVGTearOffList<Owner, TearOff, Value>::AppendItem(
   if (ThrowIfReadOnly(exception_state)) {
     return nullptr;
   }
-  SVGListItem<Value>* const item = new_item->ItemToInsert();
+  SVGListItem<Value>* const item = new_item->ItemToInsert(*owner_);
   owner_->InsertItem(owner_->Items().size(), *item);
-  return TearOff::ForItem(*item, /*read_only=*/false);
+  return TearOff::ForItem(*item, /*read_only=*/false, owner_.Get());
 }
 
 template <typename Owner, typename TearOff, typename Value>
@@ -271,16 +274,21 @@ template class SVGTearOffList<SVGAnimatedLengthList, SVGLength, SVGLengthValue>;
 // static
 SVGNumber* SVGNumber::Create() {
   return bindings::MakeGarbageCollected<SVGNumber>(
-      *bindings::MakeGarbageCollected<SVGListItem<float>>(0.0f), false);
+      *bindings::MakeGarbageCollected<SVGListItem<float>>(0.0f), false,
+      nullptr);
 }
 
 // static
-SVGNumber* SVGNumber::ForItem(SVGListItem<float>& item, bool read_only) {
-  return bindings::MakeGarbageCollected<SVGNumber>(item, read_only);
+SVGNumber* SVGNumber::ForItem(SVGListItem<float>& item,
+                              bool read_only,
+                              SVGAnimatedListBase* binding) {
+  return bindings::MakeGarbageCollected<SVGNumber>(item, read_only, binding);
 }
 
-SVGNumber::SVGNumber(SVGListItem<float>& item, bool read_only)
-    : item_(&item), read_only_(read_only) {}
+SVGNumber::SVGNumber(SVGListItem<float>& item,
+                     bool read_only,
+                     SVGAnimatedListBase* binding)
+    : item_(&item), read_only_(read_only), binding_(binding) {}
 
 SVGNumber::~SVGNumber() = default;
 
@@ -291,6 +299,7 @@ const bindings::WrapperTypeInfo* SVGNumber::GetWrapperTypeInfo() const {
 void SVGNumber::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(item_);
+  visitor->Trace(binding_);
 }
 
 void SVGNumber::SetValue(float value,
@@ -305,8 +314,9 @@ void SVGNumber::SetValue(float value,
   }
 }
 
-SVGListItem<float>* SVGNumber::ItemToInsert() const {
-  if (!item_->owner && !read_only_) {
+SVGListItem<float>* SVGNumber::ItemToInsert(SVGAnimatedListBase& list) {
+  if (!read_only_ && !binding_ && !item_->owner) {
+    binding_ = &list;
     return item_.Get();
   }
   return bindings::MakeGarbageCollected<SVGListItem<float>>(item_->value);

@@ -5,9 +5,10 @@
 // An animated list's items are the attribute's, as Blink parses it, and its
 // objects share each item: a change through one writes the attribute again,
 // with no record for mutation observers. getItem() gives a new object each
-// time. Inserting an object that is in no list puts its own item in the list,
-// so a change through it reaches the list too, and inserting one that a list
-// or an animated value holds puts a copy in. A change to the attribute
+// time. Inserting an object of no element, such as createSVGNumber()'s, puts
+// its own item in the list, so a change through it reaches the list too, and
+// inserting any other puts a copy in, as an object that a list gave stays
+// bound to it. A change to the attribute
 // replaces the items, and the objects of the old ones keep their values. An
 // animVal's list and items are read-only. An empty list removes its
 // attribute, as Blink's null value of an empty list does.
@@ -131,9 +132,13 @@ class SVGNumber final : public bindings::ScriptWrappable {
  public:
   // createSVGNumber()'s: 0, in no list.
   static SVGNumber* Create();
-  static SVGNumber* ForItem(SVGListItem<float>& item, bool read_only);
+  static SVGNumber* ForItem(SVGListItem<float>& item,
+                            bool read_only,
+                            SVGAnimatedListBase* binding);
 
-  SVGNumber(SVGListItem<float>& item, bool read_only);
+  SVGNumber(SVGListItem<float>& item,
+            bool read_only,
+            SVGAnimatedListBase* binding);
   ~SVGNumber() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -143,13 +148,16 @@ class SVGNumber final : public bindings::ScriptWrappable {
   float Value() const { return item_->value; }
   void SetValue(float value, bindings::ExceptionState& exception_state);
 
-  // What a list's insertion takes: this number's item, when it is in no
-  // list, or else a copy.
-  SVGListItem<float>* ItemToInsert() const;
+  // Blink's GetValueForInsertionFromTearOff(): what `list` takes, this
+  // number's item, which binds it to `list`, when it is bound to no list, or
+  // else a copy.
+  SVGListItem<float>* ItemToInsert(SVGAnimatedListBase& list);
 
  private:
   const cppgc::Member<SVGListItem<float>> item_;
   const bool read_only_;
+  // The list that gave it or took it, which it stays bound to.
+  cppgc::Member<SVGAnimatedListBase> binding_;
 };
 
 class SVGNumberList;

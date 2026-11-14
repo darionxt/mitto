@@ -12,8 +12,7 @@
 // errors.
 //
 // Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
-// Upstream:
-// third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 // Upstream: third_party/blink/renderer/platform/bindings/v8_set_return_value.cc
 
 #ifndef MITTO_BINDINGS_INDEXED_AND_NAMED_PROPERTIES_H_
