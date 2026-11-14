@@ -52,6 +52,15 @@ bool IsCorsSafelistedRequestHeader(std::string_view name,
 // Upstream: services/network/public/cpp/cors/cors.cc
 bool IsCorsSafelistedResponseHeaderName(std::string_view name);
 
+// The values of each header line named `name`, joined by commas, as Blink's
+// ResourceResponse::HttpHeaderField() joins a header that comes more than
+// once. `headers` holds a line feed after each "name: value".
+std::string HeaderField(std::string_view headers, std::string_view name);
+
+// Blink's ResourceResponse::HttpContentType(): the MIME type of the last
+// media type in Content-Type that has one, in lower case, without parameters.
+std::string HttpContentType(std::string_view headers);
+
 }  // namespace mitto
 
 #endif  // MITTO_HEADER_RULES_H_

@@ -280,6 +280,7 @@ mitto_bindings_interfaces = [
       "createRange",
       "createNodeIterator",
       "createTreeWalker",
+      "currentScript",
       "get domain",
       "designMode",
       "scrollingElement",
@@ -884,7 +885,13 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLScriptElement"
     file = "html_script_element"
-    implemented = [ "text" ]
+    implemented = [
+      "src",
+      "async",
+      "text",
+      "supports",
+      "textContent",
+    ]
   },
   {
     name = "HTMLSelectElement"
