@@ -137,7 +137,7 @@ Goal: real pages load and run as they do in Chrome.
 - More Request Kinds, for what pages request: `XMLHttpRequest`, styles, fonts, frames, workers and `sendBeacon()`, and CORS preflights and the `credentials` modes of `fetch()`.
 - `localStorage`, `sessionStorage`, IndexedDB and the Cache API, which the Session keeps for all its Pages, in a directory of its own or in memory ([ADR-0010](adr/0010-a-directory-of-its-own-for-page-storage.md)). `sessionStorage` lasts as long as its Page.
 - Dedicated workers.
-- Tests from web-platform-tests. The Engine Release's tree records Chrome's own results for them, so mitto is held to Chrome's results, failures included.
+- Tests from web-platform-tests, in the repository. Windows Chrome of the Engine Release is recorded running them in each run, as Baselines are, so mitto is held to Chrome's results, failures included ([wpt.md](wpt.md)).
 - **Exit:** the chosen directories of web-platform-tests give Chrome's results, and the Parity Checks pass in frames and workers as well as in top-level pages.
 
 ### M9: Style, geometry and input
