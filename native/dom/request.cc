@@ -14,6 +14,8 @@
 #include "mitto/dom/headers.h"
 #include "mitto/dom/window.h"
 #include "mitto/header_rules.h"
+#include "url/origin.h"
+#include "url/url_constants.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-isolate.h"
 
@@ -35,18 +37,42 @@ std::string NormalizeMethod(const std::string& method) {
 // Whether `init` sets a member whose behaviour the Runtime lacks, to a value
 // other than its default.
 bool HasMissingMember(const bindings::RequestInit& init) {
-  return (init.referrer && *init.referrer != u"about:client") ||
-         (init.referrer_policy && !init.referrer_policy->empty()) ||
-         (init.mode && *init.mode == u"no-cors") ||
-         (init.credentials && *init.credentials == u"omit") ||
-         (init.cache && *init.cache != u"default") ||
+  return (init.cache && *init.cache != u"default") ||
          (init.redirect && *init.redirect != u"follow") ||
          (init.integrity && !init.integrity->empty()) ||
-         (init.keepalive && *init.keepalive) ||
-         (init.priority && *init.priority != u"auto") ||
          init.ad_auction_headers.has_value() ||
          init.target_address_space.has_value() ||
          init.private_token.has_value() || init.retry_options.has_value();
+}
+
+// Whether `init` has any member, which resets what a Request takes from
+// another.
+bool AreAnyMembersPresent(const bindings::RequestInit& init) {
+  return init.method || init.headers || init.body || init.referrer ||
+         init.referrer_policy || init.mode || init.target_address_space ||
+         init.credentials || init.cache || init.redirect || init.integrity ||
+         init.keepalive || init.ad_auction_headers || init.priority ||
+         init.signal || init.duplex || init.private_token || init.retry_options;
+}
+
+FetchMode ModeFromString(std::u16string_view mode) {
+  if (mode == u"same-origin") {
+    return FetchMode::kSameOrigin;
+  }
+  if (mode == u"no-cors") {
+    return FetchMode::kNoCors;
+  }
+  return FetchMode::kCors;
+}
+
+FetchCredentialsMode CredentialsFromString(std::u16string_view credentials) {
+  if (credentials == u"omit") {
+    return FetchCredentialsMode::kOmit;
+  }
+  if (credentials == u"include") {
+    return FetchCredentialsMode::kInclude;
+  }
+  return FetchCredentialsMode::kSameOrigin;
 }
 
 }  // namespace
@@ -91,6 +117,11 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     request->url_ = input_request->url_;
     request->method_ = input_request->method_;
     request->mode_ = input_request->mode_;
+    request->credentials_ = input_request->credentials_;
+    request->referrer_ = input_request->referrer_;
+    request->referrer_policy_ = input_request->referrer_policy_;
+    request->priority_ = input_request->priority_;
+    request->keepalive_ = input_request->keepalive_;
     request->body_ = input_request->body_;
     signal = input_request->signal_.Get();
   } else {
@@ -114,6 +145,38 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     }
     request->url_ = parsed;
   }
+  Document& document = Window::Current().GetDocument();
+  if (AreAnyMembersPresent(init)) {
+    request->referrer_ = kClientReferrer;
+    request->referrer_policy_ = FetchReferrerPolicy::kDefault;
+  }
+  if (init.referrer) {
+    if (init.referrer->empty()) {
+      request->referrer_ = kNoReferrer;
+    } else {
+      const GURL parsed = document.BaseUrl().Resolve(*init.referrer);
+      if (!parsed.is_valid()) {
+        exception_state.ThrowTypeError(
+            base::StrCat({"Referrer '", base::UTF16ToUTF8(*init.referrer),
+                          "' is not a valid URL."}));
+        return nullptr;
+      }
+      // about:client, or a URL of another origin than the document's, leaves
+      // the document's URL.
+      const bool is_client = parsed.SchemeIs(url::kAboutScheme) &&
+                             parsed.host().empty() &&
+                             parsed.path() == "client";
+      request->referrer_ =
+          is_client || !url::Origin::Create(GURL(document.UrlForBinding()))
+                            .IsSameOriginWith(parsed)
+              ? std::string(kClientReferrer)
+              : parsed.spec();
+    }
+  }
+  if (init.referrer_policy) {
+    request->referrer_policy_ =
+        FetchReferrerPolicyFromString(*init.referrer_policy);
+  }
   if (init.mode && *init.mode == u"navigate") {
     exception_state.ThrowTypeError(
         "Cannot construct a Request with a RequestInit whose mode member is "
@@ -125,10 +188,17 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
         bindings::ExceptionMessages::NotImplemented());
     return nullptr;
   }
-  if (init.mode && *init.mode == u"same-origin") {
-    request->mode_ = Mode::kSameOrigin;
-  } else if (init.mode) {
-    request->mode_ = Mode::kCors;
+  if (init.mode) {
+    request->mode_ = ModeFromString(*init.mode);
+  }
+  if (init.priority) {
+    request->priority_ = FetchPriorityHintFromAttribute(*init.priority);
+  }
+  if (init.credentials) {
+    request->credentials_ = CredentialsFromString(*init.credentials);
+  }
+  if (init.keepalive) {
+    request->keepalive_ = *init.keepalive;
   }
   if (init.method) {
     const std::string& method = *init.method;
@@ -154,7 +224,17 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     signals.push_back(signal);
   }
   request->signal_ = AbortSignal::CreateComposite(signals);
-  request->headers_ = Headers::Create(Headers::Guard::kRequest);
+  // A request of mode no-cors takes only a CORS-safelisted method, and only
+  // no-CORS-safelisted header lines.
+  if (request->mode_ == FetchMode::kNoCors &&
+      !IsCorsSafelistedMethod(request->method_)) {
+    exception_state.ThrowTypeError(base::StrCat(
+        {"'", request->method_, "' is unsupported in no-cors mode."}));
+    return nullptr;
+  }
+  request->headers_ = Headers::Create(request->mode_ == FetchMode::kNoCors
+                                          ? Headers::Guard::kRequestNoCors
+                                          : Headers::Guard::kRequest);
   if (init.headers) {
     request->headers_->FillWith(*init.headers, exception_state);
   } else if (input_request) {

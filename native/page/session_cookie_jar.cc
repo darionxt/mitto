@@ -108,12 +108,14 @@ void SessionCookieJar::SetForCookieStore(PageCookieStoreSet set,
 
 void SessionCookieJar::ListenForCookieStore(ChangeListener listener) {
   const bool listen = !listener.is_null();
+  // The document that listens, whose changes alone it hears of.
+  cookie_store_document_ = Window::Current().DocumentId();
   if (listen == !cookie_store_listener_.is_null()) {
     cookie_store_listener_ = std::move(listener);
     return;
   }
   cookie_store_listener_ = std::move(listener);
-  send_.Run(EncodeCookieStoreListen(Window::Current().DocumentId(), listen));
+  send_.Run(EncodeCookieStoreListen(cookie_store_document_, listen));
 }
 
 bool SessionCookieJar::AnswerCookieStoreGet(PageCookieStoreCookies cookies) {
@@ -163,11 +165,13 @@ bool SessionCookieJar::AnswerCookieStoreSet(uint64_t number, bool stored) {
 
 void SessionCookieJar::CookieStoreChanged(PageCookieStoreChange change) {
   // A change may come after the CookieStore stopped listening, while its
-  // message to stop was on the way, and then nothing hears of it.
+  // message to stop was on the way, or after its document went, and then
+  // nothing hears of it.
   main_thread_->PostTask(
       FROM_HERE, base::BindOnce(
                      [](SessionCookieJar* jar, PageCookieStoreChange change) {
-                       if (jar->cookie_store_listener_) {
+                       if (jar->cookie_store_listener_ &&
+                           change.document == jar->cookie_store_document_) {
                          jar->cookie_store_listener_.Run(change);
                        }
                      },

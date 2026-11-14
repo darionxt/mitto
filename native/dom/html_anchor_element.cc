@@ -326,6 +326,7 @@ void HTMLAnchorElementBase::NavigateToHyperlink(const GURL& url) {
   FrameLoadRequest request;
   request.url = url;
   request.reason = ClientNavigationReason::kAnchorClick;
+  request.source_element = this;
   Navigate(*window, request, FrameLoadType::kStandard);
 }
 

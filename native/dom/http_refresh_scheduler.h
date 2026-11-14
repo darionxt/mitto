@@ -63,6 +63,10 @@ class HttpRefreshScheduler {
 
   // Drops the refresh, as when the document stops loading.
   void Cancel();
+  // Whether a refresh waits whose delay is at most `interval`.
+  bool IsScheduledWithin(base::TimeDelta interval) const {
+    return refresh_ && refresh_->delay <= interval;
+  }
 
  private:
   struct Refresh {

@@ -15,10 +15,12 @@
 #ifndef MITTO_DOM_FRAME_LOADER_H_
 #define MITTO_DOM_FRAME_LOADER_H_
 
+#include "base/memory/raw_ptr_exclusion.h"
 #include "url/gurl.h"
 
 namespace mitto {
 
+class Element;
 class Window;
 
 // Blink's WebFrameLoadType, which the session history and the Navigation API
@@ -48,6 +50,12 @@ enum class ClientNavigationReason {
 struct FrameLoadRequest {
   GURL url;
   ClientNavigationReason reason = ClientNavigationReason::kFrameNavigation;
+  // The link that started it, which its navigate event names.
+  // On the stack only, as the garbage collector scans it.
+  RAW_PTR_EXCLUSION Element* source_element = nullptr;
+  // navigate() with history "push", which keeps a new entry where a
+  // navigation would otherwise replace the current one.
+  bool force_history_push = false;
 };
 
 // LocalFrame::Navigate(): drops a navigation past the rate limit, makes a

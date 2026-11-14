@@ -113,11 +113,12 @@ void BroadcastChannelService::Post(uint64_t connection,
       message.wire_data()));
 }
 
-void BroadcastChannelService::OnSessionMessage(const std::string& name,
+void BroadcastChannelService::OnSessionMessage(const std::string& origin,
+                                               const std::string& name,
                                                bool locked,
                                                std::vector<uint8_t> data) {
   for (const Connection& c : connections_) {
-    if (c.channel && !c.opaque && c.name == name) {
+    if (c.channel && !c.opaque && c.key == origin && c.name == name) {
       Deliver(c.id, locked, /*same_agent_cluster=*/false, data);
     }
   }

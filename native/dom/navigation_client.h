@@ -22,6 +22,8 @@ struct NavigationRequest {
   // location.reload() and a refresh to the document's URL, which validate
   // what the cache holds.
   bool reload = false;
+  // One that replaces the current entry of the session history.
+  bool replace = false;
 };
 
 class NavigationClient {
@@ -34,6 +36,15 @@ class NavigationClient {
   // The Session hears that a navigation within the window's document gave it
   // `url`, as Blink tells its browser with DidCommitSameDocumentNavigation().
   virtual void DidNavigateWithinDocument(const GURL& url) = 0;
+
+  // FrameLoader::HasProvisionalNavigation(): a navigation that a document
+  // started waits for its response.
+  virtual bool HasProvisionalNavigation() const = 0;
+  // The rest of FrameLoader::StopAllLoaders(), as document.open() runs it
+  // once the document has cancelled its parsing: the document's loading
+  // stops, and so does the navigation that waits, which ends with
+  // ERR_ABORTED.
+  virtual void StopAllLoaders() = 0;
 
  protected:
   virtual ~NavigationClient() = default;

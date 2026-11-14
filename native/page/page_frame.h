@@ -51,6 +51,8 @@ class PageFrame final : public NavigationClient {
   // NavigationClient:
   void BeginNavigation(const NavigationRequest& request) override;
   void DidNavigateWithinDocument(const GURL& url) override;
+  bool HasProvisionalNavigation() const override;
+  void StopAllLoaders() override;
 
   // What a loader of the frame calls.
   //

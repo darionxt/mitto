@@ -16,6 +16,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -43,16 +44,22 @@ class PageIndexedDb {
   // Closes the Page's connections, as a renderer that goes drops them.
   ~PageIndexedDb();
 
-  // A call of the document whose storage key is `storage_key`, or nullopt if
-  // its origin may not reach IndexedDB.
+  // A call of the Page's context `context`, whose storage key is
+  // `storage_key`, or nullopt if its origin may not reach IndexedDB.
   void OnCall(PageIndexedDbCall call,
+              uint64_t context,
               const std::optional<std::string>& storage_key);
+
+  // The Page's contexts `contexts` have gone: their connections close, as a
+  // renderer closes a context's when it goes.
+  void ForgetContexts(const std::set<uint64_t>& contexts);
 
  private:
   class FactoryClient;
   class DatabaseCallbacks;
 
   void OnFactoryCall(PageIndexedDbCall call,
+                     uint64_t context,
                      const std::optional<std::string>& storage_key);
   void OnDatabaseCall(PageIndexedDbCall call, IndexedDbConnection& connection);
   void OnTransactionCall(PageIndexedDbCall call);
@@ -62,7 +69,9 @@ class PageIndexedDb {
   // not use, because it does already.
   bool ConnectionInUse(uint64_t connection) const;
   IndexedDbTransaction* FindTransaction(uint64_t transaction);
-  void AdoptConnection(uint64_t id,
+  // Takes the connection that an open gives, unless the context that asked
+  // has gone, and returns whether it took it.
+  bool AdoptConnection(uint64_t id,
                        std::unique_ptr<IndexedDbConnection> connection);
   void AdoptCursor(uint64_t id, std::unique_ptr<IndexedDbCursor> cursor);
   void TransactionFinished(uint64_t transaction);
@@ -80,6 +89,8 @@ class PageIndexedDb {
   // The Page's connections, by its numbers, with those that its opens have
   // yet to give, as null.
   std::map<uint64_t, std::unique_ptr<IndexedDbConnection>> connections_;
+  // The context that opened each connection.
+  std::map<uint64_t, uint64_t> connection_contexts_;
   // The connection of each transaction that has not finished.
   std::map<uint64_t, uint64_t> transactions_;
   std::map<uint64_t, std::unique_ptr<IndexedDbCursor>> cursors_;

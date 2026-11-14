@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -47,11 +48,17 @@ class PageCacheStorage {
 
   // A call of the document whose storage key is `storage_key`, or nullopt if
   // its origin may not reach the Cache API.
+  // `context` is the Page's context that asks, whose puts fail when it goes.
   void OnCall(PageCacheStorageCall call,
+              uint64_t context,
               const std::optional<std::string>& storage_key);
 
   // The first number that no cache or stored body has had.
   uint64_t NextNumber() const;
+
+  // The Page's contexts `contexts` have gone: their puts that wait for a body
+  // fail, as they do when the host goes, so that none holds its cache.
+  void ForgetContexts(const std::set<uint64_t>& contexts);
 
  private:
   class PutBody;
@@ -64,7 +71,9 @@ class PageCacheStorage {
 
   void OnOpen(PageCacheStorageCall call, const std::string& storage_key);
   void OnMatch(PageCacheStorageCall call, const std::string& storage_key);
-  void OnCacheBatch(PageCacheStorageCall call, CacheStorageCache& cache);
+  void OnCacheBatch(PageCacheStorageCall call,
+                    uint64_t context,
+                    CacheStorageCache& cache);
   void OnBodyPart(PageCacheStorageCall call);
   void OnReadBody(uint64_t body);
   void OnBodyCredit(uint64_t body, uint32_t credit);

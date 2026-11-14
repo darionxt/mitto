@@ -5,8 +5,10 @@ gains something a case needs, the replay here passes it on, and those gaps leave
 """
 
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
-from mitto import RequestKind, Session
+from mitto import RequestError, RequestKind, Session
+from mitto._errors import PageTimeoutError
 from mitto._native import PrivateSettings
 from mitto._request import BodyOptions
 from tools.capture import (
@@ -42,6 +44,10 @@ _POST = "POST"
 _TEXT: BodyOptions = {"data": "text body"}
 _JSON: BodyOptions = {"json": {"json": "body"}}
 _FORM_FIELDS = {"name": "mitto", "a b&c": "d e&f+g"}
+# Longer than a Page takes to load a case page and navigate from it, even on a busy runner.
+_PAGE_TIMEOUT_SECONDS = 30.0
+# How long a Page's document stays where it is before a replay takes it that it navigates no further.
+_SETTLED_SECONDS = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +75,11 @@ class Replay:
         made_by_a_page: The issue that makes a Page make this request, for a case that only a page makes in a way that a
             caller cannot say, such as a navigation that no user started. No check replays it until that issue
             replays it through a Page and clears this.
+        through_page: Whether a Page makes the request, as the case's page made it: the Page opens at `page`, runs
+            `page_script`, if there is one, and its document navigates until a navigation lands at `lands_at`.
+        page_script: What the Page runs once its document has loaded, for a page whose own script would ask for much that
+            a Page does not do yet before it navigates: the last step of that script.
+        lands_at: The case whose page the navigation ends at, for a hop of a redirect, or nothing for the case itself.
     """
 
     kind: RequestKind
@@ -85,6 +96,9 @@ class Replay:
     credentials: str | None = None
     mode: str | None = None
     made_by_a_page: int | None = None
+    through_page: bool = False
+    page_script: str | None = None
+    lands_at: str | None = None
 
 
 def _hops(prefix: str, kind: RequestKind, page: str) -> dict[str, Replay]:
@@ -224,20 +238,29 @@ def _document_replays() -> dict[str, Replay]:
             credentials="include",
         ),
         "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start, mode="no-cors"),
-        "navigation_location": Replay(RequestKind.NAVIGATION, page=start, made_by_a_page=279),
-        "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], made_by_a_page=279),
-        "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], made_by_a_page=279),
+        # The start page asks for web fonts, modules, workers and beacons before its script sets location, so the
+        # Page takes that last step itself. Each later page navigates on its own: a click, a refresh, location.
+        "navigation_location": Replay(
+            RequestKind.NAVIGATION,
+            page=start,
+            through_page=True,
+            page_script="location.href = urls.navigation_location",
+        ),
+        "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], through_page=True),
+        "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], through_page=True),
         "redirect_location_1": Replay(
             RequestKind.NAVIGATION,
             start="redirect_location_1",
             page=_PATHS["navigation_meta_refresh"],
-            made_by_a_page=279,
+            through_page=True,
+            lands_at="redirect_location_2",
         ),
         "redirect_location_2": Replay(
             RequestKind.NAVIGATION,
             start="redirect_location_1",
             page=_PATHS["navigation_meta_refresh"],
-            made_by_a_page=279,
+            through_page=True,
+            lands_at="redirect_location_2",
         ),
         "frame_same_origin": Replay(RequestKind.IFRAME, page=DOCUMENTS_FRAMES_PATH),
         "frame_same_site": Replay(RequestKind.IFRAME, host=SAME_SITE_HOST, page=DOCUMENTS_FRAMES_PATH),
@@ -402,6 +425,9 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
         RequestError: A request got no response.
     """
     steps = REPLAYS[case]
+    if steps.through_page:
+        _replay_through_page(session, server, run, case, steps)
+        return
     kind = steps.kind.value
     initiator = None
     if steps.page is not None:
@@ -415,3 +441,36 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
     session.request(
         steps.method, url, kind=kind, initiator=initiator, credentials=steps.credentials, mode=steps.mode, **steps.body
     )
+
+
+def through_page(case: str) -> bool:
+    """Return whether a Page makes the request of a Recording Case, which needs the Page program."""
+    return REPLAYS[case].through_page
+
+
+def _replay_through_page(session: Session, server: CaptureServer, run: Run, case: str, steps: Replay) -> None:
+    """Open a Page at the case's page and let its document navigate as the case's page did, with no user's activation,
+    until a navigation lands where the case's ends.
+
+    Raises:
+        RequestError: A navigation failed, or another took its place.
+    """
+    if steps.page is None:
+        raise ValueError(f"{case} names no page to open")
+    page_url = server.url(run.route, host=steps.page_host or run.host, path=steps.page)
+    lands_at = _PATHS[steps.lands_at or case]
+    with session._open_page(page_url, timeout=_PAGE_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        if steps.page_script is not None:
+            page.evaluate(steps.page_script)
+        while urlsplit(page.wait_for_navigation(timeout=_PAGE_TIMEOUT_SECONDS).url).path != lands_at:
+            pass
+        # The case's page navigates on, as the pages of Chrome's run did. Each navigation ends before the Page closes,
+        # so that closing it cancels no request, which over HTTP/3 would open the QPACK decoder stream that Chrome's
+        # run, which cancelled nothing, never opened.
+        while True:
+            try:
+                page.wait_for_navigation(timeout=_SETTLED_SECONDS)
+            except PageTimeoutError:
+                return
+            except RequestError:
+                continue

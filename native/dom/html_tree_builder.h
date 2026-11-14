@@ -24,7 +24,12 @@
 #include <string_view>
 #include <vector>
 
+#include "mitto/dom/heap_vector.h"
 #include "mitto/dom/node.h"
+#include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/persistent.h"
+#include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
 
@@ -34,11 +39,40 @@ class HTMLScriptElement;
 class HtmlTokenizer;
 class HtmlTreeBuilder;
 
+// What a tree builder refers to: its document and every element that it holds,
+// as Blink's HTMLTreeBuilder traces them, for the builder's owner to trace or
+// to hold. A parser that a document holds traces these, rather than holding
+// them with Persistents, which would keep the document from the collector
+// (document_parser.h).
+class HtmlTreeBuilderReferences final
+    : public cppgc::GarbageCollected<HtmlTreeBuilderReferences> {
+ public:
+  explicit HtmlTreeBuilderReferences(Document& document);
+  ~HtmlTreeBuilderReferences();
+
+  void Trace(cppgc::Visitor* visitor) const;
+
+  Document& document() const { return *document_; }
+  // Keeps `element` while the builder may refer to it.
+  void Keep(Element* element);
+  // Keeps `elements` alone, without allocating on the C++ heap, so that none
+  // of them can go meanwhile.
+  void KeepOnly(const std::vector<Element*>& elements);
+  size_t size() const { return elements_.size(); }
+
+ private:
+  cppgc::Member<Document> document_;
+  HeapVector<Element> elements_;
+};
+
 // Parses a document's markup into a Document, which must have no children, as
 // the markup arrives.
 class HtmlDocumentParser {
  public:
-  explicit HtmlDocumentParser(Document& document);
+  // What the tree builder refers to stays in `references`, which outlives
+  // this, or, with none, in references that this holds.
+  explicit HtmlDocumentParser(Document& document,
+                              HtmlTreeBuilderReferences* references = nullptr);
   HtmlDocumentParser(const HtmlDocumentParser&) = delete;
   HtmlDocumentParser& operator=(const HtmlDocumentParser&) = delete;
   ~HtmlDocumentParser();
@@ -47,6 +81,15 @@ class HtmlDocumentParser {
   void Append(std::u16string_view markup);
   // Ends the markup.
   void Finish();
+  bool HasSeenEndOfFile() const;
+
+  // The insertion point of document.write(), which the tokenizer keeps
+  // (HtmlTokenizer::PushInsertionPoint()): Insert() adds markup there, or at
+  // the end of the markup while none is set.
+  void PushInsertionPoint();
+  void PopInsertionPoint();
+  bool HasInsertionPoint() const;
+  void Insert(std::u16string_view markup);
 
   // Builds the tree from the markup so far. Returns the script element whose
   // end tag it reached, where the standard would run the script before it
@@ -59,6 +102,7 @@ class HtmlDocumentParser {
   const std::vector<std::string>& skipped_rules() const;
 
  private:
+  const cppgc::Persistent<HtmlTreeBuilderReferences> own_references_;
   std::unique_ptr<HtmlTokenizer> tokenizer_;
   std::unique_ptr<HtmlTreeBuilder> tree_builder_;
 };

@@ -279,6 +279,8 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kIndexedDb:
       case PageMessage::kDocumentCommitted:
       case PageMessage::kSameDocumentNavigation:
+      case PageMessage::kWorkerStarted:
+      case PageMessage::kContextGone:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -369,7 +371,7 @@ class SessionLink final : public PageChannel::Delegate
       return;
     }
     BroadcastChannelService::Get().OnSessionMessage(
-        broadcast.name, broadcast.locked,
+        broadcast.origin, broadcast.name, broadcast.locked,
         std::vector<uint8_t>(broadcast.data.begin(), broadcast.data.end()));
   }
 

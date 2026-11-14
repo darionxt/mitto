@@ -27,6 +27,7 @@
 #include "base/thread_annotations.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/page/page_reporter.h"
+#include "mitto/page_messages.h"
 
 namespace mitto {
 
@@ -81,6 +82,7 @@ class SessionCookieJar final : public CookieJar {
   std::map<uint64_t, CookiesAnswer> cookie_store_gets_;
   std::map<uint64_t, StoredAnswer> cookie_store_sets_;
   ChangeListener cookie_store_listener_;
+  uint64_t cookie_store_document_ = kNoDocument;
   uint64_t last_cookie_store_question_ = 0;
   std::set<uint64_t> cookie_store_questions_ GUARDED_BY(lock_);
 };

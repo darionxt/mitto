@@ -579,3 +579,270 @@ def test_navigation_timing_says_a_reload_and_gives_the_unload_times_of_a_documen
         page.evaluate(f"location.href = '{bounce}'")
         assert _next(page).url == first
         assert page.evaluate(timing) == [0, "navigate", False, True, False]
+
+
+# What the Navigation API's events say, as each fires, and the outcome of a navigate() or reload().
+_NAVIGATION_EVENTS = """
+<script>
+  window.seen = [];
+  const entry = (e) => e && [e.url, e.index, e.sameDocument];
+  navigation.addEventListener('navigate', (e) => seen.push([
+    'navigate', e.navigationType, e.destination.url, e.destination.sameDocument, e.canIntercept, e.hashChange,
+    e.cancelable, e.userInitiated, e.info ?? null, e.sourceElement && e.sourceElement.id,
+  ]));
+  navigation.addEventListener('currententrychange', (e) => seen.push(['currententrychange', entry(e.from)]));
+  navigation.addEventListener('navigatesuccess', () => seen.push(['navigatesuccess']));
+  navigation.addEventListener('navigateerror', (e) => seen.push([
+    'navigateerror', e.error.name + ': ' + e.error.message, e.message,
+  ]));
+  addEventListener('popstate', () => seen.push(['popstate']));
+  addEventListener('hashchange', () => seen.push(['hashchange']));
+  window.later = () => new Promise((resolve) => setTimeout(resolve, 0)).then(() => seen.splice(0));
+  window.settled = (result) => Promise.allSettled([result.committed, result.finished]).then((outcomes) =>
+    outcomes.map((o) => o.status === 'fulfilled' ? 'fulfilled' : o.reason.name + ': ' + o.reason.message));
+</script>
+"""
+
+_ABORTED = "AbortError: Navigation was aborted"
+
+
+def test_the_navigate_event_comes_first_and_canceling_it_stops_the_navigation(
+    session: mitto.Session, server: _Server
+) -> None:
+    url = server.page("/", f"<a id=link href=/elsewhere>elsewhere</a>{_NAVIGATION_EVENTS}")
+
+    with _open_page(session, url) as page:
+        # A navigation within the document fires navigate, then changes the current entry, then fires popstate; it
+        # succeeds later, before hashchange.
+        assert page.evaluate("location.hash = 'part'; seen.splice(0)") == [
+            ["navigate", "push", url + "#part", True, True, True, True, False, None, None],
+            ["currententrychange", [url, 0, True]],
+            ["popstate"],
+        ]
+        assert page.evaluate("later()") == [["navigatesuccess"], ["hashchange"]]
+        assert page.evaluate("navigation.entries().map((e) => e.url)") == [url, url + "#part"]
+        assert _next(page).url == url + "#part"
+
+        # Canceling navigate stops a navigation to another document before it asks the server, and aborts it, as
+        # navigateerror and the promises of navigate() say.
+        page.evaluate("navigation.addEventListener('navigate', (e) => e.preventDefault())")
+        assert page.evaluate("location.href = '/never'; seen.splice(0)") == [
+            ["navigate", "push", server.url("/never"), False, True, False, True, False, None, None],
+            ["navigateerror", _ABORTED, "Uncaught "],
+        ]
+        assert page.evaluate("settled(navigation.navigate('/never', {info: 'given'}))") == [_ABORTED, _ABORTED]
+        assert page.evaluate("seen[0][8]") == "given"
+        page.evaluate("seen.length = 0; document.getElementById('link').click()")
+        assert page.evaluate("seen.splice(0)") == [
+            ["navigate", "push", server.url("/elsewhere"), False, True, False, True, False, None, "link"],
+            ["navigateerror", _ABORTED, "Uncaught "],
+        ]
+        assert page.evaluate("location.href") == url + "#part"
+    assert server.paths() == ["/"]
+
+
+def test_intercept_makes_a_navigation_within_the_document_that_ends_with_its_handlers(
+    session: mitto.Session, server: _Server
+) -> None:
+    url = server.page("/", _NAVIGATION_EVENTS)
+    app = server.url("/app?view=1")
+
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "window.release = null;"
+            "navigation.addEventListener('navigate', (e) => e.intercept({handler: () => {"
+            "  seen.push(['handler', location.href, navigation.transition.navigationType, navigation.transition.from.url]);"
+            "  return new Promise((resolve) => { release = resolve; });"
+            "}}), {once: true});"
+            "window.result = navigation.navigate('/app?view=1', {state: {view: 1}, info: 'from the page'}); 0"
+        )
+        # It commits at once, with no request, and the handlers run once it has.
+        assert _next(page) == PageNavigation(url=app, status=0, same_document=True)
+        assert page.url == app
+        assert page.evaluate("seen.splice(0)") == [
+            ["navigate", "push", app, False, True, False, True, False, "from the page", None],
+            ["currententrychange", [url, 0, True]],
+            ["handler", app, "push", url],
+        ]
+        assert page.evaluate(
+            "result.committed.then((entry) => [entry === navigation.currentEntry, entry.index, entry.getState()])"
+        ) == [True, 1, {"view": 1}]
+        # It ends once the handler's promise has settled.
+        assert page.evaluate("later().then((events) => [events, navigation.transition !== null])") == [[], True]
+        assert page.evaluate("release(); result.finished.then(() => [seen.splice(0), navigation.transition])") == [
+            [["navigatesuccess"]],
+            None,
+        ]
+
+        # A handler's rejection fails the navigation once it has committed: here one that replaces the current entry.
+        page.evaluate(
+            "navigation.addEventListener('navigate', (e) => e.intercept({"
+            "  handler: () => Promise.reject(new TypeError('no view')),"
+            "}), {once: true}); 0"
+        )
+        assert page.evaluate("settled(navigation.navigate('/app?view=2', {history: 'replace'}))") == [
+            "fulfilled",
+            "TypeError: no view",
+        ]
+        assert page.evaluate("seen.splice(0)") == [
+            ["navigate", "replace", server.url("/app?view=2"), False, True, False, True, False, None, None],
+            ["currententrychange", [app, -1, True]],
+            ["navigateerror", "TypeError: no view", "Uncaught TypeError: no view"],
+        ]
+        assert page.evaluate("navigation.entries().map((e) => e.url)") == [url, server.url("/app?view=2")]
+        assert _next(page) == PageNavigation(url=server.url("/app?view=2"), status=0, same_document=True)
+
+        # A navigation that starts before an intercepted one has ended aborts it.
+        assert page.evaluate(
+            "navigation.addEventListener('navigate', (e) => {"
+            "  window.signal = e.signal; e.intercept({handler: () => new Promise(() => {})});"
+            "}, {once: true});"
+            "window.outcome = settled(navigation.navigate('/app?view=3')); location.hash = 'other';"
+            "[seen.splice(0), signal.aborted, signal.reason.message]"
+        ) == [
+            [
+                ["navigate", "push", server.url("/app?view=3"), False, True, False, True, False, None, None],
+                ["currententrychange", [server.url("/app?view=2"), 1, True]],
+                ["navigateerror", _ABORTED, "Uncaught "],
+                ["navigate", "push", server.url("/app?view=3#other"), True, True, True, True, False, None, None],
+                ["currententrychange", [server.url("/app?view=3"), 2, True]],
+                ["popstate"],
+            ],
+            True,
+            "Navigation was aborted",
+        ]
+        assert page.evaluate("outcome.then((s) => later().then((events) => [s, events]))") == [
+            ["fulfilled", _ABORTED],
+            [["navigatesuccess"], ["hashchange"]],
+        ]
+    assert server.paths() == ["/"]
+
+
+def test_a_navigate_that_keeps_the_document_stays_pending_until_another_starts(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.routes["/nothing"] = _Route(status=204)
+    url = server.page("/", _NAVIGATION_EVENTS)
+
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "window.outcome = []; const result = navigation.navigate('/nothing');"
+            "result.committed.then(() => outcome.push('committed'), (e) => outcome.push('committed ' + e.name));"
+            "result.finished.then(() => outcome.push('finished'), (e) => outcome.push('finished ' + e.name)); 0"
+        )
+        assert _next(page) == PageNavigation(url=server.url("/nothing"), status=204, kept_document=True)
+        # Chrome drops such a navigation and leaves its navigate event ongoing, so its promises wait, until the next
+        # navigation aborts it.
+        assert page.evaluate("later().then(() => outcome)") == []
+        assert page.evaluate(
+            "location.hash = 'later'; later().then((events) => [outcome,"
+            "events.map((e) => e[0] === 'navigateerror' ? e.slice(0, 2) : e[0])])"
+        ) == [
+            ["committed AbortError", "finished AbortError"],
+            [
+                ["navigateerror", _ABORTED],
+                "navigate",
+                "currententrychange",
+                "popstate",
+                "navigatesuccess",
+                "hashchange",
+            ],
+        ]
+
+
+def test_navigate_refuses_what_chrome_refuses(session: mitto.Session, server: _Server) -> None:
+    url = server.page("/", _NAVIGATION_EVENTS)
+    other_origin = url.replace("127.0.0.1", "localhost")
+
+    with _open_page(session, url) as page:
+        assert page.evaluate(
+            "Promise.all([navigation.navigate('http://['), navigation.navigate('javascript:void 0'),"
+            "navigation.navigate('/never', {state: () => 1})].map(settled))"
+        ) == [
+            ["SyntaxError: Invalid URL 'http://[/'."] * 2,
+            ["NotSupportedError: The javascript: protocol is not supported"] * 2,
+            ["DataCloneError: Failed to execute 'navigate' on 'Navigation': () => 1 could not be cloned."] * 2,
+        ]
+        assert page.evaluate("seen.length") == 0
+
+        # A document may not intercept a navigation to another origin.
+        assert page.evaluate(
+            "navigation.addEventListener('navigate', (e) => {"
+            "  try { e.intercept(); } catch (error) { seen.push([error.name, error.message]); }"
+            "  e.preventDefault();"
+            "}, {once: true});"
+            f"location.href = '{other_origin}'; seen.splice(0)"
+        ) == [
+            ["navigate", "push", other_origin, False, False, False, True, False, None, None],
+            [
+                "SecurityError",
+                f"Failed to execute 'intercept' on 'NavigateEvent': A navigation with URL '{other_origin}' cannot be"
+                f" intercepted by in a window with origin '{url.rstrip('/')}' and URL '{url}'.",
+            ],
+            ["navigateerror", _ABORTED, "Uncaught "],
+        ]
+    assert server.paths() == ["/"]
+
+
+def test_a_new_document_keeps_the_entries_of_its_origin_with_how_it_came(
+    session: mitto.Session, server: _Server
+) -> None:
+    second = server.page("/second", "<title>Second</title>")
+    third = server.page("/third", "<title>Third</title>")
+    first = server.page("/first", "<a id=link href=/third>third</a>")
+    other_origin = second.replace("127.0.0.1", "localhost")
+    activation = (
+        "(() => { const a = navigation.activation;"
+        "return [a.navigationType, a.entry === navigation.currentEntry, a.from && [a.from.url, a.from.index,"
+        "a.from.sameDocument], a.from === a.entry, navigation.entries().map((e) => [e.url, e.sameDocument]),"
+        "navigation.currentEntry.getState() ?? null]; })()"
+    )
+
+    with _open_page(session, first) as page:
+        # The first document takes the place of the initial about:blank one.
+        assert page.evaluate(activation) == ["replace", True, None, False, [[first, True]], None]
+        page.evaluate("navigation.navigate('/second', {state: {kept: false}}); 0")
+        assert _next(page).url == second
+        # Chrome 157 gives no state of a navigate() to the entry of the document that it loads.
+        assert page.evaluate(activation) == [
+            "push",
+            True,
+            [first, 0, False],
+            False,
+            [[first, False], [second, True]],
+            None,
+        ]
+        page.evaluate("navigation.reload(); 0")
+        assert _next(page).url == second
+        assert page.evaluate(activation) == [
+            "reload",
+            True,
+            [second, 1, True],
+            True,
+            [[first, False], [second, True]],
+            None,
+        ]
+        page.evaluate("location.replace('/first')")
+        assert _next(page).url == first
+        assert page.evaluate(activation) == [
+            "replace",
+            True,
+            [second, -1, False],
+            False,
+            [[first, False], [first, True]],
+            None,
+        ]
+        page.evaluate("document.getElementById('link').click()")
+        assert _next(page).url == third
+        assert page.evaluate(activation) == [
+            "push",
+            True,
+            [first, 1, False],
+            False,
+            [[first, False], [first, False], [third, True]],
+            None,
+        ]
+        # A document of another origin sees its own entry alone.
+        page.evaluate(f"location.href = '{other_origin}'")
+        assert _next(page).url == other_origin
+        assert page.evaluate(activation) == ["push", True, None, False, [[other_origin, True]], None]

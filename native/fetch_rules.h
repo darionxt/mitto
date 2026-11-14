@@ -13,6 +13,7 @@
 #include "mitto/client_hints.h"
 #include "mitto/network_quality.h"
 #include "mitto/request_options.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -148,6 +149,12 @@ class FetchRules {
   // Whether this is the navigation of a frame, whose parent is the page, and
   // not one of a top-level page.
   bool IsSubframeNavigation() const;
+  // The origin of the request's top-level frame: the one that a Page's frame
+  // names, or the initiator. Not for a navigation that the browser starts.
+  const url::Origin& TopFrameOrigin() const;
+  // The site for cookies of a subresource's frame, or of a frame's parent for
+  // its navigation.
+  net::SiteForCookies FrameSiteForCookies() const;
 
   // Whether Blink holds the Origin line in its HTTPHeaderMap, with the page's
   // origin as its value: FetchParameters::SetCrossOriginAccessControl() sets it

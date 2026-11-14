@@ -1,6 +1,7 @@
 #include "mitto/page_indexed_db.h"
 
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/notreached.h"
@@ -53,6 +54,7 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
     // An open that never gave its connection frees the numbers.
     if (host_ && connection_ != 0 && !gave_connection_) {
       host_->connections_.erase(connection_);
+      host_->connection_contexts_.erase(connection_);
       host_->transactions_.erase(transaction_);
     }
   }
@@ -81,7 +83,9 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
       return;
     }
     gave_connection_ = true;
-    host_->AdoptConnection(connection_, std::move(connection));
+    if (!host_->AdoptConnection(connection_, std::move(connection))) {
+      return;
+    }
     PageIndexedDbCallback callback;
     callback.op = IndexedDbCallbackOp::kUpgradeNeeded;
     callback.old_version = old_version;
@@ -98,7 +102,9 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
       // Opened without an upgrade: its transaction's number was never used.
       gave_connection_ = true;
       host_->transactions_.erase(transaction_);
-      host_->AdoptConnection(connection_, std::move(connection));
+      if (!host_->AdoptConnection(connection_, std::move(connection))) {
+        return;
+      }
     }
     PageIndexedDbCallback callback;
     callback.op = IndexedDbCallbackOp::kOpenSuccess;
@@ -208,6 +214,7 @@ PageIndexedDb::~PageIndexedDb() {
 }
 
 void PageIndexedDb::OnCall(PageIndexedDbCall call,
+                           uint64_t context,
                            const std::optional<std::string>& storage_key) {
   if (HasCallNumber(call.op)) {
     if (call.call <= last_call_) {
@@ -222,7 +229,7 @@ void PageIndexedDb::OnCall(PageIndexedDbCall call,
     case IndexedDbCallOp::kGetDatabaseInfo:
     case IndexedDbCallOp::kOpen:
     case IndexedDbCallOp::kDeleteDatabase:
-      OnFactoryCall(std::move(call), storage_key);
+      OnFactoryCall(std::move(call), context, storage_key);
       return;
     case IndexedDbCallOp::kCreateObjectStore:
     case IndexedDbCallOp::kDeleteObjectStore:
@@ -254,6 +261,7 @@ void PageIndexedDb::OnCall(PageIndexedDbCall call,
 
 void PageIndexedDb::OnFactoryCall(
     PageIndexedDbCall call,
+    uint64_t context,
     const std::optional<std::string>& storage_key) {
   if (!storage_key) {
     RefuseCall("IndexedDB of a document whose origin may not reach it");
@@ -280,6 +288,7 @@ void PageIndexedDb::OnFactoryCall(
         return;
       }
       connections_.emplace(call.connection, nullptr);
+      connection_contexts_.emplace(call.connection, context);
       transactions_.emplace(call.transaction, call.connection);
       const base::WeakPtr<PageIndexedDb> self = weak_factory_.GetWeakPtr();
       bucket.Open(std::move(call.name), call.version, call.transaction,
@@ -391,6 +400,7 @@ void PageIndexedDb::OnDatabaseCall(PageIndexedDbCall call,
       std::unique_ptr<IndexedDbConnection> closed =
           std::move(connections_.at(call.connection));
       connections_.erase(call.connection);
+      connection_contexts_.erase(call.connection);
       std::erase_if(transactions_, [&call](const auto& entry) {
         return entry.second == call.connection;
       });
@@ -496,10 +506,39 @@ IndexedDbTransaction* PageIndexedDb::FindTransaction(uint64_t transaction) {
   return connection->second->GetTransaction(transaction);
 }
 
-void PageIndexedDb::AdoptConnection(
+bool PageIndexedDb::AdoptConnection(
     uint64_t id,
     std::unique_ptr<IndexedDbConnection> connection) {
-  connections_[id] = std::move(connection);
+  const auto found = connections_.find(id);
+  if (found == connections_.end()) {
+    // The context that opened it has gone: it closes as it goes.
+    return false;
+  }
+  found->second = std::move(connection);
+  return true;
+}
+
+void PageIndexedDb::ForgetContexts(const std::set<uint64_t>& contexts) {
+  std::vector<std::unique_ptr<IndexedDbConnection>> closing;
+  for (auto it = connection_contexts_.begin();
+       it != connection_contexts_.end();) {
+    if (!contexts.contains(it->second)) {
+      ++it;
+      continue;
+    }
+    const uint64_t connection = it->first;
+    const auto found = connections_.find(connection);
+    if (found != connections_.end()) {
+      closing.push_back(std::move(found->second));
+      connections_.erase(found);
+    }
+    std::erase_if(transactions_, [connection](const auto& entry) {
+      return entry.second == connection;
+    });
+    it = connection_contexts_.erase(it);
+  }
+  // Closing aborts what each connection still runs.
+  closing.clear();
 }
 
 void PageIndexedDb::AdoptCursor(uint64_t id,
