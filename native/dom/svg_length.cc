@@ -144,10 +144,11 @@ float ViewportSize(const SVGElement& element, bool width) {
     }
     const SVGElement& svg = static_cast<const SVGElement&>(*ancestor);
     if (const std::u16string* view_box = svg.FindAttribute(u"viewBox")) {
-      const std::optional<std::vector<float>> numbers =
-          ParseSVGNumberList(*view_box);
-      if (numbers && numbers->size() == 4 && (*numbers)[2] >= 0 &&
-          (*numbers)[3] >= 0) {
+      const std::optional<std::array<float, 4>> numbers =
+          ParseSVGRect(*view_box);
+      // A viewBox of no area is empty, which the svg element's own size
+      // stands for.
+      if (numbers && (*numbers)[2] > 0 && (*numbers)[3] > 0) {
         return width ? (*numbers)[2] : (*numbers)[3];
       }
     }
