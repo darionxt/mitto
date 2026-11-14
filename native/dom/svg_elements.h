@@ -1,7 +1,7 @@
 // The elements of SVG, whose classes have their interfaces' animated values,
-// lists, rectangles, aspect ratios, angles and points: each other member of
-// theirs that is not a reflected attribute is a Known Gap. Blink's classes of
-// the same names hold what layout and animation need.
+// lists, rectangles, aspect ratios, angles, points and transforms: each other
+// member of theirs that is not a reflected attribute is a Known Gap. Blink's
+// classes of the same names hold what layout and animation need.
 //
 // Upstream: third_party/blink/renderer/core/svg/svg_tag_names.json5
 
@@ -62,6 +62,7 @@ class SVGGradientElement : public SVGElement {
 
   // The members of the interface.
   SVGAnimatedEnumeration* GradientUnits();
+  SVGAnimatedTransformList* GradientTransform();
   SVGAnimatedEnumeration* SpreadMethod();
 
  protected:
@@ -71,6 +72,9 @@ class SVGGradientElement : public SVGElement {
 class SVGGraphicsElement : public SVGElement {
  public:
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedTransformList* Transform();
 
  protected:
   SVGGraphicsElement(Document& document, const std::u16string& local_name);
@@ -184,6 +188,7 @@ class SVGClipPathElement final : public SVGElement {
 
   // The members of the interface.
   SVGAnimatedEnumeration* ClipPathUnits();
+  SVGAnimatedTransformList* Transform();
 };
 
 class SVGDefsElement final : public SVGGraphicsElement {
@@ -738,6 +743,7 @@ class SVGPatternElement final : public SVGElement {
   SVGAnimatedLength* Height();
   SVGAnimatedEnumeration* PatternUnits();
   SVGAnimatedEnumeration* PatternContentUnits();
+  SVGAnimatedTransformList* PatternTransform();
 };
 
 class SVGPolygonElement final : public SVGGeometryElement {
@@ -817,7 +823,10 @@ class SVGSVGElement final : public SVGGraphicsElement {
   SVGLength* CreateSVGLength();
   SVGNumber* CreateSVGNumber();
   SVGPoint* CreateSVGPoint();
+  SVGMatrix* CreateSVGMatrix();
   SVGRect* CreateSVGRect();
+  SVGTransform* CreateSVGTransform();
+  SVGTransform* CreateSVGTransformFromMatrix(SVGMatrix* matrix);
 };
 
 class SVGScriptElement final : public SVGElement {

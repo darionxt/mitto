@@ -329,10 +329,21 @@ std::optional<std::vector<std::array<float, 2>>> ParseSVGPoints(
 // for no unit to 5 for turn, or nothing.
 std::optional<std::pair<float, uint8_t>> ParseSVGAngle(
     std::u16string_view value);
-// String::Number() of a float: six significant digits, as JavaScript's
-// toPrecision(6) gives them, without the trailing zeros of a number with no
-// exponent.
-std::u16string SVGNumberToString(float value);
+// A transform of an attribute such as transform's: SVGTransformType's value of
+// its function, from 1 for matrix to 6 for skewY, and its arguments.
+struct SVGTransformArguments {
+  uint8_t type = 0;
+  std::array<float, 6> values = {};
+  size_t count = 0;
+};
+// SVGTransformList::ParseInternal(): the transforms that spaces or one comma
+// part, or nothing.
+std::optional<std::vector<SVGTransformArguments>> ParseSVGTransforms(
+    std::u16string_view value);
+// String::Number() of a float or a double: six significant digits, as
+// JavaScript's toPrecision(6) gives them, without the trailing zeros of a
+// number with no exponent.
+std::u16string SVGNumberToString(double value);
 
 }  // namespace mitto
 

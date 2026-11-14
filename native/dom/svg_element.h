@@ -20,6 +20,7 @@
 #include "mitto/dom/svg_geometry.h"
 #include "mitto/dom/svg_length.h"
 #include "mitto/dom/svg_lists.h"
+#include "mitto/dom/svg_transforms.h"
 
 namespace mitto {
 
@@ -89,6 +90,8 @@ class SVGElement : public Element {
   SVGAnimatedAngle* AnimatedOrient();
   // A polyline's or polygon's points.
   SVGAnimatedPointList* AnimatedPointList();
+  SVGAnimatedTransformList* AnimatedTransformList(
+      std::u16string_view attribute);
 
  private:
   SVGAnimatedPropertyBase* FindAnimated(std::u16string_view attribute,

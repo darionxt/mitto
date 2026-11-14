@@ -44,8 +44,11 @@ class CookieStore;
 
 namespace mitto {
 
+class CacheStorageContext;
+class PageCacheStorage;
 class PageHost;
 class ReadyRequests;
+class StorageQuota;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
 // header lines in their order, and its options, with no Initiator, which the
@@ -119,6 +122,10 @@ class PageNetwork {
   virtual void BroadcastFromPage(const PageHost& from,
                                  const url::Origin& origin,
                                  const PageBroadcast& broadcast) = 0;
+  // The Session's Cache API, which its Pages share, and the quota of its
+  // storage.
+  virtual CacheStorageContext& cache_storage() = 0;
+  virtual StorageQuota& storage_quota() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -300,6 +307,9 @@ class PageHost final : public PageChannel::Delegate {
   // The URL of the Page's top-level document, or an empty one before the Page
   // has made one.
   GURL TopDocumentUrl() const;
+  // What the document's Cache API asks, which PageCacheStorage serves,
+  // with the storage key of the document that asks.
+  void OnCacheStorage(PageCacheStorageCall call, const GURL& document_url);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -349,6 +359,12 @@ class PageHost final : public PageChannel::Delegate {
   // The partition of the cookies of a document at `document_url`, as Chrome's
   // RestrictedCookieManager for a top-level frame has it.
   static std::optional<net::CookiePartitionKey> DocumentPartitionKey(
+      const GURL& document_url);
+  // The storage key of a document at `document_url`, as
+  // StorageKey::Serialize() writes it, if it may reach the Cache API: one of
+  // an HTTP or HTTPS URL in a secure context. A top-level document's key is
+  // its origin, first party.
+  static std::optional<std::string> DocumentCacheStorageKey(
       const GURL& document_url);
 
   // What navigator.connection gives a document at `url`: what the renderer
@@ -412,6 +428,11 @@ class PageHost final : public PageChannel::Delegate {
   bool ended_ = false;
   // The calls in progress, which the Page answers in any order.
   std::set<uint64_t> calls_;
+  // The document's Cache API, from its first call.
+  std::unique_ptr<PageCacheStorage> cache_storage_;
+  // The first number that the next document's Cache API gives a cache or a
+  // stored body, past those of the documents before.
+  uint64_t next_cache_storage_number_ = 1;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

@@ -161,7 +161,7 @@ Response* Response::CreateFetched(ResponseType type,
                                   std::u16string url,
                                   bool redirected,
                                   mitto::Headers* headers,
-                                  FetchLoader* loader) {
+                                  BodyLoader* loader) {
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type;
   response->status_ = status;
@@ -174,6 +174,11 @@ Response* Response::CreateFetched(ResponseType type,
     response->loader_ = loader;
   }
   return response;
+}
+
+void Response::AttachBodyLoader(BodyLoader* loader) {
+  body_state_ = BodyState::kLoading;
+  loader_ = loader;
 }
 
 Response::Response() = default;

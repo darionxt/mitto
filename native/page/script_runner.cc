@@ -19,6 +19,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/animation_frame_controller.h"
+#include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
@@ -210,6 +211,10 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   committed.source = source;
   committed.navigation = navigation;
   send_.Run(EncodeDocumentCommitted(committed));
+  // What the document before asked of the Session's storage goes with it.
+  if (cache_storage_host_) {
+    cache_storage_host_->DocumentCommitted(committed.document);
+  }
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
   animation_frames_ =
@@ -418,6 +423,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   // there; another's origin is opaque to them.
   if (url.SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(cookie_jar_);
+    document->SetCacheStorageHost(cache_storage_host_);
   }
   Window::Current().SetDocument(document);
   return *document;
