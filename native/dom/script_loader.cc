@@ -214,7 +214,8 @@ void ScriptLoader::HandleSourceAttribute(const std::u16string& source) {
 }
 
 bool ScriptLoader::IsScriptForEventSupported() const {
-  const std::optional<std::u16string> event = ScriptElement().EventAttributeValue();
+  const std::optional<std::u16string> event =
+      ScriptElement().EventAttributeValue();
   const std::optional<std::u16string> for_attribute =
       ScriptElement().ForAttributeValue();
   if (script_type_ != ScriptTypeAtPrepare::kClassic || !event ||

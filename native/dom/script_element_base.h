@@ -33,8 +33,7 @@ class ScriptElementBase {
   virtual std::optional<std::u16string> CrossOriginAttributeValue() const = 0;
   virtual std::optional<std::u16string> ReferrerPolicyAttributeValue()
       const = 0;
-  virtual std::optional<std::u16string> FetchPriorityAttributeValue()
-      const = 0;
+  virtual std::optional<std::u16string> FetchPriorityAttributeValue() const = 0;
   virtual bool AsyncAttributeValue() const = 0;
   virtual bool DeferAttributeValue() const = 0;
   virtual bool NomoduleAttributeValue() const = 0;

@@ -19,8 +19,7 @@ namespace mitto {
 
 class ScriptLoader;
 
-class HTMLScriptElement final : public HTMLElement,
-                                public ScriptElementBase {
+class HTMLScriptElement final : public HTMLElement, public ScriptElementBase {
  public:
   static HTMLScriptElement* Create(Document& document);
 

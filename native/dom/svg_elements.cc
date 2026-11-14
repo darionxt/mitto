@@ -1719,7 +1719,8 @@ int SVGScriptElement::StartColumn() const {
 
 std::optional<std::u16string> SVGScriptElement::SourceAttributeValue() const {
   // SVGURIReference::LegacyHrefString(): href, or else xlink:href.
-  if (std::optional<std::u16string> href = GetAttributeNS(std::nullopt, u"href")) {
+  if (std::optional<std::u16string> href =
+          GetAttributeNS(std::nullopt, u"href")) {
     return href;
   }
   return GetAttributeNS(std::u16string(html_names::kXlinkNamespace), u"href");
@@ -1729,8 +1730,7 @@ std::optional<std::u16string> SVGScriptElement::TypeAttributeValue() const {
   return GetAttribute(u"type");
 }
 
-std::optional<std::u16string> SVGScriptElement::LanguageAttributeValue()
-    const {
+std::optional<std::u16string> SVGScriptElement::LanguageAttributeValue() const {
   return std::nullopt;
 }
 

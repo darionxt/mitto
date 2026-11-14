@@ -449,10 +449,11 @@ void DocumentParser::ProcessScriptElementInternal(Element& element) {
   }
   const InsertionPointRecord insertion_point(*tree_);
   const ScopedCounter nesting_level(script_nesting_level_);
-  PendingScript* const pending_script = ToScriptElement(element)->Loader().PrepareScript(
-      script_nesting_level_ == 1
-          ? ScriptLoader::ParserBlockingInlineOption::kAllow
-          : ScriptLoader::ParserBlockingInlineOption::kDeny);
+  PendingScript* const pending_script =
+      ToScriptElement(element)->Loader().PrepareScript(
+          script_nesting_level_ == 1
+              ? ScriptLoader::ParserBlockingInlineOption::kAllow
+              : ScriptLoader::ParserBlockingInlineOption::kDeny);
   if (!pending_script) {
     return;
   }

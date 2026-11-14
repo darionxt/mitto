@@ -133,8 +133,7 @@ int HTMLScriptElement::StartColumn() const {
   return start_column_;
 }
 
-std::optional<std::u16string> HTMLScriptElement::SourceAttributeValue()
-    const {
+std::optional<std::u16string> HTMLScriptElement::SourceAttributeValue() const {
   return GetAttribute(u"src");
 }
 
@@ -155,8 +154,7 @@ std::optional<std::u16string> HTMLScriptElement::ForAttributeValue() const {
   return GetAttribute(u"for");
 }
 
-std::optional<std::u16string> HTMLScriptElement::CharsetAttributeValue()
-    const {
+std::optional<std::u16string> HTMLScriptElement::CharsetAttributeValue() const {
   return GetAttribute(u"charset");
 }
 
