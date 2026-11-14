@@ -184,6 +184,25 @@ _CASES["write_while_parsing"] = Case(
     }
 )
 
+# open() with three arguments is window.open(): a new window is a pop-up that no user activated, so none opens, and a
+# document without a window throws.
+_CASES["open_three_arguments"] = Case(
+    {
+        "/": _page(
+            "<body><script>"
+            "function attempt(name, f) {"
+            " try { log(name + ' ' + f()); } catch (e) { log(name + ' threw ' + e.name + ': ' + e.message); } }"
+            "attempt('popup', () => document.open('/x', 'popup', ''));"
+            "attempt('blank', () => document.open('/x', '_blank', 'noopener'));"
+            "attempt('invalid', () => document.open('http://[', '_self', ''));"
+            "attempt('self empty', () => document.open('', '_self', '') === window);"
+            "attempt('no window', () => document.implementation.createHTMLDocument('').open('/x', '_self', ''));"
+            "finish(logged);"
+            "</script>"
+        ),
+    }
+)
+
 # open() stops a navigation that the page started and that waits for its response, so the page stays, opened.
 _CASES["open_stops_navigation"] = Case(
     {
@@ -425,6 +444,15 @@ _CHROME: dict[str, list[str]] = {
         "timer a complete",
         "wrote b loading",
         "closed b complete",
+    ],
+    "open_three_arguments": [
+        "popup null",
+        "blank null",
+        "invalid threw SyntaxError: Failed to execute 'open' on 'Document': Unable to open a window with invalid URL"
+        " 'http://[/'.\n",
+        "self empty true",
+        "no window threw InvalidAccessError: Failed to execute 'open' on 'Document': The document has no window"
+        " associated.",
     ],
     "open_stops_navigation": [
         "wrote w loading",
