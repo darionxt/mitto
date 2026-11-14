@@ -568,10 +568,11 @@ def script_index(url: str) -> int:
 
 
 def _requested_url(payload: bytes) -> tuple[int, str]:
-    """The number and the URL of a Request, without its fragment, which never reaches a server."""
-    number = struct.unpack("<Q", payload[:8])[0]
-    (size,) = struct.unpack("<I", payload[10:14])
-    url = payload[14 : 14 + size].decode()
+    """The number and the URL of a Request, after the ID of its document, without its fragment, which never reaches a
+    server."""
+    number = struct.unpack("<Q", payload[8:16])[0]
+    (size,) = struct.unpack("<I", payload[18:22])
+    url = payload[22 : 22 + size].decode()
     return number, url.split("#", 1)[0]
 
 
