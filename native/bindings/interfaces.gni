@@ -1655,6 +1655,11 @@ mitto_bindings_interfaces = [
     header = "svg_animated_values"
   },
   {
+    name = "SVGAnimatedTransformList"
+    file = "svg_animated_transform_list"
+    header = "svg_transforms"
+  },
+  {
     name = "SVGAnimationElement"
     file = "svg_animation_element"
     header = "svg_elements"
@@ -1679,6 +1684,7 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "clipPathUnits",
+      "transform",
     ]
   },
   {
@@ -2112,6 +2118,7 @@ mitto_bindings_interfaces = [
       "gradientUnits",
       "spreadMethod",
       "href",
+      "gradientTransform",
     ]
   },
   {
@@ -2121,6 +2128,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "requiredExtensions",
       "systemLanguage",
+      "transform",
     ]
   },
   {
@@ -2210,6 +2218,12 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "SVGMatrix"
+    file = "svg_matrix"
+    header = "svg_transforms"
+    made_by_known_gaps = true
+  },
+  {
     name = "SVGMetadataElement"
     file = "svg_metadata_element"
     header = "svg_elements"
@@ -2247,6 +2261,7 @@ mitto_bindings_interfaces = [
       "systemLanguage",
       "viewBox",
       "preserveAspectRatio",
+      "patternTransform",
     ]
   },
   {
@@ -2254,9 +2269,6 @@ mitto_bindings_interfaces = [
     file = "svg_point"
     header = "svg_geometry"
     made_by_known_gaps = true
-
-    # Until SVGMatrix comes.
-    missing = [ "matrixTransform" ]
   },
   {
     name = "SVGPointList"
@@ -2334,6 +2346,9 @@ mitto_bindings_interfaces = [
       "createSVGRect",
       "viewBox",
       "preserveAspectRatio",
+      "createSVGMatrix",
+      "createSVGTransform",
+      "createSVGTransformFromMatrix",
     ]
   },
   {
@@ -2434,6 +2449,16 @@ mitto_bindings_interfaces = [
     file = "svg_title_element"
     header = "svg_elements"
     implemented = []
+  },
+  {
+    name = "SVGTransform"
+    file = "svg_transform"
+    header = "svg_transforms"
+  },
+  {
+    name = "SVGTransformList"
+    file = "svg_transform_list"
+    header = "svg_transforms"
   },
   {
     name = "SVGUseElement"

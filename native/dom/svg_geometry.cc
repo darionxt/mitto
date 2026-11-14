@@ -19,6 +19,7 @@
 #include "mitto/bindings/v8_svg_preserve_aspect_ratio.h"
 #include "mitto/bindings/v8_svg_rect.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_transforms.h"
 #include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
@@ -879,6 +880,13 @@ void SVGPoint::SetX(float value, bindings::ExceptionState& exception_state) {
 
 void SVGPoint::SetY(float value, bindings::ExceptionState& exception_state) {
   Set(1, value, exception_state);
+}
+
+SVGPoint* SVGPoint::MatrixTransform(SVGMatrix* matrix) {
+  return ForItem(
+      *bindings::MakeGarbageCollected<SVGListItem<std::array<float, 2>>>(
+          matrix->Value().MapPoint(item_->value)),
+      /*read_only=*/false, nullptr);
 }
 
 SVGListItem<std::array<float, 2>>* SVGPoint::ItemToInsert(
