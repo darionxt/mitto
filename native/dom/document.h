@@ -46,6 +46,7 @@ class DocumentLoadTiming;
 class DocumentScriptRunner;
 class DocumentType;
 class Element;
+class Event;
 class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
@@ -193,6 +194,12 @@ class Document : public Node {
                           bindings::ExceptionState& exception_state);
   Comment* CreateComment(const std::u16string& data);
   DocumentFragment* CreateDocumentFragment();
+  // Blink's Document::createEvent(): an event of the interface that
+  // `event_type` names, not initialized, from event_factory.h, or Chrome's
+  // NotSupportedError for a name that no factory takes, and for TouchEvent
+  // while touch events are not exposed.
+  Event* CreateEvent(const std::u16string& event_type,
+                     bindings::ExceptionState& exception_state);
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);
   Element* CreateElementForBinding(

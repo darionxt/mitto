@@ -296,6 +296,7 @@ mitto_bindings_interfaces = [
       "createComment",
       "createDocumentFragment",
       "createElement",
+      "createEvent",
       "createElementNS",
       "createTextNode",
       "getElementById",

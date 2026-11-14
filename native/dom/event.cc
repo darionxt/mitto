@@ -1,7 +1,5 @@
 #include "mitto/dom/event.h"
 
-#include <cmath>
-
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/runtime_feature_set.h"
 #include "mitto/bindings/runtime_features.h"
@@ -9,19 +7,11 @@
 #include "mitto/dom/event_path.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 
 namespace mitto {
-
-namespace {
-
-// Chrome coarsens time stamps to 100 microseconds for a context that is not
-// cross-origin isolated, in Blink's TimeClamper, which also adds jitter. The
-// Runtime does not add jitter yet.
-constexpr double kResolutionMilliseconds = 0.1;
-
-}  // namespace
 
 // static
 Event* Event::Create(const std::u16string& type,
@@ -124,11 +114,12 @@ void Event::PreventDefault() {
 }
 
 double Event::TimeStamp() const {
-  const base::TimeTicks origin =
-      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->time_origin();
-  const double milliseconds = (created_ - origin).InMillisecondsF();
-  return std::floor(milliseconds / kResolutionMilliseconds) *
-         kResolutionMilliseconds;
+  // Blink's Event::timeStamp(): the time it was made, from the window's time
+  // origin, through the performance timeline's clamp, so that it falls
+  // between two calls of performance.now() around its making.
+  return Performance::MonotonicTimeToDOMHighResTimeStamp(
+      bindings::PerIsolateData::From(v8::Isolate::GetCurrent())->time_origin(),
+      created_);
 }
 
 void Event::InitEvent(const std::u16string& type,
@@ -137,6 +128,7 @@ void Event::InitEvent(const std::u16string& type,
   if (IsBeingDispatched()) {
     return;
   }
+  was_initialized_ = true;
   stop_propagation_ = false;
   stop_immediate_propagation_ = false;
   canceled_ = false;

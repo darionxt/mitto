@@ -216,12 +216,14 @@ void CallListener(v8::Isolate* isolate,
       return;
     }
     if (!handle_event->IsFunction()) {
+      // Blink's CallbackInvokeHelper throws this from C++ into the verbose
+      // TryCatch of JSBasedEventListener::Invoke(), and V8 hands its message
+      // listeners nothing for an exception that no script threw, so the
+      // window gets no error event and the console no error, as in Chrome.
       bindings::ThrowTypeError(isolate,
                                "Failed to execute 'handleEvent' on "
                                "'EventListener': The provided callback is not "
                                "callable.");
-      bindings::ReportException(isolate, try_catch.Exception(),
-                                try_catch.Message());
       return;
     }
     function = handle_event.As<v8::Function>();
@@ -609,6 +611,11 @@ bool EventTarget::IsTopLevelNode() {
 bool EventTarget::DispatchEventForBindings(
     Event* event,
     bindings::ExceptionState& exception_state) {
+  if (!event->WasInitialized()) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "The event provided is uninitialized.");
+    return false;
+  }
   if (event->IsBeingDispatched()) {
     exception_state.ThrowDOMException("InvalidStateError",
                                       "The event is already being dispatched.");

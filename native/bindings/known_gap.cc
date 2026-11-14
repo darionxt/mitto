@@ -563,15 +563,42 @@ ScriptWrappable* MakeObjectBehind(
   NOTREACHED();
 }
 
+// The width in bits of an integer type, and 0 for any other.
+int IntegerWidth(IdlTypeKind kind) {
+  switch (kind) {
+    case IdlTypeKind::kByte:
+    case IdlTypeKind::kOctet:
+      return 8;
+    case IdlTypeKind::kShort:
+    case IdlTypeKind::kUnsignedShort:
+      return 16;
+    case IdlTypeKind::kLong:
+    case IdlTypeKind::kUnsignedLong:
+      return 32;
+    case IdlTypeKind::kLongLong:
+    case IdlTypeKind::kUnsignedLongLong:
+      return 64;
+    default:
+      return 0;
+  }
+}
+
 // Whether a member of an event's init dictionary, of type `member`, can
 // initialize the attribute of the same name, of type `attribute`: the same
-// type, or a sequence for a frozen array of the same items.
+// type, a sequence for a frozen array of the same items, or an integer of the
+// same width with the other signedness, whose value converts to the same bits
+// either way, as KeyboardEvent's constructor keeps its unsigned long charCode
+// and keyCode for its long attributes.
 bool InitializesAttribute(const IdlTypeInfo& member,
                           const IdlTypeInfo& attribute) {
   if (member.kind == IdlTypeKind::kSequence &&
       attribute.kind == IdlTypeKind::kFrozenArray) {
     return member.members.size() == 1 && attribute.members.size() == 1 &&
            InitializesAttribute(*member.members[0], *attribute.members[0]);
+  }
+  if (member.flags == attribute.flags && IntegerWidth(member.kind) != 0 &&
+      IntegerWidth(member.kind) == IntegerWidth(attribute.kind)) {
+    return true;
   }
   return &member == &attribute ||
          (member.kind == attribute.kind && member.flags == attribute.flags &&

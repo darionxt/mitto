@@ -325,8 +325,17 @@ class Node : public EventTarget {
   bool ChildTypeAllowed(uint16_t type) const;
   // Inserts `nodes`, which are valid here, before `next`, or at the end. A
   // document fragment among them gives its children, which leave it, as the
-  // DOM standard's insert does.
+  // DOM standard's insert does. Their record goes to observers before their
+  // children changed and post-connection steps run, which may run a script,
+  // as Blink's ChildListMutationScope ends before DidInsertNodeVector().
   void InsertNodes(const NodeVector& nodes, Node* next);
+  // InsertNodes() up to the steps that DidInsertNodes() takes, for a caller
+  // whose own record holds the insertion: the nodes that went in, into
+  // `children`, and those that ask for post-connection steps.
+  void LinkNodes(const NodeVector& nodes,
+                 Node* next,
+                 NodeVector& children,
+                 NodeVector& post_connection);
   // Blink's ConvertNodeUnionsIntoNodes(): nodes for the arguments of append()
   // and the like, with a new Text node for each string. With more than one,
   // each leaves its parent first.
