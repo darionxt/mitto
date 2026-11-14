@@ -1,0 +1,62 @@
+{
+"format": 1,
+"differs from": "page",
+"objects": [
+{"path": "globalThis",
+ "get": [
+  ["top", ["foreign", "Window"]],
+  ["parent", ["foreign", "Window"]],
+  ["frameElement", ["node", "IFRAME"]],
+  ["innerWidth", 300],
+  ["innerHeight", 150]
+ ]
+},
+{"path": "document",
+ "get": [
+  ["URL", "<origin>/script/same-origin-frame/frame"],
+  ["documentURI", "<origin>/script/same-origin-frame/frame"],
+  ["referrer", "<origin>/script/same-origin-frame"],
+  ["baseURI", "<origin>/script/same-origin-frame/frame"]
+ ]
+},
+{"path": "location",
+ "get": [
+  ["href", "<origin>/script/same-origin-frame/frame"],
+  ["pathname", "/script/same-origin-frame/frame"]
+ ]
+},
+{"path": "visualViewport",
+ "get": [
+  ["width", 300],
+  ["height", 150]
+ ]
+},
+{"path": "viewport",
+ "get": [
+  ["segments", null]
+ ]
+},
+{"path": "location.ancestorOrigins",
+ "own": [
+  ["0", "-ec", "<origin>"]
+ ],
+ "get": [
+  ["length", 1]
+ ]
+},
+{"path": "navigation.currentEntry",
+ "get": [
+  ["url", "<origin>/script/same-origin-frame/frame"]
+ ]
+}
+],
+"gone": [
+"viewport.segments",
+"viewport.segments[\"0\"]"
+],
+"values": {
+"matchMedia(): the keywords that match": {"value": {"display-mode": ["browser"], "display-state": "<machine>", "resizable": [], "orientation": ["landscape"], "pointer": "<machine>", "any-pointer": "<machine>", "hover": "<machine>", "any-hover": "<machine>", "scan": [], "color-gamut": "<machine>", "inverted-colors": "<machine>", "prefers-color-scheme": "<machine>", "prefers-contrast": "<machine>", "prefers-reduced-motion": "<machine>", "dynamic-range": "<machine>", "video-dynamic-range": "<machine>", "prefers-reduced-data": [], "prefers-reduced-transparency": "<machine>", "forced-colors": "<machine>", "navigation-controls": [], "device-posture": ["continuous"], "overflow-inline": ["scroll"], "overflow-block": ["scroll"], "update": ["fast"], "scripting": ["enabled"]}},
+"matchMedia(): what agrees with the window and the screen": {"value": {"width = innerWidth": true, "height = innerHeight": true, "aspect-ratio = innerWidth / innerHeight": true, "device-width = screen.width": "<machine>", "device-height = screen.height": "<machine>", "device-aspect-ratio = screen.width / screen.height": "<machine>", "resolution = devicePixelRatio": true, "-webkit-device-pixel-ratio = devicePixelRatio": true}},
+"navigator.permissions.query(): the state of each": {"value": {"accelerometer": {"value": "granted"}, "background-fetch": {"value": "prompt"}, "background-sync": {"value": "granted"}, "camera": {"value": "prompt"}, "captured-surface-control": {"value": "prompt"}, "clipboard-read": {"value": "prompt"}, "clipboard-write": {"value": "granted"}, "display-capture": {"value": "prompt"}, "fullscreen": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': Fullscreen Permission only supports allowWithoutGesture:true."}, "geolocation": {"value": "prompt"}, "gyroscope": {"value": "granted"}, "idle-detection": {"value": "prompt"}, "keyboard-lock": {"value": "granted"}, "local-fonts": {"value": "prompt"}, "local-network-access": {"value": "prompt"}, "magnetometer": {"value": "granted"}, "microphone": {"value": "prompt"}, "midi": {"value": "prompt"}, "notifications": {"value": "prompt"}, "payment-handler": {"value": "granted"}, "persistent-storage": {"value": "prompt"}, "pointer-lock": {"value": "granted"}, "screen-wake-lock": {"value": "granted"}, "speaker-selection": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': The Speaker Selection API is not enabled."}, "storage-access": {"value": "prompt"}, "system-wake-lock": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': System Wake Lock is not enabled."}, "top-level-storage-access": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': The requested origin is invalid."}, "web-app-installation": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': The Web App Install API is not enabled."}, "window-management": {"value": "prompt"}}}
+}
+}
