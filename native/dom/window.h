@@ -190,6 +190,16 @@ class Window final : public WindowProperties {
                    const bindings::WindowPostMessageOptions& options,
                    bindings::ExceptionState& exception_state);
 
+  // LocalDOMWindow::open() (window_open.cc): navigates the window to `url`
+  // for a target that names it, _self, _top or _parent, and returns it; any
+  // other target asks for a new window, which Chrome's pop-up blocker refuses
+  // without the user's activation, so it returns null. document.open() with
+  // three arguments calls it too.
+  Window* Open(const std::u16string& url,
+               const std::u16string& target,
+               const std::u16string& features,
+               bindings::ExceptionState& exception_state);
+
   // Reports `e` as an error that a script left uncaught: the window's error
   // event, then the console, as Blink's WindowOrWorkerGlobalScope does.
   void ReportError(v8::Local<v8::Value> e);

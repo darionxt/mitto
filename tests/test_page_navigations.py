@@ -8,6 +8,7 @@ native library with the Page program beside it, as CI's native job installs it o
 import http.server
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -381,3 +382,108 @@ def test_an_opening_navigation_to_a_204_leaves_the_page_at_about_blank(session: 
     with _open_page(session, server.url("/nothing")) as page:
         assert page.url == "about:blank"
         assert page.evaluate("document.URL") == "about:blank"
+
+
+def test_a_meta_refresh_navigates_once_the_document_has_loaded(session: mitto.Session, server: _Server) -> None:
+    second = server.page("/second", "<title>Second</title>")
+    first = server.page("/first", "<meta http-equiv=refresh content=\"0; URL='/second'\"><title>First</title>")
+
+    with _open_page(session, first) as page:
+        assert _next(page).url == second
+        assert page.evaluate("document.title") == "Second"
+    (lines,) = server.headers_of("/second")
+    assert ("Sec-Fetch-Site", "same-origin") in lines
+    assert ("Referer", first) in lines
+    assert "Sec-Fetch-User" not in dict(lines)
+
+
+def test_a_refresh_header_navigates_and_one_to_the_documents_own_url_reloads(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The second page asks for a refresh to its own URL once, through a meta element that its script inserts.
+    second = server.page(
+        "/second",
+        "<script>if (!document.cookie.includes('again=1')) { document.cookie = 'again=1';"
+        "const meta = document.createElement('meta'); meta.httpEquiv = 'refresh'; meta.content = '0';"
+        "document.head.append(meta); }</script>",
+    )
+    first = server.page("/first", "<title>First</title>", headers=[("Refresh", "0;url=/second")])
+
+    with _open_page(session, first) as page:
+        assert _next(page).url == second
+        # A refresh to its own URL reloads it, which validates the cache.
+        assert _next(page).url == second
+    first_load, reload = server.headers_of("/second")
+    assert "Cache-Control" not in dict(first_load)
+    assert dict(reload)["Cache-Control"] == "max-age=0"
+
+
+def test_a_refresh_waits_for_its_delay_and_the_shortest_wins(session: mitto.Session, server: _Server) -> None:
+    server.page("/late", "<title>Late</title>")
+    server.page("/soon", "<title>Soon</title>")
+    first = server.page(
+        "/first",
+        "<meta http-equiv=refresh content='5; url=/late'><meta http-equiv=refresh content='1.9;/soon'>",
+    )
+
+    with _open_page(session, first) as page:
+        loaded = time.monotonic()
+        assert _next(page).url == server.url("/soon")
+        assert time.monotonic() - loaded >= 0.9
+    assert "/late" not in server.paths()
+
+
+def test_a_refresh_to_a_javascript_url_is_refused(session: mitto.Session, server: _Server) -> None:
+    url = server.page("/", "<meta http-equiv=refresh content='0; url=javascript:alert(1)'>")
+
+    with _open_page(session, url) as page:
+        assert page.evaluate("new Promise(r => setTimeout(r, 100)).then(() => document.URL)") == url
+        assert _native.ConsoleMessage(level="error", text=f"Refused to refresh {url} to a javascript: URL") in (
+            page.console_messages
+        )
+
+
+def test_window_open_navigates_this_window_for_self_and_opens_no_new_one(
+    session: mitto.Session, server: _Server
+) -> None:
+    second = server.page("/second", "<title>Second</title>")
+    first = server.page("/first", "<title>First</title>")
+
+    with _open_page(session, first) as page:
+        # No user activated the page, so the pop-up blocker refuses a new window.
+        assert page.evaluate("[window.open('/never'), window.open('/never', 'name'), window.open()]") == [
+            None,
+            None,
+            None,
+        ]
+        with pytest.raises(ScriptError) as raised:
+            page.evaluate("window.open('http://[')")
+        assert str(raised.value) == (
+            "Uncaught SyntaxError: Failed to execute 'open' on 'Window': Unable to open a window with invalid URL"
+            " 'http://[/'.\n"
+        )
+        assert page.evaluate("window.open('/second', '_self', 'noopener') === window") is True
+        assert _next(page).url == second
+    assert "/never" not in server.paths()
+
+
+def test_navigation_timing_says_a_reload_and_gives_the_unload_times_of_a_document_of_its_origin(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.page("/second", "<title>Second</title>")
+    first = server.page("/first", "<title>First</title>")
+    timing = (
+        "(() => { const entry = performance.getEntriesByType('navigation')[0];"
+        "return [performance.navigation.type, entry.type, entry.unloadEventStart > 0,"
+        "entry.unloadEventStart <= entry.unloadEventEnd, performance.timing.unloadEventStart > 0]; })()"
+    )
+
+    with _open_page(session, first) as page:
+        # The first document comes from no document, so it has no unload times.
+        assert page.evaluate(timing) == [0, "navigate", False, True, False]
+        page.evaluate("location.href = '/second'")
+        _next(page)
+        assert page.evaluate(timing) == [0, "navigate", True, True, True]
+        page.evaluate("location.reload()")
+        _next(page)
+        assert page.evaluate(timing) == [1, "reload", True, True, True]

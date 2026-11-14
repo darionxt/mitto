@@ -17,6 +17,7 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance_timing_confidence.h"
@@ -199,6 +200,18 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       content_type.charset, document_->DefaultView()->Start().locale,
       /*parent=*/nullptr);
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
+  // DocumentLoader::CreateParserPostCommit(): the response's Refresh, before
+  // anything of the body. A header's value is Latin-1.
+  const std::string refresh = HeaderField(response.headers, "refresh");
+  if (!refresh.empty()) {
+    std::u16string latin1;
+    latin1.reserve(refresh.size());
+    for (const char c : refresh) {
+      latin1.push_back(static_cast<unsigned char>(c));
+    }
+    document_->GetHttpRefreshScheduler().MaybeHandle(
+        latin1, HttpRefreshScheduler::Source::kHeader);
+  }
   // The load event waits for what the document's scripts hold back.
   document_->SetCheckCompleted(base::BindRepeating(
       &DocumentLoader::CheckCompleted, weak_factory_.GetWeakPtr()));
@@ -517,6 +530,9 @@ void DocumentLoader::CheckCompleted() {
         document_.Get());
   }
   send_.Run(EncodeLoaded(document_id_));
+  // Document::CheckCompletedInternal(): the refresh's delay starts once the
+  // load event has finished.
+  document_->GetHttpRefreshScheduler().MaybeStartTimer();
 }
 
 }  // namespace mitto

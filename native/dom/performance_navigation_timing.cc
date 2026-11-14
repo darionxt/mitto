@@ -54,6 +54,22 @@ bool PerformanceNavigationTiming::ExposesRedirectTiming() const {
   return !timing_->has_cross_origin_redirect;
 }
 
+std::u16string PerformanceNavigationTiming::Type() const {
+  return timing_->is_reload ? u"reload" : u"navigate";
+}
+
+double PerformanceNavigationTiming::UnloadEventStart() const {
+  return timing_->has_same_origin_as_previous_document
+             ? ToDOMHighResTimeStamp(timing_->unload_event_start)
+             : 0;
+}
+
+double PerformanceNavigationTiming::UnloadEventEnd() const {
+  return timing_->has_same_origin_as_previous_document
+             ? ToDOMHighResTimeStamp(timing_->unload_event_end)
+             : 0;
+}
+
 double PerformanceNavigationTiming::DomInteractive() const {
   return ToDOMHighResTimeStamp(timing_->dom_interactive);
 }

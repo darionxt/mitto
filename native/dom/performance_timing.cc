@@ -74,11 +74,15 @@ uint64_t PerformanceTiming::NavigationStart() const {
 // A Page's document never follows another from which it could request, as a
 // new tab's first one does not.
 uint64_t PerformanceTiming::UnloadEventStart() const {
-  return 0;
+  return timing_->has_same_origin_as_previous_document
+             ? ToIntegerMilliseconds(timing_->unload_event_start)
+             : 0;
 }
 
 uint64_t PerformanceTiming::UnloadEventEnd() const {
-  return 0;
+  return timing_->has_same_origin_as_previous_document
+             ? ToIntegerMilliseconds(timing_->unload_event_end)
+             : 0;
 }
 
 uint64_t PerformanceTiming::RedirectStart() const {

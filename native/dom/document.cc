@@ -36,6 +36,7 @@
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/mathml_element.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
@@ -379,11 +380,21 @@ bool Document::DispatchBeforeUnloadEvent() {
   return true;
 }
 
+HttpRefreshScheduler& Document::GetHttpRefreshScheduler() {
+  if (!http_refresh_scheduler_) {
+    http_refresh_scheduler_ = std::make_unique<HttpRefreshScheduler>(*this);
+  }
+  return *http_refresh_scheduler_;
+}
+
 void Document::Abort() {
   // CancelParsing(): the parser goes, and the document is complete. The
   // refresh that the document scheduled goes with it.
   if (cancel_parsing_) {
     cancel_parsing_.Run();
+  }
+  if (http_refresh_scheduler_) {
+    http_refresh_scheduler_->Cancel();
   }
   SetReadiness(Readiness::kComplete);
   if (!LoadEventFinished()) {
@@ -422,7 +433,9 @@ void Document::DispatchUnloadEvents() {
     bindings::EventInit init;
     Event* const event = Event::Create(u"unload", init);
     event->SetTrusted(true);
+    unload_event_start_ = base::TimeTicks::Now();
     window_->DispatchEventWithTarget(event, this);
+    unload_event_end_ = base::TimeTicks::Now();
   }
   load_event_progress_ = LoadEventProgress::kUnloadEventHandled;
 }
