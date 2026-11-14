@@ -1497,5 +1497,104 @@
     p.getAttribute("pathLength");
     return [quiet, o.takeRecords().map((x) => x.attributeName + ":" + x.oldValue).join(" ")].join(",");
   });
+  // SVG's lengths.
+  const lengthOf = (l) => { let value; try { value = l.value; } catch (e) { value = e.name + ": " + e.message; } return [l.unitType, l.valueInSpecifiedUnits, JSON.stringify(l.valueAsString), value].join("/"); };
+  const tryIt = (f) => { try { return String(f()); } catch (e) { return e.name + ": " + e.message; } };
+  run("svg length parse", () => {
+    const r = svg("rect");
+    return ["5", "5px", " 5px ", "5PX", "5e1px", "+.5cm", "-1mm", "2in", "3pt", "4pc", "1q", "1Q", "10%", "2em", "3ex", "1rem", "1ch", "10vw", "1lh", "5 px", "px", "", "abc", "5px 6px", "inherit", "1e40", "0.1234567", "123456789", "1e-7px", "1e40px", "-0", "5deg", "5s", "#5", "calc(10px + 1px)", "calc(1in - 1px)", "calc(10px + 1em)", "min(1px, 2px)", "max(1cm, 1px)", "clamp(1px, 2px, 3px)", "calc(5)", "calc(1deg)", "calc(1px", "var(--x)", " var(--x, 5px) ", "calc(var(--x) * 2)", "var(--x) !important", "var(--x);", "{var(--x)}", "VAR(--y)"].map((v) => { r.setAttribute("x", v); return JSON.stringify(v) + "=" + lengthOf(r.x.baseVal); }).join(" | ");
+  });
+  run("svg length connected", () => {
+    const s = svg("svg");
+    s.setAttribute("width", "200");
+    s.setAttribute("height", "100");
+    (document.body || document.documentElement).appendChild(s);
+    const r = svg("rect");
+    const c = svg("circle");
+    const inner = svg("svg");
+    inner.setAttribute("width", "50%");
+    inner.setAttribute("height", "40");
+    const deep = svg("rect");
+    inner.appendChild(deep);
+    s.append(r, c, inner);
+    const out = [];
+    for (const v of ["10%", "2em", "1rem", "calc(10px + 1em)", "3in"]) { r.setAttribute("x", v); out.push("x " + v + "=" + r.x.baseVal.value); }
+    r.setAttribute("y", "10%"); out.push("y=" + r.y.baseVal.value);
+    r.setAttribute("width", "25%"); out.push("width=" + r.width.baseVal.value);
+    c.setAttribute("r", "10%"); out.push("r=" + c.r.baseVal.value);
+    deep.setAttribute("x", "10%"); deep.setAttribute("y", "50%"); out.push("deep=" + deep.x.baseVal.value + "," + deep.y.baseVal.value);
+    out.push("svg=" + [s.width.baseVal.value, s.height.baseVal.value, s.x.baseVal.value].join(","));
+    s.setAttribute("viewBox", "0 0 400 50"); r.setAttribute("x", "10%"); out.push("viewBox=" + r.x.baseVal.value + "," + r.y.baseVal.value);
+    s.removeAttribute("viewBox");
+    r.setAttribute("x", "10%"); r.x.baseVal.value = 50; out.push("set%=" + r.getAttribute("x"));
+    r.setAttribute("x", "2em"); r.x.baseVal.value = 8; out.push("setEm=" + r.getAttribute("x"));
+    r.setAttribute("x", "30px"); r.x.baseVal.convertToSpecifiedUnits(2); out.push("to%=" + r.getAttribute("x"));
+    r.x.baseVal.convertToSpecifiedUnits(3); out.push("toEm=" + r.getAttribute("x"));
+    r.x.baseVal.convertToSpecifiedUnits(5); out.push("toPx=" + r.getAttribute("x"));
+    s.remove();
+    out.push("removed=" + tryIt(() => r.x.baseVal.value));
+    return out.join(" | ");
+  });
+  run("svg length set", () => {
+    const e = svg("rect");
+    const l = e.x.baseVal;
+    e.setAttribute("x", "5px");
+    return [tryIt(() => { l.value = 7; return e.getAttribute("x") + " " + l.unitType; }), tryIt(() => { l.valueInSpecifiedUnits = 2.5; return e.getAttribute("x"); }), tryIt(() => { l.valueAsString = "3cm"; return e.getAttribute("x") + " " + l.value; }), tryIt(() => { l.valueAsString = "bad"; }), tryIt(() => { l.newValueSpecifiedUnits(7, 4); return e.getAttribute("x") + " " + l.value; }), tryIt(() => { l.newValueSpecifiedUnits(0, 4); }), tryIt(() => { l.newValueSpecifiedUnits(11, 4); }), tryIt(() => { l.convertToSpecifiedUnits(8); return e.getAttribute("x") + " " + l.valueInSpecifiedUnits; }), tryIt(() => { l.convertToSpecifiedUnits(3); }), tryIt(() => { l.convertToSpecifiedUnits(1); return e.getAttribute("x"); }), tryIt(() => { l.value = NaN; }), tryIt(() => { l.valueInSpecifiedUnits = Infinity; }), tryIt(() => { l.convertToSpecifiedUnits(0); }), tryIt(() => { l.newValueSpecifiedUnits(1, 1 / 3); return e.getAttribute("x") + " " + l.valueInSpecifiedUnits; }), tryIt(() => { l.newValueSpecifiedUnits(10, 1e20); return e.getAttribute("x") + " " + l.value; })].join(" | ");
+  });
+  run("svg length set relative and calc", () => {
+    const e = svg("rect");
+    const l = e.x.baseVal;
+    e.setAttribute("x", "2em");
+    const out = [tryIt(() => { l.value = 7; return e.getAttribute("x"); }), tryIt(() => { l.valueInSpecifiedUnits = 3; return e.getAttribute("x"); })];
+    e.setAttribute("x", "calc(1px + 2px)");
+    out.push(l.unitType, l.valueInSpecifiedUnits, tryIt(() => l.value), tryIt(() => { l.value = 7; return e.getAttribute("x") + " " + l.unitType; }));
+    e.setAttribute("x", "calc(1px + 2px)");
+    out.push(tryIt(() => { l.valueInSpecifiedUnits = 4; return e.getAttribute("x"); }));
+    e.setAttribute("x", "var(--x)");
+    out.push(tryIt(() => l.convertToSpecifiedUnits(5)), tryIt(() => { l.value = 2; return e.getAttribute("x"); }));
+    return out.join(" | ");
+  });
+  run("svg length objects", () => {
+    const e = svg("rect");
+    const s = svg("svg");
+    const c = s.createSVGLength();
+    const out = [e.x.animVal === e.x.animVal, e.x.baseVal === e.x.baseVal, e.x.animVal !== e.x.baseVal, e.x === e.x, Object.prototype.toString.call(e.x), Object.prototype.toString.call(c), c !== s.createSVGLength()];
+    for (const f of [() => { e.x.animVal.value = 1; }, () => { e.x.animVal.valueInSpecifiedUnits = 1; }, () => { e.x.animVal.valueAsString = "1"; }, () => { e.x.animVal.newValueSpecifiedUnits(1, 2); }, () => { e.x.animVal.convertToSpecifiedUnits(1); }]) out.push(tryIt(f));
+    e.x.baseVal.value = 4;
+    out.push(e.x.animVal.value, e.x.animVal.valueAsString);
+    out.push(lengthOf(c), tryIt(() => { c.valueAsString = "2em"; return c.value; }), tryIt(() => { c.valueAsString = "10%"; return c.value; }), tryIt(() => { c.valueAsString = "3mm"; return c.value; }), tryIt(() => { c.convertToSpecifiedUnits(9); return c.valueAsString; }), tryIt(() => { c.value = 12; return c.valueAsString; }));
+    out.push(SVGLength.SVG_LENGTHTYPE_UNKNOWN, SVGLength.SVG_LENGTHTYPE_PERCENTAGE, SVGLength.SVG_LENGTHTYPE_PC, c.SVG_LENGTHTYPE_EMS, tryIt(() => new SVGLength()), tryIt(() => new SVGAnimatedLength()));
+    return out.join(",");
+  });
+  run("svg length defaults", () => [["rect", "x"], ["rect", "y"], ["rect", "width"], ["rect", "height"], ["rect", "rx"], ["rect", "ry"], ["circle", "cx"], ["circle", "cy"], ["circle", "r"], ["ellipse", "cx"], ["ellipse", "cy"], ["ellipse", "rx"], ["ellipse", "ry"], ["line", "x1"], ["line", "y1"], ["line", "x2"], ["line", "y2"], ["svg", "x"], ["svg", "y"], ["svg", "width"], ["svg", "height"], ["image", "x"], ["image", "width"], ["use", "y"], ["use", "height"], ["foreignObject", "x"], ["foreignObject", "height"], ["linearGradient", "x1"], ["linearGradient", "y1"], ["linearGradient", "x2"], ["linearGradient", "y2"], ["radialGradient", "cx"], ["radialGradient", "cy"], ["radialGradient", "r"], ["radialGradient", "fx"], ["radialGradient", "fy"], ["radialGradient", "fr"], ["mask", "x"], ["mask", "y"], ["mask", "width"], ["mask", "height"], ["pattern", "x"], ["pattern", "width"], ["filter", "x"], ["filter", "y"], ["filter", "width"], ["filter", "height"], ["marker", "refX"], ["marker", "refY"], ["marker", "markerWidth"], ["marker", "markerHeight"], ["text", "textLength"], ["tspan", "textLength"], ["textPath", "startOffset"], ["textPath", "textLength"], ...["feBlend", "feColorMatrix", "feComponentTransfer", "feComposite", "feConvolveMatrix", "feDiffuseLighting", "feDisplacementMap", "feDropShadow", "feFlood", "feGaussianBlur", "feImage", "feMerge", "feMorphology", "feOffset", "feSpecularLighting", "feTile", "feTurbulence"].flatMap((t) => ["x", "y", "width", "height"].map((m) => [t, m]))].map(([t, m]) => { const e = svg(t); const out = t + "." + m + "=" + lengthOf(e[m].baseVal); e.setAttribute(m, "bad"); return out + ";" + e[m].baseVal.valueAsString + "/" + e[m].baseVal.unitType; }).join(" | "));
+  run("svg length text length", () => {
+    const t = svg("text");
+    const out = [lengthOf(t.textLength.baseVal)];
+    t.setAttribute("textLength", "bad");
+    out.push(lengthOf(t.textLength.baseVal));
+    t.setAttribute("textLength", "5mm");
+    out.push(lengthOf(t.textLength.baseVal));
+    t.removeAttribute("textLength");
+    t.textLength.baseVal.value = 9;
+    out.push(t.getAttribute("textLength"), lengthOf(t.textLength.baseVal));
+    return out.join(" | ");
+  });
+  run("svg length attributes", () => {
+    const e = svg("rect");
+    const o = new MutationObserver(() => {});
+    o.observe(e, { attributes: true, attributeOldValue: true });
+    const l = e.width.baseVal;
+    l.value = 3;
+    l.newValueSpecifiedUnits(6, 2);
+    const quiet = o.takeRecords().length;
+    e.setAttribute("width", "-5");
+    const after = [l.valueAsString, l.value];
+    e.setAttributeNS("urn:x", "x:width", "7");
+    after.push(l.valueAsString);
+    const copy = e.cloneNode();
+    copy.width.baseVal.value = 10;
+    after.push(e.getAttribute("width"), copy.getAttribute("width"));
+    return [quiet, o.takeRecords().map((x) => x.attributeName + ":" + x.oldValue).join(" "), ...after].join(",");
+  });
   return JSON.stringify(cases, null, 1);
 })()

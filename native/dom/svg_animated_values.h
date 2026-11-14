@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr_exclusion.h"
@@ -264,6 +265,9 @@ class SVGAnimatedNumber final : public SVGAnimatedPropertyBase {
 // Blink's SVG number grammar, of svg_parser_utilities.cc: the whole of
 // `value` with spaces around it, or nothing.
 std::optional<float> ParseSVGNumber(std::u16string_view value);
+// Numbers that spaces, or one comma and spaces, part, such as a viewBox's,
+// each in Blink's SVG number grammar, or nothing.
+std::optional<std::vector<float>> ParseSVGNumberList(std::u16string_view value);
 // String::Number() of a float: six significant digits, as JavaScript's
 // toPrecision(6) gives them, without the trailing zeros of a number with no
 // exponent.
