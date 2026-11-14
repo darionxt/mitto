@@ -54,7 +54,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 | `client_hints_*` | A navigation to the page that asks, as `asks` in its `Replay` says, and then the case, as for the cases above | Nothing |
-| The cases of documents | The case's path at its name, with the Request Kind of what asked for it, from the page that asked for it, which its `Referer` names: a stylesheet for its `@import` and fonts, a module for what it imports, the cross-site frame for what it asks for. `asks` sets the cookies that a case carries first, as the case's run did | What only a page can say of a request, whose cases a check skips, as [below](#what-a-session-cannot-replay-of-a-document) |
+| The cases of documents | The case's path at its name, with the Request Kind of what asked for it, from the page that asked for it, which its `Referer` names: a stylesheet for its `@import` and fonts, a module for what it imports, the cross-site frame for what it asks for. `asks` sets the cookies that a case carries first, as the case's run did, and `credentials` and `mode` say what the page's `fetch()` asked for | What only a page can say of a request, whose cases a check skips, as [below](#what-a-session-cannot-replay-of-a-document) |
 
 The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
 

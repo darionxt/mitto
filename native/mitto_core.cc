@@ -39,7 +39,10 @@
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/system/sys_info.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
@@ -47,6 +50,7 @@
 #include "base/types/optional_util.h"
 #include "build/build_config.h"
 #include "mitto/body_stream.h"
+#include "mitto/cache_storage/cache_storage_context.h"
 #include "mitto/client_hints.h"
 #include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
@@ -69,6 +73,7 @@
 #include "mitto/session_settings.h"
 #include "mitto/socks5_auth_socket_factory.h"
 #include "mitto/ssl_config_service_mojo.h"
+#include "mitto/storage_quota.h"
 #include "mitto/stub_resolver_config_reader.h"
 #include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
@@ -160,6 +165,8 @@ struct MittoSession final : public mitto::PageNetwork {
   void BroadcastFromPage(const mitto::PageHost& from,
                          const url::Origin& origin,
                          const mitto::PageBroadcast& broadcast) override;
+  mitto::CacheStorageContext& cache_storage() override;
+  mitto::StorageQuota& storage_quota() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -184,6 +191,11 @@ struct MittoSession final : public mitto::PageNetwork {
   std::map<url::Origin, std::string> accept_ch_via_alps;
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
+  // What a page's storage holds, which the Session's Pages share: the quota
+  // of each storage key first, which the Cache API reports to. Before
+  // `pages`, which use it.
+  std::unique_ptr<mitto::StorageQuota> quota_manager;
+  std::unique_ptr<mitto::CacheStorageContext> cache_storage_context;
   mitto::ReadyRequests ready_requests;
   // After `ready_requests`, which a Page lists its handle in.
   std::set<std::unique_ptr<mitto::PageHost>, base::UniquePtrComparator> pages;
@@ -986,6 +998,14 @@ const mitto::NetworkQuality* MittoSession::GetNetworkQuality() const {
   return base::OptionalToPtr(network_quality);
 }
 
+mitto::CacheStorageContext& MittoSession::cache_storage() {
+  return *cache_storage_context;
+}
+
+mitto::StorageQuota& MittoSession::storage_quota() {
+  return *quota_manager;
+}
+
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
                                      const url::Origin& origin,
                                      const mitto::PageBroadcast& broadcast) {
@@ -1092,6 +1112,14 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
   session->http_cache_directory_lock = std::move(http_cache_directory_lock);
+  // Kept in memory, with Incognito's quota, until the Session has a
+  // directory for its storage.
+  session->quota_manager = std::make_unique<StorageQuota>(
+      /*directory=*/std::nullopt,
+      base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
+      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
+  session->cache_storage_context = std::make_unique<CacheStorageContext>(
+      /*directory=*/std::nullopt, *session->quota_manager);
   session->cert_net_fetcher =
       base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
@@ -1280,16 +1308,39 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   // each Page process to end.
   void DestroySession(std::unique_ptr<MittoSession> session) {
     std::vector<scoped_refptr<PageProcess>> processes;
-    RunAndWait(base::BindOnce(
+    base::WaitableEvent destroyed;
+    PostTask(base::BindOnce(
         [](std::unique_ptr<MittoSession> session,
-           std::vector<scoped_refptr<PageProcess>>* processes) {
+           std::vector<scoped_refptr<PageProcess>>* processes,
+           base::WaitableEvent* destroyed) {
           session->CancelJobs();
           for (const std::unique_ptr<PageHost>& page : session->pages) {
             processes->push_back(page->process());
             page->EndWithSession();
           }
+          // Its storage writes what it holds before it goes, so that the
+          // next Session of its directory finds it, in this process or
+          // another.
+          CacheStorageContext* const caches =
+              session->cache_storage_context.get();
+          caches->Close(base::BindOnce(
+              [](std::unique_ptr<MittoSession> session,
+                 base::WaitableEvent* destroyed) {
+                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+                    FROM_HERE,
+                    base::BindOnce(
+                        [](std::unique_ptr<MittoSession> session,
+                           base::WaitableEvent* destroyed) {
+                          session.reset();
+                          destroyed->Signal();
+                        },
+                        std::move(session), destroyed));
+              },
+              std::move(session), destroyed));
         },
-        std::move(session), base::Unretained(&processes)));
+        std::move(session), base::Unretained(&processes),
+        base::Unretained(&destroyed)));
+    destroyed.Wait();
     for (const scoped_refptr<PageProcess>& process : processes) {
       process->WaitForExit(kPageExitGrace);
     }

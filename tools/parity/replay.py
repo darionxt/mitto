@@ -64,6 +64,8 @@ class Replay:
         page_host: The name of that page, or nothing for the name the case's run starts at.
         cache: Whether the Session has a cache in a directory, as the Chrome that recorded the case had, for a case that
             needs one to show what it is about.
+        credentials: The credentials mode that the page's fetch() asked for, or nothing for the kind's own.
+        mode: The mode that the page's fetch() asked for, or nothing for the kind's own.
         made_by_a_page: The issue that makes a Page make this request, for a case that only a page makes in a way that a
             caller cannot say, such as a navigation that no user started. No check replays it until that issue
             replays it through a Page and clears this.
@@ -80,6 +82,8 @@ class Replay:
     page: str | None = None
     page_host: str | None = None
     cache: bool = False
+    credentials: str | None = None
+    mode: str | None = None
     made_by_a_page: int | None = None
 
 
@@ -201,6 +205,7 @@ def _document_replays() -> dict[str, Replay]:
             asks=(CREDENTIALS_COOKIE_SET_PATH,),
             asks_host=SAME_SITE_HOST,
             page=start,
+            credentials="omit",
         ),
         "fetch_credentials_same_origin": Replay(
             RequestKind.FETCH,
@@ -208,6 +213,7 @@ def _document_replays() -> dict[str, Replay]:
             asks=(CREDENTIALS_COOKIE_SET_PATH,),
             asks_host=SAME_SITE_HOST,
             page=start,
+            credentials="same-origin",
         ),
         "fetch_credentials_include": Replay(
             RequestKind.FETCH,
@@ -215,8 +221,9 @@ def _document_replays() -> dict[str, Replay]:
             asks=(CREDENTIALS_COOKIE_SET_PATH,),
             asks_host=SAME_SITE_HOST,
             page=start,
+            credentials="include",
         ),
-        "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start),
+        "fetch_no_cors": Replay(RequestKind.FETCH, host=CROSS_SITE_HOST, page=start, mode="no-cors"),
         "navigation_location": Replay(RequestKind.NAVIGATION, page=start, made_by_a_page=279),
         "navigation_click": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_location"], made_by_a_page=279),
         "navigation_meta_refresh": Replay(RequestKind.NAVIGATION, page=_PATHS["navigation_click"], made_by_a_page=279),
@@ -405,4 +412,6 @@ def replay(session: Session, server: CaptureServer, run: Run, case: str) -> None
         session.get(server.url(run.route, host=run.host, path=path), kind=kind, initiator=initiator)
     path = _PATHS[steps.start or case]
     url = server.url(run.route, host=steps.host or run.host, path=path)
-    session.request(steps.method, url, kind=kind, initiator=initiator, **steps.body)
+    session.request(
+        steps.method, url, kind=kind, initiator=initiator, credentials=steps.credentials, mode=steps.mode, **steps.body
+    )

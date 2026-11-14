@@ -19,6 +19,7 @@
 
 #include "base/containers/span.h"
 #include "base/types/expected.h"
+#include "mitto/cache_storage_messages.h"
 
 namespace base {
 class DictValue;
@@ -29,7 +30,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 17;
+inline constexpr uint32_t kPageProtocolVersion = 18;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -171,6 +172,13 @@ enum class PageMessage : uint32_t {
   // To the Page: a message of a BroadcastChannel of another Page of the
   // Session whose document is of the same origin, as PageBroadcast says.
   kBroadcastReceived = 26,
+  // 27 to 39 are the storage messages' to come.
+  // To the Session: what the document's CacheStorage or one of its Caches
+  // asks, as cache_storage_messages.h says.
+  kCacheStorage = 40,
+  // To the Page: what the Session answers the Cache API, as
+  // cache_storage_messages.h says.
+  kCacheStorageAnswer = 41,
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
@@ -744,6 +752,8 @@ struct FrameFromPage {
   bool cookie_store_listen = false;
   // kBroadcast.
   PageBroadcast broadcast;
+  // kCacheStorage.
+  PageCacheStorageCall cache_storage_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
   // kSameDocumentNavigation: the document's new URL.
@@ -787,6 +797,8 @@ struct FrameFromSession {
   PageCookieStoreChange cookie_store_change;
   // kBroadcastReceived.
   PageBroadcast broadcast;
+  // kCacheStorageAnswer.
+  PageCacheStorageAnswer cache_storage_answer;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -844,6 +856,9 @@ std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
 bool BroadcastFits(const PageBroadcast& broadcast);
 // The broadcast fits in a frame.
 std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
+// The frame of a call of document `document`'s Cache API.
+std::string EncodeCacheStorage(uint64_t document,
+                               const PageCacheStorageCall& call);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
 // `url` is at most kMaxPayloadSize - 8 bytes.
