@@ -14,6 +14,8 @@
 #include "mitto/bindings/v8_svg_number_list.h"
 #include "mitto/bindings/v8_svg_string_list.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_geometry.h"
+#include "mitto/dom/svg_transforms.h"
 #include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
@@ -132,7 +134,8 @@ void SVGAnimatedItemList<Value>::ReplaceItem(size_t index,
 }
 
 template <typename Value>
-void SVGAnimatedItemList<Value>::ResetItems(SVGListItem<Value>& item) {
+void SVGAnimatedItemList<Value>::ResetItems(SVGListItem<Value>& item,
+                                            bool write_attribute) {
   EnsureFresh();
   for (size_t i = 0; i < items_.size(); ++i) {
     items_[i]->owner = nullptr;
@@ -140,7 +143,9 @@ void SVGAnimatedItemList<Value>::ResetItems(SVGListItem<Value>& item) {
   items_.EraseIf([](SVGListItem<Value>*) { return true; });
   item.owner = this;
   items_.push_back(&item);
-  Synchronize();
+  if (write_attribute) {
+    Synchronize();
+  }
 }
 
 // SVGTearOffList.
@@ -268,6 +273,14 @@ template class SVGAnimatedItemList<float>;
 template class SVGAnimatedItemList<SVGLengthValue>;
 template class SVGTearOffList<SVGAnimatedNumberList, SVGNumber, float>;
 template class SVGTearOffList<SVGAnimatedLengthList, SVGLength, SVGLengthValue>;
+template class SVGAnimatedItemList<std::array<float, 2>>;
+template class SVGTearOffList<SVGAnimatedPointList,
+                              SVGPoint,
+                              std::array<float, 2>>;
+template class SVGAnimatedItemList<SVGTransformValue>;
+template class SVGTearOffList<SVGAnimatedTransformList,
+                              SVGTransform,
+                              SVGTransformValue>;
 
 // SVGNumber.
 

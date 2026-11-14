@@ -1,7 +1,7 @@
-// The elements of SVG, whose classes have their interfaces' animated strings,
-// booleans, enumerations, integers, numbers and lengths: each other member of
-// theirs that is not a reflected attribute is a Known Gap. Blink's classes of
-// the same names hold what layout and animation need.
+// The elements of SVG, whose classes have their interfaces' animated values,
+// lists, rectangles, aspect ratios, angles, points and transforms: each other
+// member of theirs that is not a reflected attribute is a Known Gap. Blink's
+// classes of the same names hold what layout and animation need.
 //
 // Upstream: third_party/blink/renderer/core/svg/svg_tag_names.json5
 
@@ -62,6 +62,7 @@ class SVGGradientElement : public SVGElement {
 
   // The members of the interface.
   SVGAnimatedEnumeration* GradientUnits();
+  SVGAnimatedTransformList* GradientTransform();
   SVGAnimatedEnumeration* SpreadMethod();
 
  protected:
@@ -71,6 +72,9 @@ class SVGGradientElement : public SVGElement {
 class SVGGraphicsElement : public SVGElement {
  public:
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedTransformList* Transform();
 
  protected:
   SVGGraphicsElement(Document& document, const std::u16string& local_name);
@@ -184,6 +188,7 @@ class SVGClipPathElement final : public SVGElement {
 
   // The members of the interface.
   SVGAnimatedEnumeration* ClipPathUnits();
+  SVGAnimatedTransformList* Transform();
 };
 
 class SVGDefsElement final : public SVGGraphicsElement {
@@ -680,6 +685,12 @@ class SVGMarkerElement final : public SVGElement {
   SVGAnimatedLength* MarkerWidth();
   SVGAnimatedLength* MarkerHeight();
   SVGAnimatedEnumeration* MarkerUnits();
+  SVGAnimatedEnumeration* OrientType();
+  SVGAnimatedAngle* OrientAngle();
+  // Each sets the attribute, as a page would, with a record for mutation
+  // observers.
+  void SetOrientToAuto();
+  void SetOrientToAngle(SVGAngle* angle);
 };
 
 class SVGMaskElement final : public SVGElement {
@@ -732,6 +743,7 @@ class SVGPatternElement final : public SVGElement {
   SVGAnimatedLength* Height();
   SVGAnimatedEnumeration* PatternUnits();
   SVGAnimatedEnumeration* PatternContentUnits();
+  SVGAnimatedTransformList* PatternTransform();
 };
 
 class SVGPolygonElement final : public SVGGeometryElement {
@@ -741,6 +753,10 @@ class SVGPolygonElement final : public SVGGeometryElement {
   explicit SVGPolygonElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGPointList* PointsFromJavascript();
+  SVGPointList* AnimatedPoints();
 };
 
 class SVGPolylineElement final : public SVGGeometryElement {
@@ -750,6 +766,10 @@ class SVGPolylineElement final : public SVGGeometryElement {
   explicit SVGPolylineElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGPointList* PointsFromJavascript();
+  SVGPointList* AnimatedPoints();
 };
 
 class SVGRadialGradientElement final : public SVGGradientElement {
@@ -799,8 +819,14 @@ class SVGSVGElement final : public SVGGraphicsElement {
   SVGAnimatedLength* Y();
   SVGAnimatedLength* Width();
   SVGAnimatedLength* Height();
+  SVGAngle* CreateSVGAngle();
   SVGLength* CreateSVGLength();
   SVGNumber* CreateSVGNumber();
+  SVGPoint* CreateSVGPoint();
+  SVGMatrix* CreateSVGMatrix();
+  SVGRect* CreateSVGRect();
+  SVGTransform* CreateSVGTransform();
+  SVGTransform* CreateSVGTransformFromMatrix(SVGMatrix* matrix);
 };
 
 class SVGScriptElement final : public SVGElement {

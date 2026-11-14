@@ -17,6 +17,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/response.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-promise.h"
@@ -26,7 +27,7 @@ namespace mitto {
 class AbortSignal;
 class Response;
 
-class FetchLoader final : public FetchClient {
+class FetchLoader final : public FetchClient, public BodyLoader {
  public:
   // `resolver` is fetch()'s, in `context`. The response of a HEAD request,
   // `head`, has a null body. `signal` is the request's, which has not
@@ -48,13 +49,9 @@ class FetchLoader final : public FetchClient {
   void OnResponseBody(std::string bytes) override;
   void OnResponseEnded(int net_error) override;
 
-  // What its Response tells it: a script reads the body, so what has come and
-  // what comes is taken.
-  void ReaderStarted();
-  // The Response has been collected, so the rest of the body is not wanted.
-  // Called during garbage collection, which may not run scripts or free
-  // handles, so it cancels the request from a later task.
-  void ResponseCollected();
+  // BodyLoader: it cancels the request once its Response has been collected.
+  void ReaderStarted() override;
+  void ResponseCollected() override;
   // The request's signal aborted. Destroys this.
   void Abort();
 

@@ -18,18 +18,21 @@
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
+#include "mitto/page_cache_storage.h"
 #include "mitto/ready_requests.h"
 #include "mitto/sec_header_helpers.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
+#include "net/base/url_util.h"
 #include "net/cookies/cookie_access_delegate.h"
 #include "net/cookies/cookie_access_params.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -925,6 +928,7 @@ PageHost::PageHost(scoped_refptr<PageEvents> events,
       network_(network) {}
 
 PageHost::~PageHost() {
+  cache_storage_.reset();
   AbandonRequests();
 }
 
@@ -1117,6 +1121,13 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
 }
 
 void PageHost::OnCancel(uint64_t number) {
+  // A navigation that the Page let go after its response came, before it
+  // made a document of it, as when another takes its place, has ended too.
+  if (const auto pending = navigation_responses_.find(number);
+      pending != navigation_responses_.end()) {
+    PushNavigated(pending->second.url.spec(), 0, net::ERR_ABORTED);
+    navigation_responses_.erase(pending);
+  }
   const auto found = requests_.find(number);
   if (found == requests_.end()) {
     // The request may have ended since the Page let it go.
@@ -1181,9 +1192,9 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     return;
   }
   if (request.is_navigation()) {
-    // The document that the Page makes of it, which it tells the library of.
-    navigation_responses_[request.number()] = GURL(event.url);
-    PushNavigated(event.url, event.status, net::OK);
+    // The document that the Page makes of it, which it tells the library of,
+    // and the caller hears of then.
+    navigation_responses_[request.number()] = {GURL(event.url), event.status};
   }
   if (channel_) {
     PageResponseStarted response;
@@ -1222,6 +1233,9 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     response.first_request_start = Microseconds(event.first_request_start);
     response.last_redirect_end = Microseconds(request.last_redirect_end());
     response.critical_ch_restart = Microseconds(event.critical_ch_restart);
+    if (request.is_navigation()) {
+      response.referrer = event.referrer;
+    }
     channel_->Send(EncodeResponseStarted(response));
   }
   request.ReadIfCredited();
@@ -1641,6 +1655,47 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast,
   network_->BroadcastFromPage(*this, origin, broadcast);
 }
 
+void PageHost::OnCacheStorage(PageCacheStorageCall call,
+                              const GURL& document_url) {
+  if (!cache_storage_) {
+    cache_storage_ = std::make_unique<PageCacheStorage>(
+        network_->cache_storage(), network_->storage_quota(),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string frame) {
+              if (host && host->channel_ && !host->refused_by_library_) {
+                host->channel_->Send(std::move(frame));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string why) {
+              if (host && !host->refused_by_library_) {
+                host->Refuse(std::move(why));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        next_cache_storage_number_);
+  }
+  cache_storage_->OnCall(std::move(call),
+                         DocumentCacheStorageKey(document_url));
+}
+
+// static
+std::optional<std::string> PageHost::DocumentCacheStorageKey(
+    const GURL& document_url) {
+  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
+  // an origin that is not opaque, of a potentially trustworthy URL.
+  if (!DocumentHasCookies(document_url)) {
+    return std::nullopt;
+  }
+  if (!document_url.SchemeIs(url::kHttpsScheme) &&
+      !net::IsLocalhost(document_url)) {
+    return std::nullopt;
+  }
+  // StorageKey::Serialize() of a first-party key: the origin and a slash.
+  return url::Origin::Create(document_url).GetURL().spec();
+}
+
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
   const GURL document_url = TopDocumentUrl();
@@ -1671,6 +1726,9 @@ void PageHost::EndWithSession() {
   }
   AbandonRequests();
   channel_.reset();
+  // A put that waits for the rest of its body from the Page fails, so that
+  // its cache, and the Session's storage, may close.
+  cache_storage_.reset();
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
@@ -1682,6 +1740,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     return;
   }
   GURL url;
+  std::optional<int32_t> navigated_status;
   switch (committed.source) {
     case PageDocumentSource::kInitialEmpty:
       // The Page's first document, before any other.
@@ -1699,7 +1758,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
                              ", which has no response"}));
         return;
       }
-      url = std::move(found->second);
+      url = std::move(found->second.url);
+      navigated_status = found->second.status;
       navigation_responses_.erase(found);
       break;
     }
@@ -1721,9 +1781,21 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     it = requests_.erase(it);
   }
   documents_.clear();
-  documents_.emplace(committed.document, std::move(url));
+  documents_.emplace(committed.document, url);
+  // The old document's Cache API goes with it, as its pipes go with its
+  // context in Chrome: its puts that wait for a body fail, and what it held
+  // is let go. The new document's numbers go on from its.
+  if (cache_storage_) {
+    next_cache_storage_number_ = cache_storage_->NextNumber();
+    cache_storage_.reset();
+  }
   // The old document's CookieStore listened over a pipe that went with it.
   cookie_store_subscription_.reset();
+  // The navigation's document has taken the place of the Page's, after every
+  // message of the old one, its load among them.
+  if (navigated_status) {
+    PushNavigated(url.spec(), *navigated_status, net::OK);
+  }
 }
 
 void PageHost::OnSameDocumentNavigation(uint64_t document,
@@ -1895,6 +1967,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kDocumentCommitted:
       OnDocumentCommitted(frame->committed);
       return;
+    case PageMessage::kCacheStorage:
+      OnCacheStorage(std::move(frame->cache_storage_call), document_url);
+      return;
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
       return;
@@ -1908,6 +1983,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
     case PageMessage::kBroadcastReceived:
+    case PageMessage::kCacheStorageAnswer:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }
@@ -1931,8 +2007,14 @@ void PageHost::Refuse(std::string why) {
 }
 
 void PageHost::WaitForExit() {
-  // A Page that has gone needs nothing more from the network.
+  // A Page that has gone needs nothing more from the network, and a put that
+  // waits for the rest of its body from it fails. Not at once: what refuses
+  // the Page may be the Cache API's own call.
   AbandonRequests();
+  if (cache_storage_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(cache_storage_));
+  }
   // What was sent already still reaches the Page, if it reads it.
   channel_.reset();
   if (waiting_for_exit_ || ended_) {

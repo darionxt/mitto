@@ -13,6 +13,8 @@
 
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
@@ -33,6 +35,13 @@ class Request final : public bindings::ScriptWrappable {
   static Request* Create(const bindings::RequestOrUSVString& input,
                          const bindings::RequestInit& init,
                          bindings::ExceptionState& exception_state);
+  // One that the Cache API stored, as Blink makes a Request of the browser's
+  // FetchAPIRequest: its URL, method and header lines, `headers` each
+  // "name: value", and a signal of its own.
+  static Request* CreateFromStored(
+      GURL url,
+      std::string method,
+      const std::vector<std::pair<std::string, std::string>>& headers);
 
   Request();
   ~Request() override;

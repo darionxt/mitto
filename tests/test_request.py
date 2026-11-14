@@ -633,6 +633,21 @@ def test_no_cors_takes_the_place_of_a_fetchs_mode_in_its_line_and_its_parameters
     assert built["headers"] == tuple((name, "no-cors" if name == "Sec-Fetch-Mode" else value) for name, value in lines)
 
 
+def test_a_no_cors_fetch_sends_a_json_body_with_the_type_that_chrome_gives_text() -> None:
+    # Blink's request-no-cors guard drops Content-Type: application/json, and the body goes as a string's would. The
+    # other types that the library gives are CORS-safelisted, and a caller's own line stays as it is given.
+    def content_type(**options: Any) -> str | None:
+        built = build_request(ENGINE_PERSONA, "POST", URL, kind="fetch", mode="no-cors", **options)
+        return dict(built["headers"]).get("Content-Type")
+
+    assert content_type(json={"a": 1}) == "text/plain;charset=UTF-8"
+    assert content_type(data={"a": "1"}) == "application/x-www-form-urlencoded;charset=UTF-8"
+    assert content_type(data=b"bytes") is None
+    assert content_type(json={"a": 1}, headers={"Content-Type": "application/json"}) == "application/json"
+    cors = build_request(ENGINE_PERSONA, "POST", URL, kind="fetch", json={"a": 1})
+    assert dict(cors["headers"])["Content-Type"] == "application/json"
+
+
 @pytest.mark.parametrize("kind", [RequestKind.SCRIPT, RequestKind.IMAGE, RequestKind.STYLE])
 def test_an_element_in_cors_mode_gets_the_origin_that_blink_puts_first(kind: RequestKind) -> None:
     built = build_request(ENGINE_PERSONA, "GET", URL, kind=kind, mode="cors", credentials="same-origin")

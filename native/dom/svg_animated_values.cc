@@ -18,6 +18,7 @@
 #include "mitto/bindings/v8_svg_animated_string.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_geometry.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "v8/include/cppgc/visitor.h"
 
@@ -257,6 +258,10 @@ std::u16string IntegerToString(int32_t value) {
   return base::NumberToString16(value);
 }
 
+std::u16string FloatToString(float value) {
+  return SVGNumberToString(value);
+}
+
 }  // namespace
 
 std::optional<float> ParseSVGNumber(std::u16string_view value) {
@@ -281,12 +286,179 @@ std::optional<std::vector<float>> ParseSVGNumberList(
   return numbers;
 }
 
+std::optional<std::array<float, 4>> ParseSVGRect(std::u16string_view value) {
+  std::array<float, 4> numbers;
+  if (!ParseNumber(value, numbers[0]) || !ParseNumber(value, numbers[1]) ||
+      !ParseNumber(value, numbers[2]) ||
+      !ParseNumber(value, numbers[3], kAllowLeadingWhitespace)) {
+    return std::nullopt;
+  }
+  SkipSpaces(value);
+  if (!value.empty()) {
+    return std::nullopt;
+  }
+  return numbers;
+}
+
+std::optional<std::vector<std::array<float, 2>>> ParseSVGPoints(
+    std::u16string_view value) {
+  std::vector<std::array<float, 2>> points;
+  SkipSpaces(value);
+  std::array<float, 2> pair = {0, 0};
+  size_t count = 0;
+  while (!value.empty()) {
+    if (!ParseNumber(value, pair[count % 2], /*mode=*/0)) {
+      return std::nullopt;
+    }
+    ++count;
+    if (count % 2 == 0) {
+      points.push_back(pair);
+    }
+    SkipSpaces(value);
+    if (!value.empty() && value.front() == ',') {
+      value.remove_prefix(1);
+      SkipSpaces(value);
+    }
+  }
+  return points;
+}
+
+// ParseValue() and StringToAngleType(): a number, then deg, rad, grad, turn
+// or nothing, then only spaces.
+std::optional<std::pair<float, uint8_t>> ParseSVGAngle(
+    std::u16string_view value) {
+  float number = 0;
+  if (!ParseNumber(value, number, kAllowLeadingWhitespace)) {
+    return std::nullopt;
+  }
+  constexpr uint8_t kUnspecified = 1;
+  constexpr uint8_t kDeg = 2;
+  constexpr uint8_t kRad = 3;
+  constexpr uint8_t kGrad = 4;
+  constexpr uint8_t kTurn = 5;
+  if (value.empty()) {
+    return std::pair(number, kUnspecified);
+  }
+  uint8_t unit = 0;
+  size_t skip = 0;
+  if (IsHTMLSpace(value.front())) {
+    unit = kUnspecified;
+    skip = 1;
+  } else if (value.substr(0, 3) == u"deg") {
+    unit = kDeg;
+    skip = 3;
+  } else if (value.substr(0, 3) == u"rad") {
+    unit = kRad;
+    skip = 3;
+  } else if (value.substr(0, 4) == u"grad") {
+    unit = kGrad;
+    skip = 4;
+  } else if (value.substr(0, 4) == u"turn") {
+    unit = kTurn;
+    skip = 4;
+  }
+  value.remove_prefix(skip);
+  SkipSpaces(value);
+  if (!unit || !value.empty()) {
+    return std::nullopt;
+  }
+  return std::pair(number, unit);
+}
+
+// ParseAndSkipTransformType(), then ParseTransformArgumentsForType() of each
+// function: its required arguments, or those and its optional ones, parted by
+// spaces or a comma, with no comma after the last.
+std::optional<std::vector<SVGTransformArguments>> ParseSVGTransforms(
+    std::u16string_view value) {
+  // Of kUnknown, kMatrix, kTranslate, kScale, kRotate, kSkewx and kSkewy.
+  constexpr std::array<size_t, 7> kRequired = {0, 6, 1, 1, 1, 1, 1};
+  constexpr std::array<size_t, 7> kOptional = {0, 0, 1, 1, 2, 0, 0};
+  auto skip_token = [&value](std::u16string_view token) {
+    if (value.substr(0, token.size()) != token) {
+      return false;
+    }
+    value.remove_prefix(token.size());
+    return true;
+  };
+  std::vector<SVGTransformArguments> transforms;
+  bool delimiter = false;
+  SkipSpaces(value);
+  while (!value.empty()) {
+    delimiter = false;
+    SVGTransformArguments transform;
+    if (value.front() == 's') {
+      if (skip_token(u"skewX")) {
+        transform.type = 5;
+      } else if (skip_token(u"skewY")) {
+        transform.type = 6;
+      } else if (skip_token(u"scale")) {
+        transform.type = 3;
+      }
+    } else if (skip_token(u"translate")) {
+      transform.type = 2;
+    } else if (skip_token(u"rotate")) {
+      transform.type = 4;
+    } else if (skip_token(u"matrix")) {
+      transform.type = 1;
+    }
+    if (!transform.type) {
+      return std::nullopt;
+    }
+    SkipSpaces(value);
+    if (value.empty() || value.front() != '(') {
+      return std::nullopt;
+    }
+    value.remove_prefix(1);
+    const size_t required = kRequired[transform.type];
+    const size_t all = required + kOptional[transform.type];
+    bool trailing_delimiter = false;
+    while (transform.count < all) {
+      std::u16string_view rest = value;
+      float number = 0;
+      if (!ParseNumber(rest, number, kAllowLeadingWhitespace)) {
+        break;
+      }
+      value = rest;
+      transform.values[transform.count++] = number;
+      trailing_delimiter = false;
+      if (transform.count == all) {
+        break;
+      }
+      SkipSpaces(value);
+      if (!value.empty() && value.front() == ',') {
+        value.remove_prefix(1);
+        trailing_delimiter = true;
+      }
+    }
+    if ((transform.count != required && transform.count != all) ||
+        trailing_delimiter) {
+      return std::nullopt;
+    }
+    SkipSpaces(value);
+    if (value.empty() || value.front() != ')') {
+      return std::nullopt;
+    }
+    value.remove_prefix(1);
+    transforms.push_back(transform);
+    SkipSpaces(value);
+    if (!value.empty() && value.front() == ',') {
+      value.remove_prefix(1);
+      delimiter = true;
+    }
+    SkipSpaces(value);
+  }
+  if (delimiter) {
+    return std::nullopt;
+  }
+  return transforms;
+}
+
 // DoubleToStringConverter::ToStringWithFixedPrecision() of WTF's dtoa.cc.
-std::u16string SVGNumberToString(float value) {
+std::u16string SVGNumberToString(double value) {
   char buffer[128];
   double_conversion::StringBuilder builder(buffer, sizeof(buffer));
   double_conversion::DoubleToStringConverter::EcmaScriptConverter().ToPrecision(
-      static_cast<double>(value), 6, &builder);
+      value, 6, &builder);
   std::string text(builder.Finalize());
   // Blink keeps the trailing zeros of a number with an exponent.
   if (text.find('e') == std::string::npos &&
@@ -438,13 +610,26 @@ SVGAnimatedEnumeration* SVGAnimatedEnumeration::Create(
       element, attribute, map, initial_value);
 }
 
+// static
+SVGAnimatedEnumeration* SVGAnimatedEnumeration::CreateForAngle(
+    SVGElement& element,
+    SVGAnimatedAngle& angle) {
+  static constexpr std::u16string_view kOrientTypes[] = {u"auto", u"angle",
+                                                         u"auto-start-reverse"};
+  static constexpr SVGEnumerationMap kOrientTypeMap = {kOrientTypes, 2};
+  return bindings::MakeGarbageCollected<SVGAnimatedEnumeration>(
+      element, u"orient", kOrientTypeMap, SVGAngleValue::kAngle, &angle);
+}
+
 SVGAnimatedEnumeration::SVGAnimatedEnumeration(SVGElement& element,
                                                std::u16string_view attribute,
                                                const SVGEnumerationMap& map,
-                                               uint16_t initial_value)
+                                               uint16_t initial_value,
+                                               SVGAnimatedAngle* angle)
     : SVGAnimatedPropertyBase(element, attribute, SVGPairHalf::kNone),
       map_(map),
-      initial_value_(initial_value) {}
+      initial_value_(initial_value),
+      angle_(angle) {}
 
 SVGAnimatedEnumeration::~SVGAnimatedEnumeration() = default;
 
@@ -453,7 +638,16 @@ const bindings::WrapperTypeInfo* SVGAnimatedEnumeration::GetWrapperTypeInfo()
   return &bindings::V8SVGAnimatedEnumeration::kWrapperTypeInfo;
 }
 
+void SVGAnimatedEnumeration::Trace(cppgc::Visitor* visitor) const {
+  SVGAnimatedPropertyBase::Trace(visitor);
+  visitor->Trace(angle_);
+}
+
 uint16_t SVGAnimatedEnumeration::BaseVal() {
+  if (angle_) {
+    const uint16_t orient = angle_->BaseValue().orient;
+    return orient <= map_->max_exposed_value ? orient : 0;
+  }
   EnsureFresh();
   return value_ <= map_->max_exposed_value ? value_ : 0;
 }
@@ -471,6 +665,13 @@ void SVGAnimatedEnumeration::SetBaseVal(
         {"The enumeration value provided (", base::NumberToString(value),
          ") is larger than the largest allowed value (",
          base::NumberToString(map_->max_exposed_value), ")."}));
+    return;
+  }
+  if (angle_) {
+    // SVGAngle::OrientTypeChanged(), then the angle's attribute.
+    SVGAngleValue angle = angle_->BaseValue();
+    angle.SetOrient(static_cast<SVGAngleValue::Orient>(value));
+    angle_->SetBaseValue(angle);
     return;
   }
   EnsureFresh();
@@ -626,8 +827,8 @@ void SVGAnimatedNumber::SetBaseValue(float value) {
   }
   const float other = other_half_->BaseVal();
   SynchronizeAttribute(Half() == SVGPairHalf::kFirst
-                           ? PairToString(value, other, &SVGNumberToString)
-                           : PairToString(other, value, &SVGNumberToString));
+                           ? PairToString(value, other, &FloatToString)
+                           : PairToString(other, value, &FloatToString));
 }
 
 void SVGAnimatedNumber::Parse(const std::u16string* value) {

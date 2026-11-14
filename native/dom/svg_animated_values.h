@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -43,6 +44,7 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
+class SVGAnimatedAngle;
 class SVGElement;
 
 // The keywords of an enumeration, the first of which is its value 1, and the
@@ -192,14 +194,20 @@ class SVGAnimatedEnumeration final : public SVGAnimatedPropertyBase {
                                         std::u16string_view attribute,
                                         const SVGEnumerationMap& map,
                                         uint16_t initial_value);
+  // A marker's orientType, which is the orient of `angle`, as Blink's
+  // SVGAnimatedAngle wraps its SVGMarkerOrientEnumeration.
+  static SVGAnimatedEnumeration* CreateForAngle(SVGElement& element,
+                                                SVGAnimatedAngle& angle);
 
   SVGAnimatedEnumeration(SVGElement& element,
                          std::u16string_view attribute,
                          const SVGEnumerationMap& map,
-                         uint16_t initial_value);
+                         uint16_t initial_value,
+                         SVGAnimatedAngle* angle = nullptr);
   ~SVGAnimatedEnumeration() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
   uint16_t BaseVal();
@@ -213,6 +221,8 @@ class SVGAnimatedEnumeration final : public SVGAnimatedPropertyBase {
   const raw_ref<const SVGEnumerationMap> map_;
   const uint16_t initial_value_;
   uint16_t value_ = 0;
+  // orientType's angle, which holds its value in place of `value_`.
+  const cppgc::Member<SVGAnimatedAngle> angle_;
 };
 
 class SVGAnimatedInteger final : public SVGAnimatedPropertyBase {
@@ -305,13 +315,35 @@ class SVGAnimatedNumber final : public SVGAnimatedPropertyBase {
 // Blink's SVG number grammar, of svg_parser_utilities.cc: the whole of
 // `value` with spaces around it, or nothing.
 std::optional<float> ParseSVGNumber(std::u16string_view value);
-// Numbers that spaces, or one comma and spaces, part, such as a viewBox's,
+// Numbers that spaces, or one comma and spaces, part, such as a number list's,
 // each in Blink's SVG number grammar, or nothing.
 std::optional<std::vector<float>> ParseSVGNumberList(std::u16string_view value);
-// String::Number() of a float: six significant digits, as JavaScript's
-// toPrecision(6) gives them, without the trailing zeros of a number with no
-// exponent.
-std::u16string SVGNumberToString(float value);
+// SVGRect::Parse(): a viewBox's four numbers, the last with nothing after it
+// but spaces, or nothing.
+std::optional<std::array<float, 4>> ParseSVGRect(std::u16string_view value);
+// SVGPointList::Parse(): the points of pairs of numbers that spaces or one
+// comma part, an odd number at the end making none, or nothing.
+std::optional<std::vector<std::array<float, 2>>> ParseSVGPoints(
+    std::u16string_view value);
+// SVGAngle's parse of a number and a unit: SVGAngle's unit type of it, from 1
+// for no unit to 5 for turn, or nothing.
+std::optional<std::pair<float, uint8_t>> ParseSVGAngle(
+    std::u16string_view value);
+// A transform of an attribute such as transform's: SVGTransformType's value of
+// its function, from 1 for matrix to 6 for skewY, and its arguments.
+struct SVGTransformArguments {
+  uint8_t type = 0;
+  std::array<float, 6> values = {};
+  size_t count = 0;
+};
+// SVGTransformList::ParseInternal(): the transforms that spaces or one comma
+// part, or nothing.
+std::optional<std::vector<SVGTransformArguments>> ParseSVGTransforms(
+    std::u16string_view value);
+// String::Number() of a float or a double: six significant digits, as
+// JavaScript's toPrecision(6) gives them, without the trailing zeros of a
+// number with no exponent.
+std::u16string SVGNumberToString(double value);
 
 }  // namespace mitto
 

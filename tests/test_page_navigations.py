@@ -315,6 +315,42 @@ def test_a_navigation_that_starts_while_the_document_loads_stops_its_parser(
     assert all(cookie.name != "parsed" for cookie in session.cookies)
 
 
+def test_a_page_opens_when_its_document_stops_loading_for_a_navigation_that_keeps_it(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.routes["/nothing"] = _Route(status=204)
+    url = server.page("/", "<script>location.href = '/nothing';</script><p id=after>after")
+
+    # The navigation stopped the parser, so the load event never fires, and the page opens once the navigation ends.
+    with _open_page(session, url) as page:
+        assert page.url == url
+        assert _next(page) == PageNavigation(url=server.url("/nothing"), status=204, kept_document=True)
+        assert page.evaluate("[document.readyState, document.getElementById('after')]") == ["complete", None]
+
+
+def test_a_navigation_ends_once_its_own_document_has_loaded_and_not_the_one_it_left(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The second document's script waits on the server, so its load comes well after the first document's.
+    hold = threading.Event()
+    server.routes["/slow.js"] = _Route(b"window.slow = 1;", headers=[("Content-Type", "text/javascript")], hold=hold)
+    second = server.page("/second", "<title>Second</title><script src=/slow.js></script>")
+    # The load listener runs on until the navigation's response has come, so the first document's load ends after it.
+    first = server.page(
+        "/first",
+        "<script>addEventListener('load', () => {"
+        "  location.href = '/second'; const end = Date.now() + 1000; while (Date.now() < end);"
+        "});</script>",
+    )
+    release = threading.Timer(2.0, hold.set)
+    release.start()
+
+    with _open_page(session, first) as page:
+        assert _next(page).url == second
+        assert page.evaluate("[document.title, document.readyState, window.slow]") == ["Second", "complete", 1]
+    release.cancel()
+
+
 def test_a_javascript_url_runs_from_a_task_and_navigates_nowhere(session: mitto.Session, server: _Server) -> None:
     url = server.page("/", "<body>")
 
@@ -342,13 +378,32 @@ def test_location_refuses_a_url_that_does_not_resolve(session: mitto.Session, se
 def test_a_navigation_to_a_url_longer_than_chrome_carries_starts_nothing(
     session: mitto.Session, server: _Server
 ) -> None:
-    url = server.page("/", "<title>Here</title>")
+    # Chrome's browser gets no URL of more than 2 MiB and goes to about:blank#blocked, which a Page does not, so the
+    # document goes on loading, as no navigation started.
+    url = server.page("/", "<script>location.href = '/' + 'x'.repeat(2 * 1024 * 1024);</script><title>Here</title>")
 
     with _open_page(session, url) as page:
-        # Chrome's browser gets no URL of more than 2 MiB and goes to about:blank#blocked, which a Page does not.
-        assert page.evaluate("location.href = '/' + 'x'.repeat(2 * 1024 * 1024); document.title") == "Here"
+        assert page.evaluate("location.href = '/' + 'y'.repeat(2 * 1024 * 1024); document.title") == "Here"
         assert page.evaluate("new Promise(r => setTimeout(r, 100)).then(() => document.URL)") == url
     assert server.paths() == ["/"]
+
+
+def test_a_documents_referrer_is_the_referer_that_its_navigation_sent_last(
+    session: mitto.Session, server: _Server
+) -> None:
+    done = server.page("/done", "<title>Done</title>")
+    server.routes["/bounce"] = _Route(status=302, headers=[("Location", done)])
+    first = server.page("/deep/path?token=1", "<title>First</title>")
+    bounce = server.url("/bounce").replace("127.0.0.1", "localhost")
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"location.href = '{bounce}'")
+        assert _next(page).url == done
+        # The hop to another origin cut the Referer to the document's origin, and the hop back does not give the path
+        # back, as in Chrome.
+        assert page.evaluate("document.referrer") == server.url("/")
+    ((bounce_lines,), (done_lines,)) = server.headers_of("/bounce"), server.headers_of("/done")
+    assert dict(bounce_lines)["Referer"] == dict(done_lines)["Referer"] == server.url("/")
 
 
 def test_a_navigation_that_fails_raises_its_error_and_keeps_the_document(
@@ -385,6 +440,25 @@ def test_a_new_navigation_takes_the_place_of_one_that_waits_and_the_same_one_is_
         assert _next(page).url == fast
         hold.set()
     assert server.paths().count("/slow") == 1
+
+
+def test_a_navigation_whose_response_came_ends_when_another_takes_its_place_before_its_document(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.page("/a", "<title>A</title>")
+    server.routes["/nothing"] = _Route(status=204)
+    url = server.page("/", "<title>Start</title>")
+
+    with _open_page(session, url) as page:
+        # The script runs on until the first navigation's response has come, then starts one that keeps the document.
+        page.evaluate(
+            "location.href = '/a'; const end = Date.now() + 1000; while (Date.now() < end); location.href = '/nothing'"
+        )
+        with pytest.raises(mitto.RequestError, match="ERR_ABORTED"):
+            _next(page)
+        assert _next(page) == PageNavigation(url=server.url("/nothing"), status=204, kept_document=True)
+        assert page.url == url
+        assert page.evaluate("[document.title, location.href]") == ["Start", url]
 
 
 def test_an_opening_navigation_to_a_204_leaves_the_page_at_about_blank(session: mitto.Session, server: _Server) -> None:

@@ -159,6 +159,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                    payload.size());
           break;
         }
+        case mitto::PageMessage::kCacheStorage:
+          // What the reader takes is exactly what the writer writes, after
+          // the document's ID.
+          CHECK_EQ(mitto::EncodeCacheStorageCall(frame->cache_storage_call),
+                   std::string_view(payload).substr(8));
+          break;
         case mitto::PageMessage::kSameDocumentNavigation:
           CHECK(base::IsStringUTF8AllowingNoncharacters(
               frame->same_document_url));
@@ -184,6 +190,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kCookieStoreStored:
         case mitto::PageMessage::kCookieStoreChange:
         case mitto::PageMessage::kBroadcastReceived:
+        case mitto::PageMessage::kCacheStorageAnswer:
           // Only a Session sends these.
           NOTREACHED();
       }

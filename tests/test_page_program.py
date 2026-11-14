@@ -811,8 +811,10 @@ def _respond(
     headers: str = "",
     connection: tuple[int, float] = (0, 0.0),
     timing: bytes | None = None,
+    referrer: str = "",
 ) -> None:
-    """Send the start of a response: for the navigation, `connection` is the rtt and downlink of its document."""
+    """Send the start of a response: for the navigation, `connection` is the rtt and downlink of its document, and
+    `referrer` the Referer that its last hop sent."""
     lines = f"Content-Type: {content_type}\n{headers}".encode()
     session.send(
         _RESPONSE_STARTED,
@@ -822,6 +824,7 @@ def _respond(
         + _sized(status_text.encode("latin-1"))
         + _sized(b"http/1.1")
         + _sized(b"unknown")
+        + _sized(referrer.encode())
         + lines,
     )
 
@@ -1226,6 +1229,18 @@ def test_a_fetch_whose_body_cannot_fit_in_a_frame_rejects_and_the_page_goes_on(s
 
     assert session.evaluate(script.decode()) == (False, '"TypeError: Failed to fetch"')
     assert session.evaluate("1 + 1", call=2) == (False, "2")
+    assert session.close() == 0
+
+
+def test_a_document_gives_the_referer_that_its_navigation_sent_last(session: _Session) -> None:
+    session.start()
+    _respond(session, 0, _DOCUMENT_URL, "text/html", referrer="http://www.example.test/")
+    _body(session, 0, b"<p>referred</p>")
+    assert session.receive()[0] == _CREDIT
+    _end(session, 0)
+    assert session.receive() == (_LOADED, _DOCUMENT)
+
+    assert session.evaluate("document.referrer") == (False, '"http://www.example.test/"')
     assert session.close() == 0
 
 
