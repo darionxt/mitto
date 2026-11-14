@@ -386,6 +386,16 @@ def test_target_matches_the_element_that_the_fragment_indicates(session: mitto.S
         assert page.evaluate(f"location.hash = 'two'; {target}") == "2"
         assert page.evaluate(f"location.hash = '%C3%A9'; {target}") == "3"
         assert page.evaluate(f"location.hash = 'nothing'; {target}") is None
+        # The target changes after popstate, from the URL that each navigation committed, so one that a listener
+        # starts meanwhile is overwritten by the one it interrupted, as in Chrome.
+        assert page.evaluate(
+            f"let seen; addEventListener('popstate', () => {{ seen = {target}; }}, {{once: true}});"
+            f"location.hash = 'one'; [seen, {target}]"
+        ) == [None, "1"]
+        assert page.evaluate(
+            "navigation.addEventListener('currententrychange', () => { location.hash = 'two'; }, {once: true});"
+            f"location.hash = 'nothing'; [location.hash, {target}]"
+        ) == ["#two", None]
         # The target stays with its element as it moves, and in another document it is none of that one's.
         assert page.evaluate(
             "location.hash = 'moved'; const moved = document.getElementById('moved');"

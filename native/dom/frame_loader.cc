@@ -170,9 +170,6 @@ void CommitSameDocumentNavigation(Window& window,
     client->DidNavigateWithinDocument(url);
   }
   window.Navigation()->UpdateForNavigation(url, type, /*keep_state=*/true);
-  // FrameLoader::ProcessScrollForSameDocumentNavigation(): the new fragment
-  // indicates the document's target.
-  document.ProcessUrlFragment(url);
   if (!window.HasContext()) {
     return;
   }
@@ -182,6 +179,11 @@ void CommitSameDocumentNavigation(Window& window,
   PopStateEvent* const popstate = PopStateEvent::Create(u"popstate", init);
   popstate->SetTrusted(true);
   window.DispatchEvent(popstate);
+  // FrameLoader::ProcessScrollForSameDocumentNavigation(), after the events
+  // of the commit: this navigation's fragment indicates the document's
+  // target, also when a listener has navigated on meanwhile, as Blink takes
+  // the URL that it commits.
+  document.ProcessUrlFragment(url);
 }
 
 // Runs the script of a javascript: URL in the current window, from its task,
