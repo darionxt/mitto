@@ -558,6 +558,8 @@ def test_navigation_timing_says_a_reload_and_gives_the_unload_times_of_a_documen
 ) -> None:
     server.page("/second", "<title>Second</title>")
     first = server.page("/first", "<title>First</title>")
+    server.routes["/bounce"] = _Route(status=302, headers=[("Location", first)])
+    bounce = server.url("/bounce").replace("127.0.0.1", "localhost")
     timing = (
         "(() => { const entry = performance.getEntriesByType('navigation')[0];"
         "return [performance.navigation.type, entry.type, entry.unloadEventStart > 0,"
@@ -573,6 +575,10 @@ def test_navigation_timing_says_a_reload_and_gives_the_unload_times_of_a_documen
         page.evaluate("location.reload()")
         _next(page)
         assert page.evaluate(timing) == [1, "reload", True, True, True]
+        # A redirect through another origin hides them, though the navigation comes back to the old document's origin.
+        page.evaluate(f"location.href = '{bounce}'")
+        assert _next(page).url == first
+        assert page.evaluate(timing) == [0, "navigate", False, True, False]
 
 
 # What the Navigation API's events say, as each fires, and the outcome of a navigate() or reload().
