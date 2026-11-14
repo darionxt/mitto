@@ -12,7 +12,8 @@
 // errors.
 //
 // Upstream: third_party/blink/renderer/bindings/scripts/bind_gen/interface.py
-// Upstream: third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
+// Upstream:
+// third_party/blink/renderer/bindings/core/v8/generated_code_helper.cc
 // Upstream: third_party/blink/renderer/platform/bindings/v8_set_return_value.cc
 
 #ifndef MITTO_BINDINGS_INDEXED_AND_NAMED_PROPERTIES_H_
@@ -77,6 +78,13 @@ struct IndexedAndNamedProperties {
   bool (*named_deleter)(v8::Isolate* isolate,
                         v8::Local<v8::Object> holder,
                         const std::u16string& name);
+  // The indexed property setter, which converts `value` and may throw,
+  // leaving the exception pending, such as for an index past the end. Null
+  // without one.
+  void (*indexed_setter)(v8::Isolate* isolate,
+                         v8::Local<v8::Object> holder,
+                         uint32_t index,
+                         v8::Local<v8::Value> value);
 };
 
 // Installs the interceptors of `properties` on the interface's instance

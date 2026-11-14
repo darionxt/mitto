@@ -1627,5 +1627,103 @@
     after.push(e.getAttribute("width"), copy.getAttribute("width"));
     return [quiet, o.takeRecords().map((x) => x.attributeName + ":" + x.oldValue).join(" "), ...after].join(",");
   });
+  // SVG's lists of numbers, lengths and strings.
+  const listOf = (L, read) => [...Array(L.length).keys()].map((i) => read(L.getItem(i))).join(";");
+  run("svg number list parse", () => {
+    const m = svg("feColorMatrix");
+    const L = m.values.baseVal;
+    return ["1 2 3", "1,2,3", " 1 , 2 ,3 ", "1,,2", "1 2 bad", "", "1e2 .5", "1,", ",1", "1 2 ", "\t1\n2", "1.5e-3,-4"].map((v) => { m.setAttribute("values", v); return JSON.stringify(v) + "=" + L.length + ":" + listOf(L, (n) => n.value) + ":" + JSON.stringify(m.getAttribute("values")); }).join(" | ");
+  });
+  run("svg number list objects", () => {
+    const m = svg("feColorMatrix");
+    const s = svg("svg");
+    const out = [Object.prototype.toString.call(m.values), Object.prototype.toString.call(m.values.baseVal), m.values.baseVal === m.values.baseVal, m.values.animVal === m.values.animVal, m.values.animVal !== m.values.baseVal, m.values === m.values];
+    m.setAttribute("values", "1 2");
+    const L = m.values.baseVal;
+    const n = s.createSVGNumber();
+    n.value = 1 / 3;
+    const appended = L.appendItem(n);
+    out.push(appended === n, L.length, m.getAttribute("values"), tryIt(() => { n.value = 9; return m.getAttribute("values"); }), tryIt(() => { appended.value = 8; return m.getAttribute("values") + " " + n.value; }));
+    const first = L.getItem(0);
+    out.push(first === L.getItem(0), first === L[0], tryIt(() => { first.value = 5; return m.getAttribute("values"); }));
+    m.setAttribute("values", "7 8");
+    out.push(first.value, tryIt(() => { first.value = 6; return m.getAttribute("values"); }), L.getItem(0).value);
+    const other = svg("feColorMatrix");
+    other.setAttribute("values", "1 2");
+    const otherItem = other.values.baseVal.getItem(1);
+    out.push(L.appendItem(otherItem) === otherItem, m.getAttribute("values"), other.getAttribute("values"), tryIt(() => { otherItem.value = 3; return m.getAttribute("values") + "|" + other.getAttribute("values"); }));
+    out.push(L.appendItem(L.getItem(0)).value, m.getAttribute("values"), L.length);
+    return out.join(",");
+  });
+  run("svg number list operations", () => {
+    const m = svg("feColorMatrix");
+    const s = svg("svg");
+    m.setAttribute("values", "1 2 3");
+    const L = m.values.baseVal;
+    const made = () => { const n = s.createSVGNumber(); n.value = 4; return n; };
+    return [tryIt(() => L.insertItemBefore(made(), 99).value), m.getAttribute("values"), tryIt(() => L.insertItemBefore(made(), 0).value), m.getAttribute("values"), tryIt(() => L.replaceItem(made(), 1).value), m.getAttribute("values"), tryIt(() => L.removeItem(0).value), m.getAttribute("values"), tryIt(() => L.initialize(made()).value), m.getAttribute("values"), tryIt(() => L.removeItem(0).value), JSON.stringify(m.getAttribute("values")), tryIt(() => L.appendItem(made()).value), tryIt(() => { L.clear(); return L.length + " " + JSON.stringify(m.getAttribute("values")); }), tryIt(() => L.getItem(0)), tryIt(() => L[0]), tryIt(() => L.removeItem(0)), tryIt(() => L.replaceItem(made(), 0)), tryIt(() => L.appendItem(null)), tryIt(() => L.appendItem({ value: 1 })), tryIt(() => L.getItem(-1)), tryIt(() => L.insertItemBefore(made())), tryIt(() => L.getItem())].join(" | ");
+  });
+  run("svg number list indices", () => {
+    const m = svg("feColorMatrix");
+    const s = svg("svg");
+    m.setAttribute("values", "1 2");
+    const L = m.values.baseVal;
+    const out = [tryIt(() => { L[0] = s.createSVGNumber(); return m.getAttribute("values"); }), tryIt(() => { L[5] = s.createSVGNumber(); return m.getAttribute("values") + " " + L.length; }), tryIt(() => { L[2] = s.createSVGNumber(); }), tryIt(() => { L[1] = 3; }), (function () { "use strict"; try { L[5] = s.createSVGNumber(); return "no error"; } catch (e) { return e.name + ": " + e.message; } })(), Object.keys(L).join(), 0 in L, 5 in L, tryIt(() => { delete L[0]; return L.length; }), JSON.stringify(Object.getOwnPropertyDescriptor(L, 0), (k, v) => (k === "value" ? typeof v : v)), tryIt(() => { Object.defineProperty(L, 0, { value: s.createSVGNumber() }); return m.getAttribute("values"); }), tryIt(() => { Object.defineProperty(L, 0, { get() { return 1; } }); })];
+    const A = m.values.animVal;
+    out.push(A.length, tryIt(() => A.clear()), tryIt(() => A.appendItem(s.createSVGNumber())), tryIt(() => { A.getItem(0).value = 3; }), tryIt(() => { A[0] = s.createSVGNumber(); return A.length; }), A.getItem(0) === A.getItem(0), A.getItem(0) !== L.getItem(0), A.getItem(0).value, tryIt(() => L.appendItem(A.getItem(0)).value), m.getAttribute("values"));
+    const free = s.createSVGNumber();
+    out.push(free.value, tryIt(() => { free.value = NaN; }), tryIt(() => { free.value = "2"; return free.value; }), Object.prototype.toString.call(free), tryIt(() => new SVGNumber()), tryIt(() => new SVGNumberList()));
+    return out.join(" | ");
+  });
+  run("svg number list owners", () => ["feColorMatrix.values", "feFuncR.tableValues", "feFuncA.tableValues", "feConvolveMatrix.kernelMatrix", "text.rotate", "tspan.rotate", "textPath.rotate"].map((p) => { const [t, m] = p.split("."); const e = svg(t); return p + "=" + (e[m] === undefined ? "none" : Object.prototype.toString.call(e[m]) + "/" + e[m].baseVal.length); }).join(" | "));
+  run("svg length list", () => {
+    const t = svg("text");
+    const L = t.x.baseVal;
+    const out = [Object.prototype.toString.call(t.x), Object.prototype.toString.call(L), L === t.x.baseVal];
+    for (const v of ["1 2px", "1,2px", " 1 2", "1,,2", "1 bad", "", "10% 2em 3in", "calc(1px + 1px) var(--x)", "calc(1px) 2", "1 2 ", "1,2,"]) { t.setAttribute("x", v); out.push(JSON.stringify(v) + "=" + L.length + ":" + listOf(L, (l) => l.valueAsString) + ":" + JSON.stringify(t.getAttribute("x"))); }
+    t.setAttribute("x", "1 2px");
+    const first = L.getItem(0);
+    out.push(first.unitType, tryIt(() => { first.value = 3; return t.getAttribute("x"); }), tryIt(() => { first.newValueSpecifiedUnits(2, 50); return t.getAttribute("x"); }), tryIt(() => first.value));
+    const s = svg("svg");
+    const created = s.createSVGLength();
+    created.value = 5;
+    const appended = L.appendItem(created);
+    out.push(appended === created, t.getAttribute("x"), tryIt(() => { created.value = 9; return t.getAttribute("x"); }));
+    const r = svg("rect");
+    r.setAttribute("x", "7mm");
+    out.push(L.appendItem(r.x.baseVal).valueAsString, t.getAttribute("x"), tryIt(() => { r.x.baseVal.value = 1; return t.getAttribute("x") + "|" + r.getAttribute("x"); }));
+    out.push(tryIt(() => L.removeItem(0).valueAsString), tryIt(() => { L.clear(); return JSON.stringify(t.getAttribute("x")); }));
+    out.push(tryIt(() => { t.x.animVal.appendItem(created); }), tryIt(() => { t.setAttribute("x", "1"); t.x.animVal.getItem(0).value = 2; }));
+    s.setAttribute("width", "200");
+    (document.body || document.documentElement).appendChild(s);
+    s.appendChild(t);
+    t.setAttribute("x", "10%");
+    t.setAttribute("y", "10% 20%");
+    s.setAttribute("height", "50");
+    out.push(tryIt(() => L.getItem(0).value), tryIt(() => t.y.baseVal.getItem(1).value), tryIt(() => t.dx.baseVal.length));
+    s.remove();
+    const span = svg("tspan");
+    out.push([span.x, span.y, span.dx, span.dy].map((a) => a.baseVal.length).join(","));
+    return out.join(" | ");
+  });
+  run("svg string list", () => {
+    const g = svg("g");
+    const R = g.requiredExtensions;
+    const Y = g.systemLanguage;
+    const out = [Object.prototype.toString.call(R), R.length, R === g.requiredExtensions, Y === g.systemLanguage, R !== Y];
+    for (const v of ["a b", " a  b ", "a,b", "", "a\tb\nc", ",a,", " , "]) { g.setAttribute("systemLanguage", v); out.push("lang " + JSON.stringify(v) + "=" + Y.length + ":" + listOf(Y, (x) => x).replaceAll(";", "|")); }
+    for (const v of ["x y", " x  y ", "x,y", "", "a\tb\nc"]) { g.setAttribute("requiredExtensions", v); out.push("ext " + JSON.stringify(v) + "=" + R.length + ":" + listOf(R, (x) => x).replaceAll(";", "|")); }
+    g.setAttribute("requiredExtensions", "x y");
+    out.push(R.appendItem("z"), g.getAttribute("requiredExtensions"), R.insertItemBefore("w", 0), g.getAttribute("requiredExtensions"), R.replaceItem("q", 1), R.removeItem(0), g.getAttribute("requiredExtensions"), R.initialize("only"), g.getAttribute("requiredExtensions"), tryIt(() => R.getItem(5)), tryIt(() => R[5]), R[0], tryIt(() => { R[0] = "set"; return g.getAttribute("requiredExtensions"); }), tryIt(() => { R.appendItem("a b"); return R.length + " " + g.getAttribute("requiredExtensions"); }), tryIt(() => R.removeItem(9)), tryIt(() => { R.clear(); return JSON.stringify(g.getAttribute("requiredExtensions")); }), tryIt(() => R.getItem(0)));
+    g.setAttribute("systemLanguage", "en, fr");
+    out.push(Y.appendItem("de"), g.getAttribute("systemLanguage"), tryIt(() => { Y[1] = 5; return g.getAttribute("systemLanguage"); }), tryIt(() => { Y.removeItem(0); Y.removeItem(0); Y.removeItem(0); return JSON.stringify(g.getAttribute("systemLanguage")); }));
+    const o = new MutationObserver(() => {});
+    o.observe(g, { attributes: true });
+    R.appendItem("m");
+    Y.appendItem("n");
+    out.push(o.takeRecords().length);
+    out.push(["a", "circle", "text", "use", "animate", "set", "svg", "switch", "foreignObject", "clipPath", "mask", "linearGradient", "pattern", "filter", "marker", "tspan", "image", "defs", "symbol", "stop", "view"].map((n) => n + ":" + (svg(n).requiredExtensions === undefined ? "-" : "+")).join(""));
+    return out.join(" | ");
+  });
   return JSON.stringify(cases, null, 1);
 })()
