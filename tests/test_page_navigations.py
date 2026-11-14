@@ -718,6 +718,38 @@ def test_intercept_makes_a_navigation_within_the_document_that_ends_with_its_han
     assert server.paths() == ["/"]
 
 
+def test_a_navigate_that_keeps_the_document_stays_pending_until_another_starts(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.routes["/nothing"] = _Route(status=204)
+    url = server.page("/", _NAVIGATION_EVENTS)
+
+    with _open_page(session, url) as page:
+        page.evaluate(
+            "window.outcome = []; const result = navigation.navigate('/nothing');"
+            "result.committed.then(() => outcome.push('committed'), (e) => outcome.push('committed ' + e.name));"
+            "result.finished.then(() => outcome.push('finished'), (e) => outcome.push('finished ' + e.name)); 0"
+        )
+        assert _next(page) == PageNavigation(url=server.url("/nothing"), status=204, kept_document=True)
+        # Chrome drops such a navigation and leaves its navigate event ongoing, so its promises wait, until the next
+        # navigation aborts it.
+        assert page.evaluate("later().then(() => outcome)") == []
+        assert page.evaluate(
+            "location.hash = 'later'; later().then((events) => [outcome,"
+            "events.map((e) => e[0] === 'navigateerror' ? e.slice(0, 2) : e[0])])"
+        ) == [
+            ["committed AbortError", "finished AbortError"],
+            [
+                ["navigateerror", _ABORTED],
+                "navigate",
+                "currententrychange",
+                "popstate",
+                "navigatesuccess",
+                "hashchange",
+            ],
+        ]
+
+
 def test_navigate_refuses_what_chrome_refuses(session: mitto.Session, server: _Server) -> None:
     url = server.page("/", _NAVIGATION_EVENTS)
     other_origin = url.replace("127.0.0.1", "localhost")
