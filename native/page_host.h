@@ -403,7 +403,9 @@ class PageHost final : public PageChannel::Delegate {
   FrameTree FrameTreeOf(uint64_t id) const;
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
-  void OnCacheStorage(PageCacheStorageCall call, const GURL& document_url);
+  void OnCacheStorage(PageCacheStorageCall call,
+                      uint64_t context_id,
+                      const GURL& document_url);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.

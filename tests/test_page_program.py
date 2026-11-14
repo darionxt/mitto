@@ -742,6 +742,7 @@ _COOKIE_STORE_GET = 19
 _COOKIE_STORE_COOKIES = 22
 _COOKIE_STORE_STORED = 23
 _COOKIE_STORE_CHANGE = 24
+_BROADCAST_RECEIVED = 26
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
 _DOCUMENT_URL = "http://www.example.test/page"
@@ -1174,6 +1175,25 @@ def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Sess
     assert session.evaluated() == (2, False, "null")
     for number in (1, 2, 3):
         _end(session, number, -2)
+    assert session.close() == 0
+
+
+def test_a_broadcast_from_another_page_reaches_only_the_channels_of_its_origin(session: _Session) -> None:
+    # The Session names the origin of the Page that sent it. A channel that it reaches fires an event, whatever its
+    # bytes read back as.
+    session.start()
+    _loaded(session)
+    assert session.evaluate(
+        "window.heard = []; const channel = new BroadcastChannel('news');"
+        " channel.onmessage = channel.onmessageerror = (e) => heard.push(e.type); 'listening'"
+    ) == (False, '"listening"')
+    for origin in (b"http://elsewhere.test", b"http://www.example.test"):
+        session.send(_BROADCAST_RECEIVED, _sized(origin) + _sized(b"news") + b"\x00" + b"not a value")
+
+    assert session.evaluate("new Promise((resolve) => setTimeout(() => resolve(heard.length), 50))", call=2) == (
+        False,
+        "1",
+    )
     assert session.close() == 0
 
 

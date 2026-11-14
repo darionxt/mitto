@@ -170,7 +170,7 @@ enum class PageMessage : uint32_t {
   // whose documents are of the same origin.
   kBroadcast = 25,
   // To the Page: a message of a BroadcastChannel of another Page of the
-  // Session whose document is of the same origin, as PageBroadcast says.
+  // Session whose context is of the origin it names, as PageBroadcast says.
   kBroadcastReceived = 26,
   // 27 to 39 are the storage messages' to come.
   // To the Session: what the document's CacheStorage or one of its Caches
@@ -822,6 +822,10 @@ struct PageBroadcast {
   std::string name;
   bool locked = false;
   std::string data;
+  // For kBroadcastReceived: the serialized origin of the documents that sent
+  // it, whose channels alone it reaches. Its payload starts with it, after its
+  // size.
+  std::string origin;
 };
 
 // A frame from a Page, once checked. Which fields it uses depends on `type`.
@@ -970,6 +974,8 @@ std::string EncodeCookieStoreStored(uint64_t answer, bool stored);
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
 // Whether a broadcast fits in a frame, with the ID of its document.
 bool BroadcastFits(const PageBroadcast& broadcast);
+// Whether a received broadcast fits in a frame, with its origin.
+bool BroadcastReceivedFits(const PageBroadcast& broadcast);
 // The broadcast fits in a frame.
 std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
 // The frame of a call of document `document`'s Cache API.

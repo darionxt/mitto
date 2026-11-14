@@ -1759,6 +1759,18 @@ bool BroadcastFits(const PageBroadcast& broadcast) {
          broadcast.data.size() <= kMaxPayloadSize - 13 - broadcast.name.size();
 }
 
+bool BroadcastReceivedFits(const PageBroadcast& broadcast) {
+  // The origin and the name after their sizes, the byte that says whether it
+  // is locked, and the data.
+  const size_t fixed = 4 + 4 + 1;
+  return broadcast.origin.size() <= kMaxPayloadSize - fixed &&
+         broadcast.name.size() <=
+             kMaxPayloadSize - fixed - broadcast.origin.size() &&
+         broadcast.data.size() <= kMaxPayloadSize - fixed -
+                                      broadcast.origin.size() -
+                                      broadcast.name.size();
+}
+
 namespace {
 
 std::string EncodeBroadcastPayload(const PageBroadcast& broadcast) {
@@ -1782,7 +1794,8 @@ std::string EncodeCacheStorage(uint64_t document,
 
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
   return EncodeFrame(PageMessage::kBroadcastReceived,
-                     EncodeBroadcastPayload(broadcast));
+                     base::StrCat({EncodeSized(broadcast.origin),
+                                   EncodeBroadcastPayload(broadcast)}));
 }
 
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
@@ -2158,12 +2171,18 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       return frame;
     }
     case PageMessage::kBroadcastReceived: {
+      std::string_view bytes = payload;
+      std::string_view origin;
+      if (!TakeSized(bytes, origin) || !IsText(origin)) {
+        return base::unexpected("a received broadcast that is not valid");
+      }
       base::expected<PageBroadcast, std::string> broadcast =
-          ReadBroadcast(payload);
+          ReadBroadcast(bytes);
       if (!broadcast.has_value()) {
         return base::unexpected(std::move(broadcast).error());
       }
       frame.broadcast = *std::move(broadcast);
+      frame.broadcast.origin = std::string(origin);
       return frame;
     }
     case PageMessage::kCacheStorageAnswer: {

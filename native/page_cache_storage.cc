@@ -123,8 +123,14 @@ bool IsPutValid(const PageCacheOperation& operation) {
 // The body of a put, which comes from the Page as the cache asks for it.
 class PageCacheStorage::PutBody final : public CacheBodySource {
  public:
-  PutBody(base::WeakPtr<PageCacheStorage> host, uint64_t body, uint64_t size)
-      : host_(std::move(host)), body_(body), remaining_(size) {}
+  PutBody(base::WeakPtr<PageCacheStorage> host,
+          uint64_t body,
+          uint64_t size,
+          uint64_t context)
+      : host_(std::move(host)),
+        body_(body),
+        remaining_(size),
+        context_(context) {}
 
   ~PutBody() override {
     if (host_) {
@@ -133,6 +139,8 @@ class PageCacheStorage::PutBody final : public CacheBodySource {
   }
 
   uint64_t body() const { return body_; }
+  // The Page's context that put it.
+  uint64_t context() const { return context_; }
   bool waiting() const { return !done_.is_null(); }
   uint32_t wanted() const { return wanted_; }
 
@@ -157,7 +165,7 @@ class PageCacheStorage::PutBody final : public CacheBodySource {
     std::move(done_).Run(std::move(bytes));
   }
 
-  // The Page has gone, or its document with it.
+  // The Page has gone, or the context that put it.
   void Failed() {
     host_.reset();
     if (done_) {
@@ -170,6 +178,7 @@ class PageCacheStorage::PutBody final : public CacheBodySource {
   base::WeakPtr<PageCacheStorage> host_;
   const uint64_t body_;
   uint64_t remaining_;
+  const uint64_t context_;
   uint32_t wanted_ = 0;
   base::OnceCallback<void(std::optional<std::string>)> done_;
 };
@@ -202,6 +211,18 @@ PageCacheStorage::PageCacheStorage(CacheStorageContext& context,
 
 uint64_t PageCacheStorage::NextNumber() const {
   return std::max(next_cache_, next_stored_body_);
+}
+
+void PageCacheStorage::ForgetContexts(const std::set<uint64_t>& contexts) {
+  // Each fails from a task of its own, and no longer counts as the Page's.
+  for (auto it = put_bodies_.begin(); it != put_bodies_.end();) {
+    if (!contexts.contains(it->second->context())) {
+      ++it;
+      continue;
+    }
+    it->second->Failed();
+    it = put_bodies_.erase(it);
+  }
 }
 
 PageCacheStorage::~PageCacheStorage() {
@@ -245,6 +266,7 @@ CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
 }
 
 void PageCacheStorage::OnCall(PageCacheStorageCall call,
+                              uint64_t context,
                               const std::optional<std::string>& storage_key) {
   switch (call.op) {
     case CacheStorageCallOp::kBodyPart:
@@ -430,7 +452,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call,
       if (!cache) {
         return;
       }
-      OnCacheBatch(std::move(call), *cache);
+      OnCacheBatch(std::move(call), context, *cache);
       return;
     }
     case CacheStorageCallOp::kBodyPart:
@@ -494,6 +516,7 @@ void PageCacheStorage::OnMatch(PageCacheStorageCall call,
 }
 
 void PageCacheStorage::OnCacheBatch(PageCacheStorageCall call,
+                                    uint64_t context,
                                     CacheStorageCache& cache) {
   std::vector<CacheStorageCache::BatchOperation> operations;
   for (PageCacheOperation& operation : call.operations) {
@@ -517,8 +540,9 @@ void PageCacheStorage::OnCacheBatch(PageCacheStorageCall call,
                                   base::NumberToString(body)}));
         return;
       }
-      auto put_body = std::make_unique<PutBody>(
-          weak_factory_.GetWeakPtr(), body, operation.response.body_size);
+      auto put_body =
+          std::make_unique<PutBody>(weak_factory_.GetWeakPtr(), body,
+                                    operation.response.body_size, context);
       put_bodies_.emplace(body, put_body.get());
       batch_operation.body = std::move(put_body);
     }

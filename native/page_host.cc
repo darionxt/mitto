@@ -1715,6 +1715,7 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast,
 }
 
 void PageHost::OnCacheStorage(PageCacheStorageCall call,
+                              uint64_t context_id,
                               const GURL& document_url) {
   if (!cache_storage_) {
     cache_storage_ = std::make_unique<PageCacheStorage>(
@@ -1735,7 +1736,7 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
             weak_factory_.GetWeakPtr()),
         next_cache_storage_number_);
   }
-  cache_storage_->OnCall(std::move(call),
+  cache_storage_->OnCall(std::move(call), context_id,
                          DocumentCacheStorageKey(document_url));
 }
 
@@ -1757,15 +1758,22 @@ std::optional<std::string> PageHost::DocumentCacheStorageKey(
 
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
-  // The Page hands it to each of its contexts of that origin, if it has one.
+  // The Page hands it to the channels of its contexts of that origin, if it
+  // has one. A message too large for a frame with its origin stays out, as
+  // one too large for a frame stays in the Page that posts it.
   if (!channel_ || ended_ || refused_by_library_ ||
       std::ranges::none_of(contexts_, [&origin](const auto& entry) {
-        return DocumentHasCookies(entry.second.url) &&
+        return DocumentHasCookies(ContextUrl(entry.second)) &&
                entry.second.origin.IsSameOriginWith(origin);
       })) {
     return;
   }
-  channel_->Send(EncodeBroadcastReceived(broadcast));
+  PageBroadcast received = broadcast;
+  received.origin = origin.Serialize();
+  if (!BroadcastReceivedFits(received)) {
+    return;
+  }
+  channel_->Send(EncodeBroadcastReceived(received));
 }
 
 void PageHost::Evaluate(uint64_t call, std::string script) {
@@ -1973,6 +1981,11 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
     contexts_.erase(id);
     // Its CookieStore listened over a pipe that went with it.
     cookie_store_listeners_.erase(id);
+  }
+  // Its Cache API's puts that wait for a body fail, as its pipes go with it in
+  // Chrome, so that none holds its cache.
+  if (cache_storage_) {
+    cache_storage_->ForgetContexts(ids);
   }
   std::erase_if(frame_navigation_responses_, [&ids](const auto& entry) {
     return ids.contains(entry.second.parent) ||
@@ -2298,7 +2311,8 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnDocumentCommitted(frame->committed);
       return;
     case PageMessage::kCacheStorage:
-      OnCacheStorage(std::move(frame->cache_storage_call), document_url);
+      OnCacheStorage(std::move(frame->cache_storage_call), frame->document,
+                     document_url);
       return;
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
