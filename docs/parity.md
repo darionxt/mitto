@@ -263,6 +263,14 @@ So the rules of `content`, `components` and Blink are what comes from outside `/
 
 A **Persona**'s lines arrive at the native core with the rest of the headers, each in its place, along with what `network::ResourceRequest` would say: `mode`, `destination`, `credentials_mode`, `has_user_activation` and `initiator`. `fixed_headers` names what a caller gave or removed, which no rule touches. A request with none of this, which only `mitto._native` can make, sends what its headers say.
 
+## A CORS preflight
+
+`native/cors_preflight.cc` ports what Chrome's network service does for a request in cors mode, with the upstream names kept: `NeedsPreflight()` and `CheckPreflightRequired()` from `services/network/cors/cors_url_loader.cc`, `CreatePreflightRequest()` and `PreflightLoader` from `preflight_controller.cc`, `PreflightResult` and `PreflightCache` from `preflight_result.cc` and `preflight_cache.cc`, `CorsUnsafeNotForbiddenRequestHeaderNames()` from `cors_util.cc`, and `IsCorsSafelistedHeader()` and `CheckAccess()` from `services/network/public/cpp/cors/cors.cc`. The features they read are at their defaults: `kCorsPreflightCacheKeyTaintedOrigin` on, so a tainted request neither reads the cache nor adds to it, `kCorsNonWildcardRequestHeadersSupport` off, and a network context's `acam_preflight_spec_conformant` true. `RequestJob` holds a request back until its preflight has answered, at its start and at a redirect, as `CorsURLLoader` does with `kAvoidCorsURLLoaderRestartOnRedirect` on by default, and the cache is the Session's, as a network context's is.
+
+### What stays different
+
+- Chrome reports a failed preflight to DevTools and the console, which a Session has not.
+
 ## Client hints
 
 What a server asks for ([the rules](persona.md#client-hints)) lives in a `ClientHintsStore` in each **Session**, on the network thread, so that the native core can read it on each hop with nothing to ask Python. All of this is outside the source export and is ported with its names kept:
