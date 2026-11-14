@@ -82,17 +82,18 @@
 // An error that no script caught, such as a promise rejected with no handler.
 // The Page goes on.
 #define MITTO_PAGE_EVENT_UNCAUGHT_ERROR 4
-// A navigation has its response, after any redirects, and the document it
-// loads takes the place of the Page's document; or it ended with no document,
-// as one whose response is a 204 or a download does, with the net error
-// ERR_ABORTED and the response's status, and the Page keeps its document; or
-// it failed before a response, and the Page keeps its document. Each
+// A navigation has its response, after any redirects, and the Page has made
+// the document that takes the place of its own, after every event of the old
+// one; or it ended with no document, as one whose response is a 204 or a
+// download does, with the net error ERR_ABORTED and the response's status,
+// and the Page keeps its document; or another took its place before the Page
+// made its document, with ERR_ABORTED and the status 0; or it failed before a
+// response, and the Page keeps its document. Each
 // navigation has one: the one that mitto_page_open() started, and each that
 // a MITTO_PAGE_EVENT_NAVIGATION_STARTED said, in the order they started.
 #define MITTO_PAGE_EVENT_NAVIGATED 5
 // The window's load event has been dispatched: the document and its classic
-// scripts have loaded and run. None comes for a document whose place a
-// navigation takes once its MITTO_PAGE_EVENT_NAVIGATED event has come.
+// scripts have loaded and run.
 #define MITTO_PAGE_EVENT_LOADED 6
 // The document reached a member whose behaviour the Runtime lacks, a Known
 // Gap, for the first time: each document reports each one once, as Chrome's
