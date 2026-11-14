@@ -11,7 +11,7 @@ export MITTO_NATIVE_LIBRARY="$MITTO_WORKSPACE/chromium-<tag>/src/out/mitto/libmi
 uv run pytest tests/parity
 ```
 
-On Linux the file is `libmitto_core.so`. Without a native library, the tests that make requests are skipped and the others still run.
+On Linux the file is `libmitto_core.so`. Without a native library, the tests that make requests are skipped and the others still run. The cases that only a page makes, which a **Page** replays, are checked by a test of their own, which needs the Page program beside the native library, as CI's native job installs it on every **Host**, and is skipped elsewhere. `uv run python -m tools.parity` needs it too, as it writes their gaps into the same list.
 
 ## What a check does
 
@@ -54,6 +54,7 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 | `client_hints_*` | A navigation to the page that asks, as `asks` in its `Replay` says, and then the case, as for the cases above | Nothing |
+| `navigation_location`, `navigation_click`, `navigation_meta_refresh`, `redirect_location_*` | Nothing through the Session: a **Page** opens at the page the case came from, and its document navigates as that page's did, with no user's activation and so no `Sec-Fetch-User`, until a navigation lands where the case's ends. The page of `navigation_location` asks for web fonts, modules, workers and beacons that a Page does not yet before its script sets `location`, so the replay takes that last step itself; the others navigate on their own, by a click, a refresh and `location`. These need the Page program beside the native library, and [a test of their own](#run-them) checks them | Nothing |
 | The cases of documents | The case's path at its name, with the Request Kind of what asked for it, from the page that asked for it, which its `Referer` names: a stylesheet for its `@import` and fonts, a module for what it imports, the cross-site frame for what it asks for. `asks` sets the cookies that a case carries first, as the case's run did, and `credentials` and `mode` say what the page's `fetch()` asked for | What only a page can say of a request, whose cases a check skips, as [below](#what-a-session-cannot-replay-of-a-document) |
 
 The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
@@ -64,7 +65,6 @@ A Session replays the cases of documents as a caller would make them. A page mak
 
 | Cases | What a caller cannot say | Who makes a Page make them |
 | --- | --- | --- |
-| `navigation_location`, `navigation_click`, `navigation_meta_refresh`, `redirect_location_*` | That no user started the navigation, so it has no `Sec-Fetch-User` | [#279](https://github.com/darionxt/mitto/issues/279) |
 | `navigation_history_back` | That it traverses history, without a user's activation | [#280](https://github.com/darionxt/mitto/issues/280) |
 | `xhr_get_sync`, `xhr_post_text_sync` | That the request is synchronous, which Blink gives the highest priority | [#283](https://github.com/darionxt/mitto/issues/283) |
 | `worker_import_scripts`, `worker_fetch`, `worker_blob_fetch` | That a worker asks for it, which sends no hints, at the worker's priority, and with no `Referer` from a `blob:` worker | [#289](https://github.com/darionxt/mitto/issues/289) |
