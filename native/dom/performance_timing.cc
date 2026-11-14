@@ -71,18 +71,22 @@ uint64_t PerformanceTiming::NavigationStart() const {
   return ToIntegerMilliseconds(timing_->navigation_start);
 }
 
-// A Page's document never follows another from which it could request, as a
-// new tab's first one does not.
+// The old document's unload times, for a document of its origin that no
+// redirect to another origin led to, as Blink gives them.
 uint64_t PerformanceTiming::UnloadEventStart() const {
-  return timing_->has_same_origin_as_previous_document
-             ? ToIntegerMilliseconds(timing_->unload_event_start)
-             : 0;
+  if (timing_->has_cross_origin_redirect ||
+      !timing_->has_same_origin_as_previous_document) {
+    return 0;
+  }
+  return ToIntegerMilliseconds(timing_->unload_event_start);
 }
 
 uint64_t PerformanceTiming::UnloadEventEnd() const {
-  return timing_->has_same_origin_as_previous_document
-             ? ToIntegerMilliseconds(timing_->unload_event_end)
-             : 0;
+  if (timing_->has_cross_origin_redirect ||
+      !timing_->has_same_origin_as_previous_document) {
+    return 0;
+  }
+  return ToIntegerMilliseconds(timing_->unload_event_end);
 }
 
 uint64_t PerformanceTiming::RedirectStart() const {
