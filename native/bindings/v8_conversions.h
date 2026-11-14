@@ -72,25 +72,20 @@ bool FromV8NullableUSVString(v8::Isolate* isolate,
 
 // Converts `value` to one of Web IDL's integer types of 32 bits or fewer, as
 // ConvertToInt() does without [EnforceRange] or [Clamp]: ToNumber(), then the
-// integer modulo 2 to the type's bits, which is what ToInt32() or ToUint32()
-// and then the type's low bits give. Returns false if that threw.
+// integer modulo 2 to the type's bits, which ToInt32() and then the type's low
+// bits give for a signed type and an unsigned one alike. Not Uint32Value(),
+// whose ToUint32() turns a negative small integer that a string or an object
+// gave into 0, so that "-1" would be 0 rather than 4294967295. Returns false
+// if that threw.
 template <typename T>
 bool FromV8Integer(v8::Isolate* isolate, v8::Local<v8::Value> value, T* result)
   requires(std::is_integral_v<T> && sizeof(T) <= 4)
 {
-  if constexpr (std::is_signed_v<T>) {
-    int32_t number;
-    if (!value->Int32Value(isolate->GetCurrentContext()).To(&number)) {
-      return false;
-    }
-    *result = static_cast<T>(number);
-  } else {
-    uint32_t number;
-    if (!value->Uint32Value(isolate->GetCurrentContext()).To(&number)) {
-      return false;
-    }
-    *result = static_cast<T>(number);
+  int32_t number;
+  if (!value->Int32Value(isolate->GetCurrentContext()).To(&number)) {
+    return false;
   }
+  *result = static_cast<T>(static_cast<uint32_t>(number));
   return true;
 }
 
