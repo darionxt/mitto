@@ -135,7 +135,7 @@ Goal: real pages load and run as they do in Chrome.
 - Navigation: `readyState`, `DOMContentLoaded` and `load`, `location` and history, redirects, `<meta http-equiv="refresh">` and form submission, each as a navigation through the Session.
 - Frames, with documents of their own and Chrome's rules for access between origins. The Initiator learns which frame a request comes from.
 - More Request Kinds, for what pages request: `XMLHttpRequest`, styles, fonts, frames, workers and `sendBeacon()`, and CORS preflights and the `credentials` modes of `fetch()`.
-- `localStorage`, `sessionStorage` and IndexedDB, saved with the Session as its cookies are.
+- `localStorage`, `sessionStorage`, IndexedDB and the Cache API, which the Session keeps for all its Pages, in a directory of its own or in memory ([ADR-0010](adr/0010-a-directory-of-its-own-for-page-storage.md)). `sessionStorage` lasts as long as its Page.
 - Dedicated workers.
 - Tests from web-platform-tests. The Engine Release's tree records Chrome's own results for them, so mitto is held to Chrome's results, failures included.
 - **Exit:** the chosen directories of web-platform-tests give Chrome's results, and the Parity Checks pass in frames and workers as well as in top-level pages.
