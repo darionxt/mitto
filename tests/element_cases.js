@@ -1785,6 +1785,11 @@
     s.setAttribute("viewBox", "0 0 100 40");
     s.viewBox.baseVal.width = 60;
     out.push(s.getAttribute("viewBox"), tryIt(() => r.width.baseVal.value));
+    s.viewBox.baseVal.width = 1000001;
+    out.push(s.getAttribute("viewBox"), tryIt(() => r.width.baseVal.value));
+    s.removeAttribute("viewBox");
+    s.height.baseVal.value = 1000003;
+    out.push(s.getAttribute("height"), tryIt(() => r.height.baseVal.value));
     outer.remove();
     return out.join(" | ");
   });

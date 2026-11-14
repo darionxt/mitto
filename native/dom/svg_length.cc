@@ -24,6 +24,7 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/media_query_list.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_elements.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/visitor.h"
 
@@ -129,8 +130,10 @@ float ResolveToUserUnits(const SVGLengthValue& value,
 // SVGViewportResolver: one size of the viewport that a percentage of
 // `element`'s takes, from the nearest svg element above it: its viewBox's,
 // or else its width or height, which needs only the same size of the svg
-// element's own viewport. An outermost svg element's size is its layout
-// box's in Blink, which the window stands for here.
+// element's own viewport. Each is the svg element's value, which keeps what a
+// page set beyond the six digits of its attribute, as Blink's current values
+// do. An outermost svg element's size is its layout box's in Blink, which the
+// window stands for here.
 float ViewportSize(const SVGElement& element, bool width) {
   for (Node* node = element.ParentNode(); node; node = node->ParentNode()) {
     if (!node->IsElementNode()) {
@@ -142,23 +145,16 @@ float ViewportSize(const SVGElement& element, bool width) {
         ancestor->LocalName() != u"svg") {
       continue;
     }
-    const SVGElement& svg = static_cast<const SVGElement&>(*ancestor);
-    if (const std::u16string* view_box = svg.FindAttribute(u"viewBox")) {
-      const std::optional<std::array<float, 4>> numbers =
-          ParseSVGRect(*view_box);
-      // A viewBox of no area is empty, which the svg element's own size
-      // stands for.
-      if (numbers && (*numbers)[2] > 0 && (*numbers)[3] > 0) {
-        return width ? (*numbers)[2] : (*numbers)[3];
-      }
+    SVGSVGElement& svg = static_cast<SVGSVGElement&>(*ancestor);
+    // A viewBox of no area, or none, is empty, which the svg element's own
+    // size stands for.
+    const SVGRectValue& view_box = svg.ViewBox()->BaseValue();
+    if (view_box.width > 0 && view_box.height > 0) {
+      return width ? view_box.width : view_box.height;
     }
-    const std::u16string* text =
-        svg.FindAttribute(width ? u"width" : u"height");
-    const std::optional<SVGLengthValue> value =
-        text ? SVGLengthValue::Parse(*text) : std::nullopt;
     return ResolveToUserUnits(
-        value.value_or(SVGLengthValue::Literal(100, CssUnit::kPercentage)),
-        &svg, width ? SVGLengthMode::kWidth : SVGLengthMode::kHeight);
+        (width ? svg.Width() : svg.Height())->BaseValue(), &svg,
+        width ? SVGLengthMode::kWidth : SVGLengthMode::kHeight);
   }
   const CssLengthResolver resolver = ResolverFor(&element);
   return static_cast<float>(width ? resolver.viewport_width
