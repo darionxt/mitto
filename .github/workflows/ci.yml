@@ -271,3 +271,59 @@ jobs:
           MITTO_PAGE_PROGRAM="$("$ENVIRONMENT_PYTHON" -c 'import importlib.util, os, sys; print(os.path.join(importlib.util.find_spec("mitto").submodule_search_locations[0], sys.argv[1]))' "$PAGE_PROGRAM")"
           export MITTO_PAGE_PROGRAM
           "$ENVIRONMENT_PYTHON" -m pytest -rs tests/test_page_process.py
+
+  wpt:
+    name: web-platform-tests on ${{ matrix.runner }}
+    # From the wheel that the native job built on the same Host, so it waits for that job on every Host. A draft pull
+    # request builds no wheel, and runs this once it is marked ready for review.
+    needs: native
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            environment-python: bin/python
+          - runner: xcode-27
+            environment-python: bin/python
+          - runner: windows-2025-vs2026
+            environment-python: Scripts/python.exe
+    env:
+      UV_LOCKED: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The copy of web-platform-tests holds files whose line endings a test checks.
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheel-${{ matrix.runner }}
+          path: ${{ runner.temp }}/dist
+      # As the native job installs it, so that the Pages run the Page program of the installed package.
+      - name: Install the wheel
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wheel-env
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
+        run: |
+          uv sync --no-install-project
+          uv pip install --python "$ENVIRONMENT_PYTHON" "$RUNNER_TEMP"/dist/*.whl
+      # Against Chrome's results and the list of differences in tests/wpt. docs/wpt.md says how to write the list from
+      # the results that this keeps. Most Pages wait out a timeout with nothing to do, so 12 run at once on 4 cores.
+      - name: Run web-platform-tests
+        env:
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
+        run: |
+          "$ENVIRONMENT_PYTHON" -m tools.wpt run --jobs 12 --results "$RUNNER_TEMP/wpt-results.json"
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wpt-results-${{ matrix.runner }}
+          path: ${{ runner.temp }}/wpt-results.json
+          if-no-files-found: ignore
