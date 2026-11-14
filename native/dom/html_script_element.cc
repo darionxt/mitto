@@ -113,6 +113,85 @@ void HTMLScriptElement::SetStartPosition(int line, int column) {
   start_column_ = column;
 }
 
+Element& HTMLScriptElement::AsElement() {
+  return *this;
+}
+
+const Element& HTMLScriptElement::AsElement() const {
+  return *this;
+}
+
+ScriptLoader& HTMLScriptElement::Loader() const {
+  return *loader_;
+}
+
+int HTMLScriptElement::StartLine() const {
+  return start_line_;
+}
+
+int HTMLScriptElement::StartColumn() const {
+  return start_column_;
+}
+
+std::optional<std::u16string> HTMLScriptElement::SourceAttributeValue()
+    const {
+  return GetAttribute(u"src");
+}
+
+std::optional<std::u16string> HTMLScriptElement::TypeAttributeValue() const {
+  return GetAttribute(u"type");
+}
+
+std::optional<std::u16string> HTMLScriptElement::LanguageAttributeValue()
+    const {
+  return GetAttribute(u"language");
+}
+
+std::optional<std::u16string> HTMLScriptElement::EventAttributeValue() const {
+  return GetAttribute(u"event");
+}
+
+std::optional<std::u16string> HTMLScriptElement::ForAttributeValue() const {
+  return GetAttribute(u"for");
+}
+
+std::optional<std::u16string> HTMLScriptElement::CharsetAttributeValue()
+    const {
+  return GetAttribute(u"charset");
+}
+
+std::optional<std::u16string> HTMLScriptElement::IntegrityAttributeValue()
+    const {
+  return GetAttribute(u"integrity");
+}
+
+std::optional<std::u16string> HTMLScriptElement::CrossOriginAttributeValue()
+    const {
+  return GetAttribute(u"crossorigin");
+}
+
+std::optional<std::u16string> HTMLScriptElement::ReferrerPolicyAttributeValue()
+    const {
+  return GetAttribute(u"referrerpolicy");
+}
+
+std::optional<std::u16string> HTMLScriptElement::FetchPriorityAttributeValue()
+    const {
+  return GetAttribute(u"fetchpriority");
+}
+
+bool HTMLScriptElement::AsyncAttributeValue() const {
+  return HasAttribute(u"async");
+}
+
+bool HTMLScriptElement::DeferAttributeValue() const {
+  return HasAttribute(u"defer");
+}
+
+bool HTMLScriptElement::NomoduleAttributeValue() const {
+  return HasAttribute(u"nomodule");
+}
+
 bool HTMLScriptElement::IsPotentiallyRenderBlocking() const {
   if (const std::optional<std::u16string> blocking =
           GetAttribute(u"blocking")) {

@@ -35,7 +35,6 @@ namespace mitto {
 
 class Document;
 class Element;
-class HTMLScriptElement;
 class HtmlTokenizer;
 class HtmlTreeBuilder;
 
@@ -95,7 +94,7 @@ class HtmlDocumentParser {
   // end tag it reached, where the standard would run the script before it
   // goes on, or null once it needs more markup or has reached the end. Call
   // it again to go on.
-  HTMLScriptElement* Pump();
+  Element* Pump();
 
   // The rules the tree builder could not follow so far, each once, in the
   // order it first met them.

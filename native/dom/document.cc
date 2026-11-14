@@ -1004,11 +1004,11 @@ bindings::ScriptWrappable* Document::CurrentScriptForBinding() const {
   return current_script_stack_.empty() ? nullptr : current_script_stack_.back();
 }
 
-void Document::PushCurrentScript(HTMLScriptElement* element) {
+void Document::PushCurrentScript(Element* element) {
   current_script_stack_.push_back(element);
 }
 
-void Document::PopCurrentScript(HTMLScriptElement* element) {
+void Document::PopCurrentScript(Element* element) {
   CHECK_EQ(current_script_stack_.back(), element);
   current_script_stack_.pop_back();
 }

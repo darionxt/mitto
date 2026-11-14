@@ -12,7 +12,9 @@
 
 #include <string>
 
+#include "mitto/dom/script_element_base.h"
 #include "mitto/dom/svg_element.h"
+#include "v8/include/cppgc/member.h"
 
 namespace mitto {
 
@@ -829,13 +831,66 @@ class SVGSVGElement final : public SVGGraphicsElement {
   SVGTransform* CreateSVGTransformFromMatrix(SVGMatrix* matrix);
 };
 
-class SVGScriptElement final : public SVGElement {
+// SVG's script element, which its ScriptLoader prepares as it does the HTML
+// Standard's, as Blink's SVGScriptElement has it: its href, or else its
+// xlink:href, is its source, it has async and integrity but no defer,
+// charset, nomodule or crossorigin, and it never blocks rendering.
+// Upstream: third_party/blink/renderer/core/svg/svg_script_element.cc
+class SVGScriptElement final : public SVGElement, public ScriptElementBase {
  public:
   static SVGScriptElement* Create(Document& document);
 
   explicit SVGScriptElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  void Trace(cppgc::Visitor* visitor) const override;
+
+  // What the parser tells it before it inserts it, as HTMLScriptElement's.
+  void SetCreatedByParser(Document& parser_document);
+  void SetAlreadyStarted();
+  void SetStartPosition(int line, int column);
+
+  // ScriptElementBase's.
+  Element& AsElement() override;
+  const Element& AsElement() const override;
+  ScriptLoader& Loader() const override;
+  std::optional<std::u16string> SourceAttributeValue() const override;
+  std::optional<std::u16string> TypeAttributeValue() const override;
+  std::optional<std::u16string> LanguageAttributeValue() const override;
+  std::optional<std::u16string> EventAttributeValue() const override;
+  std::optional<std::u16string> ForAttributeValue() const override;
+  std::optional<std::u16string> CharsetAttributeValue() const override;
+  std::optional<std::u16string> IntegrityAttributeValue() const override;
+  std::optional<std::u16string> CrossOriginAttributeValue() const override;
+  std::optional<std::u16string> ReferrerPolicyAttributeValue() const override;
+  std::optional<std::u16string> FetchPriorityAttributeValue() const override;
+  bool AsyncAttributeValue() const override;
+  bool DeferAttributeValue() const override;
+  bool NomoduleAttributeValue() const override;
+  bool IsPotentiallyRenderBlocking() const override;
+  int StartLine() const override;
+  int StartColumn() const override;
+  void DispatchLoadEvent() override;
+  void DispatchErrorEvent() override;
+
+  // Node's.
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
+  void DidNotifySubtreeInsertionsToDocument() override;
+  void ChildrenChanged(ChildrenChangeType type,
+                       Node& child,
+                       bool by_parser) override;
+  // Element's.
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
+
+ protected:
+  Node* CloneWithoutChildren(Document& document) const override;
+
+ private:
+  cppgc::Member<ScriptLoader> loader_;
+  int start_line_ = 0;
+  int start_column_ = 0;
 };
 
 class SVGSetElement final : public SVGAnimationElement {

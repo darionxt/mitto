@@ -25,6 +25,7 @@
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/qualified_name.h"
+#include "mitto/dom/svg_elements.h"
 #include "mitto/dom/text.h"
 #include "mitto/html/html_token.h"
 #include "mitto/html/html_tokenizer.h"
@@ -499,7 +500,7 @@ class HtmlTreeBuilder {
   HtmlTreeBuilder& operator=(const HtmlTreeBuilder&) = delete;
 
   // Processes one token. Returns the script element whose end tag it was.
-  HTMLScriptElement* ProcessToken(HtmlToken& token) {
+  Element* ProcessToken(HtmlToken& token) {
     ended_script_ = nullptr;
     CompactReferences();
     if (ShouldProcessTokenInForeignContent(token)) {
@@ -1098,7 +1099,27 @@ class HtmlTreeBuilder {
   void InsertForeignElement(const HtmlToken& token,
                             const char16_t* namespace_uri) {
     Element* const element = CreateElement(token, namespace_uri);
+    // SVG's script element is the parser's, as Blink's SVGScriptElement
+    // takes the parser's CreateElementFlags: already started in a fragment,
+    // so that it never runs, and where its text starts.
+    const bool svg_script =
+        std::u16string_view(namespace_uri) == html_names::kSvgNamespace &&
+        element->LocalName() == u"script";
+    if (svg_script) {
+      auto* const script = static_cast<SVGScriptElement*>(element);
+      script->SetCreatedByParser(*document_);
+      if (IsFragment()) {
+        script->SetAlreadyStarted();
+      }
+      const HtmlTokenizer::ZeroBasedPosition position =
+          tokenizer_->TextPosition();
+      script->SetStartPosition(position.line, position.column);
+    }
     AttachOrFosterParent(element, token.self_closing ? nullptr : &token);
+    // A self-closing one acts as its end tag, which processes the script.
+    if (svg_script && token.self_closing) {
+      ended_script_ = element;
+    }
   }
 
   void InsertHTMLFormElement(const HtmlToken& token) {
@@ -2223,7 +2244,7 @@ class HtmlTreeBuilder {
         return;
       case Mode::kText:
         if (name == u"script" && CurrentNodeIs(u"script")) {
-          ended_script_ = static_cast<HTMLScriptElement*>(&CurrentNode());
+          ended_script_ = &CurrentNode();
           Pop();
           mode_ = original_mode_;
           tokenizer_->SetState(HtmlTokenizer::State::kData);
@@ -2884,8 +2905,9 @@ class HtmlTreeBuilder {
         }
         if (token.name == u"script" &&
             IsSvgElementNamed(CurrentNode(), {u"script"})) {
-          // Blink runs the script here. SVG's script element has no class
-          // yet, so it does not run.
+          // The parser processes the script once the element is popped, as
+          // Blink's HTMLTreeBuilder gives its script to process.
+          ended_script_ = &CurrentNode();
           Pop();
           return;
         }
@@ -2936,7 +2958,7 @@ class HtmlTreeBuilder {
   bool frameset_ok_ = true;
   bool skip_leading_newline_ = false;
   bool redirect_to_foster_parent_ = false;
-  raw_ptr<HTMLScriptElement> ended_script_;
+  raw_ptr<Element> ended_script_;
   std::vector<std::string> skipped_rules_;
 };
 
@@ -3015,10 +3037,10 @@ void HtmlDocumentParser::Insert(std::u16string_view markup) {
   tokenizer_->Insert(markup);
 }
 
-HTMLScriptElement* HtmlDocumentParser::Pump() {
+Element* HtmlDocumentParser::Pump() {
   HtmlToken token;
   while (tokenizer_->NextToken(token)) {
-    if (HTMLScriptElement* const script = tree_builder_->ProcessToken(token)) {
+    if (Element* const script = tree_builder_->ProcessToken(token)) {
       return script;
     }
   }

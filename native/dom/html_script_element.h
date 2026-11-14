@@ -12,13 +12,15 @@
 #include <string>
 
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/script_element_base.h"
 #include "v8/include/cppgc/member.h"
 
 namespace mitto {
 
 class ScriptLoader;
 
-class HTMLScriptElement final : public HTMLElement {
+class HTMLScriptElement final : public HTMLElement,
+                                public ScriptElementBase {
  public:
   static HTMLScriptElement* Create(Document& document);
 
@@ -56,17 +58,31 @@ class HTMLScriptElement final : public HTMLElement {
   // column, as Blink's TextPosition: the offsets of an inline script's
   // errors.
   void SetStartPosition(int line, int column);
-  int StartLine() const { return start_line_; }
-  int StartColumn() const { return start_column_; }
 
-  // What the DOM, the parser and the Page use.
-  ScriptLoader& Loader() const { return *loader_; }
+  // ScriptElementBase's.
+  Element& AsElement() override;
+  const Element& AsElement() const override;
+  ScriptLoader& Loader() const override;
+  std::optional<std::u16string> SourceAttributeValue() const override;
+  std::optional<std::u16string> TypeAttributeValue() const override;
+  std::optional<std::u16string> LanguageAttributeValue() const override;
+  std::optional<std::u16string> EventAttributeValue() const override;
+  std::optional<std::u16string> ForAttributeValue() const override;
+  std::optional<std::u16string> CharsetAttributeValue() const override;
+  std::optional<std::u16string> IntegrityAttributeValue() const override;
+  std::optional<std::u16string> CrossOriginAttributeValue() const override;
+  std::optional<std::u16string> ReferrerPolicyAttributeValue() const override;
+  std::optional<std::u16string> FetchPriorityAttributeValue() const override;
+  bool AsyncAttributeValue() const override;
+  bool DeferAttributeValue() const override;
+  bool NomoduleAttributeValue() const override;
   // HTMLScriptElement::IsPotentiallyRenderBlocking(): blocking="render", or a
   // classic script that the parser inserted without async or defer.
-  bool IsPotentiallyRenderBlocking() const;
-  // Fire load and error at the element, which do not bubble.
-  void DispatchLoadEvent();
-  void DispatchErrorEvent();
+  bool IsPotentiallyRenderBlocking() const override;
+  int StartLine() const override;
+  int StartColumn() const override;
+  void DispatchLoadEvent() override;
+  void DispatchErrorEvent() override;
 
   // Node's.
   InsertionNotificationRequest InsertedInto(Node& insertion_point) override;

@@ -337,8 +337,8 @@ class Document : public Node {
   DocumentScriptRunner& GetScriptRunner();
   // The HTML Standard's currentScript, as Blink keeps it for scripts that
   // run inside others.
-  void PushCurrentScript(HTMLScriptElement* element);
-  void PopCurrentScript(HTMLScriptElement* element);
+  void PushCurrentScript(Element* element);
+  void PopCurrentScript(Element* element);
   // Whether no style sheet blocks scripts, which none does while a Page loads
   // no style sheets.
   bool IsScriptExecutionReady() const { return true; }
@@ -505,7 +505,7 @@ class Document : public Node {
   GURL base_element_url_;
   GURL base_url_ = GURL("about:blank");
   cppgc::Member<DocumentScriptRunner> script_runner_;
-  HeapVector<HTMLScriptElement> current_script_stack_;
+  HeapVector<Element> current_script_stack_;
   int load_event_delay_count_ = 0;
   bool load_event_check_pending_ = false;
   cppgc::Member<DocumentParser> parser_;
