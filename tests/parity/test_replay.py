@@ -97,7 +97,20 @@ def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of
     waiting = {name: replay.made_by_a_page for name, replay in REPLAYS.items() if replay.made_by_a_page is not None}
 
     assert set(waiting) <= {case.name for case in DOCUMENT_CASES}
-    assert set(waiting.values()) <= {279, 280, 283, 284, 285, 289}
+    assert set(waiting.values()) <= {280, 283, 284, 285, 289}
+
+
+def test_only_the_navigations_that_a_page_starts_are_replayed_through_a_page_from_the_page_they_came_from() -> None:
+    through = {name for name, replay in REPLAYS.items() if replay.through_page}
+
+    assert through == {
+        "navigation_location",
+        "navigation_click",
+        "navigation_meta_refresh",
+        "redirect_location_1",
+        "redirect_location_2",
+    }
+    assert all(REPLAYS[name].page is not None and REPLAYS[name].made_by_a_page is None for name in through)
 
 
 def test_a_check_skips_a_case_that_only_a_page_makes() -> None:

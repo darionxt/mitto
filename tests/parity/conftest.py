@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from mitto import _native
 from tests.capture import samples
 
 SAMPLE_RELEASE = "156"
@@ -41,3 +42,12 @@ def change_baseline(sample_baselines: Path) -> ChangeBaseline:
         path.write_text(json.dumps(form))
 
     return change
+
+
+@pytest.fixture
+def page_program(native_library: Any) -> None:
+    """Skip unless the native library has the Page program beside it, as CI's native job installs it on every Host."""
+    library = _native.find_library()
+    assert library is not None
+    if not library.with_name(_native.PAGE_PROGRAM_NAME).is_file():
+        pytest.skip("no Page program beside the native library")

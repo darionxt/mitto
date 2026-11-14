@@ -15,7 +15,6 @@ from typing import Any
 import pytest
 
 import mitto
-from mitto import _native
 from mitto._native import LIBRARY_ENV_VAR
 from mitto._persona import WINDOWS_PERSONAS
 from tools.parity import BASELINES_DIRECTORY, dumps_known_gaps, mismatches, script
@@ -24,15 +23,6 @@ from tools.parity.script_gaps import SCRIPT_KNOWN_GAPS_FILE_NAME, GapKind, loads
 
 _REPOSITORY = Path(__file__).parents[2]
 _REGENERATE = "uv run python -m tools.parity --script"
-
-
-@pytest.fixture
-def page_program(native_library: Any) -> None:
-    """Skip unless the native library has the Page program beside it."""
-    library = _native.find_library()
-    assert library is not None
-    if not library.with_name(_native.PAGE_PROGRAM_NAME).is_file():
-        pytest.skip("no Page program beside the native library")
 
 
 def listed(directory: Path) -> list[Any]:
