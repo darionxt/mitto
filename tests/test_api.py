@@ -260,14 +260,25 @@ def server() -> Iterator[AnyMethodServer]:
 def on_the_wire(server: AnyMethodServer, persona_name: str, kind: RequestKind) -> list[tuple[str, str]]:
     """Return what a GET to the server sends for a Persona and a Request Kind, when the caller changes nothing.
 
-    A subresource comes from the page at the root of its URL's origin, and a navigation from no page.
+    A subresource comes from the page at the root of its URL's origin, and a navigation from no page. An element in cors
+    mode keeps the Origin that Blink gives it, also for its own origin, and a worker's script gets its User-Agent from
+    //net, after Referer.
     """
     persona = load_persona(persona_name)
+    fetch = persona.request_defaults(kind)["fetch"]
+    keeps_origin = fetch.mode == "cors" and fetch.destination != "empty"
+    origin = server.url.removesuffix("/")
+    lines = [
+        (name, origin if name == "Origin" else value)
+        for name, value in until_a_server_asks(persona.request_defaults(kind)["headers"])
+        if name != "Origin" or keeps_origin
+    ]
     return [
         ("Host", server.authority),
         ("Connection", "keep-alive"),
-        *[line for line in until_a_server_asks(persona.request_defaults(kind)["headers"]) if line[0] != "Origin"],
+        *lines,
         *([("Referer", server.url)] if kind != RequestKind.NAVIGATION else []),
+        *([("User-Agent", persona.user_agent)] if kind == RequestKind.WORKER else []),
         ACCEPT_ENCODING,
         ("Accept-Language", persona.accept_language),
     ]

@@ -152,6 +152,10 @@ SVGComponentTransferFunctionElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGComponentTransferFunctionElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumberList* SVGComponentTransferFunctionElement::TableValues() {
+  return AnimatedNumberList(u"tableValues");
+}
+
 SVGAnimatedEnumeration* SVGComponentTransferFunctionElement::Type() {
   return AnimatedEnumeration(u"type", kComponentTransferTypes, 1);
 }
@@ -267,6 +271,26 @@ SVGTextPositioningElement::SVGTextPositioningElement(
 const bindings::WrapperTypeInfo* SVGTextPositioningElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGTextPositioningElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::X() {
+  return AnimatedLengthList(u"x", SVGLengthMode::kWidth);
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::Y() {
+  return AnimatedLengthList(u"y", SVGLengthMode::kHeight);
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::Dx() {
+  return AnimatedLengthList(u"dx", SVGLengthMode::kWidth);
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::Dy() {
+  return AnimatedLengthList(u"dy", SVGLengthMode::kHeight);
+}
+
+SVGAnimatedNumberList* SVGTextPositioningElement::Rotate() {
+  return AnimatedNumberList(u"rotate");
 }
 
 // static
@@ -469,6 +493,10 @@ const bindings::WrapperTypeInfo* SVGFEColorMatrixElement::GetWrapperTypeInfo()
   return &bindings::V8SVGFEColorMatrixElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumberList* SVGFEColorMatrixElement::Values() {
+  return AnimatedNumberList(u"values");
+}
+
 SVGAnimatedString* SVGFEColorMatrixElement::In1() {
   return AnimatedString(u"in");
 }
@@ -549,6 +577,10 @@ SVGFEConvolveMatrixElement::SVGFEConvolveMatrixElement(Document& document)
 const bindings::WrapperTypeInfo*
 SVGFEConvolveMatrixElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEConvolveMatrixElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedNumberList* SVGFEConvolveMatrixElement::KernelMatrix() {
+  return AnimatedNumberList(u"kernelMatrix");
 }
 
 SVGAnimatedString* SVGFEConvolveMatrixElement::In1() {
@@ -1549,6 +1581,10 @@ SVGAnimatedLength* SVGSVGElement::Height() {
 
 SVGLength* SVGSVGElement::CreateSVGLength() {
   return SVGLength::Create();
+}
+
+SVGNumber* SVGSVGElement::CreateSVGNumber() {
+  return SVGNumber::Create();
 }
 
 // static

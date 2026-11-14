@@ -118,7 +118,7 @@ Every response under `/case/` allows every origin, because a request shows no si
 
 ### Documents
 
-The runs at `documents/` record what a document requests beside the main Request Kinds, and the navigations that it starts by itself: the Request Kinds that M8's pages make. Their files stay apart from `cases/`, because the Parity Checks of the wire replay each case in `cases/`, and they do not replay these yet. A recording session takes these runs after those above and before the client hints, whose asking would reach them. The three runs over TLS go through these pages in order, from `/case/documents-start`. Only the forms need a click. The page starts each other navigation by itself, with no user activation:
+The runs at `documents/` record what a document requests beside the main Request Kinds, and the navigations that it starts by itself: the Request Kinds that M8's pages make. Their files stay apart from `cases/`, in a directory that the Parity Checks of the wire read beside it, since a Session [replays these](parity.md#what-a-session-cannot-replay-of-a-document) as a caller would make them. A recording session takes these runs after those above and before the client hints, whose asking would reach them. The three runs over TLS go through these pages in order, from `/case/documents-start`. Only the forms need a click. The page starts each other navigation by itself, with no user activation:
 
 | Recording Case | What makes it |
 |---|---|

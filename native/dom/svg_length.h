@@ -43,9 +43,6 @@ class ExceptionState;
 class SVGAnimatedLength;
 class SVGElement;
 
-// Which of the viewport's sizes a percentage takes, as Blink's SVGLengthMode.
-enum class SVGLengthMode { kWidth, kHeight, kOther };
-
 // What an SVG length holds, as Blink's SVGLength holds a CSS value.
 class SVGLengthValue {
  public:
@@ -95,12 +92,20 @@ class SVGLength final : public bindings::ScriptWrappable {
   static SVGLength* Create();
   // An animated length's baseVal or, read-only, its animVal.
   static SVGLength* CreateTearOff(SVGAnimatedLength& owner, bool is_anim_val);
+  // An object of a list's item, read-only for an animVal's, bound to the list
+  // that gave it, if any.
+  static SVGLength* ForItem(SVGListItem<SVGLengthValue>& item,
+                            bool read_only,
+                            SVGAnimatedListBase* binding);
   // The one a Known Gap gives, such as SVGLengthList's getItem() until lists
   // come: a length of no element, whose wrapper is of `info`.
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);
 
   SVGLength(SVGAnimatedLength* owner, bool is_anim_val);
+  SVGLength(SVGListItem<SVGLengthValue>& item,
+            bool read_only,
+            SVGAnimatedListBase* binding);
   ~SVGLength() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -122,10 +127,16 @@ class SVGLength final : public bindings::ScriptWrappable {
   void ConvertToSpecifiedUnits(uint16_t unit_type,
                                bindings::ExceptionState& exception_state);
 
+  // Blink's GetValueForInsertionFromTearOff(): the item that `list` takes,
+  // this length's own, which binds it to `list`, when it is bound to no
+  // element, or else a copy. A length that a list gave stays bound to it,
+  // even once a change to the attribute takes its item out.
+  SVGListItem<SVGLengthValue>* ItemToInsert(SVGAnimatedListBase& list);
+
  private:
   SVGLengthValue Target() const;
   // Blink's CommitChange(): the animated length's base value, which writes
-  // its attribute, or this length's own.
+  // its attribute, or its item's, which its list writes.
   void Commit(const SVGLengthValue& value);
   SVGElement* ContextElement() const;
   SVGLengthMode Mode() const;
@@ -134,7 +145,10 @@ class SVGLength final : public bindings::ScriptWrappable {
 
   const cppgc::Member<SVGAnimatedLength> owner_;
   const bool is_anim_val_;
-  SVGLengthValue own_value_;
+  // The item of a list's length, or a length of its own, without an owner.
+  const cppgc::Member<SVGListItem<SVGLengthValue>> item_;
+  // The list that an item's length is bound to: its element is the length's.
+  cppgc::Member<SVGAnimatedListBase> binding_;
 };
 
 class SVGAnimatedLength final : public SVGAnimatedPropertyBase {

@@ -383,6 +383,8 @@ source_set("dom") {
     "svg_elements.h",
     "svg_length.cc",
     "svg_length.h",
+    "svg_lists.cc",
+    "svg_lists.h",
     "task_controller.cc",
     "task_controller.h",
     "task_signal.cc",
