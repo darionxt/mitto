@@ -151,7 +151,9 @@ shared_library("mitto_core") {
     "//base",
     "//crypto",
     "//net",
+    "//sql",
     "//third_party/boringssl",
+    "//third_party/sqlite",
     "//url",
   ]
 
