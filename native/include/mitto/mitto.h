@@ -260,6 +260,7 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //     "accept_ch_via_alps": {"https://<host>:<port>": "<hints>"},
 //     "refused_connects": 2,
 //     "http_cache": "<absolute path of a directory>",
+//     "storage": "<absolute path of a directory>",
 //     "network_quality": {
 //       "http_rtt_ms": 116,
 //       "downstream_throughput_kbps": 2658,
@@ -328,6 +329,14 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 //   memory cancels the stream of a 304 with an RST_STREAM, as Chrome's Incognito
 //   mode does, and a directory does not, as Chrome on Windows does not. The
 //   default is no cache.
+// - "storage" keeps what the Session's Pages store, as Chrome's storage
+//   service does for a profile, in this directory, which is made if it does
+//   not exist, for any later Session too: localStorage in the SQLite database
+//   LocalStorage. sessionStorage is kept in memory, for as long as its Page.
+//   One Session at a time can have the directory, in any process, and it stays
+//   locked until mitto_session_destroy() returns, by when everything is
+//   written, or the process ends. The default keeps it all in memory until the
+//   Session is destroyed, as Chrome's Incognito mode does.
 // - "network_quality" works out the values of the rtt and downlink hints that a
 //   request with "fetch" in its options sends, for the host of each hop, as
 //   Chrome does from what its network quality estimator has, with noise for
@@ -346,14 +355,17 @@ MITTO_EXPORT const char* mitto_net_error_name(int32_t net_error);
 // Returns 0 on success and stores the new Session in `session`. On failure,
 // returns a negative Chromium net error code and stores null: -4
 // (ERR_INVALID_ARGUMENT) for invalid settings, -409 (ERR_CACHE_LOCK_TIMEOUT) if
-// another Session has the directory of "http_cache", without waiting for it, and
-// -404 (ERR_CACHE_OPEN_FAILURE) if a cache cannot be kept there.
+// another Session has the directory of "http_cache", without waiting for it,
+// -404 (ERR_CACHE_OPEN_FAILURE) if a cache cannot be kept there, -10
+// (ERR_ACCESS_DENIED) if another Session has the directory of "storage", and -2
+// (ERR_FAILED) if storage cannot be kept there.
 MITTO_EXPORT int32_t mitto_session_create(const char* settings,
                                           size_t settings_size,
                                           MittoSession** session);
 
-// Releases `session`, closes its connections and any cache on disk, blocking
-// until that is done, so that another Session can open the same cache.
+// Releases `session`, closes its connections and any cache on disk and writes
+// what its Pages stored, blocking until that is done, so that another Session
+// can open the same cache and storage.
 // May be called from any thread. Each request still running on it ends, with a
 // last event that holds -3 (ERR_ABORTED), and its handle stays valid until it is
 // released. Each of its Pages ends, with a MITTO_PAGE_EVENT_ENDED event that

@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "base/containers/span.h"
+#include "base/token.h"
 #include "base/types/expected.h"
 
 namespace base {
@@ -29,7 +30,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 16;
+inline constexpr uint32_t kPageProtocolVersion = 17;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -171,10 +172,47 @@ enum class PageMessage : uint32_t {
   // To the Page: a message of a BroadcastChannel of another Page of the
   // Session whose document is of the same origin, as PageBroadcast says.
   kBroadcastReceived = 26,
+  // To the Session: a storage area of a document's storage key, which the Page
+  // numbers, and an observer of it, as PageStorageBind says. Blink binds a
+  // StorageArea and adds its observer when a window first reaches its Storage.
+  kStorageBind = 27,
+  // To the Session: the number of an area, as a 64-bit number, and of a new
+  // observer that takes the place of the area's, as another 64-bit number.
+  // kStorageEntries answers it, and the Page waits for the answer, as Blink's
+  // GetAll() is a synchronous call.
+  kStorageGetAll = 28,
+  // To the Session: a change to an area, as PageStorageMutation says. The
+  // Session tells each observer of the area of it, or that it failed.
+  kStoragePut = 29,
+  kStorageDelete = 30,
+  kStorageDeleteAll = 31,
+  // To the Session: the number of an area, as a 64-bit number, which the Page
+  // no longer uses.
+  kStorageUnbind = 32,
+  // To the Page: what an area holds, as PageStorageEntries says, in one frame
+  // or more, the last of which says so.
+  kStorageEntries = 33,
+  // To the Page: what happened to an area, for an observer of it, as
+  // PageStorageEvent says: Blink's StorageAreaObserver.
+  kStorageKeyChanged = 34,
+  kStorageKeyChangeFailed = 35,
+  kStorageKeyDeleted = 36,
+  kStorageAllDeleted = 37,
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
   kDocumentCommitted = 70,
+};
+
+// The quota of an area of localStorage or sessionStorage, as Blink's
+// mojom::StorageArea says, counted as Blink counts it: two bytes for each
+// character of its keys and values.
+inline constexpr size_t kPerStorageAreaQuota = 10 * 1024 * 1024;
+
+// Whether an area is of localStorage or sessionStorage.
+enum class PageStorageKind : uint8_t {
+  kLocal = 1,
+  kSession = 2,
 };
 
 // Whether a message of `type` names the document it comes from: each of the
@@ -688,6 +726,108 @@ struct PageBroadcast {
   std::string data;
 };
 
+// Where a change to a storage area comes from, as Blink's StorageAreaSource
+// says: a random token of the Storage object of the window that made it, by
+// which that window drops its own echo, and the URL of its document, which a
+// storage event gives other windows. The Session hands both on as they come,
+// as Chrome's browser does. Its payload is the token's two 64-bit halves and
+// then the URL after its size.
+struct PageStorageSource {
+  PageStorageSource();
+  PageStorageSource(const PageStorageSource&);
+  PageStorageSource& operator=(const PageStorageSource&);
+  ~PageStorageSource();
+
+  base::Token token;
+  // In UTF-8.
+  std::string page_url;
+};
+
+// A storage area that a document binds: the area's number, which the Page
+// picks and never uses again, whether it is of localStorage or sessionStorage,
+// and the number of its first observer, also new. The Session works out the
+// area's storage key from the URL it loaded the document at, and the area
+// stays the Page's after the document goes, as Blink's cached area stays the
+// renderer's. Its payload is the document's ID, the area's number, the kind as
+// a byte and the observer's number.
+struct PageStorageBind {
+  uint64_t area = 0;
+  PageStorageKind kind = PageStorageKind::kLocal;
+  uint64_t observer = 0;
+};
+
+// What kStorageGetAll asks for.
+struct PageStorageGetAll {
+  uint64_t area = 0;
+  uint64_t observer = 0;
+};
+
+// A change that the Page makes to an area. A key and a value are the bytes
+// that Blink sends: for localStorage a byte that says whether Latin-1 or
+// UTF-16 follows, and for sessionStorage a key in UTF-8 and a value in UTF-16.
+// The Session keeps them as they come.
+//
+// kStoragePut's payload is the area's number, the source, the key after its
+// size, and the value, which is the rest. kStorageDelete's is the area's
+// number, the source and the key, which is the rest. kStorageDeleteAll's is the
+// area's number, the number of a new observer of the area or 0, and the
+// source: Blink's Clear() takes a new observer when the window has not read the
+// area, so that the first event the new one hears of is this one.
+struct PageStorageMutation {
+  PageStorageMutation();
+  PageStorageMutation(PageStorageMutation&&);
+  PageStorageMutation& operator=(PageStorageMutation&&);
+  ~PageStorageMutation();
+
+  uint64_t area = 0;
+  PageStorageSource source;
+  std::string key;
+  std::string value;
+  // kStorageDeleteAll's new observer, or 0.
+  uint64_t observer = 0;
+};
+
+// What an area holds, which kStorageGetAll asked for: the area's number, a
+// byte that is 1 in the last frame of the answer, and then the keys and values,
+// each after its size, in the order of the Session's map.
+struct PageStorageEntries {
+  PageStorageEntries();
+  PageStorageEntries(PageStorageEntries&&);
+  PageStorageEntries& operator=(PageStorageEntries&&);
+  ~PageStorageEntries();
+
+  uint64_t area = 0;
+  bool last = true;
+  std::vector<std::pair<std::string, std::string>> entries;
+};
+
+// What happened to an area, which the Session tells each of its observers.
+//
+// kStorageKeyChanged's payload is the observer's number, the source, the key
+// and the new value after their sizes, and then a byte that is 1 if the old
+// value follows, which is the rest. kStorageKeyChangeFailed's is the
+// observer's number, the source and the key, which is the rest.
+// kStorageKeyDeleted's is the observer's number, the source, the key after its
+// size, and a byte that is 1 if the old value follows. kStorageAllDeleted's is
+// the observer's number, a byte that is 1 if the area held anything, and the
+// source.
+struct PageStorageEvent {
+  PageStorageEvent();
+  PageStorageEvent(const PageStorageEvent&);
+  PageStorageEvent& operator=(const PageStorageEvent&);
+  PageStorageEvent(PageStorageEvent&&);
+  PageStorageEvent& operator=(PageStorageEvent&&);
+  ~PageStorageEvent();
+
+  uint64_t observer = 0;
+  PageStorageSource source;
+  std::string key;
+  std::string new_value;
+  std::optional<std::string> old_value;
+  // kStorageAllDeleted.
+  bool was_nonempty = false;
+};
+
 // A frame from a Page, once checked. Which fields it uses depends on `type`.
 struct FrameFromPage {
   FrameFromPage();
@@ -730,6 +870,14 @@ struct FrameFromPage {
   PageBroadcast broadcast;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
+  // kStorageBind.
+  PageStorageBind storage_bind;
+  // kStorageGetAll.
+  PageStorageGetAll storage_get_all;
+  // kStoragePut, kStorageDelete and kStorageDeleteAll.
+  PageStorageMutation storage_mutation;
+  // kStorageUnbind.
+  uint64_t storage_unbind = 0;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -769,6 +917,11 @@ struct FrameFromSession {
   PageCookieStoreChange cookie_store_change;
   // kBroadcastReceived.
   PageBroadcast broadcast;
+  // kStorageEntries.
+  PageStorageEntries storage_entries;
+  // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
+  // kStorageAllDeleted.
+  PageStorageEvent storage_event;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -828,6 +981,26 @@ bool BroadcastFits(const PageBroadcast& broadcast);
 std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
+std::string EncodeStorageBind(uint64_t document, const PageStorageBind& bind);
+std::string EncodeStorageGetAll(const PageStorageGetAll& get_all);
+// Whether a mutation fits in a frame.
+bool StorageMutationFits(const PageStorageMutation& mutation);
+// The mutation fits in a frame. `type` is kStoragePut, kStorageDelete or
+// kStorageDeleteAll, which reads only the area, the observer and the source.
+std::string EncodeStorageMutation(PageMessage type,
+                                  const PageStorageMutation& mutation);
+std::string EncodeStorageUnbind(uint64_t area);
+// Returns the frames that hold what an area holds, at most kMaxPayloadSize
+// bytes each, the last of which says so. An entry that cannot fit in a frame
+// of its own is left out, which no area that the Session keeps holds.
+std::vector<std::string> EncodeStorageEntries(
+    uint64_t area,
+    const std::vector<std::pair<std::string, std::string>>& entries);
+// Whether an event fits in a frame.
+bool StorageEventFits(const PageStorageEvent& event);
+// The event fits in a frame. `type` is kStorageKeyChanged,
+// kStorageKeyChangeFailed, kStorageKeyDeleted or kStorageAllDeleted.
+std::string EncodeStorageEvent(PageMessage type, const PageStorageEvent& event);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

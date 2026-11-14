@@ -1192,16 +1192,22 @@ class _InterfaceWriter:
         return special
 
     def _getter_call(self, special: SpecialOperation, key: str) -> tuple[IdlType, str]:
-        """The return type of an indexed or named property getter, and the C++ expression that calls the class's."""
+        """The return type of an indexed or named property getter, and the C++ expression that calls the class's.
+
+        A named getter that raises an exception takes an ExceptionState named exception_state, as Storage's getItem()
+        does, which the caller declares."""
         where = f"{special.kind} of {self.interface.name}"
         operation = special.operation
         _check_written(where, operation.extended_attributes)
+        arguments = [key]
         if "RaisesException" in operation.extended_attributes:
-            raise UnhandledError(f"{where}: the C++ writer does not handle a getter that raises an exception")
+            if special.kind != "named getter":
+                raise UnhandledError(f"{where}: the C++ writer does not handle a getter that raises an exception")
+            arguments.append("exception_state")
         # Blink's classes name a getter without an identifier AnonymousIndexedGetter() or AnonymousNamedGetter().
         method = self.method_name(operation) if operation.name else f"Anonymous{special.kind.title().replace(' ', '')}"
         self.types.return_type(operation.return_type, f"{where} return type")
-        return operation.return_type, f"HolderOf(isolate, holder)->{method}({key})"
+        return operation.return_type, f"HolderOf(isolate, holder)->{method}({', '.join(arguments)})"
 
     def indexed_and_named_properties(self) -> bool:
         """Writes the functions of the interface's IndexedAndNamedProperties, kIndexedAndNamedProperties, which read
@@ -1279,12 +1285,20 @@ class _InterfaceWriter:
                 not_found = "result.IsEmpty()"
             else:
                 raise UnhandledError(f"{where}: the C++ writer cannot tell when {reduced.syntax} names no property")
+            # A getter that throws leaves its exception pending and names no property, as bind_gen's interceptor does.
+            raises = "RaisesException" in named.operation.extended_attributes
             self.callbacks.append(
                 "\n".join(
                     [
                         "v8::Local<v8::Value> NamedPropertyGetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
                         "                                         const std::u16string& name) {",
+                        *(["  ExceptionState exception_state(isolate);"] if raises else []),
                         f"  const auto result = {call};",
+                        *(
+                            ["  if (exception_state.HadException()) {", "    return v8::Local<v8::Value>();", "  }"]
+                            if raises
+                            else []
+                        ),
                         f"  if ({not_found}) {{",
                         "    return v8::Local<v8::Value>();",
                         "  }",
@@ -1367,17 +1381,29 @@ class _InterfaceWriter:
         return "&NamedPropertySetter"
 
     def _named_deleter(self, special: SpecialOperation) -> str:
-        """The function that calls the class's named property deleter, which says whether it deleted the property."""
+        """The function that calls the class's named property deleter, which says whether it deleted the property.
+
+        One that raises an exception, as Storage's removeItem() does, takes an ExceptionState and leaves the exception
+        pending, having deleted nothing."""
         where = f"named deleter of {self.interface.name}"
         _check_written(where, special.operation.extended_attributes)
-        if "RaisesException" in special.operation.extended_attributes:
-            raise UnhandledError(f"{where}: the C++ writer does not handle a deleter that raises an exception")
+        raises = "RaisesException" in special.operation.extended_attributes
+        call = f"HolderOf(isolate, holder)->{self._special_method(special)}"
+        body = (
+            [
+                "  ExceptionState exception_state(isolate);",
+                f"  const bool deleted = {call}(name, exception_state);",
+                "  return deleted && !exception_state.HadException();",
+            ]
+            if raises
+            else [f"  return {call}(name);"]
+        )
         self.callbacks.append(
             "\n".join(
                 [
                     "bool NamedPropertyDeleter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
                     "                          const std::u16string& name) {",
-                    f"  return HolderOf(isolate, holder)->{self._special_method(special)}(name);",
+                    *body,
                     "}",
                 ]
             )

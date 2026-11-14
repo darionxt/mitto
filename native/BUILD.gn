@@ -124,6 +124,14 @@ shared_library("mitto_core") {
     "socks5_auth_socket_factory.h",
     "ssl_config_service_mojo.cc",
     "ssl_config_service_mojo.h",
+    "storage/local_storage_database.cc",
+    "storage/local_storage_database.h",
+    "storage/storage_area_impl.cc",
+    "storage/storage_area_impl.h",
+    "storage/storage_context.cc",
+    "storage/storage_context.h",
+    "storage/storage_key.cc",
+    "storage/storage_key.h",
     "stub_resolver_config_reader.cc",
     "stub_resolver_config_reader.h",
   ]
@@ -151,7 +159,11 @@ shared_library("mitto_core") {
     "//base",
     "//crypto",
     "//net",
+    "//sql",
     "//third_party/boringssl",
+    "//third_party/sqlite",
+    "//third_party/zstd:compress",
+    "//third_party/zstd:decompress",
     "//url",
   ]
 

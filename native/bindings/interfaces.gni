@@ -2363,6 +2363,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Storage"
+    file = "storage"
+  },
+  {
+    name = "StorageEvent"
+    file = "storage_event"
+  },
+  {
     name = "StorageManager"
     file = "storage_manager"
 
@@ -2533,6 +2541,8 @@ mitto_bindings_interfaces = [
       "event",
       "scheduler",
       "cookieStore",
+      "localStorage",
+      "sessionStorage",
       "structuredClone",
       "postMessage",
       "reportError",

@@ -48,6 +48,7 @@ class Session:
         proxy: str | None = None,
         cache: str | os.PathLike[str] | None = None,
         _settings: PrivateSettings | None = None,
+        _storage: str | os.PathLike[str] | None = None,
     ) -> None:
         """Create the Session.
 
@@ -80,6 +81,11 @@ class Session:
                 Write "./memory" for a directory of that name. The default keeps no responses, where a real Chrome always
                 has a cache, so a server sees each request.
             _settings: Settings that only tests need, which are not part of the public API.
+            _storage: A directory to keep what this Session's Pages store in, localStorage and the rest, as Chrome keeps
+                a profile's, and the Machine whose storage it is, made if it does not exist. A Session that opens on it
+                loads what is there and claims its Machine. One Session at a time can have it, in any process. The default
+                keeps it in memory until the Session closes, as Chrome's Incognito mode does. sessionStorage lasts as
+                long as its Page either way. Private until the Runtime ships, as the Page API is.
 
         Raises:
             TypeError: If an argument is of a type it does not take, which the message names: `persona` that is not text,
@@ -89,10 +95,10 @@ class Session:
             ValueError: If there is no such Persona, the native core refuses `accept_language` or
                 `additional_trust_anchors`, `timeout` is not a positive number of at most 2,000,000 seconds,
                 `cookie_file` does not hold cookies that this Session can use or holds another Machine than `machine`,
-                `proxy` cannot be used or `cache` is an empty string. The message leaves out `proxy`, which may hold a
-                password.
-            OSError: If `cookie_file` exists and cannot be read, a cache cannot be kept in the directory of `cache`, or
-                another Session has that directory open.
+                `proxy` cannot be used, `cache` or `_storage` is an empty string, or `_storage` names another Machine
+                than `machine` or `cookie_file`. The message leaves out `proxy`, which may hold a password.
+            OSError: If `cookie_file` exists and cannot be read, a cache cannot be kept in the directory of `cache` or
+                storage in that of `_storage`, or another Session has either directory open.
             NativeLibraryError: If the native library cannot be used.
         """
         self._state = SessionState(
@@ -105,6 +111,7 @@ class Session:
             proxy=proxy,
             cache=cache,
             settings=_settings,
+            storage=_storage,
         )
         self._native = self._state.native
         self.cookies = self._state.cookies

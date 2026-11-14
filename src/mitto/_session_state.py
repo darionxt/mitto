@@ -1,7 +1,7 @@
 """What a Session holds from when it opens until it closes, whichever API drives it.
 
 Session and AsyncSession differ in how they wait, so everything that has nothing to do with waiting is here. Opening and
-closing can block for a moment, on the system's DNS settings, a cache on disk or a file of cookies.
+closing can block for a moment, on the system's DNS settings, a cache or storage on disk or a file of cookies.
 """
 
 import os
@@ -27,6 +27,7 @@ from mitto._native import (
 from mitto._navigator import page_navigator
 from mitto._persona import RequestKind, load_persona
 from mitto._request import BuiltRequest, RequestOptions, build_request
+from mitto._storage_directory import read_storage_machine, storage_directory, write_storage_machine
 from mitto._timeout import Timeout, to_timeout
 from mitto._window import screen_size
 
@@ -42,10 +43,11 @@ _FETCH_WITH_BODY = "fetch_with_body"
 
 
 class SessionState:
-    """A native Session with its Persona, its Machine, its default timeout and the file of its cookies.
+    """A native Session with its Persona, its Machine, its default timeout, the file of its cookies and its storage.
 
     Attributes:
-        machine: The Machine it claims, whose values its Persona's lines hold, and which its file of cookies keeps.
+        machine: The Machine it claims, whose values its Persona's lines hold, and which its file of cookies and its
+            storage directory keep.
         native: The native Session.
         cookies: Its cookies.
     """
@@ -62,6 +64,7 @@ class SessionState:
         proxy: str | None,
         cache: str | os.PathLike[str] | None,
         settings: PrivateSettings | None,
+        storage: str | os.PathLike[str] | None = None,
     ) -> None:
         """Open a native Session and load any cookies, where Session() says what each argument means.
 
@@ -79,13 +82,16 @@ class SessionState:
         require_path("cookie_file", cookie_file, or_none=True)
         require_type("proxy", proxy, str | None, "text or None")
         require_path("cache", cache, or_none=True)
+        require_path("_storage", storage, or_none=True)
         persona_data = load_persona(persona)
         self._timeout = to_timeout(timeout)
         # Before anything that needs closing exists, because this can raise. The working directory may change before the
         # Session closes.
         self._cookie_file = None if cookie_file is None else Path(cookie_file).resolve()
         saved = None if self._cookie_file is None else _read_if_there(self._cookie_file)
-        self.machine = _machine_to_claim(machine, saved)
+        directory = storage_directory(storage)
+        stored = None if directory is None else read_storage_machine(directory)
+        self.machine = _machine_to_claim(machine, saved, stored, directory)
         self._persona = persona_data.with_machine(self.machine)
         # Each time the Session opens, for the Machine it claims, which may be the file's.
         salts = draw_noise_salts(self.machine)
@@ -97,6 +103,7 @@ class SessionState:
             additional_trust_anchors=anchors,
             proxy=proxy,
             http_cache=_http_cache_setting(cache),
+            storage=None if directory is None else str(directory),
             network_quality=NetworkQuality(
                 http_rtt_ms=self.machine.round_trip_ms,
                 downstream_throughput_kbps=self.machine.throughput_kbps,
@@ -105,6 +112,8 @@ class SessionState:
             ),
             **(PrivateSettings() if settings is None else settings),
         )
+        if directory is not None:
+            self._claim_storage(directory)
         self.cookies = Cookies(self.native, self.machine)
         if saved is not None:
             self._add_saved(saved)
@@ -220,6 +229,24 @@ class SessionState:
         """
         self.begin_close()()
 
+    def _claim_storage(self, directory: Path) -> None:
+        """Make the storage directory name this Session's Machine, now that the native Session holds it and no other
+        Session can write it. Close the Session if that fails.
+
+        Raises:
+            OSError: If its file cannot be read or written.
+            ValueError: If another Session named another Machine there after this one read it.
+        """
+        try:
+            stored = read_storage_machine(directory)
+            if stored is None:
+                write_storage_machine(directory, self.machine)
+            elif stored != self.machine:
+                raise ValueError(f"{directory} holds the storage of another Machine than this Session claims")
+        except BaseException:
+            self.native.close()
+            raise
+
     def _add_saved(self, saved: CookieFile) -> None:
         """Add the cookies of the file that this Session claims the Machine of. Close the Session if that fails."""
         try:
@@ -242,23 +269,31 @@ def _read_if_there(path: Path) -> CookieFile | None:
         return None
 
 
-def _machine_to_claim(machine: Machine | None, saved: CookieFile | None) -> Machine:
-    """Return the Machine of a Session's file of cookies, or else the one given, or else one drawn for it.
+def _machine_to_claim(
+    machine: Machine | None, saved: CookieFile | None, stored: Machine | None, directory: Path | None
+) -> Machine:
+    """Return the Machine of a Session's file of cookies or storage directory, or else the one given, or else one drawn.
 
-    A Session that comes back with its cookies has to be the machine it was, since a server can tell.
+    A Session that comes back with its cookies or its storage has to be the machine it was, since a server can tell.
 
     Raises:
-        ValueError: If a Machine is given and the file holds another.
+        ValueError: If a Machine is given and the file or the directory holds another, or the two hold different ones.
     """
-    if saved is None:
-        return Machine.draw() if machine is None else machine
-    if machine is None:
-        return saved.machine
-    if machine != saved.machine:
+    if saved is not None and stored is not None and saved.machine != stored:
+        raise ValueError(f"{saved.path} holds the cookies of another Machine than {directory} holds the storage of")
+    if saved is not None and machine is not None and machine != saved.machine:
         raise ValueError(
             f"{saved.path} holds the cookies of another Machine than `machine` gives: leave it out to claim the file's"
         )
-    return machine
+    if stored is not None and machine is not None and machine != stored:
+        raise ValueError(
+            f"{directory} holds the storage of another Machine than `machine` gives: leave it out to claim its own"
+        )
+    if machine is not None:
+        return machine
+    if saved is not None:
+        return saved.machine
+    return Machine.draw() if stored is None else stored
 
 
 def _trust_anchors(anchors: object) -> tuple[str, ...]:

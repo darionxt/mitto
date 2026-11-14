@@ -25,6 +25,8 @@
 #include "mitto/header_rules.h"
 #include "mitto/mitto.h"
 #include "mitto/ready_requests.h"
+#include "mitto/storage/storage_area_impl.h"
+#include "mitto/storage/storage_context.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
@@ -613,6 +615,114 @@ class PageHost::Request final : public RequestClient {
   RequestTotals totals_;
 };
 
+// One storage area that the Page has bound, and its observer, which the Page
+// numbers: Chrome's StorageArea receiver and StorageAreaObserver remote for a
+// renderer. A new observer takes the place of the old one, whose events the
+// Page no longer reads, as a new Mojo pipe would.
+class PageHost::StorageArea {
+ public:
+  StorageArea(PageHost& host, StorageAreaImpl& area, PageStorageKind kind)
+      : host_(host), area_(area), kind_(kind) {
+    area_->Bind();
+  }
+
+  StorageArea(const StorageArea&) = delete;
+  StorageArea& operator=(const StorageArea&) = delete;
+
+  ~StorageArea() {
+    observer_.reset();
+    area_->Unbind();
+  }
+
+  StorageAreaImpl& area() { return *area_; }
+  PageStorageKind kind() const { return kind_; }
+
+  // Puts an observer numbered `number` in the place of the one before, and
+  // returns it for the area to add when it should. An area of sessionStorage
+  // has none: Chrome's SessionStorageAreaImpl tells a renderer of no change,
+  // since the renderer is the source of truth for its own, and only of a
+  // deletion that the browser starts, which a Session never does.
+  base::WeakPtr<StorageAreaObserver> ReplaceObserver(uint64_t number) {
+    observer_.reset();
+    if (kind_ == PageStorageKind::kSession) {
+      return nullptr;
+    }
+    observer_ = std::make_unique<Observer>(*host_, *area_, number);
+    return observer_->GetWeakPtr();
+  }
+
+ private:
+  class Observer final : public StorageAreaObserver {
+   public:
+    Observer(PageHost& host, StorageAreaImpl& area, uint64_t number)
+        : host_(host), area_(area), number_(number) {}
+
+    ~Observer() override { area_->RemoveObserver(this); }
+
+    base::WeakPtr<StorageAreaObserver> GetWeakPtr() {
+      return weak_factory_.GetWeakPtr();
+    }
+
+    // StorageAreaObserver:
+    void KeyChanged(const std::string& key,
+                    const std::string& new_value,
+                    const std::optional<std::string>& old_value,
+                    const PageStorageSource& source) override {
+      PageStorageEvent event = Event(source);
+      event.key = key;
+      event.new_value = new_value;
+      event.old_value = old_value;
+      Send(PageMessage::kStorageKeyChanged, event);
+    }
+    void KeyChangeFailed(const std::string& key,
+                         const PageStorageSource& source) override {
+      PageStorageEvent event = Event(source);
+      event.key = key;
+      Send(PageMessage::kStorageKeyChangeFailed, event);
+    }
+    void KeyDeleted(const std::string& key,
+                    const std::optional<std::string>& old_value,
+                    const PageStorageSource& source) override {
+      PageStorageEvent event = Event(source);
+      event.key = key;
+      event.old_value = old_value;
+      Send(PageMessage::kStorageKeyDeleted, event);
+    }
+    void AllDeleted(bool was_nonempty,
+                    const PageStorageSource& source) override {
+      PageStorageEvent event = Event(source);
+      event.was_nonempty = was_nonempty;
+      Send(PageMessage::kStorageAllDeleted, event);
+    }
+
+   private:
+    PageStorageEvent Event(const PageStorageSource& source) const {
+      PageStorageEvent event;
+      event.observer = number_;
+      event.source = source;
+      return event;
+    }
+
+    void Send(PageMessage type, const PageStorageEvent& event) {
+      // The area's keys and values fit, since it holds no more than its quota,
+      // and a source that does not leaves the Page that sent it without word.
+      if (host_->channel_ && StorageEventFits(event)) {
+        host_->channel_->Send(EncodeStorageEvent(type, event));
+      }
+    }
+
+    const raw_ref<PageHost> host_;
+    const raw_ref<StorageAreaImpl> area_;
+    const uint64_t number_;
+    base::WeakPtrFactory<Observer> weak_factory_{this};
+  };
+
+  const raw_ref<PageHost> host_;
+  const raw_ref<StorageAreaImpl> area_;
+  const PageStorageKind kind_;
+  std::unique_ptr<Observer> observer_;
+};
+
 PageHost::PageHost(scoped_refptr<PageEvents> events,
                    scoped_refptr<PageProcess> process,
                    ReadyRequests& ready,
@@ -626,6 +736,7 @@ PageHost::PageHost(scoped_refptr<PageEvents> events,
 
 PageHost::~PageHost() {
   AbandonRequests();
+  ReleaseStorage();
 }
 
 bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
@@ -1305,6 +1416,135 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast,
   network_->BroadcastFromPage(*this, origin, broadcast);
 }
 
+// static
+std::optional<StorageKey> PageHost::DocumentStorageKey(
+    const GURL& document_url) {
+  // RenderFrameHostImpl::CalculateStorageKey() for a top-level frame.
+  // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
+  if (!DocumentHasCookies(document_url)) {
+    return std::nullopt;
+  }
+  const url::Origin origin = url::Origin::Create(document_url);
+  if (origin.opaque()) {
+    return std::nullopt;
+  }
+  return StorageKey::CreateFirstParty(origin);
+}
+
+void PageHost::ReleaseStorage() {
+  storage_areas_.clear();
+  session_storage_.reset();
+}
+
+// What Chrome's browser checks when a renderer binds an area, in
+// DOMStorageContextWrapper, and the binding, in LocalStorageImpl or the
+// renderer's session storage namespace.
+// Upstream: content/browser/dom_storage/dom_storage_context_wrapper.cc
+void PageHost::OnStorageBind(const PageStorageBind& bind,
+                             const GURL& document_url) {
+  if (bind.area <= last_storage_area_ ||
+      bind.observer <= last_storage_observer_) {
+    Refuse("a storage area or observer numbered as one before it");
+    return;
+  }
+  last_storage_area_ = bind.area;
+  last_storage_observer_ = bind.observer;
+  if (storage_areas_.size() >= kMaxPageStorageAreas) {
+    Refuse(
+        base::StrCat({"more than ", base::NumberToString(kMaxPageStorageAreas),
+                      " storage areas at once"}));
+    return;
+  }
+  // A document of an opaque origin throws before it asks.
+  const std::optional<StorageKey> storage_key =
+      DocumentStorageKey(document_url);
+  if (!storage_key) {
+    Refuse("a storage area of a document that has no storage key");
+    return;
+  }
+  StorageAreaImpl* area = nullptr;
+  if (bind.kind == PageStorageKind::kLocal) {
+    area = &network_->storage_context().LocalStorageArea(*storage_key);
+  } else {
+    if (!session_storage_) {
+      session_storage_ = std::make_unique<SessionStorageNamespace>();
+    }
+    area = &session_storage_->Area(*storage_key);
+  }
+  auto storage_area = std::make_unique<StorageArea>(*this, *area, bind.kind);
+  if (base::WeakPtr<StorageAreaObserver> observer =
+          storage_area->ReplaceObserver(bind.observer)) {
+    area->AddObserver(observer.get());
+  }
+  storage_areas_.emplace(bind.area, std::move(storage_area));
+}
+
+void PageHost::OnStorageGetAll(const PageStorageGetAll& get_all) {
+  const auto found = storage_areas_.find(get_all.area);
+  if (found == storage_areas_.end()) {
+    Refuse("a question for a storage area that is not bound");
+    return;
+  }
+  if (get_all.observer <= last_storage_observer_) {
+    Refuse("a storage observer numbered as one before it");
+    return;
+  }
+  last_storage_observer_ = get_all.observer;
+  StorageArea& area = *found->second;
+  area.area().GetAll(
+      area.ReplaceObserver(get_all.observer),
+      base::BindOnce(
+          [](base::WeakPtr<PageHost> host, uint64_t area,
+             std::vector<std::pair<std::string, std::string>> entries) {
+            if (!host || !host->channel_) {
+              return;
+            }
+            for (std::string& frame : EncodeStorageEntries(area, entries)) {
+              host->channel_->Send(std::move(frame));
+            }
+          },
+          weak_factory_.GetWeakPtr(), get_all.area));
+}
+
+void PageHost::OnStorageMutation(PageMessage type,
+                                 PageStorageMutation mutation) {
+  const auto found = storage_areas_.find(mutation.area);
+  if (found == storage_areas_.end()) {
+    Refuse("a change to a storage area that is not bound");
+    return;
+  }
+  StorageArea& area = *found->second;
+  switch (type) {
+    case PageMessage::kStoragePut:
+      area.area().Put(mutation.key, mutation.value, mutation.source);
+      return;
+    case PageMessage::kStorageDelete:
+      area.area().Delete(mutation.key, mutation.source);
+      return;
+    case PageMessage::kStorageDeleteAll: {
+      base::WeakPtr<StorageAreaObserver> new_observer;
+      if (mutation.observer != 0) {
+        if (mutation.observer <= last_storage_observer_) {
+          Refuse("a storage observer numbered as one before it");
+          return;
+        }
+        last_storage_observer_ = mutation.observer;
+        new_observer = area.ReplaceObserver(mutation.observer);
+      }
+      area.area().DeleteAll(mutation.source, std::move(new_observer));
+      return;
+    }
+    default:
+      NOTREACHED();
+  }
+}
+
+void PageHost::OnStorageUnbind(uint64_t area) {
+  if (storage_areas_.erase(area) == 0) {
+    Refuse("a storage area that is not bound");
+  }
+}
+
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
   const GURL document_url = TopDocumentUrl();
@@ -1334,6 +1574,7 @@ void PageHost::EndWithSession() {
     return;
   }
   AbandonRequests();
+  ReleaseStorage();
   channel_.reset();
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
@@ -1514,6 +1755,20 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kDocumentCommitted:
       OnDocumentCommitted(frame->committed);
       return;
+    case PageMessage::kStorageBind:
+      OnStorageBind(frame->storage_bind, document_url);
+      return;
+    case PageMessage::kStorageGetAll:
+      OnStorageGetAll(frame->storage_get_all);
+      return;
+    case PageMessage::kStoragePut:
+    case PageMessage::kStorageDelete:
+    case PageMessage::kStorageDeleteAll:
+      OnStorageMutation(frame->type, std::move(frame->storage_mutation));
+      return;
+    case PageMessage::kStorageUnbind:
+      OnStorageUnbind(frame->storage_unbind);
+      return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1524,6 +1779,11 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
     case PageMessage::kBroadcastReceived:
+    case PageMessage::kStorageEntries:
+    case PageMessage::kStorageKeyChanged:
+    case PageMessage::kStorageKeyChangeFailed:
+    case PageMessage::kStorageKeyDeleted:
+    case PageMessage::kStorageAllDeleted:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }
@@ -1547,8 +1807,9 @@ void PageHost::Refuse(std::string why) {
 }
 
 void PageHost::WaitForExit() {
-  // A Page that has gone needs nothing more from the network.
+  // A Page that has gone needs nothing more from the network or its storage.
   AbandonRequests();
+  ReleaseStorage();
   // What was sent already still reaches the Page, if it reads it.
   channel_.reset();
   if (waiting_for_exit_ || ended_) {

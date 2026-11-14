@@ -29,6 +29,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_storage_backend.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-callbacks.h"
@@ -80,12 +81,14 @@ class SessionLink final : public PageChannel::Delegate
               scoped_refptr<base::SingleThreadTaskRunner> inspector,
               scoped_refptr<base::SingleThreadTaskRunner> networking,
               StartV8Callback start_v8,
-              SessionCookieJar& cookie_jar)
+              SessionCookieJar& cookie_jar,
+              SessionStorageBackend& storage_backend)
       : main_thread_(std::move(main_thread)),
         inspector_(std::move(inspector)),
         networking_(std::move(networking)),
         start_v8_(std::move(start_v8)),
-        cookie_jar_(cookie_jar) {}
+        cookie_jar_(cookie_jar),
+        storage_backend_(storage_backend) {}
 
   SessionLink(const SessionLink&) = delete;
   SessionLink& operator=(const SessionLink&) = delete;
@@ -216,6 +219,27 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreChange:
         cookie_jar_->CookieStoreChanged(std::move(frame->cookie_store_change));
         return;
+      case PageMessage::kStorageEntries: {
+        // The main thread waits for this, so it is handed over here.
+        const uint64_t area = frame->storage_entries.area;
+        if (!storage_backend_->AnswerEntries(
+                std::move(frame->storage_entries))) {
+          Refuse(base::StrCat({"entries of storage area ",
+                               base::NumberToString(area),
+                               ", which no script waits for"}));
+        }
+        return;
+      }
+      case PageMessage::kStorageKeyChanged:
+      case PageMessage::kStorageKeyChangeFailed:
+      case PageMessage::kStorageKeyDeleted:
+      case PageMessage::kStorageAllDeleted:
+        if (!started_) {
+          Refuse("a storage event came before the start");
+          return;
+        }
+        storage_backend_->OnEvent(frame->type, std::move(frame->storage_event));
+        return;
       case PageMessage::kBroadcastReceived:
         if (!started_) {
           Refuse("a broadcast came before the start");
@@ -242,6 +266,12 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreListen:
       case PageMessage::kBroadcast:
       case PageMessage::kDocumentCommitted:
+      case PageMessage::kStorageBind:
+      case PageMessage::kStorageGetAll:
+      case PageMessage::kStoragePut:
+      case PageMessage::kStorageDelete:
+      case PageMessage::kStorageDeleteAll:
+      case PageMessage::kStorageUnbind:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -307,6 +337,9 @@ class SessionLink final : public PageChannel::Delegate
           }
         },
         send));
+    // What the document's localStorage and sessionStorage ask of the Session.
+    storage_backend_->SetSend(send);
+    StorageBackend::Set(&*storage_backend_);
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
@@ -398,8 +431,9 @@ class SessionLink final : public PageChannel::Delegate
   // process ends.
   StartV8Callback start_v8_;
   std::unique_ptr<ScriptRunner> runner_;
-  // Lives until the process ends. The I/O thread hands it answers.
+  // These live until the process ends. The I/O thread hands them answers.
   const raw_ref<SessionCookieJar> cookie_jar_;
+  const raw_ref<SessionStorageBackend> storage_backend_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
   bool started_ = false;
@@ -440,6 +474,7 @@ std::optional<SessionArgument> ParseSessionArgument(std::string_view argument) {
 
 void ServeSession(SessionArgument session, StartV8Callback start_v8) {
   SessionCookieJar cookie_jar;
+  SessionStorageBackend storage_backend;
 
   // Reads the channel while a script runs, so that the Page process ends when
   // it closes, even in the middle of a script that never ends.
@@ -457,7 +492,7 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
           base::SingleThreadTaskRunner::GetCurrentDefault(),
           event_loop->TaskRunner(TaskType::kInternalInspector),
           event_loop->TaskRunner(TaskType::kNetworking), std::move(start_v8),
-          cookie_jar)
+          cookie_jar, storage_backend)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),
