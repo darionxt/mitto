@@ -4,7 +4,8 @@ The Page program makes no frame yet, so a fake Page program stands in for it, as
 Python script beside a copy of the library, which speaks the messages of native/page_messages.h. Under a top-level
 document of 127.0.0.1 it commits a frame of localhost, another site, with a frame of 127.0.0.1 in it, and a frame's
 initial about:blank of 127.0.0.1, and each binds localStorage, reads it and writes it. A Session in another process,
-with a storage directory, opens the Page, and the test reads what the directory holds afterwards.
+with a storage directory, opens the Page, and the test reads what the directory holds afterwards. Another fake Page
+sends a change that Blink would not write, which the library refuses.
 """
 
 import http.server
@@ -122,6 +123,17 @@ _FAKE_PAGE = textwrap.dedent(
         if message_type == 4:
             call = struct.unpack_from("<Q", payload)[0]
             break
+    {actions}
+    while channel.recv(65536):
+        pass
+    """
+)
+
+# What the fake Page does once the Session asks it something: it commits a frame of the other site under the top-level
+# document, with a frame of the top-level site in it, and a frame's initial about:blank, and each binds localStorage,
+# reads it and writes it.
+_FRAME_ACTIONS = textwrap.dedent(
+    """\
     frame(2, 3, 1, 4, "{frame}")
     frame(4, 5, 2, 6, "{nested}")
     send(70, struct.pack("<QBQ", 7, 0, 2))
@@ -138,12 +150,20 @@ _FAKE_PAGE = textwrap.dedent(
     bind(7, 4, 6)
     seen["blank"] = entries(4, 7)
     send(5, struct.pack("<QB", call, 0) + json.dumps(seen).encode())
-    while channel.recv(65536):
-        pass
     """
 )
 
-# Opens a Page at the URL in argv[1] in a Session that keeps its storage in argv[2], and prints what it gives.
+# A key and value of localStorage with no byte for their format, which Blink always writes.
+_EMPTY_PUT_ACTIONS = textwrap.dedent(
+    """\
+    bind(2, 1, 1)
+    source = struct.pack("<QQ", 1, 1) + sized(b"http://source.test/")
+    send(29, struct.pack("<Q", 1) + source + sized(b""))
+    """
+)
+
+# Opens a Page at the URL in argv[1] in a Session that keeps its storage in argv[2], and prints what it gives, or the
+# error that the call raised.
 _SESSION = textwrap.dedent(
     """\
     import json
@@ -153,7 +173,10 @@ _SESSION = textwrap.dedent(
 
     with mitto.Session(_storage=sys.argv[2]) as session:
         with session._open_page(sys.argv[1], timeout=60) as page:
-            print(json.dumps(page.evaluate("storage", timeout=60)))
+            try:
+                print(json.dumps(page.evaluate("storage", timeout=60)))
+            except Exception as error:
+                print(json.dumps({"error": str(error)}))
     """
 )
 
@@ -210,8 +233,9 @@ def frame_site() -> Iterator[_Server]:
         yield server
 
 
-def _run_page(tmp_path: Path, top: _Server, frame_site: _Server, storage: Path) -> Any:
-    """Run the fake Page in a Session of its own that keeps its storage in `storage`, and return what it gave."""
+def _run_page(tmp_path: Path, top: _Server, actions: str, storage: Path) -> Any:
+    """Run the fake Page with `actions` in a Session of its own that keeps its storage in `storage`, and return what
+    it gave."""
     library = _native.find_library()
     assert library is not None
     directory = tmp_path / "library"
@@ -219,14 +243,7 @@ def _run_page(tmp_path: Path, top: _Server, frame_site: _Server, storage: Path) 
     copy = directory / library.name
     shutil.copy2(library, copy)
     page_program = directory / _native.PAGE_PROGRAM_NAME
-    page_program.write_text(
-        _FAKE_PAGE.format(
-            python=sys.executable,
-            version=_PROTOCOL_VERSION,
-            frame=frame_site.url("/frame-page"),
-            nested=top.url("/nested-page"),
-        )
-    )
+    page_program.write_text(_FAKE_PAGE.format(python=sys.executable, version=_PROTOCOL_VERSION, actions=actions))
     page_program.chmod(0o755)
     environment = {**os.environ, _native.LIBRARY_ENV_VAR: str(copy)}
     finished = subprocess.run(
@@ -244,7 +261,8 @@ def test_a_frames_local_storage_is_partitioned_by_the_top_level_site(
     tmp_path: Path, top: _Server, frame_site: _Server
 ) -> None:
     storage = tmp_path / "storage"
-    seen = _run_page(tmp_path, top, frame_site, storage)
+    actions = _FRAME_ACTIONS.format(frame=frame_site.url("/frame-page"), nested=top.url("/nested-page"))
+    seen = _run_page(tmp_path, top, actions, storage)
 
     # A frame of 127.0.0.1 under one of another site has storage apart from the top-level document's, of the same
     # origin, and a frame's about:blank of the top-level document's origin, directly under it, shares the top-level
@@ -263,3 +281,12 @@ def test_a_frames_local_storage_is_partitioned_by_the_top_level_site(
         f"http://localhost:{frame_site.port}/^0http://127.0.0.1".encode(): b"\x01frame",
         f"http://127.0.0.1:{top.port}/^31".encode(): b"\x01nested",
     }
+
+
+def test_a_change_of_a_key_that_blink_does_not_write_is_refused(tmp_path: Path, top: _Server) -> None:
+    # A key of localStorage that has no byte for its format, which the Session's store counts on.
+    seen = _run_page(tmp_path, top, _EMPTY_PUT_ACTIONS, tmp_path / "storage")
+
+    assert seen["error"].endswith(
+        "the library refused a message from the Page: a change to storage of a key or value that Blink does not write"
+    )

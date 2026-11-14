@@ -53,6 +53,25 @@
 namespace mitto {
 namespace {
 
+// Whether `key` and `value`, if any, are as Blink's CachedStorageArea writes
+// them: for localStorage a byte that says Latin-1 or UTF-16 and then its code
+// units, and for sessionStorage a key in UTF-8 and a value in UTF-16. The
+// Session's store counts on a localStorage key never being empty.
+bool IsStorageAsBlinkWrites(PageStorageKind kind,
+                            std::string_view key,
+                            std::optional<std::string_view> value) {
+  if (kind == PageStorageKind::kSession) {
+    return base::IsStringUTF8AllowingNoncharacters(key) &&
+           (!value || value->size() % 2 == 0);
+  }
+  const auto local = [](std::string_view bytes) {
+    // 1 for Latin-1, and 0 for UTF-16, two bytes for each code unit.
+    return !bytes.empty() &&
+           (bytes[0] == 1 || (bytes[0] == 0 && bytes.size() % 2 == 1));
+  };
+  return local(key) && (!value || local(*value));
+}
+
 constexpr std::string_view kVersionKey = "version";
 // What net::HttpConnectionInfoToString() and net::NextProtoToString() call a
 // protocol that is not known.
@@ -1991,6 +2010,15 @@ void PageHost::OnStorageMutation(PageMessage type,
     return;
   }
   StorageArea& area = *found->second;
+  if (type != PageMessage::kStorageDeleteAll &&
+      !IsStorageAsBlinkWrites(
+          area.kind(), mutation.key,
+          type == PageMessage::kStoragePut
+              ? std::optional<std::string_view>(mutation.value)
+              : std::nullopt)) {
+    Refuse("a change to storage of a key or value that Blink does not write");
+    return;
+  }
   switch (type) {
     case PageMessage::kStoragePut:
       area.area().Put(mutation.key, mutation.value, mutation.source);
