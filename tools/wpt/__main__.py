@@ -78,11 +78,15 @@ def main() -> int:
     commands.add_parser("counts", help="print how many tests and subtests differ, by owner, part and directory")
 
     owner = commands.add_parser("owner", help="print how many differences a ticket owns, which is none once it closes")
-    owner.add_argument("ticket", help=f'such as "#283", or "{NO_OWNER}" for those that no ticket owns')
+    owner.add_argument(
+        "ticket", help=f'such as "#283", a later milestone such as "M9", "out", or "{NO_OWNER}" for those nothing owns'
+    )
     owner.add_argument("--list", action="store_true", help="also print each of them")
 
     give = commands.add_parser("move", help="give a ticket the differences that its missing behaviour causes")
-    give.add_argument("ticket", help='such as "#283"')
+    give.add_argument(
+        "ticket", help='such as "#283", or a later milestone such as "M9", or "out" for what the roadmap leaves out'
+    )
     give.add_argument("tests", nargs="*", metavar="PREFIX", help="only those of the tests whose address starts so")
     give.add_argument("--outcome", help="only those whose outcome in a Page contains this text")
 

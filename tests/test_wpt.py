@@ -303,6 +303,8 @@ def test_the_list_reads_back_in_the_order_of_the_tests() -> None:
         '["a"]',
         '[{"test": "a"}]',
         '[{"test": "a", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "283"}]',
+        '[{"test": "a", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "M0"}]',
+        '[{"test": "a", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "left out"}]',
         '[{"test": "a", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "reason": "XHR"}]',
     ],
 )
@@ -665,9 +667,34 @@ def test_moving_differences_gives_them_a_ticket_and_moving_them_back_takes_it_aw
     assert [d.owner for d in back] == [None, None, None]
 
 
+def test_a_later_milestone_or_out_owns_what_the_roadmap_puts_there() -> None:
+    listed = [
+        Difference(ENCODING, None, "OK", "TIMEOUT"),
+        Difference("encoding/api-basics.any.html", "a", "PASS", "FAIL: Not implemented."),
+        DIFFERENCE,
+    ]
+
+    later, moved = move(listed, "M9", ["encoding/legacy-mb-"])
+    assert moved == 1
+    left_out, moved = move(later, "out", outcome="Not implemented")
+    assert moved == 1
+    text = dumps_differences(left_out)
+
+    assert {(d.test, d.owner) for d in loads_differences(text)} == {
+        (ENCODING, "M9"),
+        ("encoding/api-basics.any.html", "out"),
+        (TEST, None),
+    }
+    assert [owner_of(d) for d in left_out] == ["M9", "out", "#274"]
+
+
 @pytest.mark.parametrize(
     ("ticket", "prefixes", "error"),
-    [("285", ["encoding/"], "not a ticket"), ("#285", [], "say which differences to move")],
+    [
+        ("285", ["encoding/"], "not an owner"),
+        ("m9", ["encoding/"], "not an owner"),
+        ("#285", [], "say which differences to move"),
+    ],
 )
 def test_a_move_needs_a_ticket_and_what_to_move(ticket: str, prefixes: list[str], error: str) -> None:
     with pytest.raises(ValueError, match=error):
@@ -693,4 +720,30 @@ def test_counts_by_owner_go_by_the_ticket_that_owns_each_difference() -> None:
     assert list(count_by_owner(recorded, [Difference(TEST, "a", "PASS", "x", "#1000"), DIFFERENCE])) == [
         "#274",
         "#1000",
+    ]
+
+
+def test_counts_put_later_milestones_and_what_is_left_out_apart_from_the_tickets() -> None:
+    recorded = {TEST: [chrome(*passing("a", "b", "c", "d"))], ENCODING: [chrome(*passing(*"abc"))]}
+    listed = [
+        Difference(TEST, "a", "PASS", "FAIL: no", "out"),
+        Difference(TEST, "b", "PASS", "FAIL: no", "M10"),
+        Difference(TEST, "c", "PASS", "FAIL: no", "M9"),
+        Difference(TEST, "d", "PASS", "FAIL: no"),
+        Difference(ENCODING, None, "OK", "TIMEOUT", "#285"),
+        Difference("fetch/a.html", "a", "PASS", "FAIL: no"),
+    ]
+
+    counts = count_by_owner(recorded, listed)
+
+    assert list(counts) == ["#274", "#285", NO_OWNER, "M9", "M10", "out"]
+    assert list(owner_table(counts))[2:] == [
+        "| #274 Element interfaces | 1 | 1 | 1 |",
+        "| #285 Frames | 1 | 1 | 3 |",
+        "| Tickets | 2 | 2 | 4 |",
+        "| none | 1 | 1 | 1 |",
+        "| M9 | 1 | 1 | 1 |",
+        "| M10 | 1 | 1 | 1 |",
+        "| out | 1 | 1 | 1 |",
+        "| All | 6 | 6 | 8 |",
     ]
