@@ -1560,6 +1560,8 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "relList",
+      "target",
+      "href",
     ]
   },
   {
@@ -1581,6 +1583,31 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "SVGAnimatedBoolean"
+    file = "svg_animated_boolean"
+    header = "svg_animated_values"
+  },
+  {
+    name = "SVGAnimatedEnumeration"
+    file = "svg_animated_enumeration"
+    header = "svg_animated_values"
+  },
+  {
+    name = "SVGAnimatedInteger"
+    file = "svg_animated_integer"
+    header = "svg_animated_values"
+  },
+  {
+    name = "SVGAnimatedNumber"
+    file = "svg_animated_number"
+    header = "svg_animated_values"
+  },
+  {
+    name = "SVGAnimatedString"
+    file = "svg_animated_string"
+    header = "svg_animated_values"
+  },
+  {
     name = "SVGAnimationElement"
     file = "svg_animation_element"
     header = "svg_elements"
@@ -1596,13 +1623,22 @@ mitto_bindings_interfaces = [
     name = "SVGClipPathElement"
     file = "svg_clip_path_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "clipPathUnits",
+    ]
   },
   {
     name = "SVGComponentTransferFunctionElement"
     file = "svg_component_transfer_function_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "type",
+      "slope",
+      "intercept",
+      "amplitude",
+      "exponent",
+      "offset",
+    ]
   },
   {
     name = "SVGDefsElement"
@@ -1622,6 +1658,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "tabIndex",
       "dataset",
+      "className",
     ]
   },
   {
@@ -1634,61 +1671,122 @@ mitto_bindings_interfaces = [
     name = "SVGFEBlendElement"
     file = "svg_fe_blend_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "in2",
+      "mode",
+      "result",
+    ]
   },
   {
     name = "SVGFEColorMatrixElement"
     file = "svg_fe_color_matrix_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "type",
+      "result",
+    ]
   },
   {
     name = "SVGFEComponentTransferElement"
     file = "svg_fe_component_transfer_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "result",
+    ]
   },
   {
     name = "SVGFECompositeElement"
     file = "svg_fe_composite_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in2",
+      "in1",
+      "operator",
+      "k1",
+      "k2",
+      "k3",
+      "k4",
+      "result",
+    ]
   },
   {
     name = "SVGFEConvolveMatrixElement"
     file = "svg_fe_convolve_matrix_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "orderX",
+      "orderY",
+      "divisor",
+      "bias",
+      "targetX",
+      "targetY",
+      "edgeMode",
+      "kernelUnitLengthX",
+      "kernelUnitLengthY",
+      "preserveAlpha",
+      "result",
+    ]
   },
   {
     name = "SVGFEDiffuseLightingElement"
     file = "svg_fe_diffuse_lighting_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "surfaceScale",
+      "diffuseConstant",
+      "kernelUnitLengthX",
+      "kernelUnitLengthY",
+      "result",
+    ]
   },
   {
     name = "SVGFEDisplacementMapElement"
     file = "svg_fe_displacement_map_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "in2",
+      "scale",
+      "xChannelSelector",
+      "yChannelSelector",
+      "result",
+    ]
   },
   {
     name = "SVGFEDistantLightElement"
     file = "svg_fe_distant_light_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "azimuth",
+      "elevation",
+    ]
   },
   {
     name = "SVGFEDropShadowElement"
     file = "svg_fe_drop_shadow_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "dx",
+      "dy",
+      "stdDeviationX",
+      "stdDeviationY",
+      "setStdDeviation",
+      "result",
+    ]
   },
   {
     name = "SVGFEFloodElement"
     file = "svg_fe_flood_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "result",
+    ]
   },
   {
     name = "SVGFEFuncAElement"
@@ -1718,73 +1816,133 @@ mitto_bindings_interfaces = [
     name = "SVGFEGaussianBlurElement"
     file = "svg_fe_gaussian_blur_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "stdDeviationX",
+      "stdDeviationY",
+      "setStdDeviation",
+      "result",
+    ]
   },
   {
     name = "SVGFEImageElement"
     file = "svg_fe_image_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "href",
+      "result",
+    ]
   },
   {
     name = "SVGFEMergeElement"
     file = "svg_fe_merge_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "result",
+    ]
   },
   {
     name = "SVGFEMergeNodeElement"
     file = "svg_fe_merge_node_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+    ]
   },
   {
     name = "SVGFEMorphologyElement"
     file = "svg_fe_morphology_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "operator",
+      "radiusX",
+      "radiusY",
+      "result",
+    ]
   },
   {
     name = "SVGFEOffsetElement"
     file = "svg_fe_offset_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "dx",
+      "dy",
+      "result",
+    ]
   },
   {
     name = "SVGFEPointLightElement"
     file = "svg_fe_point_light_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "z",
+    ]
   },
   {
     name = "SVGFESpecularLightingElement"
     file = "svg_fe_specular_lighting_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "surfaceScale",
+      "specularConstant",
+      "specularExponent",
+      "kernelUnitLengthX",
+      "kernelUnitLengthY",
+      "result",
+    ]
   },
   {
     name = "SVGFESpotLightElement"
     file = "svg_fe_spot_light_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "z",
+      "pointsAtX",
+      "pointsAtY",
+      "pointsAtZ",
+      "specularExponent",
+      "limitingConeAngle",
+    ]
   },
   {
     name = "SVGFETileElement"
     file = "svg_fe_tile_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "in1",
+      "result",
+    ]
   },
   {
     name = "SVGFETurbulenceElement"
     file = "svg_fe_turbulence_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "baseFrequencyX",
+      "baseFrequencyY",
+      "numOctaves",
+      "seed",
+      "stitchTiles",
+      "type",
+      "result",
+    ]
   },
   {
     name = "SVGFilterElement"
     file = "svg_filter_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "filterUnits",
+      "primitiveUnits",
+      "href",
+    ]
   },
   {
     name = "SVGForeignObjectElement"
@@ -1802,13 +1960,19 @@ mitto_bindings_interfaces = [
     name = "SVGGeometryElement"
     file = "svg_geometry_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "pathLength",
+    ]
   },
   {
     name = "SVGGradientElement"
     file = "svg_gradient_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "gradientUnits",
+      "spreadMethod",
+      "href",
+    ]
   },
   {
     name = "SVGGraphicsElement"
@@ -1820,7 +1984,9 @@ mitto_bindings_interfaces = [
     name = "SVGImageElement"
     file = "svg_image_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "href",
+    ]
   },
   {
     name = "SVGLineElement"
@@ -1838,19 +2004,26 @@ mitto_bindings_interfaces = [
     name = "SVGMPathElement"
     file = "svg_mpath_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "href",
+    ]
   },
   {
     name = "SVGMarkerElement"
     file = "svg_marker_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "markerUnits",
+    ]
   },
   {
     name = "SVGMaskElement"
     file = "svg_mask_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "maskUnits",
+      "maskContentUnits",
+    ]
   },
   {
     name = "SVGMetadataElement"
@@ -1868,7 +2041,11 @@ mitto_bindings_interfaces = [
     name = "SVGPatternElement"
     file = "svg_pattern_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "patternUnits",
+      "patternContentUnits",
+      "href",
+    ]
   },
   {
     name = "SVGPolygonElement"
@@ -1904,7 +2081,9 @@ mitto_bindings_interfaces = [
     name = "SVGScriptElement"
     file = "svg_script_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "href",
+    ]
   },
   {
     name = "SVGSetElement"
@@ -1916,7 +2095,9 @@ mitto_bindings_interfaces = [
     name = "SVGStopElement"
     file = "svg_stop_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "offset",
+    ]
   },
   {
     name = "SVGStyleElement"
@@ -1946,7 +2127,9 @@ mitto_bindings_interfaces = [
     name = "SVGTextContentElement"
     file = "svg_text_content_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "lengthAdjust",
+    ]
   },
   {
     name = "SVGTextElement"
@@ -1958,7 +2141,12 @@ mitto_bindings_interfaces = [
     name = "SVGTextPathElement"
     file = "svg_text_path_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "method",
+      "spacing",
+      "side",
+      "href",
+    ]
   },
   {
     name = "SVGTextPositioningElement"
@@ -1976,7 +2164,9 @@ mitto_bindings_interfaces = [
     name = "SVGUseElement"
     file = "svg_use_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "href",
+    ]
   },
   {
     name = "SVGViewElement"
