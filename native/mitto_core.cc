@@ -764,6 +764,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.first_request_start = first_request_start_;
     event.critical_ch_restart = critical_ch_restart_;
     event.restarted_for_critical_ch = restarted_for_critical_ch_;
+    event.referrer = request_->referrer();
     return event;
   }
 

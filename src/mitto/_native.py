@@ -784,6 +784,12 @@ class PageNavigated:
         """Whether the navigation ended with no document, and the Page keeps the one it has."""
         return self.net_error == _ERR_ABORTED and self.status != 0
 
+    @property
+    def replaced(self) -> bool:
+        """Whether the navigation ended before a response because another took its place, which may still give a
+        document."""
+        return self.net_error == _ERR_ABORTED and self.status == 0
+
 
 @dataclass(frozen=True, slots=True)
 class PageNavigationStarted:

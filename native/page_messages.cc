@@ -1082,14 +1082,16 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   std::string_view status_text;
   std::string_view connection_info;
   std::string_view alpn_negotiated_protocol;
+  std::string_view referrer;
   if (response.status < 0 || redirected > 1 || cors > 1 || spdy > 1 ||
       alpn > 1 || !IsConnection(response.connection) ||
       !TakeSized(bytes, url) || !TakeSized(bytes, status_text) ||
       !TakeSized(bytes, connection_info) ||
-      !TakeSized(bytes, alpn_negotiated_protocol)) {
+      !TakeSized(bytes, alpn_negotiated_protocol) ||
+      !TakeSized(bytes, referrer)) {
     return base::unexpected("a response that does not hold what it says");
   }
-  if (!IsText(url)) {
+  if (!IsText(url) || !IsText(referrer)) {
     return base::unexpected("a response whose URL is not UTF-8");
   }
   if (!IsProtocolName(connection_info) ||
@@ -1104,6 +1106,7 @@ base::expected<PageResponseStarted, std::string> ReadResponseStarted(
   response.status_text = std::string(status_text);
   response.connection_info = std::string(connection_info);
   response.alpn_negotiated_protocol = std::string(alpn_negotiated_protocol);
+  response.referrer = std::string(referrer);
   response.headers = std::string(bytes);
   return response;
 }
@@ -1512,6 +1515,8 @@ std::string EncodeResponseStarted(const PageResponseStarted& response) {
            EncodeUint32(
                static_cast<uint32_t>(response.alpn_negotiated_protocol.size())),
            response.alpn_negotiated_protocol,
+           EncodeUint32(static_cast<uint32_t>(response.referrer.size())),
+           response.referrer,
            response.headers}));
 }
 

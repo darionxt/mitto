@@ -918,6 +918,9 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     response.first_request_start = Microseconds(event.first_request_start);
     response.last_redirect_end = Microseconds(request.last_redirect_end());
     response.critical_ch_restart = Microseconds(event.critical_ch_restart);
+    if (request.is_navigation()) {
+      response.referrer = event.referrer;
+    }
     channel_->Send(EncodeResponseStarted(response));
   }
   request.ReadIfCredited();
