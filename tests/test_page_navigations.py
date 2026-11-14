@@ -340,6 +340,18 @@ def test_location_refuses_a_url_that_does_not_resolve(session: mitto.Session, se
         assert str(raised.value).endswith(": 'a b' is an invalid protocol.")
 
 
+def test_a_navigation_to_a_url_longer_than_chrome_carries_starts_nothing(
+    session: mitto.Session, server: _Server
+) -> None:
+    url = server.page("/", "<title>Here</title>")
+
+    with _open_page(session, url) as page:
+        # Chrome's browser gets no URL of more than 2 MiB and goes to about:blank#blocked, which a Page does not.
+        assert page.evaluate("location.href = '/' + 'x'.repeat(2 * 1024 * 1024); document.title") == "Here"
+        assert page.evaluate("new Promise(r => setTimeout(r, 100)).then(() => document.URL)") == url
+    assert server.paths() == ["/"]
+
+
 def test_a_navigation_that_fails_raises_its_error_and_keeps_the_document(
     session: mitto.Session, server: _Server
 ) -> None:

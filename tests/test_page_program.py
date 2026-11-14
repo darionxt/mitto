@@ -1178,6 +1178,38 @@ def test_a_fetch_whose_body_cannot_fit_in_a_frame_rejects_and_the_page_goes_on(s
     assert session.close() == 0
 
 
+def test_a_fetch_whose_body_fills_a_frame_after_its_documents_id_is_sent_and_one_byte_more_rejects(
+    session: _Session,
+) -> None:
+    session.start()
+    _loaded(session)
+    script = "fetch('/upload', {{method: 'POST', body: new Uint8Array({})}}).then(() => 'sent', error => String(error))"
+
+    # What the frame holds beside the body: the document's ID, the number, the kind and the flags, then the URL, the
+    # method and the header lines, each after its size, and the byte that says a body follows.
+    session.send(_EVALUATE, struct.pack("<Q", 1) + script.format(1).encode())
+    message_type, payload = session.receive()
+    assert message_type == _REQUEST
+    (number,) = struct.unpack_from("<Q", payload, 8)
+    offset = 18
+    for _ in range(3):
+        (size,) = struct.unpack_from("<I", payload, offset)
+        offset += 4 + size
+    assert len(payload) == offset + 2
+    room = _MAX_PAYLOAD_SIZE - offset - 1
+    _end(session, number, -100)
+    assert session.evaluated() == (1, False, '"TypeError: Failed to fetch"')
+
+    assert session.evaluate(script.format(room + 1), call=2) == (False, '"TypeError: Failed to fetch"')
+    session.send(_EVALUATE, struct.pack("<Q", 3) + script.format(room).encode())
+    message_type, payload = session.receive()
+    assert (message_type, len(payload)) == (_REQUEST, _MAX_PAYLOAD_SIZE)
+    (number,) = struct.unpack_from("<Q", payload, 8)
+    _end(session, number, -100)
+    assert session.evaluated() == (3, False, '"TypeError: Failed to fetch"')
+    assert session.close() == 0
+
+
 def test_a_cors_response_shows_only_the_header_names_that_cors_lets_through(session: _Session) -> None:
     # The Session says the response's tainting is cors, which a redirect back to the document's origin keeps.
     session.start()
