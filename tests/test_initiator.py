@@ -1081,6 +1081,68 @@ def test_a_fetch_loses_its_credentials_for_good_at_another_origin(servers: Serve
     assert [_cookie_names(received) for received in servers.received] == [{"none"}, set(), set()]
 
 
+def test_a_request_that_omits_credentials_sends_and_keeps_no_cookie_even_at_its_own_origin(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(setting(servers.https(), NONE))
+        servers.received.clear()
+
+        session.get(
+            setting(servers.https(), LAX), kind="fetch", credentials="omit", initiator=servers.https(HOST, "/page")
+        )
+
+        assert {cookie.name for cookie in session.cookies} == {"none"}
+    assert _cookie_names(servers.received[0]) == set()
+
+
+def test_a_fetch_that_includes_credentials_sends_them_to_another_site_and_says_its_storage_access(
+    servers: Servers,
+) -> None:
+    with new_session() as session:
+        session.get(setting(servers.https(CROSS_SITE), *ALL_COOKIES))
+        servers.received.clear()
+
+        session.get(
+            servers.https(CROSS_SITE), kind="fetch", credentials="include", initiator=servers.https(HOST, "/page")
+        )
+
+    assert _cookie_names(servers.received[0]) == {"none"}
+    assert servers.received[0].header("Sec-Fetch-Storage-Access") == "active"
+
+
+@pytest.mark.parametrize(("method", "origin"), [("GET", False), ("POST", True)])
+def test_a_fetch_of_mode_no_cors_says_its_mode_and_its_origin_only_with_a_body(
+    servers: Servers, method: str, origin: bool
+) -> None:
+    with new_session() as session:
+        session.request(
+            method, servers.https(CROSS_SITE), kind="fetch", mode="no-cors", initiator=servers.https(HOST, "/page")
+        )
+
+    received = servers.received[0]
+    assert received.header("Sec-Fetch-Mode") == "no-cors"
+    assert (received.header("Origin") is not None) == origin
+
+
+def test_a_script_in_cors_mode_says_its_origin_first_and_sends_no_cookie_to_another_origin(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(setting(servers.https(CROSS_SITE), NONE))
+        servers.received.clear()
+
+        session.get(
+            servers.https(CROSS_SITE),
+            kind="script",
+            mode="cors",
+            credentials="same-origin",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    received = servers.received[0]
+    assert received.header("Origin") == servers.https(HOST).removesuffix("/")
+    assert received.names.index("Origin") < received.names.index("User-Agent")
+    assert received.header("Sec-Fetch-Mode") == "cors"
+    assert _cookie_names(received) == set()
+
+
 def test_a_cookie_set_on_a_hop_of_a_cross_site_navigation_counts_as_first_party(servers: Servers) -> None:
     with new_session() as session:
         session.get(

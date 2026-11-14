@@ -390,6 +390,8 @@ The keyword arguments that each method of a Session takes, and `get()` and `stre
 | [`headers=`](#headers) | Names with text or `None`, in a mapping | The Persona's |
 | [`kind=`](#kind) | A [`RequestKind`](#requestkind), or its value | `navigation` for `GET`, and `fetch` for other methods |
 | [`initiator=`](#initiator) | The URL of a page | None |
+| [`credentials=`](#credentials) | `"omit"`, `"same-origin"`, `"include"` or `None` | The kind's own |
+| [`mode=`](#mode) | `"cors"`, `"no-cors"`, `"same-origin"` or `None` | The kind's own |
 | [`timeout=`](#timeout-1) | A number, a [`Timeout`](#timeout-2) or `None` | The Session's |
 | [`follow_redirects=`](#follow_redirects) | `True` or `False` | `True` |
 | [`data=`](#data) | Bytes, text, a mapping of text, a file or an iterable of bytes | No body |
@@ -496,6 +498,24 @@ assert fetch["Referer"] == "https://example.test/"
 assert "Cookie" not in fetch
 assert image["Cookie"] == "a=1"
 ```
+
+### `credentials=`
+
+Whether the request sends cookies and keeps those it is answered with, as `credentials` of a page's `fetch()` says: `"omit"` never, `"same-origin"` only to its page's origin, and `"include"` wherever `SameSite` allows. `None` leaves the kind's own, which [`RequestKind`](#requestkind) says. A request that includes credentials to another site says its storage access, as the kinds that include them do ([persona.md](persona.md#the-initiator)). A navigation and an `iframe` always include them, so they take only `"include"`, and anything else raises a `ValueError`, as text that is none of the three does.
+
+```python
+page = "https://example.test/page"
+
+with mitto.Session() as session:
+    session.cookies.set(mitto.Cookie("a", "1", domain="other.test", secure=True, same_site="none"))
+    sent = session.get("https://other.test/echo", kind="fetch", credentials="include", initiator=page).json()
+
+assert sent["headers"]["Cookie"] == "a=1"
+```
+
+### `mode=`
+
+The request's mode, as `mode` of a page's `fetch()` or an element's `crossorigin` says: `"cors"`, `"no-cors"` or `"same-origin"`, which `Sec-Fetch-Mode` says in the place of the kind's line. `None` leaves the kind's own. A `fetch` of mode `"no-cors"` to another origin sends no `Origin` with `GET` or `HEAD`, and needs no [preflight](persona.md#a-cors-preflight). A `script`, `image` or `style` of mode `"cors"` sends `Origin` first among its lines, as a font does, and with credentials `"same-origin"` it is what `crossorigin="anonymous"` asks for. A navigation and an `iframe` take no mode, the script of a `worker` only `"same-origin"`, and `"no-cors"` only `GET`, `HEAD` and `POST`, as Fetch allows. Anything else raises a `ValueError`.
 
 ### `timeout=`
 

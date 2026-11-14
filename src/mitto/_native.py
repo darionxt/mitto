@@ -868,7 +868,7 @@ class FetchParams:
     Attributes:
         mode: "navigate", "same-origin", "cors" or "no-cors".
         destination: What Sec-Fetch-Dest says, such as "document" or "empty".
-        credentials_mode: "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
+        credentials_mode: "omit", "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
         has_user_activation: Whether Sec-Fetch-User says that the user started it.
         initiator: The URL of the page it comes from. Without one, a navigation counts as started by the browser and a
             subresource as coming from the page at the root of the origin of its URL.
