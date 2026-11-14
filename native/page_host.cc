@@ -867,8 +867,8 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   const url::Origin document_origin = url::Origin::Create(document_url_);
   request.Reach(GURL(event.url), document_origin);
   // A redirect to another origin of a fetch of mode same-origin is not
-  // followed, as in Chrome. The library ends one that would need a CORS
-  // preflight there.
+  // followed, as in Chrome. The library asks the next origin first for one
+  // that would need a CORS preflight there.
   if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED && checks.same_origin &&
       !document_origin.IsSameOriginWith(GURL(event.new_url))) {
     return false;
