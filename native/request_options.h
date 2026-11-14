@@ -23,7 +23,7 @@ enum class RequestMode {
   kNoCors,
 };
 
-// The values of network::mojom::CredentialsMode that a Request Kind has.
+// The values of network::mojom::CredentialsMode.
 enum class CredentialsMode {
   kOmit,
   kSameOrigin,
