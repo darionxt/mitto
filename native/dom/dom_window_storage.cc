@@ -21,6 +21,12 @@ namespace {
 // hold before those that no window holds go.
 constexpr size_t kTotalCacheLimitInBytes = 5 * 1024 * 1024;
 
+// How many areas the Page keeps cached before those that no window holds go,
+// beside Blink's limit of bytes: half as many as the Session lets a Page
+// bind, where Chrome's browser takes any number. An area that goes loads
+// again from the Session when a window reaches it, so no script can tell.
+constexpr size_t kMaxCachedAreas = kMaxPageStorageAreas / 2;
+
 }  // namespace
 
 Storage* WindowStorage(Window& window,
@@ -90,7 +96,7 @@ void StorageController::ClearAreasIfNeeded() {
   for (const auto& [key, area] : areas_) {
     total += area->memory_used();
   }
-  if (total < kTotalCacheLimitInBytes) {
+  if (total < kTotalCacheLimitInBytes && areas_.size() < kMaxCachedAreas) {
     return;
   }
   std::erase_if(areas_,

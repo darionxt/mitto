@@ -56,8 +56,8 @@ class StorageController {
                                                  uint64_t document);
 
  private:
-  // ClearAreasIfNeeded(): past the limit of the cache, the areas that no
-  // window holds go, and are bound again when one asks.
+  // ClearAreasIfNeeded(): past the limit of the cache, in bytes or in areas,
+  // the areas that no window holds go, and are bound again when one asks.
   void ClearAreasIfNeeded();
 
   std::map<std::pair<PageStorageKind, std::string>,

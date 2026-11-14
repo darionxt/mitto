@@ -123,10 +123,6 @@ struct KeepaliveInFlight final : public base::RefCounted<KeepaliveInFlight> {
 inline constexpr size_t kMaxKeepaliveRequests = 2048;
 inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
 inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
-// How many storage areas a Page may have bound at once. A document binds at
-// most one of localStorage and one of sessionStorage, and lets them go when
-// it no longer uses them, so a Page that binds more is refused.
-inline constexpr size_t kMaxPageStorageAreas = 1000;
 
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
