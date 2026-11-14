@@ -1307,7 +1307,7 @@ def test_a_class_with_indexed_and_named_getters_has_interceptors_that_call_it() 
     assert "const auto result = HolderOf(isolate, holder)->NamedItem(name);" in source
     assert "return HolderOf(isolate, holder)->NamedPropertyEnumerator();" in source
     assert "return HolderOf(isolate, holder)->NamedPropertyQuery(name);" in source
-    assert "    kNamedPropertiesUnenumerable,\n    nullptr,\n    nullptr,\n};" in source
+    assert "    kNamedPropertiesUnenumerable,\n    nullptr,\n    nullptr,\n    nullptr,\n};" in source
     assert "InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);" in source
     # %Array.prototype.values%, as Blink installs it for an indexed getter.
     assert "SetIntrinsicDataProperty(v8::Symbol::GetIterator(isolate), v8::kArrayProto_values," in source
@@ -1319,7 +1319,7 @@ def test_a_named_getter_alone_leaves_the_indices_to_it() -> None:
     )
 
     assert "kIndexedAndNamedProperties = {\n    nullptr,\n    nullptr,\n    &NamedPropertyGetter," in source
-    assert "    0,\n    nullptr,\n    nullptr,\n};" in source
+    assert "    0,\n    nullptr,\n    nullptr,\n    nullptr,\n};" in source
     assert "kArrayProto_values" not in source
 
 
@@ -1359,17 +1359,51 @@ def test_a_named_setter_and_deleter_call_the_class() -> None:
     assert "return ToV8String(isolate, *result);" in source
     assert "HolderOf(isolate, holder)->AnonymousNamedSetter(name, property_value, exception_state);" in source
     assert "return HolderOf(isolate, holder)->AnonymousNamedDeleter(name);" in source
-    assert "    kNamedPropertiesOverrideBuiltIns,\n    &NamedPropertySetter,\n    &NamedPropertyDeleter,\n};" in source
+    assert (
+        "    kNamedPropertiesOverrideBuiltIns,\n    &NamedPropertySetter,\n    &NamedPropertyDeleter,\n    nullptr,\n};"
+        in source
+    )
 
 
 def test_the_writer_refuses_what_it_cannot_install_of_named_properties() -> None:
     implemented = ImplementedInterface("Thing", "mitto/dom/thing.h", implemented=("named setter",))
     with pytest.raises(UnhandledError, match="interface Thing: a named setter or deleter needs the named getter"):
         _bindings_of(_string_map(), implemented)
-    with pytest.raises(UnhandledError, match="interface Thing: the C\\+\\+ writer does not handle its indexed setter"):
-        _bindings_of(
-            _collection("indexed getter", "indexed setter"), ImplementedInterface("Thing", "mitto/dom/thing.h")
-        )
+    with pytest.raises(UnhandledError, match="interface Thing: an indexed setter needs the indexed getter"):
+        _bindings_of(_collection("indexed setter"), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+
+def _list() -> Interface:
+    """An interface like SVGNumberList, whose indexed getter, getItem(), and anonymous indexed setter raise
+    exceptions."""
+    thing = IdlType(TypeKind.INTERFACE, "Thing")
+    index = Argument("index", IdlType(TypeKind.INTEGER, "unsigned long"), False, False, None)
+    get_item = Operation("getItem", (index,), thing, False, _extended("RaisesException"), ALWAYS)
+    setter = Operation(
+        "",
+        (index, Argument("newItem", thing, False, False, None)),
+        UNDEFINED,
+        False,
+        _extended("RaisesException"),
+        ALWAYS,
+    )
+    return _interface(
+        attributes=(
+            Attribute("length", IdlType(TypeKind.INTEGER, "unsigned long"), True, False, ExtendedAttributes(), ALWAYS),
+        ),
+        operation_groups=(OperationGroup("getItem", (get_item,), False, 1, ExtendedAttributes(), ALWAYS),),
+        special_operations=(SpecialOperation("indexed getter", get_item), SpecialOperation("indexed setter", setter)),
+    )
+
+
+def test_an_indexed_getter_and_setter_that_raise_take_an_exception_state() -> None:
+    source = _bindings_of(_list(), ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    # The interceptor calls the getter only below the length, so an index past the end gives undefined.
+    assert "const auto result = HolderOf(isolate, holder)->GetItem(index, exception_state);" in source
+    assert "  if (exception_state.HadException()) {\n    return v8::Local<v8::Value>();\n  }" in source
+    assert "HolderOf(isolate, holder)->AnonymousIndexedSetter(index, property_value, exception_state);" in source
+    assert "    nullptr,\n    nullptr,\n    &IndexedPropertySetter,\n};" in source
 
 
 def test_each_iterable_gets_an_iterator_of_its_own() -> None:

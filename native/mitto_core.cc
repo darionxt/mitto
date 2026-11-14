@@ -351,6 +351,16 @@ class RequestJob final : public net::URLRequest::Delegate,
     request_ = CreateRequest(url_, options_.method, request_headers_);
     if (fetch_rules_) {
       fetch_rules_->ConfigureRequest(*request_);
+      // A URL that is not valid fails as such, from //net.
+      if (url_.is_valid() && fetch_rules_->IsDisallowedByMode()) {
+        // CorsURLLoader fails it before anything goes out, and its client
+        // hears of that from a later task.
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE,
+            base::BindOnce(&RequestJob::Finish, weak_ptr_factory_.GetWeakPtr(),
+                           net::ERR_FAILED));
+        return;
+      }
     } else {
       SetUpTopLevelNavigation(*request_);
     }
@@ -722,6 +732,10 @@ class RequestJob final : public net::URLRequest::Delegate,
     if (fetch_rules_) {
       fetch_rules_->WillFollowRedirect(*request_, redirect_info,
                                        removed_headers, modified_headers);
+      if (fetch_rules_->IsDisallowedByMode()) {
+        Finish(net::ERR_FAILED);
+        return;
+      }
     }
     // The next hop has its own connection to get.
     StartConnectTimer();

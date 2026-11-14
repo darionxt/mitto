@@ -25,6 +25,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "base/containers/span.h"
@@ -32,7 +33,9 @@
 #include "base/memory/raw_ref.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/qualified_name.h"
+#include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
 
@@ -54,6 +57,9 @@ struct SVGEnumerationMap {
 
 // Which number of an attribute of two, such as stdDeviation's, a value is.
 enum class SVGPairHalf { kNone, kFirst, kSecond };
+
+// Which of the viewport's sizes a percentage takes, as Blink's SVGLengthMode.
+enum class SVGLengthMode { kWidth, kHeight, kOther };
 
 // What a page cannot see of the values: the attribute that each reads, and
 // whether the attribute changed since it was read.
@@ -80,8 +86,9 @@ class SVGAnimatedPropertyBase : public bindings::ScriptWrappable {
   SVGElement& ContextElement() const { return *element_; }
   const std::u16string* AttributeValue() const;
   // Blink's SynchronizeAttribute(): the attribute takes `value`, with no
-  // record for mutation observers and without being parsed again.
-  void SynchronizeAttribute(const std::u16string& value);
+  // record for mutation observers and without being parsed again. Null
+  // removes it.
+  void SynchronizeAttribute(const std::optional<std::u16string>& value);
   // Reads the attribute again if it changed since it was last read.
   void EnsureFresh();
   virtual void Parse(const std::u16string* value) = 0;
@@ -92,6 +99,39 @@ class SVGAnimatedPropertyBase : public bindings::ScriptWrappable {
   const std::u16string_view attribute_;
   const SVGPairHalf half_;
   bool stale_ = true;
+};
+
+// An animated list of SVGNumbers or SVGLengths, which an item that changes
+// through one of its objects tells.
+class SVGAnimatedListBase : public SVGAnimatedPropertyBase {
+ public:
+  // Writes the attribute again, if the list still holds `item`: an item that
+  // an attribute's change took out of it changes nothing of the list's.
+  void ItemChanged(const void* item);
+  // What a percentage of a length in the list takes of the viewport.
+  virtual SVGLengthMode LengthMode() const;
+  SVGElement& Element() const { return ContextElement(); }
+
+ protected:
+  SVGAnimatedListBase(SVGElement& element, std::u16string_view attribute);
+
+  virtual bool Holds(const void* item) const = 0;
+  // Writes the attribute from the items, which an empty list removes, as
+  // Blink's null value of an empty list does.
+  virtual void Synchronize() = 0;
+};
+
+// A list's item, which each object of it shares, as Blink's
+// SVGListablePropertyBase: its value and the list that holds it, if any.
+template <typename Value>
+class SVGListItem final : public cppgc::GarbageCollected<SVGListItem<Value>> {
+ public:
+  explicit SVGListItem(Value item_value) : value(std::move(item_value)) {}
+
+  void Trace(cppgc::Visitor* visitor) const { visitor->Trace(owner); }
+
+  Value value;
+  cppgc::Member<SVGAnimatedListBase> owner;
 };
 
 class SVGAnimatedString final : public SVGAnimatedPropertyBase {

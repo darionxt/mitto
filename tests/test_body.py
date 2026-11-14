@@ -32,7 +32,12 @@ _BOUNDARY = re.compile(rf"{_BOUNDARY_PREFIX}[0-9A-Za-z]{{16}}")
 
 _STREAM_CASE = "fetch_post_stream"
 _ALL_BASELINES = load_baselines(BASELINES_DIRECTORY)
-_BASELINES = [baseline for baseline in _ALL_BASELINES if REPLAYS[baseline.case].body and baseline.case != _STREAM_CASE]
+# A case that its replay makes by asking for another, such as a preflight, holds that other's body, not its own.
+_BASELINES = [
+    baseline
+    for baseline in _ALL_BASELINES
+    if REPLAYS[baseline.case].body and baseline.case != _STREAM_CASE and REPLAYS[baseline.case].start is None
+]
 _STREAM_BASELINES = [baseline for baseline in _ALL_BASELINES if baseline.case == _STREAM_CASE]
 
 
@@ -71,6 +76,15 @@ def test_the_recorded_cases_hold_a_body_of_each_kind_that_a_baseline_has() -> No
         "client_hints_fetch_post",
         "client_hints_form",
         *(asked.post.name for asked in HINTS_ASKED),
+        "xhr_post_text",
+        "xhr_post_text_sync",
+        "beacon_text",
+        "beacon_blob",
+        "beacon_form_data",
+        "beacon_text_cross_site",
+        "fetch_post_json_cross_site",
+        "navigation_form_text",
+        "navigation_form_cross_site",
     }
 
 

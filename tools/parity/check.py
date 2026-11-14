@@ -2,7 +2,7 @@
 
 import json
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Container, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
@@ -12,13 +12,14 @@ from mitto._persona import WINDOWS_PERSONAS
 from tools.capture import CaptureServer, Case, Recording, normal_form
 from tools.capture.recording import Json
 from tools.parity.gaps import Gap, differences
-from tools.parity.replay import needs_cache, proxy_of, replay, run_of, session_settings
+from tools.parity.replay import made_by_a_page, needs_cache, proxy_of, replay, run_of, session_settings
 
 BASELINES_DIRECTORY = Path(__file__).parents[2] / "tests" / "baselines"
 
 _RAW_SUFFIX = ".raw.json"
 _REQUESTS = "requests"
 _REQUEST = "request"
+_ORDER = "order"
 _RESPONSE_FIELD = "response"
 _A_RESPONSE = "a response"
 
@@ -53,29 +54,39 @@ class Baseline:
     fingerprint: dict[str, Json]
 
 
-def fingerprint(form: dict[str, Json], case: str) -> dict[str, Json]:
+def fingerprint(form: dict[str, Json], case: str, ordered: Container[str] = ()) -> dict[str, Json]:
     """Return the part of a normal form that is about one Recording Case.
 
     That is everything about its connection, and that case's entry in "requests" as "request". The entry is None if the
-    normal form has none.
+    normal form has none. The order of the cases whose order counts is about each of those cases, and about no other.
+
+    Args:
+        form: A normal form.
+        case: The name of the Recording Case.
+        ordered: The names of the cases whose order on the wire counts, as their run says.
     """
-    connection = {key: value for key, value in form.items() if key != _REQUESTS}
+    connection = {key: value for key, value in form.items() if key not in (_REQUESTS, _ORDER)}
     requests = form.get(_REQUESTS)
-    return {**connection, _REQUEST: requests.get(case) if isinstance(requests, dict) else None}
+    found: dict[str, Json] = {**connection, _REQUEST: requests.get(case) if isinstance(requests, dict) else None}
+    if case in ordered and _ORDER in form:
+        found[_ORDER] = form[_ORDER]
+    return found
 
 
 def load_baselines(directory: Path) -> list[Baseline]:
     """Read the Baselines from directory, in a fixed order.
 
-    Each file named RELEASE/NAME.json or RELEASE/cases/NAME.json holds a normal form, with one Baseline for each Recording
-    Case in it. Other files, such as raw recordings and notes on where a Baseline came from, are left alone.
+    Each file named RELEASE/NAME.json, RELEASE/cases/NAME.json or RELEASE/documents/NAME.json holds a normal form, with
+    one Baseline for each Recording Case in it. Other files, such as raw recordings and notes on where a Baseline came
+    from, are left alone.
 
     Raises:
         BaselineError: A file is not a normal form, or two files hold the same Baseline.
     """
     baselines: list[Baseline] = []
     seen: dict[tuple[str, str, str], Path] = {}
-    for path in sorted((*directory.glob("*/*.json"), *directory.glob("*/cases/*.json"))):
+    found = (*directory.glob("*/*.json"), *directory.glob("*/cases/*.json"), *directory.glob("*/documents/*.json"))
+    for path in sorted(found):
         if path.name.endswith(_RAW_SUFFIX):
             continue
         for baseline in _read_baselines(path, path.relative_to(directory).parts[0]):
@@ -99,10 +110,13 @@ def _read_baselines(path: Path, release: str) -> list[Baseline]:
     requests = form.get(_REQUESTS)
     if not isinstance(protocol, str) or not isinstance(requests, dict) or not requests:
         raise BaselineError(f"{path} is not a normal form with a protocol and requests")
+    baselines: list[Baseline] = []
     for case in requests:
-        if run_of(case, protocol) is None:
+        run = run_of(case, protocol)
+        if run is None:
             raise BaselineError(f"{path} holds an unknown Recording Case: {case} over {protocol}")
-    return [Baseline(release, case, protocol, fingerprint(form, case)) for case in requests]
+        baselines.append(Baseline(release, case, protocol, fingerprint(form, case, _names(run.ordered))))
+    return baselines
 
 
 def _persona_of(release: str) -> str:
@@ -153,28 +167,43 @@ def record(baseline: Baseline) -> dict[str, Json]:
                 raise
             refused = _REFUSED
     recording = server.recording(run.route, host=run.host)
-    cases = [as_recorded(case, recording) for case in run.cases]
+    cases = [as_recorded(case, recording, run.cases) for case in run.cases]
     if not any(_was_recorded(case, recording) for case in cases):
         return {**baseline.fingerprint, _REQUEST: refused}
-    return fingerprint(normal_form(recording, cases), baseline.case)
+    ordered = [case for case in cases if case.name in _names(run.ordered)]
+    return fingerprint(normal_form(recording, cases, ordered), baseline.case, _names(run.ordered))
+
+
+def _names(cases: Iterable[Case]) -> frozenset[str]:
+    return frozenset(case.name for case in cases)
 
 
 def _was_recorded(case: Case, recording: Recording) -> bool:
     return any(case.matches(request) for connection in recording.connections for request in connection.requests)
 
 
-def as_recorded(case: Case, recording: Recording) -> Case:
+def as_recorded(case: Case, recording: Recording, others: Iterable[Case] = ()) -> Case:
     """Return a case, or if no request carries what it should, the case that any request to its path stands for.
 
-    So a request without its Cookie is a gap in that header, rather than a request that is missing.
+    So a request without its Cookie is a gap in that header, rather than a request that is missing. A request that
+    another case of the run stands for at the same path, such as the request after a preflight, does not count, so a
+    preflight that never went is a request that is missing.
     """
-    return case if case.carries is None or _was_recorded(case, recording) else replace(case, carries=None)
+    if case.carries is None or _was_recorded(case, recording):
+        return case
+    claimed = any(
+        other.path == case.path and other.carries is not None and _was_recorded(other, recording)
+        for other in others
+        if other is not case
+    )
+    return case if claimed else replace(case, carries=None)
 
 
 def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> list[Gap]:
     """Make the request of each Baseline, and return every gap in the order of the Baselines and of their fields.
 
-    A request that gets no response has nothing to compare, so it is one gap, in the field "response".
+    A request that gets no response has nothing to compare, so it is one gap, in the field "response". A Baseline of a
+    case that only a page makes, until a Page makes it (made_by_a_page()), is left out.
 
     Raises:
         BaselineError: No Persona presents the Chrome Release of a Baseline, or no run records its Recording Case.
@@ -183,6 +212,8 @@ def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> lis
     """
     gaps: list[Gap] = []
     for baseline in baselines:
+        if made_by_a_page(baseline.case) is not None:
+            continue
         try:
             recorded = recorder(baseline)
         except RequestError as error:

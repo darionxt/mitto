@@ -18,6 +18,7 @@ namespace mitto {
 // The values of network::mojom::RequestMode that a Request Kind has.
 enum class RequestMode {
   kNavigate,
+  kSameOrigin,
   kCors,
   kNoCors,
 };

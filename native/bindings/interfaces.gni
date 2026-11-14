@@ -1657,9 +1657,19 @@ mitto_bindings_interfaces = [
     header = "svg_length"
   },
   {
+    name = "SVGAnimatedLengthList"
+    file = "svg_animated_length_list"
+    header = "svg_lists"
+  },
+  {
     name = "SVGAnimatedNumber"
     file = "svg_animated_number"
     header = "svg_animated_values"
+  },
+  {
+    name = "SVGAnimatedNumberList"
+    file = "svg_animated_number_list"
+    header = "svg_lists"
   },
   {
     name = "SVGAnimatedString"
@@ -1670,7 +1680,10 @@ mitto_bindings_interfaces = [
     name = "SVGAnimationElement"
     file = "svg_animation_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "requiredExtensions",
+      "systemLanguage",
+    ]
   },
   {
     name = "SVGCircleElement"
@@ -1701,6 +1714,7 @@ mitto_bindings_interfaces = [
       "amplitude",
       "exponent",
       "offset",
+      "tableValues",
     ]
   },
   {
@@ -1762,6 +1776,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "values",
     ]
   },
   {
@@ -1817,6 +1832,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "kernelMatrix",
     ]
   },
   {
@@ -2123,7 +2139,10 @@ mitto_bindings_interfaces = [
     name = "SVGGraphicsElement"
     file = "svg_graphics_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "requiredExtensions",
+      "systemLanguage",
+    ]
   },
   {
     name = "SVGImageElement"
@@ -2141,6 +2160,11 @@ mitto_bindings_interfaces = [
     name = "SVGLength"
     file = "svg_length"
     made_by_known_gaps = true
+  },
+  {
+    name = "SVGLengthList"
+    file = "svg_length_list"
+    header = "svg_lists"
   },
   {
     name = "SVGLineElement"
@@ -2195,6 +2219,8 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "requiredExtensions",
+      "systemLanguage",
     ]
   },
   {
@@ -2202,6 +2228,16 @@ mitto_bindings_interfaces = [
     file = "svg_metadata_element"
     header = "svg_elements"
     implemented = []
+  },
+  {
+    name = "SVGNumber"
+    file = "svg_number"
+    header = "svg_lists"
+  },
+  {
+    name = "SVGNumberList"
+    file = "svg_number_list"
+    header = "svg_lists"
   },
   {
     name = "SVGPathElement"
@@ -2221,6 +2257,8 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "requiredExtensions",
+      "systemLanguage",
     ]
   },
   {
@@ -2271,6 +2309,7 @@ mitto_bindings_interfaces = [
       "width",
       "height",
       "createSVGLength",
+      "createSVGNumber",
     ]
   },
   {
@@ -2294,6 +2333,11 @@ mitto_bindings_interfaces = [
     implemented = [
       "offset",
     ]
+  },
+  {
+    name = "SVGStringList"
+    file = "svg_string_list"
+    header = "svg_lists"
   },
   {
     name = "SVGStyleElement"
@@ -2350,7 +2394,13 @@ mitto_bindings_interfaces = [
     name = "SVGTextPositioningElement"
     file = "svg_text_positioning_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "dx",
+      "dy",
+      "rotate",
+    ]
   },
   {
     name = "SVGTitleElement"

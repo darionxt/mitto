@@ -623,6 +623,13 @@ SVGLength* SVGLength::Create() {
 }
 
 // static
+SVGLength* SVGLength::ForItem(SVGListItem<SVGLengthValue>& item,
+                              bool read_only,
+                              SVGAnimatedListBase* binding) {
+  return bindings::MakeGarbageCollected<SVGLength>(item, read_only, binding);
+}
+
+// static
 bindings::ScriptWrappable* SVGLength::CreateForKnownGap(
     const bindings::WrapperTypeInfo& info) {
   return bindings::MakeForKnownGap<SVGLength>(
@@ -638,7 +645,14 @@ SVGLength* SVGLength::CreateTearOff(SVGAnimatedLength& owner,
 SVGLength::SVGLength(SVGAnimatedLength* owner, bool is_anim_val)
     : owner_(owner),
       is_anim_val_(is_anim_val),
-      own_value_(SVGLengthValue::Literal(0, CssUnit::kNumber)) {}
+      item_(owner ? nullptr
+                  : bindings::MakeGarbageCollected<SVGListItem<SVGLengthValue>>(
+                        SVGLengthValue::Literal(0, CssUnit::kNumber))) {}
+
+SVGLength::SVGLength(SVGListItem<SVGLengthValue>& item,
+                     bool read_only,
+                     SVGAnimatedListBase* binding)
+    : is_anim_val_(read_only), item_(&item), binding_(binding) {}
 
 SVGLength::~SVGLength() = default;
 
@@ -649,26 +663,46 @@ const bindings::WrapperTypeInfo* SVGLength::GetWrapperTypeInfo() const {
 void SVGLength::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(owner_);
+  visitor->Trace(item_);
+  visitor->Trace(binding_);
+}
+
+SVGListItem<SVGLengthValue>* SVGLength::ItemToInsert(
+    SVGAnimatedListBase& list) {
+  if (!owner_ && !is_anim_val_ && !binding_ && !item_->owner) {
+    binding_ = &list;
+    return item_.Get();
+  }
+  return bindings::MakeGarbageCollected<SVGListItem<SVGLengthValue>>(Target());
 }
 
 SVGLengthValue SVGLength::Target() const {
-  return owner_ ? owner_->BaseValue() : own_value_;
+  return owner_ ? owner_->BaseValue() : item_->value;
 }
 
 void SVGLength::Commit(const SVGLengthValue& value) {
   if (owner_) {
     owner_->SetBaseValue(value);
-  } else {
-    own_value_ = value;
+    return;
+  }
+  item_->value = value;
+  if (item_->owner) {
+    item_->owner->ItemChanged(item_.Get());
   }
 }
 
 SVGElement* SVGLength::ContextElement() const {
-  return owner_ ? &owner_->Element() : nullptr;
+  if (owner_) {
+    return &owner_->Element();
+  }
+  return binding_ ? &binding_->Element() : nullptr;
 }
 
 SVGLengthMode SVGLength::Mode() const {
-  return owner_ ? owner_->Mode() : SVGLengthMode::kOther;
+  if (owner_) {
+    return owner_->Mode();
+  }
+  return binding_ ? binding_->LengthMode() : SVGLengthMode::kOther;
 }
 
 bool SVGLength::ThrowIfImmutable(

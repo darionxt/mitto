@@ -914,7 +914,7 @@ class FetchParams:
     """What a request made for a page says of itself, in the terms of Chrome's network::ResourceRequest.
 
     Attributes:
-        mode: "navigate", "cors" or "no-cors".
+        mode: "navigate", "same-origin", "cors" or "no-cors".
         destination: What Sec-Fetch-Dest says, such as "document" or "empty".
         credentials_mode: "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
         has_user_activation: Whether Sec-Fetch-User says that the user started it.
