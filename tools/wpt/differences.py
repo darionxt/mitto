@@ -124,16 +124,23 @@ def _matches(chrome: Subtest, page: Subtest) -> bool:
 def differing_subtests(chrome: Iterable[ChromeResult], found: Iterable[Difference]) -> int:
     """How many of a test's subtests differ, for the counts by directory: every one of Chrome's when a test ran out of
     time, ended or is flaky on one side only, else each subtest that differs and each that one side ran and the other
-    did not."""
+    did not, once."""
+    found = list(found)
     whole = max((result.subtests for result in chrome if result.reported), default=0)
     all_reported = all(result.reported for result in chrome)
-    count = 0
+    named = [difference for difference in found if difference.subtest is not None]
+    # A subtest of Chrome's that the Page did not run has a line of its own, and is one of those the Page ran fewer too.
+    missing = sum(1 for difference in named if difference.mitto is None)
+    # A subtest that Chrome did not list and the Page did not pass is one that Chrome passed, or one more that only the
+    # Page ran. Beyond as many as Chrome ran, they are the Page's own, so they are some of those it ran more.
+    unlisted = sum(1 for difference in named if difference.chrome == PASS and difference.mitto is not None)
+    count = len(named)
     for difference in found:
-        if difference.subtest is not None:
-            count += 1
-        elif _place(difference)[1]:
-            count += abs(int(str(difference.chrome).split()[0]) - int(str(difference.mitto).split()[0]))
-        elif not all_reported or difference.mitto in _WHOLE_TEST:
+        if _place(difference)[1]:
+            in_chrome, in_page = (int(str(side).split()[0]) for side in (difference.chrome, difference.mitto))
+            counted = missing if in_chrome > in_page else max(0, unlisted - in_chrome)
+            count += max(0, abs(in_chrome - in_page) - counted)
+        elif difference.subtest is None and (not all_reported or difference.mitto in _WHOLE_TEST):
             count += max(1, whole)
     return count
 

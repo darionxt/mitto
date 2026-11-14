@@ -82,7 +82,7 @@ gh run download RUN --pattern 'wpt-results-*' --dir wpt-results
 uv run python -m tools.wpt differences --from wpt-results/*/wpt-results.json
 ```
 
-How many subtests differ counts each subtest whose outcome differs, each that one side ran and the other did not, and all of Chrome's subtests of a test that ran out of time or crashed on one side only.
+How many subtests differ counts each subtest whose outcome differs, each that one side ran and the other did not, and all of Chrome's subtests of a test that ran out of time or crashed on one side only. A subtest counts once where the list can tell that its line and the difference in how many ran are the same subtest: one of Chrome's that the Page did not run, or one that only the Page ran in a test where Chrome ran fewer.
 
 ## Who owns a difference
 

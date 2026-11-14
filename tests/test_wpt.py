@@ -256,6 +256,26 @@ def test_differing_subtests_count_all_of_chromes_for_a_timeout() -> None:
     )
 
 
+def test_a_subtest_of_chromes_that_the_page_did_not_run_counts_once() -> None:
+    recorded = [chrome(*passing("a", "b", "c"), Subtest("d", "FAIL", "no"))]
+    missing = [Difference(TEST, None, "4 subtests", "1 subtests"), Difference(TEST, "d", "FAIL: no", None)]
+
+    assert differing_subtests(recorded, missing) == 3
+    assert differing_subtests(recorded, [Difference(TEST, None, "4 subtests", "0 subtests"), *missing[1:]]) == 4
+    assert differing_subtests(recorded, [Difference(TEST, None, "4 subtests", "6 subtests")]) == 2
+
+
+def test_a_subtest_that_only_the_page_ran_counts_once() -> None:
+    errored = [chrome(harness="ERROR", message="x")]
+    extra = [Difference(TEST, None, "0 subtests", "2 subtests"), Difference(TEST, "x", "PASS", "NOTRUN")]
+    # One of Chrome's two failed, and one more that only the Page ran passed: which is which, the list cannot say.
+    one_each = [Difference(TEST, None, "2 subtests", "3 subtests"), Difference(TEST, "a", "PASS", "FAIL: no")]
+
+    assert differing_subtests(errored, [*extra, Difference(TEST, "y", "PASS", "FAIL: no")]) == 2
+    assert differing_subtests(errored, extra) == 2
+    assert differing_subtests([chrome(*passing("a", "b"))], one_each) == 2
+
+
 # The list of differences
 
 DIFFERENCE = Difference(TEST, "a", "PASS", "FAIL: no")
