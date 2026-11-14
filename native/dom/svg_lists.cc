@@ -14,6 +14,7 @@
 #include "mitto/bindings/v8_svg_number_list.h"
 #include "mitto/bindings/v8_svg_string_list.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_geometry.h"
 #include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
@@ -268,6 +269,10 @@ template class SVGAnimatedItemList<float>;
 template class SVGAnimatedItemList<SVGLengthValue>;
 template class SVGTearOffList<SVGAnimatedNumberList, SVGNumber, float>;
 template class SVGTearOffList<SVGAnimatedLengthList, SVGLength, SVGLengthValue>;
+template class SVGAnimatedItemList<std::array<float, 2>>;
+template class SVGTearOffList<SVGAnimatedPointList,
+                              SVGPoint,
+                              std::array<float, 2>>;
 
 // SVGNumber.
 
