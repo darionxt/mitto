@@ -48,6 +48,16 @@ class HeapVector {
 
   void push_back(T* item) { insert(size_, item); }
 
+  T* back() const {
+    CHECK_GT(size_, 0u);
+    return buffer_->at(size_ - 1);
+  }
+
+  void pop_back() {
+    CHECK_GT(size_, 0u);
+    buffer_->set(--size_, nullptr);
+  }
+
   void insert(size_t index, T* item) {
     CHECK_LE(index, size_);
     Reserve(size_ + 1);

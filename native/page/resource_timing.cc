@@ -197,35 +197,6 @@ bool IsSupportedMimeType(std::string_view mime_type) {
 
 }  // namespace
 
-std::string HeaderField(std::string_view headers, std::string_view name) {
-  std::vector<std::string_view> values;
-  for (const std::string_view line : base::SplitStringPiece(
-           headers, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const size_t colon = line.find(':');
-    if (colon != std::string_view::npos &&
-        base::EqualsCaseInsensitiveASCII(line.substr(0, colon), name)) {
-      values.push_back(
-          base::TrimString(line.substr(colon + 1), " \t", base::TRIM_ALL));
-    }
-  }
-  return base::JoinString(values, ", ");
-}
-
-std::string HttpContentType(std::string_view headers) {
-  std::string mime_type;
-  const std::string field =
-      base::ToLowerASCII(HeaderField(headers, "content-type"));
-  for (const std::string_view value : base::SplitStringPiece(
-           field, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-    const std::string_view type = base::TrimString(
-        value.substr(0, value.find(';')), " \t", base::TRIM_ALL);
-    if (type.find('/') != std::string_view::npos && type != "*/*") {
-      mime_type = std::string(type);
-    }
-  }
-  return mime_type;
-}
-
 std::string MinimizedMimeType(std::string_view mime_type) {
   if (Contains(kSupportedJavascriptTypes, mime_type)) {
     return "text/javascript";

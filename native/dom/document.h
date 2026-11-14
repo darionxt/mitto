@@ -18,8 +18,10 @@
 #include <string_view>
 #include <utility>
 
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
+#include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
 #include "url/gurl.h"
@@ -34,11 +36,13 @@ class Comment;
 class CookieJar;
 class DocumentFragment;
 class CustomElementRegistry;
+class DocumentScriptRunner;
 class DocumentType;
 class Element;
 class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
+class HTMLScriptElement;
 class Location;
 class NodeIterator;
 class PermissionsPolicy;
@@ -162,6 +166,9 @@ class Document : public Node {
       bindings::ExceptionState& exception_state);
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
+  // The script element whose classic script runs, and null outside one: an
+  // HTMLOrSVGScriptElement, as the bindings return a union of interfaces.
+  bindings::ScriptWrappable* CurrentScriptForBinding() const;
   Node* ImportNode(Node* node,
                    const bindings::BooleanOrImportNodeOptions& options,
                    bindings::ExceptionState& exception_state);
@@ -248,6 +255,29 @@ class Document : public Node {
   // Blink's Document::ProcessBaseElement(), once a base element comes, goes,
   // or changes its href.
   void ProcessBaseElement();
+  // When the document was made, as Blink's Document::GetStartTime().
+  base::TimeTicks StartTime() const { return start_time_; }
+
+  // What the document's scripts use.
+  //
+  // The async and in-order scripts, which it makes the first time.
+  DocumentScriptRunner& GetScriptRunner();
+  // The HTML Standard's currentScript, as Blink keeps it for scripts that
+  // run inside others.
+  void PushCurrentScript(HTMLScriptElement* element);
+  void PopCurrentScript(HTMLScriptElement* element);
+  // Whether no style sheet blocks scripts, which none does while a Page loads
+  // no style sheets.
+  bool IsScriptExecutionReady() const { return true; }
+  // What holds the load event back, such as an async script that has not
+  // run. Once nothing does, `check_completed`, which the Page's loader gives,
+  // runs from a task, as Blink's load event delay timer runs.
+  void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
+  void DecrementLoadEventDelayCount();
+  bool IsDelayingLoadEvent() const { return load_event_delay_count_ > 0; }
+  void SetCheckCompleted(base::RepeatingClosure check_completed) {
+    check_completed_ = std::move(check_completed);
+  }
 
   // The live ranges and node iterators of the document, which the DOM tells
   // as its trees change, made when one is first attached.
@@ -267,6 +297,7 @@ class Document : public Node {
                              HTMLCollection::Type type);
 
   const bool is_html_;
+  const base::TimeTicks start_time_ = base::TimeTicks::Now();
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
   std::u16string url_ = u"about:blank";
@@ -295,6 +326,11 @@ class Document : public Node {
   // none, and the base URL that it gives, empty for one that is not valid.
   GURL base_element_url_;
   GURL base_url_ = GURL("about:blank");
+  cppgc::Member<DocumentScriptRunner> script_runner_;
+  HeapVector<HTMLScriptElement> current_script_stack_;
+  int load_event_delay_count_ = 0;
+  bool load_event_check_pending_ = false;
+  base::RepeatingClosure check_completed_;
 };
 
 }  // namespace mitto
