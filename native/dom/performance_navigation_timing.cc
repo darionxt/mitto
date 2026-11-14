@@ -54,6 +54,28 @@ bool PerformanceNavigationTiming::ExposesRedirectTiming() const {
   return !timing_->has_cross_origin_redirect;
 }
 
+std::u16string PerformanceNavigationTiming::Type() const {
+  return timing_->is_reload ? u"reload" : u"navigate";
+}
+
+// The old document's unload times, for a document of its origin that no
+// redirect to another origin led to, as Blink gives them.
+double PerformanceNavigationTiming::UnloadEventStart() const {
+  if (timing_->has_cross_origin_redirect ||
+      !timing_->has_same_origin_as_previous_document) {
+    return 0;
+  }
+  return ToDOMHighResTimeStamp(timing_->unload_event_start);
+}
+
+double PerformanceNavigationTiming::UnloadEventEnd() const {
+  if (timing_->has_cross_origin_redirect ||
+      !timing_->has_same_origin_as_previous_document) {
+    return 0;
+  }
+  return ToDOMHighResTimeStamp(timing_->unload_event_end);
+}
+
 double PerformanceNavigationTiming::DomInteractive() const {
   return ToDOMHighResTimeStamp(timing_->dom_interactive);
 }

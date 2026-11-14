@@ -2745,6 +2745,7 @@ mitto_bindings_interfaces = [
       "setInterval",
       "clearInterval",
       "queueMicrotask",
+      "open",
       "fetch",
       "navigator",
       "clientInformation",
