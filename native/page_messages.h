@@ -161,12 +161,13 @@ enum class PageMessage : uint32_t {
   // To the Page: a message of a BroadcastChannel of another Page of the
   // Session whose document is of the same origin, as PageBroadcast says.
   kBroadcastReceived = 26,
+  // 27 to 39 are the storage messages' to come.
   // To the Session: what the document's CacheStorage or one of its Caches
   // asks, as cache_storage_messages.h says.
-  kCacheStorage = 27,
+  kCacheStorage = 40,
   // To the Page: what the Session answers the Cache API, as
   // cache_storage_messages.h says.
-  kCacheStorageAnswer = 28,
+  kCacheStorageAnswer = 41,
 };
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
