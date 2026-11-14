@@ -551,7 +551,7 @@ Known Gaps of `fetch()`: `RequestInit`'s `cache`, `redirect`, `integrity`, `targ
 - **Quota.** A put needs the room its entries take, before it writes anything, within the quota that Chrome enforces for a storage key, Incognito's in memory, a third of a random 15% to 20% of the Host's memory; past it, it fails with `QuotaExceededError: Quota exceeded.`. `navigator.storage.estimate()` gives what the caches hold, with `usageDetails.caches`, and 10 GiB more ([`native/storage_quota.h`](../native/storage_quota.h)).
 - **Where it is kept.** In memory, until the Session goes. A directory of the Session's own comes with `storage=`.
 
-Opaque responses, which a page gets only from a `no-cors` fetch that the Runtime does not make yet, and their padding, are not there yet, nor the V8 code cache that a service worker's put makes. A response's `body` stream is a Known Gap, as for `fetch()`.
+An opaque response, which a page gets from a `no-cors` fetch, goes in and comes back opaque, with a null body, since the Runtime keeps none of its bytes. Its padding is not there yet, and neither is the V8 code cache that a service worker's put makes. A response's `body` stream is a Known Gap, as for `fetch()`.
 
 The tests run [`tests/cache_storage_cases.js`](../tests/cache_storage_cases.js) in a Page and compare what it gives with what Chrome 157 gave for it, in `tests/data/cache_storage_cases.json`.
 
