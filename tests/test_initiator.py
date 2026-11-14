@@ -34,6 +34,7 @@ SAME_SITE = "other.example.test"
 CROSS_SITE = "www.other.test"
 ANOTHER_SITE = "www.third.test"
 
+ERR_FAILED = -2
 ERR_INVALID_ARGUMENT = -4
 ERR_INVALID_URL = -300
 ERR_UNKNOWN_URL_SCHEME = -302
@@ -41,16 +42,18 @@ ERR_UNKNOWN_URL_SCHEME = -302
 # Longer than any local request takes, even on a busy machine.
 TIMEOUT_SECONDS = 30.0
 
-ALL_KINDS = list(mitto.RequestKind)
+WORKER = mitto.RequestKind.WORKER
+# A worker's script never goes to another origin, which its own tests below cover, so the rest leave it out.
+ALL_KINDS = [kind for kind in mitto.RequestKind if kind is not WORKER]
+EVERY_KIND = list(mitto.RequestKind)
 SUBRESOURCES = [mitto.RequestKind.FETCH, mitto.RequestKind.SCRIPT, mitto.RequestKind.IMAGE]
 NO_CORS = [mitto.RequestKind.SCRIPT, mitto.RequestKind.IMAGE]
+# The kinds whose hints go in a navigation's order, which the browser adds.
+NAVIGATIONS = [mitto.RequestKind.NAVIGATION, mitto.RequestKind.IFRAME]
 
 CLIENT_HINTS = ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"]
-FETCH_METADATA = {
-    mitto.RequestKind.NAVIGATION: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-User", "Sec-Fetch-Dest"],
-    mitto.RequestKind.FETCH: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"],
-    mitto.RequestKind.SCRIPT: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"],
-    mitto.RequestKind.IMAGE: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"],
+FETCH_METADATA = {kind: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"] for kind in mitto.RequestKind} | {
+    mitto.RequestKind.NAVIGATION: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-User", "Sec-Fetch-Dest"]
 }
 
 STRICT = "strict=1; Secure; SameSite=Strict"
@@ -470,6 +473,88 @@ def test_a_fetch_says_null_once_a_redirect_leaves_another_origin_for_a_third(ser
     assert [received.header("Origin") for received in servers.received] == [None, origin, "null", "null"]
 
 
+@pytest.mark.parametrize("kind", [mitto.RequestKind.FONT, mitto.RequestKind.MODULE])
+@pytest.mark.parametrize("host", [HOST, SAME_SITE, CROSS_SITE])
+def test_an_element_in_cors_mode_says_the_origin_of_its_page_wherever_it_goes(
+    servers: Servers, kind: mitto.RequestKind, host: str
+) -> None:
+    with new_session() as session:
+        session.get(servers.https(host), kind=kind, initiator=servers.https(HOST, "/page"))
+
+    assert servers.received[0].header("Origin") == servers.https(HOST).removesuffix("/")
+    # Blink holds it in its map, ahead of the lines that it adds itself.
+    assert servers.received[0].names.index("Origin") < servers.received[0].names.index("User-Agent")
+
+
+@pytest.mark.parametrize("kind", [mitto.RequestKind.XHR, mitto.RequestKind.BEACON])
+def test_a_page_request_of_another_kind_gets_its_origin_where_a_fetch_does(
+    servers: Servers, kind: mitto.RequestKind
+) -> None:
+    with new_session() as session:
+        session.get(servers.https(HOST), kind=kind, initiator=servers.https(HOST, "/page"))
+        session.post(servers.https(HOST), kind=kind, data="text", initiator=servers.https(HOST, "/page"))
+
+    assert [received.header("Origin") for received in servers.received] == [None, servers.https().removesuffix("/")]
+
+
+def test_a_workers_script_to_its_pages_origin_says_same_origin(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(servers.https(HOST, "/worker.js"), kind="worker", initiator=servers.https(HOST, "/page"))
+
+    received = servers.received[0]
+    assert (received.header("Sec-Fetch-Mode"), received.header("Sec-Fetch-Dest")) == ("same-origin", "worker")
+    assert received.header("Origin") is None
+    assert received.names.index("User-Agent") == received.names.index("Referer") + 1
+
+
+@pytest.mark.parametrize("host", [SAME_SITE, CROSS_SITE])
+def test_a_workers_script_to_another_origin_fails_and_sends_nothing(servers: Servers, host: str) -> None:
+    with new_session() as session, pytest.raises(RequestError) as caught:
+        session.get(servers.https(host, "/worker.js"), kind="worker", initiator=servers.https(HOST, "/page"))
+
+    assert caught.value.net_error == ERR_FAILED
+    assert servers.received == []
+
+
+@pytest.mark.parametrize("origin", [None, "https://www.other.test"], ids=["removed", "given"])
+def test_a_workers_script_to_another_origin_fails_whatever_the_caller_does_to_origin(
+    servers: Servers, origin: str | None
+) -> None:
+    with new_session() as session, pytest.raises(RequestError) as caught:
+        session.get(
+            servers.https(CROSS_SITE, "/worker.js"),
+            kind="worker",
+            headers={"Origin": origin},
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert caught.value.net_error == ERR_FAILED
+    assert servers.received == []
+
+
+def test_a_workers_script_does_not_follow_a_redirect_to_another_origin(servers: Servers) -> None:
+    with new_session() as session, pytest.raises(RequestError) as caught:
+        session.get(
+            redirect(servers.https(HOST, "/worker.js"), servers.https(SAME_SITE, "/worker.js")),
+            kind="worker",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert caught.value.net_error == ERR_FAILED
+    assert [received.path.partition("?")[0] for received in servers.received] == ["/worker.js"]
+
+
+def test_a_workers_script_follows_a_redirect_within_its_origin(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(
+            redirect(servers.https(HOST, "/first.js"), servers.https(HOST, "/worker.js")),
+            kind="worker",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert [received.path.partition("?")[0] for received in servers.received] == ["/first.js", "/worker.js"]
+
+
 def test_a_script_gets_no_origin_on_a_redirect(servers: Servers) -> None:
     with new_session() as session:
         session.get(
@@ -561,7 +646,7 @@ def test_an_origin_that_a_redirect_adds_goes_after_the_other_lines(servers: Serv
     assert names.index("Origin") == names.index("Sec-Fetch-Dest") + 1
 
 
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", EVERY_KIND)
 @pytest.mark.parametrize("method", ["GET", "POST"])
 def test_no_placeholder_of_a_persona_reaches_the_wire(servers: Servers, kind: mitto.RequestKind, method: str) -> None:
     with new_session() as session:
@@ -610,6 +695,34 @@ def test_a_cross_site_navigation_says_nothing_of_storage_access_because_it_becom
     assert servers.received[0].header("Sec-Fetch-Storage-Access") is None
 
 
+def test_a_cross_site_frame_says_its_storage_access(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(servers.https(CROSS_SITE), kind="iframe", initiator=servers.https(HOST, "/page"))
+
+    assert servers.received[0].header("Sec-Fetch-Storage-Access") == "active"
+    names = servers.received[0].names
+    assert names.index("Sec-Fetch-Storage-Access") == names.index("Sec-Fetch-Dest") + 1
+
+
+@pytest.mark.parametrize("host", [HOST, SAME_SITE])
+def test_a_frame_of_the_pages_site_says_nothing_of_storage_access(servers: Servers, host: str) -> None:
+    with new_session() as session:
+        session.get(servers.https(host), kind="iframe", initiator=servers.https(HOST, "/page"))
+
+    assert servers.received[0].header("Sec-Fetch-Storage-Access") is None
+
+
+def test_a_frame_keeps_the_site_of_its_page_on_each_hop(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(
+            chain(servers.https(HOST), servers.https(CROSS_SITE), servers.https(SAME_SITE, "/end")),
+            kind="iframe",
+            initiator=servers.https(HOST, "/page"),
+        )
+
+    assert [received.header("Sec-Fetch-Storage-Access") for received in servers.received] == [None, "active", None]
+
+
 def test_storage_access_follows_each_hop_of_a_script(servers: Servers) -> None:
     with new_session() as session:
         session.get(
@@ -655,7 +768,7 @@ def test_mitto_get_leaves_them_out_too(servers: Servers) -> None:
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "name.localhost"])
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", EVERY_KIND)
 def test_plain_http_to_a_local_host_is_potentially_trustworthy(
     servers: Servers, host: str, kind: mitto.RequestKind
 ) -> None:
@@ -668,8 +781,10 @@ def test_plain_http_to_a_local_host_is_potentially_trustworthy(
 
 
 def _persona_order(kind: mitto.RequestKind) -> list[str]:
-    if kind == mitto.RequestKind.NAVIGATION:
+    if kind in NAVIGATIONS:
         return [*CLIENT_HINTS, *FETCH_METADATA[kind]]
+    if kind is WORKER:
+        return FETCH_METADATA[kind]
     return ["sec-ch-ua-platform", "sec-ch-ua", "sec-ch-ua-mobile", *FETCH_METADATA[kind]]
 
 
@@ -840,7 +955,7 @@ def test_an_initiator_with_a_nul_is_refused(servers: Servers) -> None:
     assert servers.received == []
 
 
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", EVERY_KIND)
 @pytest.mark.parametrize("url", ["not a url", "https://", "//example.test/", "https://example.test:99999/", ""])
 def test_the_native_core_says_what_is_wrong_with_a_url_of_each_kind(kind: mitto.RequestKind, url: str) -> None:
     with new_session() as session, pytest.raises(RequestError) as caught:
@@ -877,6 +992,20 @@ def _cookie_names(received: Received) -> set[str]:
         ("fetch", HOST, {"strict", "lax", "none"}),
         ("fetch", SAME_SITE, set[str]()),
         ("fetch", CROSS_SITE, set[str]()),
+        # So do an XMLHttpRequest, and an element in cors mode, which Chrome asks for anonymously.
+        ("xhr", SAME_SITE, set[str]()),
+        ("font", HOST, {"strict", "lax", "none"}),
+        ("font", CROSS_SITE, set[str]()),
+        ("module", SAME_SITE, set[str]()),
+        # The rest of a page's subresources go as a script does.
+        ("style", SAME_SITE, {"strict", "lax", "none"}),
+        ("style", CROSS_SITE, {"none"}),
+        ("beacon", CROSS_SITE, {"none"}),
+        ("favicon", CROSS_SITE, {"none"}),
+        ("worker", HOST, {"strict", "lax", "none"}),
+        # A frame stays in its page, so a frame of another site gets no cookie that keeps to its site.
+        ("iframe", SAME_SITE, {"strict", "lax", "none"}),
+        ("iframe", CROSS_SITE, {"none"}),
     ],
 )
 def test_which_samesite_cookies_a_request_sends(servers: Servers, kind: str, host: str, expected: set[str]) -> None:
@@ -927,6 +1056,8 @@ def test_a_navigation_the_browser_started_sends_every_cookie(servers: Servers) -
         ("fetch", HOST, {"strict", "lax", "none"}),
         ("fetch", SAME_SITE, set[str]()),
         ("fetch", CROSS_SITE, set[str]()),
+        ("iframe", SAME_SITE, {"strict", "lax", "none"}),
+        ("iframe", CROSS_SITE, {"none"}),
     ],
 )
 def test_which_samesite_cookies_a_response_sets(servers: Servers, kind: str, host: str, expected: set[str]) -> None:
