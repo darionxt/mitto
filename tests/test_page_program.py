@@ -762,20 +762,25 @@ def _request(
     body: bytes | None = None,
     *,
     same_origin: bool = False,
+    flags: int = 0,
+    mode: int = 0,
+    credentials: int = 0,
+    referrer_policy: int = 0,
+    priority: int = 0,
+    referrer: str = "",
 ) -> bytes:
-    """The payload of a Request of the navigation's document: its number, Kind, no flags, its mode (same-origin or the
-    kind's own), the default of every other byte, no target, its URL, method and lines, no referrer, and its body, if it
-    has one."""
+    """The payload of a Request of the navigation's document: its number, Kind, flags, mode (same-origin, `mode`, or the
+    kind's own), credentials mode, referrer policy and priority, the kind's own incremental, no target, its URL, method,
+    lines and referrer, and its body, if it has one."""
     has_body = b"\x00" if body is None else b"\x01" + body
-    mode = 2 if same_origin else 0
     return (
         _DOCUMENT
-        + struct.pack("<QBB", number, kind, 0)
-        + struct.pack("<BBBBBQ", mode, 0, 0, 0, 0, 0)
+        + struct.pack("<QBB", number, kind, flags)
+        + struct.pack("<BBBBBQ", 2 if same_origin else mode, credentials, referrer_policy, priority, 0, 0)
         + _sized(url.encode())
         + _sized(method.encode())
         + _sized(headers.encode())
-        + _sized(b"")
+        + _sized(referrer.encode())
         + has_body
     )
 
@@ -1127,6 +1132,48 @@ def test_a_fetch_asks_the_session_for_what_its_script_gives_and_resolves_with_th
     assert session.close() == 0
 
 
+def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Session) -> None:
+    # Mode no-cors takes only the no-CORS-safelisted lines, a referrer of the document's origin goes as a URL, and a
+    # fetch's priority "low" is LOWEST, sent as one more than net::LOWEST. Keepalive is flag 8.
+    session.start()
+    _loaded(session)
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 1) + b"fetch('/a', {mode: 'no-cors', credentials: 'include', referrer: '/from',"
+        b" referrerPolicy: 'origin', priority: 'low', keepalive: true, headers: {'X-A': '1', 'Accept': 'text/plain'}})"
+        b".catch(() => null); null",
+    )
+
+    assert session.receive() == (
+        _REQUEST,
+        _request(
+            1,
+            _FETCH_KIND,
+            "http://www.example.test/a",
+            headers="Accept: text/plain\n",
+            flags=8,
+            mode=3,
+            credentials=3,
+            referrer_policy=3,
+            priority=3,
+            referrer="http://www.example.test/from",
+        ),
+    )
+    assert session.evaluated() == (1, False, "null")
+    # No referrer is flag 32, and a referrer of another origin leaves the document's.
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 2) + b"fetch('/b', {referrer: ''}).catch(() => null);"
+        b" fetch('/c', {referrer: 'http://other.test/', credentials: 'omit'}).catch(() => null); null",
+    )
+    assert session.receive() == (_REQUEST, _request(2, _FETCH_KIND, "http://www.example.test/b", flags=32))
+    assert session.receive() == (_REQUEST, _request(3, _FETCH_KIND, "http://www.example.test/c", credentials=1))
+    assert session.evaluated() == (2, False, "null")
+    for number in (1, 2, 3):
+        _end(session, number, -2)
+    assert session.close() == 0
+
+
 def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
     session.start()
     _loaded(session)
@@ -1189,14 +1236,15 @@ def test_a_fetch_whose_body_fills_a_frame_after_its_documents_id_is_sent_and_one
     _loaded(session)
     script = "fetch('/upload', {{method: 'POST', body: new Uint8Array({})}}).then(() => 'sent', error => String(error))"
 
-    # What the frame holds beside the body: the document's ID, the number, the kind and the flags, then the URL, the
-    # method and the header lines, each after its size, and the byte that says a body follows.
+    # What the frame holds beside the body: the document's ID, the number, the kind, the flags, five bytes of modes,
+    # policy and priority, and the target, then the URL, the method, the header lines and the referrer, each after its
+    # size, and the byte that says a body follows.
     session.send(_EVALUATE, struct.pack("<Q", 1) + script.format(1).encode())
     message_type, payload = session.receive()
     assert message_type == _REQUEST
     (number,) = struct.unpack_from("<Q", payload, 8)
-    offset = 18
-    for _ in range(3):
+    offset = 31
+    for _ in range(4):
         (size,) = struct.unpack_from("<I", payload, offset)
         offset += 4 + size
     assert len(payload) == offset + 2
