@@ -1535,6 +1535,26 @@
     out.push("removed=" + tryIt(() => r.x.baseVal.value));
     return out.join(" | ");
   });
+  run("svg length nested", () => {
+    const outer = svg("svg");
+    outer.setAttribute("width", "200");
+    outer.setAttribute("height", "100");
+    (document.body || document.documentElement).appendChild(outer);
+    let parent = outer;
+    for (let i = 0; i < 40; i++) {
+      const next = svg("svg");
+      parent.appendChild(next);
+      parent = next;
+    }
+    const c = svg("circle");
+    c.setAttribute("cx", "10%");
+    c.setAttribute("cy", "10%");
+    c.setAttribute("r", "10%");
+    parent.appendChild(c);
+    const out = [c.cx.baseVal.value, c.cy.baseVal.value, c.r.baseVal.value];
+    outer.remove();
+    return out.join(",");
+  });
   run("svg length set", () => {
     const e = svg("rect");
     const l = e.x.baseVal;

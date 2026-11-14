@@ -126,11 +126,12 @@ float ResolveToUserUnits(const SVGLengthValue& value,
                          const SVGElement* context,
                          SVGLengthMode mode);
 
-// SVGViewportResolver: the size of the viewport that a percentage of
-// `element`'s takes, from the nearest svg element above it: its viewBox, or
-// else its width and height. An outermost svg element's size is its layout
+// SVGViewportResolver: one size of the viewport that a percentage of
+// `element`'s takes, from the nearest svg element above it: its viewBox's,
+// or else its width or height, which needs only the same size of the svg
+// element's own viewport. An outermost svg element's size is its layout
 // box's in Blink, which the window stands for here.
-std::pair<float, float> ViewportOf(const SVGElement& element) {
+float ViewportSize(const SVGElement& element, bool width) {
   for (Node* node = element.ParentNode(); node; node = node->ParentNode()) {
     if (!node->IsElementNode()) {
       continue;
@@ -147,34 +148,33 @@ std::pair<float, float> ViewportOf(const SVGElement& element) {
           ParseSVGNumberList(*view_box);
       if (numbers && numbers->size() == 4 && (*numbers)[2] >= 0 &&
           (*numbers)[3] >= 0) {
-        return {(*numbers)[2], (*numbers)[3]};
+        return width ? (*numbers)[2] : (*numbers)[3];
       }
     }
-    auto length = [&svg](std::u16string_view name, SVGLengthMode mode) {
-      const std::u16string* text = svg.FindAttribute(name);
-      std::optional<SVGLengthValue> value =
-          text ? SVGLengthValue::Parse(*text) : std::nullopt;
-      return ResolveToUserUnits(
-          value.value_or(SVGLengthValue::Literal(100, CssUnit::kPercentage)),
-          &svg, mode);
-    };
-    return {length(u"width", SVGLengthMode::kWidth),
-            length(u"height", SVGLengthMode::kHeight)};
+    const std::u16string* text =
+        svg.FindAttribute(width ? u"width" : u"height");
+    const std::optional<SVGLengthValue> value =
+        text ? SVGLengthValue::Parse(*text) : std::nullopt;
+    return ResolveToUserUnits(
+        value.value_or(SVGLengthValue::Literal(100, CssUnit::kPercentage)),
+        &svg, width ? SVGLengthMode::kWidth : SVGLengthMode::kHeight);
   }
   const CssLengthResolver resolver = ResolverFor(&element);
-  return {static_cast<float>(resolver.viewport_width),
-          static_cast<float>(resolver.viewport_height)};
+  return static_cast<float>(width ? resolver.viewport_width
+                                  : resolver.viewport_height);
 }
 
 float ViewportDimension(const SVGElement& element, SVGLengthMode mode) {
-  const auto [width, height] = ViewportOf(element);
   switch (mode) {
     case SVGLengthMode::kWidth:
-      return width;
+      return ViewportSize(element, /*width=*/true);
     case SVGLengthMode::kHeight:
-      return height;
-    case SVGLengthMode::kOther:
+      return ViewportSize(element, /*width=*/false);
+    case SVGLengthMode::kOther: {
+      const float width = ViewportSize(element, /*width=*/true);
+      const float height = ViewportSize(element, /*width=*/false);
       return std::sqrt((width * width + height * height) / 2);
+    }
   }
   NOTREACHED();
 }
