@@ -11,6 +11,7 @@ from tools.wpt.results import CRASH, PASS, TIMEOUT, ChromeResult, RunResult, Sub
 
 __all__ = [
     "FLAKY",
+    "OWNER",
     "TICKET",
     "Difference",
     "DifferencesError",
@@ -31,6 +32,10 @@ FLAKY = "FLAKY"
 TICKET = re.compile(r"#[1-9][0-9]*")
 """What a ticket that owns a difference looks like, such as "#283"."""
 
+OWNER = re.compile(r"#[1-9][0-9]*|M[1-9][0-9]*|out")
+"""What owns a difference: a ticket such as "#283", a later milestone such as "M9" whose behaviour the roadmap or
+#259 puts there, or "out" for what the roadmap leaves out, such as media playback."""
+
 
 class DifferencesError(Exception):
     """A list of differences cannot be read."""
@@ -46,8 +51,8 @@ class Difference:
         chrome: Chrome's outcome, such as "PASS", "FAIL: assert_true: expected true", "TIMEOUT" or "222 subtests", or
             None where Chrome had no such subtest.
         mitto: The Page's outcome, in the same form, or None where the Page did not run such a subtest.
-        owner: The ticket whose missing behaviour causes it, such as "#283", where that is not the ticket of the
-            test's part of M8 (tools.wpt.owners). It takes no part in comparing differences.
+        owner: What its missing behaviour belongs to, such as "#283", "M9" or "out", where that is not the ticket of
+            the test's part of M8 (tools.wpt.owners). It takes no part in comparing differences.
     """
 
     test: str
@@ -183,8 +188,10 @@ def loads_differences(text: str) -> list[Difference]:
     except (ValueError, TypeError) as error:
         raise DifferencesError(f"not a list of differences: {error}") from error
     for difference in differences:
-        if difference.owner is not None and not TICKET.fullmatch(str(difference.owner)):
-            raise DifferencesError(f'{difference.test}: owner {difference.owner!r} is not a ticket such as "#283"')
+        if difference.owner is not None and not OWNER.fullmatch(str(difference.owner)):
+            raise DifferencesError(
+                f'{difference.test}: owner {difference.owner!r} is not one such as "#283", "M9" or "out"'
+            )
     return differences
 
 

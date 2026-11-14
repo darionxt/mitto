@@ -6,7 +6,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from tools.wpt.differences import Difference, differing_subtests
-from tools.wpt.owners import NO_OWNER, owner_of
+from tools.wpt.owners import LEFT_OUT, NO_OWNER, is_ticket, owner_of
 from tools.wpt.parts import PARTS, directory_of, part_of
 from tools.wpt.results import ChromeResult
 from tools.wpt.tests import ListedTest
@@ -91,7 +91,7 @@ def _row(name: str, count: Count) -> str:
 
 @dataclass(slots=True)
 class OwnerCount:
-    """What one ticket owns.
+    """What one owner owns.
 
     Attributes:
         differences: The lines of the list.
@@ -107,8 +107,8 @@ class OwnerCount:
 def count_by_owner(
     chrome: Mapping[str, Sequence[ChromeResult]], differences: Iterable[Difference]
 ) -> dict[str, OwnerCount]:
-    """Count the differences by the ticket that owns them: the tickets of the parts of M8 in order, then any other
-    ticket by number, then the differences that no ticket owns."""
+    """Count the differences by what owns them: the tickets of the parts of M8 in order, then any other ticket by
+    number, then the differences that nothing owns, then the later milestones by number, then those left out."""
     found: defaultdict[tuple[str, str], list[Difference]] = defaultdict(list)
     for difference in differences:
         found[owner_of(difference), difference.test].append(difference)
@@ -119,19 +119,43 @@ def count_by_owner(
         count.tests += 1
         count.differing_subtests += differing_subtests(chrome.get(test, []), owned)
     order = [part.ticket for part in PARTS]
-    others = sorted((owner for owner in counts if owner not in order and owner != NO_OWNER), key=lambda t: int(t[1:]))
-    return {owner: counts[owner] for owner in [*order, *others, NO_OWNER] if owner in counts}
+    others = sorted((owner for owner in counts if is_ticket(owner) and owner not in order), key=lambda t: int(t[1:]))
+    later = sorted(
+        (owner for owner in counts if not is_ticket(owner) and owner not in (NO_OWNER, LEFT_OUT)),
+        key=lambda m: int(m[1:]),
+    )
+    return {owner: counts[owner] for owner in [*order, *others, NO_OWNER, *later, LEFT_OUT] if owner in counts}
 
 
 def owner_table(counts: Mapping[str, OwnerCount]) -> Iterator[str]:
-    """Yield a Markdown table of what each ticket owns, with a total."""
+    """Yield a Markdown table of what each owner owns, with the total of the tickets, on which M8's exit is judged,
+    after them, and the total of all at the end, past the differences that nothing owns, the later milestones and
+    those left out."""
     titles = {part.ticket: f"{part.ticket} {part.title}" for part in PARTS}
     yield "| Owner | Differences | Tests | Subtests that differ |"
     yield "| --- | ---: | ---: | ---: |"
+    tickets = OwnerCount()
     total = OwnerCount()
+    tickets_written = False
+    # count_by_owner() puts the tickets first.
     for owner, count in counts.items():
-        yield f"| {titles.get(owner, owner)} | {count.differences:,} | {count.tests:,} | {count.differing_subtests:,} |"
-        total.differences += count.differences
-        total.tests += count.tests
-        total.differing_subtests += count.differing_subtests
-    yield f"| All | {total.differences:,} | {total.tests:,} | {total.differing_subtests:,} |"
+        if not is_ticket(owner) and not tickets_written:
+            yield _owner_row("Tickets", tickets)
+            tickets_written = True
+        yield _owner_row(titles.get(owner, owner), count)
+        if is_ticket(owner):
+            _add(tickets, count)
+        _add(total, count)
+    if not tickets_written:
+        yield _owner_row("Tickets", tickets)
+    yield _owner_row("All", total)
+
+
+def _add(total: OwnerCount, count: OwnerCount) -> None:
+    total.differences += count.differences
+    total.tests += count.tests
+    total.differing_subtests += count.differing_subtests
+
+
+def _owner_row(name: str, count: OwnerCount) -> str:
+    return f"| {name} | {count.differences:,} | {count.tests:,} | {count.differing_subtests:,} |"
