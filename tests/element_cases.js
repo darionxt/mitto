@@ -1206,6 +1206,100 @@
     out.push(f.getAttribute("sandbox"));
     return out.join(",");
   });
+  // hidden, getHTML() and document.implementation.
+  run("hidden read", () => {
+    const e = document.createElement("div");
+    const out = [e.hidden];
+    for (const v of ["", "UNTIL-FOUND", "until-found ", "x"]) {
+      e.setAttribute("hidden", v);
+      out.push(e.hidden);
+    }
+    return out.map((v) => JSON.stringify(v)).join(",");
+  });
+  run("hidden write", () => {
+    const e = document.createElement("div");
+    const out = [];
+    for (const v of [true, false, "until-found", "Until-Found", "", "x", 0, 1, -1, NaN, -0, Infinity, null, undefined, {}, [], [1], "0", "false"]) {
+      e.hidden = v;
+      out.push(JSON.stringify(e.getAttribute("hidden")));
+    }
+    return out.join(",");
+  });
+  run("hidden types", () => { const e = document.createElement("div"); e.hidden = "until-found"; const a = typeof e.hidden; e.hidden = 1; return [a, typeof e.hidden, e.hidden, e.outerHTML].join("|"); });
+  run("hidden foreign", () => ["hidden" in document.createElementNS(SVG, "g"), "hidden" in document.createElementNS(MATHML, "mi")].join("|"));
+  run("hidden symbol", () => { document.createElement("div").hidden = Symbol("s"); });
+  run("getHTML", () => {
+    const d = document.createElement("div");
+    d.innerHTML = "<p a=1>x&amp;<template><i>t</i></template></p><!--c-->";
+    return [d.getHTML(), d.getHTML({}), d.getHTML({ serializableShadowRoots: true, shadowRoots: [] }), d.getHTML() === d.innerHTML, d.getHTML(null), d.getHTML(undefined)].join("|");
+  });
+  run("getHTML template", () => { const t = document.createElement("template"); t.innerHTML = "<b>x</b>"; return t.getHTML(); });
+  run("getHTML shadowRoots", () => document.createElement("div").getHTML({ shadowRoots: [document.body] }));
+  run("getHTML not object", () => document.createElement("div").getHTML(5));
+  run("getHTML not iterable", () => document.createElement("div").getHTML({ shadowRoots: 5 }));
+  run("implementation", () => {
+    const i = document.implementation;
+    const d = new Document();
+    return [i === document.implementation, String(i), i.hasFeature(), i.hasFeature("Core", "2.0"), d.implementation === i, d.implementation === d.implementation].join("|");
+  });
+  run("createDocumentType", () => { const t = document.implementation.createDocumentType("html", "-//W3C//DTD", "about:x"); return [t.name, t.publicId, t.systemId, t.ownerDocument === document, t.parentNode, t.nodeName, String(t)].join("|"); });
+  run("createDocumentType names", () => ["a:b", "1a", "", "aé", "a<", "a "].map((n) => { try { return JSON.stringify(document.implementation.createDocumentType(n, "", "").name); } catch (e) { return e.name; } }).join(","));
+  run("createDocumentType space", () => document.implementation.createDocumentType("a b", "", ""));
+  run("createDocumentType gt", () => document.implementation.createDocumentType("a>", "", ""));
+  run("createDocumentType null char", () => document.implementation.createDocumentType("a\u0000", "", ""));
+  run("createDocumentType args", () => document.implementation.createDocumentType("a"));
+  run("createHTMLDocument", () => {
+    const d = document.implementation.createHTMLDocument("T<");
+    return [d.documentElement.outerHTML, d.contentType, d.compatMode, d.URL, d.characterSet, String(d), d.doctype.name, d.title, d.defaultView, d.implementation === document.implementation, d.childNodes.length, d.body.localName].join("|");
+  });
+  run("createHTMLDocument no title", () => {
+    const i = document.implementation;
+    return [i.createHTMLDocument().documentElement.outerHTML, i.createHTMLDocument(undefined).head.childNodes.length, i.createHTMLDocument(null).title, i.createHTMLDocument("").head.childNodes.length].join("|");
+  });
+  run("createHTMLDocument use", () => {
+    const d = document.implementation.createHTMLDocument("x");
+    const p = d.createElement("P");
+    d.body.appendChild(p);
+    p.innerHTML = "<b>y</b>";
+    const imported = document.importNode(d.body, true);
+    return [p.localName, p.namespaceURI, d.getElementsByTagName("b").length, d.querySelector("b").textContent, imported.outerHTML, d.cloneNode(true).body.innerHTML, String(d.cloneNode())].join("|");
+  });
+  run("createDocument", () => {
+    const d = document.implementation.createDocument(HTML, "html", null);
+    return [String(d), d.contentType, d.documentElement.localName, d.documentElement.namespaceURI, String(d.documentElement), d.childNodes.length, d.URL, d.characterSet, d.compatMode, d.doctype, d.defaultView, d.createElement("P").namespaceURI, d.createElement("P").localName, String(d.createElement("p")), String(d.cloneNode()), d.cloneNode().contentType].join("|");
+  });
+  run("createDocument svg", () => {
+    const d = document.implementation.createDocument(SVG, "svg:svg");
+    return [d.contentType, d.documentElement.prefix, d.documentElement.localName, String(d.documentElement), d.createElement("rect").namespaceURI, String(d.cloneNode()), d.cloneNode().contentType].join("|");
+  });
+  run("createDocument other", () => {
+    const i = document.implementation;
+    const d = i.createDocument("urn:x", "a:b");
+    const e = i.createDocument(null, "");
+    const n = i.createDocument(null, null, undefined);
+    return [d.contentType, d.documentElement.prefix, d.documentElement.namespaceURI, e.contentType, e.documentElement, e.childNodes.length, n.childNodes.length, e.createElement("P").namespaceURI, e.createElement("P").localName, String(e.createElement("p"))].join("|");
+  });
+  run("createDocument doctype", () => {
+    const t = document.implementation.createDocumentType("a", "p", "s");
+    const d = document.implementation.createDocument("urn:x", "a", t);
+    return [d.contentType, d.firstChild === t, t.ownerDocument === d, d.lastChild.localName, d.doctype === t, d.childNodes.length].join("|");
+  });
+  run("createDocument moves doctype", () => {
+    const d1 = document.implementation.createHTMLDocument();
+    const t = d1.doctype;
+    const d = document.implementation.createDocument(null, "x", t);
+    return [d1.doctype, t.ownerDocument === d, d.doctype === t].join("|");
+  });
+  run("createDocument bad prefix", () => document.implementation.createDocument(null, "a:b"));
+  run("createDocument bad name", () => document.implementation.createDocument("urn:x", "1a"));
+  run("createDocument xmlns", () => document.implementation.createDocument("urn:x", "xmlns:a"));
+  run("createDocument args", () => document.implementation.createDocument());
+  run("createDocument doctype type", () => document.implementation.createDocument(null, "a", document.body));
+  run("createDocument types", () => {
+    const i = document.implementation;
+    return [i.createDocument(null, "") instanceof XMLDocument, i.createDocument(null, "") instanceof Document, i.createHTMLDocument() instanceof HTMLDocument, Object.getPrototypeOf(i.createDocument(null, "")) === XMLDocument.prototype].join("|");
+  });
+  run("XMLDocument constructor", () => new XMLDocument());
   // SVG's animated strings, booleans, enumerations, integers and numbers.
   const SVG_ANIMATED = [["a","target","String","target"],["clipPath","clipPathUnits","Enumeration","clipPathUnits"],["feFuncR","type","Enumeration","type"],["feFuncR","slope","Number","slope"],["feFuncR","intercept","Number","intercept"],["feFuncR","amplitude","Number","amplitude"],["feFuncR","exponent","Number","exponent"],["feFuncR","offset","Number","offset"],["rect","className","String","class"],["feBlend","in1","String","in"],["feBlend","in2","String","in2"],["feBlend","mode","Enumeration","mode"],["feColorMatrix","in1","String","in"],["feColorMatrix","type","Enumeration","type"],["feComponentTransfer","in1","String","in"],["feComposite","in2","String","in2"],["feComposite","in1","String","in"],["feComposite","operator","Enumeration","operator"],["feComposite","k1","Number","k1"],["feComposite","k2","Number","k2"],["feComposite","k3","Number","k3"],["feComposite","k4","Number","k4"],["feConvolveMatrix","in1","String","in"],["feConvolveMatrix","orderX","Integer","order"],["feConvolveMatrix","orderY","Integer","order"],["feConvolveMatrix","divisor","Number","divisor"],["feConvolveMatrix","bias","Number","bias"],["feConvolveMatrix","targetX","Integer","targetX"],["feConvolveMatrix","targetY","Integer","targetY"],["feConvolveMatrix","edgeMode","Enumeration","edgeMode"],["feConvolveMatrix","kernelUnitLengthX","Number","kernelUnitLength"],["feConvolveMatrix","kernelUnitLengthY","Number","kernelUnitLength"],["feConvolveMatrix","preserveAlpha","Boolean","preserveAlpha"],["feDiffuseLighting","in1","String","in"],["feDiffuseLighting","surfaceScale","Number","surfaceScale"],["feDiffuseLighting","diffuseConstant","Number","diffuseConstant"],["feDiffuseLighting","kernelUnitLengthX","Number","kernelUnitLength"],["feDiffuseLighting","kernelUnitLengthY","Number","kernelUnitLength"],["feDisplacementMap","in1","String","in"],["feDisplacementMap","in2","String","in2"],["feDisplacementMap","scale","Number","scale"],["feDisplacementMap","xChannelSelector","Enumeration","xChannelSelector"],["feDisplacementMap","yChannelSelector","Enumeration","yChannelSelector"],["feDistantLight","azimuth","Number","azimuth"],["feDistantLight","elevation","Number","elevation"],["feDropShadow","in1","String","in"],["feDropShadow","dx","Number","dx"],["feDropShadow","dy","Number","dy"],["feDropShadow","stdDeviationX","Number","stdDeviation"],["feDropShadow","stdDeviationY","Number","stdDeviation"],["feGaussianBlur","in1","String","in"],["feGaussianBlur","stdDeviationX","Number","stdDeviation"],["feGaussianBlur","stdDeviationY","Number","stdDeviation"],["feMergeNode","in1","String","in"],["feMorphology","in1","String","in"],["feMorphology","operator","Enumeration","operator"],["feMorphology","radiusX","Number","radius"],["feMorphology","radiusY","Number","radius"],["feOffset","in1","String","in"],["feOffset","dx","Number","dx"],["feOffset","dy","Number","dy"],["fePointLight","x","Number","x"],["fePointLight","y","Number","y"],["fePointLight","z","Number","z"],["feSpecularLighting","in1","String","in"],["feSpecularLighting","surfaceScale","Number","surfaceScale"],["feSpecularLighting","specularConstant","Number","specularConstant"],["feSpecularLighting","specularExponent","Number","specularExponent"],["feSpecularLighting","kernelUnitLengthX","Number","kernelUnitLength"],["feSpecularLighting","kernelUnitLengthY","Number","kernelUnitLength"],["feSpotLight","x","Number","x"],["feSpotLight","y","Number","y"],["feSpotLight","z","Number","z"],["feSpotLight","pointsAtX","Number","pointsAtX"],["feSpotLight","pointsAtY","Number","pointsAtY"],["feSpotLight","pointsAtZ","Number","pointsAtZ"],["feSpotLight","specularExponent","Number","specularExponent"],["feSpotLight","limitingConeAngle","Number","limitingConeAngle"],["feTile","in1","String","in"],["feTurbulence","baseFrequencyX","Number","baseFrequency"],["feTurbulence","baseFrequencyY","Number","baseFrequency"],["feTurbulence","numOctaves","Integer","numOctaves"],["feTurbulence","seed","Number","seed"],["feTurbulence","stitchTiles","Enumeration","stitchTiles"],["feTurbulence","type","Enumeration","type"],["filter","filterUnits","Enumeration","filterUnits"],["filter","primitiveUnits","Enumeration","primitiveUnits"],["feFlood","result","String","result"],["path","pathLength","Number","pathLength"],["linearGradient","gradientUnits","Enumeration","gradientUnits"],["linearGradient","spreadMethod","Enumeration","spreadMethod"],["marker","markerUnits","Enumeration","markerUnits"],["mask","maskUnits","Enumeration","maskUnits"],["mask","maskContentUnits","Enumeration","maskContentUnits"],["pattern","patternUnits","Enumeration","patternUnits"],["pattern","patternContentUnits","Enumeration","patternContentUnits"],["stop","offset","Number","offset"],["text","lengthAdjust","Enumeration","lengthAdjust"],["textPath","method","Enumeration","method"],["textPath","spacing","Enumeration","spacing"],["a","href","String","href"],["textPath","side","Enumeration","side"]];
   const svg = (name) => document.createElementNS(SVG, name);

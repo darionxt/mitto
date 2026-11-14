@@ -7,9 +7,13 @@
 #ifndef MITTO_DOM_HTML_ELEMENT_H_
 #define MITTO_DOM_HTML_ELEMENT_H_
 
+#include <optional>
 #include <string>
 
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/element.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-value.h"
 
 namespace mitto {
 
@@ -26,6 +30,14 @@ class HTMLElement : public Element {
   // The members of the interface beyond its reflected attributes.
   std::u16string Autocapitalize() const;
   void SetAutocapitalize(const std::u16string& value);
+  // The hidden attribute: false for none, "until-found" for that keyword in
+  // any case, and true for any other value, as Blink's hidden() gives it.
+  v8::Local<v8::Value> Hidden() const;
+  // Null, false, "", 0 and NaN remove the attribute, "until-found" in any case
+  // sets that, and any other value sets it empty, as Blink's setHidden() does.
+  void SetHidden(
+      const std::optional<bindings::BooleanOrUnrestrictedDoubleOrDOMString>&
+          value);
   // The dir attribute limited to "ltr", "rtl" and "auto", as Blink's
   // ToValidDirValue() limits it.
   std::u16string Dir() const;
@@ -55,6 +67,19 @@ class HTMLElement : public Element {
   // Element's: the summary of its parent details, its first summary child,
   // is focusable, as Blink's HTMLSummaryElement is.
   int32_t DefaultTabIndex() const override;
+
+  // Node's: a summary has activation behaviour, as Blink's
+  // HTMLSummaryElement has: a click on the main summary of a details element
+  // opens or closes it, unless it was on a form control, a label, an embed or
+  // an element with activation behaviour of its own in the summary.
+  bool HasActivationBehavior() const override;
+  void RunActivationBehavior(Event& event,
+                             EventDispatchHandlingState* state) override;
+
+ private:
+  // Whether it is a summary that is the first summary child of a details
+  // element, as Blink's IsMainSummary() says.
+  bool IsMainSummary() const;
 };
 
 }  // namespace mitto

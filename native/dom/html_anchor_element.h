@@ -52,6 +52,9 @@ class HTMLAnchorElementBase : public HTMLElement {
   // HTMLElement's: a link with href is draggable by default, and focusable.
   bool Draggable() const override;
   int32_t DefaultTabIndex() const override;
+  // Node's: a link has activation behaviour, as Blink's has for one with
+  // href. Following it is the Runtime's later work.
+  bool HasActivationBehavior() const override;
 
  protected:
   HTMLAnchorElementBase(Document& document, const std::u16string& local_name);
