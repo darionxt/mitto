@@ -1,0 +1,229 @@
+{
+ "open_sync": 0,
+ "open": [
+  [
+   "ToggleEvent",
+   "closed",
+   "open",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ]
+ ],
+ "open_close": [
+  [
+   "ToggleEvent",
+   "closed",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ]
+ ],
+ "coalesced": [
+  [
+   "ToggleEvent",
+   "closed",
+   "open",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ],
+  [
+   "ToggleEvent",
+   "open",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ]
+ ],
+ "accordion": [
+  false,
+  true,
+  true,
+  true
+ ],
+ "accordion_again": [
+  true,
+  false
+ ],
+ "accordion_events": [
+  [
+   [
+    "ToggleEvent",
+    "closed",
+    "open",
+    false,
+    false,
+    false,
+    true,
+    null,
+    true
+   ]
+  ],
+  [
+   [
+    "ToggleEvent",
+    "closed",
+    "closed",
+    false,
+    false,
+    false,
+    true,
+    null,
+    true
+   ]
+  ]
+ ],
+ "inserted": [
+  true,
+  false
+ ],
+ "renamed": [
+  true,
+  false
+ ],
+ "parsed_group": [
+  true,
+  false,
+  false
+ ],
+ "across_parents": [
+  true,
+  false
+ ],
+ "root_of_tree": [
+  true,
+  true,
+  true,
+  true
+ ],
+ "summary": [
+  true,
+  true,
+  false,
+  [
+   [
+    "click",
+    "summary",
+    false
+   ],
+   [
+    "DOMActivate",
+    "summary",
+    false
+   ],
+   [
+    "click",
+    "summary",
+    false
+   ],
+   [
+    "DOMActivate",
+    "summary",
+    false
+   ],
+   [
+    "click",
+    "summary",
+    false
+   ],
+   [
+    "DOMActivate",
+    "summary",
+    false
+   ]
+  ]
+ ],
+ "summary_events": [
+  [
+   "ToggleEvent",
+   "closed",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ]
+ ],
+ "summary_inner": [
+  [
+   "button=false",
+   "span=true",
+   "a[href]=false",
+   "a:not([href])=true",
+   "label=false",
+   "input=false",
+   "b=true",
+   "i=false",
+   "u=false",
+   "s=false",
+   "q=false",
+   "option=true"
+  ],
+  true
+ ],
+ "summary_canceled": [
+  false,
+  "<summary></summary>"
+ ],
+ "copy": [
+  [
+   [
+    "ToggleEvent",
+    "closed",
+    "open",
+    false,
+    false,
+    false,
+    true,
+    null,
+    true
+   ]
+  ],
+  true,
+  [
+   [
+    "ToggleEvent",
+    "closed",
+    "open",
+    false,
+    false,
+    false,
+    true,
+    null,
+    true
+   ]
+  ]
+ ],
+ "constructor": [
+  "x",
+  "a",
+  "b",
+  true,
+  true,
+  false,
+  "",
+  "",
+  null,
+  1,
+  "[object ToggleEvent]"
+ ],
+ "constructor_none": "TypeError: Failed to construct 'ToggleEvent': 1 argument required, but only 0 present.",
+ "constructor_source": "TypeError: Failed to construct 'ToggleEvent': Failed to read the 'source' property from 'ToggleEventInit': Failed to convert value to 'Element'."
+}

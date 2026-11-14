@@ -155,6 +155,10 @@ int32_t SVGAElement::DefaultTabIndex() const {
   return 0;
 }
 
+bool SVGAElement::HasActivationBehavior() const {
+  return true;
+}
+
 // static
 SVGAnimateElement* SVGAnimateElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGAnimateElement>(document);

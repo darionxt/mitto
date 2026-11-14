@@ -1,6 +1,6 @@
 """Tests of a Page's events against Chrome's: the path and order of an event through a document to the window, the
-window's error and unhandledrejection events and what then reaches the Session, MutationObserver's records, and the
-click of click().
+window's error and unhandledrejection events and what then reaches the Session, MutationObserver's records, the
+click of click(), and a details element's toggle events and its summary's click.
 
 Each page in tests/data/dom_events/ runs its cases and keeps what they give in `window.result`. The `.chrome.json`
 beside it is what Chrome gave for the same page, recorded by hand in headless Chrome 157.0.8103.51 on macOS, the Engine
@@ -194,4 +194,16 @@ def test_a_click_checks_checkboxes_and_radio_buttons_as_chrome_does(
     result, uncaught = _run(session, server, "activation")
 
     assert result == _chrome("activation")
+    assert uncaught == []
+
+
+def test_details_fires_toggle_and_opens_by_its_summary_as_chrome_does(
+    session: mitto.Session, server: _DataServer
+) -> None:
+    # A toggle event in a task, one for the changes before it with the first old state, a name group whose opened
+    # details closes the others and whose joining open details closes itself, the main summary's click with what it
+    # leaves to a control of its own, copies, another document's details, and ToggleEvent's constructor.
+    result, uncaught = _run(session, server, "details")
+
+    assert result == _chrome("details")
     assert uncaught == []

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include "base/strings/strcat.h"
@@ -13,6 +14,9 @@
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_html_element.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/event.h"
+#include "mitto/dom/event_target.h"
+#include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_input_element.h"
 #include "mitto/dom/html_names.h"
 #include "v8/include/v8-isolate.h"
@@ -120,23 +124,62 @@ bool IsEditableOrEditingHost(const Node& node) {
          static_cast<const Element*>(parent)->IsHTMLElement();
 }
 
+// Blink's Element::IsClickableControl(): whether a click at `node` is one
+// on a control of its own, a form control, or a node between it and `summary`
+// with activation behaviour, an embed or a label.
+bool IsClickableControl(const Element& summary, Node* node) {
+  if (!node || !node->IsElementNode()) {
+    return false;
+  }
+  for (const std::u16string_view name :
+       {u"button", u"fieldset", u"input", u"output", u"select", u"textarea"}) {
+    if (static_cast<Element*>(node)->HasHTMLTagName(name)) {
+      return true;
+    }
+  }
+  for (; node && node != &summary; node = node->ParentNode()) {
+    if (node->HasActivationBehavior()) {
+      return true;
+    }
+    if (node->IsElementNode() &&
+        (static_cast<Element*>(node)->HasHTMLTagName(u"embed") ||
+         static_cast<Element*>(node)->HasHTMLTagName(u"label"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 int32_t HTMLElement::DefaultTabIndex() const {
+  return IsMainSummary() ? 0 : -1;
+}
+
+bool HTMLElement::HasActivationBehavior() const {
+  return HasHTMLTagName(u"summary");
+}
+
+void HTMLElement::RunActivationBehavior(Event& event,
+                                        EventDispatchHandlingState* state) {
+  if (event.DefaultPrevented() || event.DefaultHandled() || !IsMainSummary()) {
+    return;
+  }
+  EventTarget* const target = event.Target();
+  if (IsClickableControl(*this, target ? target->ToNode() : nullptr)) {
+    return;
+  }
+  static_cast<HTMLDetailsElement*>(ParentElement())->ToggleOpen();
+  event.SetDefaultHandled();
+}
+
+bool HTMLElement::IsMainSummary() const {
   if (!HasHTMLTagName(u"summary")) {
-    return -1;
+    return false;
   }
   Element* const parent = ParentElement();
-  if (!parent || !parent->HasHTMLTagName(u"details")) {
-    return -1;
-  }
-  for (Element* child = parent->FirstElementChild(); child;
-       child = child->NextElementSibling()) {
-    if (child->HasHTMLTagName(u"summary")) {
-      return child == this ? 0 : -1;
-    }
-  }
-  return -1;
+  return parent && parent->HasHTMLTagName(u"details") &&
+         static_cast<HTMLDetailsElement*>(parent)->MainSummary() == this;
 }
 
 v8::Local<v8::Value> HTMLElement::Hidden() const {

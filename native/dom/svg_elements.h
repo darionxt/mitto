@@ -82,6 +82,8 @@ class SVGAElement final : public SVGGraphicsElement {
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   int32_t DefaultTabIndex() const override;
+  // Node's: activation behaviour, href or not, as Blink's SVGAElement has.
+  bool HasActivationBehavior() const override;
   DOMTokenList* RelList() {
     return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
   }

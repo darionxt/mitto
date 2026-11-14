@@ -227,6 +227,10 @@ int32_t HTMLAnchorElementBase::DefaultTabIndex() const {
   return 0;
 }
 
+bool HTMLAnchorElementBase::HasActivationBehavior() const {
+  return FindAttribute(u"href");
+}
+
 // static
 HTMLAnchorElement* HTMLAnchorElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<HTMLAnchorElement>(document);

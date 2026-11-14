@@ -25,6 +25,9 @@ class HTMLButtonElement final : public HTMLElement {
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   int32_t DefaultTabIndex() const override;
+  // Node's: activation behaviour, as Blink's button has, though it submits
+  // no form yet, so that a click inside it leaves a summary alone.
+  bool HasActivationBehavior() const override;
 };
 
 class HTMLDListElement final : public HTMLElement {
@@ -50,15 +53,6 @@ class HTMLDataListElement final : public HTMLElement {
   static HTMLDataListElement* Create(Document& document);
 
   explicit HTMLDataListElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
-class HTMLDetailsElement final : public HTMLElement {
- public:
-  static HTMLDetailsElement* Create(Document& document);
-
-  explicit HTMLDetailsElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
