@@ -10,6 +10,7 @@
 #include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/notreached.h"
@@ -2963,10 +2964,11 @@ void HtmlTreeBuilderReferences::Keep(Element* element) {
 
 void HtmlTreeBuilderReferences::KeepOnly(
     const std::vector<Element*>& elements) {
-  elements_.clear();
-  for (Element* const element : elements) {
-    elements_.push_back(element);
-  }
+  // In place, with nothing allocated on the C++ heap, so that no collection
+  // runs while an element that the builder still holds is out of the list.
+  const base::flat_set<const Element*> kept(elements.begin(), elements.end());
+  elements_.EraseIf(
+      [&kept](Element* element) { return !kept.contains(element); });
 }
 
 HtmlDocumentParser::HtmlDocumentParser(Document& document,

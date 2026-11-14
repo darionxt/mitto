@@ -594,7 +594,8 @@ def test_a_script_of_another_site_that_a_write_inserts_is_warned_of_and_fetched(
 def test_a_document_that_a_script_opened_and_let_go_is_collected() -> None:
     # The parser of a document that a script opened and never closed holds what its tree builder refers to through the
     # document, so the document still goes to the collector once the page lets go of it, with an element that a script
-    # removed while the builder held it. gc() is V8's, which --expose-gc gives the Page program.
+    # removed while the builder held it, while the builder keeps such an element as long as its document lives.
+    # gc() is V8's, which --expose-gc gives the Page program.
     program = os.environ.get("MITTO_PAGE_PROGRAM")
     if not program:
         pytest.skip("no Page program; set MITTO_PAGE_PROGRAM to run this test")
@@ -609,9 +610,29 @@ def test_a_document_that_a_script_opened_and_let_go_is_collected() -> None:
             documentRef = new WeakRef(opened);
             elementRef = new WeakRef(div);
         })();
+        // An element that only the builder holds, as a script removed it while it was open, outlives the builder's
+        // compaction of what it keeps, after thousands of elements, and a collection.
+        const kept = document.implementation.createHTMLDocument("");
+        let openRef;
+        (() => {
+            kept.write("<div id=k><b>open");
+            const div = kept.getElementById("k");
+            openRef = new WeakRef(div);
+            div.remove();
+        })();
+        for (let i = 0; i < 3000; i++) {
+            kept.write("<i>x</i>");
+        }
         await new Promise((resolve) => setTimeout(resolve));
         gc();
-        return [documentRef.deref() === undefined, elementRef.deref() === undefined].join();
+        kept.write("<u>y</u>");
+        const open = openRef.deref();
+        return [
+            documentRef.deref() === undefined,
+            elementRef.deref() === undefined,
+            open !== undefined && open.querySelectorAll("i").length,
+            open !== undefined && open.querySelectorAll("u").length,
+        ].join();
     })()"""
     result = subprocess.run(
         [program, "--js-flags=--expose-gc", "-"],
@@ -621,4 +642,4 @@ def test_a_document_that_a_script_opened_and_let_go_is_collected() -> None:
         timeout=_TIMEOUT_SECONDS,
         check=False,
     )
-    assert (result.returncode, result.stderr, result.stdout) == (0, "", "true,true\n")
+    assert (result.returncode, result.stderr, result.stdout) == (0, "", "true,true,3000,1\n")

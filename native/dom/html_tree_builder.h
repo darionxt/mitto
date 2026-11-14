@@ -12,9 +12,11 @@
 //
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.cc
-// Upstream: third_party/blink/renderer/core/html/parser/html_construction_site.cc
+// Upstream:
+// third_party/blink/renderer/core/html/parser/html_construction_site.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_element_stack.cc
-// Upstream: third_party/blink/renderer/core/html/parser/html_formatting_element_list.cc
+// Upstream:
+// third_party/blink/renderer/core/html/parser/html_formatting_element_list.cc
 
 #ifndef MITTO_DOM_HTML_TREE_BUILDER_H_
 #define MITTO_DOM_HTML_TREE_BUILDER_H_
@@ -55,7 +57,8 @@ class HtmlTreeBuilderReferences final
   Document& document() const { return *document_; }
   // Keeps `element` while the builder may refer to it.
   void Keep(Element* element);
-  // Keeps `elements` alone.
+  // Keeps `elements` alone, without allocating on the C++ heap, so that none
+  // of them can go meanwhile.
   void KeepOnly(const std::vector<Element*>& elements);
   size_t size() const { return elements_.size(); }
 
