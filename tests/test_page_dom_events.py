@@ -1,6 +1,7 @@
 """Tests of a Page's events against Chrome's: the path and order of an event through a document to the window, the
 window's error and unhandledrejection events and what then reaches the Session, MutationObserver's records, the
-click of click(), and a details element's toggle events and its summary's click.
+click of click(), a details element's toggle events and its summary's click, and a dialog's events as it opens and
+closes.
 
 Each page in tests/data/dom_events/ runs its cases and keeps what they give in `window.result`. The `.chrome.json`
 beside it is what Chrome gave for the same page, recorded by hand in headless Chrome 157.0.8103.51 on macOS, the Engine
@@ -206,4 +207,15 @@ def test_details_fires_toggle_and_opens_by_its_summary_as_chrome_does(
     result, uncaught = _run(session, server, "details")
 
     assert result == _chrome("details")
+    assert uncaught == []
+
+
+def test_dialog_opens_and_closes_with_chromes_events(session: mitto.Session, server: _DataServer) -> None:
+    # show() and showModal() with beforetoggle, which may cancel them, toggle in a task, their errors and :modal;
+    # close() with its return value and close in the next frame; requestClose()'s cancel, which may keep the dialog
+    # open, and the close watcher that a listener replaces or a removal ends; closedBy; the open attribute alone; and a
+    # document with no window.
+    result, uncaught = _run(session, server, "dialog")
+
+    assert result == _chrome("dialog")
     assert uncaught == []

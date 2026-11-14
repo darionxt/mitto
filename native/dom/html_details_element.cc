@@ -7,32 +7,11 @@
 #include "mitto/bindings/v8_html_details_element.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/toggle_event.h"
-#include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/cppgc/visitor.h"
-#include "v8/include/v8-isolate.h"
 
 namespace mitto {
-
-namespace {
-
-// The tasks that fire the event: the window's of the document, or for a
-// document of no window, such as one that createHTMLDocument() made, the
-// current window's, as such documents of Blink share the window's execution
-// context.
-WindowTasks* TasksFor(const Document& document) {
-  if (Window* const window = document.DefaultView()) {
-    return window->GetTasks();
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  if (!isolate || !isolate->InContext()) {
-    return nullptr;
-  }
-  return Window::Current().GetTasks();
-}
-
-}  // namespace
 
 // static
 HTMLDetailsElement* HTMLDetailsElement::Create(Document& document) {
@@ -130,7 +109,7 @@ void HTMLDetailsElement::QueueToggleEvent(bool is_open) {
   pending_toggle_event_ =
       ToggleEvent::CreateTrusted(u"toggle", old_state, new_state);
   const uint64_t task = ++toggle_task_;
-  WindowTasks* const tasks = TasksFor(GetDocument());
+  WindowTasks* const tasks = GetDocument().GetTasks();
   if (!tasks) {
     return;
   }

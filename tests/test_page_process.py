@@ -235,7 +235,7 @@ def _fetch_request(
 
 
 # The hello, and the Page's initial about:blank, document 1.
-_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(27, struct.pack('<QB', 1, 0))"
+_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QB', 1, 0))"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
@@ -325,19 +325,19 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(27, struct.pack
         ),
         pytest.param(
             "document-numbered-again",
-            f"{_HELLO}\nsend(27, struct.pack('<QB', 1, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QB', 1, 0))",
             "the library refused a message from the Page: a document numbered 1, after one numbered 1",
             id="document-numbered-again",
         ),
         pytest.param(
             "document-of-no-response",
-            f"{_HELLO}\nsend(27, struct.pack('<QBQ', 2, 1, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 1, 0))",
             "the library refused a message from the Page: a document of navigation 0, which has no response",
             id="document-of-no-response",
         ),
         pytest.param(
             "same-document-elsewhere",
-            f"{_HELLO}\nsend(28, struct.pack('<Q', 1) + b'http://elsewhere.test/')",
+            f"{_HELLO}\nsend(71, struct.pack('<Q', 1) + b'http://elsewhere.test/')",
             "the library refused a message from the Page: a same-document navigation to another origin",
             id="same-document-elsewhere",
         ),

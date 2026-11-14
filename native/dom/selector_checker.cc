@@ -624,6 +624,8 @@ bool SelectorChecker::CheckPseudoClass(const CssSimpleSelector& selector,
       return state::IsDefined(element);
     case Pseudo::kOpen:
       return state::IsOpen(element);
+    case Pseudo::kModal:
+      return state::IsModal(element);
     case Pseudo::kTextField:
       return state::IsTextField(element);
     case Pseudo::kLang:
@@ -636,11 +638,11 @@ bool SelectorChecker::CheckPseudoClass(const CssSimpleSelector& selector,
       return false;
     default:
       // What needs input, focus, style, layout, media, a fullscreen element,
-      // a popover or modal dialog shown, a navigation, a view transition,
-      // autofill or custom element state, none of which a Page has: :hover,
-      // :active, :focus, :focus-visible, :focus-within, :target, :autofill,
-      // :fullscreen, :modal, :popover-open, :picture-in-picture, :state()
-      // and the rest, as Chrome answers them for a page without them.
+      // a popover shown, a navigation, a view transition, autofill or custom
+      // element state, none of which a Page has: :hover, :active, :focus,
+      // :focus-visible, :focus-within, :target, :autofill, :fullscreen,
+      // :popover-open, :picture-in-picture, :state() and the rest, as Chrome
+      // answers them for a page without them.
       return false;
   }
 }

@@ -57,6 +57,7 @@
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 
@@ -153,6 +154,17 @@ void Document::Trace(cppgc::Visitor* visitor) const {
 
 mitto::Location* Document::Location() const {
   return window_ ? window_->Location() : nullptr;
+}
+
+WindowTasks* Document::GetTasks() const {
+  if (window_) {
+    return window_->GetTasks();
+  }
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate || !isolate->InContext()) {
+    return nullptr;
+  }
+  return Window::Current().GetTasks();
 }
 
 // SecurityOrigin::Domain(): the host, which an opaque origin lacks.

@@ -9,7 +9,9 @@
 #include "base/no_destructor.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/event_target.h"
 #include "mitto/dom/scheduler_task_context.h"
 #include "mitto/dom/time_clamper.h"
 #include "mitto/dom/window.h"
@@ -50,6 +52,11 @@ struct AnimationFrameController::FrameCallback {
   // attribution, so a yield() in the callback inherits what the task that
   // asked for it had.
   cppgc::Persistent<SchedulerTaskContext> task_state;
+};
+
+struct AnimationFrameController::QueuedEvent {
+  cppgc::Persistent<EventTarget> target;
+  cppgc::Persistent<Event> event;
 };
 
 AnimationFrameController::AnimationFrameController(
@@ -94,8 +101,14 @@ void AnimationFrameController::CancelAnimationFrame(int32_t id) {
   }
 }
 
+void AnimationFrameController::EnqueueEvent(EventTarget& target, Event& event) {
+  events_.push_back(std::make_unique<QueuedEvent>(
+      QueuedEvent{.target = &target, .event = &event}));
+  ScheduleAnimationIfNeeded();
+}
+
 void AnimationFrameController::ScheduleAnimationIfNeeded() {
-  if (frame_requested_ || callbacks_.empty()) {
+  if (frame_requested_ || (callbacks_.empty() && events_.empty())) {
     return;
   }
   frame_requested_ = true;
@@ -120,10 +133,35 @@ void AnimationFrameController::ServiceScriptedAnimations(
         animation_time_, AnimationTimeClamper().ClampTimeResolution(
                              frame_time - zero_time, kCrossOriginIsolated));
   }
+  const base::WeakPtr<AnimationFrameController> self =
+      weak_factory_.GetWeakPtr();
+  DispatchEvents();
+  // A listener may have ended the window's context, and this with it.
+  if (!self) {
+    return;
+  }
   ExecuteFrameCallbacks(
       animation_time_.InMillisecondsF(),
       timing.MonotonicTimeToPseudoWallTime(zero_time + animation_time_)
           .InMillisecondsF());
+}
+
+// ScriptedAnimationController::DispatchEvents(): the events that wait now,
+// each at its target, with its microtasks run before the next.
+void AnimationFrameController::DispatchEvents() {
+  std::vector<std::unique_ptr<QueuedEvent>> events;
+  events.swap(events_);
+  const v8::Local<v8::Context> context = context_->Get(isolate_);
+  const base::WeakPtr<AnimationFrameController> self =
+      weak_factory_.GetWeakPtr();
+  for (const std::unique_ptr<QueuedEvent>& queued : events) {
+    const v8::MicrotasksScope microtasks_scope(
+        context, v8::MicrotasksScope::kRunMicrotasks);
+    queued->target->DispatchEvent(queued->event.Get());
+    if (!self) {
+      return;
+    }
+  }
 }
 
 // FrameRequestCallbackCollection::ExecuteFrameCallbacks(): the callbacks that

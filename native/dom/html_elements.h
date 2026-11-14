@@ -57,15 +57,6 @@ class HTMLDataListElement final : public HTMLElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-class HTMLDialogElement final : public HTMLElement {
- public:
-  static HTMLDialogElement* Create(Document& document);
-
-  explicit HTMLDialogElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
 class HTMLDirectoryElement final : public HTMLElement {
  public:
   static HTMLDirectoryElement* Create(Document& document);

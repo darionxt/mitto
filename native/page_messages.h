@@ -174,11 +174,11 @@ enum class PageMessage : uint32_t {
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
-  kDocumentCommitted = 27,
+  kDocumentCommitted = 70,
   // To the Session: the ID of a document, and the URL in UTF-8 that a
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
-  kSameDocumentNavigation = 28,
+  kSameDocumentNavigation = 71,
 };
 
 // Whether a message of `type` names the document it comes from: each of the

@@ -16,8 +16,10 @@ ToggleEvent* ToggleEvent::Create(const std::u16string& type,
 // static
 ToggleEvent* ToggleEvent::CreateTrusted(const std::u16string& type,
                                         const std::u16string& old_state,
-                                        const std::u16string& new_state) {
+                                        const std::u16string& new_state,
+                                        bool cancelable) {
   bindings::ToggleEventInit init;
+  init.cancelable = cancelable;
   init.old_state = old_state;
   init.new_state = new_state;
   ToggleEvent* const event = Create(type, init);
