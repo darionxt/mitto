@@ -6,7 +6,6 @@ native library with the Page program beside it, as CI's native job installs it o
 """
 
 import http.server
-import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -20,7 +19,7 @@ import mitto
 from mitto import _native
 from mitto._errors import ScriptError
 from mitto._page import Page, PageNavigation
-from tests.local_server import QuietServer
+from tests.local_server import QuietServer, refused_port
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -411,10 +410,7 @@ def test_a_navigation_that_fails_raises_its_error_and_keeps_the_document(
     session: mitto.Session, server: _Server
 ) -> None:
     url = server.page("/", "<body>kept")
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        refused = f"http://127.0.0.1:{listener.getsockname()[1]}/"
-
+    refused = f"http://127.0.0.1:{refused_port()}/"
     with _open_page(session, url) as page:
         page.evaluate(f"location.href = '{refused}'")
         with pytest.raises(mitto.ConnectionFailedError):

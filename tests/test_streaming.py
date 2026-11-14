@@ -25,7 +25,7 @@ import mitto
 from mitto import _native
 from mitto._body import StreamBody
 from mitto._native import BodyWanted, NativeRequest
-from tests.local_server import LocalHTTPServer
+from tests.local_server import LocalHTTPServer, refused_port
 from tools.capture import CASES, HTTP1, HTTP2, HTTP3, CaptureServer, normal_form
 from tools.parity.replay import run_of, session_settings
 
@@ -248,9 +248,7 @@ def test_a_body_that_stops_halfway_raises_from_what_reads_it(server: StreamServe
 
 
 def test_no_connection_raises_when_the_with_statement_starts() -> None:
-    with socket.create_server(("127.0.0.1", 0)) as listener:
-        port = listener.getsockname()[1]
-
+    port = refused_port()
     with (
         mitto.Session() as session,
         pytest.raises(mitto.ConnectionFailedError),
@@ -832,11 +830,8 @@ def test_a_stream_is_not_touched_if_no_connection_comes() -> None:
         started = True
         yield b"part"
 
-    with socket.create_server(("127.0.0.1", 0)) as listener:
-        port = listener.getsockname()[1]
-
     with mitto.Session() as session, pytest.raises(mitto.ConnectionFailedError):
-        session.post(f"http://127.0.0.1:{port}/", data=parts(), headers={"Content-Length": "4"})
+        session.post(f"http://127.0.0.1:{refused_port()}/", data=parts(), headers={"Content-Length": "4"})
 
     assert not started
 
