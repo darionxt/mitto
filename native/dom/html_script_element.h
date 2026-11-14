@@ -1,6 +1,6 @@
-// The script element. Documents run their scripts once a Page loads them
-// (#183), and the parser tells each script element it makes what the HTML
-// Standard's script processing model needs of it.
+// The script element, which its ScriptLoader prepares as the HTML Standard
+// has it, once the parser reaches its end tag, or once the DOM connects it,
+// gives it children or a src.
 //
 // Upstream: third_party/blink/renderer/core/html/html_script_element.h
 // Upstream: third_party/blink/renderer/core/html/html_script_element.cc
@@ -8,13 +8,15 @@
 #ifndef MITTO_DOM_HTML_SCRIPT_ELEMENT_H_
 #define MITTO_DOM_HTML_SCRIPT_ELEMENT_H_
 
+#include <optional>
 #include <string>
 
 #include "mitto/dom/html_element.h"
 #include "v8/include/cppgc/member.h"
-#include "v8/include/cppgc/visitor.h"
 
 namespace mitto {
+
+class ScriptLoader;
 
 class HTMLScriptElement final : public HTMLElement {
  public:
@@ -26,9 +28,20 @@ class HTMLScriptElement final : public HTMLElement {
   void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
+  std::u16string Src() const;
+  void SetSrc(const std::u16string& src,
+              bindings::ExceptionState& exception_state);
+  bool Async() const;
+  void SetAsync(bool async);
   std::u16string Text() const { return ChildTextContent(); }
   void SetText(const std::u16string& text,
                bindings::ExceptionState& exception_state);
+  std::optional<std::u16string> ScriptTextContentForBinding() const;
+  void SetScriptTextContentForBinding(
+      const std::optional<std::u16string>& value,
+      bindings::ExceptionState& exception_state);
+  // HTMLScriptElement.supports(): the script types Chrome runs.
+  static bool Supports(const std::u16string& type);
 
   // What the parser tells a script element before it inserts it, as Blink's
   // CreateElementFlags and ScriptLoader keep it.
@@ -38,22 +51,39 @@ class HTMLScriptElement final : public HTMLElement {
   void SetCreatedByParser(Document& parser_document);
   // The script never runs: one that the fragment parser makes, or a copy of
   // one that has run.
-  void SetAlreadyStarted() { already_started_ = true; }
+  void SetAlreadyStarted();
   // Where the script's text starts in its document, a zero-based line and
   // column, as Blink's TextPosition: the offsets of an inline script's
   // errors.
   void SetStartPosition(int line, int column);
-
-  bool IsParserInserted() const { return parser_inserted_; }
-  Document* ParserDocument() const { return parser_document_.Get(); }
-  bool AlreadyStarted() const { return already_started_; }
   int StartLine() const { return start_line_; }
   int StartColumn() const { return start_column_; }
 
+  // What the DOM, the parser and the Page use.
+  ScriptLoader& Loader() const { return *loader_; }
+  // HTMLScriptElement::IsPotentiallyRenderBlocking(): blocking="render", or a
+  // classic script that the parser inserted without async or defer.
+  bool IsPotentiallyRenderBlocking() const;
+  // Fire load and error at the element, which do not bubble.
+  void DispatchLoadEvent();
+  void DispatchErrorEvent();
+
+  // Node's.
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
+  void DidNotifySubtreeInsertionsToDocument() override;
+  void ChildrenChanged(ChildrenChangeType type,
+                       Node& child,
+                       bool by_parser) override;
+  // Element's.
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
+
+ protected:
+  Node* CloneWithoutChildren(Document& document) const override;
+
  private:
-  bool parser_inserted_ = false;
-  cppgc::WeakMember<Document> parser_document_;
-  bool already_started_ = false;
+  cppgc::Member<ScriptLoader> loader_;
   int start_line_ = 0;
   int start_column_ = 0;
 };

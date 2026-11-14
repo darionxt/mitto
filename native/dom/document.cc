@@ -5,6 +5,7 @@
 
 #include "base/check.h"
 #include "base/containers/span.h"
+#include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
@@ -21,6 +22,7 @@
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
+#include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
@@ -30,6 +32,7 @@
 #include "mitto/dom/html_element_factory.h"
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_script_element.h"
 #include "mitto/dom/mathml_element.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
@@ -42,6 +45,7 @@
 #include "mitto/dom/text.h"
 #include "mitto/dom/tree_walker.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/text_codec.h"
 #include "mitto/encoding/text_encoding_registry.h"
 #include "mitto/encoding/url_with_encoding.h"
@@ -131,6 +135,8 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(applets_);
   visitor->Trace(all_);
   visitor->Trace(feature_policy_);
+  visitor->Trace(script_runner_);
+  current_script_stack_.Trace(visitor);
   visitor->Trace(template_document_);
   visitor->Trace(template_document_host_);
   visitor->Trace(traversals_);
@@ -779,6 +785,51 @@ void Document::UpdateBaseUrl() {
   if (!base_url_.is_valid()) {
     base_url_ = GURL();
   }
+}
+
+DocumentScriptRunner& Document::GetScriptRunner() {
+  if (!script_runner_) {
+    script_runner_ =
+        bindings::MakeGarbageCollected<DocumentScriptRunner>(*this);
+  }
+  return *script_runner_;
+}
+
+bindings::ScriptWrappable* Document::CurrentScriptForBinding() const {
+  return current_script_stack_.empty() ? nullptr : current_script_stack_.back();
+}
+
+void Document::PushCurrentScript(HTMLScriptElement* element) {
+  current_script_stack_.push_back(element);
+}
+
+void Document::PopCurrentScript(HTMLScriptElement* element) {
+  CHECK_EQ(current_script_stack_.back(), element);
+  current_script_stack_.pop_back();
+}
+
+void Document::DecrementLoadEventDelayCount() {
+  CHECK_GT(load_event_delay_count_, 0);
+  if (--load_event_delay_count_ > 0 || load_event_check_pending_) {
+    return;
+  }
+  // CheckLoadEventSoon(): a timer of no delay on the DOM manipulation task
+  // source.
+  WindowTasks* const tasks = window_ ? window_->GetTasks() : nullptr;
+  if (!tasks || check_completed_.is_null()) {
+    return;
+  }
+  load_event_check_pending_ = true;
+  tasks->PostTask(TaskType::kDOMManipulation,
+                  base::BindOnce(
+                      [](const cppgc::WeakPersistent<Document>& document) {
+                        if (!document) {
+                          return;
+                        }
+                        document->load_event_check_pending_ = false;
+                        document->check_completed_.Run();
+                      },
+                      cppgc::WeakPersistent<Document>(this)));
 }
 
 }  // namespace mitto

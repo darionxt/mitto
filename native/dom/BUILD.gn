@@ -55,6 +55,8 @@ source_set("dom") {
     "document_fragment.h",
     "document_load_timing.cc",
     "document_load_timing.h",
+    "document_script_runner.cc",
+    "document_script_runner.h",
     "document_picture_in_picture.cc",
     "document_picture_in_picture.h",
     "document_type.cc",
@@ -265,6 +267,8 @@ source_set("dom") {
     "objects_behind.h",
     "page_interfaces.cc",
     "page_interfaces.h",
+    "pending_script.cc",
+    "pending_script.h",
     "performance.cc",
     "performance.h",
     "performance_entry.cc",
@@ -331,6 +335,8 @@ source_set("dom") {
     "screen.h",
     "screen_orientation.cc",
     "screen_orientation.h",
+    "script_loader.cc",
+    "script_loader.h",
     "script_values.cc",
     "script_values.h",
     "selector_checker.cc",
@@ -347,6 +353,8 @@ source_set("dom") {
     "string_hash_table_order.h",
     "style_media.cc",
     "style_media.h",
+    "subresource_integrity.cc",
+    "subresource_integrity.h",
     "svg_element.cc",
     "svg_element.h",
     "svg_element_factory.cc",
@@ -386,6 +394,8 @@ source_set("dom") {
     "window_properties.h",
     "window_task.cc",
     "window_task.h",
+    "window_tasks.cc",
+    "window_tasks.h",
   ]
 
   # What //mitto/bindings:generate_bindings writes for these classes and for
@@ -401,6 +411,7 @@ source_set("dom") {
   deps = [
     "//base",
     "//base/third_party/double_conversion",
+    "//crypto",
     "//mitto:header_rules",
     "//mitto:string_hasher",
     "//mitto/encoding",

@@ -337,11 +337,13 @@ def test_a_script_whose_mime_type_cannot_run_fires_error_as_in_chrome(
 
     with _open_page(session, url) as page:
         assert page.evaluate("seen") == ["/plain.js error", "/image.js error", "/javascript.js ran", "/lax.js ran"]
-        assert [message.text for message in page.console_messages if message.level == "error"] == [
-            f"Refused to execute script from '{server.url('/plain.js')}' because its MIME type ('text/plain') is not"
-            " executable, and strict MIME type checking is enabled.",
+        # The console says why as each response ends, as Blink's ClassicPendingScript::NotifyFinished() does, so in the
+        # order the responses came.
+        assert sorted(message.text for message in page.console_messages if message.level == "error") == [
             f"Refused to execute script from '{server.url('/image.js')}' because its MIME type ('image/png') is not"
             " executable.",
+            f"Refused to execute script from '{server.url('/plain.js')}' because its MIME type ('text/plain') is not"
+            " executable, and strict MIME type checking is enabled.",
         ]
 
 

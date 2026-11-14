@@ -70,6 +70,7 @@ class Screen;
 class StyleMedia;
 class Viewport;
 class VisualViewport;
+class WindowTasks;
 
 class Window final : public WindowProperties {
  public:
@@ -214,6 +215,11 @@ class Window final : public WindowProperties {
   size_t TimerCount() const;
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
+  Fetcher* GetFetcher() const { return fetcher_; }
+  // The tasks of the window's context, which the Page program keeps, and
+  // which go with it: without them, a task posted to the window never runs.
+  void SetTasks(WindowTasks* tasks) { tasks_ = tasks; }
+  WindowTasks* GetTasks() const { return tasks_; }
   // The idle callbacks of the window's context, which go with it, as its
   // timers do.
   void SetIdleTasks(IdleTaskController* idle_tasks) { idle_tasks_ = idle_tasks; }
@@ -312,6 +318,7 @@ class Window final : public WindowProperties {
   std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;
   raw_ptr<IdleTaskController> idle_tasks_ = nullptr;
+  raw_ptr<WindowTasks> tasks_ = nullptr;
   raw_ptr<AnimationFrameController> animation_frames_ = nullptr;
 };
 
