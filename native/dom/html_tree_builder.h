@@ -111,13 +111,22 @@ class HtmlDocumentParser {
 std::vector<std::string> ParseHtmlDocument(Document& document,
                                            std::u16string_view markup);
 
+// What a fragment's script elements are, as Blink's ParserContentPolicy has
+// it: the parser's and already started, so that they never run, as innerHTML's
+// are, or neither, so that they run once the DOM connects them, as
+// createContextualFragment()'s do
+// (kAllowScriptingContentAndDoNotMarkAlreadyStarted).
+enum class FragmentScripts { kAlreadyStarted, kRunnable };
+
 // The HTML Standard's fragment parsing algorithm for `context`, of any
 // namespace, which innerHTML, outerHTML and insertAdjacentHTML() use: the nodes
 // that `markup` makes, with no parent. `skipped_rules`, if not null, gets the
 // rules the tree builder could not follow.
-NodeVector ParseHtmlFragment(Element& context,
-                             std::u16string_view markup,
-                             std::vector<std::string>* skipped_rules = nullptr);
+NodeVector ParseHtmlFragment(
+    Element& context,
+    std::u16string_view markup,
+    std::vector<std::string>* skipped_rules = nullptr,
+    FragmentScripts scripts = FragmentScripts::kAlreadyStarted);
 
 }  // namespace mitto
 

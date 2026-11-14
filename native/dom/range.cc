@@ -992,8 +992,10 @@ DocumentFragment* Range::CreateContextualFragment(
   }
   DocumentFragment* const fragment =
       DocumentFragment::Create(element->GetDocument());
+  // Its scripts run once they are connected, unlike innerHTML's.
   for (const cppgc::Persistent<Node>& child :
-       ParseHtmlFragment(*element, fragment_markup)) {
+       ParseHtmlFragment(*element, fragment_markup, /*skipped_rules=*/nullptr,
+                         FragmentScripts::kRunnable)) {
     fragment->ParserAppendChild(child.Get());
   }
   Node* next = nullptr;

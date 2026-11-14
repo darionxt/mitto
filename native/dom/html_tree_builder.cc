@@ -513,6 +513,9 @@ class HtmlTreeBuilder {
   }
 
   Element* fragment_root() const { return root_; }
+  // Blink's kAllowScriptingContentAndDoNotMarkAlreadyStarted: the script
+  // elements are neither the parser's nor already started.
+  void SetScriptsRunnable() { scripts_parser_inserted_ = false; }
   const std::vector<std::string>& skipped_rules() const {
     return skipped_rules_;
   }
@@ -1107,9 +1110,11 @@ class HtmlTreeBuilder {
         element->LocalName() == u"script";
     if (svg_script) {
       auto* const script = static_cast<SVGScriptElement*>(element);
-      script->SetCreatedByParser(*document_);
-      if (IsFragment()) {
-        script->SetAlreadyStarted();
+      if (scripts_parser_inserted_) {
+        script->SetCreatedByParser(*document_);
+        if (IsFragment()) {
+          script->SetAlreadyStarted();
+        }
       }
       const HtmlTokenizer::ZeroBasedPosition position =
           tokenizer_->TextPosition();
@@ -1775,9 +1780,11 @@ class HtmlTreeBuilder {
     mode_ = Mode::kText;
     auto* const script = static_cast<HTMLScriptElement*>(
         CreateElement(token, html_names::kXhtmlNamespace));
-    script->SetCreatedByParser(*document_);
-    if (IsFragment()) {
-      script->SetAlreadyStarted();
+    if (scripts_parser_inserted_) {
+      script->SetCreatedByParser(*document_);
+      if (IsFragment()) {
+        script->SetAlreadyStarted();
+      }
     }
     script->SetStartPosition(position.line, position.column);
     AttachOrFosterParent(script, &token);
@@ -2944,6 +2951,8 @@ class HtmlTreeBuilder {
   const raw_ptr<Document> document_;
   const raw_ref<HtmlTokenizer> tokenizer_;
   const raw_ptr<Element> fragment_context_;
+  // Whether the script elements it makes are the parser's.
+  bool scripts_parser_inserted_ = true;
   // The context element as the adjusted current node of a fragment takes it.
   const OpenElement context_entry_;
   raw_ptr<Element> root_;
@@ -3063,12 +3072,16 @@ std::vector<std::string> ParseHtmlDocument(Document& document,
 
 NodeVector ParseHtmlFragment(Element& context,
                              std::u16string_view markup,
-                             std::vector<std::string>* skipped_rules) {
+                             std::vector<std::string>* skipped_rules,
+                             FragmentScripts scripts) {
   HtmlTokenizer tokenizer(TokenizerOptions());
   const cppgc::Persistent<HtmlTreeBuilderReferences> references =
       bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(
           context.GetDocument());
   HtmlTreeBuilder tree_builder(*references, context, tokenizer);
+  if (scripts == FragmentScripts::kRunnable) {
+    tree_builder.SetScriptsRunnable();
+  }
   tokenizer.Append(markup);
   tokenizer.Finish();
   HtmlToken token;
