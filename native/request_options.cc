@@ -93,6 +93,9 @@ std::optional<RequestMode> ParseRequestMode(const base::Value& value) {
   if (value.GetString() == "navigate") {
     return RequestMode::kNavigate;
   }
+  if (value.GetString() == "same-origin") {
+    return RequestMode::kSameOrigin;
+  }
   if (value.GetString() == "cors") {
     return RequestMode::kCors;
   }

@@ -52,12 +52,35 @@ _SEC_FETCH_USER = "Sec-Fetch-User"
 
 
 class RequestKind(StrEnum):
-    """Which kind of Chrome request is being reproduced."""
+    """Which kind of Chrome request is being reproduced.
+
+    Attributes:
+        NAVIGATION: A navigation of the top-level page, such as a click on a link or a form's submission.
+        FETCH: A page's fetch().
+        SCRIPT: A classic script that an element asks for.
+        IMAGE: An image that an element asks for.
+        STYLE: A stylesheet that a link element or an @import asks for.
+        FONT: A font that a stylesheet's @font-face asks for.
+        MODULE: A module script, or what one imports.
+        XHR: A page's XMLHttpRequest.
+        WORKER: The script of a dedicated worker, which the browser asks for.
+        BEACON: A page's navigator.sendBeacon().
+        IFRAME: The navigation of a frame that an iframe element holds, whose parent is the Initiator.
+        FAVICON: The icon of a page, which the browser asks for.
+    """
 
     NAVIGATION = "navigation"
     FETCH = "fetch"
     SCRIPT = "script"
     IMAGE = "image"
+    STYLE = "style"
+    FONT = "font"
+    MODULE = "module"
+    XHR = "xhr"
+    WORKER = "worker"
+    BEACON = "beacon"
+    IFRAME = "iframe"
+    FAVICON = "favicon"
 
 
 class RequestDefaults(TypedDict):

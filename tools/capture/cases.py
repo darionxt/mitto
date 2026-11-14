@@ -44,14 +44,14 @@ CLIENT_HINTS_PLAIN_HTTP_START_PATH = "/case/client-hints-plain-http"
 _FAILED_PREFIX = "/case/failed?"
 COOKIE_SET_PATH = "/case/cookie-set"
 _COOKIE = "mitto=1"
-_DOCUMENT_START_PATH = "/case/documents-start"
+DOCUMENTS_START_PATH = "/case/documents-start"
 _DOCUMENT_DONE_PATH = "/case/documents-done"
-_DOCUMENT_FRAMES_PATH = "/case/documents-frames"
-_DOCUMENT_PATH = "/case/document"
-_DOCUMENT_FORMS_PATH = "/case/documents-forms"
-_CREDENTIALS_COOKIE_SET_PATH = "/case/credentials-cookie-set"
+DOCUMENTS_FRAMES_PATH = "/case/documents-frames"
+DOCUMENT_PATH = "/case/document"
+DOCUMENTS_FORMS_PATH = "/case/documents-forms"
+CREDENTIALS_COOKIE_SET_PATH = "/case/credentials-cookie-set"
 _HISTORY_NEXT_PATH = "/case/history-next"
-_HISTORY_COOKIE_SET_PATH = "/case/history-cookie-set"
+HISTORY_COOKIE_SET_PATH = "/case/history-cookie-set"
 _HISTORY_COOKIE_CLEAR_PATH = "/case/history-cookie-clear"
 
 _CASE_PREFIX = "/case/"
@@ -392,7 +392,7 @@ DOCUMENT_CASES = (
 )
 """The Recording Cases of what a document requests beside the main Request Kinds, in the order a normal form lists them.
 
-The Parity Checks of the wire do not replay these yet, so they are not among CASES."""
+Their runs record into a directory of their own, so they are not among CASES."""
 
 CASES = (
     *MAIN_CASES,
@@ -455,7 +455,7 @@ def _document_run(name: str, label: str, route: str) -> Run:
         label,
         route,
         CASE_HOST,
-        _DOCUMENT_START_PATH,
+        DOCUMENTS_START_PATH,
         _DOCUMENT_DONE_PATH,
         DOCUMENT_CASES,
         ordered=_DOCUMENT_ORDERED,
@@ -506,8 +506,7 @@ DOCUMENT_RUNS = (
     _document_run("documents/http2", "Documents over HTTP/2", HTTP2),
     _document_run("documents/http3", "Documents over HTTP/3", HTTP3),
 )
-"""The runs of DOCUMENT_CASES. Their files go to a directory of their own, where the Parity Checks of the wire do not
-look, until those replay them."""
+"""The runs of DOCUMENT_CASES. Their files go to a directory of their own, documents/."""
 
 RECORDING_RUNS = (*_FIRST_RUNS, *DOCUMENT_RUNS, *_CLIENT_HINTS_RUNS)
 """Every start of a Chrome that a recording session takes for the wire, in the order it takes them."""
@@ -1045,7 +1044,7 @@ _HISTORY_BACK_SCRIPT = f"""
 
 _HISTORY_NEXT_SCRIPT = f"""
   addEventListener("load", () => {{
-    get("{_HISTORY_COOKIE_SET_PATH}").then(() => history.back()).catch(report);
+    get("{HISTORY_COOKIE_SET_PATH}").then(() => history.back()).catch(report);
   }});
 """
 
@@ -1072,7 +1071,7 @@ def _documents_start_page(same_site: str, cross_site: str) -> Response:
         "beacon_text_cross_site": cross_site + _BEACON_TEXT_CROSS_SITE.path,
         "fetch_later": _FETCH_LATER.path,
         "fetch_post_json_cross_site": cross_site + _FETCH_POST_JSON_CROSS_SITE.path,
-        "credentials_cookie_set": same_site + _CREDENTIALS_COOKIE_SET_PATH,
+        "credentials_cookie_set": same_site + CREDENTIALS_COOKIE_SET_PATH,
         "fetch_credentials_omit": same_site + _FETCH_CREDENTIALS_OMIT.path,
         "fetch_credentials_same_origin": same_site + _FETCH_CREDENTIALS_SAME_ORIGIN.path,
         "fetch_credentials_include": same_site + _FETCH_CREDENTIALS_INCLUDE.path,
@@ -1120,7 +1119,7 @@ def _document_page() -> Response:
 <img src="{_DOCUMENT_IMAGE.path}" alt="">
 <link rel="stylesheet" href="{_DOCUMENT_STYLE_BODY.path}">
 <script src="{_DOCUMENT_SCRIPT_DEFERRED.path}" defer></script>
-{_link(_DOCUMENT_FORMS_PATH)}
+{_link(DOCUMENTS_FORMS_PATH)}
 <script>{_PAGE_SCRIPT}{_DOCUMENT_SCRIPT_SOURCE}</script>
 </body>
 </html>
@@ -1159,7 +1158,7 @@ def _document_responses(
         for case in (_FETCH_CREDENTIALS_OMIT, _FETCH_CREDENTIALS_SAME_ORIGIN, _FETCH_CREDENTIALS_INCLUDE)
     )
     return {
-        _DOCUMENT_START_PATH: _documents_start_page(same_site, cross_site),
+        DOCUMENTS_START_PATH: _documents_start_page(same_site, cross_site),
         _STYLE.path: _case_response(_CSS, _style_source(cross_site)),
         _STYLE_IMPORT.path: style,
         _STYLE_CROSS_SITE.path: style,
@@ -1189,7 +1188,7 @@ def _document_responses(
             _TEXT, b"answered\n", ("Access-Control-Allow-Headers", "content-type")
         ),
         # The cookies go by path, so that each request but those of these cases goes without them.
-        _CREDENTIALS_COOKIE_SET_PATH: _with_credentials(page, *cookies),
+        CREDENTIALS_COOKIE_SET_PATH: _with_credentials(page, *cookies),
         _FETCH_CREDENTIALS_OMIT.path: _with_credentials(page),
         _FETCH_CREDENTIALS_SAME_ORIGIN.path: _with_credentials(page),
         _FETCH_CREDENTIALS_INCLUDE.path: _with_credentials(page),
@@ -1206,14 +1205,14 @@ def _document_responses(
         ),
         _NAVIGATION_META_REFRESH.path: _page(script=_navigate_on_load(_REDIRECT_LOCATION[0].path)),
         _REDIRECT_LOCATION[0].path: _redirect(cross_site + _REDIRECT_LOCATION[1].path),
-        _REDIRECT_LOCATION[1].path: _page(script=_navigate_on_load(page + _DOCUMENT_FRAMES_PATH)),
-        _DOCUMENT_FRAMES_PATH: _page(
+        _REDIRECT_LOCATION[1].path: _page(script=_navigate_on_load(page + DOCUMENTS_FRAMES_PATH)),
+        DOCUMENTS_FRAMES_PATH: _page(
             '<script>const framed = new Promise((resolve) => addEventListener("message", resolve, {once: true}));'
             "</script>",
             f'<iframe src="{_FRAME_SAME_ORIGIN.path}"></iframe>',
             f'<iframe src="{same_site}{_FRAME_SAME_SITE.path}"></iframe>',
             f'<iframe src="{cross_site}{_FRAME_CROSS_SITE.path}"></iframe>',
-            _link(_DOCUMENT_PATH),
+            _link(DOCUMENT_PATH),
             script='\n  addEventListener("load", () => { framed.then(showNext).catch(report); });\n',
             headers=_NESTED_FRAME_COOKIES,
         ),
@@ -1225,7 +1224,7 @@ def _document_responses(
         _FRAME_FETCH.path: text,
         _FRAME_NESTED.path: _case_response(_HTML, _document(_NESTED_FRAME)),
         _FRAME_NESTED_FETCH.path: text,
-        _DOCUMENT_PATH: _document_page(),
+        DOCUMENT_PATH: _document_page(),
         _DOCUMENT_STYLE.path: style,
         _DOCUMENT_PRELOAD_STYLE.path: style,
         _DOCUMENT_PRELOAD_SCRIPT.path: script,
@@ -1238,13 +1237,13 @@ def _document_responses(
         _DOCUMENT_SCRIPT_DEFERRED.path: script,
         _FAVICON.path: image,
         _FAVICON_NOT_ASKED_PATH: text,
-        _DOCUMENT_FORMS_PATH: _page(_form(_FORM_GET.path.partition("?")[0], method="get")),
+        DOCUMENTS_FORMS_PATH: _page(_form(_FORM_GET.path.partition("?")[0], method="get")),
         _FORM_GET.path: _page(_form(_FORM_TEXT.path, enctype="text/plain")),
         _FORM_TEXT.path: _page(_form(cross_site + _FORM_CROSS_SITE.path)),
         _FORM_CROSS_SITE.path: _link_page(page + _HISTORY_BACK.path),
         _HISTORY_BACK.path: _page(_link(_HISTORY_NEXT_PATH), script=_HISTORY_BACK_SCRIPT),
         _HISTORY_NEXT_PATH: _page(script=_HISTORY_NEXT_SCRIPT),
-        _HISTORY_COOKIE_SET_PATH: _case_response(
+        HISTORY_COOKIE_SET_PATH: _case_response(
             _TEXT, b"set\n", ("Set-Cookie", f"{_COOKIE}; Path={_HISTORY_BACK.path}")
         ),
         _HISTORY_COOKIE_CLEAR_PATH: _case_response(

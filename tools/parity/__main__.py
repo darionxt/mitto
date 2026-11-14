@@ -11,15 +11,18 @@ from mitto._native import NativeLibraryError
 from tools.capture import RecordingError
 from tools.parity.check import BASELINES_DIRECTORY, Baseline, BaselineError, find_gaps, load_baselines
 from tools.parity.gaps import KNOWN_GAPS_FILE_NAME, Gap, KnownGapsError, dumps_known_gaps, loads_known_gaps, mismatches
+from tools.parity.replay import made_by_a_page
 from tools.parity.script import ScriptBaseline, ScriptRecordingError, find_script_gaps, load_script_baselines
 from tools.parity.script_gaps import SCRIPT_KNOWN_GAPS_FILE_NAME, GapKind, ScriptGap, loads_script_known_gaps
 
 
 def _gaps_by_case(baselines: Iterable[Baseline], gaps: Iterable[Gap]) -> Iterator[str]:
-    """Yield one line for each Recording Case in the Baselines, so that one with no gaps shows that it matches."""
+    """Yield one line for each Recording Case in the Baselines, so that one with no gaps shows that it matches, and say
+    which a Page has to make."""
     counts = Counter(gap.case for gap in gaps)
     for case in dict.fromkeys(baseline.case for baseline in baselines):
-        yield f"  {case}: {counts[case]}"
+        issue = made_by_a_page(case)
+        yield f"  {case}: {counts[case]}" if issue is None else f"  {case}: skipped until a Page makes it (#{issue})"
 
 
 def _script_counts(baselines: Iterable[ScriptBaseline], gaps: Iterable[ScriptGap]) -> Iterator[str]:
