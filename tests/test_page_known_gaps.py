@@ -172,12 +172,12 @@ def test_a_known_gap_checks_and_converts_as_chrome_does(program: Path, script: s
             "return document.implementation === document.implementation", "value: true", id="the same object each time"
         ),
         pytest.param(
-            "const c = new MessageChannel(); return c.port1 === c.port1 && c.port1 instanceof MessagePort",
+            "const q = new DOMQuad(); return q.p1 === q.p1 && q.p1 instanceof DOMPoint",
             "value: true",
             id="the same object on one receiver",
         ),
         pytest.param(
-            "return new MessageChannel().port1 !== new MessageChannel().port1",
+            "return new DOMQuad().p1 !== new DOMQuad().p1",
             "value: true",
             id="another object on another receiver",
         ),
@@ -250,7 +250,7 @@ def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
             "Failed to execute 'digest' on 'SubtleCrypto'",
             id="subtle crypto",
         ),
-        pytest.param("return document.createDocumentFragment()", "Failed to execute", id="an object of a class"),
+        pytest.param("return document.createCDATASection('x')", "Failed to execute", id="an object of a class"),
     ],
 )
 def test_a_refused_known_gap_keeps_todays_error(program: Path, script: str, message: str) -> None:

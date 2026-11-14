@@ -22,6 +22,8 @@ from tools.capture import (
     CASE_HOST,
     CASES,
     CROSS_SITE_HOST,
+    DOCUMENT_CASES,
+    DOCUMENT_RUNS,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -30,6 +32,7 @@ from tools.capture import (
     PROXIED_HTTP1,
     PROXIED_HTTP2,
     PROXY,
+    RECORDING_RUNS,
     RUNS,
     SAME_SITE_HOST,
     CaptureServer,
@@ -40,12 +43,16 @@ from tools.capture import (
 from tools.capture.cases import HINTS_ASKED, HOST_NAMES, PROXY_CONNECT, START_PATH, respond_on
 from tools.capture.page import KIND_PATHS, RequestKind
 from tools.capture.recording import ConnectionRecord, Json
-from tools.capture.script_page import RECORD_PATH, SCRIPT_RUNS
+from tools.capture.script_page import SCRIPT_RUNS
 
 _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
 _BOUNDARY = "----WebKitFormBoundaryAbCdEfGh01234567"
 _RUNS_BY_NAME = {run.name: run for run in RUNS}
+_RECORDING_RUNS_BY_NAME = {run.name: run for run in RECORDING_RUNS}
+_DOCUMENT_ROUTES = {"documents/http1": HTTP1, "documents/http2": HTTP2, "documents/http3": HTTP3}
+_PAGE_ORIGIN = f"https://{CASE_HOST}:8443"
+_DOCUMENT_PATH = "/case/document"
 _TLS_ROUTES = {"cases/http1": HTTP1, "cases/http2": HTTP2, "cases/http3": HTTP3}
 _CLIENT_HINTS_ROUTES = {
     "cases/client_hints_http1": HTTP1,
@@ -66,6 +73,13 @@ _REQUEST_OF: dict[str, tuple[str, tuple[tuple[str, str], ...], bytes]] = {
     "cookie": ("GET", (("Cookie", "mitto=1"),), b""),
     "revalidation": ("GET", (("If-None-Match", '"mitto"'),), b""),
     "client_hints_critical": ("GET", (("sec-ch-ua-arch", '"x86"'),), b""),
+    "preflight": (
+        "OPTIONS",
+        (("Access-Control-Request-Method", "POST"), ("Access-Control-Request-Headers", "content-type")),
+        b"",
+    ),
+    "fetch_post_json_cross_site": ("POST", (("Content-Type", "application/json"),), b'{"json":"body"}'),
+    "navigation_history_back": ("GET", (("Cookie", "mitto=1"),), b""),
 }
 
 
@@ -189,7 +203,7 @@ def test_a_client_can_produce_every_case_of_a_run_directly(name: str, protocol: 
     assert form["protocol"] == protocol
     assert list(requests_of(form)) == [case.name for case in run.cases]
     for case_name, (_, _, body) in _REQUEST_OF.items():
-        if body and b"--" not in body:
+        if body and b"--" not in body and case_name in requests_of(form):
             assert request_of(form, case_name)["body"] == body.decode()
     assert header_lines_of(form, "cookie")[-1].lower() == "cookie: mitto=1"
     assert header_lines_of(form, "revalidation")[-1].lower() == 'if-none-match: "mitto"'
@@ -667,7 +681,7 @@ def free_tcp_ports(count: int) -> list[int]:
 
 def _go_through_run(entry: dict[str, str], proxy_port: int) -> None:
     """Do with no Chrome what a run asks of one, through the address and route that the command line gave for it."""
-    run = _RUNS_BY_NAME[entry["name"]]
+    run = _RECORDING_RUNS_BY_NAME[entry["name"]]
     address = urlsplit(entry["url"])
     host, port = str(address.hostname), int(address.port or 0)
     authority = f"{host}:{port}"
@@ -691,13 +705,14 @@ def _go_through_run(entry: dict[str, str], proxy_port: int) -> None:
 
 
 def _post_a_record(entry: dict[str, str]) -> None:
-    """Do what the page of a Script Fingerprint does once the probe has finished: post a record."""
+    """Do what the page or worker of a Script Fingerprint does once the probe has finished: post a record."""
+    (run,) = [run for run in SCRIPT_RUNS if run.name == entry["name"]]
     address = urlsplit(entry["url"])
     assert address.hostname is not None
     assert address.port is not None
     record = b'{"format": 1, "objects": [], "values": {}, "reports": []}'
     with connect(address.port, offered=("http/1.1",), host=address.hostname) as sock:
-        http1_exchange(sock, "POST", RECORD_PATH, authority=address.netloc, body=record)
+        http1_exchange(sock, "POST", run.done_path, authority=address.netloc, body=record)
 
 
 def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> None:
@@ -746,12 +761,12 @@ def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> Non
         assert process.returncode == 0, output
 
     # The Script Fingerprint first, from a user data directory that has only had its seed.
-    assert [entry["name"] for entry in entries] == [run.name for run in (*SCRIPT_RUNS, *RUNS)]
-    assert [entry["fingerprint"] for entry in entries] == ["script"] + ["wire"] * len(RUNS)
+    assert [entry["name"] for entry in entries] == [run.name for run in (*SCRIPT_RUNS, *RECORDING_RUNS)]
+    assert [entry["fingerprint"] for entry in entries] == ["script"] * len(SCRIPT_RUNS) + ["wire"] * len(RECORDING_RUNS)
     assert all(entry["flags"] for entry in entries)
     assert all(entry["label"] for entry in entries)
     assert '--host-resolver-rules="MAP capture.test 127.0.0.1,' in output
-    for run in RUNS:
+    for run in RECORDING_RUNS:
         form = json.loads((tmp_path / f"{run.name}.json").read_text(encoding="utf-8"))
         assert list(form["requests"]) == [case.name for case in run.cases]
         peers = {
@@ -759,3 +774,155 @@ def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> Non
             for connection in json.loads((tmp_path / f"{run.name}.raw.json").read_text(encoding="utf-8"))["connections"]
         }
         assert peers == {"127.0.0.1"}
+
+
+def test_each_document_case_has_a_name_and_a_path_of_its_own_but_the_preflight() -> None:
+    names = [case.name for case in (*CASES, *DOCUMENT_CASES)]
+    paths = [case.path for case in (*CASES, *DOCUMENT_CASES) if case.name != "preflight"]
+
+    assert len(set(names)) == len(names)
+    assert len(set(paths)) == len(paths)
+    preflight, request = (case for case in DOCUMENT_CASES if case.path == "/case/fetch-post-json-cross-site")
+    assert (preflight.name, preflight.carries) == ("preflight", "access-control-request-method")
+    assert (request.name, request.carries) == ("fetch_post_json_cross_site", "content-type")
+    for run in DOCUMENT_RUNS:
+        assert run.cases == DOCUMENT_CASES
+        assert run.name.startswith("documents/")
+        assert set(run.ordered) < set(run.cases)
+
+
+def test_a_recording_session_takes_the_document_runs_before_those_whose_hints_last() -> None:
+    names = [run.name for run in RECORDING_RUNS]
+
+    assert [run for run in RECORDING_RUNS if run not in DOCUMENT_RUNS] == list(RUNS)
+    assert max(names.index(run.name) for run in DOCUMENT_RUNS) < names.index("cases/client_hints_http1")
+    assert names.index("cases/proxy_http2") < min(names.index(run.name) for run in DOCUMENT_RUNS)
+
+
+@pytest.mark.parametrize(("name", "protocol"), _DOCUMENT_ROUTES.items())
+def test_a_client_can_produce_every_document_case_of_a_run_directly(name: str, protocol: str) -> None:
+    run = _RECORDING_RUNS_BY_NAME[name]
+    with CaptureServer() as server:
+        authority = server.authority(protocol, host=CASE_HOST)
+        if protocol == HTTP3:
+            with Http3Client(server.port(HTTP3), host=CASE_HOST) as client:
+                send_cases(client, run, authority)
+        else:
+            offered = ("h2",) if protocol == HTTP2 else ("http/1.1",)
+            with connect(server.port(protocol), offered=offered, host=CASE_HOST) as sock:
+                send_cases(Http2Client(sock) if protocol == HTTP2 else _Http1Client(sock), run, authority)
+        assert server.wait_for_page(protocol, _TIMEOUT_SECONDS, done_path=run.done_path)
+        form = normal_form(server.recording(protocol, host=CASE_HOST), run.cases, run.ordered)
+
+    assert list(requests_of(form)) == [case.name for case in run.cases]
+    assert form.get("order") == (None if protocol == HTTP1 else [case.name for case in run.ordered])
+    assert request_of(form, "fetch_post_json_cross_site")["body"] == '{"json":"body"}'
+    assert "body" not in request_of(form, "preflight")
+
+
+class _Head:
+    def __init__(self, target: str) -> None:
+        self.target = target
+        self.headers: tuple[tuple[str, str], ...] = ()
+
+
+def _document_pages() -> dict[str, bytes]:
+    """Return the body of each page and file that the pages of a document run name, from its first page on.
+
+    A form that GETs sends its fields in the query, so its action gets them here too.
+    """
+    form_get = next(case.path for case in DOCUMENT_CASES if case.name == "navigation_form_get")
+    submitted = {form_get.partition("?")[0]: form_get}
+    bodies: dict[str, bytes] = {}
+    queue = [DOCUMENT_RUNS[0].start_path]
+    while queue:
+        path = queue.pop()
+        # The pages report there what went wrong.
+        if path in bodies or path == "/case/failed":
+            continue
+        answer = respond_on("https", 8443, _Head(submitted.get(path, path)))
+        assert answer.status in {200, 302}, path
+        bodies[path] = answer.body
+        text = answer.body.decode("latin-1") + dict(answer.headers).get("Location", "")
+        queue += re.findall(r"/case/[a-z0-9-]+", text)
+    return bodies
+
+
+def test_the_pages_of_a_document_run_ask_for_every_case_of_it_or_chrome_does() -> None:
+    pages = _document_pages()
+
+    run = DOCUMENT_RUNS[0]
+    reached = set(pages)
+    assert run.done_path in reached
+    for case in run.cases:
+        if case.name == "favicon":
+            # Chrome asks for it by itself, and the page says when it waited long enough.
+            assert case.path not in "".join(page.decode("latin-1") for page in pages.values())
+            assert case.refused_path in reached
+        elif case.name == "navigation_form_get":
+            path, _, query = case.path.partition("?")
+            assert path in reached
+            assert 'method="get"' in pages["/case/documents-forms"].decode()
+            assert query == "name=mitto&a+b%26c=d+e%26f%2Bg"
+        else:
+            assert case.path in reached, case.name
+
+
+def test_only_the_document_names_no_icon_so_chrome_asks_for_one_there_alone() -> None:
+    pages = _document_pages()
+
+    documents = {path: page.decode() for path, page in pages.items() if page.startswith(b"<!doctype html>")}
+    assert _DOCUMENT_PATH in documents
+    assert [path for path, page in documents.items() if 'rel="icon"' not in page] == [_DOCUMENT_PATH]
+
+
+def test_the_document_asks_for_what_most_pages_do() -> None:
+    page = respond_on("https", 8443, _Head(_DOCUMENT_PATH)).body.decode()
+
+    for kind in ("style", "script", "image", "font"):
+        assert f'rel="preload" href="/case/document-preload-{kind}" as="{kind}"' in page
+    assert '<link rel="stylesheet" href="/case/document-style">' in page
+    assert '<img src="/case/document-image-small" width="1" height="1" alt="">' in page
+    assert '<img src="/case/document-image" alt="">' in page
+    assert '<script src="/case/document-script-deferred" defer></script>' in page
+
+
+def test_requests_with_credentials_can_read_their_answers_and_only_they_get_cookies() -> None:
+    answer = respond_on("https", 8443, _Head("/case/credentials-cookie-set"))
+
+    headers = [(name.lower(), value) for name, value in answer.headers]
+    assert ("access-control-allow-origin", _PAGE_ORIGIN) in headers
+    assert ("access-control-allow-credentials", "true") in headers
+    assert ("access-control-allow-origin", "*") not in headers
+    assert [value for name, value in headers if name == "set-cookie"] == [
+        f"mitto=1; Path=/case/fetch-credentials-{mode}" for mode in ("omit", "same-origin", "include")
+    ]
+    for mode in ("omit", "same-origin", "include"):
+        assert _answer_to(f"/case/fetch-credentials-{mode}")["Access-Control-Allow-Origin"] == _PAGE_ORIGIN
+
+
+def test_the_preflight_is_answered_so_that_the_request_after_it_goes() -> None:
+    answer = _answer_to("/case/fetch-post-json-cross-site")
+
+    assert answer["Access-Control-Allow-Origin"] == "*"
+    assert answer["Access-Control-Allow-Headers"] == "content-type"
+
+
+def test_the_cookie_of_the_traversal_back_is_set_for_its_page_alone_and_cleared() -> None:
+    assert _answer_to("/case/history-cookie-set")["Set-Cookie"] == "mitto=1; Path=/case/navigation-history-back"
+    assert _answer_to("/case/history-cookie-clear")["Set-Cookie"] == (
+        "mitto=; Max-Age=0; Path=/case/navigation-history-back"
+    )
+
+
+def test_the_frames_page_sets_a_cookie_of_each_same_site_for_the_nested_frame_alone() -> None:
+    answer = respond_on("https", 8443, _Head("/case/documents-frames"))
+
+    cookies = [value for name, value in answer.headers if name == "Set-Cookie"]
+    assert cookies == [
+        f"{same_site.lower()}=1; Path=/case/{path}; Secure; SameSite={same_site}"
+        for path in ("frame-nested", "frame-nested-fetch")
+        for same_site in ("Strict", "Lax", "None")
+    ]
+    frame = respond_on("https", 8443, _Head("/case/frame-cross-site")).body.decode()
+    assert f'<iframe src="{_PAGE_ORIGIN}/case/frame-nested"></iframe>' in frame

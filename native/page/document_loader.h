@@ -1,22 +1,23 @@
 // Loads the Page's document from the response of the navigation that its
 // Session makes when the Page opens, on the Page program's main thread: a new
-// context for it, the HTML parser fed as the body arrives, the document's
-// classic scripts in document order, and its readiness with DOMContentLoaded
-// and load, in their simplest form.
+// context for it, the HTML parser fed as the body arrives, decoded with the
+// encoding that Chrome works out for it (text_resource_decoder_builder.h), the
+// scripts that the parser runs, and the document's readiness with
+// DOMContentLoaded and load, as Blink's HTMLDocumentParser and
+// HTMLParserScriptRunner have them.
 //
-// A script without src runs as soon as the parser reaches its end tag. One
-// with src is fetched through the Session as a script request, with the
-// document as its Initiator, and the parser waits for it, as for a
-// parser-blocking script, while other tasks run. One with src and defer or
-// async is fetched at once and runs after parsing, in document order, before
-// DOMContentLoaded: a schedule the HTML Standard allows, where Chrome's exact
-// timing comes with its preload scanner. Scripts that the DOM inserts and
-// module scripts do not run yet.
+// The parser takes the body from tasks of the networking task source, and
+// yields after a budget of time, as Chrome's does. It runs an inline script
+// as soon as it reaches its end tag, and waits for a parser-blocking one,
+// which goes on from a task of a very high priority once the script is
+// ready, and the parser after it from a later task. Deferred scripts run
+// after parsing, each from a task of its own, then DOMContentLoaded fires,
+// and load once nothing holds it back, such as an async script.
 //
 // Upstream: third_party/blink/renderer/core/loader/document_loader.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_document_parser.cc
-// Upstream: third_party/blink/renderer/core/script/script_loader.cc
-// Upstream: third_party/blink/renderer/core/script/script_runner.cc
+// Upstream: third_party/blink/renderer/core/script/html_parser_script_runner.cc
+// Upstream: third_party/blink/renderer/core/dom/document.cc
 
 #ifndef MITTO_PAGE_DOCUMENT_LOADER_H_
 #define MITTO_PAGE_DOCUMENT_LOADER_H_
@@ -40,26 +41,9 @@ class Document;
 class DocumentLoadTiming;
 class HTMLScriptElement;
 class HtmlDocumentParser;
+class PendingScript;
 class ScriptRunner;
-
-// Decodes UTF-8 that arrives in pieces, as the Encoding Standard's UTF-8
-// decode does: a byte order mark at the start goes, and each byte sequence
-// that is not UTF-8 becomes U+FFFD. A sequence cut between two pieces waits
-// for the rest.
-// Upstream: third_party/blink/renderer/platform/wtf/text/text_codec_utf8.cc
-class Utf8StreamDecoder {
- public:
-  Utf8StreamDecoder();
-  ~Utf8StreamDecoder();
-
-  std::u16string Decode(std::string_view bytes);
-  // What is left at the end of the stream.
-  std::u16string Flush();
-
- private:
-  std::string pending_;
-  bool started_ = false;
-};
+class TextResourceDecoder;
 
 class DocumentLoader final : public PageRequests::Client {
  public:
@@ -77,32 +61,46 @@ class DocumentLoader final : public PageRequests::Client {
   void OnResponseEnded(int net_error) override;
 
  private:
-  class ScriptFetch;
+  // Gives the parser what the decoder decoded, after the document has taken
+  // the decoder's encoding.
+  void AppendDecoded(std::u16string text);
 
-  // Feeds the parser what has arrived, and runs each script it reaches, until
-  // it waits for a script, needs more of the body, or has finished.
-  void Pump();
+  // HTMLDocumentParser::SchedulePumpTokenizer(): the parser goes on from a
+  // task of the networking task source.
+  void SchedulePumpTokenizer();
+  // PumpTokenizerIfPossible(): feeds the parser what has arrived until it
+  // yields, waits for a script, or needs more, and ends the parse once all
+  // of the body is in.
+  void PumpTokenizerIfPossible();
+  // PumpTokenizer(): returns whether the parser yielded.
+  bool PumpTokenizer();
+  // Whether the parser waits for a parser-blocking script.
+  bool IsPaused() const { return parser_blocking_script_; }
 
-  // The HTML Standard's "prepare the script element", for a script that the
-  // parser inserted. Returns whether the parser waits for it.
-  bool PrepareScript(HTMLScriptElement& element);
+  // HTMLParserScriptRunner::ProcessScriptElement(): prepares a script whose
+  // end tag the parser reached.
+  void ProcessScriptElement(HTMLScriptElement& element);
+  // ExecuteParsingBlockingScripts(): runs the parser-blocking script once it
+  // is ready.
+  void ExecuteParsingBlockingScripts();
+  // A script that the parser waits for is ready: the parser goes on from a
+  // task of a very high priority, as Blink posts NotifyScriptLoaded().
+  void PendingScriptFinished();
+  void NotifyScriptLoaded();
 
-  // Runs a fetched script, or fires error at its element if it could not be
-  // fetched, and then load for one that ran.
-  void ExecuteFetched(ScriptFetch& fetch);
-
-  // A script's fetch has ended.
-  void OnScriptFetched(ScriptFetch& fetch);
-
-  // The HTML Standard's "the end", once the parser has finished: interactive,
-  // the scripts that run after parsing, DOMContentLoaded, complete and load.
-  void RunAfterParsing();
-  void FireDOMContentLoaded();
-  void FireLoad();
-
-  // Fires error at `element` from a later task, as the HTML Standard queues
-  // it for a script whose URL cannot be fetched.
-  void QueueErrorEvent(HTMLScriptElement& element);
+  // The HTML Standard's "the end", once the parser has taken all of the body:
+  // interactive, the deferred scripts, each from a task of its own, then
+  // DOMContentLoaded, and load once nothing holds it back.
+  void PrepareToStopParsing();
+  void AttemptToRunDeferredScriptsAndEnd();
+  // ExecuteScriptsWaitingForParsing(): returns whether every deferred script
+  // has run.
+  bool ExecuteScriptsWaitingForParsing();
+  // Document::FinishedParsing().
+  void FinishedParsing();
+  // Document::CheckCompleted(): complete and load, once parsing has finished
+  // and nothing holds the load event back.
+  void CheckCompleted();
 
   const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;
@@ -115,19 +113,28 @@ class DocumentLoader final : public PageRequests::Client {
   // How many bytes of the body have come, as decoded as the Page gets them.
   uint64_t body_bytes_ = 0;
   std::unique_ptr<HtmlDocumentParser> parser_;
-  Utf8StreamDecoder decoder_;
-  // Pieces of the body that have arrived and wait for the parser, which waits
-  // for a script. The Session has no credit for them until the parser takes
-  // them.
+  // Decodes the body as Blink's TextResourceDecoder does, with the encoding
+  // that the response, the document or Chrome's detector gives.
+  std::unique_ptr<TextResourceDecoder> decoder_;
+  // Pieces of the body that have arrived and wait for the parser. The
+  // Session has no credit for them until the parser takes them.
   base::circular_deque<std::string> waiting_body_;
   bool body_ended_ = false;
   bool parser_finished_ = false;
-  bool after_parsing_started_ = false;
-  bool dom_content_loaded_queued_ = false;
+  bool pump_scheduled_ = false;
+  // How often the parser has yielded, after which it has a longer budget.
+  int times_yielded_ = 0;
+  // The parser's script nesting level.
+  int script_nesting_level_ = 0;
+  // Once the parser has taken all of the body: the end has started, parsing
+  // has finished with DOMContentLoaded, and load has fired.
+  bool stopping_ = false;
+  bool parsing_finished_ = false;
+  bool load_fired_ = false;
   // The script that the parser waits for, if any.
-  std::unique_ptr<ScriptFetch> blocking_script_;
+  cppgc::Persistent<PendingScript> parser_blocking_script_;
   // The scripts that run after parsing, in document order.
-  base::circular_deque<std::unique_ptr<ScriptFetch>> after_parsing_;
+  base::circular_deque<cppgc::Persistent<PendingScript>> scripts_after_parsing_;
   base::WeakPtrFactory<DocumentLoader> weak_factory_{this};
 };
 

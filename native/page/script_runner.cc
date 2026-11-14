@@ -18,12 +18,15 @@
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
+#include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
 #include "mitto/page/document_loader.h"
 #include "mitto/page/page_fetcher.h"
@@ -154,6 +157,8 @@ std::optional<std::string> ScriptRunner::Start(
     return base::StrCat({"the locale \"", start.locale, "\" cannot be set"});
   }
   icu::TimeZone::adoptDefault(time_zone.release());
+  // The frames begin at the vsyncs of the Machine's display.
+  EventLoop::Get()->SetRefreshRate(start.refresh_rate);
   isolate_->DateTimeConfigurationChangeNotification(
       v8::Isolate::TimeZoneDetection::kSkip);
   isolate_->LocaleConfigurationChangeNotification();
@@ -198,11 +203,16 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   const v8::Context::Scope context_scope(context);
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
+  animation_frames_ =
+      std::make_unique<AnimationFrameController>(isolate_, context);
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
+  window_tasks_ = std::make_unique<WindowTasks>(isolate_, context);
   Window& window = Window::Current();
   window.SetTimers(timers_.get());
   window.SetIdleTasks(idle_tasks_.get());
+  window.SetAnimationFrames(animation_frames_.get());
   window.SetFetcher(fetcher_.get());
+  window.SetTasks(window_tasks_.get());
   window.SetStart(start_, connection);
   window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
   window.SetConsoleSink(base::BindRepeating(
@@ -242,11 +252,18 @@ void ScriptRunner::Evaluate(uint64_t call, std::string_view script) {
     const v8::TryCatch try_catch(isolate_);
     v8::Local<v8::String> source;
     v8::Local<v8::Script> compiled;
+    // As DevTools' EvaluateGlobal() compiles what it evaluates: with no name,
+    // and errors that the window's error listeners see as they are.
+    v8::ScriptOrigin origin(
+        v8::String::Empty(isolate_), /*resource_line_offset=*/0,
+        /*resource_column_offset=*/0,
+        /*resource_is_shared_cross_origin=*/true, /*script_id=*/-1,
+        /*source_map_url=*/v8::Local<v8::Value>(), /*resource_is_opaque=*/true);
     if (!v8::String::NewFromUtf8(isolate_, script.data(),
                                  v8::NewStringType::kNormal,
                                  base::checked_cast<int>(script.size()))
              .ToLocal(&source) ||
-        !v8::Script::Compile(context, source).ToLocal(&compiled) ||
+        !v8::Script::Compile(context, source, &origin).ToLocal(&compiled) ||
         !compiled->Run(context).ToLocal(&result)) {
       evaluated = FailureOf(call, Failure(isolate_, context, try_catch));
     }
@@ -279,10 +296,11 @@ void ScriptRunner::EndTask() {
       reporter_->TakeUnhandledRejections();
   if (!rejections.empty()) {
     ++reports_queued_;
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE,
-        base::BindOnce(&ScriptRunner::ReportRejections, base::Unretained(this),
-                       std::move(rejections)));
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kDOMManipulation)
+        ->PostTask(FROM_HERE, base::BindOnce(&ScriptRunner::ReportRejections,
+                                             base::Unretained(this),
+                                             std::move(rejections)));
   }
   // Results wait for the reports queued before them.
   if (reports_queued_ > 0) {
@@ -329,9 +347,9 @@ void ScriptRunner::RunTask(base::OnceClosure task) {
   std::move(task).Run();
 }
 
-void ScriptRunner::PostTask(base::OnceClosure task) {
+void ScriptRunner::PostTask(TaskType type, base::OnceClosure task) {
   // The runner lives until the process ends.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+  EventLoop::Get()->TaskRunner(type)->PostTask(
       FROM_HERE, base::BindOnce(&ScriptRunner::RunTask, base::Unretained(this),
                                 std::move(task)));
 }
@@ -349,11 +367,15 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
     const v8::Context::Scope old_scope(context_.Get(isolate_));
     Window::Current().SetTimers(nullptr);
     Window::Current().SetIdleTasks(nullptr);
+    Window::Current().SetAnimationFrames(nullptr);
     Window::Current().SetFetcher(nullptr);
+    Window::Current().SetTasks(nullptr);
   }
   timers_.reset();
   idle_tasks_.reset();
+  animation_frames_.reset();
   fetcher_.reset();
+  window_tasks_.reset();
   reporter_->ContextDestroyed(context_.Get(isolate_));
   chrome_object_data_.back()->detached = true;
   // What the new document's DOMHighResTimeStamp counts from, as Blink takes
@@ -382,42 +404,6 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
   }
   Window::Current().SetDocument(document);
   return *document;
-}
-
-void ScriptRunner::RunClassicScript(std::u16string_view source,
-                                    const GURL& url) {
-  // V8 holds no longer string, and a script that it cannot hold does not run.
-  if (source.size() > static_cast<size_t>(v8::String::kMaxLength)) {
-    return;
-  }
-  const v8::HandleScope handle_scope(isolate_);
-  const v8::Local<v8::Context> context = context_.Get(isolate_);
-  const v8::Context::Scope context_scope(context);
-  // The HTML Standard's clean up after running script: its microtasks run
-  // once it returns, after the TryCatch, so that what they throw is reported
-  // on its own.
-  const v8::MicrotasksScope microtasks_scope(
-      context, v8::MicrotasksScope::kRunMicrotasks);
-  const v8::TryCatch try_catch(isolate_);
-  v8::Local<v8::String> text;
-  v8::Local<v8::String> name;
-  v8::Local<v8::Script> compiled;
-  if (!v8::String::NewFromTwoByte(
-           isolate_, reinterpret_cast<const uint16_t*>(source.data()),
-           v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
-           .ToLocal(&text) ||
-      !v8::String::NewFromUtf8(isolate_, url.spec().data(),
-                               v8::NewStringType::kNormal,
-                               base::checked_cast<int>(url.spec().size()))
-           .ToLocal(&name)) {
-    return;
-  }
-  v8::ScriptOrigin origin(name);
-  if ((!v8::Script::Compile(context, text, &origin).ToLocal(&compiled) ||
-       compiled->Run(context).IsEmpty()) &&
-      try_catch.HasCaught() && try_catch.CanContinue()) {
-    reporter_->ReportException(try_catch.Exception());
-  }
 }
 
 PageEvaluated ScriptRunner::ResultOf(uint64_t call,

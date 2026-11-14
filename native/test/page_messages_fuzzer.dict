@@ -51,3 +51,9 @@
 "__Host-"
 ".example.com"
 "/"
+# A BroadcastChannel's message: its name after its size, a byte that is 1 if it
+# is locked to its agent cluster, and the bytes of the serialized value, which
+# start with Blink's envelope and V8's header.
+"\x04\x00\x00\x00news"
+"\xff\x15\xfe"
+"\xff\x0f"

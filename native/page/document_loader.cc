@@ -1,293 +1,51 @@
 #include "mitto/page/document_loader.h"
 
-#include <algorithm>
-#include <array>
-#include <optional>
-#include <string_view>
+#include <memory>
 #include <utility>
-#include <vector>
 
 #include "base/check.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
-#include "base/strings/strcat.h"
-#include "base/strings/string_split.h"
-#include "base/strings/string_util.h"
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/timer/elapsed_timer.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_loop.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
+#include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance_timing_confidence.h"
+#include "mitto/dom/script_loader.h"
 #include "mitto/dom/window.h"
+#include "mitto/encoding/content_type.h"
+#include "mitto/encoding/text_resource_decoder.h"
+#include "mitto/encoding/text_resource_decoder_builder.h"
+#include "mitto/header_rules.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
 
 namespace mitto {
 namespace {
 
-// The HTML Standard's JavaScript MIME types, which Blink's
-// MIMETypeRegistry::IsSupportedJavaScriptMIMEType() holds.
-// Upstream: third_party/blink/renderer/platform/network/mime/mime_type_registry.cc
-constexpr std::array<std::u16string_view, 16> kJavaScriptMimeTypes = {
-    u"application/ecmascript",
-    u"application/javascript",
-    u"application/x-ecmascript",
-    u"application/x-javascript",
-    u"text/ecmascript",
-    u"text/javascript",
-    u"text/javascript1.0",
-    u"text/javascript1.1",
-    u"text/javascript1.2",
-    u"text/javascript1.3",
-    u"text/javascript1.4",
-    u"text/javascript1.5",
-    u"text/jscript",
-    u"text/livescript",
-    u"text/x-ecmascript",
-    u"text/x-javascript",
-};
+// HTMLDocumentParser's timed budget: 10 milliseconds for each of the first
+// six yields, and 500 after them, as Chrome has it off Android.
+constexpr int kNumYieldsWithDefaultBudget = 6;
+constexpr base::TimeDelta kDefaultParserBudget = base::Milliseconds(10);
+constexpr base::TimeDelta kLongParserBudget = base::Milliseconds(500);
 
-bool IsJavaScriptMimeType(std::u16string_view mime_type) {
-  for (const std::u16string_view javascript : kJavaScriptMimeTypes) {
-    if (mime_type == javascript) {
-      return true;
-    }
-  }
-  return false;
-}
-
-enum class ScriptType {
-  kClassic,
-  kModule,
-  // Not a script that runs, such as a data block or an import map.
-  kOther,
-};
-
-// The HTML Standard's script block's type string, from the type and language
-// attributes, as Blink's ScriptLoader::GetScriptTypeAtPrepare() reads it.
-// Upstream: third_party/blink/renderer/core/script/script_loader.cc
-ScriptType TypeOf(const HTMLScriptElement& element) {
-  const std::optional<std::u16string> type = element.GetAttribute(u"type");
-  const std::optional<std::u16string> language =
-      element.GetAttribute(u"language");
-  if ((type && type->empty()) || (!type && (!language || language->empty()))) {
-    return ScriptType::kClassic;
-  }
-  const std::u16string block_type =
-      type ? std::u16string(base::TrimWhitespace(*type, base::TRIM_ALL))
-           : u"text/" + *language;
-  const std::u16string lower = base::ToLowerASCII(block_type);
-  if (IsJavaScriptMimeType(lower)) {
-    return ScriptType::kClassic;
-  }
-  return lower == u"module" ? ScriptType::kModule : ScriptType::kOther;
-}
-
-// Blink's ParseContentTypeOptionsHeader(), as the Fetch Standard splits the
-// header.
-bool IsNosniff(std::string_view headers) {
-  const std::string field = HeaderField(headers, "x-content-type-options");
-  const std::string_view first = std::string_view(field).substr(
-      0, std::min(field.find(','), field.size()));
-  return base::EqualsCaseInsensitiveASCII(
-      base::TrimString(first, " \t", base::TRIM_ALL), "nosniff");
-}
-
-// KURL::ElidedString(), for a URL in a console message.
-// Upstream: third_party/blink/renderer/platform/weborigin/kurl.cc
-std::string ElidedUrl(const GURL& url) {
-  const std::string& spec = url.possibly_invalid_spec();
-  if (spec.size() <= 1024) {
-    return spec;
-  }
-  return base::StrCat(
-      {spec.substr(0, 511), "...", spec.substr(spec.size() - 510)});
-}
-
-// Blink's AllowedByNosniff::MimeTypeAsScript() for a classic script of an
-// element: whether a response of `url` with `headers` may run as one, and
-// otherwise the console error that says why not.
-// Upstream: third_party/blink/renderer/platform/loader/allowed_by_nosniff.cc
-std::optional<std::string> RefusedAsScript(const GURL& url,
-                                           std::string_view headers) {
-  const std::string mime_type = HttpContentType(headers);
-  const bool is_javascript =
-      IsJavaScriptMimeType(base::ASCIIToUTF16(mime_type));
-  if (IsNosniff(headers) && !is_javascript) {
-    return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
-                         "' because its MIME type ('", mime_type,
-                         "') is not executable, and strict MIME type "
-                         "checking is enabled."});
-  }
-  if (is_javascript) {
-    return std::nullopt;
-  }
-  // The Fetch Standard's should response to request be blocked due to MIME
-  // type.
-  for (const std::string_view blocked : {"image/", "audio/", "video/"}) {
-    if (mime_type.starts_with(blocked)) {
-      return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
-                           "' because its MIME type ('", mime_type,
-                           "') is not executable."});
-    }
-  }
-  if (mime_type.starts_with("text/csv")) {
-    return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
-                         "' because its MIME type ('", mime_type,
-                         "') is not executable."});
-  }
-  return std::nullopt;
-}
-
-// HTMLScriptElement::IsPotentiallyRenderBlocking() for a classic script that
-// the parser inserted: one with blocking="render", or without async and defer.
-// Upstream: third_party/blink/renderer/core/html/html_script_element.cc
-bool IsPotentiallyRenderBlocking(const HTMLScriptElement& element) {
-  if (const std::optional<std::u16string> blocking =
-          element.GetAttribute(u"blocking")) {
-    for (const std::u16string_view token :
-         base::SplitStringPiece(*blocking, u" \t\n\f\r", base::KEEP_WHITESPACE,
-                                base::SPLIT_WANT_NONEMPTY)) {
-      if (token == u"render") {
-        return true;
-      }
-    }
-  }
-  return !element.HasAttribute(u"async") && !element.HasAttribute(u"defer");
-}
-
-// Fires a trusted event of `type` at `target`, which does not bubble, as the
-// HTML Standard fires load and error at a script.
-void FireSimpleEvent(EventTarget& target, const std::u16string& type) {
-  bindings::EventInit init;
-  Event* const event = Event::Create(type, init);
-  event->SetTrusted(true);
-  target.DispatchEvent(event);
-}
-
-// How many bytes at the end of `bytes` start a UTF-8 sequence that has not
-// ended yet.
-size_t IncompleteTail(std::string_view bytes) {
-  const size_t look = std::min<size_t>(bytes.size(), 3);
-  for (size_t back = 1; back <= look; ++back) {
-    const uint8_t byte = static_cast<uint8_t>(bytes[bytes.size() - back]);
-    if ((byte & 0xC0) == 0x80) {
-      // A continuation byte: look further back for its lead.
-      continue;
-    }
-    const size_t length = (byte & 0xE0) == 0xC0   ? 2
-                          : (byte & 0xF0) == 0xE0 ? 3
-                          : (byte & 0xF8) == 0xF0 ? 4
-                                                  : 1;
-    return length > back ? back : 0;
-  }
-  return 0;
+// The HTML Standard's perform a microtask checkpoint, as Blink's event loop
+// performs one before the parser prepares a script.
+void PerformMicrotaskCheckpoint() {
+  v8::MicrotasksScope::PerformCheckpoint(v8::Isolate::GetCurrent());
 }
 
 }  // namespace
-
-Utf8StreamDecoder::Utf8StreamDecoder() = default;
-Utf8StreamDecoder::~Utf8StreamDecoder() = default;
-
-std::u16string Utf8StreamDecoder::Decode(std::string_view bytes) {
-  pending_.append(bytes);
-  std::string_view complete = pending_;
-  if (!started_) {
-    // The byte order mark, once three bytes have come to tell.
-    if (complete.size() < 3 &&
-        std::string_view("\xEF\xBB\xBF").starts_with(complete)) {
-      return std::u16string();
-    }
-    started_ = true;
-    if (complete.starts_with("\xEF\xBB\xBF")) {
-      complete.remove_prefix(3);
-    }
-  }
-  const size_t tail = IncompleteTail(complete);
-  std::u16string text;
-  base::UTF8ToUTF16(complete.data(), complete.size() - tail, &text);
-  pending_ = std::string(complete.substr(complete.size() - tail));
-  return text;
-}
-
-std::u16string Utf8StreamDecoder::Flush() {
-  // A sequence that the stream cut off is not UTF-8, also one that began as a
-  // byte order mark.
-  std::u16string text;
-  base::UTF8ToUTF16(pending_.data(), pending_.size(), &text);
-  pending_.clear();
-  started_ = true;
-  return text;
-}
-
-// One classic script that the document fetches through the Session.
-class DocumentLoader::ScriptFetch final : public PageRequests::Client {
- public:
-  ScriptFetch(DocumentLoader& loader, HTMLScriptElement& element, GURL url)
-      : loader_(loader), element_(&element), url_(std::move(url)) {}
-
-  ScriptFetch(const ScriptFetch&) = delete;
-  ScriptFetch& operator=(const ScriptFetch&) = delete;
-
-  ~ScriptFetch() override = default;
-
-  void Start() {
-    number_ =
-        loader_->requests_->Start(PageRequestKind::kScript, url_.spec(), *this,
-                                  IsPotentiallyRenderBlocking(*element_));
-  }
-
-  bool ended() const { return ended_; }
-  // Whether the script has a response with an ok status, and all of its body:
-  // the HTML Standard's fetch a classic script.
-  bool succeeded() const {
-    return net_error_ == kResponseComplete && status_ >= 200 && status_ <= 299;
-  }
-  HTMLScriptElement& element() const { return *element_; }
-  // The URL of the response, after any redirects.
-  const GURL& response_url() const { return response_url_; }
-  const std::string& response_headers() const { return response_headers_; }
-  std::u16string TakeSource() {
-    Utf8StreamDecoder decoder;
-    std::u16string source = decoder.Decode(source_);
-    source += decoder.Flush();
-    source_.clear();
-    return source;
-  }
-
-  // PageRequests::Client:
-  void OnResponseStarted(const PageResponseStarted& response) override {
-    status_ = response.status;
-    response_url_ = GURL(response.url);
-    response_headers_ = response.headers;
-  }
-  void OnResponseBody(std::string bytes) override {
-    source_ += bytes;
-    loader_->requests_->TookBody(number_, bytes.size());
-  }
-  void OnResponseEnded(int net_error) override {
-    ended_ = true;
-    net_error_ = net_error;
-    // This may delete the fetch.
-    loader_->OnScriptFetched(*this);
-  }
-
- private:
-  const raw_ref<DocumentLoader> loader_;
-  const cppgc::Persistent<HTMLScriptElement> element_;
-  const GURL url_;
-  uint64_t number_ = 0;
-  int status_ = 0;
-  GURL response_url_;
-  std::string response_headers_;
-  std::string source_;
-  bool ended_ = false;
-  // Until the fetch ends, it has not succeeded.
-  int net_error_ = -1;
-};
 
 DocumentLoader::DocumentLoader(ScriptRunner& runner,
                                PageRequests& requests,
@@ -348,13 +106,36 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       base::Time::FromString(last_modified.c_str(), &last_modified_time)) {
     document_->SetLastModified(last_modified_time);
   }
+  // The decoder that DocumentLoader makes at commit, for a top-level
+  // document of a browser in the Persona's locale. A response with no MIME
+  // type is HTML here, as the parser reads it, where Chrome's network service
+  // sniffs one.
+  const MimeTypeAndCharset content_type =
+      GetMimeTypeAndCharset(HeaderField(response.headers, "content-type"));
+  decoder_ = BuildTextResourceDecoder(
+      url_,
+      content_type.mime_type.empty() ? "text/html" : content_type.mime_type,
+      content_type.charset, document_->DefaultView()->Start().locale,
+      /*parent=*/nullptr);
   parser_ = std::make_unique<HtmlDocumentParser>(*document_);
+  // The load event waits for what the document's scripts hold back.
+  document_->SetCheckCompleted(base::BindRepeating(
+      &DocumentLoader::CheckCompleted, weak_factory_.GetWeakPtr()));
+}
+
+void DocumentLoader::AppendDecoded(std::u16string text) {
+  // The document's encoding is the decoder's after each piece, as
+  // DecodedDataDocumentParser::UpdateDocument() sets it.
+  document_->SetEncoding(decoder_->encoding(),
+                         decoder_->EncodingWasDetectedHeuristically());
+  parser_->Append(text);
 }
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
   waiting_body_.push_back(std::move(bytes));
-  Pump();
+  // HTMLDocumentParser::Append(): the parser takes it from a task of its own.
+  SchedulePumpTokenizer();
 }
 
 void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
@@ -373,162 +154,242 @@ void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
 
 void DocumentLoader::OnResponseEnded(int net_error) {
   // After a response, a body that stops short still makes a document of what
-  // came, as in Chrome.
+  // came, as in Chrome. HTMLDocumentParser::Finish(): a parser that is to go
+  // on from a task ends then.
   body_ended_ = true;
-  Pump();
+  if (!pump_scheduled_) {
+    PumpTokenizerIfPossible();
+  }
 }
 
-void DocumentLoader::Pump() {
-  if (!parser_ || blocking_script_ || after_parsing_started_) {
+void DocumentLoader::SchedulePumpTokenizer() {
+  if (!parser_ || pump_scheduled_ || stopping_) {
     return;
   }
+  pump_scheduled_ = true;
+  runner_->PostTask(TaskType::kNetworking,
+                    base::BindOnce(
+                        [](const base::WeakPtr<DocumentLoader>& loader) {
+                          if (!loader) {
+                            return;
+                          }
+                          loader->pump_scheduled_ = false;
+                          loader->PumpTokenizerIfPossible();
+                        },
+                        weak_factory_.GetWeakPtr()));
+}
+
+void DocumentLoader::PumpTokenizerIfPossible() {
+  if (!parser_ || IsPaused() || stopping_) {
+    return;
+  }
+  if (PumpTokenizer()) {
+    SchedulePumpTokenizer();
+    return;
+  }
+  if (!IsPaused() && parser_finished_) {
+    PrepareToStopParsing();
+  }
+}
+
+bool DocumentLoader::PumpTokenizer() {
+  // The parser yields once the document has a body and the budget has run
+  // out, which it checks after each script and each piece of the body.
+  const base::ElapsedTimer timer;
+  const base::TimeDelta budget = times_yielded_ <= kNumYieldsWithDefaultBudget
+                                     ? kDefaultParserBudget
+                                     : kLongParserBudget;
+  const auto should_yield = [this, &timer, budget] {
+    if (!document_->Body() || timer.Elapsed() < budget) {
+      return false;
+    }
+    ++times_yielded_;
+    return true;
+  };
   while (true) {
     while (HTMLScriptElement* const script = parser_->Pump()) {
-      if (PrepareScript(*script)) {
-        return;
+      ProcessScriptElement(*script);
+      if (IsPaused()) {
+        return false;
+      }
+      if (should_yield()) {
+        return true;
       }
     }
     if (!waiting_body_.empty()) {
       const std::string bytes = std::move(waiting_body_.front());
       waiting_body_.pop_front();
-      parser_->Append(decoder_.Decode(bytes));
+      AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
       requests_->TookBody(kNavigationRequest, bytes.size());
+      if (should_yield()) {
+        return true;
+      }
       continue;
     }
-    if (!body_ended_) {
-      return;
-    }
-    if (!parser_finished_) {
-      parser_->Append(decoder_.Flush());
+    if (body_ended_ && !parser_finished_) {
+      AppendDecoded(decoder_->Flush());
       parser_->Finish();
       parser_finished_ = true;
       // The parser may still reach scripts before the end.
       continue;
     }
-    RunAfterParsing();
-    return;
+    return false;
   }
 }
 
-bool DocumentLoader::PrepareScript(HTMLScriptElement& element) {
-  const std::optional<std::u16string> src = element.GetAttribute(u"src");
-  if (!src && element.Text().empty()) {
-    return false;
+void DocumentLoader::ProcessScriptElement(HTMLScriptElement& element) {
+  // The HTML Standard's script end tag: a microtask checkpoint unless a
+  // script runs, then prepare the script element at a script nesting level
+  // one deeper.
+  if (script_nesting_level_ == 0) {
+    PerformMicrotaskCheckpoint();
   }
-  if (TypeOf(element) != ScriptType::kClassic) {
-    return false;
-  }
-  // A browser that runs module scripts skips the classic ones meant for
-  // browsers that do not, as Chrome does.
-  if (element.HasAttribute(u"nomodule")) {
-    return false;
-  }
-  if (!src) {
-    runner_->RunClassicScript(element.Text(), url_);
-    return false;
-  }
-  // The document's URL is its base URL: <base> is a Known Gap.
-  const GURL url = src->empty() ? GURL() : url_.Resolve(*src);
-  if (!url.is_valid()) {
-    QueueErrorEvent(element);
-    return false;
-  }
-  auto fetch = std::make_unique<ScriptFetch>(*this, element, url);
-  ScriptFetch& started = *fetch;
-  const bool runs_after_parsing =
-      element.HasAttribute(u"defer") || element.HasAttribute(u"async");
-  if (runs_after_parsing) {
-    after_parsing_.push_back(std::move(fetch));
-  } else {
-    blocking_script_ = std::move(fetch);
-  }
-  started.Start();
-  return !runs_after_parsing;
-}
-
-void DocumentLoader::ExecuteFetched(ScriptFetch& fetch) {
-  HTMLScriptElement& element = fetch.element();
-  if (!fetch.succeeded()) {
-    FireSimpleEvent(element, u"error");
-    return;
-  }
-  // A response whose MIME type cannot run as a script is a network error, and
-  // Chrome's console says why.
-  if (std::optional<std::string> refused =
-          RefusedAsScript(fetch.response_url(), fetch.response_headers())) {
-    PageConsoleMessage message;
-    message.level = ConsoleLevel::kError;
-    message.text = *std::move(refused);
-    send_.Run(EncodeConsole(message));
-    FireSimpleEvent(element, u"error");
-    return;
-  }
-  runner_->RunClassicScript(fetch.TakeSource(), fetch.response_url());
-  FireSimpleEvent(element, u"load");
-}
-
-void DocumentLoader::OnScriptFetched(ScriptFetch& fetch) {
-  if (&fetch == blocking_script_.get()) {
-    const std::unique_ptr<ScriptFetch> done = std::move(blocking_script_);
-    ExecuteFetched(*done);
-    Pump();
-    return;
-  }
-  // A script that runs after parsing waits for those before it, and for the
-  // parser to finish, which then runs it.
-  if (after_parsing_started_) {
-    RunAfterParsing();
-  }
-}
-
-void DocumentLoader::RunAfterParsing() {
-  if (!after_parsing_started_) {
-    after_parsing_started_ = true;
-    timing_->dom_interactive = base::TimeTicks::Now();
-    document_->SetReadiness(Document::Readiness::kInteractive);
-    // Document::SetReadyState() tells Chrome's browser process, which answers
-    // with the navigation's confidence from a later task: high, as for any
-    // navigation once the browser has started, with its noise.
-    runner_->PostTask(base::BindOnce(
-        [](const cppgc::Persistent<DocumentLoadTiming>& timing) {
-          timing->high_confidence =
-              PerformanceTimingConfidence::DrawHighConfidence();
-        },
-        timing_));
-  }
-  while (!after_parsing_.empty()) {
-    if (!after_parsing_.front()->ended()) {
-      // OnScriptFetched() comes back here.
-      return;
+  ++script_nesting_level_;
+  PendingScript* const pending_script = element.Loader().PrepareScript(
+      script_nesting_level_ == 1
+          ? ScriptLoader::ParserBlockingInlineOption::kAllow
+          : ScriptLoader::ParserBlockingInlineOption::kDeny);
+  --script_nesting_level_;
+  if (pending_script) {
+    switch (pending_script->scheduling_type()) {
+      case ScriptSchedulingType::kDefer:
+        scripts_after_parsing_.emplace_back(pending_script);
+        break;
+      case ScriptSchedulingType::kParserBlocking:
+      case ScriptSchedulingType::kParserBlockingInline:
+        CHECK(!parser_blocking_script_);
+        parser_blocking_script_ = pending_script;
+        if (!pending_script->IsReady()) {
+          pending_script->WatchForLoad(
+              base::BindOnce(&DocumentLoader::PendingScriptFinished,
+                             weak_factory_.GetWeakPtr()));
+        }
+        break;
+      default:
+        NOTREACHED();
     }
-    const std::unique_ptr<ScriptFetch> next = std::move(after_parsing_.front());
-    after_parsing_.pop_front();
-    ExecuteFetched(*next);
   }
-  if (dom_content_loaded_queued_) {
-    return;
+  if (parser_blocking_script_ && script_nesting_level_ == 0) {
+    ExecuteParsingBlockingScripts();
   }
-  dom_content_loaded_queued_ = true;
-  runner_->PostTask(base::BindOnce(&DocumentLoader::FireDOMContentLoaded,
+}
+
+void DocumentLoader::ExecuteParsingBlockingScripts() {
+  while (parser_blocking_script_ && parser_blocking_script_->IsReady()) {
+    PendingScript* const pending_script = parser_blocking_script_.Get();
+    pending_script->StopWatchingForLoad();
+    if (script_nesting_level_ == 0) {
+      PerformMicrotaskCheckpoint();
+    }
+    parser_blocking_script_ = nullptr;
+    ++script_nesting_level_;
+    pending_script->ExecuteScriptBlock();
+    --script_nesting_level_;
+  }
+}
+
+void DocumentLoader::PendingScriptFinished() {
+  runner_->PostTask(TaskType::kInternalContinueScriptLoading,
+                    base::BindOnce(&DocumentLoader::NotifyScriptLoaded,
                                    weak_factory_.GetWeakPtr()));
 }
 
-void DocumentLoader::FireDOMContentLoaded() {
+void DocumentLoader::NotifyScriptLoaded() {
+  if (stopping_) {
+    AttemptToRunDeferredScriptsAndEnd();
+    return;
+  }
+  ExecuteParsingBlockingScripts();
+  // ResumeParsingAfterPause(): the parser goes on from a later task.
+  if (!IsPaused()) {
+    SchedulePumpTokenizer();
+  }
+}
+
+void DocumentLoader::PrepareToStopParsing() {
+  stopping_ = true;
+  timing_->dom_interactive = base::TimeTicks::Now();
+  document_->SetReadiness(Document::Readiness::kInteractive);
+  // Document::SetReadyState() tells Chrome's browser process, which answers
+  // with the navigation's confidence from a later task: high, as for any
+  // navigation once the browser has started, with its noise.
+  runner_->PostTask(
+      TaskType::kInternalNavigationAssociated,
+      base::BindOnce(
+          [](const cppgc::Persistent<DocumentLoadTiming>& timing) {
+            timing->high_confidence =
+                PerformanceTimingConfidence::DrawHighConfidence();
+          },
+          timing_));
+  AttemptToRunDeferredScriptsAndEnd();
+}
+
+void DocumentLoader::AttemptToRunDeferredScriptsAndEnd() {
+  if (parsing_finished_ || !ExecuteScriptsWaitingForParsing()) {
+    return;
+  }
+  FinishedParsing();
+}
+
+bool DocumentLoader::ExecuteScriptsWaitingForParsing() {
+  // SeparateDeferModuleScriptTasks, which stable has on: one deferred script
+  // in each task.
+  if (scripts_after_parsing_.empty()) {
+    return true;
+  }
+  PendingScript* const first = scripts_after_parsing_.front().Get();
+  if (!first->IsReady()) {
+    if (!first->IsWatchingForLoad()) {
+      first->WatchForLoad(base::BindOnce(&DocumentLoader::PendingScriptFinished,
+                                         weak_factory_.GetWeakPtr()));
+    }
+    return false;
+  }
+  const cppgc::Persistent<PendingScript> script = first;
+  scripts_after_parsing_.pop_front();
+  script->StopWatchingForLoad();
+  if (script_nesting_level_ == 0) {
+    PerformMicrotaskCheckpoint();
+  }
+  script->ExecuteScriptBlock();
+  if (scripts_after_parsing_.empty()) {
+    return true;
+  }
+  runner_->PostTask(
+      TaskType::kInternalContinueScriptLoading,
+      base::BindOnce(
+          [](const base::WeakPtr<DocumentLoader>& loader) {
+            if (loader && loader->ExecuteScriptsWaitingForParsing()) {
+              loader->NotifyScriptLoaded();
+            }
+          },
+          weak_factory_.GetWeakPtr()));
+  return false;
+}
+
+void DocumentLoader::FinishedParsing() {
+  parsing_finished_ = true;
+  // DOMContentLoaded at the document, from the task that ends the parse, as
+  // Blink dispatches it. It reaches the document's listeners: events that go
+  // through the tree and on to the window are a Known Gap.
   bindings::EventInit init;
   init.bubbles = true;
   Event* const event = Event::Create(u"DOMContentLoaded", init);
   event->SetTrusted(true);
   timing_->dom_content_loaded_event_start = base::TimeTicks::Now();
-  // It reaches the document's listeners. Events that go through the tree and
-  // on to the window are a Known Gap.
   document_->DispatchEvent(event);
   timing_->dom_content_loaded_event_end = base::TimeTicks::Now();
-  // Nothing else that a document loads holds its load event back yet.
-  runner_->PostTask(
-      base::BindOnce(&DocumentLoader::FireLoad, weak_factory_.GetWeakPtr()));
+  PerformMicrotaskCheckpoint();
+  CheckCompleted();
 }
 
-void DocumentLoader::FireLoad() {
+void DocumentLoader::CheckCompleted() {
+  // Document::ShouldComplete(), with what a Page's documents hold back: the
+  // async and in-order scripts.
+  if (!parsing_finished_ || load_fired_ || document_->IsDelayingLoadEvent()) {
+    return;
+  }
+  load_fired_ = true;
   timing_->dom_complete = base::TimeTicks::Now();
   document_->SetReadiness(Document::Readiness::kComplete);
   bindings::EventInit init;
@@ -540,14 +401,6 @@ void DocumentLoader::FireLoad() {
   }
   timing_->load_event_end = base::TimeTicks::Now();
   send_.Run(EncodeLoaded());
-}
-
-void DocumentLoader::QueueErrorEvent(HTMLScriptElement& element) {
-  runner_->PostTask(base::BindOnce(
-      [](const cppgc::Persistent<HTMLScriptElement>& element) {
-        FireSimpleEvent(*element, u"error");
-      },
-      cppgc::Persistent<HTMLScriptElement>(&element)));
 }
 
 }  // namespace mitto

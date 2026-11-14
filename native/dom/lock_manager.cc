@@ -16,7 +16,6 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
-#include "mitto/dom/event_loop.h"
 #include "mitto/dom/lock.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
@@ -39,11 +38,10 @@ constexpr char kAccessDeniedMessage[] =
     "Access to the Locks API is denied in this context.";
 
 void Post(base::OnceClosure task) {
-  // The Page program always makes one before it runs a script.
-  EventLoop* const event_loop = EventLoop::Get();
-  CHECK(event_loop);
-  event_loop->TaskRunner(EventLoop::Queue::kDefault)
-      ->PostTask(FROM_HERE, std::move(task));
+  // What a document asks of the lock service goes to it as IPC, which belongs
+  // to no frame.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+                                                              std::move(task));
 }
 
 url::Origin OriginOf(Window& window) {

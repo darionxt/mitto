@@ -18,7 +18,7 @@ void Post(base::OnceClosure task) {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
-  event_loop->TaskRunner(EventLoop::Queue::kDefault)
+  event_loop->TaskRunner(TaskType::kWebLocks)
       ->PostTask(FROM_HERE, std::move(task));
 }
 

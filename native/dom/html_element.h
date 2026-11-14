@@ -26,6 +26,35 @@ class HTMLElement : public Element {
   // The members of the interface beyond its reflected attributes.
   std::u16string Autocapitalize() const;
   void SetAutocapitalize(const std::u16string& value);
+  // The dir attribute limited to "ltr", "rtl" and "auto", as Blink's
+  // ToValidDirValue() limits it.
+  std::u16string Dir() const;
+  void SetDir(const std::u16string& value);
+  // The translate attribute of this element or the nearest HTML ancestor
+  // that says "yes", "" or "no", and true for none.
+  bool Translate() const;
+  void SetTranslate(bool value);
+  // "true", in any case, and a link with href and an image by default.
+  virtual bool Draggable() const;
+  void SetDraggable(bool value);
+  // The spellcheck attribute of this element or the nearest ancestor that
+  // says "true", "" or "false", and true for none, as Chrome's default is.
+  bool Spellcheck() const;
+  void SetSpellcheck(bool value);
+  std::u16string ContentEditable() const;
+  void SetContentEditable(const std::u16string& value,
+                          bindings::ExceptionState& exception_state);
+  // Whether the element is editable: its own or the nearest HTML ancestor's
+  // contenteditable makes it so, or the designMode of the document it is
+  // connected to does.
+  bool IsContentEditableForBinding() const;
+  // Fires a click at the element, which runs its activation behaviour, as
+  // Blink's HTMLElement::click() does for a script.
+  void Click() { DispatchSimulatedClick(); }
+
+  // Element's: the summary of its parent details, its first summary child,
+  // is focusable, as Blink's HTMLSummaryElement is.
+  int32_t DefaultTabIndex() const override;
 };
 
 }  // namespace mitto

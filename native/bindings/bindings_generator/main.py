@@ -3,6 +3,7 @@
 import argparse
 import itertools
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,11 +18,29 @@ from bindings_generator.web_idl_reader import Definitions, read_database
 __all__ = ["main"]
 
 
+def _expand_response_files(argv: list[str]) -> list[str]:
+    """The arguments with each @FILE replaced by the arguments that the file holds, which GN writes for a response file
+    quoted as a Unix shell quotes them."""
+    expanded: list[str] = []
+    for argument in argv:
+        if argument.startswith("@"):
+            expanded += shlex.split(Path(argument[1:]).read_text(encoding="utf-8"))
+        else:
+            expanded.append(argument)
+    return expanded
+
+
 def _parse(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, required=True, help="Blink's Web IDL database")
     parser.add_argument("--runtime-enabled-features", type=Path, required=True, help="runtime_enabled_features.json5")
     parser.add_argument("--interface", action="append", default=[], help="an interface that has a C++ class")
+    parser.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        help="INTERFACE=FILE: the class is declared in native/dom/FILE.h, not in the file named after the interface",
+    )
     parser.add_argument("--missing", action="append", default=[], help="INTERFACE.MEMBER whose behaviour is missing")
     parser.add_argument(
         "--only-implemented",
@@ -41,7 +60,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True, help="where the C++ goes")
     parser.add_argument("--output", action="append", default=[], help="a file that GN expects in the output directory")
     parser.add_argument("--listing", type=Path, required=True, help="where the listing of every interface goes")
-    return parser.parse_args(argv)
+    return parser.parse_args(_expand_response_files(argv))
 
 
 def _check_feature_names(definitions: Definitions, names: set[str]) -> None:
@@ -71,23 +90,23 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
         listed = _members_by_interface(arguments.implemented)
         only_implemented = set(arguments.only_implemented)
         made_by_known_gaps = set(arguments.made_by_known_gaps)
+        headers = _headers(arguments.header)
         implemented: list[ImplementedInterface] = []
         for name in arguments.interface:
             members = listed.pop(name, [])
             made = name in made_by_known_gaps
+            header = headers.pop(name, _class_header(name))
             if name in only_implemented:
                 if name in missing:
                     raise UnhandledError(f"{name} names both its missing members and its implemented ones")
                 implemented.append(
-                    ImplementedInterface(
-                        name=name, header=_class_header(name), implemented=tuple(members), made_by_known_gaps=made
-                    )
+                    ImplementedInterface(name=name, header=header, implemented=tuple(members), made_by_known_gaps=made)
                 )
             else:
                 implemented.append(
                     ImplementedInterface(
                         name=name,
-                        header=_class_header(name),
+                        header=header,
                         missing=tuple(missing.pop(name, [])),
                         made_by_known_gaps=made,
                     )
@@ -97,6 +116,8 @@ def main(argv: list[str], database: Any, runtime_enabled_features: Any) -> int:
             raise UnhandledError(f"--made-by-known-gaps names interfaces without a C++ class: {unknown}")
         if missing:
             raise UnhandledError(f"--missing names interfaces without a C++ class: {', '.join(sorted(missing))}")
+        if headers:
+            raise UnhandledError(f"--header names interfaces without a C++ class: {', '.join(sorted(headers))}")
         if listed or only_implemented - set(arguments.interface):
             unknown = set(listed) | (only_implemented - set(arguments.interface))
             raise UnhandledError(f"--implemented names interfaces without a C++ class: {', '.join(sorted(unknown))}")
@@ -140,3 +161,14 @@ def _members_by_interface(items: list[str]) -> dict[str, list[str]]:
 
 def _class_header(name: str) -> str:
     return f"mitto/dom/{file_name(name)}.h"
+
+
+def _headers(items: list[str]) -> dict[str, str]:
+    """The headers that INTERFACE=FILE items name, by interface."""
+    headers: dict[str, str] = {}
+    for item in items:
+        interface, separator, file = item.partition("=")
+        if not separator or not file:
+            raise UnhandledError(f"--header {item} is not INTERFACE=FILE")
+        headers[interface] = f"mitto/dom/{file}.h"
+    return headers

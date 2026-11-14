@@ -28,6 +28,7 @@
 
 #include <stdint.h>
 
+#include <string_view>
 #include <vector>
 
 #include "mitto/bindings/idl_type_info.h"
@@ -37,6 +38,8 @@
 #include "v8/include/v8-value.h"
 
 namespace mitto::bindings {
+
+class ScriptWrappable;
 
 void KnownGapAttributeGetter(const v8::FunctionCallbackInfo<v8::Value>& info);
 void KnownGapAttributeSetter(const v8::FunctionCallbackInfo<v8::Value>& info);
@@ -81,6 +84,28 @@ bool IsSafeObjectType(const WrapperTypeInfo& info);
 // given.
 v8::MaybeLocal<v8::Value> NewObjectOfInterface(v8::Local<v8::Context> context,
                                                const WrapperTypeInfo& info);
+
+// Sets the attributes of `event`, the wrapper of an event of `interface`
+// whose attributes are Known Gaps, from `init`, as the interface's
+// constructor sets them from its init dictionary, so that an event that the
+// Runtime fires, such as the PointerEvent of click(), gives Chrome's values.
+// Returns false if that threw.
+bool InitializeEventOfInterface(v8::Isolate* isolate,
+                                v8::Local<v8::Object> event,
+                                const WrapperTypeInfo& interface,
+                                v8::Local<v8::Object> init);
+// Makes the Known Gap attribute `name` of `event` give `value`, as for an
+// event of an interface without a class that the Runtime fires trusted, whose
+// isTrusted is such an attribute there. Returns false if it has none.
+bool SetEventOfInterfaceAttribute(v8::Isolate* isolate,
+                                  ScriptWrappable& event,
+                                  std::string_view name,
+                                  v8::Local<v8::Value> value);
+// What the Known Gap attribute `name` of `event` gives, as its getter does,
+// or undefined if the event's interface has no such attribute.
+v8::Local<v8::Value> EventOfInterfaceAttribute(v8::Isolate* isolate,
+                                               ScriptWrappable& event,
+                                               std::string_view name);
 
 }  // namespace mitto::bindings
 

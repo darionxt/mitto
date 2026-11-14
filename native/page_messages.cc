@@ -120,7 +120,8 @@ constexpr auto kStartNames = std::to_array<StartName>({
 
 // The numbers of a start, each a field of PageStart, and the least and the
 // most that a Machine can have. Windows holds Chrome to 64 logical processors,
-// in one group of them.
+// in one group of them, and a Machine's display refreshes from 24 to 1000
+// times a second.
 struct StartNumber {
   std::string_view key;
   int PageStart::* field;
@@ -144,6 +145,7 @@ constexpr auto kStartNumbers = std::to_array<StartNumber>({
     {"screen_height", &PageStart::screen_height, 1, kMost},
     {"viewport_width", &PageStart::viewport_width, 1, kMost},
     {"viewport_height", &PageStart::viewport_height, 1, kMost},
+    {"refresh_rate", &PageStart::refresh_rate, 24, 1000},
 });
 
 // The lists of a start's features, each a field of PageFeatures. Blink has
@@ -188,7 +190,7 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kCookieStoreChange);
+         type <= static_cast<uint32_t>(PageMessage::kBroadcastReceived);
 }
 
 bool IsRequestKind(uint8_t kind) {
@@ -936,6 +938,25 @@ base::expected<PageCookieStoreChange, std::string> ReadCookieStoreChange(
   return change;
 }
 
+// A message of a BroadcastChannel: its name after its size, a byte that is 1
+// if it is locked to its agent cluster, and its bytes, which are the rest.
+base::expected<PageBroadcast, std::string> ReadBroadcast(
+    std::string_view payload) {
+  std::string_view name;
+  if (!TakeSized(payload, name) || payload.empty()) {
+    return base::unexpected(WrongSize("broadcast", payload.size()));
+  }
+  const uint8_t locked = static_cast<uint8_t>(payload[0]);
+  if (locked > 1 || !IsText(name)) {
+    return base::unexpected("a broadcast that is not valid");
+  }
+  PageBroadcast broadcast;
+  broadcast.name = std::string(name);
+  broadcast.locked = locked == 1;
+  broadcast.data = std::string(payload.substr(1));
+  return broadcast;
+}
+
 base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
   if (payload.size() != 12) {
     return base::unexpected(WrongSize("credit", payload.size()));
@@ -1101,6 +1122,13 @@ PageCookieStoreCookies::PageCookieStoreCookies(PageCookieStoreCookies&&) =
 PageCookieStoreCookies& PageCookieStoreCookies::operator=(
     PageCookieStoreCookies&&) = default;
 PageCookieStoreCookies::~PageCookieStoreCookies() = default;
+
+PageBroadcast::PageBroadcast() = default;
+PageBroadcast::PageBroadcast(const PageBroadcast&) = default;
+PageBroadcast& PageBroadcast::operator=(const PageBroadcast&) = default;
+PageBroadcast::PageBroadcast(PageBroadcast&&) = default;
+PageBroadcast& PageBroadcast::operator=(PageBroadcast&&) = default;
+PageBroadcast::~PageBroadcast() = default;
 
 PageResponseBody::PageResponseBody() = default;
 PageResponseBody::PageResponseBody(PageResponseBody&&) = default;
@@ -1495,6 +1523,18 @@ std::string EncodeCookieStoreChange(const PageCookieStoreChange& change) {
                                    EncodeCookie(change.cookie)}));
 }
 
+bool BroadcastFits(const PageBroadcast& broadcast) {
+  return broadcast.name.size() <= kMaxPayloadSize - 5 &&
+         broadcast.data.size() <= kMaxPayloadSize - 5 - broadcast.name.size();
+}
+
+std::string EncodeBroadcast(PageMessage type, const PageBroadcast& broadcast) {
+  const char locked = broadcast.locked ? 1 : 0;
+  return EncodeFrame(
+      type, base::StrCat({EncodeSized(broadcast.name),
+                          std::string_view(&locked, 1), broadcast.data}));
+}
+
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     uint32_t type,
     std::string payload) {
@@ -1632,6 +1672,15 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       }
       frame.cookie_store_listen = payload[0] == 1;
       return frame;
+    case PageMessage::kBroadcast: {
+      base::expected<PageBroadcast, std::string> broadcast =
+          ReadBroadcast(payload);
+      if (!broadcast.has_value()) {
+        return base::unexpected(std::move(broadcast).error());
+      }
+      frame.broadcast = *std::move(broadcast);
+      return frame;
+    }
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1641,6 +1690,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kCookieStoreCookies:
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
+    case PageMessage::kBroadcastReceived:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -1753,6 +1803,15 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.cookie_store_change = *std::move(change);
       return frame;
     }
+    case PageMessage::kBroadcastReceived: {
+      base::expected<PageBroadcast, std::string> broadcast =
+          ReadBroadcast(payload);
+      if (!broadcast.has_value()) {
+        return base::unexpected(std::move(broadcast).error());
+      }
+      frame.broadcast = *std::move(broadcast);
+      return frame;
+    }
     case PageMessage::kEvaluated:
     case PageMessage::kConsole:
     case PageMessage::kUncaughtError:
@@ -1766,6 +1825,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kCookieStoreGet:
     case PageMessage::kCookieStoreSet:
     case PageMessage::kCookieStoreListen:
+    case PageMessage::kBroadcast:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

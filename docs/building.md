@@ -139,7 +139,7 @@ The HTML tokenizer follows the HTML Standard's tokenization section, and Blink's
 out/mitto/html_tokenizer_test mitto/test/html5lib_tokenizer mitto/test/html5lib_tokenizer_failures.txt
 ```
 
-It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
+It runs each test once for each of its initial states, with its whole input in one piece and again one code unit at a time, and the two must give the same tokens and parse errors. It also checks the position that the tokenizer gives right after a start tag, which the tree builder hands a script element for the line and column its errors count from. [`native/test/html5lib_tokenizer_failures.txt`](../native/test/html5lib_tokenizer_failures.txt) lists the tests the tokenizer fails, under the reason for each. The program fails if a test it lists passes or one it does not list fails, and prints what it expected and what it got. `--print-failures` prints every test that fails in the form of the list.
 
 The native job of CI runs it on every Host, and the `asan` and `ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
@@ -199,13 +199,15 @@ The build needs one thing from the checkout that the native core does not: the p
 
 ### The tree builder's tests
 
-The HTML parser's tree builder follows the HTML Standard's tree construction for simple documents, and records each rule it skips for a document that needs more ([runtime.md](runtime.md#the-tree-builder)). [`native/test/html5lib_tree`](../native/test/html5lib_tree) holds html5lib's tree construction tests, from the same copy of html5lib as the tokenizer's, and [its `ORIGIN.md`](../native/test/html5lib_tree/ORIGIN.md) says where from. Run them from `$MITTO_WORKSPACE/chromium-<tag>/src`, where `mitto` is the repository's `native/`:
+The HTML parser's tree builder follows the HTML Standard's tree construction, and Blink's where Blink differs, and records each rule it cannot follow until the DOM has what the rule needs ([runtime.md](runtime.md#the-tree-builder)). [`native/test/html5lib_tree`](../native/test/html5lib_tree) holds html5lib's tree construction tests, from the same copy of html5lib as the tokenizer's, and [its `ORIGIN.md`](../native/test/html5lib_tree/ORIGIN.md) says where from. Run them from `$MITTO_WORKSPACE/chromium-<tag>/src`, where `mitto` is the repository's `native/`:
 
 ```bash
 out/runtime/html_tree_builder_test mitto/test/html5lib_tree mitto/test/html5lib_tree_failures.txt
 ```
 
-A test passes when it builds the tree it expects. One that builds another tree is fine only if the tree builder recorded a rule it skipped, and [`native/test/html5lib_tree_failures.txt`](../native/test/html5lib_tree_failures.txt) lists, under the reason for each, the tests that build another tree without skipping a rule. The program fails if a test it lists passes or skips a rule, or if one it does not list fails, and prints what it expected and what it got, and at the end how many tests skipped each rule. For Chromium 157.0.8103.39, 1,020 of the 1,615 tests that a Page can run pass, 594 skip a rule, and one is listed. `--print-failures` prints every test that fails in the form of the list, and `--print-skipped` each test that skipped a rule, with the rules. It runs the parser on V8's C++ heap, as the Page program does, and links the same data.
+A test passes when it builds the tree it expects. One that builds another tree is fine only if the tree builder recorded a rule it could not follow, and [`native/test/html5lib_tree_failures.txt`](../native/test/html5lib_tree_failures.txt) lists, under the reason for each, the tests where Chrome builds another tree than the test expects, which the tree builder builds too. The program fails if a test it lists passes or records a rule, or if one it does not list fails, and prints what it expected and what it got, and at the end how many tests recorded each rule. For Chromium 157.0.8103.39, 1,645 of the 1,673 tests that a Page can run pass, 3 record a rule, for processing instructions, and 25 are listed. `--print-failures` prints every test that fails in the form of the list, and `--print-skipped` each test that recorded a rule, with the rules. It runs the parser on V8's C++ heap, as the Page program does, and links the same data.
+
+These tests are html5lib-python 1.1's. The Engine Release's tree holds a newer copy of html5lib's tests in `third_party/blink/web_tests/html5lib/resources`, with what Chrome built for each beside them in `../generated/run-*-data-expected.txt`, which says where it fails. The program runs that copy too, with an empty list of failures, which shows what the tree builder builds where the two copies differ: on 2026-11-13, 1,743 of its 1,751 tests that a Page can run passed, 3 recorded a rule, and of the 5 that failed, one builds the tree that Chrome's results there record, and four expect a `selectedcontent` that the select element fills, which the parser does not. Chrome's results there come from its web tests, which turn on Blink's features that are experimental too, such as `InputInSelect`, so a test that Chrome fails there for one of those passes.
 
 The native job of CI runs it on every Host, and the `runtime-asan` and `runtime-ubsan` builds of the [sanitizer workflow](#sanitizer-builds-and-the-fuzz-target) run it too.
 
@@ -491,7 +493,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | --- | --- | --- | --- |
 | `asan` | AddressSanitizer and LeakSanitizer | | 1.9 GiB |
 | `ubsan` | UndefinedBehaviorSanitizer | | 1.7 GiB |
-| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
+| `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `css_selector_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
 | `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program, the tree builder's test and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
 | `runtime-fuzz` | AddressSanitizer and libFuzzer | `html_tree_builder_fuzzer` alone, with V8, as the Runtime's args build it | |
@@ -518,7 +520,7 @@ ASAN_OPTIONS=detect_leaks=1 uv run pytest tests/test_core_test_program.py
 
 Over each of HTTP/1.1, HTTP/2 and HTTP/3 it makes a request, cancels and releases one before and after its response, destroys a Session and exits the process with one running. It also makes a request that fails on the certificate, tries settings that are refused, fetches a missing intermediate, and destroys a Session and exits the process during such a fetch. A report fails the test, and the test shows it. Chromium's default options leave leak checks off, so the command turns them on. Python cannot load a sanitized library, because the sanitizers' runtime is linked into the program that starts.
 
-To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML, `media_query_fuzzer` for what a page gives `matchMedia()`, `page_messages_fuzzer` for what a Page sends its Session and `html_tree_builder_fuzzer`, from `runtime-fuzz`, for the markup that the tree builder takes, with the files of that name:
+To fuzz the code that reads a Session's settings, from the repository root, with new inputs going into a directory of your own. `request_options_fuzzer` does the same for a request's options, `cookies_fuzzer` for cookies, `socks5_auth_fuzzer` for what a SOCKS5 proxy answers, `client_hints_fuzzer` for what a server asks for, `html_tokenizer_fuzzer` for HTML, `media_query_fuzzer` for what a page gives `matchMedia()`, `css_selector_fuzzer` for the selectors a page gives `querySelector()` and the like, `page_messages_fuzzer` for what a Page sends its Session and `html_tree_builder_fuzzer`, from `runtime-fuzz`, for the markup that the tree builder takes, with the files of that name:
 
 ```bash
 mkdir corpus

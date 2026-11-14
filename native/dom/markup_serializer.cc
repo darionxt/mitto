@@ -3,9 +3,11 @@
 #include <string_view>
 
 #include "mitto/dom/character_data.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_template_element.h"
 #include "mitto/dom/node.h"
 
 namespace mitto {
@@ -86,30 +88,61 @@ void AppendChildren(std::u16string& markup, const Node& node) {
   }
 }
 
-void AppendElement(std::u16string& markup, const Element& element) {
-  // The local name for an element of the HTML, SVG or MathML namespace, and
-  // otherwise the qualified name.
-  const std::optional<std::u16string>& namespace_uri = element.NamespaceURI();
-  std::u16string tag_name = element.LocalName();
-  if (element.Prefix() && namespace_uri != html_names::kXhtmlNamespace &&
-      namespace_uri != html_names::kSvgNamespace &&
-      namespace_uri != html_names::kMathMlNamespace) {
-    tag_name = *element.Prefix() + u":" + tag_name;
+// The HTML Standard's attribute's serialized name, as Blink's
+// ResolveAttributePrefixForHtml() writes it.
+std::u16string SerializedAttributeName(const QualifiedName& name) {
+  std::optional<std::u16string> prefix = name.prefix;
+  if (name.namespace_uri == html_names::kXmlnsNamespace) {
+    if (!name.prefix && name.local_name != u"xmlns") {
+      prefix = u"xmlns";
+    }
+  } else if (name.namespace_uri == html_names::kXmlNamespace) {
+    prefix = u"xml";
+  } else if (name.namespace_uri == html_names::kXlinkNamespace) {
+    prefix = u"xlink";
   }
+  if (!prefix || prefix->empty()) {
+    return name.local_name;
+  }
+  return *prefix + u":" + name.local_name;
+}
+
+// The node whose children an element's markup holds: a template's contents.
+const Node& ChildrenHolder(const Node& node) {
+  if (node.IsElementNode() &&
+      static_cast<const Element&>(node).HasHTMLTagName(u"template")) {
+    return *static_cast<const HTMLTemplateElement&>(node).Content();
+  }
+  return node;
+}
+
+void AppendElement(std::u16string& markup, const Element& element) {
+  // The qualified name, whatever the namespace, as Blink's
+  // MarkupFormatter::AppendStartTagOpen() writes it, where the HTML Standard
+  // would write the local name of an HTML, SVG or MathML element.
+  const std::u16string tag_name = element.TagQName().ToString();
   markup += u'<';
   markup += tag_name;
-  for (const Element::Attribute& attribute : element.attributes()) {
+  const auto append_attribute = [&markup](std::u16string_view name,
+                                          const std::u16string& value) {
     markup += u' ';
-    markup += attribute.name;
+    markup += name;
     markup += u"=\"";
-    AppendEscaped(markup, attribute.value, /*in_attribute=*/true);
+    AppendEscaped(markup, value, /*in_attribute=*/true);
     markup += u'"';
+  };
+  // The is value the element was made with, when no is attribute says it.
+  if (element.IsValue() && !element.FindAttribute(u"is")) {
+    append_attribute(u"is", *element.IsValue());
+  }
+  for (const Element::Attribute& attribute : element.attributes()) {
+    append_attribute(SerializedAttributeName(attribute.name), attribute.value);
   }
   markup += u'>';
   if (IsVoidElement(element)) {
     return;
   }
-  AppendChildren(markup, element);
+  AppendChildren(markup, ChildrenHolder(element));
   markup += u"</";
   markup += tag_name;
   markup += u'>';
@@ -141,6 +174,7 @@ void AppendNode(std::u16string& markup, const Node& node) {
       markup += u'>';
       break;
     case Node::kDocumentNode:
+    case Node::kDocumentFragmentNode:
       AppendChildren(markup, node);
       break;
     default:
@@ -152,7 +186,7 @@ void AppendNode(std::u16string& markup, const Node& node) {
 
 std::u16string SerializeChildren(const Node& node) {
   std::u16string markup;
-  AppendChildren(markup, node);
+  AppendChildren(markup, ChildrenHolder(node));
   return markup;
 }
 
