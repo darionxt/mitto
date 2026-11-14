@@ -161,7 +161,7 @@ Response* Response::CreateFetched(ResponseType type,
                                   std::u16string url,
                                   bool redirected,
                                   mitto::Headers* headers,
-                                  FetchLoader* loader) {
+                                  BodyLoader* loader) {
   Response* const response = bindings::MakeGarbageCollected<Response>();
   response->type_ = type;
   response->status_ = status;
@@ -170,10 +170,16 @@ Response* Response::CreateFetched(ResponseType type,
   response->redirected_ = redirected;
   response->headers_ = headers;
   if (loader) {
-    response->body_state_ = BodyState::kLoading;
+    response->body_state_ =
+        type == ResponseType::kOpaque ? BodyState::kNull : BodyState::kLoading;
     response->loader_ = loader;
   }
   return response;
+}
+
+void Response::AttachBodyLoader(BodyLoader* loader) {
+  body_state_ = BodyState::kLoading;
+  loader_ = loader;
 }
 
 Response::Response() = default;
@@ -199,6 +205,8 @@ std::u16string Response::Type() const {
       return u"cors";
     case ResponseType::kDefault:
       return u"default";
+    case ResponseType::kOpaque:
+      return u"opaque";
   }
 }
 
@@ -226,8 +234,10 @@ void Response::FollowSignal(AbortSignal* signal) {
 void Response::AbortBody() {
   // A body that a script has read all of stays so. Chrome's body of a HEAD
   // request or a null body status is an empty stream, which a read uses up,
-  // so a null body that no script read aborts too.
-  if ((body_state_ == BodyState::kNull && null_body_read_) ||
+  // so a null body that no script read aborts too. An opaque response's body
+  // is null in Chrome too, which nothing errors.
+  if (type_ == ResponseType::kOpaque ||
+      (body_state_ == BodyState::kNull && null_body_read_) ||
       (body_used_ && reader_.IsEmpty() && whole_body_reader_.is_null())) {
     return;
   }

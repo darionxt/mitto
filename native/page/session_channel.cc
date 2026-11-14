@@ -28,6 +28,7 @@
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/script_runner.h"
+#include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "mitto/page/session_storage_backend.h"
 #include "mitto/page_channel.h"
@@ -80,14 +81,18 @@ class SessionLink final : public PageChannel::Delegate
   SessionLink(scoped_refptr<base::SingleThreadTaskRunner> main_thread,
               scoped_refptr<base::SingleThreadTaskRunner> inspector,
               scoped_refptr<base::SingleThreadTaskRunner> networking,
+              scoped_refptr<base::SingleThreadTaskRunner> misc_platform_api,
               StartV8Callback start_v8,
               SessionCookieJar& cookie_jar,
+              SessionCacheStorage& cache_storage,
               SessionStorageBackend& storage_backend)
       : main_thread_(std::move(main_thread)),
         inspector_(std::move(inspector)),
         networking_(std::move(networking)),
+        misc_platform_api_(std::move(misc_platform_api)),
         start_v8_(std::move(start_v8)),
         cookie_jar_(cookie_jar),
+        cache_storage_(cache_storage),
         storage_backend_(storage_backend) {}
 
   SessionLink(const SessionLink&) = delete;
@@ -250,6 +255,18 @@ class SessionLink final : public PageChannel::Delegate
                                       base::Unretained(this),
                                       std::move(frame->broadcast)));
         return;
+      case PageMessage::kCacheStorageAnswer:
+        if (!started_) {
+          Refuse("a Cache API answer came before the start");
+          return;
+        }
+        // Blink binds CacheStorage and its Caches to this queue.
+        misc_platform_api_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionCacheStorage::OnAnswer,
+                           base::Unretained(&*cache_storage_),
+                           std::move(frame->cache_storage_answer)));
+        return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
       case PageMessage::kConsole:
@@ -265,7 +282,11 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreSet:
       case PageMessage::kCookieStoreListen:
       case PageMessage::kBroadcast:
+      case PageMessage::kCacheStorage:
       case PageMessage::kDocumentCommitted:
+      case PageMessage::kSameDocumentNavigation:
+      case PageMessage::kWorkerStarted:
+      case PageMessage::kContextGone:
       case PageMessage::kStorageBind:
       case PageMessage::kStorageGetAll:
       case PageMessage::kStoragePut:
@@ -337,10 +358,12 @@ class SessionLink final : public PageChannel::Delegate
           }
         },
         send));
+    cache_storage_->SetSend(send, refuse);
     // What the document's localStorage and sessionStorage ask of the Session.
     storage_backend_->SetSend(send);
     StorageBackend::Set(&*storage_backend_);
     runner_ = std::make_unique<ScriptRunner>(*isolate);
+    runner_->SetCacheStorageHost(*cache_storage_);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
@@ -361,7 +384,7 @@ class SessionLink final : public PageChannel::Delegate
       return;
     }
     BroadcastChannelService::Get().OnSessionMessage(
-        broadcast.name, broadcast.locked,
+        broadcast.origin, broadcast.name, broadcast.locked,
         std::vector<uint8_t>(broadcast.data.begin(), broadcast.data.end()));
   }
 
@@ -427,12 +450,14 @@ class SessionLink final : public PageChannel::Delegate
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
   const scoped_refptr<base::SingleThreadTaskRunner> inspector_;
   const scoped_refptr<base::SingleThreadTaskRunner> networking_;
+  const scoped_refptr<base::SingleThreadTaskRunner> misc_platform_api_;
   // These are the main thread's. The runner lives from the start until the
   // process ends.
   StartV8Callback start_v8_;
   std::unique_ptr<ScriptRunner> runner_;
   // These live until the process ends. The I/O thread hands them answers.
   const raw_ref<SessionCookieJar> cookie_jar_;
+  const raw_ref<SessionCacheStorage> cache_storage_;
   const raw_ref<SessionStorageBackend> storage_backend_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
@@ -474,6 +499,7 @@ std::optional<SessionArgument> ParseSessionArgument(std::string_view argument) {
 
 void ServeSession(SessionArgument session, StartV8Callback start_v8) {
   SessionCookieJar cookie_jar;
+  SessionCacheStorage cache_storage;
   SessionStorageBackend storage_backend;
 
   // Reads the channel while a script runs, so that the Page process ends when
@@ -491,8 +517,9 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
       std::make_unique<SessionLink>(
           base::SingleThreadTaskRunner::GetCurrentDefault(),
           event_loop->TaskRunner(TaskType::kInternalInspector),
-          event_loop->TaskRunner(TaskType::kNetworking), std::move(start_v8),
-          cookie_jar, storage_backend)
+          event_loop->TaskRunner(TaskType::kNetworking),
+          event_loop->TaskRunner(TaskType::kMiscPlatformAPI),
+          std::move(start_v8), cookie_jar, cache_storage, storage_backend)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),

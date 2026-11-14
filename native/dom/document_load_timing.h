@@ -119,6 +119,15 @@ class DocumentLoadTiming final
   base::TimeTicks load_event_start;
   base::TimeTicks load_event_end;
   base::TimeTicks critical_ch_restart;
+  // Whether the navigation reloaded the document, which navigation timing
+  // calls a reload.
+  bool is_reload = false;
+  // When the unload event of the document before this one started and ended,
+  // which only a document of its origin sees, as Blink's
+  // HasSameOriginAsPreviousDocument() says.
+  base::TimeTicks unload_event_start;
+  base::TimeTicks unload_event_end;
+  bool has_same_origin_as_previous_document = false;
   // What the browser says of the navigation's confidence once the document is
   // interactive: whether it answered "high", at kRandomizedTriggerRate's
   // noise. Nothing before.

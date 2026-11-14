@@ -83,12 +83,27 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           break;
         case mitto::PageMessage::kRequest:
           CHECK_NE(frame->request.number, mitto::kNavigationRequest);
+          // Only a navigation has a navigation's flags, only a fetch or a
+          // beacon outlives its document, and only a frame's navigation names
+          // a target.
+          CHECK((!frame->request.user_activation && !frame->request.reload) ||
+                frame->request.kind == mitto::PageRequestKind::kNavigation ||
+                frame->request.kind == mitto::PageRequestKind::kIframe);
+          CHECK(!frame->request.keepalive ||
+                frame->request.kind == mitto::PageRequestKind::kFetch ||
+                frame->request.kind == mitto::PageRequestKind::kBeacon);
+          CHECK((frame->request.target != 0) ==
+                (frame->request.kind == mitto::PageRequestKind::kIframe));
+          CHECK(!frame->request.no_referrer || frame->request.referrer.empty());
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
+          CHECK(base::IsStringUTF8AllowingNoncharacters(
+              frame->request.referrer));
           CHECK(mitto::IsHttpToken(frame->request.method));
           CHECK(!mitto::IsForbiddenMethod(frame->request.method));
           CHECK_EQ(frame->request.url.size() + frame->request.method.size() +
                        frame->request.headers.size() +
-                       frame->request.body.value_or("").size() + 31,
+                       frame->request.referrer.size() +
+                       frame->request.body.value_or("").size() + 48,
                    payload.size());
           break;
         case mitto::PageMessage::kCredit:
@@ -144,16 +159,47 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                    payload.size());
           break;
         }
+        case mitto::PageMessage::kCacheStorage:
+          // What the reader takes is exactly what the writer writes, after
+          // the document's ID.
+          CHECK_EQ(mitto::EncodeCacheStorageCall(frame->cache_storage_call),
+                   std::string_view(payload).substr(8));
+          break;
+        case mitto::PageMessage::kSameDocumentNavigation:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(
+              frame->same_document_url));
+          CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
+          break;
         case mitto::PageMessage::kDocumentCommitted: {
           const mitto::PageDocumentCommitted& committed = frame->committed;
           CHECK_NE(committed.document, mitto::kNoDocument);
+          CHECK_NE(committed.document, committed.parent);
           CHECK_EQ(
               payload.size(),
               committed.source == mitto::PageDocumentSource::kNavigationResponse
-                  ? 17u
-                  : 9u);
+                  ? 25u
+                  : 17u);
           break;
         }
+        case mitto::PageMessage::kWorkerStarted: {
+          const mitto::PageWorkerStarted& started = frame->worker_started;
+          CHECK_NE(started.worker, mitto::kNoDocument);
+          CHECK_NE(started.creator, mitto::kNoDocument);
+          CHECK_NE(started.worker, started.creator);
+          // Only a script's response names its request, and only a blob: URL
+          // is named.
+          CHECK_EQ(started.source == mitto::PageWorkerSource::kScriptResponse,
+                   started.request != mitto::kNavigationRequest);
+          CHECK_EQ(started.source == mitto::PageWorkerSource::kBlob,
+                   !started.url.empty());
+          CHECK(base::IsStringUTF8AllowingNoncharacters(started.url));
+          CHECK_EQ(started.url.size() + 26, payload.size());
+          break;
+        }
+        case mitto::PageMessage::kContextGone:
+          CHECK_NE(frame->gone_context, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 8u);
+          break;
         case mitto::PageMessage::kStorageBind:
           CHECK_EQ(payload.size(), 25u);
           CHECK(frame->storage_bind.kind == mitto::PageStorageKind::kLocal ||
@@ -193,6 +239,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kStorageKeyChangeFailed:
         case mitto::PageMessage::kStorageKeyDeleted:
         case mitto::PageMessage::kStorageAllDeleted:
+        case mitto::PageMessage::kCacheStorageAnswer:
           // Only a Session sends these.
           NOTREACHED();
       }

@@ -19,6 +19,7 @@
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/bar_prop.h"
+#include "mitto/dom/cache_storage.h"
 #include "mitto/dom/cookie_store.h"
 #include "mitto/dom/crash_report_context.h"
 #include "mitto/dom/crypto.h"
@@ -46,7 +47,6 @@
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
 #include "mitto/dom/visual_viewport.h"
-#include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/v8-context.h"
@@ -118,6 +118,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
   visitor->Trace(cookie_store_);
+  visitor->Trace(caches_);
   visitor->Trace(local_storage_);
   visitor->Trace(session_storage_);
   visitor->Trace(current_event_);
@@ -290,6 +291,22 @@ mitto::CookieStore* Window::CookieStore() {
     cookie_store_ = bindings::MakeGarbageCollected<mitto::CookieStore>(this);
   }
   return cookie_store_.Get();
+}
+
+mitto::CacheStorage* Window::Caches(
+    bindings::ExceptionState& exception_state) {
+  // GlobalCacheStorage::CanCreateCacheStorage(): a document whose origin is
+  // opaque, as one that the Session did not load over HTTP or HTTPS has, may
+  // not.
+  if (!GetDocument().GetCacheStorageHost()) {
+    exception_state.ThrowDOMException("SecurityError",
+                                      "Access to cache storage is denied.");
+    return nullptr;
+  }
+  if (!caches_) {
+    caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
+  }
+  return caches_.Get();
 }
 
 // DOMScheduler::scheduler(): the window's supplement.
@@ -610,16 +627,12 @@ v8::Local<v8::Promise> Window::Fetch(
   }
   const url::Origin document_origin = url::Origin::Create(
       GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
+  // A cross-origin request of mode same-origin fails before anything goes, as
+  // CorsURLLoader fails it. One that needs a CORS preflight goes to the
+  // Session, which makes the preflight first.
   const bool cross_origin = !document_origin.IsSameOriginWith(request->url());
-  // A cross-origin request that needs a CORS preflight is a Known Gap, which
-  // the Session refuses too.
-  bool needs_preflight = !IsCorsSafelistedMethod(request->Method());
-  for (const auto& [name, value] : request->GetHeaders()->list()) {
-    needs_preflight |= !IsCorsSafelistedRequestHeader(name, value);
-  }
   if (!fetcher_ ||
-      (cross_origin &&
-       (request->mode() == Request::Mode::kSameOrigin || needs_preflight))) {
+      (cross_origin && request->mode() == FetchMode::kSameOrigin)) {
     std::ignore = resolver->Reject(
         context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
                      isolate, "Failed to fetch")));
@@ -630,11 +643,24 @@ v8::Local<v8::Promise> Window::Fetch(
   data.url = request->url().spec();
   data.headers = request->GetHeaders()->ToLines();
   data.body = request->body();
-  data.same_origin = request->mode() == Request::Mode::kSameOrigin;
-  fetcher_->Fetch(std::move(data),
-                  std::make_unique<FetchLoader>(
-                      isolate, context, resolver,
-                      /*head=*/request->Method() == "HEAD", signal));
+  // A fetch's own are mode cors and credentials same-origin.
+  if (request->mode() != FetchMode::kCors) {
+    data.mode = request->mode();
+  }
+  if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
+    data.credentials = request->credentials();
+  }
+  data.referrer = request->referrer();
+  data.referrer_policy = request->referrer_policy();
+  data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
+                                       /*render_blocking=*/false);
+  data.keepalive = request->keepalive();
+  fetcher_->Fetch(std::move(data), std::make_unique<FetchLoader>(
+                                       isolate, context, resolver,
+                                       /*head=*/request->Method() == "HEAD",
+                                       /*credentials=*/request->credentials() ==
+                                           FetchCredentialsMode::kInclude,
+                                       signal));
   return resolver->GetPromise();
 }
 

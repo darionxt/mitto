@@ -10,13 +10,17 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "mitto/dom/element.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/svg_animated_values.h"
+#include "mitto/dom/svg_geometry.h"
 #include "mitto/dom/svg_length.h"
+#include "mitto/dom/svg_lists.h"
+#include "mitto/dom/svg_transforms.h"
 
 namespace mitto {
 
@@ -37,11 +41,18 @@ class SVGElement : public Element {
   SVGAnimatedString* ClassName();
   SVGAnimatedString* Href();
   SVGAnimatedString* Result();
+  // SVGTests', which the interfaces that include it reach here.
+  SVGStringList* RequiredExtensions();
+  SVGStringList* SystemLanguage();
+  // SVGFitToViewBox's, and preserveAspectRatio of image and feImage too.
+  SVGAnimatedRect* ViewBox();
+  SVGAnimatedPreserveAspectRatio* PreserveAspectRatio();
 
   // Writes back the value that a page set of an animated value, which the
   // value keeps rather than reading again.
+  // A null value removes the attribute.
   void SynchronizeAnimatedAttribute(const QualifiedName& name,
-                                    const std::u16string& value);
+                                    const std::optional<std::u16string>& value);
 
   // Element:
   void AttributeChanged(const QualifiedName& name,
@@ -68,10 +79,19 @@ class SVGElement : public Element {
   SVGAnimatedNumber* AnimatedNumberHalf(std::u16string_view attribute,
                                         SVGPairHalf half,
                                         float initial_value);
+  SVGAnimatedNumberList* AnimatedNumberList(std::u16string_view attribute);
+  SVGAnimatedLengthList* AnimatedLengthList(std::u16string_view attribute,
+                                            SVGLengthMode mode);
   SVGAnimatedLength* AnimatedLength(std::u16string_view attribute,
                                     SVGLengthMode mode,
                                     SVGAnimatedLength::Initial initial,
                                     bool text_length = false);
+  // A marker's orient.
+  SVGAnimatedAngle* AnimatedOrient();
+  // A polyline's or polygon's points.
+  SVGAnimatedPointList* AnimatedPointList();
+  SVGAnimatedTransformList* AnimatedTransformList(
+      std::u16string_view attribute);
 
  private:
   SVGAnimatedPropertyBase* FindAnimated(std::u16string_view attribute,

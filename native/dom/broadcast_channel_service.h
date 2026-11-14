@@ -64,9 +64,11 @@ class BroadcastChannelService {
   // A message of the channel of `connection`.
   void Post(uint64_t connection, const SerializedScriptValue& message);
 
-  // A message from another Page of the Session, whose document's origin the
-  // Session matched with this Page's.
-  void OnSessionMessage(const std::string& name,
+  // A message from another Page of the Session, for the channels of
+  // `origin`, serialized, which the Session matched with one of this Page's
+  // contexts.
+  void OnSessionMessage(const std::string& origin,
+                        const std::string& name,
                         bool locked,
                         std::vector<uint8_t> data);
 

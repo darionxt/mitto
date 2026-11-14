@@ -19,6 +19,7 @@ from mitto._native import LIBRARY_ENV_VAR, PrivateSettings
 from mitto._persona import CHROME_157_WINDOWS, WINDOWS_PERSONAS, load_persona
 from tests.parity.conftest import SAMPLE_RELEASE, ChangeBaseline
 from tools.capture import (
+    DOCUMENT_RUNS,
     HTTP1,
     HTTP2,
     HTTP3,
@@ -43,7 +44,7 @@ from tools.parity import (
     mismatches,
 )
 from tools.parity.check import record
-from tools.parity.replay import protocol_of
+from tools.parity.replay import protocol_of, through_page
 
 _REPOSITORY = Path(__file__).parents[2]
 _REGENERATE = "uv run python -m tools.parity"
@@ -66,14 +67,30 @@ def regenerate(directory: Path, **environment: str) -> subprocess.CompletedProce
     )
 
 
+def _differ_only_by_the_known_gaps(by_page: bool) -> None:
+    """Check the Baselines that a Session replays, or those of the cases a Page makes, against their known gaps."""
+    baselines = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if through_page(baseline.case) == by_page]
+    listed = [gap for gap in known_gaps(BASELINES_DIRECTORY) if through_page(gap.case) == by_page]
+    found = mismatches(find_gaps(baselines), listed)
+
+    if found:
+        pytest.fail(f"{found}\n\nIf this is what you meant, regenerate the list: {_REGENERATE}", pytrace=False)
+
+
 @pytest.mark.usefixtures("native_library", "both_apis")
 def test_the_baselines_differ_from_the_native_core_only_by_the_known_gaps(monkeypatch: pytest.MonkeyPatch) -> None:
     """The check that everything in this milestone is measured with, through each API."""
     monkeypatch.setattr(check, "Session", mitto.Session)
-    found = mismatches(find_gaps(load_baselines(BASELINES_DIRECTORY)), known_gaps(BASELINES_DIRECTORY))
+    _differ_only_by_the_known_gaps(by_page=False)
 
-    if found:
-        pytest.fail(f"{found}\n\nIf this is what you meant, regenerate the list: {_REGENERATE}", pytrace=False)
+
+@pytest.mark.usefixtures("page_program", "both_apis")
+def test_the_cases_a_page_makes_differ_from_its_baselines_only_by_the_known_gaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same for the cases that only a page makes, such as a navigation that no user started, through a Page."""
+    monkeypatch.setattr(check, "Session", mitto.Session)
+    _differ_only_by_the_known_gaps(by_page=True)
 
 
 def test_the_known_gaps_list_is_written_the_way_the_command_writes_it() -> None:
@@ -87,13 +104,13 @@ def test_each_release_has_a_baseline_of_every_recording_case_of_every_run() -> N
 
     assert found == {
         (release, case.name, protocol_of(run.route))
-        for release, run in itertools.product(WINDOWS_PERSONAS, RUNS)
+        for release, run in itertools.product(WINDOWS_PERSONAS, (*RUNS, *DOCUMENT_RUNS))
         for case in run.cases
     }
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
+@pytest.mark.parametrize("run", [*RUNS, *DOCUMENT_RUNS], ids=lambda run: run.name)
 def test_each_release_has_every_recording_case_of_every_run(release: str, run: Run) -> None:
     text = (BASELINES_DIRECTORY / release / f"{run.name}.json").read_text(encoding="utf-8")
 

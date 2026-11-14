@@ -46,7 +46,8 @@ ERR_TOO_MANY_ACCEPT_CH_RESTARTS = -382
 # Longer than any local request takes, even on a busy machine.
 TIMEOUT_SECONDS = 30.0
 
-ALL_KINDS = list(mitto.RequestKind)
+# A worker's script comes from the browser, which sends it none.
+KINDS_WITH_HINTS = [kind for kind in mitto.RequestKind if kind is not mitto.RequestKind.WORKER]
 SUBRESOURCES = [mitto.RequestKind.FETCH, mitto.RequestKind.SCRIPT, mitto.RequestKind.IMAGE]
 
 SENT_BY_DEFAULT = ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"]
@@ -229,7 +230,7 @@ def asks(servers: Servers, session: mitto.Session, host: str = HOST, hints: str 
 # Asking
 
 
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", KINDS_WITH_HINTS)
 def test_a_server_that_has_not_asked_gets_only_what_goes_by_default(servers: Servers, kind: mitto.RequestKind) -> None:
     with new_session() as session:
         session.get(servers.https(), kind=kind)
@@ -700,6 +701,65 @@ def test_a_subresource_sends_its_lines_in_the_order_of_blinks_map(
     assert [name for name in servers.received[1].names if name in known] == [*order, "accept"]
 
 
+# Frames and workers
+
+
+def test_a_frame_of_the_pages_origin_gets_what_the_page_asked_for_in_a_navigations_order(servers: Servers) -> None:
+    with new_session() as session:
+        page = asks(servers, session, hints=EVERY_HINT)
+        session.get(servers.https(path="/frame"), kind="iframe", initiator=page)
+
+    assert servers.received[1].hints == NAVIGATION_HINTS
+
+
+@pytest.mark.parametrize("host", [SAME_SITE, CROSS_SITE])
+def test_a_frame_of_another_origin_gets_only_what_goes_by_default(servers: Servers, host: str) -> None:
+    with new_session() as session:
+        asks(servers, session, host)
+        page = asks(servers, session)
+        session.get(servers.https(host, "/frame"), kind="iframe", initiator=page)
+
+    assert sorted(servers.received[2].hints) == SENT_BY_DEFAULT
+
+
+def test_what_a_frame_is_answered_counts_for_nothing(servers: Servers) -> None:
+    with new_session() as session:
+        session.get(servers.https(path="/frame", accept_ch=ASKED_FOR), kind="iframe")
+        session.get(servers.https())
+
+    assert sorted(servers.received[1].hints) == SENT_BY_DEFAULT
+
+
+def test_a_frame_does_not_start_over_for_a_critical_hint(servers: Servers) -> None:
+    with new_session() as session:
+        page = asks(servers, session, hints="")
+        session.get(
+            servers.https(path="/frame", accept_ch=ASKED_FOR, critical_ch=ASKED_FOR), kind="iframe", initiator=page
+        )
+
+    assert len(servers.received) == 2
+
+
+def test_a_frame_gets_on_each_hop_what_its_page_lets_that_origin_have(servers: Servers) -> None:
+    with new_session() as session:
+        page = asks(servers, session)
+        session.get(
+            chain(servers.https(path="/first"), servers.https(CROSS_SITE), servers.https(path="/last")),
+            kind="iframe",
+            initiator=page,
+        )
+
+    assert [ASKED_FOR in received.hints for received in servers.received[1:]] == [True, False, True]
+
+
+def test_a_workers_script_gets_no_hint_where_its_origin_asked_for_them(servers: Servers) -> None:
+    with new_session() as session:
+        page = asks(servers, session, hints=EVERY_HINT)
+        session.get(servers.https(path="/worker.js"), kind="worker", initiator=page)
+
+    assert servers.received[1].hints == []
+
+
 # Each Persona
 
 
@@ -991,11 +1051,11 @@ def chromes_machine_hints(
     machine: mitto.Machine, host: str = HOST, kind: mitto.RequestKind = mitto.RequestKind.NAVIGATION
 ) -> dict[str, str | None]:
     """Return what Chrome on `machine`, with the salts a Session draws for it, sends on a hop to `host` of the hints that
-    follow the machine: rtt and downlink from the browser process for a navigation, and from the renderer process of the
-    page's site for a subresource, whose page is at `host`."""
+    follow the machine: rtt and downlink from the browser process for a navigation, a frame's too, and from the renderer
+    process of the page's site for a subresource, whose page is at `host`."""
     salts = draw_noise_salts(machine)
     values: dict[str, str | None] = dict(client_hints(machine))
-    if kind is mitto.RequestKind.NAVIGATION:
+    if kind in {mitto.RequestKind.NAVIGATION, mitto.RequestKind.IFRAME}:
         values["rtt"] = browser_rtt(host, machine.round_trip_ms, salts.browser)
         values["downlink"] = browser_downlink(host, machine.throughput_kbps, salts.browser)
     else:
@@ -1011,7 +1071,7 @@ def site_of(host: str) -> str:
     return "https://" + ".".join(host.split(".")[-2:])
 
 
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", KINDS_WITH_HINTS)
 def test_a_session_with_no_machine_sends_the_values_of_the_machine_drawn_for_it(
     servers: Servers, kind: mitto.RequestKind
 ) -> None:

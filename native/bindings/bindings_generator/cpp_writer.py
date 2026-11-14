@@ -697,16 +697,21 @@ class _InterfaceWriter:
             )
         cpp_name = self.method_name(attribute)
         return_type = self.types.return_type(attribute.idl_type, where)
+        receiver = self._receiver()
+        if self.types.reduce(attribute.idl_type).kind is TypeKind.PROMISE:
+            # Web IDL: an error in the getter of a promise attribute rejects the promise it gives, as for an operation
+            # that returns one, so a receiver of another kind gives a rejected promise, as bind_gen's getter does.
+            receiver = ["ExceptionToRejectPromiseScope reject_promise_scope(info);", *self._promise_receiver()]
         raises = attribute.extended_attributes.values_of("RaisesException")
         if "RaisesException" not in attribute.extended_attributes or (raises and "Getter" not in raises):
             call = f"impl->{cpp_name}()"
             return self._add_callback(
-                name, [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
+                name, [*receiver, f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
             )
         return self._add_callback(
             name,
             [
-                *self._receiver(),
+                *receiver,
                 self._exception_state(),
                 f"{return_type} result = impl->{cpp_name}(exception_state);",
                 "if (exception_state.HadException()) {",
@@ -1194,20 +1199,19 @@ class _InterfaceWriter:
     def _getter_call(self, special: SpecialOperation, key: str) -> tuple[IdlType, str]:
         """The return type of an indexed or named property getter, and the C++ expression that calls the class's.
 
-        A named getter that raises an exception takes an ExceptionState named exception_state, as Storage's getItem()
-        does, which the caller declares."""
+        A getter that raises an exception takes an `exception_state` that the caller declares: an indexed one, as the
+        length that the interceptor checks first keeps it to the supported indices, where it does not throw, and a
+        named one, as Storage's getItem() does, whose exception the interceptor leaves pending."""
         where = f"{special.kind} of {self.interface.name}"
         operation = special.operation
         _check_written(where, operation.extended_attributes)
-        arguments = [key]
+        arguments = key
         if "RaisesException" in operation.extended_attributes:
-            if special.kind != "named getter":
-                raise UnhandledError(f"{where}: the C++ writer does not handle a getter that raises an exception")
-            arguments.append("exception_state")
+            arguments += ", exception_state"
         # Blink's classes name a getter without an identifier AnonymousIndexedGetter() or AnonymousNamedGetter().
         method = self.method_name(operation) if operation.name else f"Anonymous{special.kind.title().replace(' ', '')}"
         self.types.return_type(operation.return_type, f"{where} return type")
-        return operation.return_type, f"HolderOf(isolate, holder)->{method}({', '.join(arguments)})"
+        return operation.return_type, f"HolderOf(isolate, holder)->{method}({arguments})"
 
     def indexed_and_named_properties(self) -> bool:
         """Writes the functions of the interface's IndexedAndNamedProperties, kIndexedAndNamedProperties, which read
@@ -1215,8 +1219,9 @@ class _InterfaceWriter:
         interface = self.interface
         indexed = self._special_with_behaviour("indexed getter")
         named = self._special_with_behaviour("named getter")
-        if self._special_with_behaviour("indexed setter"):
-            raise UnhandledError(f"interface {interface.name}: the C++ writer does not handle its indexed setter")
+        indexed_setter = self._special_with_behaviour("indexed setter")
+        if indexed_setter is not None and indexed is None:
+            raise UnhandledError(f"interface {interface.name}: an indexed setter needs the indexed getter")
         named_setter = self._special_with_behaviour("named setter")
         named_deleter = self._special_with_behaviour("named deleter")
         if (named_setter or named_deleter) and named is None:
@@ -1250,12 +1255,23 @@ class _InterfaceWriter:
                     ]
                 )
             )
+            if "RaisesException" in indexed.operation.extended_attributes:
+                getter_body = [
+                    "  ExceptionState exception_state(isolate);",
+                    f"  const auto result = {call};",
+                    "  if (exception_state.HadException()) {",
+                    "    return v8::Local<v8::Value>();",
+                    "  }",
+                    f"  return {self.types.to_v8(return_type, 'result')};",
+                ]
+            else:
+                getter_body = [f"  return {self.types.to_v8(return_type, call)};"]
             self.callbacks.append(
                 "\n".join(
                     [
                         "v8::Local<v8::Value> IndexedPropertyGetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
                         "                                           uint32_t index) {",
-                        f"  return {self.types.to_v8(return_type, call)};",
+                        *getter_body,
                         "}",
                     ]
                 )
@@ -1327,11 +1343,13 @@ class _InterfaceWriter:
                 flags.append("kNamedPropertiesOverrideBuiltIns")
             if named.operation.extended_attributes.value_of("Affects") == "Everything":
                 flags.append("kNamedGetterHasSideEffects")
-        setter_fields = ["nullptr", "nullptr"]
+        setter_fields = ["nullptr", "nullptr", "nullptr"]
         if named_setter is not None:
             setter_fields[0] = self._named_setter(named_setter)
         if named_deleter is not None:
             setter_fields[1] = self._named_deleter(named_deleter)
+        if indexed_setter is not None:
+            setter_fields[2] = self._indexed_setter(indexed_setter)
         flag_value = " | ".join(flags) if flags else "0"
         self.callbacks.append(
             "\n".join(
@@ -1379,6 +1397,32 @@ class _InterfaceWriter:
             )
         )
         return "&NamedPropertySetter"
+
+    def _indexed_setter(self, special: SpecialOperation) -> str:
+        """The function that converts an indexed property setter's value and calls the class's setter, as bind_gen's
+        make_indexed_property_setter_callback() does: an error converting or setting stays pending."""
+        where = f"indexed setter of {self.interface.name}"
+        operation = special.operation
+        _check_written(where, operation.extended_attributes)
+        value_argument = operation.arguments[1]
+        site = Site(fail="return;", argument_index=1)
+        conversion = self.types.from_v8(value_argument.idl_type, "value", "property_value", site, where)
+        passed = ["index", "property_value"]
+        if "RaisesException" in operation.extended_attributes:
+            passed.append("exception_state")
+        self.callbacks.append(
+            "\n".join(
+                [
+                    "void IndexedPropertySetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
+                    "                           uint32_t index, v8::Local<v8::Value> value) {",
+                    "  ExceptionState exception_state(isolate);",
+                    *_indent(conversion),
+                    f"  HolderOf(isolate, holder)->{self._special_method(special)}({', '.join(passed)});",
+                    "}",
+                ]
+            )
+        )
+        return "&IndexedPropertySetter"
 
     def _named_deleter(self, special: SpecialOperation) -> str:
         """The function that calls the class's named property deleter, which says whether it deleted the property.
@@ -1515,9 +1559,10 @@ class _InterfaceWriter:
             data = ""
             if getter.startswith("&KnownGap") or setter.startswith("&KnownGap"):
                 data = f", {self._known_gap_data(property_)}"
-            if getter.startswith("&KnownGap") and self.types.reduce(member.idl_type).kind is TypeKind.PROMISE:
-                # As for an operation that returns a promise: no signature, so that the Known Gap's getter rejects for
-                # a receiver of another kind, as bind_gen's make_check_receiver() and its promise scope do.
+            if self.types.reduce(member.idl_type).kind is TypeKind.PROMISE:
+                # As for an operation that returns a promise: no signature, so that the getter, a Known Gap's or the
+                # class's, rejects for a receiver of another kind, as bind_gen's make_check_receiver() and its promise
+                # scope do.
                 signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "

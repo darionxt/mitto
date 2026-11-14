@@ -178,6 +178,9 @@ class EventTarget : public bindings::ScriptWrappable {
   void RemoveMarkedListener(const std::u16string& type,
                             double listener_id,
                             bool capture);
+  // Removes every listener, its event handlers' among them, as Blink's
+  // EventTarget::RemoveAllEventListeners() does for document.open().
+  void RemoveAllEventListeners();
 
  protected:
   // Called once a listener of `type` has joined or left, as Blink's

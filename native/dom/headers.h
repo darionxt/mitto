@@ -24,6 +24,8 @@ class Headers final : public bindings::ScriptWrappable {
   enum class Guard {
     kNone,
     kRequest,
+    // A request of mode no-cors, which takes only no-CORS-safelisted lines.
+    kRequestNoCors,
     kResponse,
     kImmutable,
   };

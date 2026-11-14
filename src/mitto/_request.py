@@ -9,7 +9,17 @@ from collections.abc import AsyncIterable, Buffer, Iterable, Mapping
 from typing import TypedDict, cast
 
 from mitto._arguments import require_type
-from mitto._body import FileFields, QueryParams, RequestData, StreamBody, encode_body, encode_query, with_declared_size
+from mitto._body import (
+    BodyEncoding,
+    EncodedBody,
+    FileFields,
+    QueryParams,
+    RequestData,
+    StreamBody,
+    encode_body,
+    encode_query,
+    with_declared_size,
+)
 from mitto._native import encode_url
 from mitto._persona import Persona, RequestDefaults, RequestKind
 from mitto._timeout import Timeout, to_timeout
@@ -31,6 +41,24 @@ _REFERER = "referer"
 
 _CONTENT_TYPE = "Content-Type"
 _CONTENT_LENGTH = "content-length"
+_SEC_FETCH_MODE = "Sec-Fetch-Mode"
+_ORIGIN = "Origin"
+_ORIGIN_PLACEHOLDER = "<origin>"
+
+_CREDENTIALS = frozenset({"omit", "same-origin", "include"})
+_MODES = frozenset({"cors", "no-cors", "same-origin"})
+_NO_CORS = "no-cors"
+_CORS = "cors"
+_INCLUDE = "include"
+_SAME_ORIGIN = "same-origin"
+
+# What Fetch allows a request of mode no-cors to have as its method.
+_NO_CORS_METHODS = frozenset({"GET", "HEAD", "POST"})
+# The MIME types of a CORS-safelisted Content-Type, the only one that a request in mode no-cors takes.
+_NO_CORS_CONTENT_TYPES = frozenset({"application/x-www-form-urlencoded", "multipart/form-data", "text/plain"})
+
+# The kinds that navigate, whose mode is navigate and whose credentials are always included.
+_NAVIGATIONS = frozenset({RequestKind.NAVIGATION, RequestKind.IFRAME})
 
 
 class BodyOptions(TypedDict, total=False):
@@ -84,6 +112,11 @@ class RequestOptions(BodyOptions, total=False):
         follow_redirects: False makes a redirect the response, with empty content, because the network stack does not read
             the body of a redirect. A redirect to a URL that is not valid still ends the request with a RequestError. The
             default is True.
+        credentials: "omit", "same-origin" or "include", as fetch()'s `credentials` says whether cookies go and are kept,
+            in place of the kind's own. A navigation's are always included, so it takes only "include".
+        mode: "cors", "no-cors" or "same-origin", as fetch()'s `mode` says, in place of the kind's own, which Sec-Fetch-Mode
+            says. An element in cors mode, as `crossorigin` puts it, sends Origin as a font does. A navigation takes none,
+            a worker's script only "same-origin", and "no-cors" only GET, HEAD and POST.
     """
 
     params: QueryParams | None
@@ -92,6 +125,8 @@ class RequestOptions(BodyOptions, total=False):
     initiator: str | None
     timeout: float | Timeout | None
     follow_redirects: bool
+    credentials: str | None
+    mode: str | None
 
 
 class AsyncRequestOptions(TypedDict, total=False):
@@ -114,6 +149,8 @@ class AsyncRequestOptions(TypedDict, total=False):
     initiator: str | None
     timeout: float | Timeout | None
     follow_redirects: bool
+    credentials: str | None
+    mode: str | None
 
 
 class BuiltRequest(RequestDefaults):
@@ -150,6 +187,8 @@ def build_request(
     data: RequestData | None = None,
     json: object = None,
     files: FileFields | None = None,
+    credentials: str | None = None,
+    mode: str | None = None,
 ) -> BuiltRequest:
     """Return what to ask the native core for, given a caller's arguments as described in RequestOptions.
 
@@ -167,6 +206,8 @@ def build_request(
         data: See BodyOptions.
         json: See BodyOptions.
         files: See BodyOptions.
+        credentials: See RequestOptions.
+        mode: See RequestOptions.
 
     Raises:
         TypeError: If an argument is of a type it does not take, as Session.request() says, which the message names. A
@@ -177,13 +218,15 @@ def build_request(
             NUL character or cannot be encoded as UTF-8, or `timeout` is not a positive number of at most 2,000,000
             seconds. Also if the arguments of a body do not go together, `json` holds a NaN or an infinity, a body goes with
             GET or HEAD or with a Request Kind that Chrome sends none with, or the `Content-Length` of a stream is not a
-            number of bytes.
+            number of bytes. Also if `credentials` or `mode` is none of its values, or one that the kind cannot have.
     """
     require_type("method", method, str, "text")
     require_type("url", url, str, "text")
     require_type("kind", kind, str | None, "a RequestKind, its value or None")
     require_type("initiator", initiator, str | None, "text or None")
     require_type("follow_redirects", follow_redirects, bool, "True or False")
+    require_type("credentials", credentials, str | None, "text or None")
+    require_type("mode", mode, str | None, "text or None")
     method = method.upper() if method.upper() in _METHODS_FETCH_NORMALIZES else method
     url = _with_query(url, encode_query(params)) if params is not None else url
     if kind is None:
@@ -192,7 +235,9 @@ def build_request(
     body = encode_body(data, json, files)
     if body is not None and method in _METHODS_WITHOUT_A_BODY:
         raise ValueError(f"Fetch refuses a body with {method}, so Chrome never sends one")
-    defaults = persona.request_defaults(request_kind, with_body=body is not None)
+    defaults = _with_fetch(
+        persona.request_defaults(request_kind, with_body=body is not None), request_kind, method, credentials, mode
+    )
     changes = _changes_by_name(headers)
     if isinstance(body, StreamBody):
         body = _with_size_from_headers(body, changes)
@@ -204,7 +249,12 @@ def build_request(
     if body is not None:
         # This takes the place of the Persona's line, as a caller's would. Having no type removes the line, while a type
         # that a caller gives for bytes still goes where Chrome puts it.
-        changes.setdefault(_CONTENT_TYPE.lower(), (_CONTENT_TYPE, persona.content_type(request_kind, body)))
+        content_type = persona.content_type(request_kind, body)
+        if fetch.mode == _NO_CORS and not _is_no_cors_safelisted_content_type(content_type):
+            # Blink's request-no-cors guard drops a Content-Type such as JSON's, so the body goes as the text it is,
+            # with the type that Chrome gives text.
+            content_type = persona.content_type(request_kind, EncodedBody(b"", BodyEncoding.TEXT))
+        changes.setdefault(_CONTENT_TYPE.lower(), (_CONTENT_TYPE, content_type))
     return BuiltRequest(
         url=url,
         method=method,
@@ -217,6 +267,53 @@ def build_request(
         follow_redirects=follow_redirects,
         body=body if body is None or isinstance(body, StreamBody) else body.content,
     )
+
+
+def _with_fetch(
+    defaults: RequestDefaults, kind: RequestKind, method: str, credentials: str | None, mode: str | None
+) -> RequestDefaults:
+    """Return what a kind sends with the credentials mode and the mode that a caller gives in place of the kind's own.
+
+    A mode keeps its line's place, and an element in cors mode gets the Origin that Blink puts first in its map.
+
+    Raises:
+        ValueError: If `credentials` or `mode` is none of its values, or one that `kind` or `method` cannot have.
+    """
+    if credentials is not None and credentials not in _CREDENTIALS:
+        raise ValueError(f"credentials has to be one of {', '.join(sorted(_CREDENTIALS))}, not {credentials!r}")
+    if mode is not None and mode not in _MODES:
+        raise ValueError(f"mode has to be one of {', '.join(sorted(_MODES))}, not {mode!r}")
+    if kind in _NAVIGATIONS and (mode is not None or credentials not in {None, _INCLUDE}):
+        raise ValueError(f"a request of the kind {kind.value!r} navigates, with credentials, and takes no mode")
+    if kind is RequestKind.WORKER and mode not in {None, _SAME_ORIGIN}:
+        raise ValueError("the script of a worker goes in mode same-origin")
+    if mode == _NO_CORS and method not in _NO_CORS_METHODS:
+        raise ValueError(f"Fetch refuses mode no-cors with {method}, so Chrome never sends it")
+    fetch = defaults["fetch"]
+    if mode is None or mode == fetch.mode:
+        lines = defaults["headers"]
+    else:
+        lines = tuple((name, mode if name == _SEC_FETCH_MODE else value) for name, value in defaults["headers"])
+        if mode == _CORS and fetch.destination != "empty" and all(name != _ORIGIN for name, _ in lines):
+            lines = ((_ORIGIN, _ORIGIN_PLACEHOLDER), *lines)
+    return RequestDefaults(
+        headers=lines,
+        priority=defaults["priority"],
+        priority_incremental=defaults["priority_incremental"],
+        fetch=dataclasses.replace(
+            fetch, mode=mode or fetch.mode, credentials_mode=credentials or fetch.credentials_mode
+        ),
+    )
+
+
+def _is_no_cors_safelisted_content_type(content_type: str | None) -> bool:
+    """Return whether a request in mode no-cors takes this Content-Type that the library gives a body, or none.
+
+    Upstream: services/network/public/cpp/cors/cors.cc
+    """
+    if content_type is None:
+        return True
+    return content_type.split(";", 1)[0].strip().lower() in _NO_CORS_CONTENT_TYPES
 
 
 def _with_size_from_headers(body: StreamBody, changes: dict[str, tuple[str, str | None]]) -> StreamBody:

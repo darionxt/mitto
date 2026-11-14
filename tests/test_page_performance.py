@@ -379,7 +379,10 @@ _NAVIGATION_CASE = """
       firstInTimeline: performance.getEntries()[0] === nav,
       tag: Object.prototype.toString.call(nav),
     },
-    legacyAgrees: legacy.filter((k) => !(Math.abs((t[k] - t.navigationStart) - nav[k]) <= 1)),
+    // performance.timing and the navigation entry both coarsen a time to a multiple of 100 µs, and performance.timing then
+    // floors it to a whole millisecond. So the two differences differ by a multiple of 0.1 ms, at most 0.9 from the floors
+    // and under 0.4 from the four coarsenings: by 1.2 ms at most, as in Chrome.
+    legacyAgrees: legacy.filter((k) => !(Math.abs((t[k] - t.navigationStart) - nav[k]) < 1.25)),
     legacyZero: Object.keys(t.toJSON()).filter((k) => t[k] === 0),
     loadTimes: chrome.loadTimes().commitLoadTime * 1000 === t.responseStart,
     origin: Math.abs(performance.timeOrigin - t.navigationStart) <= 1,

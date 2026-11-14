@@ -152,6 +152,10 @@ SVGComponentTransferFunctionElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGComponentTransferFunctionElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumberList* SVGComponentTransferFunctionElement::TableValues() {
+  return AnimatedNumberList(u"tableValues");
+}
+
 SVGAnimatedEnumeration* SVGComponentTransferFunctionElement::Type() {
   return AnimatedEnumeration(u"type", kComponentTransferTypes, 1);
 }
@@ -214,6 +218,10 @@ SVGAnimatedEnumeration* SVGGradientElement::GradientUnits() {
   return AnimatedEnumeration(u"gradientUnits", kUnitTypes, 2);
 }
 
+SVGAnimatedTransformList* SVGGradientElement::GradientTransform() {
+  return AnimatedTransformList(u"gradientTransform");
+}
+
 SVGAnimatedEnumeration* SVGGradientElement::SpreadMethod() {
   return AnimatedEnumeration(u"spreadMethod", kSpreadMethods, 1);
 }
@@ -225,6 +233,10 @@ SVGGraphicsElement::SVGGraphicsElement(Document& document,
 const bindings::WrapperTypeInfo* SVGGraphicsElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGGraphicsElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedTransformList* SVGGraphicsElement::Transform() {
+  return AnimatedTransformList(u"transform");
 }
 
 SVGGeometryElement::SVGGeometryElement(Document& document,
@@ -267,6 +279,26 @@ SVGTextPositioningElement::SVGTextPositioningElement(
 const bindings::WrapperTypeInfo* SVGTextPositioningElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGTextPositioningElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::X() {
+  return AnimatedLengthList(u"x", SVGLengthMode::kWidth);
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::Y() {
+  return AnimatedLengthList(u"y", SVGLengthMode::kHeight);
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::Dx() {
+  return AnimatedLengthList(u"dx", SVGLengthMode::kWidth);
+}
+
+SVGAnimatedLengthList* SVGTextPositioningElement::Dy() {
+  return AnimatedLengthList(u"dy", SVGLengthMode::kHeight);
+}
+
+SVGAnimatedNumberList* SVGTextPositioningElement::Rotate() {
+  return AnimatedNumberList(u"rotate");
 }
 
 // static
@@ -376,6 +408,10 @@ SVGAnimatedEnumeration* SVGClipPathElement::ClipPathUnits() {
   return AnimatedEnumeration(u"clipPathUnits", kUnitTypes, 1);
 }
 
+SVGAnimatedTransformList* SVGClipPathElement::Transform() {
+  return AnimatedTransformList(u"transform");
+}
+
 // static
 SVGDefsElement* SVGDefsElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGDefsElement>(document);
@@ -469,6 +505,10 @@ const bindings::WrapperTypeInfo* SVGFEColorMatrixElement::GetWrapperTypeInfo()
   return &bindings::V8SVGFEColorMatrixElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumberList* SVGFEColorMatrixElement::Values() {
+  return AnimatedNumberList(u"values");
+}
+
 SVGAnimatedString* SVGFEColorMatrixElement::In1() {
   return AnimatedString(u"in");
 }
@@ -549,6 +589,10 @@ SVGFEConvolveMatrixElement::SVGFEConvolveMatrixElement(Document& document)
 const bindings::WrapperTypeInfo*
 SVGFEConvolveMatrixElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEConvolveMatrixElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedNumberList* SVGFEConvolveMatrixElement::KernelMatrix() {
+  return AnimatedNumberList(u"kernelMatrix");
 }
 
 SVGAnimatedString* SVGFEConvolveMatrixElement::In1() {
@@ -1300,6 +1344,23 @@ SVGAnimatedEnumeration* SVGMarkerElement::MarkerUnits() {
   return AnimatedEnumeration(u"markerUnits", kMarkerUnits, 2);
 }
 
+SVGAnimatedEnumeration* SVGMarkerElement::OrientType() {
+  return AnimatedOrient()->OrientType();
+}
+
+SVGAnimatedAngle* SVGMarkerElement::OrientAngle() {
+  return AnimatedOrient();
+}
+
+void SVGMarkerElement::SetOrientToAuto() {
+  SetAttributeWithoutValidation(u"orient", u"auto");
+}
+
+// The angle's string in its unit, a turn too.
+void SVGMarkerElement::SetOrientToAngle(SVGAngle* angle) {
+  SetAttributeWithoutValidation(u"orient", angle->Target().ValueAsString());
+}
+
 // static
 SVGMaskElement* SVGMaskElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGMaskElement>(document);
@@ -1405,6 +1466,10 @@ SVGAnimatedEnumeration* SVGPatternElement::PatternContentUnits() {
   return AnimatedEnumeration(u"patternContentUnits", kUnitTypes, 1);
 }
 
+SVGAnimatedTransformList* SVGPatternElement::PatternTransform() {
+  return AnimatedTransformList(u"patternTransform");
+}
+
 // static
 SVGPolygonElement* SVGPolygonElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGPolygonElement>(document);
@@ -1415,6 +1480,14 @@ SVGPolygonElement::SVGPolygonElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGPolygonElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGPolygonElement::kWrapperTypeInfo;
+}
+
+SVGPointList* SVGPolygonElement::PointsFromJavascript() {
+  return AnimatedPointList()->BaseVal();
+}
+
+SVGPointList* SVGPolygonElement::AnimatedPoints() {
+  return AnimatedPointList()->AnimVal();
 }
 
 // static
@@ -1428,6 +1501,14 @@ SVGPolylineElement::SVGPolylineElement(Document& document)
 const bindings::WrapperTypeInfo* SVGPolylineElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGPolylineElement::kWrapperTypeInfo;
+}
+
+SVGPointList* SVGPolylineElement::PointsFromJavascript() {
+  return AnimatedPointList()->BaseVal();
+}
+
+SVGPointList* SVGPolylineElement::AnimatedPoints() {
+  return AnimatedPointList()->AnimVal();
 }
 
 // static
@@ -1547,8 +1628,36 @@ SVGAnimatedLength* SVGSVGElement::Height() {
                         SVGAnimatedLength::Initial::kPercent100);
 }
 
+SVGAngle* SVGSVGElement::CreateSVGAngle() {
+  return SVGAngle::Create();
+}
+
 SVGLength* SVGSVGElement::CreateSVGLength() {
   return SVGLength::Create();
+}
+
+SVGNumber* SVGSVGElement::CreateSVGNumber() {
+  return SVGNumber::Create();
+}
+
+SVGPoint* SVGSVGElement::CreateSVGPoint() {
+  return SVGPoint::Create();
+}
+
+SVGMatrix* SVGSVGElement::CreateSVGMatrix() {
+  return SVGMatrix::Create(SVGAffineTransform());
+}
+
+SVGRect* SVGSVGElement::CreateSVGRect() {
+  return SVGRect::Create();
+}
+
+SVGTransform* SVGSVGElement::CreateSVGTransform() {
+  return SVGTransform::Create();
+}
+
+SVGTransform* SVGSVGElement::CreateSVGTransformFromMatrix(SVGMatrix* matrix) {
+  return SVGTransform::CreateFromMatrix(*matrix);
 }
 
 // static

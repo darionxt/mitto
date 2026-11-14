@@ -166,6 +166,10 @@ bool Event::IsErrorEvent() const {
   return false;
 }
 
+bool Event::IsBeforeUnloadEvent() const {
+  return false;
+}
+
 void Event::SetTarget(EventTarget* target) {
   target_ = target;
 }

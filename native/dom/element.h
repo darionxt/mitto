@@ -235,6 +235,9 @@ class Element : public Node {
   // record for mutation observers.
   void SetSynchronizedLazyAttribute(const QualifiedName& name,
                                     const std::u16string& value);
+  // The same for a value that is null, such as an empty SVG list's, which
+  // removes the attribute.
+  void RemoveSynchronizedLazyAttribute(const QualifiedName& name);
   // Called once the attribute `name` has changed from `old_value` to
   // `new_value`, null for none, through the DOM and the parser alike, as
   // Blink's Element::AttributeChanged() is.
@@ -273,7 +276,7 @@ class Element : public Node {
                                  const std::u16string& value,
                                  bool record = true);
   // Detaches the attribute's node too, which keeps its value.
-  void RemoveAttributeInternal(size_t index);
+  void RemoveAttributeInternal(size_t index, bool record = true);
   // The node of the attribute of `name`'s local name and namespace, if any.
   Attr* AttrIfExists(const QualifiedName& name) const;
   // Blink's DetachAttribute(): the node of the attribute at `index`, made if

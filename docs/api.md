@@ -390,6 +390,8 @@ The keyword arguments that each method of a Session takes, and `get()` and `stre
 | [`headers=`](#headers) | Names with text or `None`, in a mapping | The Persona's |
 | [`kind=`](#kind) | A [`RequestKind`](#requestkind), or its value | `navigation` for `GET`, and `fetch` for other methods |
 | [`initiator=`](#initiator) | The URL of a page | None |
+| [`credentials=`](#credentials) | `"omit"`, `"same-origin"`, `"include"` or `None` | The kind's own |
+| [`mode=`](#mode) | `"cors"`, `"no-cors"`, `"same-origin"` or `None` | The kind's own |
 | [`timeout=`](#timeout-1) | A number, a [`Timeout`](#timeout-2) or `None` | The Session's |
 | [`follow_redirects=`](#follow_redirects) | `True` or `False` | `True` |
 | [`data=`](#data) | Bytes, text, a mapping of text, a file or an iterable of bytes | No body |
@@ -465,6 +467,14 @@ A string enum, so that `kind="fetch"` and `kind=mitto.RequestKind.FETCH` are the
 | `RequestKind.FETCH` | `"fetch"` | A page's `fetch()` that does not ask for a `credentials` mode, so `same-origin` |
 | `RequestKind.SCRIPT` | `"script"` | A `<script>`, which has no body, and whose cookies go by `SameSite` alone |
 | `RequestKind.IMAGE` | `"image"` | An `<img>`, which has no body, and whose cookies go by `SameSite` alone |
+| `RequestKind.STYLE` | `"style"` | A stylesheet that a `<link rel="stylesheet">` or an `@import` asks for, which has no body |
+| `RequestKind.FONT` | `"font"` | A font that an `@font-face` asks for, in mode `cors` with `same-origin` credentials, so it sends `Origin` to its own origin too, and no cookie to another |
+| `RequestKind.MODULE` | `"module"` | A `<script type="module">` or what a module imports, in mode `cors` with `same-origin` credentials, as a font |
+| `RequestKind.XHR` | `"xhr"` | A page's `XMLHttpRequest` that does not set `withCredentials`, so `same-origin`, as a `fetch` |
+| `RequestKind.WORKER` | `"worker"` | The script of a dedicated worker, which the browser asks for, with no client hints and with `User-Agent` after `Referer`. Its mode is `same-origin`, so one that starts at or a redirect that goes to another origin than its page's fails with `ERR_FAILED` and sends nothing there |
+| `RequestKind.BEACON` | `"beacon"` | A page's `navigator.sendBeacon()`, in mode `no-cors` with credentials, so it sends `Origin` with its `POST` |
+| `RequestKind.IFRAME` | `"iframe"` | The navigation of an `<iframe>` whose parent is the page of `initiator=`, which has no body. Its cookies are those of a frame of that page, so a frame of another site gets no `SameSite` `Strict` or `Lax` cookie, and the origin it goes to keeps none of the client hints it asks for |
+| `RequestKind.FAVICON` | `"favicon"` | A page's icon, which the browser asks for at a higher priority than an image's |
 
 ### `initiator=`
 
@@ -472,7 +482,7 @@ The URL of the page the request is made from, which counts as a top-level page. 
 
 Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`. One that holds a NUL character or a lone surrogate, which UTF-8 cannot encode, raises a `ValueError` that names `initiator`, and a value that is neither text nor `None` raises a `TypeError`.
 
-A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows.
+A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows. A `fetch`, `xhr`, `font` or `module` to another origin that Chrome would send a CORS preflight for, such as a `PUT` or a `POST` with `json=`, sends one first, and goes only if its answer allows it, as [persona.md](persona.md#a-cors-preflight) says. Otherwise the request raises a `RequestError` with `ERR_FAILED`.
 
 ```python
 page = "https://example.test/page"
@@ -488,6 +498,24 @@ assert fetch["Referer"] == "https://example.test/"
 assert "Cookie" not in fetch
 assert image["Cookie"] == "a=1"
 ```
+
+### `credentials=`
+
+Whether the request sends cookies and keeps those it is answered with, as `credentials` of a page's `fetch()` says: `"omit"` never, `"same-origin"` only to its page's origin, and `"include"` wherever `SameSite` allows. `None` leaves the kind's own, which [`RequestKind`](#requestkind) says. A request that includes credentials to another site says its storage access, as the kinds that include them do ([persona.md](persona.md#the-initiator)). A navigation and an `iframe` always include them, so they take only `"include"`, and anything else raises a `ValueError`, as text that is none of the three does.
+
+```python
+page = "https://example.test/page"
+
+with mitto.Session() as session:
+    session.cookies.set(mitto.Cookie("a", "1", domain="other.test", secure=True, same_site="none"))
+    sent = session.get("https://other.test/echo", kind="fetch", credentials="include", initiator=page).json()
+
+assert sent["headers"]["Cookie"] == "a=1"
+```
+
+### `mode=`
+
+The request's mode, as `mode` of a page's `fetch()` or an element's `crossorigin` says: `"cors"`, `"no-cors"` or `"same-origin"`, which `Sec-Fetch-Mode` says in the place of the kind's line. `None` leaves the kind's own. A `fetch` of mode `"no-cors"` to another origin sends no `Origin` with `GET` or `HEAD`, and needs no [preflight](persona.md#a-cors-preflight). Its `json=` body goes with the `Content-Type` that Chrome gives text, `text/plain;charset=UTF-8`, since a page's `fetch()` in that mode cannot say `application/json`; a `Content-Type` in `headers=` still goes as it is given. A `script`, `image` or `style` of mode `"cors"` sends `Origin` first among its lines, as a font does, and with credentials `"same-origin"` it is what `crossorigin="anonymous"` asks for. A navigation and an `iframe` take no mode, the script of a `worker` only `"same-origin"`, and `"no-cors"` only `GET`, `HEAD` and `POST`, as Fetch allows. Anything else raises a `ValueError`.
 
 ### `timeout=`
 

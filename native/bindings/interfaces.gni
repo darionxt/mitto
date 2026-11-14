@@ -82,6 +82,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "BeforeUnloadEvent"
+    file = "before_unload_event"
+  },
+  {
     name = "BroadcastChannel"
     file = "broadcast_channel"
 
@@ -90,6 +94,30 @@ mitto_bindings_interfaces = [
       "name",
       "postMessage",
       "close",
+    ]
+  },
+  {
+    name = "Cache"
+    file = "cache"
+    implemented = [
+      "match",
+      "matchAll",
+      "add",
+      "addAll",
+      "put",
+      "delete",
+      "keys",
+    ]
+  },
+  {
+    name = "CacheStorage"
+    file = "cache_storage"
+    implemented = [
+      "match",
+      "has",
+      "open",
+      "delete",
+      "keys",
     ]
   },
   {
@@ -303,6 +331,7 @@ mitto_bindings_interfaces = [
       "rootElement",
       "customElementRegistry",
       "lastModified",
+      "referrer",
       "images",
       "embeds",
       "plugins",
@@ -315,6 +344,10 @@ mitto_bindings_interfaces = [
       "children",
       "hasStorageAccess",
       "featurePolicy",
+      "open",
+      "close",
+      "write",
+      "writeln",
     ]
   },
   {
@@ -1065,6 +1098,10 @@ mitto_bindings_interfaces = [
     implemented = []
   },
   {
+    name = "HashChangeEvent"
+    file = "hash_change_event"
+  },
+  {
     name = "Headers"
     file = "headers"
 
@@ -1120,19 +1157,9 @@ mitto_bindings_interfaces = [
     file = "location"
     made_by_known_gaps = true
 
-    # Navigating, through its setters and methods, is a Known Gap.
-    implemented = [
-      "get href",
-      "origin",
-      "get protocol",
-      "get host",
-      "get hostname",
-      "get port",
-      "get pathname",
-      "get search",
-      "get hash",
-      "toString",
-    ]
+    # ancestorOrigins gives the empty list of a top-level page, as a Known Gap
+    # does.
+    missing = [ "ancestorOrigins" ]
   },
   {
     name = "Lock"
@@ -1213,9 +1240,23 @@ mitto_bindings_interfaces = [
     file = "named_node_map"
   },
   {
+    name = "NavigateEvent"
+    file = "navigate_event"
+    made_by_known_gaps = true
+
+    # Only the Page makes one: a page's own needs a FormData, which #281
+    # gives, and deferPageSwap() is not on in Chrome 157.
+    missing = [
+      "constructor",
+      "deferPageSwap",
+    ]
+  },
+  {
     name = "Navigation"
     file = "navigation"
     made_by_known_gaps = true
+
+    # Traversal and updateCurrentEntry() are #280's.
     implemented = [
       "currentEntry",
       "transition",
@@ -1223,6 +1264,8 @@ mitto_bindings_interfaces = [
       "canGoBack",
       "canGoForward",
       "entries",
+      "navigate",
+      "reload",
     ]
   },
   {
@@ -1231,16 +1274,39 @@ mitto_bindings_interfaces = [
     made_by_known_gaps = true
   },
   {
+    name = "NavigationCurrentEntryChangeEvent"
+    file = "navigation_current_entry_change_event"
+    made_by_known_gaps = true
+
+    # The bindings do not write a nullable enumeration yet, which
+    # navigationType gives and the constructor's dictionary holds.
+    missing = [
+      "constructor",
+      "navigationType",
+    ]
+  },
+  {
+    name = "NavigationDestination"
+    file = "navigation_destination"
+  },
+  {
     name = "NavigationHistoryEntry"
     file = "navigation_history_entry"
     made_by_known_gaps = true
-    implemented = [
-      "key",
-      "id",
-      "url",
-      "index",
-      "sameDocument",
-    ]
+
+    # The bindings run its event handler attribute.
+    missing = [ "ondispose" ]
+  },
+  {
+    name = "NavigationPrecommitController"
+    file = "navigation_precommit_controller"
+
+    # A redirect before the commit is a Known Gap.
+    missing = [ "redirect" ]
+  },
+  {
+    name = "NavigationTransition"
+    file = "navigation_transition"
   },
   {
     name = "Navigator"
@@ -1371,6 +1437,10 @@ mitto_bindings_interfaces = [
       "permission",
       "requestPermission",
     ]
+  },
+  {
+    name = "PageTransitionEvent"
+    file = "page_transition_event"
   },
   {
     name = "Performance"
@@ -1577,6 +1647,11 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "SVGAngle"
+    file = "svg_angle"
+    header = "svg_geometry"
+  },
+  {
     name = "SVGAnimateElement"
     file = "svg_animate_element"
     header = "svg_elements"
@@ -1593,6 +1668,11 @@ mitto_bindings_interfaces = [
     file = "svg_animate_transform_element"
     header = "svg_elements"
     implemented = []
+  },
+  {
+    name = "SVGAnimatedAngle"
+    file = "svg_animated_angle"
+    header = "svg_geometry"
   },
   {
     name = "SVGAnimatedBoolean"
@@ -1615,9 +1695,29 @@ mitto_bindings_interfaces = [
     header = "svg_length"
   },
   {
+    name = "SVGAnimatedLengthList"
+    file = "svg_animated_length_list"
+    header = "svg_lists"
+  },
+  {
     name = "SVGAnimatedNumber"
     file = "svg_animated_number"
     header = "svg_animated_values"
+  },
+  {
+    name = "SVGAnimatedNumberList"
+    file = "svg_animated_number_list"
+    header = "svg_lists"
+  },
+  {
+    name = "SVGAnimatedPreserveAspectRatio"
+    file = "svg_animated_preserve_aspect_ratio"
+    header = "svg_geometry"
+  },
+  {
+    name = "SVGAnimatedRect"
+    file = "svg_animated_rect"
+    header = "svg_geometry"
   },
   {
     name = "SVGAnimatedString"
@@ -1625,10 +1725,18 @@ mitto_bindings_interfaces = [
     header = "svg_animated_values"
   },
   {
+    name = "SVGAnimatedTransformList"
+    file = "svg_animated_transform_list"
+    header = "svg_transforms"
+  },
+  {
     name = "SVGAnimationElement"
     file = "svg_animation_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "requiredExtensions",
+      "systemLanguage",
+    ]
   },
   {
     name = "SVGCircleElement"
@@ -1646,6 +1754,7 @@ mitto_bindings_interfaces = [
     header = "svg_elements"
     implemented = [
       "clipPathUnits",
+      "transform",
     ]
   },
   {
@@ -1659,6 +1768,7 @@ mitto_bindings_interfaces = [
       "amplitude",
       "exponent",
       "offset",
+      "tableValues",
     ]
   },
   {
@@ -1720,6 +1830,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "values",
     ]
   },
   {
@@ -1775,6 +1886,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "kernelMatrix",
     ]
   },
   {
@@ -1901,6 +2013,7 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "preserveAspectRatio",
     ]
   },
   {
@@ -2075,13 +2188,18 @@ mitto_bindings_interfaces = [
       "gradientUnits",
       "spreadMethod",
       "href",
+      "gradientTransform",
     ]
   },
   {
     name = "SVGGraphicsElement"
     file = "svg_graphics_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "requiredExtensions",
+      "systemLanguage",
+      "transform",
+    ]
   },
   {
     name = "SVGImageElement"
@@ -2093,12 +2211,18 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "preserveAspectRatio",
     ]
   },
   {
     name = "SVGLength"
     file = "svg_length"
     made_by_known_gaps = true
+  },
+  {
+    name = "SVGLengthList"
+    file = "svg_length_list"
+    header = "svg_lists"
   },
   {
     name = "SVGLineElement"
@@ -2140,6 +2264,12 @@ mitto_bindings_interfaces = [
       "refY",
       "markerWidth",
       "markerHeight",
+      "orientType",
+      "orientAngle",
+      "setOrientToAuto",
+      "setOrientToAngle",
+      "viewBox",
+      "preserveAspectRatio",
     ]
   },
   {
@@ -2153,13 +2283,31 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "requiredExtensions",
+      "systemLanguage",
     ]
+  },
+  {
+    name = "SVGMatrix"
+    file = "svg_matrix"
+    header = "svg_transforms"
+    made_by_known_gaps = true
   },
   {
     name = "SVGMetadataElement"
     file = "svg_metadata_element"
     header = "svg_elements"
     implemented = []
+  },
+  {
+    name = "SVGNumber"
+    file = "svg_number"
+    header = "svg_lists"
+  },
+  {
+    name = "SVGNumberList"
+    file = "svg_number_list"
+    header = "svg_lists"
   },
   {
     name = "SVGPathElement"
@@ -2179,19 +2327,46 @@ mitto_bindings_interfaces = [
       "y",
       "width",
       "height",
+      "requiredExtensions",
+      "systemLanguage",
+      "viewBox",
+      "preserveAspectRatio",
+      "patternTransform",
     ]
+  },
+  {
+    name = "SVGPoint"
+    file = "svg_point"
+    header = "svg_geometry"
+    made_by_known_gaps = true
+  },
+  {
+    name = "SVGPointList"
+    file = "svg_point_list"
+    header = "svg_geometry"
   },
   {
     name = "SVGPolygonElement"
     file = "svg_polygon_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "points",
+      "animatedPoints",
+    ]
   },
   {
     name = "SVGPolylineElement"
     file = "svg_polyline_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "points",
+      "animatedPoints",
+    ]
+  },
+  {
+    name = "SVGPreserveAspectRatio"
+    file = "svg_preserve_aspect_ratio"
+    header = "svg_geometry"
   },
   {
     name = "SVGRadialGradientElement"
@@ -2205,6 +2380,12 @@ mitto_bindings_interfaces = [
       "fy",
       "fr",
     ]
+  },
+  {
+    name = "SVGRect"
+    file = "svg_rect"
+    header = "svg_geometry"
+    made_by_known_gaps = true
   },
   {
     name = "SVGRectElement"
@@ -2229,6 +2410,15 @@ mitto_bindings_interfaces = [
       "width",
       "height",
       "createSVGLength",
+      "createSVGNumber",
+      "createSVGAngle",
+      "createSVGPoint",
+      "createSVGRect",
+      "viewBox",
+      "preserveAspectRatio",
+      "createSVGMatrix",
+      "createSVGTransform",
+      "createSVGTransformFromMatrix",
     ]
   },
   {
@@ -2254,6 +2444,11 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "SVGStringList"
+    file = "svg_string_list"
+    header = "svg_lists"
+  },
+  {
     name = "SVGStyleElement"
     file = "svg_style_element"
     header = "svg_elements"
@@ -2269,7 +2464,10 @@ mitto_bindings_interfaces = [
     name = "SVGSymbolElement"
     file = "svg_symbol_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "viewBox",
+      "preserveAspectRatio",
+    ]
   },
   {
     name = "SVGTSpanElement"
@@ -2308,13 +2506,29 @@ mitto_bindings_interfaces = [
     name = "SVGTextPositioningElement"
     file = "svg_text_positioning_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "x",
+      "y",
+      "dx",
+      "dy",
+      "rotate",
+    ]
   },
   {
     name = "SVGTitleElement"
     file = "svg_title_element"
     header = "svg_elements"
     implemented = []
+  },
+  {
+    name = "SVGTransform"
+    file = "svg_transform"
+    header = "svg_transforms"
+  },
+  {
+    name = "SVGTransformList"
+    file = "svg_transform_list"
+    header = "svg_transforms"
   },
   {
     name = "SVGUseElement"
@@ -2332,7 +2546,10 @@ mitto_bindings_interfaces = [
     name = "SVGViewElement"
     file = "svg_view_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "viewBox",
+      "preserveAspectRatio",
+    ]
   },
   {
     name = "Scheduler"
@@ -2484,6 +2701,7 @@ mitto_bindings_interfaces = [
     file = "window"
     implemented = [
       "window",
+      "caches",
       "webkitRequestFileSystem",
       "self",
       "document",
@@ -2493,6 +2711,7 @@ mitto_bindings_interfaces = [
       "setInterval",
       "clearInterval",
       "queueMicrotask",
+      "open",
       "fetch",
       "navigator",
       "clientInformation",

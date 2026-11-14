@@ -1041,7 +1041,7 @@ def test_request_start_accepts_valid_options(
             id="fetch-without-a-credentials-mode",
         ),
         pytest.param(
-            b'{"version": 1, "fetch": {"mode": "same-origin", "destination": "empty", "credentials_mode": "include"}}',
+            b'{"version": 1, "fetch": {"mode": "websocket", "destination": "empty", "credentials_mode": "include"}}',
             id="another-mode",
         ),
         pytest.param(
@@ -1053,7 +1053,7 @@ def test_request_start_accepts_valid_options(
             id="destination-is-empty",
         ),
         pytest.param(
-            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "omit"}}',
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "everything"}}',
             id="another-credentials-mode",
         ),
         pytest.param(

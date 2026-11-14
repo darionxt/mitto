@@ -24,6 +24,7 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/media_query_list.h"
 #include "mitto/dom/svg_element.h"
+#include "mitto/dom/svg_elements.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/visitor.h"
 
@@ -129,8 +130,10 @@ float ResolveToUserUnits(const SVGLengthValue& value,
 // SVGViewportResolver: one size of the viewport that a percentage of
 // `element`'s takes, from the nearest svg element above it: its viewBox's,
 // or else its width or height, which needs only the same size of the svg
-// element's own viewport. An outermost svg element's size is its layout
-// box's in Blink, which the window stands for here.
+// element's own viewport. Each is the svg element's value, which keeps what a
+// page set beyond the six digits of its attribute, as Blink's current values
+// do. An outermost svg element's size is its layout box's in Blink, which the
+// window stands for here.
 float ViewportSize(const SVGElement& element, bool width) {
   for (Node* node = element.ParentNode(); node; node = node->ParentNode()) {
     if (!node->IsElementNode()) {
@@ -142,22 +145,16 @@ float ViewportSize(const SVGElement& element, bool width) {
         ancestor->LocalName() != u"svg") {
       continue;
     }
-    const SVGElement& svg = static_cast<const SVGElement&>(*ancestor);
-    if (const std::u16string* view_box = svg.FindAttribute(u"viewBox")) {
-      const std::optional<std::vector<float>> numbers =
-          ParseSVGNumberList(*view_box);
-      if (numbers && numbers->size() == 4 && (*numbers)[2] >= 0 &&
-          (*numbers)[3] >= 0) {
-        return width ? (*numbers)[2] : (*numbers)[3];
-      }
+    SVGSVGElement& svg = static_cast<SVGSVGElement&>(*ancestor);
+    // A viewBox of no area, or none, is empty, which the svg element's own
+    // size stands for.
+    const SVGRectValue& view_box = svg.ViewBox()->BaseValue();
+    if (view_box.width > 0 && view_box.height > 0) {
+      return width ? view_box.width : view_box.height;
     }
-    const std::u16string* text =
-        svg.FindAttribute(width ? u"width" : u"height");
-    const std::optional<SVGLengthValue> value =
-        text ? SVGLengthValue::Parse(*text) : std::nullopt;
     return ResolveToUserUnits(
-        value.value_or(SVGLengthValue::Literal(100, CssUnit::kPercentage)),
-        &svg, width ? SVGLengthMode::kWidth : SVGLengthMode::kHeight);
+        (width ? svg.Width() : svg.Height())->BaseValue(), &svg,
+        width ? SVGLengthMode::kWidth : SVGLengthMode::kHeight);
   }
   const CssLengthResolver resolver = ResolverFor(&element);
   return static_cast<float>(width ? resolver.viewport_width
@@ -623,6 +620,13 @@ SVGLength* SVGLength::Create() {
 }
 
 // static
+SVGLength* SVGLength::ForItem(SVGListItem<SVGLengthValue>& item,
+                              bool read_only,
+                              SVGAnimatedListBase* binding) {
+  return bindings::MakeGarbageCollected<SVGLength>(item, read_only, binding);
+}
+
+// static
 bindings::ScriptWrappable* SVGLength::CreateForKnownGap(
     const bindings::WrapperTypeInfo& info) {
   return bindings::MakeForKnownGap<SVGLength>(
@@ -638,7 +642,14 @@ SVGLength* SVGLength::CreateTearOff(SVGAnimatedLength& owner,
 SVGLength::SVGLength(SVGAnimatedLength* owner, bool is_anim_val)
     : owner_(owner),
       is_anim_val_(is_anim_val),
-      own_value_(SVGLengthValue::Literal(0, CssUnit::kNumber)) {}
+      item_(owner ? nullptr
+                  : bindings::MakeGarbageCollected<SVGListItem<SVGLengthValue>>(
+                        SVGLengthValue::Literal(0, CssUnit::kNumber))) {}
+
+SVGLength::SVGLength(SVGListItem<SVGLengthValue>& item,
+                     bool read_only,
+                     SVGAnimatedListBase* binding)
+    : is_anim_val_(read_only), item_(&item), binding_(binding) {}
 
 SVGLength::~SVGLength() = default;
 
@@ -649,26 +660,46 @@ const bindings::WrapperTypeInfo* SVGLength::GetWrapperTypeInfo() const {
 void SVGLength::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(owner_);
+  visitor->Trace(item_);
+  visitor->Trace(binding_);
+}
+
+SVGListItem<SVGLengthValue>* SVGLength::ItemToInsert(
+    SVGAnimatedListBase& list) {
+  if (!owner_ && !is_anim_val_ && !binding_ && !item_->owner) {
+    binding_ = &list;
+    return item_.Get();
+  }
+  return bindings::MakeGarbageCollected<SVGListItem<SVGLengthValue>>(Target());
 }
 
 SVGLengthValue SVGLength::Target() const {
-  return owner_ ? owner_->BaseValue() : own_value_;
+  return owner_ ? owner_->BaseValue() : item_->value;
 }
 
 void SVGLength::Commit(const SVGLengthValue& value) {
   if (owner_) {
     owner_->SetBaseValue(value);
-  } else {
-    own_value_ = value;
+    return;
+  }
+  item_->value = value;
+  if (item_->owner) {
+    item_->owner->ItemChanged(item_.Get());
   }
 }
 
 SVGElement* SVGLength::ContextElement() const {
-  return owner_ ? &owner_->Element() : nullptr;
+  if (owner_) {
+    return &owner_->Element();
+  }
+  return binding_ ? &binding_->Element() : nullptr;
 }
 
 SVGLengthMode SVGLength::Mode() const {
-  return owner_ ? owner_->Mode() : SVGLengthMode::kOther;
+  if (owner_) {
+    return owner_->Mode();
+  }
+  return binding_ ? binding_->LengthMode() : SVGLengthMode::kOther;
 }
 
 bool SVGLength::ThrowIfImmutable(

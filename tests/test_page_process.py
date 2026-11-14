@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 17
+_PROTOCOL_VERSION = 21
 
 
 def _script_request(number: int, url: str) -> str:
@@ -224,18 +224,33 @@ def _script_request(number: int, url: str) -> str:
 
 
 def _fetch_request(
-    number: int, url: str, method: str = "GET", lines: str = "", kind: int = 2, document: int = 1
+    number: int,
+    url: str,
+    method: str = "GET",
+    lines: str = "",
+    kind: int = 2,
+    document: int = 1,
+    flags: int = 0,
+    *,
+    fixed: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0),
+    target: int = 0,
 ) -> str:
-    """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends."""
+    """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends.
+
+    `fixed` holds its mode, credentials mode, referrer policy, priority and whether it is incremental, 0 each for the
+    kind's own, and it has no referrer."""
     return (
-        f"struct.pack('<QQBBI', {document}, {number}, {kind}, 0, {len(url)}) + b'{url}' "
-        f"+ struct.pack('<I', {len(method)}) "
-        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + b'\\x00'"
+        f"struct.pack('<QQBB', {document}, {number}, {kind}, {flags}) "
+        f"+ struct.pack('<BBBBBQ', *{fixed}, {target}) "
+        f"+ struct.pack('<I', {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
+        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + struct.pack('<I', 0) + b'\\x00'"
     )
 
 
 # The hello, and the Page's initial about:blank, document 1.
-_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QB', 1, 0))"
+_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QBQ', 1, 0, 0))"
+# A worker of a data: URL that document 1 started, as context 2.
+_DATA_WORKER = "send(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
@@ -294,7 +309,7 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack
         pytest.param(
             "script-with-lines",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', lines='X-A: 1' + chr(10), kind=1)})",
-            "the library refused a message from the Page: a script request with a method, header lines, a body or a mode",
+            "the library refused a message from the Page: a request of an element's kind with a method, header lines or a body",
             id="script-with-lines",
         ),
         pytest.param(
@@ -319,21 +334,161 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack
         pytest.param(
             "unknown-document",
             f"{_HELLO}\nsend(10, struct.pack('<QQ', 5, 1))",
-            "the library refused a message from the Page: message type 10 of document 5, which is not one of the"
-            " Page's",
+            "the library refused a message from the Page: message type 10 of context 5, which is not one of the Page's",
             id="unknown-document",
         ),
         pytest.param(
             "document-numbered-again",
-            f"{_HELLO}\nsend(70, struct.pack('<QB', 1, 0))",
-            "the library refused a message from the Page: a document numbered 1, after one numbered 1",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 1, 0, 0))",
+            "the library refused a message from the Page: a document numbered 1, after a context numbered 1",
             id="document-numbered-again",
         ),
         pytest.param(
             "document-of-no-response",
-            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 1, 0))",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 1, 0, 0))",
             "the library refused a message from the Page: a document of navigation 0, which has no response",
             id="document-of-no-response",
+        ),
+        pytest.param(
+            "same-document-elsewhere",
+            f"{_HELLO}\nsend(71, struct.pack('<Q', 1) + b'http://elsewhere.test/')",
+            "the library refused a message from the Page: a same-document navigation to another origin",
+            id="same-document-elsewhere",
+        ),
+        pytest.param(
+            "navigation-with-a-method",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', method='POST', kind=3)})",
+            "the library refused a message from the Page: a navigation with a method, header lines or a body",
+            id="navigation-with-a-method",
+        ),
+        pytest.param(
+            "fetch-with-activation",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=2)})",
+            "the library refused a message from the Page: a request that is not a navigation with a navigation's flags",
+            id="fetch-with-activation",
+        ),
+        pytest.param(
+            "retired-flag",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=1)})",
+            "the library refused a message from the Page: a request with flags that are not ones",
+            id="retired-flag",
+        ),
+        pytest.param(
+            "script-kept-alive",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/a.js', kind=1, flags=8)})",
+            "the library refused a message from the Page: keepalive on a request that is not a fetch",
+            id="script-kept-alive",
+        ),
+        pytest.param(
+            "fetch-with-a-target",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', target=5)})",
+            "the library refused a message from the Page: a target that only a frame's navigation names, and always names",
+            id="fetch-with-a-target",
+        ),
+        pytest.param(
+            "priority-out-of-range",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', fixed=(0, 0, 0, 7, 0))})",
+            "the library refused a message from the Page: a request with a value out of range",
+            id="priority-out-of-range",
+        ),
+        pytest.param(
+            "worker-in-cors-mode",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/w.js', kind=9, fixed=(4, 0, 0, 0, 0))})",
+            "the library refused a message from the Page: a worker's script in a mode other than same-origin",
+            id="worker-in-cors-mode",
+        ),
+        pytest.param(
+            "no-cors-put",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', method='PUT', fixed=(3, 0, 0, 0, 0))})",
+            "the library refused a message from the Page: a request of mode no-cors with another method",
+            id="no-cors-put",
+        ),
+        pytest.param(
+            "frame-of-no-parent",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 9))",
+            "the library refused a message from the Page: a frame's document whose parent is not one of the Page's"
+            " documents",
+            id="frame-of-no-parent",
+        ),
+        pytest.param(
+            "own-parent",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 0, 2))",
+            "the library refused a message from the Page: a document that is its own parent",
+            id="own-parent",
+        ),
+        pytest.param(
+            "frame-of-no-navigation",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQQ', 2, 1, 1, 7))",
+            "the library refused a message from the Page: a frame's document of navigation 7, which has no response",
+            id="frame-of-no-navigation",
+        ),
+        pytest.param(
+            "top-as-frame-target",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/f', kind=11, target=1)})",
+            "the library refused a message from the Page: a frame's navigation whose target is not a frame's document",
+            id="top-as-frame-target",
+        ),
+        pytest.param(
+            "worker-of-no-creator",
+            f"{_HELLO}\nsend(100, struct.pack('<QQBBQ', 2, 9, 3, 0, 0))",
+            "the library refused a message from the Page: message type 100 of context 9, which is not one of the"
+            " Page's",
+            id="worker-of-no-creator",
+        ),
+        pytest.param(
+            "worker-of-no-script",
+            f"{_HELLO}\nsend(100, struct.pack('<QQBBQ', 2, 1, 1, 0, 5))",
+            "the library refused a message from the Page: a worker whose script is not a response to its creator",
+            id="worker-of-no-script",
+        ),
+        pytest.param(
+            "worker-numbered-again",
+            f"{_HELLO}\nsend(100, struct.pack('<QQBBQ', 1, 1, 3, 0, 0))",
+            "the library refused a message from the Page: a worker that is not valid",
+            id="worker-numbered-again",
+        ),
+        pytest.param(
+            "worker-numbered-back",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(100, struct.pack('<QQBBQ', 2, 1, 3, 0, 0))",
+            "the library refused a message from the Page: a worker numbered 2, after a context numbered 2",
+            id="worker-numbered-back",
+        ),
+        pytest.param(
+            "worker-of-another-origin",
+            f"{_HELLO}\nsend(100, struct.pack('<QQBBQ', 2, 1, 2, 0, 0) + b'blob:http://elsewhere.test/1')",
+            "the library refused a message from the Page: a worker of a blob: URL of another origin than its creator's",
+            id="worker-of-another-origin",
+        ),
+        pytest.param(
+            "blob-worker-with-no-url",
+            f"{_HELLO}\nsend(100, struct.pack('<QQBBQ', 2, 1, 2, 0, 0))",
+            "the library refused a message from the Page: a worker whose source does not match the rest",
+            id="blob-worker-with-no-url",
+        ),
+        pytest.param(
+            "worker-cookies",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(10, struct.pack('<QQ', 2, 1))",
+            "the library refused a message from the Page: message type 10 of a worker, which only a document sends",
+            id="worker-cookies",
+        ),
+        pytest.param(
+            "worker-navigates",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', kind=3, document=2)})",
+            "the library refused a message from the Page: a navigation that a worker starts",
+            id="worker-navigates",
+        ),
+        pytest.param(
+            "top-goes",
+            f"{_HELLO}\nsend(101, struct.pack('<Q', 1))",
+            "the library refused a message from the Page: the top-level document going while the Page stays",
+            id="top-goes",
+        ),
+        pytest.param(
+            "gone-twice",
+            f"{_HELLO}\n{_DATA_WORKER}\nsend(101, struct.pack('<Q', 2))\nsend(101, struct.pack('<Q', 2))",
+            "the library refused a message from the Page: message type 101 of context 2, which is not one of the"
+            " Page's",
+            id="gone-twice",
         ),
         pytest.param(
             "storage-of-opaque-origin",
