@@ -27,7 +27,7 @@ def test_a_written_machine_reads_back_with_its_seed(tmp_path: Path) -> None:
     write_storage_machine(tmp_path, machine)
 
     assert read_storage_machine(tmp_path) == machine
-    held = json.loads((tmp_path / MACHINE_FILE).read_text())
+    held = json.loads((tmp_path / MACHINE_FILE).read_text(encoding="utf-8"))
     assert held == {"version": MACHINE_FILE_VERSION, "machine": dataclasses.asdict(machine)}
     # Only the file is left, with no temporary one beside it.
     assert [path.name for path in tmp_path.iterdir()] == [MACHINE_FILE]

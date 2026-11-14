@@ -28,8 +28,8 @@ from tests.local_server import QuietServer
 _TIMEOUT_SECONDS = 60
 _BLANK = b"<!doctype html><title>s</title><body>"
 _TESTS = Path(__file__).parent
-_CASES = (_TESTS / "storage_cases.js").read_text()
-_AS_CHROME = json.loads((_TESTS / "data" / "storage_cases.json").read_text())
+_CASES = (_TESTS / "storage_cases.js").read_text(encoding="utf-8")
+_AS_CHROME = json.loads((_TESTS / "data" / "storage_cases.json").read_text(encoding="utf-8"))
 _SAVED_STORAGE_CLIENT = _TESTS / "saved_storage_client.py"
 
 # What a page that listens for storage events keeps: each event's members, in order.
