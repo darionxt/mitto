@@ -15,6 +15,7 @@
 #include "mitto/bindings/v8_html_element.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/html_details_element.h"
 #include "mitto/dom/html_input_element.h"
@@ -35,6 +36,35 @@ HTMLElement::HTMLElement(Document& document, const std::u16string& local_name)
 }
 
 HTMLElement::~HTMLElement() = default;
+
+Element* HTMLElement::FormOwner() const {
+  return nullptr;
+}
+
+std::u16string_view HTMLElement::WindowEventNameForAttributeName(
+    const QualifiedName& name) const {
+  return {};
+}
+
+void HTMLElement::AttributeChanged(const QualifiedName& name,
+                                   const std::u16string* old_value,
+                                   const std::u16string* new_value) {
+  Element::AttributeChanged(name, old_value, new_value);
+  // Blink's HTMLBodyElement's and HTMLFrameSetElement's ParseAttribute() set
+  // the window's handlers, before HTMLElement::ParseAttribute() sets the
+  // element's.
+  if (const std::u16string_view event = WindowEventNameForAttributeName(name);
+      !event.empty()) {
+    SetWindowAttributeEventListenerFromScriptBody(*this, event, name,
+                                                  new_value);
+    return;
+  }
+  if (const std::u16string_view event = EventNameForAttributeName(name);
+      !event.empty()) {
+    SetElementAttributeEventListenerFromScriptBody(*this, event, name,
+                                                   new_value);
+  }
+}
 
 const bindings::WrapperTypeInfo* HTMLElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLElement::kWrapperTypeInfo;

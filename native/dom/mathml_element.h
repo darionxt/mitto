@@ -24,6 +24,12 @@ class MathMLElement : public Element {
   ~MathMLElement() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // Element's: the event handler content attributes of HTML elements, as
+  // Blink's MathMLElement::ParseAttribute() sets them.
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
 };
 
 }  // namespace mitto
