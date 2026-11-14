@@ -1,5 +1,7 @@
 #include "mitto/dom/svg_elements.h"
 
+#include <string_view>
+
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_svg_a_element.h"
 #include "mitto/bindings/v8_svg_animate_element.h"
@@ -74,6 +76,63 @@
 
 namespace mitto {
 
+namespace {
+
+// The keywords of Blink's GetEnumerationMap<>()s, with the largest value that
+// a page can see.
+constexpr std::u16string_view kUnitTypesKeywords[] = {u"userSpaceOnUse",
+                                                      u"objectBoundingBox"};
+constexpr SVGEnumerationMap kUnitTypes{kUnitTypesKeywords, 2};
+constexpr std::u16string_view kComponentTransferTypesKeywords[] = {
+    u"identity", u"table", u"discrete", u"linear", u"gamma"};
+constexpr SVGEnumerationMap kComponentTransferTypes{
+    kComponentTransferTypesKeywords, 5};
+constexpr std::u16string_view kBlendModesKeywords[] = {
+    u"normal",     u"multiply",   u"screen",      u"darken",
+    u"lighten",    u"overlay",    u"color-dodge", u"color-burn",
+    u"hard-light", u"soft-light", u"difference",  u"exclusion",
+    u"hue",        u"saturation", u"color",       u"luminosity"};
+constexpr SVGEnumerationMap kBlendModes{kBlendModesKeywords, 16};
+constexpr std::u16string_view kColorMatrixTypesKeywords[] = {
+    u"matrix", u"saturate", u"hueRotate", u"luminanceToAlpha"};
+constexpr SVGEnumerationMap kColorMatrixTypes{kColorMatrixTypesKeywords, 4};
+constexpr std::u16string_view kCompositeOperatorsKeywords[] = {
+    u"over", u"in", u"out", u"atop", u"xor", u"arithmetic", u"lighter"};
+constexpr SVGEnumerationMap kCompositeOperators{kCompositeOperatorsKeywords, 6};
+constexpr std::u16string_view kEdgeModesKeywords[] = {u"duplicate", u"wrap",
+                                                      u"none"};
+constexpr SVGEnumerationMap kEdgeModes{kEdgeModesKeywords, 3};
+constexpr std::u16string_view kChannelSelectorsKeywords[] = {u"R", u"G", u"B",
+                                                             u"A"};
+constexpr SVGEnumerationMap kChannelSelectors{kChannelSelectorsKeywords, 4};
+constexpr std::u16string_view kMorphologyOperatorsKeywords[] = {u"erode",
+                                                                u"dilate"};
+constexpr SVGEnumerationMap kMorphologyOperators{kMorphologyOperatorsKeywords,
+                                                 2};
+constexpr std::u16string_view kStitchTypesKeywords[] = {u"stitch", u"noStitch"};
+constexpr SVGEnumerationMap kStitchTypes{kStitchTypesKeywords, 2};
+constexpr std::u16string_view kTurbulenceTypesKeywords[] = {u"fractalNoise",
+                                                            u"turbulence"};
+constexpr SVGEnumerationMap kTurbulenceTypes{kTurbulenceTypesKeywords, 2};
+constexpr std::u16string_view kSpreadMethodsKeywords[] = {u"pad", u"reflect",
+                                                          u"repeat"};
+constexpr SVGEnumerationMap kSpreadMethods{kSpreadMethodsKeywords, 3};
+constexpr std::u16string_view kMarkerUnitsKeywords[] = {u"userSpaceOnUse",
+                                                        u"strokeWidth"};
+constexpr SVGEnumerationMap kMarkerUnits{kMarkerUnitsKeywords, 2};
+constexpr std::u16string_view kLengthAdjustsKeywords[] = {u"spacing",
+                                                          u"spacingAndGlyphs"};
+constexpr SVGEnumerationMap kLengthAdjusts{kLengthAdjustsKeywords, 2};
+constexpr std::u16string_view kTextPathMethodsKeywords[] = {u"align",
+                                                            u"stretch"};
+constexpr SVGEnumerationMap kTextPathMethods{kTextPathMethodsKeywords, 2};
+constexpr std::u16string_view kTextPathSpacingsKeywords[] = {u"auto", u"exact"};
+constexpr SVGEnumerationMap kTextPathSpacings{kTextPathSpacingsKeywords, 2};
+constexpr std::u16string_view kTextPathSidesKeywords[] = {u"left", u"right"};
+constexpr SVGEnumerationMap kTextPathSides{kTextPathSidesKeywords, 2};
+
+}  // namespace
+
 SVGAnimationElement::SVGAnimationElement(Document& document,
                                          const std::u16string& local_name)
     : SVGElement(document, local_name) {}
@@ -93,6 +152,55 @@ SVGComponentTransferFunctionElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGComponentTransferFunctionElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedEnumeration* SVGComponentTransferFunctionElement::Type() {
+  return AnimatedEnumeration(u"type", kComponentTransferTypes, 1);
+}
+
+SVGAnimatedNumber* SVGComponentTransferFunctionElement::Slope() {
+  return AnimatedNumber(u"slope", 1);
+}
+
+SVGAnimatedNumber* SVGComponentTransferFunctionElement::Intercept() {
+  return AnimatedNumber(u"intercept", 0);
+}
+
+SVGAnimatedNumber* SVGComponentTransferFunctionElement::Amplitude() {
+  return AnimatedNumber(u"amplitude", 1);
+}
+
+SVGAnimatedNumber* SVGComponentTransferFunctionElement::Exponent() {
+  return AnimatedNumber(u"exponent", 1);
+}
+
+SVGAnimatedNumber* SVGComponentTransferFunctionElement::Offset() {
+  return AnimatedNumber(u"offset", 0);
+}
+
+SVGFilterPrimitiveStandardAttributes::SVGFilterPrimitiveStandardAttributes(
+    Document& document,
+    const std::u16string& local_name)
+    : SVGElement(document, local_name) {}
+
+SVGAnimatedLength* SVGFilterPrimitiveStandardAttributes::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent0);
+}
+
+SVGAnimatedLength* SVGFilterPrimitiveStandardAttributes::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent0);
+}
+
+SVGAnimatedLength* SVGFilterPrimitiveStandardAttributes::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent100);
+}
+
+SVGAnimatedLength* SVGFilterPrimitiveStandardAttributes::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent100);
+}
+
 SVGGradientElement::SVGGradientElement(Document& document,
                                        const std::u16string& local_name)
     : SVGElement(document, local_name) {}
@@ -100,6 +208,14 @@ SVGGradientElement::SVGGradientElement(Document& document,
 const bindings::WrapperTypeInfo* SVGGradientElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGGradientElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedEnumeration* SVGGradientElement::GradientUnits() {
+  return AnimatedEnumeration(u"gradientUnits", kUnitTypes, 2);
+}
+
+SVGAnimatedEnumeration* SVGGradientElement::SpreadMethod() {
+  return AnimatedEnumeration(u"spreadMethod", kSpreadMethods, 1);
 }
 
 SVGGraphicsElement::SVGGraphicsElement(Document& document,
@@ -120,6 +236,10 @@ const bindings::WrapperTypeInfo* SVGGeometryElement::GetWrapperTypeInfo()
   return &bindings::V8SVGGeometryElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumber* SVGGeometryElement::PathLength() {
+  return AnimatedNumber(u"pathLength", 0);
+}
+
 SVGTextContentElement::SVGTextContentElement(Document& document,
                                              const std::u16string& local_name)
     : SVGGraphicsElement(document, local_name) {}
@@ -127,6 +247,16 @@ SVGTextContentElement::SVGTextContentElement(Document& document,
 const bindings::WrapperTypeInfo* SVGTextContentElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGTextContentElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGTextContentElement::TextLength() {
+  return AnimatedLength(u"textLength", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero,
+                        /*text_length=*/true);
+}
+
+SVGAnimatedEnumeration* SVGTextContentElement::LengthAdjust() {
+  return AnimatedEnumeration(u"lengthAdjust", kLengthAdjusts, 1);
 }
 
 SVGTextPositioningElement::SVGTextPositioningElement(
@@ -149,6 +279,10 @@ SVGAElement::SVGAElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGAElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGAElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGAElement::SvgTarget() {
+  return AnimatedString(u"target");
 }
 
 int32_t SVGAElement::DefaultTabIndex() const {
@@ -210,6 +344,21 @@ const bindings::WrapperTypeInfo* SVGCircleElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGCircleElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGCircleElement::Cx() {
+  return AnimatedLength(u"cx", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGCircleElement::Cy() {
+  return AnimatedLength(u"cy", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGCircleElement::R() {
+  return AnimatedLength(u"r", SVGLengthMode::kOther,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
 // static
 SVGClipPathElement* SVGClipPathElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGClipPathElement>(document);
@@ -221,6 +370,10 @@ SVGClipPathElement::SVGClipPathElement(Document& document)
 const bindings::WrapperTypeInfo* SVGClipPathElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGClipPathElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedEnumeration* SVGClipPathElement::ClipPathUnits() {
+  return AnimatedEnumeration(u"clipPathUnits", kUnitTypes, 1);
 }
 
 // static
@@ -259,16 +412,48 @@ const bindings::WrapperTypeInfo* SVGEllipseElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGEllipseElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGEllipseElement::Cx() {
+  return AnimatedLength(u"cx", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGEllipseElement::Cy() {
+  return AnimatedLength(u"cy", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGEllipseElement::Rx() {
+  return AnimatedLength(u"rx", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGEllipseElement::Ry() {
+  return AnimatedLength(u"ry", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
 // static
 SVGFEBlendElement* SVGFEBlendElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGFEBlendElement>(document);
 }
 
 SVGFEBlendElement::SVGFEBlendElement(Document& document)
-    : SVGElement(document, u"feBlend") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feBlend") {}
 
 const bindings::WrapperTypeInfo* SVGFEBlendElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEBlendElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEBlendElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedString* SVGFEBlendElement::In2() {
+  return AnimatedString(u"in2");
+}
+
+SVGAnimatedEnumeration* SVGFEBlendElement::Mode() {
+  return AnimatedEnumeration(u"mode", kBlendModes, 1);
 }
 
 // static
@@ -277,11 +462,19 @@ SVGFEColorMatrixElement* SVGFEColorMatrixElement::Create(Document& document) {
 }
 
 SVGFEColorMatrixElement::SVGFEColorMatrixElement(Document& document)
-    : SVGElement(document, u"feColorMatrix") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feColorMatrix") {}
 
 const bindings::WrapperTypeInfo* SVGFEColorMatrixElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFEColorMatrixElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEColorMatrixElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedEnumeration* SVGFEColorMatrixElement::Type() {
+  return AnimatedEnumeration(u"type", kColorMatrixTypes, 1);
 }
 
 // static
@@ -292,11 +485,15 @@ SVGFEComponentTransferElement* SVGFEComponentTransferElement::Create(
 }
 
 SVGFEComponentTransferElement::SVGFEComponentTransferElement(Document& document)
-    : SVGElement(document, u"feComponentTransfer") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feComponentTransfer") {}
 
 const bindings::WrapperTypeInfo*
 SVGFEComponentTransferElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEComponentTransferElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEComponentTransferElement::In1() {
+  return AnimatedString(u"in");
 }
 
 // static
@@ -305,11 +502,39 @@ SVGFECompositeElement* SVGFECompositeElement::Create(Document& document) {
 }
 
 SVGFECompositeElement::SVGFECompositeElement(Document& document)
-    : SVGElement(document, u"feComposite") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feComposite") {}
 
 const bindings::WrapperTypeInfo* SVGFECompositeElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFECompositeElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFECompositeElement::In2() {
+  return AnimatedString(u"in2");
+}
+
+SVGAnimatedString* SVGFECompositeElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedEnumeration* SVGFECompositeElement::SvgOperator() {
+  return AnimatedEnumeration(u"operator", kCompositeOperators, 1);
+}
+
+SVGAnimatedNumber* SVGFECompositeElement::K1() {
+  return AnimatedNumber(u"k1", 0);
+}
+
+SVGAnimatedNumber* SVGFECompositeElement::K2() {
+  return AnimatedNumber(u"k2", 0);
+}
+
+SVGAnimatedNumber* SVGFECompositeElement::K3() {
+  return AnimatedNumber(u"k3", 0);
+}
+
+SVGAnimatedNumber* SVGFECompositeElement::K4() {
+  return AnimatedNumber(u"k4", 0);
 }
 
 // static
@@ -319,11 +544,55 @@ SVGFEConvolveMatrixElement* SVGFEConvolveMatrixElement::Create(
 }
 
 SVGFEConvolveMatrixElement::SVGFEConvolveMatrixElement(Document& document)
-    : SVGElement(document, u"feConvolveMatrix") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feConvolveMatrix") {}
 
 const bindings::WrapperTypeInfo*
 SVGFEConvolveMatrixElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEConvolveMatrixElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEConvolveMatrixElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedInteger* SVGFEConvolveMatrixElement::OrderX() {
+  return AnimatedOrder(SVGPairHalf::kFirst);
+}
+
+SVGAnimatedInteger* SVGFEConvolveMatrixElement::OrderY() {
+  return AnimatedOrder(SVGPairHalf::kSecond);
+}
+
+SVGAnimatedNumber* SVGFEConvolveMatrixElement::Divisor() {
+  return AnimatedNumber(u"divisor", 1);
+}
+
+SVGAnimatedNumber* SVGFEConvolveMatrixElement::Bias() {
+  return AnimatedNumber(u"bias", 0);
+}
+
+SVGAnimatedInteger* SVGFEConvolveMatrixElement::TargetX() {
+  return AnimatedInteger(u"targetX", 0);
+}
+
+SVGAnimatedInteger* SVGFEConvolveMatrixElement::TargetY() {
+  return AnimatedInteger(u"targetY", 0);
+}
+
+SVGAnimatedEnumeration* SVGFEConvolveMatrixElement::EdgeMode() {
+  return AnimatedEnumeration(u"edgeMode", kEdgeModes, 1);
+}
+
+SVGAnimatedNumber* SVGFEConvolveMatrixElement::KernelUnitLengthX() {
+  return AnimatedNumberHalf(u"kernelUnitLength", SVGPairHalf::kFirst, 0);
+}
+
+SVGAnimatedNumber* SVGFEConvolveMatrixElement::KernelUnitLengthY() {
+  return AnimatedNumberHalf(u"kernelUnitLength", SVGPairHalf::kSecond, 0);
+}
+
+SVGAnimatedBoolean* SVGFEConvolveMatrixElement::PreserveAlpha() {
+  return AnimatedBoolean(u"preserveAlpha");
 }
 
 // static
@@ -333,11 +602,31 @@ SVGFEDiffuseLightingElement* SVGFEDiffuseLightingElement::Create(
 }
 
 SVGFEDiffuseLightingElement::SVGFEDiffuseLightingElement(Document& document)
-    : SVGElement(document, u"feDiffuseLighting") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feDiffuseLighting") {}
 
 const bindings::WrapperTypeInfo*
 SVGFEDiffuseLightingElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEDiffuseLightingElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEDiffuseLightingElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedNumber* SVGFEDiffuseLightingElement::SurfaceScale() {
+  return AnimatedNumber(u"surfaceScale", 1);
+}
+
+SVGAnimatedNumber* SVGFEDiffuseLightingElement::DiffuseConstant() {
+  return AnimatedNumber(u"diffuseConstant", 1);
+}
+
+SVGAnimatedNumber* SVGFEDiffuseLightingElement::KernelUnitLengthX() {
+  return AnimatedNumberHalf(u"kernelUnitLength", SVGPairHalf::kFirst, 0);
+}
+
+SVGAnimatedNumber* SVGFEDiffuseLightingElement::KernelUnitLengthY() {
+  return AnimatedNumberHalf(u"kernelUnitLength", SVGPairHalf::kSecond, 0);
 }
 
 // static
@@ -347,11 +636,31 @@ SVGFEDisplacementMapElement* SVGFEDisplacementMapElement::Create(
 }
 
 SVGFEDisplacementMapElement::SVGFEDisplacementMapElement(Document& document)
-    : SVGElement(document, u"feDisplacementMap") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feDisplacementMap") {}
 
 const bindings::WrapperTypeInfo*
 SVGFEDisplacementMapElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEDisplacementMapElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEDisplacementMapElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedString* SVGFEDisplacementMapElement::In2() {
+  return AnimatedString(u"in2");
+}
+
+SVGAnimatedNumber* SVGFEDisplacementMapElement::Scale() {
+  return AnimatedNumber(u"scale", 0);
+}
+
+SVGAnimatedEnumeration* SVGFEDisplacementMapElement::XChannelSelector() {
+  return AnimatedEnumeration(u"xChannelSelector", kChannelSelectors, 4);
+}
+
+SVGAnimatedEnumeration* SVGFEDisplacementMapElement::YChannelSelector() {
+  return AnimatedEnumeration(u"yChannelSelector", kChannelSelectors, 4);
 }
 
 // static
@@ -367,17 +676,51 @@ const bindings::WrapperTypeInfo* SVGFEDistantLightElement::GetWrapperTypeInfo()
   return &bindings::V8SVGFEDistantLightElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumber* SVGFEDistantLightElement::Azimuth() {
+  return AnimatedNumber(u"azimuth", 0);
+}
+
+SVGAnimatedNumber* SVGFEDistantLightElement::Elevation() {
+  return AnimatedNumber(u"elevation", 0);
+}
+
 // static
 SVGFEDropShadowElement* SVGFEDropShadowElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGFEDropShadowElement>(document);
 }
 
 SVGFEDropShadowElement::SVGFEDropShadowElement(Document& document)
-    : SVGElement(document, u"feDropShadow") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feDropShadow") {}
 
 const bindings::WrapperTypeInfo* SVGFEDropShadowElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFEDropShadowElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEDropShadowElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedNumber* SVGFEDropShadowElement::Dx() {
+  return AnimatedNumber(u"dx", 2);
+}
+
+SVGAnimatedNumber* SVGFEDropShadowElement::Dy() {
+  return AnimatedNumber(u"dy", 2);
+}
+
+SVGAnimatedNumber* SVGFEDropShadowElement::StdDeviationX() {
+  return AnimatedNumberHalf(u"stdDeviation", SVGPairHalf::kFirst, 2);
+}
+
+SVGAnimatedNumber* SVGFEDropShadowElement::StdDeviationY() {
+  return AnimatedNumberHalf(u"stdDeviation", SVGPairHalf::kSecond, 2);
+}
+
+void SVGFEDropShadowElement::SetStdDeviation(float std_deviation_x,
+                                             float std_deviation_y) {
+  StdDeviationX()->SetBaseValue(std_deviation_x);
+  StdDeviationY()->SetBaseValue(std_deviation_y);
 }
 
 // static
@@ -386,7 +729,7 @@ SVGFEFloodElement* SVGFEFloodElement::Create(Document& document) {
 }
 
 SVGFEFloodElement::SVGFEFloodElement(Document& document)
-    : SVGElement(document, u"feFlood") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feFlood") {}
 
 const bindings::WrapperTypeInfo* SVGFEFloodElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEFloodElement::kWrapperTypeInfo;
@@ -446,11 +789,29 @@ SVGFEGaussianBlurElement* SVGFEGaussianBlurElement::Create(Document& document) {
 }
 
 SVGFEGaussianBlurElement::SVGFEGaussianBlurElement(Document& document)
-    : SVGElement(document, u"feGaussianBlur") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feGaussianBlur") {}
 
 const bindings::WrapperTypeInfo* SVGFEGaussianBlurElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFEGaussianBlurElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEGaussianBlurElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedNumber* SVGFEGaussianBlurElement::StdDeviationX() {
+  return AnimatedNumberHalf(u"stdDeviation", SVGPairHalf::kFirst, 0);
+}
+
+SVGAnimatedNumber* SVGFEGaussianBlurElement::StdDeviationY() {
+  return AnimatedNumberHalf(u"stdDeviation", SVGPairHalf::kSecond, 0);
+}
+
+void SVGFEGaussianBlurElement::SetStdDeviation(float std_deviation_x,
+                                               float std_deviation_y) {
+  StdDeviationX()->SetBaseValue(std_deviation_x);
+  StdDeviationY()->SetBaseValue(std_deviation_y);
 }
 
 // static
@@ -459,7 +820,7 @@ SVGFEImageElement* SVGFEImageElement::Create(Document& document) {
 }
 
 SVGFEImageElement::SVGFEImageElement(Document& document)
-    : SVGElement(document, u"feImage") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feImage") {}
 
 const bindings::WrapperTypeInfo* SVGFEImageElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEImageElement::kWrapperTypeInfo;
@@ -471,7 +832,7 @@ SVGFEMergeElement* SVGFEMergeElement::Create(Document& document) {
 }
 
 SVGFEMergeElement::SVGFEMergeElement(Document& document)
-    : SVGElement(document, u"feMerge") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feMerge") {}
 
 const bindings::WrapperTypeInfo* SVGFEMergeElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFEMergeElement::kWrapperTypeInfo;
@@ -490,17 +851,37 @@ const bindings::WrapperTypeInfo* SVGFEMergeNodeElement::GetWrapperTypeInfo()
   return &bindings::V8SVGFEMergeNodeElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedString* SVGFEMergeNodeElement::In1() {
+  return AnimatedString(u"in");
+}
+
 // static
 SVGFEMorphologyElement* SVGFEMorphologyElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGFEMorphologyElement>(document);
 }
 
 SVGFEMorphologyElement::SVGFEMorphologyElement(Document& document)
-    : SVGElement(document, u"feMorphology") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feMorphology") {}
 
 const bindings::WrapperTypeInfo* SVGFEMorphologyElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFEMorphologyElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEMorphologyElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedEnumeration* SVGFEMorphologyElement::SvgOperator() {
+  return AnimatedEnumeration(u"operator", kMorphologyOperators, 1);
+}
+
+SVGAnimatedNumber* SVGFEMorphologyElement::RadiusX() {
+  return AnimatedNumberHalf(u"radius", SVGPairHalf::kFirst, 0);
+}
+
+SVGAnimatedNumber* SVGFEMorphologyElement::RadiusY() {
+  return AnimatedNumberHalf(u"radius", SVGPairHalf::kSecond, 0);
 }
 
 // static
@@ -509,11 +890,23 @@ SVGFEOffsetElement* SVGFEOffsetElement::Create(Document& document) {
 }
 
 SVGFEOffsetElement::SVGFEOffsetElement(Document& document)
-    : SVGElement(document, u"feOffset") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feOffset") {}
 
 const bindings::WrapperTypeInfo* SVGFEOffsetElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFEOffsetElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFEOffsetElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedNumber* SVGFEOffsetElement::Dx() {
+  return AnimatedNumber(u"dx", 0);
+}
+
+SVGAnimatedNumber* SVGFEOffsetElement::Dy() {
+  return AnimatedNumber(u"dy", 0);
 }
 
 // static
@@ -529,6 +922,18 @@ const bindings::WrapperTypeInfo* SVGFEPointLightElement::GetWrapperTypeInfo()
   return &bindings::V8SVGFEPointLightElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumber* SVGFEPointLightElement::X() {
+  return AnimatedNumber(u"x", 0);
+}
+
+SVGAnimatedNumber* SVGFEPointLightElement::Y() {
+  return AnimatedNumber(u"y", 0);
+}
+
+SVGAnimatedNumber* SVGFEPointLightElement::Z() {
+  return AnimatedNumber(u"z", 0);
+}
+
 // static
 SVGFESpecularLightingElement* SVGFESpecularLightingElement::Create(
     Document& document) {
@@ -536,11 +941,35 @@ SVGFESpecularLightingElement* SVGFESpecularLightingElement::Create(
 }
 
 SVGFESpecularLightingElement::SVGFESpecularLightingElement(Document& document)
-    : SVGElement(document, u"feSpecularLighting") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feSpecularLighting") {}
 
 const bindings::WrapperTypeInfo*
 SVGFESpecularLightingElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFESpecularLightingElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFESpecularLightingElement::In1() {
+  return AnimatedString(u"in");
+}
+
+SVGAnimatedNumber* SVGFESpecularLightingElement::SurfaceScale() {
+  return AnimatedNumber(u"surfaceScale", 1);
+}
+
+SVGAnimatedNumber* SVGFESpecularLightingElement::SpecularConstant() {
+  return AnimatedNumber(u"specularConstant", 1);
+}
+
+SVGAnimatedNumber* SVGFESpecularLightingElement::SpecularExponent() {
+  return AnimatedNumber(u"specularExponent", 1);
+}
+
+SVGAnimatedNumber* SVGFESpecularLightingElement::KernelUnitLengthX() {
+  return AnimatedNumberHalf(u"kernelUnitLength", SVGPairHalf::kFirst, 0);
+}
+
+SVGAnimatedNumber* SVGFESpecularLightingElement::KernelUnitLengthY() {
+  return AnimatedNumberHalf(u"kernelUnitLength", SVGPairHalf::kSecond, 0);
 }
 
 // static
@@ -556,16 +985,52 @@ const bindings::WrapperTypeInfo* SVGFESpotLightElement::GetWrapperTypeInfo()
   return &bindings::V8SVGFESpotLightElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedNumber* SVGFESpotLightElement::X() {
+  return AnimatedNumber(u"x", 0);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::Y() {
+  return AnimatedNumber(u"y", 0);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::Z() {
+  return AnimatedNumber(u"z", 0);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::PointsAtX() {
+  return AnimatedNumber(u"pointsAtX", 0);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::PointsAtY() {
+  return AnimatedNumber(u"pointsAtY", 0);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::PointsAtZ() {
+  return AnimatedNumber(u"pointsAtZ", 0);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::SpecularExponent() {
+  return AnimatedNumber(u"specularExponent", 1);
+}
+
+SVGAnimatedNumber* SVGFESpotLightElement::LimitingConeAngle() {
+  return AnimatedNumber(u"limitingConeAngle", 0);
+}
+
 // static
 SVGFETileElement* SVGFETileElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGFETileElement>(document);
 }
 
 SVGFETileElement::SVGFETileElement(Document& document)
-    : SVGElement(document, u"feTile") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feTile") {}
 
 const bindings::WrapperTypeInfo* SVGFETileElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFETileElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedString* SVGFETileElement::In1() {
+  return AnimatedString(u"in");
 }
 
 // static
@@ -574,11 +1039,35 @@ SVGFETurbulenceElement* SVGFETurbulenceElement::Create(Document& document) {
 }
 
 SVGFETurbulenceElement::SVGFETurbulenceElement(Document& document)
-    : SVGElement(document, u"feTurbulence") {}
+    : SVGFilterPrimitiveStandardAttributes(document, u"feTurbulence") {}
 
 const bindings::WrapperTypeInfo* SVGFETurbulenceElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGFETurbulenceElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedNumber* SVGFETurbulenceElement::BaseFrequencyX() {
+  return AnimatedNumberHalf(u"baseFrequency", SVGPairHalf::kFirst, 0);
+}
+
+SVGAnimatedNumber* SVGFETurbulenceElement::BaseFrequencyY() {
+  return AnimatedNumberHalf(u"baseFrequency", SVGPairHalf::kSecond, 0);
+}
+
+SVGAnimatedInteger* SVGFETurbulenceElement::NumOctaves() {
+  return AnimatedInteger(u"numOctaves", 1);
+}
+
+SVGAnimatedNumber* SVGFETurbulenceElement::Seed() {
+  return AnimatedNumber(u"seed", 0);
+}
+
+SVGAnimatedEnumeration* SVGFETurbulenceElement::StitchTiles() {
+  return AnimatedEnumeration(u"stitchTiles", kStitchTypes, 2);
+}
+
+SVGAnimatedEnumeration* SVGFETurbulenceElement::Type() {
+  return AnimatedEnumeration(u"type", kTurbulenceTypes, 2);
 }
 
 // static
@@ -593,6 +1082,34 @@ const bindings::WrapperTypeInfo* SVGFilterElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGFilterElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGFilterElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercentMinus10);
+}
+
+SVGAnimatedLength* SVGFilterElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercentMinus10);
+}
+
+SVGAnimatedLength* SVGFilterElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent120);
+}
+
+SVGAnimatedLength* SVGFilterElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent120);
+}
+
+SVGAnimatedEnumeration* SVGFilterElement::FilterUnits() {
+  return AnimatedEnumeration(u"filterUnits", kUnitTypes, 2);
+}
+
+SVGAnimatedEnumeration* SVGFilterElement::PrimitiveUnits() {
+  return AnimatedEnumeration(u"primitiveUnits", kUnitTypes, 1);
+}
+
 // static
 SVGForeignObjectElement* SVGForeignObjectElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGForeignObjectElement>(document);
@@ -604,6 +1121,26 @@ SVGForeignObjectElement::SVGForeignObjectElement(Document& document)
 const bindings::WrapperTypeInfo* SVGForeignObjectElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGForeignObjectElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGForeignObjectElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGForeignObjectElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGForeignObjectElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGForeignObjectElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
 }
 
 // static
@@ -630,6 +1167,26 @@ const bindings::WrapperTypeInfo* SVGImageElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGImageElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGImageElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGImageElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGImageElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGImageElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
 // static
 SVGLineElement* SVGLineElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGLineElement>(document);
@@ -640,6 +1197,26 @@ SVGLineElement::SVGLineElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGLineElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGLineElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGLineElement::X1() {
+  return AnimatedLength(u"x1", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGLineElement::Y1() {
+  return AnimatedLength(u"y1", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGLineElement::X2() {
+  return AnimatedLength(u"x2", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGLineElement::Y2() {
+  return AnimatedLength(u"y2", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
 }
 
 // static
@@ -653,6 +1230,26 @@ SVGLinearGradientElement::SVGLinearGradientElement(Document& document)
 const bindings::WrapperTypeInfo* SVGLinearGradientElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGLinearGradientElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGLinearGradientElement::X1() {
+  return AnimatedLength(u"x1", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent0);
+}
+
+SVGAnimatedLength* SVGLinearGradientElement::Y1() {
+  return AnimatedLength(u"y1", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent0);
+}
+
+SVGAnimatedLength* SVGLinearGradientElement::X2() {
+  return AnimatedLength(u"x2", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent100);
+}
+
+SVGAnimatedLength* SVGLinearGradientElement::Y2() {
+  return AnimatedLength(u"y2", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent0);
 }
 
 // static
@@ -679,6 +1276,30 @@ const bindings::WrapperTypeInfo* SVGMarkerElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGMarkerElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGMarkerElement::RefX() {
+  return AnimatedLength(u"refX", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGMarkerElement::RefY() {
+  return AnimatedLength(u"refY", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGMarkerElement::MarkerWidth() {
+  return AnimatedLength(u"markerWidth", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kNumber3);
+}
+
+SVGAnimatedLength* SVGMarkerElement::MarkerHeight() {
+  return AnimatedLength(u"markerHeight", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kNumber3);
+}
+
+SVGAnimatedEnumeration* SVGMarkerElement::MarkerUnits() {
+  return AnimatedEnumeration(u"markerUnits", kMarkerUnits, 2);
+}
+
 // static
 SVGMaskElement* SVGMaskElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGMaskElement>(document);
@@ -689,6 +1310,34 @@ SVGMaskElement::SVGMaskElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGMaskElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGMaskElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGMaskElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercentMinus10);
+}
+
+SVGAnimatedLength* SVGMaskElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercentMinus10);
+}
+
+SVGAnimatedLength* SVGMaskElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent120);
+}
+
+SVGAnimatedLength* SVGMaskElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent120);
+}
+
+SVGAnimatedEnumeration* SVGMaskElement::MaskUnits() {
+  return AnimatedEnumeration(u"maskUnits", kUnitTypes, 2);
+}
+
+SVGAnimatedEnumeration* SVGMaskElement::MaskContentUnits() {
+  return AnimatedEnumeration(u"maskContentUnits", kUnitTypes, 1);
 }
 
 // static
@@ -726,6 +1375,34 @@ SVGPatternElement::SVGPatternElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGPatternElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGPatternElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGPatternElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGPatternElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGPatternElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGPatternElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedEnumeration* SVGPatternElement::PatternUnits() {
+  return AnimatedEnumeration(u"patternUnits", kUnitTypes, 2);
+}
+
+SVGAnimatedEnumeration* SVGPatternElement::PatternContentUnits() {
+  return AnimatedEnumeration(u"patternContentUnits", kUnitTypes, 1);
 }
 
 // static
@@ -766,6 +1443,36 @@ const bindings::WrapperTypeInfo* SVGRadialGradientElement::GetWrapperTypeInfo()
   return &bindings::V8SVGRadialGradientElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGRadialGradientElement::Cx() {
+  return AnimatedLength(u"cx", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent50);
+}
+
+SVGAnimatedLength* SVGRadialGradientElement::Cy() {
+  return AnimatedLength(u"cy", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent50);
+}
+
+SVGAnimatedLength* SVGRadialGradientElement::R() {
+  return AnimatedLength(u"r", SVGLengthMode::kOther,
+                        SVGAnimatedLength::Initial::kPercent50);
+}
+
+SVGAnimatedLength* SVGRadialGradientElement::Fx() {
+  return AnimatedLength(u"fx", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent50);
+}
+
+SVGAnimatedLength* SVGRadialGradientElement::Fy() {
+  return AnimatedLength(u"fy", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent50);
+}
+
+SVGAnimatedLength* SVGRadialGradientElement::Fr() {
+  return AnimatedLength(u"fr", SVGLengthMode::kOther,
+                        SVGAnimatedLength::Initial::kPercent0);
+}
+
 // static
 SVGRectElement* SVGRectElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGRectElement>(document);
@@ -778,6 +1485,36 @@ const bindings::WrapperTypeInfo* SVGRectElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGRectElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGRectElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGRectElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGRectElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGRectElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGRectElement::Rx() {
+  return AnimatedLength(u"rx", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGRectElement::Ry() {
+  return AnimatedLength(u"ry", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
 // static
 SVGSVGElement* SVGSVGElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGSVGElement>(document);
@@ -788,6 +1525,30 @@ SVGSVGElement::SVGSVGElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGSVGElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGSVGElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGSVGElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGSVGElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGSVGElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kPercent100);
+}
+
+SVGAnimatedLength* SVGSVGElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kPercent100);
+}
+
+SVGLength* SVGSVGElement::CreateSVGLength() {
+  return SVGLength::Create();
 }
 
 // static
@@ -824,6 +1585,11 @@ SVGStopElement::SVGStopElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGStopElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGStopElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedNumber* SVGStopElement::Offset() {
+  return AnimatedNumber(u"offset", 0,
+                        SVGAnimatedNumber::Syntax::kNumberOrPercentage);
 }
 
 // static
@@ -899,6 +1665,23 @@ const bindings::WrapperTypeInfo* SVGTextPathElement::GetWrapperTypeInfo()
   return &bindings::V8SVGTextPathElement::kWrapperTypeInfo;
 }
 
+SVGAnimatedLength* SVGTextPathElement::StartOffset() {
+  return AnimatedLength(u"startOffset", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedEnumeration* SVGTextPathElement::Method() {
+  return AnimatedEnumeration(u"method", kTextPathMethods, 1);
+}
+
+SVGAnimatedEnumeration* SVGTextPathElement::Spacing() {
+  return AnimatedEnumeration(u"spacing", kTextPathSpacings, 2);
+}
+
+SVGAnimatedEnumeration* SVGTextPathElement::Side() {
+  return AnimatedEnumeration(u"side", kTextPathSides, 1);
+}
+
 // static
 SVGTitleElement* SVGTitleElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGTitleElement>(document);
@@ -921,6 +1704,26 @@ SVGUseElement::SVGUseElement(Document& document)
 
 const bindings::WrapperTypeInfo* SVGUseElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGUseElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedLength* SVGUseElement::X() {
+  return AnimatedLength(u"x", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGUseElement::Y() {
+  return AnimatedLength(u"y", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGUseElement::Width() {
+  return AnimatedLength(u"width", SVGLengthMode::kWidth,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
+}
+
+SVGAnimatedLength* SVGUseElement::Height() {
+  return AnimatedLength(u"height", SVGLengthMode::kHeight,
+                        SVGAnimatedLength::Initial::kUnitlessZero);
 }
 
 // static

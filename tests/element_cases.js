@@ -1300,5 +1300,332 @@
     return [i.createDocument(null, "") instanceof XMLDocument, i.createDocument(null, "") instanceof Document, i.createHTMLDocument() instanceof HTMLDocument, Object.getPrototypeOf(i.createDocument(null, "")) === XMLDocument.prototype].join("|");
   });
   run("XMLDocument constructor", () => new XMLDocument());
+  // SVG's animated strings, booleans, enumerations, integers and numbers.
+  const SVG_ANIMATED = [["a","target","String","target"],["clipPath","clipPathUnits","Enumeration","clipPathUnits"],["feFuncR","type","Enumeration","type"],["feFuncR","slope","Number","slope"],["feFuncR","intercept","Number","intercept"],["feFuncR","amplitude","Number","amplitude"],["feFuncR","exponent","Number","exponent"],["feFuncR","offset","Number","offset"],["rect","className","String","class"],["feBlend","in1","String","in"],["feBlend","in2","String","in2"],["feBlend","mode","Enumeration","mode"],["feColorMatrix","in1","String","in"],["feColorMatrix","type","Enumeration","type"],["feComponentTransfer","in1","String","in"],["feComposite","in2","String","in2"],["feComposite","in1","String","in"],["feComposite","operator","Enumeration","operator"],["feComposite","k1","Number","k1"],["feComposite","k2","Number","k2"],["feComposite","k3","Number","k3"],["feComposite","k4","Number","k4"],["feConvolveMatrix","in1","String","in"],["feConvolveMatrix","orderX","Integer","order"],["feConvolveMatrix","orderY","Integer","order"],["feConvolveMatrix","divisor","Number","divisor"],["feConvolveMatrix","bias","Number","bias"],["feConvolveMatrix","targetX","Integer","targetX"],["feConvolveMatrix","targetY","Integer","targetY"],["feConvolveMatrix","edgeMode","Enumeration","edgeMode"],["feConvolveMatrix","kernelUnitLengthX","Number","kernelUnitLength"],["feConvolveMatrix","kernelUnitLengthY","Number","kernelUnitLength"],["feConvolveMatrix","preserveAlpha","Boolean","preserveAlpha"],["feDiffuseLighting","in1","String","in"],["feDiffuseLighting","surfaceScale","Number","surfaceScale"],["feDiffuseLighting","diffuseConstant","Number","diffuseConstant"],["feDiffuseLighting","kernelUnitLengthX","Number","kernelUnitLength"],["feDiffuseLighting","kernelUnitLengthY","Number","kernelUnitLength"],["feDisplacementMap","in1","String","in"],["feDisplacementMap","in2","String","in2"],["feDisplacementMap","scale","Number","scale"],["feDisplacementMap","xChannelSelector","Enumeration","xChannelSelector"],["feDisplacementMap","yChannelSelector","Enumeration","yChannelSelector"],["feDistantLight","azimuth","Number","azimuth"],["feDistantLight","elevation","Number","elevation"],["feDropShadow","in1","String","in"],["feDropShadow","dx","Number","dx"],["feDropShadow","dy","Number","dy"],["feDropShadow","stdDeviationX","Number","stdDeviation"],["feDropShadow","stdDeviationY","Number","stdDeviation"],["feGaussianBlur","in1","String","in"],["feGaussianBlur","stdDeviationX","Number","stdDeviation"],["feGaussianBlur","stdDeviationY","Number","stdDeviation"],["feMergeNode","in1","String","in"],["feMorphology","in1","String","in"],["feMorphology","operator","Enumeration","operator"],["feMorphology","radiusX","Number","radius"],["feMorphology","radiusY","Number","radius"],["feOffset","in1","String","in"],["feOffset","dx","Number","dx"],["feOffset","dy","Number","dy"],["fePointLight","x","Number","x"],["fePointLight","y","Number","y"],["fePointLight","z","Number","z"],["feSpecularLighting","in1","String","in"],["feSpecularLighting","surfaceScale","Number","surfaceScale"],["feSpecularLighting","specularConstant","Number","specularConstant"],["feSpecularLighting","specularExponent","Number","specularExponent"],["feSpecularLighting","kernelUnitLengthX","Number","kernelUnitLength"],["feSpecularLighting","kernelUnitLengthY","Number","kernelUnitLength"],["feSpotLight","x","Number","x"],["feSpotLight","y","Number","y"],["feSpotLight","z","Number","z"],["feSpotLight","pointsAtX","Number","pointsAtX"],["feSpotLight","pointsAtY","Number","pointsAtY"],["feSpotLight","pointsAtZ","Number","pointsAtZ"],["feSpotLight","specularExponent","Number","specularExponent"],["feSpotLight","limitingConeAngle","Number","limitingConeAngle"],["feTile","in1","String","in"],["feTurbulence","baseFrequencyX","Number","baseFrequency"],["feTurbulence","baseFrequencyY","Number","baseFrequency"],["feTurbulence","numOctaves","Integer","numOctaves"],["feTurbulence","seed","Number","seed"],["feTurbulence","stitchTiles","Enumeration","stitchTiles"],["feTurbulence","type","Enumeration","type"],["filter","filterUnits","Enumeration","filterUnits"],["filter","primitiveUnits","Enumeration","primitiveUnits"],["feFlood","result","String","result"],["path","pathLength","Number","pathLength"],["linearGradient","gradientUnits","Enumeration","gradientUnits"],["linearGradient","spreadMethod","Enumeration","spreadMethod"],["marker","markerUnits","Enumeration","markerUnits"],["mask","maskUnits","Enumeration","maskUnits"],["mask","maskContentUnits","Enumeration","maskContentUnits"],["pattern","patternUnits","Enumeration","patternUnits"],["pattern","patternContentUnits","Enumeration","patternContentUnits"],["stop","offset","Number","offset"],["text","lengthAdjust","Enumeration","lengthAdjust"],["textPath","method","Enumeration","method"],["textPath","spacing","Enumeration","spacing"],["a","href","String","href"],["textPath","side","Enumeration","side"]];
+  const svg = (name) => document.createElementNS(SVG, name);
+  const each = (f) => SVG_ANIMATED.map(([tag, member, kind, attribute]) => {
+    try {
+      return tag + "." + member + "=" + f(svg(tag), member, kind, attribute);
+    } catch (e) {
+      return tag + "." + member + " threw " + e.name + ": " + e.message;
+    }
+  }).join(" | ");
+  run("svg animated defaults", () => each((e, m) => [Object.prototype.toString.call(e[m]), e[m] === e[m], JSON.stringify(e[m].baseVal), JSON.stringify(e[m].animVal)].join("/")));
+  run("svg animated invalid", () => each((e, m, kind, a) => { if (kind === "String") return "-"; e.setAttribute(a, "bad"); return e[m].baseVal; }));
+  run("svg animated empty", () => each((e, m, kind, a) => { e.setAttribute(a, ""); return JSON.stringify(e[m].baseVal); }));
+  run("svg animated enumerations", () => each((e, m, kind, a) => {
+    if (kind !== "Enumeration") return "-";
+    const out = [];
+    for (let v = 1; v < 20; v++) {
+      try { e[m].baseVal = v; out.push(e.getAttribute(a) + ":" + e[m].baseVal + ":" + e[m].animVal); } catch (x) { out.push(x.message); break; }
+    }
+    return out.join(",");
+  }));
+  run("svg animated set", () => each((e, m, kind, a) => {
+    const value = { String: "v w", Boolean: true, Enumeration: 1, Integer: 7, Number: 2.25 }[kind];
+    e[m].baseVal = value;
+    return [e.getAttribute(a), e[m].baseVal, e[m].animVal, e.attributes.length].join(",");
+  }));
+  run("svg animated prototypes", () => ["String", "Boolean", "Enumeration", "Integer", "Number"].map((k) => {
+    const I = window["SVGAnimated" + k];
+    let made;
+    try { new I(); made = "made"; } catch (x) { made = x.name + ": " + x.message; }
+    return [k, I.length, Object.getOwnPropertyNames(I.prototype).join(" "), made].join("/");
+  }).join(" | "));
+  run("svg number parse", () => {
+    const p = svg("path");
+    return ["5", " 5", "5 ", "\t5\n", "5,", "5 ,", ",5", "1e2", "1E2", "1e+2", "1e-2", "1e", "1ex", "1em", "abc", "-1.5", "+.5e-1", "-.5", "0x10", "1.", ".", ".e1", "5px", "Infinity", "NaN", "1e38", "1e39", "3e38", "1e-50", "3.14159265358979", "0.1", "123456789012", "00012", "1 2", "+-1", "--1", "1.5.5", "\u00a05"].map((v) => { p.setAttribute("pathLength", v); return JSON.stringify(v) + "=" + p.pathLength.baseVal; }).join(",");
+  });
+  run("svg number set", () => {
+    const p = svg("path");
+    return [0.1, 1 / 3, 2 / 3, 1e20, -0, 123456789, 1e-7, 2.5, 100, 1e6, 999999.5, 1234567, 0.000123, 0.00001234, -42.125, 3e38, "7", true, null].map((v) => { p.pathLength.baseVal = v; return String(v) + "=" + p.getAttribute("pathLength") + "/" + p.pathLength.baseVal; }).join(",");
+  });
+  run("svg number errors", () => {
+    const p = svg("path");
+    const out = [];
+    for (const v of [NaN, Infinity, -Infinity, "x", undefined, {}]) {
+      try { p.pathLength.baseVal = v; out.push("ok " + p.getAttribute("pathLength")); } catch (x) { out.push(x.name + ": " + x.message); }
+    }
+    return out.join(",");
+  });
+  run("svg number percentage", () => {
+    const s = svg("stop");
+    return ["50%", "0.5", "150%", "-1", "2", "bad", "50 %", " 50%", "50% ", "50%%", "%", "1e2%", "50,"].map((v) => { s.setAttribute("offset", v); return JSON.stringify(v) + "=" + s.offset.baseVal; }).concat([(s.offset.baseVal = 0.25, s.getAttribute("offset"))]).join(",");
+  });
+  run("svg integer parse", () => {
+    const t = svg("feTurbulence");
+    return ["3", "3.7", "-2", "1e1", "abc", " 4", "4 ", "+5", "2147483647", "2147483648", "-2147483648", "-2147483649", "07", "-0", "+-1", "1 2", "\u00a06", "6\u3000", "\v8"].map((v) => { t.setAttribute("numOctaves", v); return JSON.stringify(v) + "=" + t.numOctaves.baseVal; }).join(",");
+  });
+  run("svg integer set", () => {
+    const t = svg("feTurbulence");
+    return [3.7, -2.5, 2147483648, 4294967297, "9", NaN, Infinity].map((v) => { t.numOctaves.baseVal = v; return String(v) + "=" + t.numOctaves.baseVal + "/" + t.getAttribute("numOctaves"); }).join(",");
+  });
+  run("svg number pairs", () => {
+    const g = svg("feGaussianBlur");
+    const out = ["3", "3 4", "3,4", "3 , 4", "3 4 5", "bad", "3 bad", " 2  5 ", "3,", ",3", "", "1e1 2e1"].map((v) => { g.setAttribute("stdDeviation", v); return JSON.stringify(v) + "=" + g.stdDeviationX.baseVal + "," + g.stdDeviationY.baseVal; });
+    g.setAttribute("stdDeviation", "1 2");
+    const x = g.stdDeviationX;
+    x.baseVal = 7;
+    out.push(g.getAttribute("stdDeviation"), g.stdDeviationY.baseVal);
+    g.setAttribute("stdDeviation", "3");
+    g.stdDeviationY.baseVal = 8;
+    out.push(g.getAttribute("stdDeviation"));
+    g.stdDeviationX.baseVal = 8;
+    out.push(g.getAttribute("stdDeviation"));
+    g.setStdDeviation(5, 6);
+    out.push(g.getAttribute("stdDeviation"), x === g.stdDeviationX, g.stdDeviationX !== g.stdDeviationY);
+    return out.join(",");
+  });
+  run("svg order", () => {
+    const c = svg("feConvolveMatrix");
+    const out = ["3", "3 2", "2.5", "2.9 1.1", "0", "-1 2", "2 0", "bad", "1e1", "4,4", "2147483648"].map((v) => { c.setAttribute("order", v); return JSON.stringify(v) + "=" + c.orderX.baseVal + "," + c.orderY.baseVal; });
+    c.removeAttribute("order");
+    c.orderX.baseVal = 4;
+    out.push(c.getAttribute("order"));
+    c.orderY.baseVal = 4;
+    out.push(c.getAttribute("order"));
+    c.orderX.baseVal = 0;
+    out.push(c.getAttribute("order"), c.orderX.baseVal, c.orderY.baseVal);
+    return out.join(",");
+  });
+  run("svg boolean", () => {
+    const c = svg("feConvolveMatrix");
+    const b = c.preserveAlpha;
+    const out = ["true", "false", "TRUE", "", "yes", " true", "1"].map((v) => { c.setAttribute("preserveAlpha", v); return JSON.stringify(v) + "=" + b.baseVal; });
+    for (const v of [true, 0, "x", "", null]) { b.baseVal = v; out.push(c.getAttribute("preserveAlpha") + ":" + b.baseVal); }
+    return out.join(",");
+  });
+  run("svg enumeration values", () => {
+    const b = svg("feBlend");
+    const out = ["multiply", "MULTIPLY", "bad", "", "hue", " screen"].map((v) => { b.setAttribute("mode", v); return JSON.stringify(v) + "=" + b.mode.baseVal; });
+    for (const v of [0, 1, 16, 17, -1, 65536, 65537, 2.5, "3", NaN]) {
+      try { b.mode.baseVal = v; out.push(v + "=" + b.mode.baseVal + ":" + b.getAttribute("mode")); } catch (x) { out.push(v + " " + x.name + ": " + x.message); }
+    }
+    const c = svg("feComposite");
+    c.setAttribute("operator", "lighter");
+    out.push(c.operator.baseVal, c.operator.animVal);
+    return out.join(",");
+  });
+  run("svg class name", () => {
+    const r = svg("rect");
+    const c = r.className;
+    const out = [String(c), c.baseVal === ""];
+    r.setAttribute("class", "a b");
+    out.push(c.baseVal, c.animVal);
+    c.baseVal = "x y";
+    out.push(r.getAttribute("class"), r.classList.length, r.classList.contains("y"), r.matches(".x"));
+    c.baseVal = null;
+    out.push(r.getAttribute("class"));
+    r.removeAttribute("class");
+    out.push(JSON.stringify(c.baseVal));
+    const h = document.createElement("div");
+    out.push(typeof h.className, Object.getOwnPropertyDescriptor(SVGElement.prototype, "className").set === undefined);
+    out.push((function () { "use strict"; try { c.animVal = "q"; return "no error"; } catch (x) { return x.name; } })());
+    return out.join(",");
+  });
+  run("svg href", () => {
+    const out = [];
+    const a = svg("a");
+    out.push(JSON.stringify(a.href.baseVal));
+    a.setAttributeNS(XLINK, "xlink:href", "x");
+    out.push(a.href.baseVal);
+    a.setAttribute("href", "y");
+    out.push(a.href.baseVal, a.href.animVal);
+    a.removeAttribute("href");
+    out.push(a.href.baseVal);
+    a.href.baseVal = "z";
+    out.push(a.getAttribute("href"), a.getAttributeNS(XLINK, "href"), a.attributes.length);
+    a.removeAttributeNS(XLINK, "href");
+    out.push(JSON.stringify(a.href.baseVal));
+    a.href.baseVal = "w";
+    out.push(a.getAttribute("href"), a.attributes.length);
+    for (const name of ["use", "image", "linearGradient", "radialGradient", "pattern", "filter", "textPath", "feImage", "script", "mpath"]) {
+      const e = svg(name);
+      e.setAttributeNS(XLINK, "xlink:href", "#x");
+      out.push(name + ":" + e.href.baseVal);
+    }
+    out.push("href" in svg("rect"), "result" in svg("rect"), "result" in svg("feFlood"));
+    return out.join(",");
+  });
+  run("svg animated strings", () => {
+    const b = svg("feBlend");
+    b.in1.baseVal = "SourceGraphic";
+    b.in2.baseVal = 5;
+    b.result.baseVal = "r";
+    return [b.getAttribute("in"), b.getAttribute("in1"), b.in2.baseVal, b.getAttribute("in2"), b.getAttribute("result"), b.attributes.length].join(",");
+  });
+  run("svg animated after attribute", () => {
+    const f = svg("feFuncR");
+    const s = f.slope;
+    const out = [s.baseVal];
+    f.setAttribute("slope", "2");
+    out.push(s.baseVal);
+    s.baseVal = 1 / 3;
+    out.push(f.getAttribute("slope"), s.baseVal);
+    f.setAttribute("slope", "0.333333");
+    out.push(s.baseVal);
+    f.setAttributeNS(null, "slope", "4");
+    out.push(s.baseVal);
+    f.attributes.getNamedItem("slope").value = "5";
+    out.push(s.baseVal);
+    f.removeAttribute("slope");
+    out.push(s.baseVal);
+    f.setAttributeNS("urn:x", "x:slope", "6");
+    out.push(s.baseVal);
+    f.innerHTML = "";
+    f.setAttribute("SLOPE", "7");
+    out.push(s.baseVal, f.attributes.length);
+    return out.join(",");
+  });
+  run("svg animated copies", () => {
+    const f = svg("feFuncR");
+    f.slope.baseVal = 1 / 3;
+    const copy = f.cloneNode();
+    return [copy.getAttribute("slope"), copy.slope.baseVal, copy.slope === f.slope, f.slope.baseVal].join(",");
+  });
+  run("svg animated mutations", () => {
+    const r = svg("rect");
+    const p = svg("path");
+    const f = svg("feGaussianBlur");
+    const o = new MutationObserver(() => {});
+    for (const e of [r, p, f]) o.observe(e, { attributes: true, attributeOldValue: true });
+    r.className.baseVal = "a";
+    p.pathLength.baseVal = 3;
+    f.stdDeviationX.baseVal = 2;
+    const quiet = o.takeRecords().length;
+    r.setAttribute("class", "b");
+    p.getAttribute("pathLength");
+    return [quiet, o.takeRecords().map((x) => x.attributeName + ":" + x.oldValue).join(" ")].join(",");
+  });
+  // SVG's lengths.
+  const lengthOf = (l) => { let value; try { value = l.value; } catch (e) { value = e.name + ": " + e.message; } return [l.unitType, l.valueInSpecifiedUnits, JSON.stringify(l.valueAsString), value].join("/"); };
+  const tryIt = (f) => { try { return String(f()); } catch (e) { return e.name + ": " + e.message; } };
+  run("svg length parse", () => {
+    const r = svg("rect");
+    return ["5", "5px", " 5px ", "5PX", "5e1px", "+.5cm", "-1mm", "2in", "3pt", "4pc", "1q", "1Q", "10%", "2em", "3ex", "1rem", "1ch", "10vw", "1lh", "5 px", "px", "", "abc", "5px 6px", "inherit", "1e40", "0.1234567", "123456789", "1e-7px", "1e40px", "-0", "5deg", "5s", "#5", "calc(10px + 1px)", "calc(1in - 1px)", "calc(10px + 1em)", "min(1px, 2px)", "max(1cm, 1px)", "clamp(1px, 2px, 3px)", "calc(5)", "calc(1deg)", "calc(1px", "var(--x)", " var(--x, 5px) ", "calc(var(--x) * 2)", "var(--x) !important", "var(--x);", "{var(--x)}", "VAR(--y)"].map((v) => { r.setAttribute("x", v); return JSON.stringify(v) + "=" + lengthOf(r.x.baseVal); }).join(" | ");
+  });
+  run("svg length connected", () => {
+    const s = svg("svg");
+    s.setAttribute("width", "200");
+    s.setAttribute("height", "100");
+    (document.body || document.documentElement).appendChild(s);
+    const r = svg("rect");
+    const c = svg("circle");
+    const inner = svg("svg");
+    inner.setAttribute("width", "50%");
+    inner.setAttribute("height", "40");
+    const deep = svg("rect");
+    inner.appendChild(deep);
+    s.append(r, c, inner);
+    const out = [];
+    for (const v of ["10%", "2em", "1rem", "calc(10px + 1em)", "3in"]) { r.setAttribute("x", v); out.push("x " + v + "=" + r.x.baseVal.value); }
+    r.setAttribute("y", "10%"); out.push("y=" + r.y.baseVal.value);
+    r.setAttribute("width", "25%"); out.push("width=" + r.width.baseVal.value);
+    c.setAttribute("r", "10%"); out.push("r=" + c.r.baseVal.value);
+    deep.setAttribute("x", "10%"); deep.setAttribute("y", "50%"); out.push("deep=" + deep.x.baseVal.value + "," + deep.y.baseVal.value);
+    out.push("svg=" + [s.width.baseVal.value, s.height.baseVal.value, s.x.baseVal.value].join(","));
+    s.setAttribute("viewBox", "0 0 400 50"); r.setAttribute("x", "10%"); out.push("viewBox=" + r.x.baseVal.value + "," + r.y.baseVal.value);
+    s.removeAttribute("viewBox");
+    r.setAttribute("x", "10%"); r.x.baseVal.value = 50; out.push("set%=" + r.getAttribute("x"));
+    r.setAttribute("x", "2em"); r.x.baseVal.value = 8; out.push("setEm=" + r.getAttribute("x"));
+    r.setAttribute("x", "30px"); r.x.baseVal.convertToSpecifiedUnits(2); out.push("to%=" + r.getAttribute("x"));
+    r.x.baseVal.convertToSpecifiedUnits(3); out.push("toEm=" + r.getAttribute("x"));
+    r.x.baseVal.convertToSpecifiedUnits(5); out.push("toPx=" + r.getAttribute("x"));
+    s.remove();
+    out.push("removed=" + tryIt(() => r.x.baseVal.value));
+    return out.join(" | ");
+  });
+  run("svg length nested", () => {
+    const outer = svg("svg");
+    outer.setAttribute("width", "200");
+    outer.setAttribute("height", "100");
+    (document.body || document.documentElement).appendChild(outer);
+    let parent = outer;
+    for (let i = 0; i < 40; i++) {
+      const next = svg("svg");
+      parent.appendChild(next);
+      parent = next;
+    }
+    const c = svg("circle");
+    c.setAttribute("cx", "10%");
+    c.setAttribute("cy", "10%");
+    c.setAttribute("r", "10%");
+    parent.appendChild(c);
+    const out = [c.cx.baseVal.value, c.cy.baseVal.value, c.r.baseVal.value];
+    outer.remove();
+    return out.join(",");
+  });
+  run("svg length references", () => {
+    const r = svg("rect");
+    const l = r.x.baseVal;
+    return ["var()", "var(foo)", "var(--)", "var(--x)", "var(-x)", "var(--x foo)", "var(--x,)", "var( --x )", "var(--x , 1px)", "var(--x, var(y))", "var(--x, var(--y))", "var(--x, ;)", "var(--x, {})", "var(--x, ))", "var(--x,!)", "var(--x) var(--y)", "1px var(--x)", "env(foo)", "env(foo, 1px)", "env(1)", "env(foo 1)", "env(foo 1 2)", "env(foo -1)", "env(foo 1.5)", "env()", "attr(x)", "attr(x px)", "attr(x type(<length>))", "attr()", "attr(1)", "if(x)", "if(supports(x: y): 1px)", "--f()", "--f(1px)", "inherit(--x)", "var(--x) {}", "{var(--x)} {}", "{var(--x)}", " {var(--x)}", "{var(--x)} ", "[var(--x)]", "(var(--x))", "var(--x) )", "var(--x) ]", "VAR(--X)", "var(--x)!", "var(--x) ! important", "var(--x)!important", "calc(var(--x))", "url(var(--x))", "var(--x,\"str\")", "var(--x, \"open", "var(--x"].map((v) => {
+      r.setAttribute("x", v);
+      const fromAttribute = l.unitType + "/" + JSON.stringify(l.valueAsString);
+      let set;
+      try { l.valueAsString = "5"; l.valueAsString = v; set = JSON.stringify(l.valueAsString); } catch (e) { set = e.name; }
+      return JSON.stringify(v) + "=" + fromAttribute + "/" + set;
+    }).join(" | ");
+  });
+  run("svg length set", () => {
+    const e = svg("rect");
+    const l = e.x.baseVal;
+    e.setAttribute("x", "5px");
+    return [tryIt(() => { l.value = 7; return e.getAttribute("x") + " " + l.unitType; }), tryIt(() => { l.valueInSpecifiedUnits = 2.5; return e.getAttribute("x"); }), tryIt(() => { l.valueAsString = "3cm"; return e.getAttribute("x") + " " + l.value; }), tryIt(() => { l.valueAsString = "bad"; }), tryIt(() => { l.newValueSpecifiedUnits(7, 4); return e.getAttribute("x") + " " + l.value; }), tryIt(() => { l.newValueSpecifiedUnits(0, 4); }), tryIt(() => { l.newValueSpecifiedUnits(11, 4); }), tryIt(() => { l.convertToSpecifiedUnits(8); return e.getAttribute("x") + " " + l.valueInSpecifiedUnits; }), tryIt(() => { l.convertToSpecifiedUnits(3); }), tryIt(() => { l.convertToSpecifiedUnits(1); return e.getAttribute("x"); }), tryIt(() => { l.value = NaN; }), tryIt(() => { l.valueInSpecifiedUnits = Infinity; }), tryIt(() => { l.convertToSpecifiedUnits(0); }), tryIt(() => { l.newValueSpecifiedUnits(1, 1 / 3); return e.getAttribute("x") + " " + l.valueInSpecifiedUnits; }), tryIt(() => { l.newValueSpecifiedUnits(10, 1e20); return e.getAttribute("x") + " " + l.value; })].join(" | ");
+  });
+  run("svg length set relative and calc", () => {
+    const e = svg("rect");
+    const l = e.x.baseVal;
+    e.setAttribute("x", "2em");
+    const out = [tryIt(() => { l.value = 7; return e.getAttribute("x"); }), tryIt(() => { l.valueInSpecifiedUnits = 3; return e.getAttribute("x"); })];
+    e.setAttribute("x", "calc(1px + 2px)");
+    out.push(l.unitType, l.valueInSpecifiedUnits, tryIt(() => l.value), tryIt(() => { l.value = 7; return e.getAttribute("x") + " " + l.unitType; }));
+    e.setAttribute("x", "calc(1px + 2px)");
+    out.push(tryIt(() => { l.valueInSpecifiedUnits = 4; return e.getAttribute("x"); }));
+    e.setAttribute("x", "var(--x)");
+    out.push(tryIt(() => l.convertToSpecifiedUnits(5)), tryIt(() => { l.value = 2; return e.getAttribute("x"); }));
+    return out.join(" | ");
+  });
+  run("svg length objects", () => {
+    const e = svg("rect");
+    const s = svg("svg");
+    const c = s.createSVGLength();
+    const out = [e.x.animVal === e.x.animVal, e.x.baseVal === e.x.baseVal, e.x.animVal !== e.x.baseVal, e.x === e.x, Object.prototype.toString.call(e.x), Object.prototype.toString.call(c), c !== s.createSVGLength()];
+    for (const f of [() => { e.x.animVal.value = 1; }, () => { e.x.animVal.valueInSpecifiedUnits = 1; }, () => { e.x.animVal.valueAsString = "1"; }, () => { e.x.animVal.newValueSpecifiedUnits(1, 2); }, () => { e.x.animVal.convertToSpecifiedUnits(1); }]) out.push(tryIt(f));
+    e.x.baseVal.value = 4;
+    out.push(e.x.animVal.value, e.x.animVal.valueAsString);
+    out.push(lengthOf(c), tryIt(() => { c.valueAsString = "2em"; return c.value; }), tryIt(() => { c.valueAsString = "10%"; return c.value; }), tryIt(() => { c.valueAsString = "3mm"; return c.value; }), tryIt(() => { c.convertToSpecifiedUnits(9); return c.valueAsString; }), tryIt(() => { c.value = 12; return c.valueAsString; }));
+    out.push(SVGLength.SVG_LENGTHTYPE_UNKNOWN, SVGLength.SVG_LENGTHTYPE_PERCENTAGE, SVGLength.SVG_LENGTHTYPE_PC, c.SVG_LENGTHTYPE_EMS, tryIt(() => new SVGLength()), tryIt(() => new SVGAnimatedLength()));
+    return out.join(",");
+  });
+  run("svg length defaults", () => [["rect", "x"], ["rect", "y"], ["rect", "width"], ["rect", "height"], ["rect", "rx"], ["rect", "ry"], ["circle", "cx"], ["circle", "cy"], ["circle", "r"], ["ellipse", "cx"], ["ellipse", "cy"], ["ellipse", "rx"], ["ellipse", "ry"], ["line", "x1"], ["line", "y1"], ["line", "x2"], ["line", "y2"], ["svg", "x"], ["svg", "y"], ["svg", "width"], ["svg", "height"], ["image", "x"], ["image", "width"], ["use", "y"], ["use", "height"], ["foreignObject", "x"], ["foreignObject", "height"], ["linearGradient", "x1"], ["linearGradient", "y1"], ["linearGradient", "x2"], ["linearGradient", "y2"], ["radialGradient", "cx"], ["radialGradient", "cy"], ["radialGradient", "r"], ["radialGradient", "fx"], ["radialGradient", "fy"], ["radialGradient", "fr"], ["mask", "x"], ["mask", "y"], ["mask", "width"], ["mask", "height"], ["pattern", "x"], ["pattern", "width"], ["filter", "x"], ["filter", "y"], ["filter", "width"], ["filter", "height"], ["marker", "refX"], ["marker", "refY"], ["marker", "markerWidth"], ["marker", "markerHeight"], ["text", "textLength"], ["tspan", "textLength"], ["textPath", "startOffset"], ["textPath", "textLength"], ...["feBlend", "feColorMatrix", "feComponentTransfer", "feComposite", "feConvolveMatrix", "feDiffuseLighting", "feDisplacementMap", "feDropShadow", "feFlood", "feGaussianBlur", "feImage", "feMerge", "feMorphology", "feOffset", "feSpecularLighting", "feTile", "feTurbulence"].flatMap((t) => ["x", "y", "width", "height"].map((m) => [t, m]))].map(([t, m]) => { const e = svg(t); const out = t + "." + m + "=" + lengthOf(e[m].baseVal); e.setAttribute(m, "bad"); return out + ";" + e[m].baseVal.valueAsString + "/" + e[m].baseVal.unitType; }).join(" | "));
+  run("svg length text length", () => {
+    const t = svg("text");
+    const out = [lengthOf(t.textLength.baseVal)];
+    t.setAttribute("textLength", "bad");
+    out.push(lengthOf(t.textLength.baseVal));
+    t.setAttribute("textLength", "5mm");
+    out.push(lengthOf(t.textLength.baseVal));
+    t.removeAttribute("textLength");
+    t.textLength.baseVal.value = 9;
+    out.push(t.getAttribute("textLength"), lengthOf(t.textLength.baseVal));
+    return out.join(" | ");
+  });
+  run("svg length attributes", () => {
+    const e = svg("rect");
+    const o = new MutationObserver(() => {});
+    o.observe(e, { attributes: true, attributeOldValue: true });
+    const l = e.width.baseVal;
+    l.value = 3;
+    l.newValueSpecifiedUnits(6, 2);
+    const quiet = o.takeRecords().length;
+    e.setAttribute("width", "-5");
+    const after = [l.valueAsString, l.value];
+    e.setAttributeNS("urn:x", "x:width", "7");
+    after.push(l.valueAsString);
+    const copy = e.cloneNode();
+    copy.width.baseVal.value = 10;
+    after.push(e.getAttribute("width"), copy.getAttribute("width"));
+    return [quiet, o.takeRecords().map((x) => x.attributeName + ":" + x.oldValue).join(" "), ...after].join(",");
+  });
   return JSON.stringify(cases, null, 1);
 })()

@@ -16,6 +16,7 @@
 #include "mitto/dom/html_br_element.h"
 #include "mitto/dom/html_canvas_element.h"
 #include "mitto/dom/html_details_element.h"
+#include "mitto/dom/html_dialog_element.h"
 #include "mitto/dom/html_div_element.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/html_elements.h"
