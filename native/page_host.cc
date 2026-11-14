@@ -638,8 +638,15 @@ class PageHost::StorageArea {
   PageStorageKind kind() const { return kind_; }
 
   // Puts an observer numbered `number` in the place of the one before, and
-  // returns it for the area to add when it should.
+  // returns it for the area to add when it should. An area of sessionStorage
+  // has none: Chrome's SessionStorageAreaImpl tells a renderer of no change,
+  // since the renderer is the source of truth for its own, and only of a
+  // deletion that the browser starts, which a Session never does.
   base::WeakPtr<StorageAreaObserver> ReplaceObserver(uint64_t number) {
+    observer_.reset();
+    if (kind_ == PageStorageKind::kSession) {
+      return nullptr;
+    }
     observer_ = std::make_unique<Observer>(*host_, *area_, number);
     return observer_->GetWeakPtr();
   }
@@ -1465,7 +1472,10 @@ void PageHost::OnStorageBind(const PageStorageBind& bind,
     area = &session_storage_->Area(*storage_key);
   }
   auto storage_area = std::make_unique<StorageArea>(*this, *area, bind.kind);
-  area->AddObserver(storage_area->ReplaceObserver(bind.observer).get());
+  if (base::WeakPtr<StorageAreaObserver> observer =
+          storage_area->ReplaceObserver(bind.observer)) {
+    area->AddObserver(observer.get());
+  }
   storage_areas_.emplace(bind.area, std::move(storage_area));
 }
 

@@ -200,10 +200,16 @@ def test_session_storage_is_each_page_s_own(blank_page: str) -> None:
         session._open_page(blank_page, timeout=_TIMEOUT_SECONDS) as second,  # pyright: ignore[reportPrivateUsage]
     ):
         second.evaluate(_LISTEN)
-        first.evaluate("sessionStorage.setItem('k', 'first')")
+        # A clear() and a write right after it: the Session tells the Page of neither, as Chrome's does not.
+        first.evaluate("sessionStorage.setItem('x', '1'); sessionStorage.clear(); sessionStorage.setItem('k', 'first')")
         second.evaluate("sessionStorage.setItem('k', 'second')")
 
-        assert first.evaluate("sessionStorage.getItem('k')") == "first"
+        assert first.evaluate(
+            "new Promise((r) => setTimeout(() => r([sessionStorage.getItem('k'), sessionStorage.length]), 200))"
+        ) == [
+            "first",
+            1,
+        ]
         assert second.evaluate(
             "new Promise((r) => setTimeout(() => r([sessionStorage.getItem('k'), heard]), 200))"
         ) == [

@@ -970,18 +970,21 @@ def test_a_page_keeps_local_storage_in_its_session(session: _Session) -> None:
     )
     assert session.evaluated() == (1, False, '["v","é"]')
 
-    # A write goes on its own, with the window's token and its document's URL.
-    assert session.evaluate(
-        "localStorage.setItem('n', '\u00e9'); addEventListener('storage', (e) => "
+    # A write goes on its own, before the script ends, with the window's token and its document's URL.
+    session.send(
+        _EVALUATE,
+        struct.pack("<Q", 2)
+        + "localStorage.setItem('n', '\u00e9'); addEventListener('storage', (e) => "
         "(window.heard = [e.key, e.oldValue, e.newValue, e.url, e.storageArea === localStorage]))"
-        "; localStorage.n"
-    ) == (False, '"é"')
+        "; localStorage.n".encode(),
+    )
     message_type, payload = session.receive()
     assert message_type == _STORAGE_PUT
     token = payload[8:24]
     assert payload == struct.pack("<Q", 1) + _storage_source(token, _DOCUMENT_URL) + _sized(_LATIN_1 + b"n") + (
         _LATIN_1 + b"\xe9"
     )
+    assert session.evaluated() == (2, False, '"é"')
 
     # Another Page's change reaches the window, and one for the observer that the read replaced does not.
     other = bytes(range(16))
