@@ -264,6 +264,11 @@ class Window final : public WindowProperties {
   void SetStart(const PageStart& start, const PageConnection& connection);
   // What the window reads of the browser and the machine.
   const PageStart& Start() const { return start_; }
+  // The ID by which the Page names the window's document to its Session, which
+  // each message of the document carries (page_messages.h). kNoDocument for a
+  // window that no Session loaded, as in the Page program given a script.
+  void SetDocumentId(uint64_t id) { document_id_ = id; }
+  uint64_t DocumentId() const { return document_id_; }
   // How the window's document loads, which performance.timing and the
   // navigation's entry read. Without one, as in the Page program given a
   // script, the window starts one at its time origin.
@@ -316,6 +321,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Event> current_event_;
   PageStart start_;
   PageConnection connection_;
+  uint64_t document_id_ = kNoDocument;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;

@@ -63,7 +63,8 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.window = &Window::Current();
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
-  send_.Run(EncodeRequest(request));
+  // The Session works out the Initiator from the document that asks.
+  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
   return request.number;
 }
 
