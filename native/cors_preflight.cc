@@ -18,7 +18,6 @@
 #include "mitto/sec_header_helpers.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
-#include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_handle.h"
 #include "net/cert/cert_status_flags.h"
@@ -61,15 +60,6 @@ constexpr std::string_view kAccessControlRequestHeaders =
     "Access-Control-Request-Headers";
 constexpr std::string_view kDefaultAcceptHeaderValue = "*/*";
 
-// https://fetch.spec.whatwg.org/#cors-unsafe-request-header-byte
-bool IsCorsUnsafeRequestHeaderByte(char c) {
-  const auto u = static_cast<uint8_t>(c);
-  return (u < 0x20 && u != 0x09) || u == 0x22 || u == 0x28 || u == 0x29 ||
-         u == 0x3a || u == 0x3c || u == 0x3e || u == 0x3f || u == 0x40 ||
-         u == 0x5b || u == 0x5c || u == 0x5d || u == 0x7b || u == 0x7d ||
-         u == 0x7f;
-}
-
 bool IsSimilarToDoubleABNF(std::string_view value) {
   if (value.empty() || !base::IsAsciiDigit(value.front())) {
     return false;
@@ -91,18 +81,6 @@ bool IsSimilarToDoubleABNF(std::string_view value) {
 
 bool IsSimilarToIntABNF(std::string_view value) {
   return !value.empty() && std::ranges::all_of(value, base::IsAsciiDigit<char>);
-}
-
-bool IsCorsSafelistedLowerCaseContentType(const std::string& value) {
-  if (std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte)) {
-    return false;
-  }
-  const std::optional<std::string> mime_type =
-      net::ExtractMimeTypeFromMediaType(value,
-                                        /*accept_comma_separated=*/false);
-  return mime_type && (*mime_type == "application/x-www-form-urlencoded" ||
-                       *mime_type == "multipart/form-data" ||
-                       *mime_type == "text/plain");
 }
 
 // network::IsSuccessfulStatus(): an ok status.
@@ -208,18 +186,8 @@ bool IsCorsSafelistedHeader(std::string_view name, std::string_view value) {
   if (!kSafeNames.contains(lower_name)) {
     return false;
   }
-  const std::string lower_value = base::ToLowerASCII(value);
-  if (lower_name == "accept") {
-    return !std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte);
-  }
-  if (lower_name == "accept-language" || lower_name == "content-language") {
-    return std::ranges::all_of(value, [](char c) {
-      return base::IsAsciiAlphaNumeric(c) || c == ' ' || c == '*' || c == ',' ||
-             c == '-' || c == '.' || c == ';' || c == '=';
-    });
-  }
-  if (lower_name == "content-type") {
-    return IsCorsSafelistedLowerCaseContentType(lower_value);
+  if (IsNoCorsSafelistedHeaderName(lower_name)) {
+    return IsNoCorsSafelistedHeader(lower_name, value);
   }
   if (lower_name == "range") {
     const std::optional<net::HttpByteRange> range =
@@ -243,7 +211,7 @@ bool IsCorsSafelistedHeader(std::string_view name, std::string_view value) {
            value == "4g";
   }
   if (lower_name == "save-data") {
-    return lower_value == "on";
+    return base::ToLowerASCII(value) == "on";
   }
   return true;
 }
