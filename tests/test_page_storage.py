@@ -193,6 +193,32 @@ def test_a_clear_reaches_other_pages_once_and_only_when_the_area_held_something(
 
 
 @pytest.mark.usefixtures("page_program")
+def test_a_change_too_large_for_a_frame_reaches_every_page(blank_page: str) -> None:
+    # A value of 4.5 million characters beyond Latin-1 takes 9 MB, within the quota, and an event of its replacement
+    # by another such value holds both, more than a frame, so it goes in parts, as one message goes over Chrome's pipe.
+    with (
+        mitto.Session() as session,
+        session._open_page(blank_page, timeout=_TIMEOUT_SECONDS) as writer,  # pyright: ignore[reportPrivateUsage]
+        session._open_page(blank_page, timeout=_TIMEOUT_SECONDS) as reader,  # pyright: ignore[reportPrivateUsage]
+    ):
+        writer.evaluate("localStorage.setItem('big', '\\u0100'.repeat(4500000))")
+        reader.evaluate(
+            """
+            localStorage.length;
+            window.seen = [];
+            addEventListener('storage', (event) => {
+              seen.push([event.key, event.oldValue.length, event.newValue.length, event.oldValue[0], event.newValue[0]]);
+            });
+            """
+        )
+        writer.evaluate("localStorage.setItem('big', '\\u0101'.repeat(4500000))")
+        assert _wait_for(reader, "seen[0]") == ["big", 4500000, 4500000, "Ā", "ā"]
+        # The writer heard of its own change too, so a later change of the key from another Page reaches it.
+        reader.evaluate("localStorage.setItem('big', 'small')")
+        assert _wait_for(writer, "localStorage.getItem('big') === 'small'") is True
+
+
+@pytest.mark.usefixtures("page_program")
 def test_session_storage_is_each_page_s_own(blank_page: str) -> None:
     with (
         mitto.Session() as session,
@@ -269,6 +295,7 @@ def test_storage_written_just_before_close_is_kept(blank_page: str, tmp_path: Pa
         assert page.evaluate("[localStorage.length, localStorage.getItem('k99').length]") == [100, 99]
 
 
+@pytest.mark.usefixtures("page_program")
 def test_a_clear_before_any_read_is_kept_at_close(blank_page: str, tmp_path: Path) -> None:
     # A clear() that is a document's first use of an area waits in the Session for the area's map, which may not have
     # loaded when the Session closes right after it. The Session makes the clear before it goes.
