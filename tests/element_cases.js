@@ -1555,6 +1555,17 @@
     outer.remove();
     return out.join(",");
   });
+  run("svg length references", () => {
+    const r = svg("rect");
+    const l = r.x.baseVal;
+    return ["var()", "var(foo)", "var(--)", "var(--x)", "var(-x)", "var(--x foo)", "var(--x,)", "var( --x )", "var(--x , 1px)", "var(--x, var(y))", "var(--x, var(--y))", "var(--x, ;)", "var(--x, {})", "var(--x, ))", "var(--x,!)", "var(--x) var(--y)", "1px var(--x)", "env(foo)", "env(foo, 1px)", "env(1)", "env(foo 1)", "env(foo 1 2)", "env(foo -1)", "env(foo 1.5)", "env()", "attr(x)", "attr(x px)", "attr(x type(<length>))", "attr()", "attr(1)", "if(x)", "if(supports(x: y): 1px)", "--f()", "--f(1px)", "inherit(--x)", "var(--x) {}", "{var(--x)} {}", "{var(--x)}", " {var(--x)}", "{var(--x)} ", "[var(--x)]", "(var(--x))", "var(--x) )", "var(--x) ]", "VAR(--X)", "var(--x)!", "var(--x) ! important", "var(--x)!important", "calc(var(--x))", "url(var(--x))", "var(--x,\"str\")", "var(--x, \"open", "var(--x"].map((v) => {
+      r.setAttribute("x", v);
+      const fromAttribute = l.unitType + "/" + JSON.stringify(l.valueAsString);
+      let set;
+      try { l.valueAsString = "5"; l.valueAsString = v; set = JSON.stringify(l.valueAsString); } catch (e) { set = e.name; }
+      return JSON.stringify(v) + "=" + fromAttribute + "/" + set;
+    }).join(" | ");
+  });
   run("svg length set", () => {
     const e = svg("rect");
     const l = e.x.baseVal;

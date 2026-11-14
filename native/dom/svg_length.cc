@@ -254,53 +254,271 @@ void ThrowUnresolvable(bindings::ExceptionState& exception_state) {
                                     "Could not resolve relative length.");
 }
 
-// ConsumeUnparsedDeclaration() for a value that must hold var(): no bad
-// token, no closing bracket of no block, no semicolon outside a block, and no
-// !important.
-bool IsUnparsedDeclarationWithVariable(std::u16string_view text) {
-  bool has_variable = false;
-  int depth = 0;
-  bool after_bang = false;
-  for (const CssToken& token : TokenizeCss(text)) {
-    switch (token.type) {
-      case CssTokenType::kEndOfFile:
-        continue;
-      case CssTokenType::kBadString:
-      case CssTokenType::kBadUrl:
-        return false;
-      case CssTokenType::kSemicolon:
+// Blink's CSSVariableParser, for a value with a reference to substitute, as
+// an SVG length takes text with var(): its tokens from `begin` to `end`.
+class UnparsedValueParser {
+ public:
+  explicit UnparsedValueParser(std::u16string_view text)
+      : tokens_(TokenizeCss(text)) {
+    while (!tokens_.empty() &&
+           tokens_.back().type == CssTokenType::kEndOfFile) {
+      tokens_.pop_back();
+    }
+  }
+
+  // ConsumeUnparsedDeclaration() with a reference that it must hold, a
+  // restricted value and no !important.
+  bool IsValidDeclaration() {
+    bool has_reference = false;
+    return ConsumeValue(SkipWhitespace(0, tokens_.size()), tokens_.size(),
+                        /*restricted=*/true, has_reference) &&
+           has_reference;
+  }
+
+ private:
+  // Where the block that starts at `index` ends, or the end of the input,
+  // which closes it.
+  size_t BlockEnd(size_t index, size_t end) const {
+    int depth = 0;
+    for (size_t i = index; i < end; ++i) {
+      if (tokens_[i].block_type == CssBlockType::kBlockStart) {
+        ++depth;
+      } else if (tokens_[i].block_type == CssBlockType::kBlockEnd &&
+                 --depth == 0) {
+        return i;
+      }
+    }
+    return end;
+  }
+
+  size_t SkipWhitespace(size_t index, size_t end) const {
+    while (index < end && tokens_[index].type == CssTokenType::kWhitespace) {
+      ++index;
+    }
+    return index;
+  }
+
+  // ConsumeUnparsedValue(): no bad token or stray closing bracket, no
+  // semicolon or ! outside a block, and, when `restricted`, a {} block only
+  // as the whole value.
+  bool ConsumeValue(size_t begin,
+                    size_t end,
+                    bool restricted,
+                    bool& has_reference) const {
+    int depth = 0;
+    size_t top_level_values = 0;
+    bool has_top_level_brace = false;
+    for (size_t i = begin; i < end; ++i) {
+      const CssToken& token = tokens_[i];
+      const bool at_top_level = depth == 0;
+      if (token.type == CssTokenType::kFunction) {
+        if (std::optional<bool> valid =
+                ConsumeSubstitution(token.value, i, end, has_reference)) {
+          if (!*valid) {
+            return false;
+          }
+          i = BlockEnd(i, end);
+          continue;
+        }
+      }
+      if (token.block_type == CssBlockType::kBlockStart) {
+        ++depth;
+      } else if (token.block_type == CssBlockType::kBlockEnd) {
         if (depth == 0) {
           return false;
         }
-        break;
-      case CssTokenType::kFunction:
-        if (base::EqualsCaseInsensitiveASCII(token.value, u"var")) {
-          has_variable = true;
+        --depth;
+      } else {
+        switch (token.type) {
+          case CssTokenType::kBadString:
+          case CssTokenType::kBadUrl:
+          // A closing bracket that closes no block.
+          case CssTokenType::kRightParenthesis:
+          case CssTokenType::kRightBracket:
+          case CssTokenType::kRightBrace:
+            return false;
+          case CssTokenType::kSemicolon:
+            if (depth == 0) {
+              return false;
+            }
+            break;
+          case CssTokenType::kDelimiter:
+            if (token.delimiter == '!' && depth == 0) {
+              return false;
+            }
+            break;
+          default:
+            break;
         }
-        break;
-      case CssTokenType::kIdent:
-        if (after_bang &&
-            base::EqualsCaseInsensitiveASCII(token.value, u"important")) {
+      }
+      // Blink counts whitespace as a value of its own here.
+      if (restricted && at_top_level) {
+        ++top_level_values;
+        if (token.type == CssTokenType::kLeftBrace) {
+          has_top_level_brace = true;
+        }
+        if (has_top_level_brace && top_level_values > 1) {
           return false;
         }
-        break;
-      default:
-        break;
+      }
     }
-    if (token.type != CssTokenType::kWhitespace) {
-      after_bang = token.type == CssTokenType::kDelimiter &&
-                   token.delimiter == '!' && depth == 0;
+    return true;
+  }
+
+  // A substitution function at `index`: whether it is valid, or nothing for
+  // a function that substitutes nothing.
+  std::optional<bool> ConsumeSubstitution(std::u16string_view name,
+                                          size_t index,
+                                          size_t end,
+                                          bool& has_reference) const {
+    const size_t close = BlockEnd(index, end);
+    const size_t begin = index + 1;
+    if (name.size() > 2 && name.substr(0, 2) == u"--") {
+      // An author's function, whose arguments are values.
+      has_reference = true;
+      return ConsumeValue(begin, close, /*restricted=*/false, has_reference);
     }
-    if (token.block_type == CssBlockType::kBlockStart) {
-      ++depth;
-    } else if (token.block_type == CssBlockType::kBlockEnd) {
-      if (depth == 0) {
+    const std::u16string lower = base::ToLowerASCII(name);
+    if (lower == u"inherit") {
+      // Behind CSSInheritFunction, which Chrome 157 has off.
+      return false;
+    }
+    if (lower == u"var") {
+      has_reference = true;
+      return ConsumeVariableReference(begin, close, has_reference);
+    }
+    if (lower == u"env") {
+      has_reference = true;
+      return ConsumeEnvReference(begin, close, has_reference);
+    }
+    if (lower == u"attr") {
+      has_reference = true;
+      return ConsumeAttributeReference(begin, close, has_reference);
+    }
+    if (lower == u"if") {
+      has_reference = true;
+      return ConsumeIf(begin, close, has_reference);
+    }
+    return std::nullopt;
+  }
+
+  // The fallback after a comma, or nothing.
+  bool ConsumeFallback(size_t index, size_t end, bool& has_reference) const {
+    if (index == end) {
+      return true;
+    }
+    if (tokens_[index].type != CssTokenType::kComma) {
+      return false;
+    }
+    return ConsumeValue(index + 1, end, /*restricted=*/false, has_reference);
+  }
+
+  // ConsumeVariableReference(): a custom property's name, of "--" and one
+  // character at least, and a fallback.
+  bool ConsumeVariableReference(size_t begin,
+                                size_t end,
+                                bool& has_reference) const {
+    size_t i = SkipWhitespace(begin, end);
+    if (i == end || tokens_[i].type != CssTokenType::kIdent ||
+        tokens_[i].value.size() < 3 || tokens_[i].value.substr(0, 2) != u"--") {
+      return false;
+    }
+    return ConsumeFallback(SkipWhitespace(i + 1, end), end, has_reference);
+  }
+
+  // ConsumeEnvVariableReference(): a name, the indices of a variable of more
+  // dimensions, and a fallback.
+  bool ConsumeEnvReference(size_t begin,
+                           size_t end,
+                           bool& has_reference) const {
+    size_t i = SkipWhitespace(begin, end);
+    if (i == end || tokens_[i].type != CssTokenType::kIdent) {
+      return false;
+    }
+    i = SkipWhitespace(i + 1, end);
+    while (i < end && tokens_[i].type == CssTokenType::kNumber) {
+      if (tokens_[i].numeric_value_type != CssNumericValueType::kInteger ||
+          tokens_[i].numeric_value < 0) {
         return false;
       }
-      --depth;
+      i = SkipWhitespace(i + 1, end);
+    }
+    return ConsumeFallback(i, end, has_reference);
+  }
+
+  // ConsumeAttributeReference(): a name, a type or unit, and a fallback.
+  bool ConsumeAttributeReference(size_t begin,
+                                 size_t end,
+                                 bool& has_reference) const {
+    size_t i = SkipWhitespace(begin, end);
+    if (i == end || tokens_[i].type != CssTokenType::kIdent) {
+      return false;
+    }
+    i = SkipWhitespace(i + 1, end);
+    if (i < end && tokens_[i].type == CssTokenType::kIdent) {
+      i = SkipWhitespace(i + 1, end);
+    } else if (i < end && tokens_[i].type == CssTokenType::kFunction) {
+      i = SkipWhitespace(BlockEnd(i, end) + 1, end);
+    }
+    return ConsumeFallback(std::min(i, end), end, has_reference);
+  }
+
+  // ConsumeIf(): branches that semicolons part, each a condition, a colon
+  // and a value.
+  bool ConsumeIf(size_t begin, size_t end, bool& has_reference) const {
+    size_t i = begin;
+    bool any_branch = false;
+    while (true) {
+      i = SkipWhitespace(i, end);
+      if (i == end) {
+        return any_branch;
+      }
+      // The condition: else, or a style(), media() or supports() query that
+      // not, and and or may join.
+      bool has_condition = false;
+      while (i < end && tokens_[i].type != CssTokenType::kColon) {
+        const CssToken& token = tokens_[i];
+        if (token.type == CssTokenType::kFunction ||
+            token.type == CssTokenType::kLeftParenthesis) {
+          i = BlockEnd(i, end);
+          has_condition = true;
+        } else if (token.type == CssTokenType::kIdent) {
+          has_condition = has_condition || base::EqualsCaseInsensitiveASCII(
+                                               token.value, u"else");
+        } else if (token.type != CssTokenType::kWhitespace) {
+          return false;
+        }
+        ++i;
+      }
+      if (!has_condition || i >= end) {
+        return false;
+      }
+      size_t value_end = i + 1;
+      int depth = 0;
+      for (; value_end < end; ++value_end) {
+        const CssToken& token = tokens_[value_end];
+        if (token.block_type == CssBlockType::kBlockStart) {
+          ++depth;
+        } else if (token.block_type == CssBlockType::kBlockEnd) {
+          --depth;
+        } else if (token.type == CssTokenType::kSemicolon && depth == 0) {
+          break;
+        }
+      }
+      if (!ConsumeValue(i + 1, value_end, /*restricted=*/false,
+                        has_reference)) {
+        return false;
+      }
+      any_branch = true;
+      i = value_end == end ? end : value_end + 1;
     }
   }
-  return has_variable;
+
+  std::vector<CssToken> tokens_;
+};
+
+bool IsUnparsedDeclarationWithVariable(std::u16string_view text) {
+  return UnparsedValueParser(text).IsValidDeclaration();
 }
 
 }  // namespace
