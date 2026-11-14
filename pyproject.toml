@@ -63,6 +63,8 @@ path = "tools/wheel.py"
 
 [tool.ruff]
 line-length = 120
+# The copy of web-platform-tests, which is upstream's code as Chromium imported it.
+extend-exclude = ["tests/wpt/wpt"]
 
 [tool.ruff.lint]
 select = [
@@ -86,6 +88,8 @@ include = ["src", "tests", "tools", "native/bindings"]
 # The bindings generator is a package in native/bindings, which GN runs from there. Naming any path drops pyright's
 # implicit src, so it is named too.
 extraPaths = ["src", "native/bindings"]
+# The copy of web-platform-tests, which is upstream's code, and what pyright leaves out by default.
+exclude = ["tests/wpt/wpt", "**/node_modules", "**/__pycache__", "**/.*"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 

@@ -425,6 +425,8 @@ An interface that Chrome exposes is on a Page already, from its table, with ever
 
 What a page sees of every interface, the global object's own properties among it, in order, with their attributes, names and `length`s, the prototypes, and what each member throws when it is called on an object of another kind, is compared with real Chrome by the [Parity Checks of the Script Fingerprint](parity.md#the-script-fingerprint), against Baselines of each Chrome Release of the Supported Window that each run records ([releasing.md](releasing.md#4-record-baselines)).
 
+How it behaves is compared with real Chrome by [web-platform-tests](wpt.md): each testharness.js test of the directories that M8 is held to runs in a Page, against Windows Chrome's results for the Engine Release, which each run records too, and CI holds the differences to a list.
+
 [`tests/test_page_bindings.py`](../tests/test_page_bindings.py) runs [`tests/page_cases.js`](../tests/page_cases.js) in the Page program, for what no Baseline holds: the own properties of an instance of each class that the Runtime implements, such as an `Event`'s `isTrusted`, which the walk reaches none of, and the outcome of some calls, such as a dispatch to listeners or a call with an argument of the wrong type. It compares them with what Chrome 157.0.8103.39 gave for the same script, which [`tests/data/page_cases.json`](../tests/data/page_cases.json) keeps. M6 recorded that in Chrome on Windows, with that script and the comparison of the global object and the interfaces that the Parity Checks took over, and no run records it again: a new case takes its outcome from the Engine Release's Chrome by hand.
 
 ### Tests of the bindings
