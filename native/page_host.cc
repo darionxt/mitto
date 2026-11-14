@@ -433,9 +433,14 @@ bool TimingAllowOriginAllows(const std::string& value,
 // Page, reading the body only as far as the Page has given credit.
 class PageHost::Request final : public RequestClient {
  public:
-  Request(PageHost& host, uint64_t number, GURL url, FetchChecks checks)
+  Request(PageHost& host,
+          uint64_t number,
+          url::Origin document_origin,
+          GURL url,
+          FetchChecks checks)
       : host_(host),
         number_(number),
+        document_origin_(std::move(document_origin)),
         last_url_(std::move(url)),
         checks_(checks),
         start_(base::TimeTicks::Now()),
@@ -453,6 +458,8 @@ class PageHost::Request final : public RequestClient {
 
   uint64_t number() const { return number_; }
   bool is_navigation() const { return number_ == kNavigationRequest; }
+  // The origin of the document that asked, opaque for a navigation.
+  const url::Origin& document_origin() const { return document_origin_; }
   const FetchChecks& checks() const { return checks_; }
   bool cors() const { return cors_; }
   bool tainted() const { return tainted_; }
@@ -558,12 +565,10 @@ class PageHost::Request final : public RequestClient {
     return host_->AllowsResponse(*this, event);
   }
   void OnResponseEvent(RequestEvent event) override {
-    const url::Origin document_origin =
-        url::Origin::Create(host_->document_url_);
-    CheckTimingAllowOrigin(event, document_origin);
+    CheckTimingAllowOrigin(event, document_origin_);
     // The job follows each redirect, and the Page sees only where it ends.
     if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED) {
-      FollowRedirect(event, document_origin);
+      FollowRedirect(event, document_origin_);
     }
     if (event.type == MITTO_EVENT_RESPONSE_STARTED) {
       host_->OnResponseStarted(*this, event);
@@ -585,6 +590,7 @@ class PageHost::Request final : public RequestClient {
  private:
   const raw_ref<PageHost> host_;
   const uint64_t number_;
+  const url::Origin document_origin_;
   // The URL of the hop the request is at.
   GURL last_url_;
   const FetchChecks checks_;
@@ -637,7 +643,7 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
     // no page.
     RequestOptions navigation_options = options_.navigation->options;
     navigation_options.fetch->initiator = std::nullopt;
-    StartRequest(kNavigationRequest, *options_.url,
+    StartRequest(kNavigationRequest, url::Origin(), *options_.url,
                  options_.navigation->headers, std::move(navigation_options),
                  std::nullopt, FetchChecks());
   }
@@ -645,12 +651,14 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
 }
 
 void PageHost::StartRequest(uint64_t number,
+                            const url::Origin& document_origin,
                             GURL url,
                             net::HttpRequestHeaders headers,
                             RequestOptions options,
                             std::optional<std::vector<char>> body,
                             FetchChecks checks) {
-  auto request = std::make_unique<Request>(*this, number, url, checks);
+  auto request =
+      std::make_unique<Request>(*this, number, document_origin, url, checks);
   Request& client = *request;
   requests_.emplace(number, std::move(request));
   client.set_job(
@@ -658,7 +666,7 @@ void PageHost::StartRequest(uint64_t number,
                                  std::move(options), std::move(body)));
 }
 
-void PageHost::OnRequest(PageRequest asked) {
+void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
   if (asked.number <= last_request_number_) {
     Refuse(base::StrCat(
         {"a request numbered ", base::NumberToString(asked.number),
@@ -707,12 +715,12 @@ void PageHost::OnRequest(PageRequest asked) {
     net_error = net::ERR_UNKNOWN_URL_SCHEME;
   } else if (!request_template) {
     net_error = net::ERR_NOT_IMPLEMENTED;
-  } else if (!document_url_.is_valid()) {
-    // A Page with no document from the Session has no Initiator that a
-    // request can name.
+  } else if (url::Origin::Create(document_url).opaque()) {
+    // A document that the Session did not load, such as about:blank, has no
+    // Initiator that a request can name.
     net_error = net::ERR_ACCESS_DENIED;
   } else if (is_fetch &&
-             !url::Origin::Create(document_url_).IsSameOriginWith(url)) {
+             !url::Origin::Create(document_url).IsSameOriginWith(url)) {
     // A cross-origin fetch, which the CORS check holds to its response. One
     // of mode same-origin fails, as in Chrome. One that would need a CORS
     // preflight first is a Known Gap: the preflight is a request that no
@@ -736,7 +744,7 @@ void PageHost::OnRequest(PageRequest asked) {
   net::HttpRequestHeaders headers = request_template->headers;
   RequestOptions options = request_template->options;
   options.method = asked.method;
-  options.fetch->initiator = document_url_;
+  options.fetch->initiator = document_url;
   if (asked.body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
             entry.first, net::HttpRequestHeaders::kContentType);
@@ -751,8 +759,8 @@ void PageHost::OnRequest(PageRequest asked) {
   if (asked.body) {
     body.emplace(asked.body->begin(), asked.body->end());
   }
-  StartRequest(asked.number, std::move(url), std::move(headers),
-               std::move(options), std::move(body),
+  StartRequest(asked.number, url::Origin::Create(document_url), std::move(url),
+               std::move(headers), std::move(options), std::move(body),
                FetchChecks{.is_fetch = is_fetch,
                            .unsafe_lines = unsafe_lines,
                            .same_origin = asked.same_origin});
@@ -801,9 +809,8 @@ void PageHost::OnCredit(const PageCredit& credit) {
 void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
   request.set_started();
   if (request.is_navigation()) {
-    document_url_ = GURL(event.url);
-    // The old document's CookieStore listened over a pipe that went with it.
-    cookie_store_subscription_.reset();
+    // The document that the Page makes of it, which it tells the library of.
+    navigation_responses_[request.number()] = GURL(event.url);
     PageEvent navigated;
     navigated.type = MITTO_PAGE_EVENT_NAVIGATED;
     navigated.status = event.status;
@@ -820,7 +827,7 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
       response.navigation_start = Microseconds(
           options_.navigation_start.is_null() ? request.start()
                                               : options_.navigation_start);
-      response.connection = ConnectionOf(document_url_);
+      response.connection = ConnectionOf(GURL(event.url));
     }
     response.was_fetched_via_spdy = event.was_fetched_via_spdy;
     response.was_alpn_negotiated = event.was_alpn_negotiated;
@@ -875,7 +882,7 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   // service does it. A Page's cross-origin fetches have no credentials, so
   // Access-Control-Allow-Origin has to name the request's origin, which a
   // tainted one serializes as "null", or be "*".
-  const url::Origin document_origin = url::Origin::Create(document_url_);
+  const url::Origin& document_origin = request.document_origin();
   request.Reach(GURL(event.url), document_origin);
   // A redirect to another origin of a request that would need a CORS
   // preflight there is not followed: the preflight is a Known Gap, and
@@ -949,15 +956,18 @@ void PageHost::AbandonRequests() {
   requests_.clear();
 }
 
-bool PageHost::DocumentHasCookies() const {
-  return document_url_.is_valid() && document_url_.SchemeIsHTTPOrHTTPS();
+// static
+bool PageHost::DocumentHasCookies(const GURL& document_url) {
+  return document_url.is_valid() && document_url.SchemeIsHTTPOrHTTPS();
 }
 
-std::optional<net::CookiePartitionKey> PageHost::DocumentPartitionKey() const {
+// static
+std::optional<net::CookiePartitionKey> PageHost::DocumentPartitionKey(
+    const GURL& document_url) {
   // RenderFrameHostImpl::GetIsolationInfoForSubresources() for a top-level
   // frame, which its RestrictedCookieManager gets.
   // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
-  const url::Origin origin = url::Origin::Create(document_url_);
+  const url::Origin origin = url::Origin::Create(document_url);
   const net::IsolationInfo isolation_info = net::IsolationInfo::Create(
       net::IsolationInfo::RequestType::kOther, origin, origin,
       net::SiteForCookies::FromOrigin(origin));
@@ -970,22 +980,22 @@ std::optional<net::CookiePartitionKey> PageHost::DocumentPartitionKey() const {
 // and always for the document that the Session loaded, never for a URL that
 // the Page names.
 // Upstream: services/network/restricted_cookie_manager.cc
-void PageHost::OnGetCookies(uint64_t question) {
-  if (!DocumentHasCookies()) {
+void PageHost::OnGetCookies(uint64_t question, const GURL& document_url) {
+  if (!DocumentHasCookies(document_url)) {
     channel_->Send(EncodeCookies(question, ""));
     return;
   }
   const net::SiteForCookies site_for_cookies =
-      net::SiteForCookies::FromUrl(document_url_);
+      net::SiteForCookies::FromUrl(document_url);
   net::CookieOptions options;
   options.set_exclude_httponly();
   options.set_same_site_cookie_context(
       net::cookie_util::ComputeSameSiteContextForScriptGet(
-          document_url_, site_for_cookies, /*initiator=*/std::nullopt,
+          document_url, site_for_cookies, /*initiator=*/std::nullopt,
           /*force_ignore_site_for_cookies=*/false));
   network_->cookie_store().GetCookieListWithOptionsAsync(
-      document_url_, options,
-      net::CookiePartitionKeyCollection(DocumentPartitionKey()),
+      document_url, options,
+      net::CookiePartitionKeyCollection(DocumentPartitionKey(document_url)),
       base::BindOnce(&PageHost::SendCookies, weak_factory_.GetWeakPtr(),
                      question));
 }
@@ -999,29 +1009,29 @@ void PageHost::SendCookies(uint64_t question,
   }
 }
 
-void PageHost::OnSetCookie(const std::string& line) {
-  if (!DocumentHasCookies()) {
+void PageHost::OnSetCookie(const std::string& line, const GURL& document_url) {
+  if (!DocumentHasCookies(document_url)) {
     return;
   }
   const std::optional<net::CookiePartitionKey> partition_key =
-      DocumentPartitionKey();
+      DocumentPartitionKey(document_url);
   net::CookieInclusionStatus status;
   std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
-      document_url_, line, base::Time::Now(), /*server_time=*/std::nullopt,
+      document_url, line, base::Time::Now(), /*server_time=*/std::nullopt,
       partition_key, net::CookieSourceType::kScript, &status);
   if (!cookie) {
     return;
   }
   const net::SiteForCookies site_for_cookies =
-      net::SiteForCookies::FromUrl(document_url_);
+      net::SiteForCookies::FromUrl(document_url);
   net::CookieOptions options;
   options.set_exclude_httponly();
   options.set_same_site_cookie_context(
       net::cookie_util::ComputeSameSiteContextForScriptSet(
-          document_url_, site_for_cookies,
+          document_url, site_for_cookies,
           /*force_ignore_site_for_cookies=*/false));
   network_->cookie_store().SetCanonicalCookieAsync(
-      std::move(cookie), document_url_, options, base::DoNothing(),
+      std::move(cookie), document_url, options, base::DoNothing(),
       /*cookie_access_result=*/std::nullopt);
 }
 
@@ -1104,14 +1114,15 @@ net::CookieOptions ScriptOptions(const GURL& url, bool set) {
 
 // RestrictedCookieManager::GetAllForUrl(): the document's cookies that a
 // script may read, of the name asked for, or all of them.
-void PageHost::OnCookieStoreGet(PageCookieStoreGet get) {
-  if (!DocumentHasCookies()) {
+void PageHost::OnCookieStoreGet(PageCookieStoreGet get,
+                                const GURL& document_url) {
+  if (!DocumentHasCookies(document_url)) {
     SendCookieStoreCookies(get, {}, {});
     return;
   }
   network_->cookie_store().GetCookieListWithOptionsAsync(
-      document_url_, ScriptOptions(document_url_, /*set=*/false),
-      net::CookiePartitionKeyCollection(DocumentPartitionKey()),
+      document_url, ScriptOptions(document_url, /*set=*/false),
+      net::CookiePartitionKeyCollection(DocumentPartitionKey(document_url)),
       base::BindOnce(&PageHost::SendCookieStoreCookies,
                      weak_factory_.GetWeakPtr(), std::move(get)));
 }
@@ -1139,32 +1150,33 @@ void PageHost::SendCookieStoreCookies(
 // RestrictedCookieManager::SetCanonicalCookie(), both halves: the cookie is
 // made as the Page asked, made again from storage with the times of now, and
 // stored if the store takes it.
-void PageHost::OnCookieStoreSet(PageCookieStoreSet set) {
+void PageHost::OnCookieStoreSet(PageCookieStoreSet set,
+                                const GURL& document_url) {
   const uint64_t question = set.question;
   const auto answer = [this, question](bool stored) {
     if (channel_) {
       channel_->Send(EncodeCookieStoreStored(question, stored));
     }
   };
-  if (!DocumentHasCookies()) {
+  if (!DocumentHasCookies(document_url)) {
     answer(false);
     return;
   }
   const std::optional<net::CookiePartitionKey> partition_key =
-      set.partitioned ? DocumentPartitionKey() : std::nullopt;
+      set.partitioned ? DocumentPartitionKey(document_url) : std::nullopt;
   const base::Time expiry =
       base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(set.expiry));
   net::CookieInclusionStatus status;
   std::unique_ptr<net::CanonicalCookie> cookie =
       net::CanonicalCookie::CreateSanitizedCookie(
-          document_url_, set.name, set.value, set.domain, set.path,
+          document_url, set.name, set.value, set.domain, set.path,
           /*creation_time=*/base::Time(), expiry,
           /*last_access_time=*/base::Time(), /*secure=*/true,
           /*http_only=*/false, ToNetSameSite(set.same_site),
           net::COOKIE_PRIORITY_MEDIUM, partition_key, &status);
   // IsCookieDomainValid(): the Page checks the domain first, so one that
   // fails here comes from a Page that does not.
-  if ((cookie && !cookie->IsDomainMatch(document_url_.host())) ||
+  if ((cookie && !cookie->IsDomainMatch(document_url.host())) ||
       status.HasExclusionReason(net::CookieInclusionStatus::ExclusionReason::
                                     EXCLUDE_DOMAIN_MISMATCH)) {
     Refuse("a CookieStore cookie for another domain");
@@ -1175,7 +1187,7 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set) {
     return;
   }
   // A URL with a leading dot, which no document has.
-  if (!net::cookie_util::DomainIsHostOnly(document_url_.host())) {
+  if (!net::cookie_util::DomainIsHostOnly(document_url.host())) {
     status.AddExclusionReason(
         net::CookieInclusionStatus::ExclusionReason::EXCLUDE_INVALID_DOMAIN);
   }
@@ -1183,7 +1195,7 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set) {
     answer(false);
     return;
   }
-  const url::Origin origin = url::Origin::Create(document_url_);
+  const url::Origin origin = url::Origin::Create(document_url);
   const base::Time now = base::Time::Now();
   std::unique_ptr<net::CanonicalCookie> sanitized =
       net::CanonicalCookie::FromStorage(
@@ -1203,7 +1215,7 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set) {
   }
   network_->cookie_store().SetCanonicalCookieAsync(
       std::move(sanitized), origin.GetURL(),
-      ScriptOptions(document_url_, /*set=*/true),
+      ScriptOptions(document_url, /*set=*/true),
       base::BindOnce(
           [](base::WeakPtr<PageHost> host, uint64_t question,
              net::CookieAccessResult result) {
@@ -1218,19 +1230,20 @@ void PageHost::OnCookieStoreSet(PageCookieStoreSet set) {
 
 // RestrictedCookieManager::AddChangeListener(), and dropping the listener's
 // pipe.
-void PageHost::OnCookieStoreListen(bool listen) {
+void PageHost::OnCookieStoreListen(bool listen, const GURL& document_url) {
   if (!listen) {
     cookie_store_subscription_.reset();
     return;
   }
-  if (cookie_store_subscription_ || !DocumentHasCookies()) {
+  if (cookie_store_subscription_ || !DocumentHasCookies(document_url)) {
     return;
   }
+  cookie_store_url_ = document_url;
   // The dispatcher stops calling once the subscription goes, which this
   // owns.
   cookie_store_subscription_ =
       network_->cookie_store().GetChangeDispatcher().AddCallbackForUrl(
-          document_url_, DocumentPartitionKey(),
+          document_url, DocumentPartitionKey(document_url),
           base::BindRepeating(&PageHost::OnCookieStoreChange,
                               base::Unretained(this)));
 }
@@ -1245,10 +1258,11 @@ void PageHost::OnCookieStoreChange(const net::CookieChangeInfo& change) {
   const net::CookieAccessDelegate* const delegate =
       network_->cookie_store().cookie_access_delegate();
   const bool trustworthy =
-      delegate && delegate->ShouldTreatUrlAsTrustworthy(document_url_);
+      delegate && delegate->ShouldTreatUrlAsTrustworthy(cookie_store_url_);
   if (!change.cookie
            .IncludeForRequestURL(
-               document_url_, ScriptOptions(document_url_, /*set=*/false),
+               cookie_store_url_,
+               ScriptOptions(cookie_store_url_, /*set=*/false),
                net::CookieAccessParams(change.access_result.access_semantics,
                                        change.access_result.scope_semantics,
                                        trustworthy))
@@ -1277,11 +1291,12 @@ void PageHost::OnCookieStoreChange(const net::CookieChangeInfo& change) {
   channel_->Send(EncodeCookieStoreChange(page_change));
 }
 
-void PageHost::OnBroadcast(const PageBroadcast& broadcast) {
+void PageHost::OnBroadcast(const PageBroadcast& broadcast,
+                           const GURL& document_url) {
   // Only a document of an origin that is not opaque sends one: one of an
   // opaque origin shares its channels with no other.
-  const url::Origin origin = url::Origin::Create(document_url_);
-  if (!DocumentHasCookies() || origin.opaque()) {
+  const url::Origin origin = url::Origin::Create(document_url);
+  if (!DocumentHasCookies(document_url) || origin.opaque()) {
     Refuse(
         "a broadcast from a Page with no document of an origin that "
         "another can share");
@@ -1292,11 +1307,13 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast) {
 
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
-  if (!channel_ || ended_ || refused_by_library_ || !DocumentHasCookies() ||
-      !url::Origin::Create(document_url_).IsSameOriginWith(origin)) {
+  const GURL document_url = TopDocumentUrl();
+  if (!channel_ || ended_ || refused_by_library_ ||
+      !DocumentHasCookies(document_url) ||
+      !url::Origin::Create(document_url).IsSameOriginWith(origin)) {
     return;
   }
-  channel_->Send(EncodeBroadcast(PageMessage::kBroadcastReceived, broadcast));
+  channel_->Send(EncodeBroadcastReceived(broadcast));
 }
 
 void PageHost::Evaluate(uint64_t call, std::string script) {
@@ -1321,6 +1338,60 @@ void PageHost::EndWithSession() {
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
+void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
+  if (committed.document <= last_document_id_) {
+    Refuse(base::StrCat(
+        {"a document numbered ", base::NumberToString(committed.document),
+         ", after one numbered ", base::NumberToString(last_document_id_)}));
+    return;
+  }
+  GURL url;
+  switch (committed.source) {
+    case PageDocumentSource::kInitialEmpty:
+      // The Page's first document, before any other.
+      if (last_document_id_ != kNoDocument) {
+        Refuse("an initial about:blank after another document");
+        return;
+      }
+      url = GURL(url::kAboutBlankURL);
+      break;
+    case PageDocumentSource::kNavigationResponse: {
+      const auto found = navigation_responses_.find(committed.navigation);
+      if (found == navigation_responses_.end()) {
+        Refuse(base::StrCat({"a document of navigation ",
+                             base::NumberToString(committed.navigation),
+                             ", which has no response"}));
+        return;
+      }
+      url = std::move(found->second);
+      navigation_responses_.erase(found);
+      break;
+    }
+  }
+  last_document_id_ = committed.document;
+  // It takes the place of the top-level document, the only one a Page has,
+  // whose messages all came before this.
+  documents_.clear();
+  documents_.emplace(committed.document, std::move(url));
+  // The old document's CookieStore listened over a pipe that went with it.
+  cookie_store_subscription_.reset();
+}
+
+const GURL* PageHost::DocumentUrl(uint64_t document, uint32_t type) {
+  const auto found = documents_.find(document);
+  if (found == documents_.end()) {
+    Refuse(base::StrCat({"message type ", base::NumberToString(type),
+                         " of document ", base::NumberToString(document),
+                         ", which is not one of the Page's"}));
+    return nullptr;
+  }
+  return &found->second;
+}
+
+GURL PageHost::TopDocumentUrl() const {
+  return documents_.empty() ? GURL() : documents_.begin()->second;
+}
+
 void PageHost::OnFrame(uint32_t type, std::string payload) {
   base::expected<FrameFromPage, std::string> frame =
       ReadFrameFromPage(type, std::move(payload));
@@ -1333,6 +1404,16 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     Refuse(base::StrCat({"message type ", base::NumberToString(type),
                          " came before the hello"}));
     return;
+  }
+  // What a message of a document asks for is the document's, as the library
+  // loaded it.
+  GURL document_url;
+  if (NamesDocument(frame->type)) {
+    const GURL* const url = DocumentUrl(frame->document, type);
+    if (!url) {
+      return;
+    }
+    document_url = *url;
   }
   switch (frame->type) {
     case PageMessage::kHello:
@@ -1391,16 +1472,16 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     }
     case PageMessage::kRequest:
-      OnRequest(std::move(frame->request));
+      OnRequest(std::move(frame->request), document_url);
       return;
     case PageMessage::kCredit:
       OnCredit(frame->credit);
       return;
     case PageMessage::kGetCookies:
-      OnGetCookies(frame->cookies_question);
+      OnGetCookies(frame->cookies_question, document_url);
       return;
     case PageMessage::kSetCookie:
-      OnSetCookie(frame->cookie_line);
+      OnSetCookie(frame->cookie_line, document_url);
       return;
     case PageMessage::kLoaded: {
       PageEvent event;
@@ -1419,16 +1500,19 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       return;
     }
     case PageMessage::kCookieStoreGet:
-      OnCookieStoreGet(std::move(frame->cookie_store_get));
+      OnCookieStoreGet(std::move(frame->cookie_store_get), document_url);
       return;
     case PageMessage::kCookieStoreSet:
-      OnCookieStoreSet(std::move(frame->cookie_store_set));
+      OnCookieStoreSet(std::move(frame->cookie_store_set), document_url);
       return;
     case PageMessage::kCookieStoreListen:
-      OnCookieStoreListen(frame->cookie_store_listen);
+      OnCookieStoreListen(frame->cookie_store_listen, document_url);
       return;
     case PageMessage::kBroadcast:
-      OnBroadcast(frame->broadcast);
+      OnBroadcast(frame->broadcast, document_url);
+      return;
+    case PageMessage::kDocumentCommitted:
+      OnDocumentCommitted(frame->committed);
       return;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:

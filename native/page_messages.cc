@@ -190,7 +190,14 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kBroadcastReceived);
+         type <= static_cast<uint32_t>(PageMessage::kDocumentCommitted);
+}
+
+// The frame of a message that names `document`, which comes first.
+std::string EncodeDocumentFrame(PageMessage type,
+                                uint64_t document,
+                                std::string_view payload) {
+  return EncodeFrame(type, base::StrCat({EncodeUint64(document), payload}));
 }
 
 bool IsRequestKind(uint8_t kind) {
@@ -957,6 +964,33 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
   return broadcast;
 }
 
+// A document that the Page has made: its ID, a byte for its source, and for a
+// navigation's response the navigation's number.
+base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
+    std::string_view payload) {
+  if (payload.size() != 9 && payload.size() != 17) {
+    return base::unexpected(WrongSize("document", payload.size()));
+  }
+  PageDocumentCommitted committed;
+  committed.document = DecodeUint64(payload.substr(0, 8));
+  const uint8_t source = static_cast<uint8_t>(payload[8]);
+  const bool from_response =
+      source == static_cast<uint8_t>(PageDocumentSource::kNavigationResponse);
+  if ((source != static_cast<uint8_t>(PageDocumentSource::kInitialEmpty) &&
+       !from_response) ||
+      (payload.size() == 17) != from_response) {
+    return base::unexpected("a document that is not valid");
+  }
+  if (committed.document == kNoDocument) {
+    return base::unexpected("a document numbered 0");
+  }
+  committed.source = static_cast<PageDocumentSource>(source);
+  if (from_response) {
+    committed.navigation = DecodeUint64(payload.substr(9, 8));
+  }
+  return committed;
+}
+
 base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
   if (payload.size() != 12) {
     return base::unexpected(WrongSize("credit", payload.size()));
@@ -1368,12 +1402,12 @@ std::string EncodeKnownGap(std::string_view name) {
   return EncodeFrame(PageMessage::kKnownGap, name);
 }
 
-std::string EncodeRequest(const PageRequest& request) {
+std::string EncodeRequest(uint64_t document, const PageRequest& request) {
   const char kind = static_cast<char>(request.kind);
   const char same_origin = request.same_origin ? 1 : 0;
   const char has_body = request.body ? 1 : 0;
-  return EncodeFrame(
-      PageMessage::kRequest,
+  return EncodeDocumentFrame(
+      PageMessage::kRequest, document,
       base::StrCat({EncodeUint64(request.number), std::string_view(&kind, 1),
                     std::string_view(&same_origin, 1),
                     EncodeUint32(static_cast<uint32_t>(request.url.size())),
@@ -1395,16 +1429,17 @@ std::string EncodeCredit(const PageCredit& credit) {
       base::StrCat({EncodeUint64(credit.number), EncodeUint32(credit.bytes)}));
 }
 
-std::string EncodeGetCookies(uint64_t question) {
-  return EncodeFrame(PageMessage::kGetCookies, EncodeUint64(question));
+std::string EncodeGetCookies(uint64_t document, uint64_t question) {
+  return EncodeDocumentFrame(PageMessage::kGetCookies, document,
+                             EncodeUint64(question));
 }
 
-std::string EncodeSetCookie(std::string_view line) {
-  return EncodeFrame(PageMessage::kSetCookie, line);
+std::string EncodeSetCookie(uint64_t document, std::string_view line) {
+  return EncodeDocumentFrame(PageMessage::kSetCookie, document, line);
 }
 
-std::string EncodeLoaded() {
-  return EncodeFrame(PageMessage::kLoaded, "");
+std::string EncodeLoaded(uint64_t document) {
+  return EncodeDocumentFrame(PageMessage::kLoaded, document, "");
 }
 
 std::string EncodeResponseStarted(const PageResponseStarted& response) {
@@ -1474,18 +1509,21 @@ std::string EncodeCookies(uint64_t answer, std::string_view line) {
                      base::StrCat({EncodeUint64(answer), line}));
 }
 
-std::string EncodeCookieStoreGet(const PageCookieStoreGet& get) {
+std::string EncodeCookieStoreGet(uint64_t document,
+                                 const PageCookieStoreGet& get) {
   const char all = get.all ? 1 : 0;
-  return EncodeFrame(PageMessage::kCookieStoreGet,
-                     base::StrCat({EncodeUint64(get.question),
-                                   std::string_view(&all, 1), get.name}));
+  return EncodeDocumentFrame(
+      PageMessage::kCookieStoreGet, document,
+      base::StrCat(
+          {EncodeUint64(get.question), std::string_view(&all, 1), get.name}));
 }
 
-std::string EncodeCookieStoreSet(const PageCookieStoreSet& set) {
+std::string EncodeCookieStoreSet(uint64_t document,
+                                 const PageCookieStoreSet& set) {
   const char same_site = static_cast<char>(set.same_site);
   const char partitioned = set.partitioned ? 1 : 0;
-  return EncodeFrame(
-      PageMessage::kCookieStoreSet,
+  return EncodeDocumentFrame(
+      PageMessage::kCookieStoreSet, document,
       base::StrCat({EncodeUint64(set.question), EncodeInt64(set.expiry),
                     std::string_view(&same_site, 1),
                     std::string_view(&partitioned, 1), EncodeSized(set.name),
@@ -1493,10 +1531,10 @@ std::string EncodeCookieStoreSet(const PageCookieStoreSet& set) {
                     set.path}));
 }
 
-std::string EncodeCookieStoreListen(bool listen) {
+std::string EncodeCookieStoreListen(uint64_t document, bool listen) {
   const char byte = listen ? 1 : 0;
-  return EncodeFrame(PageMessage::kCookieStoreListen,
-                     std::string_view(&byte, 1));
+  return EncodeDocumentFrame(PageMessage::kCookieStoreListen, document,
+                             std::string_view(&byte, 1));
 }
 
 std::string EncodeCookieStoreCookies(const PageCookieStoreCookies& cookies) {
@@ -1524,15 +1562,54 @@ std::string EncodeCookieStoreChange(const PageCookieStoreChange& change) {
 }
 
 bool BroadcastFits(const PageBroadcast& broadcast) {
-  return broadcast.name.size() <= kMaxPayloadSize - 5 &&
-         broadcast.data.size() <= kMaxPayloadSize - 5 - broadcast.name.size();
+  return broadcast.name.size() <= kMaxPayloadSize - 13 &&
+         broadcast.data.size() <= kMaxPayloadSize - 13 - broadcast.name.size();
 }
 
-std::string EncodeBroadcast(PageMessage type, const PageBroadcast& broadcast) {
+namespace {
+
+std::string EncodeBroadcastPayload(const PageBroadcast& broadcast) {
   const char locked = broadcast.locked ? 1 : 0;
-  return EncodeFrame(
-      type, base::StrCat({EncodeSized(broadcast.name),
-                          std::string_view(&locked, 1), broadcast.data}));
+  return base::StrCat({EncodeSized(broadcast.name),
+                       std::string_view(&locked, 1), broadcast.data});
+}
+
+}  // namespace
+
+std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast) {
+  return EncodeDocumentFrame(PageMessage::kBroadcast, document,
+                             EncodeBroadcastPayload(broadcast));
+}
+
+std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
+  return EncodeFrame(PageMessage::kBroadcastReceived,
+                     EncodeBroadcastPayload(broadcast));
+}
+
+std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
+  const char source = static_cast<char>(committed.source);
+  std::string payload = base::StrCat(
+      {EncodeUint64(committed.document), std::string_view(&source, 1)});
+  if (committed.source == PageDocumentSource::kNavigationResponse) {
+    payload += EncodeUint64(committed.navigation);
+  }
+  return EncodeFrame(PageMessage::kDocumentCommitted, payload);
+}
+
+bool NamesDocument(PageMessage type) {
+  switch (type) {
+    case PageMessage::kRequest:
+    case PageMessage::kGetCookies:
+    case PageMessage::kSetCookie:
+    case PageMessage::kLoaded:
+    case PageMessage::kCookieStoreGet:
+    case PageMessage::kCookieStoreSet:
+    case PageMessage::kCookieStoreListen:
+    case PageMessage::kBroadcast:
+      return true;
+    default:
+      return false;
+  }
 }
 
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(
@@ -1543,6 +1620,18 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
   }
   FrameFromPage frame;
   frame.type = static_cast<PageMessage>(type);
+  if (NamesDocument(frame.type)) {
+    if (payload.size() < 8) {
+      return base::unexpected(base::StrCat(
+          {"message type ", base::NumberToString(type), " names no document"}));
+    }
+    frame.document = DecodeUint64(payload);
+    if (frame.document == kNoDocument) {
+      return base::unexpected(base::StrCat(
+          {"message type ", base::NumberToString(type), " names document 0"}));
+    }
+    payload.erase(0, 8);
+  }
   switch (frame.type) {
     case PageMessage::kHello: {
       base::expected<uint32_t, std::string> version = ReadHello(payload);
@@ -1679,6 +1768,15 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
         return base::unexpected(std::move(broadcast).error());
       }
       frame.broadcast = *std::move(broadcast);
+      return frame;
+    }
+    case PageMessage::kDocumentCommitted: {
+      base::expected<PageDocumentCommitted, std::string> committed =
+          ReadDocumentCommitted(payload);
+      if (!committed.has_value()) {
+        return base::unexpected(std::move(committed).error());
+      }
+      frame.committed = *committed;
       return frame;
     }
     case PageMessage::kStart:
@@ -1826,6 +1924,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kCookieStoreSet:
     case PageMessage::kCookieStoreListen:
     case PageMessage::kBroadcast:
+    case PageMessage::kDocumentCommitted:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();
