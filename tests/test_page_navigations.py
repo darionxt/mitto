@@ -316,6 +316,19 @@ def test_a_navigation_that_starts_while_the_document_loads_stops_its_parser(
     assert all(cookie.name != "parsed" for cookie in session.cookies)
 
 
+def test_a_page_opens_when_its_document_stops_loading_for_a_navigation_that_keeps_it(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.routes["/nothing"] = _Route(status=204)
+    url = server.page("/", "<script>location.href = '/nothing';</script><p id=after>after")
+
+    # The navigation stopped the parser, so the load event never fires, and the page opens once the navigation ends.
+    with _open_page(session, url) as page:
+        assert page.url == url
+        assert _next(page) == PageNavigation(url=server.url("/nothing"), status=204, kept_document=True)
+        assert page.evaluate("[document.readyState, document.getElementById('after')]") == ["complete", None]
+
+
 def test_a_javascript_url_runs_from_a_task_and_navigates_nowhere(session: mitto.Session, server: _Server) -> None:
     url = server.page("/", "<body>")
 
@@ -343,13 +356,32 @@ def test_location_refuses_a_url_that_does_not_resolve(session: mitto.Session, se
 def test_a_navigation_to_a_url_longer_than_chrome_carries_starts_nothing(
     session: mitto.Session, server: _Server
 ) -> None:
-    url = server.page("/", "<title>Here</title>")
+    # Chrome's browser gets no URL of more than 2 MiB and goes to about:blank#blocked, which a Page does not, so the
+    # document goes on loading, as no navigation started.
+    url = server.page("/", "<script>location.href = '/' + 'x'.repeat(2 * 1024 * 1024);</script><title>Here</title>")
 
     with _open_page(session, url) as page:
-        # Chrome's browser gets no URL of more than 2 MiB and goes to about:blank#blocked, which a Page does not.
-        assert page.evaluate("location.href = '/' + 'x'.repeat(2 * 1024 * 1024); document.title") == "Here"
+        assert page.evaluate("location.href = '/' + 'y'.repeat(2 * 1024 * 1024); document.title") == "Here"
         assert page.evaluate("new Promise(r => setTimeout(r, 100)).then(() => document.URL)") == url
     assert server.paths() == ["/"]
+
+
+def test_a_documents_referrer_is_the_referer_that_its_navigation_sent_last(
+    session: mitto.Session, server: _Server
+) -> None:
+    done = server.page("/done", "<title>Done</title>")
+    server.routes["/bounce"] = _Route(status=302, headers=[("Location", done)])
+    first = server.page("/deep/path?token=1", "<title>First</title>")
+    bounce = server.url("/bounce").replace("127.0.0.1", "localhost")
+
+    with _open_page(session, first) as page:
+        page.evaluate(f"location.href = '{bounce}'")
+        assert _next(page).url == done
+        # The hop to another origin cut the Referer to the document's origin, and the hop back does not give the path
+        # back, as in Chrome.
+        assert page.evaluate("document.referrer") == server.url("/")
+    ((bounce_lines,), (done_lines,)) = server.headers_of("/bounce"), server.headers_of("/done")
+    assert dict(bounce_lines)["Referer"] == dict(done_lines)["Referer"] == server.url("/")
 
 
 def test_a_navigation_that_fails_raises_its_error_and_keeps_the_document(

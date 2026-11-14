@@ -306,9 +306,6 @@ class PageHost final : public PageChannel::Delegate {
   struct FetchChecks {
     // A fetch, whose responses from another origin pass the CORS check.
     bool is_fetch = false;
-    // The script set a line that a hop to another origin would need a CORS
-    // preflight for.
-    bool unsafe_lines = false;
     // Mode same-origin: no hop may go to another origin.
     bool same_origin = false;
     // A navigation, whose response the Page makes a document of, unless it

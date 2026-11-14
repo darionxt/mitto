@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/strings/string_util.h"
+#include "mitto/cors_preflight.h"
 #include "mitto/http_header_map.h"
 #include "mitto/sec_header_helpers.h"
 #include "net/base/is_potentially_trustworthy.h"
@@ -633,10 +634,17 @@ void FetchRules::WillFollowRedirect(net::URLRequest& request,
 
 void FetchRules::SetRequestCredentials(net::URLRequest& request,
                                        const GURL& url) const {
-  if (params_.credentials_mode == CredentialsMode::kSameOrigin && initiator_ &&
-      !initiator_->IsSameOriginWith(url)) {
+  if (params_.credentials_mode == CredentialsMode::kOmit ||
+      (params_.credentials_mode == CredentialsMode::kSameOrigin &&
+       initiator_ && !initiator_->IsSameOriginWith(url))) {
     request.set_disallow_credentials();
   }
+}
+
+bool FetchRules::NeedsPreflight(std::string_view method,
+                                const net::HttpRequestHeaders& headers) const {
+  return params_.mode == RequestMode::kCors && fetch_cors_flag_ &&
+         mitto::NeedsPreflight(method, headers);
 }
 
 void FetchRules::SetCorsFlagIfNeeded(const GURL& url) {

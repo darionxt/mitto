@@ -480,7 +480,7 @@ The URL of the page the request is made from, which counts as a top-level page. 
 
 Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`. One that holds a NUL character or a lone surrogate, which UTF-8 cannot encode, raises a `ValueError` that names `initiator`, and a value that is neither text nor `None` raises a `TypeError`.
 
-A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows.
+A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows. A `fetch`, `xhr`, `font` or `module` to another origin that Chrome would send a CORS preflight for, such as a `PUT` or a `POST` with `json=`, sends one first, and goes only if its answer allows it, as [persona.md](persona.md#a-cors-preflight) says. Otherwise the request raises a `RequestError` with `ERR_FAILED`.
 
 ```python
 page = "https://example.test/page"
