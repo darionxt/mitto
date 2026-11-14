@@ -108,6 +108,8 @@ class DocumentLoader final : public PageRequests::Client {
 
   GURL url_;
   cppgc::Persistent<Document> document_;
+  // The ID by which the Page names the document to its Session.
+  uint64_t document_id_ = 0;
   // How the document loads, which its window's Performance Timeline reads.
   cppgc::Persistent<DocumentLoadTiming> timing_;
   // How many bytes of the body have come, as decoded as the Page gets them.

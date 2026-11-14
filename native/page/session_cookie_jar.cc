@@ -8,6 +8,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/window.h"
 #include "mitto/page_messages.h"
 
 namespace mitto {
@@ -31,7 +32,7 @@ std::u16string SessionCookieJar::Cookies() {
     question_ = question;
     answer_.reset();
   }
-  send_.Run(EncodeGetCookies(question));
+  send_.Run(EncodeGetCookies(Window::Current().DocumentId(), question));
   std::string line;
   {
     base::AutoLock lock(lock_);
@@ -50,10 +51,10 @@ std::u16string SessionCookieJar::Cookies() {
 void SessionCookieJar::SetCookie(const std::u16string& line) {
   std::string bytes = base::UTF16ToUTF8(line);
   // //net refuses a cookie line far shorter than a frame holds.
-  if (bytes.size() > kMaxPayloadSize) {
+  if (bytes.size() > kMaxCookieLineSize) {
     return;
   }
-  send_.Run(EncodeSetCookie(bytes));
+  send_.Run(EncodeSetCookie(Window::Current().DocumentId(), bytes));
 }
 
 bool SessionCookieJar::Answer(uint64_t number, std::string line) {
@@ -71,7 +72,7 @@ void SessionCookieJar::GetForCookieStore(PageCookieStoreGet get,
   // A name too long for a frame names no cookie, since //net refuses a name
   // and value of more than 4096 bytes: the Session's answer would be none,
   // and comes from a task of its own all the same.
-  if (get.name.size() > kMaxPayloadSize - 9) {
+  if (get.name.size() > kMaxPayloadSize - 17) {
     main_thread_->PostTask(
         FROM_HERE,
         base::BindOnce(std::move(answer), std::vector<PageCookie>()));
@@ -83,7 +84,7 @@ void SessionCookieJar::GetForCookieStore(PageCookieStoreGet get,
     cookie_store_questions_.insert(get.question);
   }
   cookie_store_gets_.emplace(get.question, std::move(answer));
-  send_.Run(EncodeCookieStoreGet(get));
+  send_.Run(EncodeCookieStoreGet(Window::Current().DocumentId(), get));
 }
 
 void SessionCookieJar::SetForCookieStore(PageCookieStoreSet set,
@@ -91,7 +92,7 @@ void SessionCookieJar::SetForCookieStore(PageCookieStoreSet set,
   // Nor can a cookie too long for a frame be stored: the Session's answer
   // would be that it was not.
   if (set.name.size() + set.value.size() + set.domain.size() + set.path.size() >
-      kMaxPayloadSize - 30) {
+      kMaxPayloadSize - 38) {
     main_thread_->PostTask(FROM_HERE, base::BindOnce(std::move(answer), false));
     return;
   }
@@ -101,7 +102,7 @@ void SessionCookieJar::SetForCookieStore(PageCookieStoreSet set,
     cookie_store_questions_.insert(set.question);
   }
   cookie_store_sets_.emplace(set.question, std::move(answer));
-  send_.Run(EncodeCookieStoreSet(set));
+  send_.Run(EncodeCookieStoreSet(Window::Current().DocumentId(), set));
 }
 
 void SessionCookieJar::ListenForCookieStore(ChangeListener listener) {
@@ -111,7 +112,7 @@ void SessionCookieJar::ListenForCookieStore(ChangeListener listener) {
     return;
   }
   cookie_store_listener_ = std::move(listener);
-  send_.Run(EncodeCookieStoreListen(listen));
+  send_.Run(EncodeCookieStoreListen(Window::Current().DocumentId(), listen));
 }
 
 bool SessionCookieJar::AnswerCookieStoreGet(PageCookieStoreCookies cookies) {
