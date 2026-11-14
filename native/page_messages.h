@@ -492,10 +492,13 @@ struct PageEvaluated {
 // not say its URL.
 //
 // Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
-// of flags, 1 for a fetch of mode same-origin, 2 for a navigation that the
-// user activated and 4 for a navigation that reloads, the URL, the method and
-// the header lines, each after its size as a 32-bit number, and then a byte
-// that is 1 if a body follows, which is the rest.
+// of flags, 2 for a navigation that the user activated, 4 for a navigation
+// that reloads, 8 for a request that outlives its document, 16 for a
+// synchronous one and 32 for one with no referrer, then a byte each of the
+// mode, the credentials mode, the referrer policy, the priority and whether
+// it is incremental, the target as a 64-bit number, the URL, the method, the
+// header lines and the referrer, each after its size as a 32-bit number, and
+// then a byte that is 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);

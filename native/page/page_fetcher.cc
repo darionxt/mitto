@@ -98,7 +98,9 @@ void PageFetcher::Fetch(FetchRequestData data,
   page_request.method = std::move(data.method);
   page_request.headers = std::move(data.headers);
   page_request.body = std::move(data.body);
-  page_request.same_origin = data.same_origin;
+  if (data.same_origin) {
+    page_request.mode = PageRequestMode::kSameOrigin;
+  }
   started.set_number(
       requests_->Start(std::move(page_request), started, data.render_blocking));
   open_.emplace(started.number(), std::move(request));

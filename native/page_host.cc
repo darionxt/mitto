@@ -763,7 +763,7 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     // A document that the Session did not load, such as about:blank, has no
     // Initiator that a request can name.
     net_error = net::ERR_ACCESS_DENIED;
-  } else if (is_fetch && asked.same_origin &&
+  } else if (is_fetch && asked.mode == PageRequestMode::kSameOrigin &&
              !url::Origin::Create(document_url).IsSameOriginWith(url)) {
     // A cross-origin fetch of mode same-origin fails, as in Chrome. Another
     // has the CORS check held to its response, after the preflight that the
@@ -808,7 +808,8 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
   StartRequest(asked.number, url::Origin::Create(document_url), std::move(url),
                std::move(headers), std::move(options), std::move(body),
                FetchChecks{.is_fetch = is_fetch,
-                           .same_origin = asked.same_origin,
+                           .same_origin =
+                               asked.mode == PageRequestMode::kSameOrigin,
                            .is_navigation = is_navigation});
 }
 

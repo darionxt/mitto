@@ -137,7 +137,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 17
+_PROTOCOL_VERSION = 18
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -763,15 +763,19 @@ def _request(
     *,
     same_origin: bool = False,
 ) -> bytes:
-    """The payload of a Request of the navigation's document: its number, Kind, mode, URL, method and lines, and its
-    body, if it has one."""
+    """The payload of a Request of the navigation's document: its number, Kind, no flags, its mode (same-origin or the
+    kind's own), the default of every other byte, no target, its URL, method and lines, no referrer, and its body, if it
+    has one."""
     has_body = b"\x00" if body is None else b"\x01" + body
+    mode = 2 if same_origin else 0
     return (
         _DOCUMENT
-        + struct.pack("<QBB", number, kind, int(same_origin))
+        + struct.pack("<QBB", number, kind, 0)
+        + struct.pack("<BBBBBQ", mode, 0, 0, 0, 0, 0)
         + _sized(url.encode())
         + _sized(method.encode())
         + _sized(headers.encode())
+        + _sized(b"")
         + has_body
     )
 
