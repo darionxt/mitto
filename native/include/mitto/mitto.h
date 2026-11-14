@@ -91,7 +91,8 @@
 // a MITTO_PAGE_EVENT_NAVIGATION_STARTED said, in the order they started.
 #define MITTO_PAGE_EVENT_NAVIGATED 5
 // The window's load event has been dispatched: the document and its classic
-// scripts have loaded and run.
+// scripts have loaded and run. None comes for a document whose place a
+// navigation takes once its MITTO_PAGE_EVENT_NAVIGATED event has come.
 #define MITTO_PAGE_EVENT_LOADED 6
 // The document reached a member whose behaviour the Runtime lacks, a Known
 // Gap, for the first time: each document reports each one once, as Chrome's
