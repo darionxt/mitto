@@ -1,5 +1,5 @@
-// The elements of SVG, whose classes have their interfaces' animated strings,
-// booleans, enumerations, integers, numbers and lengths: each other member of
+// The elements of SVG, whose classes have their interfaces' animated values,
+// lists, rectangles, aspect ratios, angles and points: each other member of
 // theirs that is not a reflected attribute is a Known Gap. Blink's classes of
 // the same names hold what layout and animation need.
 //
@@ -680,6 +680,12 @@ class SVGMarkerElement final : public SVGElement {
   SVGAnimatedLength* MarkerWidth();
   SVGAnimatedLength* MarkerHeight();
   SVGAnimatedEnumeration* MarkerUnits();
+  SVGAnimatedEnumeration* OrientType();
+  SVGAnimatedAngle* OrientAngle();
+  // Each sets the attribute, as a page would, with a record for mutation
+  // observers.
+  void SetOrientToAuto();
+  void SetOrientToAngle(SVGAngle* angle);
 };
 
 class SVGMaskElement final : public SVGElement {
@@ -741,6 +747,10 @@ class SVGPolygonElement final : public SVGGeometryElement {
   explicit SVGPolygonElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGPointList* PointsFromJavascript();
+  SVGPointList* AnimatedPoints();
 };
 
 class SVGPolylineElement final : public SVGGeometryElement {
@@ -750,6 +760,10 @@ class SVGPolylineElement final : public SVGGeometryElement {
   explicit SVGPolylineElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGPointList* PointsFromJavascript();
+  SVGPointList* AnimatedPoints();
 };
 
 class SVGRadialGradientElement final : public SVGGradientElement {
@@ -799,8 +813,11 @@ class SVGSVGElement final : public SVGGraphicsElement {
   SVGAnimatedLength* Y();
   SVGAnimatedLength* Width();
   SVGAnimatedLength* Height();
+  SVGAngle* CreateSVGAngle();
   SVGLength* CreateSVGLength();
   SVGNumber* CreateSVGNumber();
+  SVGPoint* CreateSVGPoint();
+  SVGRect* CreateSVGRect();
 };
 
 class SVGScriptElement final : public SVGElement {
