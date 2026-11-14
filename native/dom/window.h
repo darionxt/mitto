@@ -50,6 +50,7 @@ namespace mitto {
 class AnimationFrameController;
 class BarProp;
 class CrashReportContext;
+class CacheStorage;
 class CookieStore;
 class Crypto;
 class CustomElementRegistry;
@@ -63,6 +64,7 @@ class IdleTaskController;
 class Location;
 class MediaQueryList;
 class Navigation;
+class NavigationClient;
 class Navigator;
 class Performance;
 class Scheduler;
@@ -175,6 +177,10 @@ class Window final : public WindowProperties {
   mitto::Scheduler* Scheduler();
   // The window's cookie store, made the first time.
   mitto::CookieStore* CookieStore();
+  // GlobalCacheStorage::caches(): the window's CacheStorage, made the first
+  // time, or null after throwing a SecurityError for a document whose origin
+  // may not reach caches.
+  mitto::CacheStorage* Caches(bindings::ExceptionState& exception_state);
   // window_messaging.cc: a structured clone of `value`, and a message to the
   // window itself, which frames will extend to other windows.
   v8::Local<v8::Value> StructuredClone(
@@ -188,6 +194,16 @@ class Window final : public WindowProperties {
   void PostMessage(v8::Local<v8::Value> message,
                    const bindings::WindowPostMessageOptions& options,
                    bindings::ExceptionState& exception_state);
+
+  // LocalDOMWindow::open() (window_open.cc): navigates the window to `url`
+  // for a target that names it, _self, _top or _parent, and returns it; any
+  // other target asks for a new window, which Chrome's pop-up blocker refuses
+  // without the user's activation, so it returns null. document.open() with
+  // three arguments calls it too.
+  Window* Open(const std::u16string& url,
+               const std::u16string& target,
+               const std::u16string& features,
+               bindings::ExceptionState& exception_state);
 
   // Reports `e` as an error that a script left uncaught: the window's error
   // event, then the console, as Blink's WindowOrWorkerGlobalScope does.
@@ -216,6 +232,13 @@ class Window final : public WindowProperties {
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
   Fetcher* GetFetcher() const { return fetcher_; }
+  // What a navigation of the window's frame to another document asks the
+  // Session through. Without one, as in the Page program given a script or
+  // once the context is gone, such a navigation does not start.
+  void SetNavigationClient(NavigationClient* client) {
+    navigation_client_ = client;
+  }
+  NavigationClient* GetNavigationClient() const { return navigation_client_; }
   // The tasks of the window's context, which the Page program keeps, and
   // which go with it: without them, a task posted to the window never runs.
   void SetTasks(WindowTasks* tasks) { tasks_ = tasks; }
@@ -316,6 +339,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Crypto> crypto_;
   cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CookieStore> cookie_store_;
+  cppgc::Member<mitto::CacheStorage> caches_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;
   ConsoleSink console_sink_;
   cppgc::Member<mitto::Event> current_event_;
@@ -324,6 +348,7 @@ class Window final : public WindowProperties {
   uint64_t document_id_ = kNoDocument;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
+  raw_ptr<NavigationClient> navigation_client_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
   std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;

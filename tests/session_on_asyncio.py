@@ -15,6 +15,7 @@ from typing import Any, Self
 import mitto
 from mitto._async_api import AsyncPage
 from mitto._native import ConsoleMessage
+from mitto._page import PageNavigation
 
 __all__ = ["SessionOnAsyncio"]
 
@@ -103,7 +104,6 @@ class _BlockingPage:
     def __init__(self, page: AsyncPage, run: _Run) -> None:
         self._page = page
         self._run = run
-        self.url = page.url
         self.process_id = page.process_id
 
     def __enter__(self) -> Self:
@@ -113,6 +113,13 @@ class _BlockingPage:
         self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
     ) -> None:
         self.close()
+
+    @property
+    def url(self) -> str:
+        async def read() -> str:
+            return self._page.url
+
+        return self._run(read())
 
     @property
     def console_messages(self) -> list[ConsoleMessage]:
@@ -137,6 +144,9 @@ class _BlockingPage:
 
     def evaluate(self, expression: str, **options: Any) -> Any:
         return self._run(self._page.evaluate(expression, **options))
+
+    def wait_for_navigation(self, **options: Any) -> PageNavigation:
+        return self._run(self._page.wait_for_navigation(**options))
 
     def close(self) -> None:
         self._run(self._page.close())

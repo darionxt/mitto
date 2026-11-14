@@ -1,5 +1,6 @@
 // The a element, a hyperlink, and the base of it and the area element, which
-// share the URL's parts of their href. A Page never follows links.
+// share the URL's parts of their href, and follow it when a click activates
+// them, as Blink's HTMLAnchorElementBase::HandleClick() does.
 //
 // Upstream: third_party/blink/renderer/core/html/html_anchor_element.h
 // Upstream: third_party/blink/renderer/core/html/html_anchor_element.cc
@@ -12,6 +13,8 @@
 #include <string>
 
 #include "mitto/dom/html_element.h"
+
+class GURL;
 
 namespace mitto {
 
@@ -53,8 +56,12 @@ class HTMLAnchorElementBase : public HTMLElement {
   bool Draggable() const override;
   int32_t DefaultTabIndex() const override;
   // Node's: a link has activation behaviour, as Blink's has for one with
-  // href. Following it is the Runtime's later work.
+  // href, which a click that nothing canceled or handled runs before
+  // DOMActivate: it follows the link.
   bool HasActivationBehavior() const override;
+  void RunActivationBehaviorBeforeDOMActivate(
+      Event& event,
+      EventDispatchHandlingState* state) override;
 
  protected:
   HTMLAnchorElementBase(Document& document, const std::u16string& local_name);
@@ -65,6 +72,12 @@ class HTMLAnchorElementBase : public HTMLElement {
   ResolvedURL Url() const;
   // Writes `url` into href, Blink's SetUrl().
   void SetUrl(const ResolvedURL& url);
+  // HandleClick(): follows the link that a click activated.
+  void HandleClick(Event& event);
+  // NavigateToHyperlink(): the frame that the link's target names navigates
+  // to `url`. A new window, which only the user's activation opens, does not
+  // open.
+  void NavigateToHyperlink(const GURL& url);
 };
 
 class HTMLAnchorElement final : public HTMLAnchorElementBase {

@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace mitto {
 
@@ -20,6 +21,77 @@ enum class FetchDestination {
   kEmpty,
   kScript,
 };
+
+// The Fetch Standard's request mode, of those that a page's requests have.
+enum class FetchMode {
+  kCors,
+  kSameOrigin,
+  kNoCors,
+};
+
+// The Fetch Standard's credentials mode.
+enum class FetchCredentialsMode {
+  kOmit,
+  kSameOrigin,
+  kInclude,
+};
+
+// A referrer policy, where kDefault, the empty string, leaves the document's.
+enum class FetchReferrerPolicy {
+  kDefault,
+  kNoReferrer,
+  kNoReferrerWhenDowngrade,
+  kOrigin,
+  kOriginWhenCrossOrigin,
+  kSameOrigin,
+  kStrictOrigin,
+  kStrictOriginWhenCrossOrigin,
+  kUnsafeUrl,
+};
+
+// The priority that a request goes at, as Blink's ResourceLoadPriority has
+// it, lowest first.
+enum class FetchPriority {
+  kVeryLow,
+  kLow,
+  kMedium,
+  kHigh,
+  kVeryHigh,
+};
+
+// A fetch priority hint, as fetch()'s priority or an element's fetchpriority
+// gives it.
+enum class FetchPriorityHint {
+  kAuto,
+  kLow,
+  kHigh,
+};
+
+// The priority that Blink's ResourceFetcher gives a request whose type's own is
+// kHigh, as fetch()'s and a classic script's is: kLow if it is lazy, as an
+// async, deferred or script-inserted script is, then moved by `hint`, and by
+// blocking rendering. Returns nullopt for kHigh, the destination's own.
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_fetcher.cc
+// Upstream: third_party/blink/renderer/platform/loader/fetch/resource_request_utils.cc
+std::optional<FetchPriority> ComputeFetchPriority(bool lazy,
+                                                  FetchPriorityHint hint,
+                                                  bool render_blocking);
+
+// The hint that a fetchpriority attribute's value gives, in any case: auto for
+// any but "high" and "low".
+// Upstream: third_party/blink/renderer/core/loader/fetch_priority_attribute.cc
+FetchPriorityHint FetchPriorityHintFromAttribute(std::u16string_view value);
+
+// The referrer policy that a referrerpolicy attribute's value or a
+// RequestInit's referrerPolicy names, in any case, without the legacy
+// keywords: kDefault for any other.
+// Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
+FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value);
+
+// The referrer of a request that is the document's, as Blink's referrer string
+// says it, and of one that has none.
+inline constexpr char kClientReferrer[] = "about:client";
+inline constexpr char kNoReferrer[] = "";
 
 // A request of a page's, once fetch() or a script element has checked it.
 struct FetchRequestData {
@@ -34,8 +106,16 @@ struct FetchRequestData {
   // The lines that the script set, each "name: value" and a line feed.
   std::string headers;
   std::optional<std::string> body;
-  // Mode same-origin, which no hop may take to another origin.
-  bool same_origin = false;
+  // The request's mode and credentials mode, if not those of its destination.
+  std::optional<FetchMode> mode;
+  std::optional<FetchCredentialsMode> credentials;
+  // kClientReferrer, kNoReferrer, or a URL of the document's origin.
+  std::string referrer = kClientReferrer;
+  FetchReferrerPolicy referrer_policy = FetchReferrerPolicy::kDefault;
+  // The priority, if not its destination's.
+  std::optional<FetchPriority> priority;
+  // Whether it outlives its document.
+  bool keepalive = false;
   FetchDestination destination = FetchDestination::kEmpty;
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.

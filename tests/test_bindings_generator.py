@@ -1600,6 +1600,21 @@ def test_a_promise_attribute_that_is_a_known_gap_has_no_signature() -> None:
     assert 'signature, "on"' in next(line for line in lines if '"on"' in line)
 
 
+def test_a_promise_attribute_of_a_class_rejects_for_a_receiver_of_another_kind() -> None:
+    # NavigationTransition's finished, whose getter Chrome rejects with "Illegal invocation" for its prototype.
+    promise = IdlType(TypeKind.PROMISE, "Promise", members=(UNDEFINED,))
+    interface = _interface(attributes=(Attribute("finished", promise, True, False, ExtendedAttributes(), ALWAYS),))
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    getter = source[source.index("void FinishedAttributeGetCallback") :]
+    getter = getter[: getter.index("\n}\n")]
+    assert "ExceptionToRejectPromiseScope reject_promise_scope(info);" in getter
+    assert 'ThrowTypeError(isolate, "Illegal invocation");' in getter
+    install = next(line for line in source.splitlines() if "InstallAttribute(" in line and '"finished"' in line)
+    assert "v8::Local<v8::Signature>()" in install
+
+
 def test_a_class_returns_a_nullable_callback_interface_and_a_nullable_union_of_classes() -> None:
     # TreeWalker's filter, and HTMLAllCollection's item(), which gives an Element or an HTMLCollection.
     types = TypeMapper(frozenset({"Element", "HTMLCollection"}), frozenset())

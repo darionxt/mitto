@@ -1913,5 +1913,112 @@
     out.push(Object.prototype.toString.call(np), [s.createSVGPoint().x, s.createSVGPoint().y].join(), s.createSVGPoint() !== s.createSVGPoint(), tryIt(() => new SVGPoint()), typeof np.matrixTransform, tryIt(() => { L.clear(); return JSON.stringify(p.getAttribute("points")); }));
     return out.join(" | ");
   });
+  // Twelve digits, as rotations go through cos and sin, which a platform's
+  // math library may round a last bit apart.
+  const num12 = (x) => String(+x.toPrecision(12));
+  const matrixOf = (m) => [m.a, m.b, m.c, m.d, m.e, m.f].map(num12).join(",");
+  const transformOf = (t) => t.type + "/" + num12(t.angle) + "/" + matrixOf(t.matrix);
+  const transformsOf = (L) => L.length + ":" + listOf(L, transformOf);
+  run("svg transform list parse", () => {
+    const g = svg("g");
+    const L = g.transform.baseVal;
+    const out = [Object.prototype.toString.call(g.transform), Object.prototype.toString.call(L), L === g.transform.baseVal, g.transform.animVal !== L, L.length, L.numberOfItems, SVGTransform.SVG_TRANSFORM_UNKNOWN, SVGTransform.SVG_TRANSFORM_SKEWY];
+    for (const value of ["translate(10)", "translate(10, 20)", "translate(10 20)", "translate(10,)", "translate( 10 , 20 )", "scale(2)", "scale(2,3)", "rotate(45)", "rotate(45 10 20)", "rotate(45, 10)", "rotate(30,1,2,3)", "skewX(30)", "skewY(-30)", "matrix(1 2 3 4 5 6)", "matrix(1,2,3,4,5)", "translate(1) scale(2)", "translate(1),scale(2)", "translate(1) , scale(2)", "translate(1),", "translate (1)", "Translate(1)", "translate(1)scale(2)", "", "   ", "rotate(90)", "rotate(180 5 5)", "rotate(-90 3 4)", "skewX(90)", "scale(1e2 -.5)", "translate(1e40)", "matrix(1 0 0 1 0 0) bad", "translate(1)\tscale(2)\n", "translate()", "skew(10)", "translate(1 2 3)"]) {
+      g.setAttribute("transform", value);
+      let text = "-";
+      if (L.length) { L.replaceItem(L.getItem(0), 0); text = g.getAttribute("transform"); }
+      out.push(JSON.stringify(value) + "=" + transformsOf(L) + "=" + JSON.stringify(text) + "/" + g.transform.animVal.length);
+    }
+    return out.join(" | ");
+  });
+  run("svg transform objects", () => {
+    const s = svg("svg");
+    const t = s.createSVGTransform();
+    const out = [Object.prototype.toString.call(t), transformOf(t), t.matrix === t.matrix, Object.prototype.toString.call(t.matrix), t !== s.createSVGTransform(), tryIt(() => new SVGTransform())];
+    t.setTranslate(1, 2);
+    out.push(transformOf(t));
+    t.setScale(2, -3);
+    out.push(transformOf(t), Object.is(t.matrix.b, -0), Object.is(t.matrix.c, -0));
+    t.setRotate(30, 5, 6);
+    out.push(transformOf(t));
+    t.setSkewX(45);
+    out.push(transformOf(t));
+    t.setSkewY(-45);
+    out.push(transformOf(t));
+    const m = s.createSVGMatrix();
+    m.a = 2;
+    m.f = 7;
+    t.setMatrix(m);
+    m.a = 3;
+    out.push(transformOf(t), tryIt(() => t.setMatrix(null)), tryIt(() => t.setMatrix({})), tryIt(() => t.setTranslate(NaN, 1)), tryIt(() => t.setRotate(1, 2)));
+    t.setRotate(90, 0, 0);
+    const tm = t.matrix;
+    tm.e = 4;
+    out.push(transformOf(t), tm === t.matrix);
+    const fm = s.createSVGTransformFromMatrix(m);
+    m.b = 9;
+    out.push(transformOf(fm), tryIt(() => s.createSVGTransformFromMatrix(null)));
+    t.setSkewX(0.1);
+    out.push(transformOf(t));
+    return out.join(" | ");
+  });
+  run("svg transform list operations", () => {
+    const s = svg("svg");
+    const g = svg("g");
+    const L = g.transform.baseVal;
+    g.setAttribute("transform", "translate(1 2) scale(3)");
+    const t0 = L.getItem(0);
+    const out = [t0 !== L.getItem(0), tryIt(() => { t0.setRotate(10, 0, 0); return g.getAttribute("transform"); }), tryIt(() => { t0.matrix.a = 2; return g.getAttribute("transform") + " " + transformOf(L.getItem(0)); }), tryIt(() => L.getItem(5)), tryIt(() => L[5]), L[1].type];
+    const created = s.createSVGTransform();
+    created.setScale(4, 4);
+    out.push(L.appendItem(created) === created, g.getAttribute("transform"), tryIt(() => { created.setTranslate(9, 9); return g.getAttribute("transform"); }), tryIt(() => { created.matrix.f = 5; return g.getAttribute("transform"); }));
+    const h = svg("rect");
+    h.setAttribute("transform", "skewX(10)");
+    out.push(tryIt(() => { h.transform.baseVal.appendItem(L.getItem(0)); return h.getAttribute("transform"); }), tryIt(() => { L.getItem(0).setScale(5, 5); return g.getAttribute("transform") + " / " + h.getAttribute("transform"); }));
+    out.push(tryIt(() => L.insertItemBefore(s.createSVGTransform(), 1).type), g.getAttribute("transform"), tryIt(() => L.replaceItem(s.createSVGTransform(), 9)), tryIt(() => L.removeItem(0).type), g.getAttribute("transform"), tryIt(() => { L[0] = s.createSVGTransform(); return g.getAttribute("transform"); }), tryIt(() => { L[0] = 5; }), tryIt(() => L.initialize(created).type), g.getAttribute("transform"));
+    const removed = L.removeItem(0);
+    out.push(JSON.stringify(g.getAttribute("transform")), tryIt(() => { removed.setScale(2, 2); return JSON.stringify(g.getAttribute("transform")) + " " + transformOf(removed); }));
+    g.setAttribute("transform", "rotate(90) translate(10 0) scale(2)");
+    const items = [L.getItem(0), L.getItem(1)];
+    const c = L.consolidate();
+    out.push(Object.prototype.toString.call(c), transformOf(c), L.length, g.getAttribute("transform"), items.map(transformOf).join(";"), tryIt(() => { c.matrix.e = 1; return g.getAttribute("transform"); }), tryIt(() => { items[0].setScale(7, 7); return g.getAttribute("transform"); }));
+    g.removeAttribute("transform");
+    out.push(String(L.consolidate()), tryIt(() => g.transform.animVal.consolidate()));
+    g.setAttribute("transform", "translate(1)");
+    out.push(tryIt(() => g.transform.animVal.clear()), tryIt(() => { g.transform.animVal.getItem(0).setScale(1, 1); }), tryIt(() => { g.transform.animVal.getItem(0).matrix.a = 2; }), tryIt(() => { g.transform.animVal[0] = created; }), transformsOf(g.transform.animVal));
+    out.push(tryIt(() => transformOf(L.createSVGTransformFromMatrix(s.createSVGMatrix().translate(3, 4)))), tryIt(() => transformOf(g.transform.animVal.createSVGTransformFromMatrix(s.createSVGMatrix()))), L.length);
+    const o = new MutationObserver(() => {});
+    o.observe(g, { attributes: true });
+    L.appendItem(s.createSVGTransform());
+    L.getItem(0).setSkewY(5);
+    L.getItem(1).matrix.d = 3;
+    out.push(o.takeRecords().length, g.getAttribute("transform"));
+    out.push(tryIt(() => { L.clear(); return JSON.stringify(g.getAttribute("transform")); }));
+    return out.join(" | ");
+  });
+  run("svg matrix", () => {
+    const s = svg("svg");
+    const m = s.createSVGMatrix();
+    const out = [Object.prototype.toString.call(m), matrixOf(m), m !== s.createSVGMatrix(), tryIt(() => new SVGMatrix())];
+    m.a = 2; m.b = 0.5; m.c = -1; m.d = 3; m.e = 10; m.f = -20;
+    out.push(matrixOf(m), tryIt(() => { m.a = NaN; }), tryIt(() => { m.e = Infinity; }));
+    const other = s.createSVGMatrix().scaleNonUniform(2, 4).translate(1, 1);
+    out.push(matrixOf(m.translate(3, 4)), matrixOf(m.scale(2)), matrixOf(m.scaleNonUniform(2, 0.5)), matrixOf(m.rotate(30)), matrixOf(m.rotate(90)), matrixOf(m.flipX()), matrixOf(m.flipY()), matrixOf(m.skewX(30)), matrixOf(m.skewY(-45)), matrixOf(m.multiply(other)), matrixOf(other.multiply(m)), matrixOf(m.inverse()), matrixOf(m.rotateFromVector(1, 1)), matrixOf(m.rotateFromVector(-3, 4)), tryIt(() => m.rotateFromVector(0, 1)), tryIt(() => m.rotateFromVector(1, 0)), tryIt(() => m.multiply(null)), m.translate(1, 1) !== m, matrixOf(m));
+    const singular = s.createSVGMatrix();
+    singular.a = 0;
+    out.push(tryIt(() => singular.inverse()), tryIt(() => { singular.a = 1; singular.d = 1e-320; return matrixOf(singular.inverse()); }), tryIt(() => { const t = s.createSVGMatrix(); t.e = 5; t.f = -6; return matrixOf(t.inverse()); }));
+    out.push(matrixOf(s.createSVGMatrix().translate(0.1, 0.2)), matrixOf(s.createSVGMatrix().rotate(0.1)), matrixOf(s.createSVGMatrix().skewX(1e-3)));
+    const p = s.createSVGPoint();
+    p.x = 3;
+    p.y = 4;
+    const q = p.matrixTransform(m);
+    out.push(Object.prototype.toString.call(q), q !== p, q.x + "," + q.y, p.x + "," + p.y, tryIt(() => p.matrixTransform(null)), tryIt(() => { const big = s.createSVGMatrix(); big.a = 1e300; return p.matrixTransform(big).x; }), tryIt(() => { const n = s.createSVGMatrix(); n.a = 1e300; n.c = -1e300; p.x = 1; p.y = 1; return p.matrixTransform(n).x; }));
+    const poly = svg("polyline");
+    poly.setAttribute("points", "1 2");
+    const moved = poly.points.getItem(0).matrixTransform(s.createSVGMatrix().translate(5, 5));
+    out.push(moved.x + "," + moved.y, tryIt(() => { moved.x = 0; return poly.getAttribute("points"); }));
+    return out.join(" | ");
+  });
+  run("svg transform owners", () => ["g.transform", "rect.transform", "svg.transform", "text.transform", "use.transform", "a.transform", "symbol.transform", "clipPath.transform", "mask.transform", "marker.transform", "linearGradient.gradientTransform", "radialGradient.gradientTransform", "pattern.patternTransform", "pattern.transform", "stop.transform"].map((p) => { const [t, m] = p.split("."); const e = svg(t); return p + "=" + (e[m] === undefined ? "none" : Object.prototype.toString.call(e[m]) + "/" + e[m].baseVal.length); }).join(" | "));
   return JSON.stringify(cases, null, 1);
 })()

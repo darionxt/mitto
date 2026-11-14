@@ -19,6 +19,7 @@
 
 #include "base/containers/span.h"
 #include "base/types/expected.h"
+#include "mitto/cache_storage_messages.h"
 
 namespace base {
 class DictValue;
@@ -29,7 +30,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 16;
+inline constexpr uint32_t kPageProtocolVersion = 20;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -161,7 +162,7 @@ enum class PageMessage : uint32_t {
   // To the Page: the number of a kCookieStoreSet, as a 64-bit number, and a
   // byte, 1 if the cookie was stored and 0 if not.
   kCookieStoreStored = 23,
-  // To the Page, while the CookieStore listens: a change to the document's
+  // To the Page, while a document's CookieStore listens: a change to its
   // cookies, as PageCookieStoreChange says.
   kCookieStoreChange = 24,
   // To the Session: the ID of the document, and a message of one of its
@@ -169,12 +170,31 @@ enum class PageMessage : uint32_t {
   // whose documents are of the same origin.
   kBroadcast = 25,
   // To the Page: a message of a BroadcastChannel of another Page of the
-  // Session whose document is of the same origin, as PageBroadcast says.
+  // Session whose context is of the origin it names, as PageBroadcast says.
   kBroadcastReceived = 26,
+  // 27 to 39 are the storage messages' to come.
+  // To the Session: what the document's CacheStorage or one of its Caches
+  // asks, as cache_storage_messages.h says.
+  kCacheStorage = 40,
+  // To the Page: what the Session answers the Cache API, as
+  // cache_storage_messages.h says.
+  kCacheStorageAnswer = 41,
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
   kDocumentCommitted = 70,
+  // To the Session: the ID of a document, and the URL in UTF-8 that a
+  // navigation within it gave it, such as one to a fragment, which is of the
+  // document's origin.
+  kSameDocumentNavigation = 71,
+  // To the Session: a dedicated worker that a context of the Page has
+  // started, as PageWorkerStarted says. Its ID is one of the documents', in
+  // the same order.
+  kWorkerStarted = 100,
+  // To the Session: the ID of a context that goes while its parent stays, a
+  // frame's document that its element let go or a worker that ended, which
+  // the Page names no more. The contexts under it go with it.
+  kContextGone = 101,
 };
 
 // Whether a message of `type` names the document it comes from: each of the
@@ -182,10 +202,54 @@ enum class PageMessage : uint32_t {
 bool NamesDocument(PageMessage type);
 
 // The Request Kinds that a Page asks its Session for, beside the navigation
-// that opens it.
+// that opens it: a navigation is one that its document starts.
 enum class PageRequestKind : uint8_t {
   kScript = 1,
   kFetch = 2,
+  kNavigation = 3,
+  kImage = 4,
+  kStyle = 5,
+  kFont = 6,
+  kModule = 7,
+  kXhr = 8,
+  kWorker = 9,
+  kBeacon = 10,
+  kIframe = 11,
+  kFavicon = 12,
+};
+
+// What a Page's request says of its mode, as Fetch names it, where 0 leaves
+// the Request Kind's own.
+enum class PageRequestMode : uint8_t {
+  kKindDefault = 0,
+  kNavigate = 1,
+  kSameOrigin = 2,
+  kNoCors = 3,
+  kCors = 4,
+};
+
+// What a Page's request says of its credentials mode, where 0 leaves the
+// Request Kind's own.
+enum class PageCredentialsMode : uint8_t {
+  kKindDefault = 0,
+  kOmit = 1,
+  kSameOrigin = 2,
+  kInclude = 3,
+};
+
+// A referrer policy, as the Referrer Policy standard names it, where 0 leaves
+// the document's: strict-origin-when-cross-origin, which no page of a Page
+// changes yet.
+enum class PageReferrerPolicy : uint8_t {
+  kDocument = 0,
+  kNoReferrer = 1,
+  kNoReferrerWhenDowngrade = 2,
+  kOrigin = 3,
+  kOriginWhenCrossOrigin = 4,
+  kSameOrigin = 5,
+  kStrictOrigin = 6,
+  kStrictOriginWhenCrossOrigin = 7,
+  kUnsafeUrl = 8,
 };
 
 // The level of a console message, as the console method that wrote it says.
@@ -444,9 +508,13 @@ struct PageEvaluated {
 // not say its URL.
 //
 // Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
-// that is 1 for a fetch of mode same-origin, the URL, the method and the
-// header lines, each after its size as a 32-bit number, and then a byte that is
-// 1 if a body follows, which is the rest.
+// of flags, 2 for a navigation that the user activated, 4 for a navigation
+// that reloads, 8 for a request that outlives its document, 16 for a
+// synchronous one and 32 for one with no referrer, then a byte each of the
+// mode, the credentials mode, the referrer policy, the priority and whether
+// it is incremental, the target as a 64-bit number, the URL, the method, the
+// header lines and the referrer, each after its size as a 32-bit number, and
+// then a byte that is 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -465,8 +533,36 @@ struct PageRequest {
   std::string headers;
   // None with GET or HEAD.
   std::optional<std::string> body;
-  // A fetch of mode same-origin, which no hop may take to another origin.
-  bool same_origin = false;
+  // A navigation whose document had transient user activation, which sends
+  // Sec-Fetch-User.
+  bool user_activation = false;
+  // A navigation that reloads the document, as location.reload() does, which
+  // validates what the cache holds.
+  bool reload = false;
+  // A request that outlives its document, as fetch()'s keepalive and
+  // sendBeacon() make one: the Session finishes it after the document or the
+  // Page has gone.
+  bool keepalive = false;
+  // A synchronous request, which Blink gives the highest priority.
+  bool synchronous = false;
+  // A request that sends no Referer at all, as fetch()'s referrer: "" asks.
+  bool no_referrer = false;
+  // Its mode, credentials mode and referrer policy, each the kind's own or
+  // the document's by default.
+  PageRequestMode mode = PageRequestMode::kKindDefault;
+  PageCredentialsMode credentials = PageCredentialsMode::kKindDefault;
+  PageReferrerPolicy referrer_policy = PageReferrerPolicy::kDocument;
+  // 0 for the kind's own priority, or 1 and net::RequestPriority, from 1 for
+  // THROTTLED to 6 for HIGHEST, as Blink works one out.
+  uint8_t priority = 0;
+  // 0 for the kind's own, 1 for a response that is not used as it arrives,
+  // and 2 for one that is.
+  uint8_t incremental = 0;
+  // For a frame's navigation, the document that it replaces. 0 otherwise.
+  uint64_t target = 0;
+  // In UTF-8: a URL of the document's origin that Referer starts from, as
+  // fetch()'s referrer asks, or empty for the document's own URL.
+  std::string referrer;
 };
 
 // How much more of a request's body a Page has taken.
@@ -485,13 +581,47 @@ enum class PageDocumentSource : uint8_t {
 };
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
-// source, a byte, and for a navigation's response the navigation's number, a
-// 64-bit number.
+// source, a byte, the parent, a 64-bit number, and for a navigation's response
+// the navigation's number, a 64-bit number.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
+  // The document whose frame element holds this document's frame, or
+  // kNoDocument for the top-level document.
+  uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
+};
+
+// Where a dedicated worker's script comes from.
+enum class PageWorkerSource : uint8_t {
+  // The response of a request of Kind worker that the worker's creator made.
+  kScriptResponse = 1,
+  // A blob: URL of the creator's origin.
+  kBlob = 2,
+  // A data: URL, which gives the worker an opaque origin.
+  kData = 3,
+};
+
+// A dedicated worker that a context of the Page has started. Its payload is
+// the worker's ID, a 64-bit number larger than that of each document and
+// worker before it, the ID of the context that started it, a 64-bit number,
+// the source, a byte, a byte of flags, 1 for a module worker, the number of
+// the request that fetched its script for kScriptResponse, and 0 for the
+// others, a 64-bit number, and then, for kBlob, its URL in UTF-8, which is the
+// rest.
+struct PageWorkerStarted {
+  PageWorkerStarted();
+  PageWorkerStarted(PageWorkerStarted&&);
+  PageWorkerStarted& operator=(PageWorkerStarted&&);
+  ~PageWorkerStarted();
+
+  uint64_t worker = kNoDocument;
+  uint64_t creator = kNoDocument;
+  PageWorkerSource source = PageWorkerSource::kScriptResponse;
+  bool module = false;
+  uint64_t request = 0;
+  std::string url;
 };
 
 // The response of a request, after any redirects, which the Session follows
@@ -532,6 +662,10 @@ struct PageResponseStarted {
   // a name of at most 64 characters.
   std::string connection_info;
   std::string alpn_negotiated_protocol;
+  // For the navigation of a document, the Referer that its last hop sent, as
+  // //net kept it through each redirect, which the document gives as
+  // document.referrer: empty for none and for every other request.
+  std::string referrer;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;
@@ -663,7 +797,9 @@ struct PageCookieStoreCookies {
 
 // A change to the document's cookies that a CookieStore hears of: a cookie
 // that was set, or one that went, whose value and expiry it does not hand on.
+// Its payload names the document whose CookieStore listens first.
 struct PageCookieStoreChange {
+  uint64_t document = kNoDocument;
   bool deleted = false;
   PageCookie cookie;
 };
@@ -686,6 +822,10 @@ struct PageBroadcast {
   std::string name;
   bool locked = false;
   std::string data;
+  // For kBroadcastReceived: the serialized origin of the documents that sent
+  // it, whose channels alone it reaches. Its payload starts with it, after its
+  // size.
+  std::string origin;
 };
 
 // A frame from a Page, once checked. Which fields it uses depends on `type`.
@@ -728,8 +868,16 @@ struct FrameFromPage {
   bool cookie_store_listen = false;
   // kBroadcast.
   PageBroadcast broadcast;
+  // kCacheStorage.
+  PageCacheStorageCall cache_storage_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
+  // kWorkerStarted.
+  PageWorkerStarted worker_started;
+  // kContextGone.
+  uint64_t gone_context = kNoDocument;
+  // kSameDocumentNavigation: the document's new URL.
+  std::string same_document_url;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -769,6 +917,8 @@ struct FrameFromSession {
   PageCookieStoreChange cookie_store_change;
   // kBroadcastReceived.
   PageBroadcast broadcast;
+  // kCacheStorageAnswer.
+  PageCacheStorageAnswer cache_storage_answer;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -824,10 +974,20 @@ std::string EncodeCookieStoreStored(uint64_t answer, bool stored);
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
 // Whether a broadcast fits in a frame, with the ID of its document.
 bool BroadcastFits(const PageBroadcast& broadcast);
+// Whether a received broadcast fits in a frame, with its origin.
+bool BroadcastReceivedFits(const PageBroadcast& broadcast);
 // The broadcast fits in a frame.
 std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
+// The frame of a call of document `document`'s Cache API.
+std::string EncodeCacheStorage(uint64_t document,
+                               const PageCacheStorageCall& call);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
+std::string EncodeWorkerStarted(const PageWorkerStarted& started);
+std::string EncodeContextGone(uint64_t context);
+// `url` is at most kMaxPayloadSize - 8 bytes.
+std::string EncodeSameDocumentNavigation(uint64_t document,
+                                         std::string_view url);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

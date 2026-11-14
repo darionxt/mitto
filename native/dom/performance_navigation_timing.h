@@ -34,15 +34,15 @@ class PerformanceNavigationTiming final : public PerformanceResourceTiming {
   void Trace(cppgc::Visitor* visitor) const override;
 
   // The members of the interface.
-  double UnloadEventStart() const { return 0; }
-  double UnloadEventEnd() const { return 0; }
+  double UnloadEventStart() const;
+  double UnloadEventEnd() const;
   double DomInteractive() const;
   double DomContentLoadedEventStart() const;
   double DomContentLoadedEventEnd() const;
   double DomComplete() const;
   double LoadEventStart() const;
   double LoadEventEnd() const;
-  std::u16string Type() const { return u"navigate"; }
+  std::u16string Type() const;
   uint16_t RedirectCount() const;
   bindings::ScriptWrappable* NotRestoredReasons() const { return nullptr; }
   // A new object for each read, as Blink makes one, or null until the browser

@@ -10,9 +10,10 @@ namespace mitto {
 // static
 NavigationActivation* NavigationActivation::Create(
     NavigationHistoryEntry* entry,
-    std::u16string navigation_type) {
+    std::u16string navigation_type,
+    NavigationHistoryEntry* from) {
   return bindings::MakeGarbageCollected<NavigationActivation>(
-      entry, std::move(navigation_type));
+      entry, std::move(navigation_type), from);
 }
 
 // static
@@ -21,12 +22,15 @@ bindings::ScriptWrappable* NavigationActivation::CreateForKnownGap(
   // The first value of NavigationType, a Known Gap's default.
   return bindings::MakeForKnownGap<NavigationActivation>(
       info, bindings::V8NavigationActivation::kWrapperTypeInfo, nullptr,
-      std::u16string(u"push"));
+      std::u16string(u"push"), nullptr);
 }
 
 NavigationActivation::NavigationActivation(NavigationHistoryEntry* entry,
-                                           std::u16string navigation_type)
-    : entry_(entry), navigation_type_(std::move(navigation_type)) {}
+                                           std::u16string navigation_type,
+                                           NavigationHistoryEntry* from)
+    : entry_(entry),
+      from_(from),
+      navigation_type_(std::move(navigation_type)) {}
 
 NavigationActivation::~NavigationActivation() = default;
 
@@ -38,6 +42,7 @@ const bindings::WrapperTypeInfo* NavigationActivation::GetWrapperTypeInfo()
 void NavigationActivation::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(entry_);
+  visitor->Trace(from_);
 }
 
 }  // namespace mitto

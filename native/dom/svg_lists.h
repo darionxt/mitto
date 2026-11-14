@@ -62,8 +62,9 @@ class SVGAnimatedItemList : public SVGAnimatedListBase {
   void InsertItem(size_t index, SVGListItem<Value>& item);
   SVGListItem<Value>* RemoveItem(size_t index);
   void ReplaceItem(size_t index, SVGListItem<Value>& item);
-  // Blink's initialize(): `item` alone, which writes the attribute once.
-  void ResetItems(SVGListItem<Value>& item);
+  // Blink's initialize(): `item` alone, which writes the attribute once, or
+  // not at all for consolidate(), which Blink does not commit.
+  void ResetItems(SVGListItem<Value>& item, bool write_attribute = true);
 
  protected:
   SVGAnimatedItemList(SVGElement& element, std::u16string_view attribute)
@@ -119,8 +120,10 @@ class SVGTearOffList : public bindings::ScriptWrappable {
   SVGTearOffList(Owner& owner, bool read_only)
       : owner_(&owner), read_only_(read_only) {}
 
- private:
+  Owner& OwnerList() const { return *owner_; }
   bool ThrowIfReadOnly(bindings::ExceptionState& exception_state) const;
+
+ private:
   bool ThrowIfOutOfRange(uint32_t index,
                          bindings::ExceptionState& exception_state) const;
 

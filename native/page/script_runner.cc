@@ -19,6 +19,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/animation_frame_controller.h"
+#include "mitto/dom/cache_storage_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
@@ -28,8 +29,8 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
-#include "mitto/page/document_loader.h"
 #include "mitto/page/page_fetcher.h"
+#include "mitto/page/page_frame.h"
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -136,8 +137,8 @@ std::optional<std::string> ScriptRunner::Start(
   cookie_jar_ = &cookie_jar;
   cookie_jar_->SetSend(send_);
   requests_ = std::make_unique<PageRequests>(send_, std::move(refuse));
-  loader_ = std::make_unique<DocumentLoader>(*this, *requests_, send_);
-  requests_->SetNavigationClient(*loader_);
+  frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar);
+  frame_->ExpectOpeningNavigation();
   // As Blink sets the time zone that its browser process reads.
   // Upstream: third_party/blink/renderer/core/timezone/timezone_controller.cc
   std::unique_ptr<icu::TimeZone> time_zone(icu::TimeZone::createTimeZone(
@@ -210,6 +211,10 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   committed.source = source;
   committed.navigation = navigation;
   send_.Run(EncodeDocumentCommitted(committed));
+  // What the document before asked of the Session's storage goes with it.
+  if (cache_storage_host_) {
+    cache_storage_host_->DocumentCommitted(committed.document);
+  }
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
   animation_frames_ =
@@ -221,7 +226,11 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   window.SetIdleTasks(idle_tasks_.get());
   window.SetAnimationFrames(animation_frames_.get());
   window.SetFetcher(fetcher_.get());
+  window.SetNavigationClient(frame_.get());
   window.SetTasks(window_tasks_.get());
+  if (source == PageDocumentSource::kInitialEmpty) {
+    window.GetDocument().SetInitialEmptyDocument();
+  }
   window.SetStart(start_, connection);
   window.SetDocumentId(committed.document);
   window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
@@ -380,6 +389,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
     Window::Current().SetIdleTasks(nullptr);
     Window::Current().SetAnimationFrames(nullptr);
     Window::Current().SetFetcher(nullptr);
+    Window::Current().SetNavigationClient(nullptr);
     Window::Current().SetTasks(nullptr);
   }
   timers_.reset();
@@ -413,6 +423,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   // there; another's origin is opaque to them.
   if (url.SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(cookie_jar_);
+    document->SetCacheStorageHost(cache_storage_host_);
   }
   Window::Current().SetDocument(document);
   return *document;

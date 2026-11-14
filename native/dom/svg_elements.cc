@@ -218,6 +218,10 @@ SVGAnimatedEnumeration* SVGGradientElement::GradientUnits() {
   return AnimatedEnumeration(u"gradientUnits", kUnitTypes, 2);
 }
 
+SVGAnimatedTransformList* SVGGradientElement::GradientTransform() {
+  return AnimatedTransformList(u"gradientTransform");
+}
+
 SVGAnimatedEnumeration* SVGGradientElement::SpreadMethod() {
   return AnimatedEnumeration(u"spreadMethod", kSpreadMethods, 1);
 }
@@ -229,6 +233,10 @@ SVGGraphicsElement::SVGGraphicsElement(Document& document,
 const bindings::WrapperTypeInfo* SVGGraphicsElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGGraphicsElement::kWrapperTypeInfo;
+}
+
+SVGAnimatedTransformList* SVGGraphicsElement::Transform() {
+  return AnimatedTransformList(u"transform");
 }
 
 SVGGeometryElement::SVGGeometryElement(Document& document,
@@ -398,6 +406,10 @@ const bindings::WrapperTypeInfo* SVGClipPathElement::GetWrapperTypeInfo()
 
 SVGAnimatedEnumeration* SVGClipPathElement::ClipPathUnits() {
   return AnimatedEnumeration(u"clipPathUnits", kUnitTypes, 1);
+}
+
+SVGAnimatedTransformList* SVGClipPathElement::Transform() {
+  return AnimatedTransformList(u"transform");
 }
 
 // static
@@ -1454,6 +1466,10 @@ SVGAnimatedEnumeration* SVGPatternElement::PatternContentUnits() {
   return AnimatedEnumeration(u"patternContentUnits", kUnitTypes, 1);
 }
 
+SVGAnimatedTransformList* SVGPatternElement::PatternTransform() {
+  return AnimatedTransformList(u"patternTransform");
+}
+
 // static
 SVGPolygonElement* SVGPolygonElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGPolygonElement>(document);
@@ -1628,8 +1644,20 @@ SVGPoint* SVGSVGElement::CreateSVGPoint() {
   return SVGPoint::Create();
 }
 
+SVGMatrix* SVGSVGElement::CreateSVGMatrix() {
+  return SVGMatrix::Create(SVGAffineTransform());
+}
+
 SVGRect* SVGSVGElement::CreateSVGRect() {
   return SVGRect::Create();
+}
+
+SVGTransform* SVGSVGElement::CreateSVGTransform() {
+  return SVGTransform::Create();
+}
+
+SVGTransform* SVGSVGElement::CreateSVGTransformFromMatrix(SVGMatrix* matrix) {
+  return SVGTransform::CreateFromMatrix(*matrix);
 }
 
 // static

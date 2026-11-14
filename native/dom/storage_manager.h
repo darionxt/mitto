@@ -1,7 +1,8 @@
-// Storage's StorageManager, navigator.storage, for a profile that has stored
-// nothing: Chrome's fixed quota and no usage, and storage that is not
-// persisted, which Chrome's durable storage permission does not grant without
-// engagement. getDirectory() stays a Known Gap.
+// Storage's StorageManager, navigator.storage: what the Session's storage
+// holds for the document's storage key and Chrome's fixed quota beside it, or
+// for a document that its Session did not load no usage, and storage that is
+// not persisted, which Chrome's durable storage permission does not grant
+// without engagement. getDirectory() stays a Known Gap.
 //
 // Upstream: third_party/blink/renderer/modules/quota/storage_manager.cc
 // Upstream: storage/browser/quota/quota_manager_impl.cc

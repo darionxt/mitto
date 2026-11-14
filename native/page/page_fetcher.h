@@ -1,7 +1,8 @@
 // What a window's fetch() asks its Session through: each request a fetch
 // Request Kind's, on the Page's requests, with the document as its Initiator.
 // One serves one window, and cancels what it has open when it goes, as a
-// document's loaders are cancelled when it goes.
+// document's loaders are cancelled when it goes, but for keepalive requests,
+// which it lets go on.
 
 #ifndef MITTO_PAGE_PAGE_FETCHER_H_
 #define MITTO_PAGE_PAGE_FETCHER_H_
@@ -38,6 +39,8 @@ class PageFetcher final : public Fetcher {
 
   const raw_ref<PageRequests> requests_;
   std::map<uint64_t, std::unique_ptr<Request>> open_;
+  // The bytes of the bodies of the open keepalive requests.
+  size_t keepalive_bytes_ = 0;
 };
 
 }  // namespace mitto

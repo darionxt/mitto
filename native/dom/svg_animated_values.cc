@@ -258,6 +258,10 @@ std::u16string IntegerToString(int32_t value) {
   return base::NumberToString16(value);
 }
 
+std::u16string FloatToString(float value) {
+  return SVGNumberToString(value);
+}
+
 }  // namespace
 
 std::optional<float> ParseSVGNumber(std::u16string_view value) {
@@ -361,12 +365,100 @@ std::optional<std::pair<float, uint8_t>> ParseSVGAngle(
   return std::pair(number, unit);
 }
 
+// ParseAndSkipTransformType(), then ParseTransformArgumentsForType() of each
+// function: its required arguments, or those and its optional ones, parted by
+// spaces or a comma, with no comma after the last.
+std::optional<std::vector<SVGTransformArguments>> ParseSVGTransforms(
+    std::u16string_view value) {
+  // Of kUnknown, kMatrix, kTranslate, kScale, kRotate, kSkewx and kSkewy.
+  constexpr std::array<size_t, 7> kRequired = {0, 6, 1, 1, 1, 1, 1};
+  constexpr std::array<size_t, 7> kOptional = {0, 0, 1, 1, 2, 0, 0};
+  auto skip_token = [&value](std::u16string_view token) {
+    if (value.substr(0, token.size()) != token) {
+      return false;
+    }
+    value.remove_prefix(token.size());
+    return true;
+  };
+  std::vector<SVGTransformArguments> transforms;
+  bool delimiter = false;
+  SkipSpaces(value);
+  while (!value.empty()) {
+    delimiter = false;
+    SVGTransformArguments transform;
+    if (value.front() == 's') {
+      if (skip_token(u"skewX")) {
+        transform.type = 5;
+      } else if (skip_token(u"skewY")) {
+        transform.type = 6;
+      } else if (skip_token(u"scale")) {
+        transform.type = 3;
+      }
+    } else if (skip_token(u"translate")) {
+      transform.type = 2;
+    } else if (skip_token(u"rotate")) {
+      transform.type = 4;
+    } else if (skip_token(u"matrix")) {
+      transform.type = 1;
+    }
+    if (!transform.type) {
+      return std::nullopt;
+    }
+    SkipSpaces(value);
+    if (value.empty() || value.front() != '(') {
+      return std::nullopt;
+    }
+    value.remove_prefix(1);
+    const size_t required = kRequired[transform.type];
+    const size_t all = required + kOptional[transform.type];
+    bool trailing_delimiter = false;
+    while (transform.count < all) {
+      std::u16string_view rest = value;
+      float number = 0;
+      if (!ParseNumber(rest, number, kAllowLeadingWhitespace)) {
+        break;
+      }
+      value = rest;
+      transform.values[transform.count++] = number;
+      trailing_delimiter = false;
+      if (transform.count == all) {
+        break;
+      }
+      SkipSpaces(value);
+      if (!value.empty() && value.front() == ',') {
+        value.remove_prefix(1);
+        trailing_delimiter = true;
+      }
+    }
+    if ((transform.count != required && transform.count != all) ||
+        trailing_delimiter) {
+      return std::nullopt;
+    }
+    SkipSpaces(value);
+    if (value.empty() || value.front() != ')') {
+      return std::nullopt;
+    }
+    value.remove_prefix(1);
+    transforms.push_back(transform);
+    SkipSpaces(value);
+    if (!value.empty() && value.front() == ',') {
+      value.remove_prefix(1);
+      delimiter = true;
+    }
+    SkipSpaces(value);
+  }
+  if (delimiter) {
+    return std::nullopt;
+  }
+  return transforms;
+}
+
 // DoubleToStringConverter::ToStringWithFixedPrecision() of WTF's dtoa.cc.
-std::u16string SVGNumberToString(float value) {
+std::u16string SVGNumberToString(double value) {
   char buffer[128];
   double_conversion::StringBuilder builder(buffer, sizeof(buffer));
   double_conversion::DoubleToStringConverter::EcmaScriptConverter().ToPrecision(
-      static_cast<double>(value), 6, &builder);
+      value, 6, &builder);
   std::string text(builder.Finalize());
   // Blink keeps the trailing zeros of a number with an exponent.
   if (text.find('e') == std::string::npos &&
@@ -735,8 +827,8 @@ void SVGAnimatedNumber::SetBaseValue(float value) {
   }
   const float other = other_half_->BaseVal();
   SynchronizeAttribute(Half() == SVGPairHalf::kFirst
-                           ? PairToString(value, other, &SVGNumberToString)
-                           : PairToString(other, value, &SVGNumberToString));
+                           ? PairToString(value, other, &FloatToString)
+                           : PairToString(other, value, &FloatToString));
 }
 
 void SVGAnimatedNumber::Parse(const std::u16string* value) {

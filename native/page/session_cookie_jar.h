@@ -27,6 +27,7 @@
 #include "base/thread_annotations.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/page/page_reporter.h"
+#include "mitto/page_messages.h"
 
 namespace mitto {
 
@@ -42,6 +43,9 @@ class SessionCookieJar final : public CookieJar {
   // On the main thread, before the first read or write: how frames go to the
   // Session.
   void SetSend(SendFrame send);
+  // How many cookie lines scripts have set through document.cookie, which a
+  // navigation that waits compares with to tell a new one from the same.
+  uint64_t cookie_writes() const { return cookie_writes_; }
 
   // CookieJar, on the main thread:
   std::u16string Cookies() override;
@@ -66,6 +70,8 @@ class SessionCookieJar final : public CookieJar {
   base::ConditionVariable answered_{&lock_};
   // The question that a read waits for the answer to, if one does.
   std::optional<uint64_t> question_ GUARDED_BY(lock_);
+  // Main thread only.
+  uint64_t cookie_writes_ = 0;
   std::optional<std::string> answer_ GUARDED_BY(lock_);
   // Only the main thread asks.
   uint64_t last_question_ = 0;
@@ -76,6 +82,7 @@ class SessionCookieJar final : public CookieJar {
   std::map<uint64_t, CookiesAnswer> cookie_store_gets_;
   std::map<uint64_t, StoredAnswer> cookie_store_sets_;
   ChangeListener cookie_store_listener_;
+  uint64_t cookie_store_document_ = kNoDocument;
   uint64_t last_cookie_store_question_ = 0;
   std::set<uint64_t> cookie_store_questions_ GUARDED_BY(lock_);
 };

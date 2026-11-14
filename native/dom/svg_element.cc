@@ -102,6 +102,18 @@ SVGAnimatedPointList* SVGElement::AnimatedPointList() {
   return value;
 }
 
+SVGAnimatedTransformList* SVGElement::AnimatedTransformList(
+    std::u16string_view attribute) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedTransformList*>(value);
+  }
+  SVGAnimatedTransformList* const value =
+      SVGAnimatedTransformList::Create(*this, attribute);
+  animated_values_.push_back(value);
+  return value;
+}
+
 SVGAnimatedNumberList* SVGElement::AnimatedNumberList(
     std::u16string_view attribute) {
   if (SVGAnimatedPropertyBase* const value =

@@ -14,6 +14,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Self
 
@@ -29,8 +30,11 @@ from mitto._native import (
     PageEvaluated,
     PageLoaded,
     PageNavigated,
+    PageNavigationStarted,
+    PageUrlChanged,
     UncaughtError,
 )
+from mitto._session_state import ABOUT_BLANK
 from mitto._timeout import to_seconds
 
 __all__ = [
@@ -39,8 +43,10 @@ __all__ = [
     "KEPT_REPORT_TEXT",
     "ConsoleMessage",
     "Page",
+    "PageNavigation",
     "PageRecord",
     "loaded_url",
+    "navigation_of",
     "outcome_of",
     "take_waiting_events",
 ]
@@ -79,6 +85,42 @@ class LastReports[T]:
             self._text -= len(self._text_of(self._reports.popleft()))
 
 
+@dataclass(frozen=True, slots=True)
+class PageNavigation:
+    """A navigation that a Page's document started, once it has ended.
+
+    Attributes:
+        url: The URL of the document that it loaded, after any redirects, the document's new URL for one within the
+            document, or the URL that it ended at with no document.
+        status: The response's HTTP status code, or 0 for one within the document.
+        same_document: Whether it stayed within the document, as one to a fragment does, with no request.
+        kept_document: Whether it ended with no document, as one whose response is a 204 or a download does, and the
+            Page kept the one it had.
+    """
+
+    url: str
+    status: int
+    same_document: bool = False
+    kept_document: bool = False
+
+
+@dataclass(slots=True)
+class _OwnNavigation:
+    """A navigation that a Page's document started, as its events tell of it.
+
+    Attributes:
+        url: Where it goes, until it ends.
+        navigated: How it ended, for one to another document, once it has.
+        same_document: Whether it stayed within the document.
+        done: Whether it has ended: its document has loaded or given way to another, or it ended with none, or failed.
+    """
+
+    url: str
+    navigated: PageNavigated | None = None
+    same_document: bool = False
+    done: bool = False
+
+
 class PageRecord:
     """What a Page's events have said, sorted for the calls that wait for their results. It neither waits nor locks.
 
@@ -88,7 +130,10 @@ class PageRecord:
         known_gaps: The members whose behaviour the Runtime lacks that each document reached, in order, likewise.
         ended: How the Page ended, once its event has come.
         navigated: How the navigation that opened the Page went, once its event has come.
-        loaded: Whether the window's load event has been dispatched.
+        loaded: Whether the window's load event of a document of the Page has been dispatched.
+        stopped_loading: Whether a document stopped loading before it had loaded, with no new document to load after it:
+            a navigation that it started ended with no document of its own.
+        document_url: The URL of the Page's document, once a navigation has given it one.
     """
 
     def __init__(self) -> None:
@@ -100,6 +145,12 @@ class PageRecord:
         self.ended: PageEnded | None = None
         self.navigated: PageNavigated | None = None
         self.loaded = False
+        self.stopped_loading = False
+        self.document_url: str | None = None
+        # The navigations that the Page's documents started, in order, each until a caller takes it once it has ended,
+        # and the one whose document loads.
+        self._navigations: deque[_OwnNavigation] = deque()
+        self._loading: _OwnNavigation | None = None
 
     def expect(self, call: int) -> None:
         """Keep the result of `call` when it arrives, until take() or forget() asks for it."""
@@ -135,16 +186,61 @@ class PageRecord:
             case PageEnded():
                 self.ended = event
             case PageNavigated():
-                self.navigated = event
+                self._navigated(event)
             case PageLoaded():
                 self.loaded = True
+                if self._loading is not None:
+                    self._loading.done = True
+                    self._loading = None
+            case PageNavigationStarted(url=url):
+                self._add_navigation(_OwnNavigation(url))
+            case PageUrlChanged(url=url):
+                self.document_url = url
+                self._add_navigation(_OwnNavigation(url, same_document=True, done=True))
             case PageEvaluated():
                 pass
 
+    def _navigated(self, event: PageNavigated) -> None:
+        """Sort how a navigation ended: the one that opened the Page, until a document has started one."""
+        navigation = next((n for n in self._navigations if not n.same_document and n.navigated is None), None)
+        if navigation is None:
+            self.navigated = event
+        else:
+            navigation.navigated = event
+            navigation.done = event.net_error != 0
+        if event.net_error == 0:
+            self.document_url = event.url
+            # A document that has not loaded before another takes its place never will.
+            if self._loading is not None:
+                self._loading.done = True
+            self._loading = navigation
+        elif navigation is not None:
+            # A document stops loading when it starts a navigation, so one that had not loaded by then never will. Unless
+            # another took this one's place, nothing comes to load after it.
+            if self._loading is not None:
+                self._loading.done = True
+                self._loading = None
+            if not self.loaded and not event.replaced:
+                self.stopped_loading = True
+
+    def _add_navigation(self, navigation: _OwnNavigation) -> None:
+        self._navigations.append(navigation)
+        # The oldest that have ended go first, so that a caller that takes none cannot fill the memory.
+        while len(self._navigations) > KEPT_REPORTS and self._navigations[0].done:
+            self._navigations.popleft()
+
+    def take_navigation(self) -> _OwnNavigation | PageEnded | None:
+        """Return the oldest navigation that a document started and no caller has taken, once it has ended, or how the
+        Page ended first."""
+        if self._navigations and self._navigations[0].done:
+            return self._navigations.popleft()
+        return self.ended
+
     def load_outcome(self) -> PageNavigated | PageEnded | None:
-        """Return how loading the Page's document went, once it has: its navigation, which failed or whose document has
-        fired its load event, or how the Page ended first."""
-        if self.navigated is not None and (self.navigated.net_error != 0 or self.loaded):
+        """Return how loading the Page's document went, once it has: its navigation, which failed or ended with no
+        document, or whose document, or one that a navigation of it started, has fired its load event or stopped loading
+        for good, or how the Page ended first."""
+        if self.navigated is not None and (self.navigated.net_error != 0 or self.loaded or self.stopped_loading):
             return self.navigated
         return self.ended
 
@@ -166,8 +262,9 @@ def take_waiting_events(native: NativePage, record: PageRecord, limit: int = EVE
     return True
 
 
-def loaded_url(native: NativePage, url: str, outcome: PageNavigated | PageEnded) -> str:
-    """Return the URL of the document that opening a Page for `url` loaded, after any redirects.
+def loaded_url(native: NativePage, url: str, record: PageRecord, outcome: PageNavigated | PageEnded) -> str:
+    """Return the URL of the document that opening a Page for `url` loaded, after any redirects and the navigations that
+    it started before it loaded, or about:blank's if the navigation ended with no document.
 
     Raises:
         RequestError: If the navigation failed, of the type that `session.get(url)` raises for that failure.
@@ -176,10 +273,35 @@ def loaded_url(native: NativePage, url: str, outcome: PageNavigated | PageEnded)
     match outcome:
         case PageEnded(message=message):
             raise PageEndedError(message)
+        case PageNavigated() as navigated if navigated.kept_document:
+            return ABOUT_BLANK
         case PageNavigated(net_error=0, url=document_url):
-            return document_url
+            return record.document_url or document_url
         case PageNavigated(net_error=net_error):
             raise native.request_error(url, net_error)
+
+
+def navigation_of(native: NativePage, outcome: _OwnNavigation | PageEnded) -> PageNavigation:
+    """Return how a navigation that a Page's document started ended.
+
+    Raises:
+        RequestError: If it failed before a response, or another took its place first, as a request to its URL raises for
+            that failure.
+        PageEndedError: If the Page ended first.
+    """
+    match outcome:
+        case PageEnded(message=message):
+            raise PageEndedError(message)
+        case _OwnNavigation(same_document=True, url=url):
+            return PageNavigation(url=url, status=0, same_document=True)
+        case _OwnNavigation(navigated=PageNavigated() as navigated) if (
+            navigated.net_error == 0 or navigated.kept_document
+        ):
+            return PageNavigation(url=navigated.url, status=navigated.status, kept_document=navigated.kept_document)
+        case _OwnNavigation(navigated=PageNavigated(net_error=net_error), url=url):
+            raise native.request_error(url, net_error)
+        case _OwnNavigation():
+            raise AssertionError("a navigation that has not ended")
 
 
 def outcome_of(evaluated: PageEvaluated) -> Any:
@@ -232,8 +354,14 @@ class Page:
 
     @property
     def url(self) -> str:
-        """The URL of the Page's document, after the redirects of the navigation that opened it, or about:blank."""
-        return self._url
+        """The URL of the Page's document, after the redirects of the navigation that loaded it, or about:blank.
+
+        It follows the navigations that the Page's documents start, once each has its response, and those within a
+        document, such as one to a fragment.
+        """
+        with self._lock:
+            self._take_waiting_events()
+            return self._record.document_url or self._url
 
     @property
     def process_id(self) -> int:
@@ -333,7 +461,37 @@ class Page:
         if outcome is None:
             assert seconds is not None
             raise PageTimeoutError(seconds)
-        self._url = loaded_url(self._native, self._url, outcome)
+        self._url = loaded_url(self._native, self._url, self._record, outcome)
+
+    def wait_for_navigation(self, *, timeout: float | None = None) -> PageNavigation:
+        """Block until the next navigation that the Page's documents started has ended, and return how.
+
+        Each call takes the oldest that no call has taken, so that a navigation that ends before the call still counts:
+        one that a script starts, such as through location or a link, is the next once the script's call has returned.
+        One to another document ends once its document has loaded, or given way to another before it did, or with no
+        document, as one whose response is a 204 or a download does. One within the document, such as to a fragment,
+        has ended already.
+
+        Args:
+            timeout: How many seconds to wait, or None to wait for as long as it takes.
+
+        Raises:
+            TypeError: If `timeout` is neither a number nor None.
+            ValueError: If `timeout` is not a positive number of at most 2,000,000 seconds, or this Page has been closed.
+            RequestError: If the navigation failed before a response, or another took its place first, as a request to
+                its URL raises for that failure.
+            PageEndedError: If the Page ended first.
+            PageTimeoutError: If `timeout` passed first.
+        """
+        seconds = to_seconds(timeout)
+        deadline = None if seconds is None else time.monotonic() + seconds
+        with self._lock:
+            self._require_open()
+            outcome = self._wait_until(self._record.take_navigation, deadline)
+        if outcome is None:
+            assert seconds is not None
+            raise PageTimeoutError(seconds)
+        return navigation_of(self._native, outcome)
 
     def close(self) -> None:
         """Close the Page: end its process, and wait for it to go, which takes up to 2 seconds before a kill.

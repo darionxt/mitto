@@ -53,8 +53,10 @@ class ResolvedURL {
   int HostEnd() const;
   int PathStart() const;
 
-  // KURL's setters, each as Blink writes it.
-  void SetProtocol(std::u16string_view protocol);
+  // KURL's setters, each as Blink writes it. SetProtocol() returns false for
+  // what is no scheme, and true when it keeps the URL as it is, as for a
+  // special URL that a scheme that is not special would leave.
+  bool SetProtocol(std::u16string_view protocol);
   void SetUser(std::u16string_view user);
   void SetPass(std::u16string_view pass);
   void SetHost(std::u16string_view host);

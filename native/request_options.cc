@@ -109,6 +109,9 @@ std::optional<CredentialsMode> ParseCredentialsMode(const base::Value& value) {
   if (!value.is_string()) {
     return std::nullopt;
   }
+  if (value.GetString() == "omit") {
+    return CredentialsMode::kOmit;
+  }
   if (value.GetString() == "same-origin") {
     return CredentialsMode::kSameOrigin;
   }

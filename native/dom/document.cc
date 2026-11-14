@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <variant>
 
+#include "base/auto_reset.h"
 #include "base/check.h"
+#include "base/check_op.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ref.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
@@ -16,12 +19,16 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
+#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
+#include "mitto/dom/before_unload_event.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
+#include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/document_parser.h"
 #include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/dom_implementation.h"
@@ -34,9 +41,13 @@
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/mathml_element.h"
+#include "mitto/dom/navigation_client.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
+#include "mitto/dom/page_transition_event.h"
+#include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/range.h"
@@ -53,7 +64,10 @@
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+#include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
+#include "v8/include/v8-microtask-queue.h"
 
 namespace mitto {
 
@@ -79,6 +93,31 @@ void SetIsValueFromOptions(
   if (dictionary && dictionary->is) {
     element.SetIsValue(*dictionary->is);
   }
+}
+
+// How deep write() calls may nest, as Blink's kCMaxWriteRecursionDepth.
+constexpr int kMaxWriteRecursionDepth = 21;
+
+// Blink's NestingLevelIncrementer.
+class NestingLevelIncrementer {
+ public:
+  explicit NestingLevelIncrementer(int& level) : level_(level) { ++*level_; }
+  NestingLevelIncrementer(const NestingLevelIncrementer&) = delete;
+  NestingLevelIncrementer& operator=(const NestingLevelIncrementer&) = delete;
+  ~NestingLevelIncrementer() { --*level_; }
+
+ private:
+  const raw_ref<int> level_;
+};
+
+// The window of the entered context, as Blink's EnteredDOMWindow() gives it.
+Window* EnteredWindow() {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate->InContext()) {
+    return nullptr;
+  }
+  return bindings::V8Window::ToWrappable(
+      isolate, isolate->GetEnteredOrMicrotaskContext()->Global());
 }
 
 bool IsAsciiWhitespace(char16_t c) {
@@ -146,6 +185,8 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(template_document_host_);
   visitor->Trace(implementation_);
   visitor->Trace(traversals_);
+  visitor->Trace(parser_);
+  visitor->Trace(load_timing_);
 }
 
 mitto::Location* Document::Location() const {
@@ -334,14 +375,148 @@ void Document::SetReadiness(Readiness readiness) {
   if (readiness == readiness_) {
     return;
   }
-  readiness_ = readiness;
-  if (readiness == Readiness::kLoading) {
-    return;
+  if (DocumentLoadTiming* const timing = load_timing_.Get()) {
+    switch (readiness) {
+      case Readiness::kLoading:
+        if (timing->dom_loading.is_null()) {
+          timing->dom_loading = base::TimeTicks::Now();
+        }
+        break;
+      case Readiness::kInteractive:
+        if (timing->dom_interactive.is_null()) {
+          timing->dom_interactive = base::TimeTicks::Now();
+          // Chrome's renderer tells its browser process, which answers with
+          // the navigation's confidence from a later task: high, as for any
+          // navigation once the browser has started, with its noise.
+          if (WindowTasks* const tasks =
+                  window_ ? window_->GetTasks() : nullptr) {
+            tasks->PostTask(
+                TaskType::kInternalNavigationAssociated,
+                base::BindOnce(
+                    [](const cppgc::Persistent<DocumentLoadTiming>& timing) {
+                      timing->high_confidence =
+                          PerformanceTimingConfidence::DrawHighConfidence();
+                    },
+                    cppgc::Persistent<DocumentLoadTiming>(timing)));
+          }
+        }
+        break;
+      case Readiness::kComplete:
+        if (timing->dom_complete.is_null()) {
+          timing->dom_complete = base::TimeTicks::Now();
+        }
+        break;
+    }
   }
+  readiness_ = readiness;
   bindings::EventInit init;
   Event* const event = Event::Create(u"readystatechange", init);
   event->SetTrusted(true);
   DispatchEvent(event);
+}
+
+bool Document::PageDismissalEventBeingDispatched() const {
+  switch (load_event_progress_) {
+    case LoadEventProgress::kBeforeUnloadEventInProgress:
+    case LoadEventProgress::kPageHideInProgress:
+    case LoadEventProgress::kUnloadVisibilityChangeInProgress:
+    case LoadEventProgress::kUnloadEventInProgress:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void Document::SetInitialEmptyDocument() {
+  initial_empty_ = true;
+  load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
+}
+
+bool Document::DispatchBeforeUnloadEvent() {
+  // The HTML Standard's prompt to unload, which FrameLoader::ShouldClose()
+  // runs with the ignore-opens-during-unload counter up, so that open() and
+  // write() do nothing meanwhile.
+  const IgnoreOpensDuringUnloadCountIncrementer ignore_opens_during_unload(
+      *this);
+  if (!window_ || !Body()) {
+    return true;
+  }
+  // A navigation that a beforeunload listener starts.
+  if (load_event_progress_ == LoadEventProgress::kBeforeUnloadEventInProgress) {
+    return false;
+  }
+  BeforeUnloadEvent* const event = BeforeUnloadEvent::Create();
+  {
+    const base::AutoReset<LoadEventProgress> in_progress(
+        &load_event_progress_, LoadEventProgress::kBeforeUnloadEventInProgress);
+    window_->DispatchEventWithTarget(event, this);
+  }
+  if (!event->ReturnValue().empty() || event->DefaultPrevented()) {
+    // Intervention::GenerateReport(), as no user ever activated the page.
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        "Blocked attempt to show a 'beforeunload' confirmation panel for a "
+        "frame that never had a user gesture since its load. "
+        "https://www.chromestatus.com/feature/5082396709879808");
+  }
+  // FrameLoader::BeforeUnloadDoneWillUnload().
+  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
+  return true;
+}
+
+HttpRefreshScheduler& Document::GetHttpRefreshScheduler() {
+  if (!http_refresh_scheduler_) {
+    http_refresh_scheduler_ = std::make_unique<HttpRefreshScheduler>(*this);
+  }
+  return *http_refresh_scheduler_;
+}
+
+void Document::Abort() {
+  // CancelParsing(): the parser goes, and the document is complete. The
+  // refresh that the document scheduled goes with it.
+  CancelParsing();
+}
+
+void Document::DispatchUnloadEvents() {
+  // The HTML Standard's unload a document, which Blink's frame runs with the
+  // ignore-opens-during-unload counter up, so that open() and write() do
+  // nothing meanwhile.
+  const IgnoreOpensDuringUnloadCountIncrementer ignore_opens_during_unload(
+      *this);
+  // The parser stops for good, and what more of the body comes goes unread.
+  DetachParser();
+  if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun ||
+      load_event_progress_ >= LoadEventProgress::kPageHideInProgress ||
+      !window_) {
+    return;
+  }
+  load_event_progress_ = LoadEventProgress::kPageHideInProgress;
+  window_->DispatchEventWithTarget(
+      PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/false),
+      this);
+  // The page is visible until this changes it, which Hidden() reads.
+  const bool page_visible = window_ && !Hidden();
+  load_event_progress_ = LoadEventProgress::kUnloadVisibilityChangeInProgress;
+  if (page_visible) {
+    for (const char16_t* type :
+         {u"visibilitychange", u"webkitvisibilitychange"}) {
+      bindings::EventInit init;
+      init.bubbles = true;
+      Event* const event = Event::Create(type, init);
+      event->SetTrusted(true);
+      DispatchEvent(event);
+    }
+  }
+  load_event_progress_ = LoadEventProgress::kUnloadEventInProgress;
+  if (window_) {
+    bindings::EventInit init;
+    Event* const event = Event::Create(u"unload", init);
+    event->SetTrusted(true);
+    unload_event_start_ = base::TimeTicks::Now();
+    window_->DispatchEventWithTarget(event, this);
+    unload_event_end_ = base::TimeTicks::Now();
+  }
+  load_event_progress_ = LoadEventProgress::kUnloadEventHandled;
 }
 
 std::u16string Document::CompatMode() const {
@@ -846,7 +1021,7 @@ void Document::DecrementLoadEventDelayCount() {
   // CheckLoadEventSoon(): a timer of no delay on the DOM manipulation task
   // source.
   WindowTasks* const tasks = window_ ? window_->GetTasks() : nullptr;
-  if (!tasks || check_completed_.is_null()) {
+  if (!tasks) {
     return;
   }
   load_event_check_pending_ = true;
@@ -857,9 +1032,323 @@ void Document::DecrementLoadEventDelayCount() {
                           return;
                         }
                         document->load_event_check_pending_ = false;
-                        document->check_completed_.Run();
+                        document->CheckCompleted();
                       },
                       cppgc::WeakPersistent<Document>(this)));
+}
+
+void Document::SetLoadTiming(DocumentLoadTiming* timing) {
+  load_timing_ = timing;
+}
+
+DocumentParser& Document::OpenForNavigation(DocumentParser::Client& client) {
+  return ImplicitOpen(&client);
+}
+
+DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client) {
+  RemoveChildren();
+  SetCompatibilityMode(CompatibilityMode::kNoQuirks);
+  DetachParser();
+  parser_ = bindings::MakeGarbageCollected<DocumentParser>(*this, client);
+  // The parser may run scripts before this returns, so it is held here.
+  const cppgc::Persistent<DocumentParser> parser = parser_.Get();
+  parsing_state_ = ParsingState::kParsing;
+  SetReadiness(Readiness::kLoading);
+  if (load_event_progress_ != LoadEventProgress::kLoadEventInProgress &&
+      !PageDismissalEventBeingDispatched()) {
+    load_event_progress_ = LoadEventProgress::kLoadEventNotRun;
+  }
+  return *parser;
+}
+
+void Document::DetachParser() {
+  if (DocumentParser* const parser = parser_.Release()) {
+    parser->Detach();
+  }
+}
+
+void Document::CancelParsing() {
+  // An open() or write() right after a navigation starts does nothing, as
+  // Firefox has it and Blink copies, so as not to cancel the navigation.
+  if (parser_ && parser_->IsParsing()) {
+    ignore_opens_and_writes_for_abort_ = true;
+  }
+  DetachParser();
+  parsing_state_ = ParsingState::kFinishedParsing;
+  SetReadiness(Readiness::kComplete);
+  if (http_refresh_scheduler_) {
+    http_refresh_scheduler_->Cancel();
+  }
+  if (load_event_progress_ < LoadEventProgress::kLoadEventCompleted) {
+    load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
+  }
+}
+
+void Document::FinishedParsing() {
+  parsing_state_ = ParsingState::kInDOMContentLoaded;
+  // DOMContentLoaded at the document, from the task that ends the parse, as
+  // Blink dispatches it, which bubbles to the window.
+  DocumentLoadTiming* const timing = load_timing_.Get();
+  if (timing && timing->dom_content_loaded_event_start.is_null()) {
+    timing->dom_content_loaded_event_start = base::TimeTicks::Now();
+  }
+  bindings::EventInit init;
+  init.bubbles = true;
+  Event* const event = Event::Create(u"DOMContentLoaded", init);
+  event->SetTrusted(true);
+  DispatchEvent(event);
+  if (timing && timing->dom_content_loaded_event_end.is_null()) {
+    timing->dom_content_loaded_event_end = base::TimeTicks::Now();
+  }
+  parsing_state_ = ParsingState::kFinishedParsing;
+  v8::MicrotasksScope::PerformCheckpoint(v8::Isolate::GetCurrent());
+  // FrameLoader::FinishedParsing(), for a document of a window.
+  if (window_) {
+    CheckCompleted();
+  }
+}
+
+void Document::CheckCompleted() {
+  // Document::ShouldComplete(), with what a Page's documents hold back: the
+  // async and in-order scripts.
+  if (parsing_state_ != ParsingState::kFinishedParsing ||
+      IsDelayingLoadEvent() ||
+      load_event_progress_ == LoadEventProgress::kLoadEventInProgress) {
+    return;
+  }
+  SetReadiness(Readiness::kComplete);
+  if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun) {
+    DispatchLoadEventAndFinalize();
+  }
+  // The refresh's delay starts once the load event has finished.
+  if (window_ && http_refresh_scheduler_) {
+    http_refresh_scheduler_->MaybeStartTimer();
+  }
+}
+
+void Document::DispatchLoadEventAndFinalize() {
+  load_event_progress_ = LoadEventProgress::kLoadEventInProgress;
+  // The parser goes, in case the load event's listeners write.
+  DetachParser();
+  if (Window* const window = window_.Get()) {
+    // LocalDOMWindow::DispatchLoadEvent(): load at the window, with the
+    // document as its target, its times marked the first time.
+    bindings::EventInit init;
+    Event* const event = Event::Create(u"load", init);
+    event->SetTrusted(true);
+    DocumentLoadTiming* const timing = load_timing_.Get();
+    if (timing && timing->load_event_start.is_null()) {
+      timing->load_event_start = base::TimeTicks::Now();
+      window->DispatchEventWithTarget(event, this);
+      timing->load_event_end = base::TimeTicks::Now();
+    } else {
+      window->DispatchEventWithTarget(event, this);
+    }
+    // LocalDOMWindow::DispatchLoadAndPageshowEvents(): pageshow right after
+    // load, at the window with the document as its target.
+    window->DispatchEventWithTarget(
+        PageTransitionEvent::CreateTrusted(u"pageshow", /*persisted=*/false),
+        this);
+  }
+  load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
+  if (window_ && !did_dispatch_load_event_.is_null()) {
+    did_dispatch_load_event_.Run();
+  }
+}
+
+void Document::RemoveAllEventListenersRecursively() {
+  for (Node* node = this; node; node = node->NextInTree(this)) {
+    node->RemoveAllEventListeners();
+  }
+  if (window_) {
+    window_->RemoveAllEventListeners();
+  }
+}
+
+Document* Document::Open(const std::u16string& type,
+                         const std::u16string& replace,
+                         bindings::ExceptionState& exception_state) {
+  // The type is ignored, and "replace" only counted, as in Blink.
+  Open(EnteredWindow(), exception_state);
+  return this;
+}
+
+Window* Document::Open(const std::u16string& url,
+                       const std::u16string& name,
+                       const std::u16string& features,
+                       bindings::ExceptionState& exception_state) {
+  if (!window_) {
+    exception_state.ThrowDOMException("InvalidAccessError",
+                                      "The document has no window associated.");
+    return nullptr;
+  }
+  return window_->Open(url, name, features, exception_state);
+}
+
+void Document::Open(Window* entered_window,
+                    bindings::ExceptionState& exception_state) {
+  if (!is_html_) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "Only HTML documents support open().");
+    return;
+  }
+  if (throw_on_dynamic_markup_insertion_count_) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "Custom Element constructor should not use open().");
+    return;
+  }
+  // A Page's documents all have its one window's origin, so the check that
+  // the entered window's is the same always passes.
+  if (entered_window && !entered_window->HasContext()) {
+    return;
+  }
+  // A parser that runs a script it reached keeps the document.
+  if (parser_ && parser_->IsParsing() && parser_->IsExecutingScript()) {
+    return;
+  }
+  if (ignore_opens_during_unload_count_ || ignore_opens_and_writes_for_abort_) {
+    return;
+  }
+  // A document of a window takes the entered window's URL, without its
+  // fragment if that is another window.
+  if (window_ && entered_window && entered_window->Document()) {
+    GURL url(entered_window->Document()->UrlForBinding());
+    if (entered_window != window_ && url.has_ref()) {
+      GURL::Replacements replacements;
+      replacements.ClearRef();
+      url = url.ReplaceComponents(replacements);
+    }
+    const std::u16string spec = base::UTF8ToUTF16(url.possibly_invalid_spec());
+    if (spec != url_) {
+      SetUrl(spec);
+    }
+  }
+  Open();
+}
+
+void Document::Open() {
+  // A navigation that a document started and that waits for its response,
+  // or a refresh due now, stops, with the document's loading, as
+  // FrameLoader::StopAllLoaders() has it, unless an unload event is being
+  // dispatched. Canceling javascript:
+  // URLs and form submissions, and the unload of child frames, come with the
+  // forms and frames that a page cannot have yet.
+  NavigationClient* const navigation =
+      window_ ? window_->GetNavigationClient() : nullptr;
+  if (navigation &&
+      (navigation->HasProvisionalNavigation() ||
+       (http_refresh_scheduler_ &&
+        http_refresh_scheduler_->IsScheduledWithin(base::TimeDelta()))) &&
+      !PageDismissalEventBeingDispatched()) {
+    CancelParsing();
+    navigation->StopAllLoaders();
+  }
+  // Every listener of the document's nodes and its window goes, then a
+  // script-created parser loads the document anew.
+  RemoveAllEventListenersRecursively();
+  ImplicitOpen(nullptr);
+}
+
+void Document::Close(bindings::ExceptionState& exception_state) {
+  if (!is_html_) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "Only HTML documents support close().");
+    return;
+  }
+  if (throw_on_dynamic_markup_insertion_count_) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "Custom Element constructor should not use close().");
+    return;
+  }
+  // Nothing without a script-created parser that is parsing.
+  if (!parser_ || !parser_->WasCreatedByScript() || !parser_->IsParsing()) {
+    return;
+  }
+  // The explicit end of the parser's input.
+  const cppgc::Persistent<DocumentParser> parser = parser_.Get();
+  parser->Finish();
+  if (!parser_ || !parser_->IsParsing()) {
+    SetReadiness(Readiness::kComplete);
+  }
+  CheckCompleted();
+}
+
+void Document::Write(const std::vector<std::u16string>& text,
+                     bindings::ExceptionState& exception_state) {
+  // The strings are one, as a TrustedHTML is its string with no policy to
+  // check it against.
+  std::u16string string;
+  for (const std::u16string& piece : text) {
+    string += piece;
+  }
+  Write(string, EnteredWindow(), exception_state);
+}
+
+void Document::Writeln(const std::vector<std::u16string>& text,
+                       bindings::ExceptionState& exception_state) {
+  std::u16string string;
+  for (const std::u16string& piece : text) {
+    string += piece;
+  }
+  string += u'\n';
+  Write(string, EnteredWindow(), exception_state);
+}
+
+void Document::Write(const std::u16string& text,
+                     Window* entered_window,
+                     bindings::ExceptionState& exception_state) {
+  if (!is_html_) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "Only HTML documents support write().");
+    return;
+  }
+  if (throw_on_dynamic_markup_insertion_count_) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "Custom Element constructor should not use write().");
+    return;
+  }
+  if (entered_window && !entered_window->HasContext()) {
+    return;
+  }
+  if (ignore_opens_and_writes_for_abort_) {
+    return;
+  }
+  // Writes nested deeper than Blink's 21 do nothing, nor do the writes
+  // within them once one has been too deep.
+  const NestingLevelIncrementer nesting_level(write_recursion_depth_);
+  write_recursion_is_too_deep_ =
+      (write_recursion_depth_ > 1 && write_recursion_is_too_deep_) ||
+      write_recursion_depth_ > kMaxWriteRecursionDepth;
+  if (write_recursion_is_too_deep_) {
+    return;
+  }
+  if (!parser_ || !parser_->HasInsertionPoint()) {
+    if (ignore_destructive_write_count_) {
+      if (window_) {
+        window_->AddConsoleMessage(
+            ConsoleLevel::kWarning,
+            "Failed to execute 'write' on 'Document': It isn't possible to "
+            "write into a document from an asynchronously-loaded external "
+            "script unless it is explicitly opened.");
+      }
+      return;
+    }
+    if (ignore_opens_during_unload_count_) {
+      return;
+    }
+    Open(entered_window, exception_state);
+    if (exception_state.HadException()) {
+      return;
+    }
+  }
+  if (!parser_) {
+    return;
+  }
+  const cppgc::Persistent<DocumentParser> parser = parser_.Get();
+  parser->Insert(text);
 }
 
 }  // namespace mitto

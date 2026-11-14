@@ -23,6 +23,9 @@ namespace mitto {
 // changes.
 bool IsFixedHeader(const FetchParams& params, std::string_view name);
 
+// What Sec-Fetch-Mode says of a mode.
+std::string_view RequestModeToString(RequestMode mode);
+
 // Removes the sec-ch- and sec-fetch- lines that are not a caller's.
 void RemoveSecHeaders(net::URLRequest& request, const FetchParams& params);
 

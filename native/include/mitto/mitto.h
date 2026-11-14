@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MITTO_ABI_VERSION 11
+#define MITTO_ABI_VERSION 12
 
 // The version of the settings that mitto_session_create() reads. Adding a
 // setting changes neither this nor MITTO_ABI_VERSION. Increase this one when an
@@ -82,9 +82,15 @@
 // An error that no script caught, such as a promise rejected with no handler.
 // The Page goes on.
 #define MITTO_PAGE_EVENT_UNCAUGHT_ERROR 4
-// The navigation that mitto_page_open() started has its response, after any
-// redirects, and the document it loads takes the place of about:blank's; or
-// it failed before a response, and the Page keeps about:blank.
+// A navigation has its response, after any redirects, and the Page has made
+// the document that takes the place of its own, after every event of the old
+// one; or it ended with no document, as one whose response is a 204 or a
+// download does, with the net error ERR_ABORTED and the response's status,
+// and the Page keeps its document; or another took its place before the Page
+// made its document, with ERR_ABORTED and the status 0; or it failed before a
+// response, and the Page keeps its document. Each
+// navigation has one: the one that mitto_page_open() started, and each that
+// a MITTO_PAGE_EVENT_NAVIGATION_STARTED said, in the order they started.
 #define MITTO_PAGE_EVENT_NAVIGATED 5
 // The window's load event has been dispatched: the document and its classic
 // scripts have loaded and run.
@@ -93,6 +99,13 @@
 // Gap, for the first time: each document reports each one once, as Chrome's
 // use counters count a feature. The Page goes on.
 #define MITTO_PAGE_EVENT_KNOWN_GAP 7
+// The document started a navigation to another document, such as through
+// location or a link, which the Session makes. A MITTO_PAGE_EVENT_NAVIGATED
+// says how it ends.
+#define MITTO_PAGE_EVENT_NAVIGATION_STARTED 8
+// A navigation within the document, such as one to a fragment, gave it
+// another URL, with no request.
+#define MITTO_PAGE_EVENT_URL_CHANGED 9
 
 // The level of a console message, as the console method that wrote it says:
 // console.debug(), console.log(), console.info(), console.warn() and
@@ -218,14 +231,17 @@ typedef struct MittoPageEvent {
   size_t message_size;
   // CONSOLE: one of the MITTO_PAGE_CONSOLE values.
   int32_t level;
-  // NAVIGATED with no net error: the response's HTTP status code.
+  // NAVIGATED with no net error, or with ERR_ABORTED for a navigation that
+  // ended with no document: the response's HTTP status code.
   int32_t status;
   // NAVIGATED: 0 if the navigation has a response, and otherwise the negative
   // Chromium net error code that it failed with, as a request's
   // MITTO_EVENT_FINISHED says.
   int32_t net_error;
   // NAVIGATED: the URL of the document, after any redirects, or the URL that
-  // the navigation failed at, in UTF-8 with a trailing NUL byte.
+  // the navigation failed or ended at. NAVIGATION_STARTED: the URL that it
+  // goes to. URL_CHANGED: the document's new URL. In UTF-8 with a trailing
+  // NUL byte.
   char* url;
   size_t url_size;
 } MittoPageEvent;
@@ -646,7 +662,8 @@ MITTO_EXPORT void mitto_session_end_waits(MittoSession* session);
 // In "fetch":
 // - "mode" is "navigate", "same-origin", "cors" or "no-cors", and
 //   "destination" is what Sec-Fetch-Dest says. "credentials_mode" is
-//   "same-origin" or "include". All three are required. A "same-origin" that
+//   "omit", "same-origin" or "include": "omit" never sends or keeps a
+//   cookie. All three are required. A "same-origin" that
 //   starts at or is redirected to another origin than the page's finishes with
 //   ERR_FAILED and sends nothing there. A "navigate" with the destination
 //   "iframe" or "frame" is the navigation of a frame whose parent is the page,
@@ -819,7 +836,8 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //                      "options": {"version": 1, "fetch": {...}, ...}},
 //       "script": {...},
 //       "fetch": {...},
-//       "fetch_with_body": {...}
+//       "fetch_with_body": {...},
+//       ...
 //     }
 //   }
 //
@@ -904,16 +922,22 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   in the order mitto_request_start() takes them, each character at most
 //   U+00FF, and "options", what mitto_request_start() reads, with "fetch" and
 //   without "initiator", "fixed_headers", "referrer", a stream body or
-//   timers. "navigation" is required with "url". The Page's own requests use
-//   "script" and "fetch", with the Page's document as their Initiator, and fail
-//   with ERR_NOT_IMPLEMENTED for a kind that is not here. A fetch() with a body
-//   uses "fetch_with_body", whose Content-Type line is where its Persona puts
-//   it: the script's own Content-Type takes its place, or it goes if the script
-//   gives none. A script's other lines take the places of the template's lines
-//   of their names, and the rest follow, as a caller's headers do. A
-//   cross-origin fetch() reaches the Page only if its response passes the CORS
-//   check for a request without credentials, and one that would need a CORS
-//   preflight fails with ERR_NOT_IMPLEMENTED.
+//   timers, by the Request Kind's name, as RequestKind's values are in Python:
+//   "navigation", "script", "fetch", "image", "style", "font", "module",
+//   "xhr", "worker", "beacon", "iframe" and "favicon". "navigation" is required
+//   with "url". The Page's own requests use the template of their kind, with
+//   the Page's document as their Initiator, and fail with ERR_NOT_IMPLEMENTED
+//   for a kind that is not here. A request with a body uses the kind's name
+//   with "_with_body", such as "fetch_with_body", where there is one, whose
+//   Content-Type line is where its Persona puts it: the script's own
+//   Content-Type takes its place, or it goes if the script gives none. A
+//   script's other lines take the places of the template's lines of their
+//   names, and the rest follow, as a caller's headers do. The mode, credentials
+//   mode, referrer policy, referrer and priority that the Page names take the
+//   place of the template's, and a keepalive request goes on after the Page
+//   has gone. A cross-origin fetch() reaches the Page only if its response
+//   passes the CORS check, after the CORS preflight that the library makes
+//   when it needs one.
 //
 // The Page's requests and cookies are the Session's: its scripts' requests go
 // through the Session's connections and cookies, as a request of their kind

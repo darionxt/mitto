@@ -1053,7 +1053,7 @@ def test_request_start_accepts_valid_options(
             id="destination-is-empty",
         ),
         pytest.param(
-            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "omit"}}',
+            b'{"version": 1, "fetch": {"mode": "cors", "destination": "empty", "credentials_mode": "everything"}}',
             id="another-credentials-mode",
         ),
         pytest.param(

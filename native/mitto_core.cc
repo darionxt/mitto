@@ -39,7 +39,10 @@
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/system/sys_info.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
@@ -47,6 +50,7 @@
 #include "base/types/optional_util.h"
 #include "build/build_config.h"
 #include "mitto/body_stream.h"
+#include "mitto/cache_storage/cache_storage_context.h"
 #include "mitto/client_hints.h"
 #include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
@@ -69,11 +73,13 @@
 #include "mitto/session_settings.h"
 #include "mitto/socks5_auth_socket_factory.h"
 #include "mitto/ssl_config_service_mojo.h"
+#include "mitto/storage_quota.h"
 #include "mitto/stub_resolver_config_reader.h"
 #include "net/base/auth.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
+#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/network_change_notifier.h"
@@ -155,10 +161,16 @@ struct MittoSession final : public mitto::PageNetwork {
       mitto::RequestOptions options,
       std::optional<std::vector<char>> body) override;
   net::CookieStore& cookie_store() override;
+  const scoped_refptr<mitto::KeepaliveInFlight>& keepalive_in_flight()
+      override {
+    return keepalive_requests;
+  }
   const mitto::NetworkQuality* GetNetworkQuality() const override;
   void BroadcastFromPage(const mitto::PageHost& from,
                          const url::Origin& origin,
                          const mitto::PageBroadcast& broadcast) override;
+  mitto::CacheStorageContext& cache_storage() override;
+  mitto::StorageQuota& storage_quota() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -177,12 +189,21 @@ struct MittoSession final : public mitto::PageNetwork {
   mitto::ClientHintsStore client_hints_store;
   // What earlier CORS preflights allowed, as a network context keeps it.
   mitto::PreflightCache preflight_cache;
+  // The keepalive requests of the Session's Pages in flight, which may
+  // outlive their Pages.
+  const scoped_refptr<mitto::KeepaliveInFlight> keepalive_requests =
+      base::MakeRefCounted<mitto::KeepaliveInFlight>();
   // What rtt and downlink are worked out from, if anything.
   std::optional<mitto::NetworkQuality> network_quality;
   // Stands for what //net reads from a server's ALPS. For tests only.
   std::map<url::Origin, std::string> accept_ch_via_alps;
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
+  // What a page's storage holds, which the Session's Pages share: the quota
+  // of each storage key first, which the Cache API reports to. Before
+  // `pages`, which use it.
+  std::unique_ptr<mitto::StorageQuota> quota_manager;
+  std::unique_ptr<mitto::CacheStorageContext> cache_storage_context;
   mitto::ReadyRequests ready_requests;
   // After `ready_requests`, which a Page lists its handle in.
   std::set<std::unique_ptr<mitto::PageHost>, base::UniquePtrComparator> pages;
@@ -406,9 +427,15 @@ class RequestJob final : public net::URLRequest::Delegate,
       read_wanted_ = true;
       return;
     }
+    // A read that a client asked for before it let the request go may still
+    // be under way, and the next waits for it.
+    if (read_in_progress_) {
+      return;
+    }
     const int result =
         request_->Read(client_->read_buffer(), client_->read_size());
     if (result == net::ERR_IO_PENDING) {
+      read_in_progress_ = true;
       StartReadTimer();
       return;
     }
@@ -427,6 +454,14 @@ class RequestJob final : public net::URLRequest::Delegate,
   void Abandon() override {
     client_ = nullptr;
     Finish(net::ERR_ABORTED);
+  }
+
+  void Detach(base::RepeatingCallback<bool(const RequestEvent&)>
+                  allows_response) override {
+    owned_detached_client_ =
+        std::make_unique<DetachedClient>(*this, std::move(allows_response));
+    client_ = owned_detached_client_.get();
+    ReadBody();
   }
 
   void Cancel() { Finish(net::ERR_ABORTED); }
@@ -551,6 +586,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   }
 
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override {
+    read_in_progress_ = false;
     read_timer_.Stop();
     if (bytes_read <= 0) {
       Finish(bytes_read);
@@ -595,6 +631,12 @@ class RequestJob final : public net::URLRequest::Delegate,
     request->set_method(method);
     request->SetExtraRequestHeaders(headers);
     request->SetPriorityIncremental(options_.priority_incremental);
+    // A reload validates what the cache holds, as NavigationRequest's
+    // LoadFlagsForNavigation() has it, so //net sends Cache-Control:
+    // max-age=0 once it goes to the network.
+    if (options_.validate_cache) {
+      request->SetLoadFlags(request->load_flags() | net::LOAD_VALIDATE_CACHE);
+    }
     return request;
   }
 
@@ -757,6 +799,7 @@ class RequestJob final : public net::URLRequest::Delegate,
     event.first_request_start = first_request_start_;
     event.critical_ch_restart = critical_ch_restart_;
     event.restarted_for_critical_ch = restarted_for_critical_ch_;
+    event.referrer = request_->referrer();
     return event;
   }
 
@@ -896,9 +939,43 @@ class RequestJob final : public net::URLRequest::Delegate,
     session_->jobs.erase(session_->jobs.find(this));
   }
 
+  // What a request that has outlived its client tells instead: nothing, as
+  // it reads what is left of the response and drops it.
+  class DetachedClient final : public RequestClient {
+   public:
+    DetachedClient(
+        RequestJob& job,
+        base::RepeatingCallback<bool(const RequestEvent&)> allows_response)
+        : job_(job),
+          allows_response_(std::move(allows_response)),
+          buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kReadSize)) {}
+
+    void OnResponseEvent(RequestEvent event) override {}
+    bool AllowsResponse(const RequestEvent& event) override {
+      return allows_response_.Run(event);
+    }
+    net::IOBuffer* read_buffer() override { return buffer_.get(); }
+    int read_size() const override { return kReadSize; }
+    void OnBodyRead(size_t size) override {
+      // From a later task, so that reads that complete at once do not nest.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&RequestJob::ReadBody,
+                                    job_->weak_ptr_factory_.GetWeakPtr()));
+    }
+    void OnFinished(int net_error) override {}
+
+   private:
+    static constexpr int kReadSize = 64 * 1024;
+    const raw_ref<RequestJob> job_;
+    const base::RepeatingCallback<bool(const RequestEvent&)> allows_response_;
+    const scoped_refptr<net::IOBufferWithSize> buffer_;
+  };
+
   const raw_ref<MittoSession> session_;
   // The client of a request of the C API's, which goes with the job.
   const std::unique_ptr<RequestClient> owned_client_;
+  // The client of a request that has outlived its own.
+  std::unique_ptr<RequestClient> owned_detached_client_;
   raw_ptr<RequestClient> client_;
   // Where a stream body comes from, if the request has one.
   const scoped_refptr<RequestChannel> stream_channel_;
@@ -928,6 +1005,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   bool restarted_for_critical_ch_ = false;
   bool response_started_ = false;
   bool read_wanted_ = false;
+  bool read_in_progress_ = false;
   bool proxy_auth_answered_ = false;
   base::OneShotTimer connect_timer_;
   base::OneShotTimer read_timer_;
@@ -976,6 +1054,14 @@ net::CookieStore& MittoSession::cookie_store() {
 
 const mitto::NetworkQuality* MittoSession::GetNetworkQuality() const {
   return base::OptionalToPtr(network_quality);
+}
+
+mitto::CacheStorageContext& MittoSession::cache_storage() {
+  return *cache_storage_context;
+}
+
+mitto::StorageQuota& MittoSession::storage_quota() {
+  return *quota_manager;
 }
 
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
@@ -1084,6 +1170,14 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
   session->http_cache_directory_lock = std::move(http_cache_directory_lock);
+  // Kept in memory, with Incognito's quota, until the Session has a
+  // directory for its storage.
+  session->quota_manager = std::make_unique<StorageQuota>(
+      /*directory=*/std::nullopt,
+      base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
+      base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
+  session->cache_storage_context = std::make_unique<CacheStorageContext>(
+      /*directory=*/std::nullopt, *session->quota_manager);
   session->cert_net_fetcher =
       base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
@@ -1272,16 +1366,39 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
   // each Page process to end.
   void DestroySession(std::unique_ptr<MittoSession> session) {
     std::vector<scoped_refptr<PageProcess>> processes;
-    RunAndWait(base::BindOnce(
+    base::WaitableEvent destroyed;
+    PostTask(base::BindOnce(
         [](std::unique_ptr<MittoSession> session,
-           std::vector<scoped_refptr<PageProcess>>* processes) {
+           std::vector<scoped_refptr<PageProcess>>* processes,
+           base::WaitableEvent* destroyed) {
           session->CancelJobs();
           for (const std::unique_ptr<PageHost>& page : session->pages) {
             processes->push_back(page->process());
             page->EndWithSession();
           }
+          // Its storage writes what it holds before it goes, so that the
+          // next Session of its directory finds it, in this process or
+          // another.
+          CacheStorageContext* const caches =
+              session->cache_storage_context.get();
+          caches->Close(base::BindOnce(
+              [](std::unique_ptr<MittoSession> session,
+                 base::WaitableEvent* destroyed) {
+                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+                    FROM_HERE,
+                    base::BindOnce(
+                        [](std::unique_ptr<MittoSession> session,
+                           base::WaitableEvent* destroyed) {
+                          session.reset();
+                          destroyed->Signal();
+                        },
+                        std::move(session), destroyed));
+              },
+              std::move(session), destroyed));
         },
-        std::move(session), base::Unretained(&processes)));
+        std::move(session), base::Unretained(&processes),
+        base::Unretained(&destroyed)));
+    destroyed.Wait();
     for (const scoped_refptr<PageProcess>& process : processes) {
       process->WaitForExit(kPageExitGrace);
     }
@@ -2015,6 +2132,10 @@ int32_t mitto_page_next_event(MittoPage* page,
   if (next.type == MITTO_PAGE_EVENT_NAVIGATED) {
     event->status = next.status;
     event->net_error = next.net_error;
+  }
+  if (next.type == MITTO_PAGE_EVENT_NAVIGATED ||
+      next.type == MITTO_PAGE_EVENT_NAVIGATION_STARTED ||
+      next.type == MITTO_PAGE_EVENT_URL_CHANGED) {
     event->url = mitto::CopyToNewBuffer(next.url);
     event->url_size = next.url.size();
   }

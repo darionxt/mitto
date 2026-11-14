@@ -186,11 +186,7 @@ HtmlTokenizer::~HtmlTokenizer() = default;
 
 void HtmlTokenizer::Append(std::u16string_view input) {
   DCHECK(!finished_);
-  // What is used up goes, once it is half of what is kept.
-  if (input_position_ > 0 && input_position_ >= input_.size() / 2) {
-    input_.erase(0, input_position_);
-    input_position_ = 0;
-  }
+  DiscardReadInput();
   // The standard's preprocessing of the input stream: CR LF and CR become LF.
   // A CR at the end of one piece and an LF at the start of the next are one.
   input_.reserve(input_.size() + input.size());
@@ -206,6 +202,75 @@ void HtmlTokenizer::Append(std::u16string_view input) {
 
 void HtmlTokenizer::Finish() {
   finished_ = true;
+}
+
+void HtmlTokenizer::DiscardReadInput() {
+  // What is used up goes, once it is half of what is kept.
+  if (input_position_ == 0 || input_position_ < input_.size() / 2) {
+    return;
+  }
+  input_.erase(0, input_position_);
+  for (size_t& insertion_point : insertion_points_) {
+    insertion_point -= input_position_;
+  }
+  inserted_end_ =
+      inserted_end_ > input_position_ ? inserted_end_ - input_position_ : 0;
+  input_position_ = 0;
+}
+
+void HtmlTokenizer::PushInsertionPoint() {
+  // Just before the next input character, which is never past an outer one.
+  insertion_points_.push_back(input_position_);
+}
+
+void HtmlTokenizer::PopInsertionPoint() {
+  DCHECK(!insertion_points_.empty());
+  insertion_points_.pop_back();
+}
+
+void HtmlTokenizer::Insert(std::u16string_view input) {
+  // The standard's preprocessing, as Append() does it. Blink turns a CR into
+  // LF as it reads it, so that an LF that it reads next is dropped wherever
+  // it came from. Here a CR at the end of what a script wrote drops an LF at
+  // the start of what a script writes next, and the network's characters are
+  // LF already: a CR that a script wrote just before an LF of the network's
+  // makes two line feeds, where Blink makes one.
+  std::u16string text;
+  text.reserve(input.size());
+  for (const char16_t unit : input) {
+    if (unit == '\n' && last_inserted_was_cr_) {
+      last_inserted_was_cr_ = false;
+      continue;
+    }
+    last_inserted_was_cr_ = unit == '\r';
+    text.push_back(last_inserted_was_cr_ ? u'\n' : unit);
+  }
+  if (text.empty()) {
+    return;
+  }
+  // A document that document.open() opened takes all of its input this way.
+  DiscardReadInput();
+  // What a script wrote before and has been read no longer counts.
+  inserted_end_ = std::max(inserted_end_, input_position_);
+  if (insertion_points_.empty()) {
+    // Only a document that document.open() opened is written to with no
+    // insertion point, and all of its input comes from scripts.
+    DCHECK(!finished_);
+    input_.append(text);
+    inserted_end_ = input_.size();
+    return;
+  }
+  const size_t at = insertion_points_.back();
+  DCHECK_LE(at, inserted_end_);
+  input_.insert(at, text);
+  // The insertion points at it or after it move past what was inserted, as
+  // what a script writes goes before what the scripts around it wrote.
+  for (size_t& insertion_point : insertion_points_) {
+    if (insertion_point >= at) {
+      insertion_point += text.size();
+    }
+  }
+  inserted_end_ += text.size();
 }
 
 bool HtmlTokenizer::NextToken(HtmlToken& token) {
@@ -242,8 +307,11 @@ std::vector<HtmlTokenizer::ParseError> HtmlTokenizer::TakeParseErrors() {
 }
 
 bool HtmlTokenizer::Consume() {
-  if (input_position_ == input_.size()) {
-    if (!finished_) {
+  const size_t readable_end = ReadableEnd();
+  // A character that a script wrote does not move the position.
+  const bool inserted = input_position_ < inserted_end_;
+  if (input_position_ == readable_end) {
+    if (!ReadsEndOfFile()) {
       return false;
     }
     if (c_ == kEndOfFile) {
@@ -256,13 +324,13 @@ bool HtmlTokenizer::Consume() {
     char32_t c = input_[input_position_];
     size_t length = 1;
     if (IsLeadSurrogate(c)) {
-      if (input_position_ + 1 < input_.size()) {
+      if (input_position_ + 1 < readable_end) {
         const char32_t trail = input_[input_position_ + 1];
         if (IsTrailSurrogate(trail)) {
           c = 0x10000 + ((c - 0xD800) << 10) + (trail - 0xDC00);
           length = 2;
         }
-      } else if (!finished_) {
+      } else if (!ReadsEndOfFile()) {
         // Its trail surrogate may come in the next piece.
         return false;
       }
@@ -271,14 +339,16 @@ bool HtmlTokenizer::Consume() {
     c_ = c;
   }
   c_was_null_ = false;
-  if (current_is_line_feed_) {
-    ++line_;
-    column_ = 1;
-  } else {
-    column_ += current_length_;
+  if (!inserted) {
+    if (current_is_line_feed_) {
+      ++line_;
+      column_ = 1;
+    } else {
+      column_ += current_length_;
+    }
+    current_is_line_feed_ = c_ == '\n';
+    current_length_ = c_ > 0xFFFF && c_ != kEndOfFile ? 2 : 1;
   }
-  current_is_line_feed_ = c_ == '\n';
-  current_length_ = c_ > 0xFFFF && c_ != kEndOfFile ? 2 : 1;
 
   // The parse errors of the standard's preprocessing of the input stream.
   if (c_ == kEndOfFile) {
@@ -297,11 +367,11 @@ bool HtmlTokenizer::Consume() {
 HtmlTokenizer::Peek HtmlTokenizer::PeekUnit(size_t offset,
                                             char16_t& unit) const {
   const size_t index = input_position_ + offset;
-  if (index < input_.size()) {
+  if (index < ReadableEnd()) {
     unit = input_[index];
     return Peek::kCharacter;
   }
-  return finished_ ? Peek::kEndOfFile : Peek::kNeedMoreInput;
+  return ReadsEndOfFile() ? Peek::kEndOfFile : Peek::kNeedMoreInput;
 }
 
 HtmlTokenizer::LookAheadResult HtmlTokenizer::LookAhead(

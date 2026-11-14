@@ -77,9 +77,24 @@ class PageRequests {
                  Client& client,
                  bool render_blocking = false);
 
+  // Asks the Session for `request`, a navigation that the current window's
+  // document starts, whose number this sets, and returns it. Its response is
+  // a document's, which gets no entry in the Performance Timeline of the
+  // window that asked.
+  uint64_t StartNavigation(PageRequest request, Client& client);
+
+  // The number that the next request gets.
+  uint64_t NextNumber() const { return next_number_; }
+
   // Tells the Session that request `number` is no longer wanted. Its client
   // hears nothing more of it.
   void Cancel(uint64_t number);
+
+  // Lets keepalive request `number` go on without its client, which hears
+  // nothing more of it, and without its document, which is going and adds no
+  // entry of it. The Session lets it outlive the document, and ends it for
+  // the Page, once it hears of the next document.
+  void LetGo(uint64_t number);
 
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);
@@ -126,7 +141,8 @@ class PageRequests {
   };
 
   // Returns the request that the Session names, or null after refusing what
-  // it sent.
+  // it sent. The navigation that the Session makes when the Page opens is
+  // found once the Session sends something of it.
   Open* Find(uint64_t number, std::string_view message);
   // Adds the entry of a request that ended at `response_end`, with `ended`'s
   // totals if the Session said them.

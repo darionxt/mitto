@@ -170,7 +170,7 @@ In mitto 0.1 every Session claimed one machine, which [`Machine.named("mitto-0.1
 
 ## What a caller changes
 
-`Session(accept_language=...)` replaces the Persona's `accept_language`, and an empty string sends no `Accept-Language`. For one request, `headers` changes the Persona's lines, by name in any case:
+`Session(accept_language=...)` replaces the Persona's `accept_language`, and an empty string sends no `Accept-Language`. For one request, [`credentials=`](api.md#credentials) and [`mode=`](api.md#mode) take the place of a kind's `credentials_mode` and of the value of its `Sec-Fetch-Mode` line, and an element in cors mode gets an `Origin` line first, where Blink puts it. `headers` changes the Persona's lines, by name in any case:
 
 | In `headers` | On the wire |
 | --- | --- |
