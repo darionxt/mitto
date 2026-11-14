@@ -22,7 +22,6 @@
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
-#include "mitto/header_rules.h"
 #include "mitto/mitto.h"
 #include "mitto/ready_requests.h"
 #include "net/base/io_buffer.h"
@@ -695,10 +694,6 @@ void PageHost::OnRequest(PageRequest asked) {
       base::StrAppend(&same->second, {", ", value});
     }
   }
-  bool unsafe_lines = false;
-  for (const auto& [name, value] : lines) {
-    unsafe_lines |= !IsCorsSafelistedRequestHeader(name, value);
-  }
   // These fail as such a request fails in Chrome, and the Page goes on.
   int net_error = net::OK;
   if (!url.is_valid()) {
@@ -711,17 +706,12 @@ void PageHost::OnRequest(PageRequest asked) {
     // A Page with no document from the Session has no Initiator that a
     // request can name.
     net_error = net::ERR_ACCESS_DENIED;
-  } else if (is_fetch &&
+  } else if (is_fetch && asked.same_origin &&
              !url::Origin::Create(document_url_).IsSameOriginWith(url)) {
-    // A cross-origin fetch, which the CORS check holds to its response. One
-    // of mode same-origin fails, as in Chrome. One that would need a CORS
-    // preflight first is a Known Gap: the preflight is a request that no
-    // Persona records yet.
-    if (asked.same_origin) {
-      net_error = net::ERR_FAILED;
-    } else if (!IsCorsSafelistedMethod(asked.method) || unsafe_lines) {
-      net_error = net::ERR_NOT_IMPLEMENTED;
-    }
+    // A cross-origin fetch of mode same-origin fails, as in Chrome. Another
+    // has the CORS check held to its response, after the preflight that the
+    // library makes when it needs one.
+    net_error = net::ERR_FAILED;
   }
   if (net_error != net::OK) {
     PageResponseEnded ended;
@@ -754,7 +744,6 @@ void PageHost::OnRequest(PageRequest asked) {
   StartRequest(asked.number, std::move(url), std::move(headers),
                std::move(options), std::move(body),
                FetchChecks{.is_fetch = is_fetch,
-                           .unsafe_lines = unsafe_lines,
                            .same_origin = asked.same_origin});
 }
 
@@ -877,15 +866,11 @@ bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
   // tainted one serializes as "null", or be "*".
   const url::Origin document_origin = url::Origin::Create(document_url_);
   request.Reach(GURL(event.url), document_origin);
-  // A redirect to another origin of a request that would need a CORS
-  // preflight there is not followed: the preflight is a Known Gap, and
-  // following without it would send what the script asked for to a server
-  // that has not agreed to it.
-  // Nor is one of mode same-origin, as in Chrome.
-  if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED &&
-      !document_origin.IsSameOriginWith(GURL(event.new_url)) &&
-      (checks.same_origin || !IsCorsSafelistedMethod(event.new_method) ||
-       checks.unsafe_lines)) {
+  // A redirect to another origin of a fetch of mode same-origin is not
+  // followed, as in Chrome. The library ends one that would need a CORS
+  // preflight there.
+  if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED && checks.same_origin &&
+      !document_origin.IsSameOriginWith(GURL(event.new_url))) {
     return false;
   }
   if (!request.cors()) {

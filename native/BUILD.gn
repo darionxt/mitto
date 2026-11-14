@@ -89,6 +89,8 @@ shared_library("mitto_core") {
     "connect_retrying_socket_factory.h",
     "cookie_json.cc",
     "cookie_json.h",
+    "cors_preflight.cc",
+    "cors_preflight.h",
     "directory_lock.h",
     "feature_list.cc",
     "feature_list.h",

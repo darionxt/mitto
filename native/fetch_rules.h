@@ -118,6 +118,18 @@ class FetchRules {
     return fetch_cors_flag_ && params_.mode == RequestMode::kSameOrigin;
   }
 
+  // CorsURLLoader::CheckPreflightRequired(): whether a request in cors mode
+  // with this method and these lines needs a preflight where it is about to
+  // go, which is another origin than its page's. To ask after
+  // ConfigureRequest() or WillFollowRedirect().
+  bool NeedsPreflight(std::string_view method,
+                      const net::HttpRequestHeaders& headers) const;
+
+  const FetchParams& params() const { return params_; }
+
+  // Whether a redirect has made the request's origin "null".
+  bool tainted() const { return tainted_; }
+
   // To call for what takes the place of `old_request`, once it has its URL,
   // method and headers, and before it starts.
   void ConfigureRestartedRequest(net::URLRequest& request,

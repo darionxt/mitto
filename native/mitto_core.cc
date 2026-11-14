@@ -50,6 +50,7 @@
 #include "mitto/client_hints.h"
 #include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
+#include "mitto/cors_preflight.h"
 #include "mitto/directory_lock.h"
 #include "mitto/feature_list.h"
 #include "mitto/fetch_rules.h"
@@ -113,6 +114,7 @@
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
+#include "net/url_request/redirect_util.h"
 #include "net/url_request/referrer_policy.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -173,6 +175,8 @@ struct MittoSession final : public mitto::PageNetwork {
   // What to answer the Session's proxy with when it asks.
   std::optional<net::AuthCredentials> proxy_credentials;
   mitto::ClientHintsStore client_hints_store;
+  // What earlier CORS preflights allowed, as a network context keeps it.
+  mitto::PreflightCache preflight_cache;
   // What rtt and downlink are worked out from, if anything.
   std::optional<mitto::NetworkQuality> network_quality;
   // Stands for what //net reads from a server's ALPS. For tests only.
@@ -381,6 +385,15 @@ class RequestJob final : public net::URLRequest::Delegate,
     }
     StartConnectTimer();
     first_request_start_ = base::TimeTicks::Now();
+    if (fetch_rules_ &&
+        fetch_rules_->NeedsPreflight(request_->method(),
+                                     request_->extra_request_headers()) &&
+        StartPreflight(PreflightFor(request_->url(), request_->method(),
+                                    request_->extra_request_headers(),
+                                    request_->referrer(),
+                                    request_->referrer_policy()))) {
+      return;
+    }
     request_->Start();
   }
 
@@ -637,6 +650,71 @@ class RequestJob final : public net::URLRequest::Delegate,
     request_->Start();
   }
 
+  // What a preflight for this request asks about, where it is about to go.
+  PreflightRequest PreflightFor(const GURL& url,
+                                const std::string& method,
+                                const net::HttpRequestHeaders& headers,
+                                const std::string& referrer,
+                                net::ReferrerPolicy referrer_policy) const {
+    PreflightRequest preflight;
+    preflight.url = url;
+    preflight.method = method;
+    preflight.headers = headers;
+    preflight.referrer = referrer;
+    preflight.referrer_policy = referrer_policy;
+    preflight.initiator = *request_->initiator();
+    preflight.isolation_info = request_->isolation_info();
+    preflight.priority = request_->priority();
+    preflight.priority_incremental = request_->priority_incremental();
+    preflight.load_flags = request_->load_flags();
+    preflight.destination = fetch_rules_->params().destination;
+    preflight.credentials_mode = fetch_rules_->params().credentials_mode;
+    preflight.tainted = fetch_rules_->tainted();
+    return preflight;
+  }
+
+  // CorsURLLoader::StartPreflightCheck(), unless the Session's cache lets the
+  // request go without one. Returns whether the request waits for it.
+  bool StartPreflight(const PreflightRequest& preflight) {
+    if (CanSkipPreflight(session_->preflight_cache, preflight)) {
+      return false;
+    }
+    preflight_ = std::make_unique<PreflightLoader>(
+        *session_->context, kTrafficAnnotation, preflight,
+        session_->preflight_cache,
+        base::BindOnce(&RequestJob::OnPreflightComplete,
+                       weak_ptr_factory_.GetWeakPtr()));
+    preflight_->Start();
+    return true;
+  }
+
+  // The preflight's answer comes in the middle of //net's work on it, so the
+  // request goes on, or ends, from a later task.
+  void OnPreflightComplete(int net_error) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&RequestJob::ContinueAfterPreflight,
+                                  weak_ptr_factory_.GetWeakPtr(), net_error));
+  }
+
+  // CorsURLLoader::OnPreflightRequestComplete(). This may delete the job, so
+  // nothing may touch it afterwards.
+  void ContinueAfterPreflight(int net_error) {
+    preflight_.reset();
+    if (net_error != net::OK) {
+      Finish(net_error);
+      return;
+    }
+    StartConnectTimer();
+    if (deferred_redirect_) {
+      DeferredRedirect redirect = *std::move(deferred_redirect_);
+      deferred_redirect_.reset();
+      request_->FollowDeferredRedirect(redirect.removed_headers,
+                                       redirect.modified_headers);
+      return;
+    }
+    request_->Start();
+  }
+
   // Pushes an event of `type` that describes the response so far.
   void PushResponseEvent(int32_t type) {
     client_->OnResponseEvent(ResponseEvent(type));
@@ -729,6 +807,23 @@ class RequestJob final : public net::URLRequest::Delegate,
         Finish(net::ERR_FAILED);
         return;
       }
+      // CorsURLLoader holds the redirect while a preflight asks the next URL,
+      // with the lines that //net will send there, and follows it once that
+      // allows the request.
+      net::HttpRequestHeaders next_headers = request_->extra_request_headers();
+      bool should_clear_upload = false;
+      net::RedirectUtil::UpdateHttpRequest(
+          request_->url(), request_->method(), redirect_info, removed_headers,
+          modified_headers, &next_headers, &should_clear_upload);
+      if (fetch_rules_->NeedsPreflight(redirect_info.new_method,
+                                       next_headers) &&
+          StartPreflight(PreflightFor(
+              redirect_info.new_url, redirect_info.new_method, next_headers,
+              redirect_info.new_referrer, redirect_info.new_referrer_policy))) {
+        deferred_redirect_.emplace(std::move(removed_headers),
+                                   std::move(modified_headers));
+        return;
+      }
     }
     // The next hop has its own connection to get.
     StartConnectTimer();
@@ -780,6 +875,7 @@ class RequestJob final : public net::URLRequest::Delegate,
           static_cast<int64_t>(request_->GetTotalReceivedBytes().InBytes());
     }
     // Deleting the request from its delegate's callback is allowed.
+    preflight_.reset();
     request_.reset();
     // A client that abandoned the request has gone.
     if (client_) {
@@ -800,6 +896,15 @@ class RequestJob final : public net::URLRequest::Delegate,
   RequestOptions options_;
   // What a request made for a page does at its start and on each hop.
   std::optional<FetchRules> fetch_rules_;
+  // The CORS preflight that the request waits for, if any.
+  std::unique_ptr<PreflightLoader> preflight_;
+  // A redirect held for that preflight, with what to change in the request's
+  // lines when it is followed.
+  struct DeferredRedirect {
+    std::vector<std::string> removed_headers;
+    net::HttpRequestHeaders modified_headers;
+  };
+  std::optional<DeferredRedirect> deferred_redirect_;
   // What to send as the body, which `request_` reads from.
   std::optional<std::vector<char>> body_;
   // The stream body, which `request_` owns and drops on a 303.

@@ -99,6 +99,22 @@ From the page and the URL of each hop, the native core sets these, in code porte
 
 An `iframe` is the navigation of a frame whose parent is the page of `initiator=`, a top-level page, or without one the page at the root of the origin of its URL. The native core gives it what Chrome's `NavigationRequest` gives a frame: the page's site for cookies on every hop, and an `IsolationInfo` of a frame, with the page's origin as the top frame's and its URL's origin as the frame's, which `//net` moves on each redirect. So a frame of another site gets only `SameSite=None` cookies and sets no others, and says its storage access, as the Baselines of a frame show.
 
+### A CORS preflight
+
+A `fetch`, an `xhr`, a font or a module to another origin than its page's, with a method that is not `GET`, `HEAD` or `POST` or a line that is neither forbidden nor CORS-safelisted, goes only after a preflight, as Chrome's network service sends one. The line that needs it can be the Persona's, such as `Content-Type: application/json`, or a caller's. A client hint that Chrome adds counts as safelisted, and a forbidden line, such as `User-Agent` or `sec-ch-ua`, counts for nothing. No Persona holds the preflight's lines, because Chrome's network service writes them itself, the same in every Chrome Release ([which code](parity.md#a-cors-preflight)):
+
+| Line | Value |
+| --- | --- |
+| `Accept` | `*/*` |
+| `Access-Control-Request-Method` | The request's method |
+| `Access-Control-Request-Headers` | The names that need it, in lower case, sorted, without repeats, joined by commas. None if only the method needs it |
+| `Origin` | The page's origin, or `null` once a redirect has tainted it |
+| `User-Agent` | The request's own line, if it has one |
+| `Sec-Fetch-Mode` | `cors` |
+| `Sec-Fetch-Site`, `Sec-Fetch-Dest` | What the native core sets for the request |
+
+`//net` adds `Referer`, the request's, `Accept-Encoding` and `Accept-Language`, and it goes at the request's priority, with no cookie and no client hint. The request goes only if the answer, which may not be a redirect, has an ok status, an `Access-Control-Allow-Origin` that allows the request, with `Access-Control-Allow-Credentials: true` for one that sends credentials, and `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` that name its method and lines, or `*` for one without credentials. Otherwise the request ends with `ERR_FAILED`, and nothing else goes to that server. A Session keeps what a preflight allowed for the request's page, URL and partition, for as long as `Access-Control-Max-Age` says, 5 seconds without it and two hours at most, so a request that it covers goes without one. At a redirect, the request waits for one where it is about to go, if it needs one there, and follows the redirect only once that allows it, as Chrome's does.
+
 ## Client hints
 
 Chrome sends `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` to everyone. The other hints go once a server has asked, so a server that asks and gets nothing could tell. A **Session** keeps what each origin has asked for, for as long as the Session lasts. Which code this follows is [in parity.md](parity.md#client-hints).
