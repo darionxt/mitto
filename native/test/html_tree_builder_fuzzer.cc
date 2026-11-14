@@ -29,9 +29,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/html_template_element.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "v8/include/cppgc/persistent.h"
@@ -118,10 +120,21 @@ std::string Dump(const Node& root) {
         out += "<" + base::UTF16ToUTF8(element->NamespaceURI().value_or(u"")) +
                " " + base::UTF16ToUTF8(element->LocalName());
         for (const Element::Attribute& attribute : element->attributes()) {
-          out += " " + base::UTF16ToUTF8(attribute.name) + "=\"" +
+          out += " " +
+                 base::UTF16ToUTF8(attribute.name.namespace_uri.value_or(u"")) +
+                 " " + base::UTF16ToUTF8(attribute.name.ToString()) + "=\"" +
                  base::UTF16ToUTF8(attribute.value) + "\"";
         }
         out += ">";
+        // A template's contents are a fragment of their own, which this walk
+        // does not reach: they get a walk of their own, one level deeper for
+        // each template that nests.
+        if (element->HasHTMLTagName(u"template")) {
+          out += "\n{" +
+                 Dump(*static_cast<const mitto::HTMLTemplateElement*>(element)
+                           ->Content()) +
+                 "}";
+        }
         break;
       }
       case Node::kTextNode:
