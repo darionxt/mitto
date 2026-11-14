@@ -165,4 +165,19 @@ SVGAnimatedNumber* SVGElement::AnimatedNumberHalf(std::u16string_view attribute,
   return half == SVGPairHalf::kFirst ? first : second;
 }
 
+SVGAnimatedLength* SVGElement::AnimatedLength(
+    std::u16string_view attribute,
+    SVGLengthMode mode,
+    SVGAnimatedLength::Initial initial,
+    bool text_length) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedLength*>(value);
+  }
+  SVGAnimatedLength* const value =
+      SVGAnimatedLength::Create(*this, attribute, mode, initial, text_length);
+  animated_values_.push_back(value);
+  return value;
+}
+
 }  // namespace mitto

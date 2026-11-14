@@ -1,7 +1,7 @@
 // The elements of SVG, whose classes have their interfaces' animated strings,
-// booleans, enumerations, integers and numbers: each other member of theirs
-// that is not a reflected attribute is a Known Gap. Blink's classes of the
-// same names hold what layout and animation need.
+// booleans, enumerations, integers, numbers and lengths: each other member of
+// theirs that is not a reflected attribute is a Known Gap. Blink's classes of
+// the same names hold what layout and animation need.
 //
 // Upstream: third_party/blink/renderer/core/svg/svg_tag_names.json5
 
@@ -41,6 +41,20 @@ class SVGComponentTransferFunctionElement : public SVGElement {
                                       const std::u16string& local_name);
 };
 
+// SVGFilterPrimitiveStandardAttributes, which the filter primitives include:
+// their subregion's lengths, as Blink's class of that name has them.
+class SVGFilterPrimitiveStandardAttributes : public SVGElement {
+ public:
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
+
+ protected:
+  SVGFilterPrimitiveStandardAttributes(Document& document,
+                                       const std::u16string& local_name);
+};
+
 class SVGGradientElement : public SVGElement {
  public:
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -77,6 +91,7 @@ class SVGTextContentElement : public SVGGraphicsElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedLength* TextLength();
   SVGAnimatedEnumeration* LengthAdjust();
 
  protected:
@@ -144,6 +159,11 @@ class SVGCircleElement final : public SVGGeometryElement {
   explicit SVGCircleElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* Cx();
+  SVGAnimatedLength* Cy();
+  SVGAnimatedLength* R();
 };
 
 class SVGClipPathElement final : public SVGElement {
@@ -183,9 +203,15 @@ class SVGEllipseElement final : public SVGGeometryElement {
   explicit SVGEllipseElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* Cx();
+  SVGAnimatedLength* Cy();
+  SVGAnimatedLength* Rx();
+  SVGAnimatedLength* Ry();
 };
 
-class SVGFEBlendElement final : public SVGElement {
+class SVGFEBlendElement final : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEBlendElement* Create(Document& document);
 
@@ -199,7 +225,8 @@ class SVGFEBlendElement final : public SVGElement {
   SVGAnimatedEnumeration* Mode();
 };
 
-class SVGFEColorMatrixElement final : public SVGElement {
+class SVGFEColorMatrixElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEColorMatrixElement* Create(Document& document);
 
@@ -212,7 +239,8 @@ class SVGFEColorMatrixElement final : public SVGElement {
   SVGAnimatedEnumeration* Type();
 };
 
-class SVGFEComponentTransferElement final : public SVGElement {
+class SVGFEComponentTransferElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEComponentTransferElement* Create(Document& document);
 
@@ -224,7 +252,8 @@ class SVGFEComponentTransferElement final : public SVGElement {
   SVGAnimatedString* In1();
 };
 
-class SVGFECompositeElement final : public SVGElement {
+class SVGFECompositeElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFECompositeElement* Create(Document& document);
 
@@ -242,7 +271,8 @@ class SVGFECompositeElement final : public SVGElement {
   SVGAnimatedNumber* K4();
 };
 
-class SVGFEConvolveMatrixElement final : public SVGElement {
+class SVGFEConvolveMatrixElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEConvolveMatrixElement* Create(Document& document);
 
@@ -264,7 +294,8 @@ class SVGFEConvolveMatrixElement final : public SVGElement {
   SVGAnimatedBoolean* PreserveAlpha();
 };
 
-class SVGFEDiffuseLightingElement final : public SVGElement {
+class SVGFEDiffuseLightingElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEDiffuseLightingElement* Create(Document& document);
 
@@ -280,7 +311,8 @@ class SVGFEDiffuseLightingElement final : public SVGElement {
   SVGAnimatedNumber* KernelUnitLengthY();
 };
 
-class SVGFEDisplacementMapElement final : public SVGElement {
+class SVGFEDisplacementMapElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEDisplacementMapElement* Create(Document& document);
 
@@ -309,7 +341,8 @@ class SVGFEDistantLightElement final : public SVGElement {
   SVGAnimatedNumber* Elevation();
 };
 
-class SVGFEDropShadowElement final : public SVGElement {
+class SVGFEDropShadowElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEDropShadowElement* Create(Document& document);
 
@@ -326,7 +359,7 @@ class SVGFEDropShadowElement final : public SVGElement {
   void SetStdDeviation(float std_deviation_x, float std_deviation_y);
 };
 
-class SVGFEFloodElement final : public SVGElement {
+class SVGFEFloodElement final : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEFloodElement* Create(Document& document);
 
@@ -371,7 +404,8 @@ class SVGFEFuncRElement final : public SVGComponentTransferFunctionElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-class SVGFEGaussianBlurElement final : public SVGElement {
+class SVGFEGaussianBlurElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEGaussianBlurElement* Create(Document& document);
 
@@ -386,7 +420,7 @@ class SVGFEGaussianBlurElement final : public SVGElement {
   void SetStdDeviation(float std_deviation_x, float std_deviation_y);
 };
 
-class SVGFEImageElement final : public SVGElement {
+class SVGFEImageElement final : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEImageElement* Create(Document& document);
 
@@ -395,7 +429,7 @@ class SVGFEImageElement final : public SVGElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-class SVGFEMergeElement final : public SVGElement {
+class SVGFEMergeElement final : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEMergeElement* Create(Document& document);
 
@@ -416,7 +450,8 @@ class SVGFEMergeNodeElement final : public SVGElement {
   SVGAnimatedString* In1();
 };
 
-class SVGFEMorphologyElement final : public SVGElement {
+class SVGFEMorphologyElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEMorphologyElement* Create(Document& document);
 
@@ -431,7 +466,7 @@ class SVGFEMorphologyElement final : public SVGElement {
   SVGAnimatedNumber* RadiusY();
 };
 
-class SVGFEOffsetElement final : public SVGElement {
+class SVGFEOffsetElement final : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFEOffsetElement* Create(Document& document);
 
@@ -459,7 +494,8 @@ class SVGFEPointLightElement final : public SVGElement {
   SVGAnimatedNumber* Z();
 };
 
-class SVGFESpecularLightingElement final : public SVGElement {
+class SVGFESpecularLightingElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFESpecularLightingElement* Create(Document& document);
 
@@ -495,7 +531,7 @@ class SVGFESpotLightElement final : public SVGElement {
   SVGAnimatedNumber* LimitingConeAngle();
 };
 
-class SVGFETileElement final : public SVGElement {
+class SVGFETileElement final : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFETileElement* Create(Document& document);
 
@@ -507,7 +543,8 @@ class SVGFETileElement final : public SVGElement {
   SVGAnimatedString* In1();
 };
 
-class SVGFETurbulenceElement final : public SVGElement {
+class SVGFETurbulenceElement final
+    : public SVGFilterPrimitiveStandardAttributes {
  public:
   static SVGFETurbulenceElement* Create(Document& document);
 
@@ -533,6 +570,10 @@ class SVGFilterElement final : public SVGElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
   SVGAnimatedEnumeration* FilterUnits();
   SVGAnimatedEnumeration* PrimitiveUnits();
 };
@@ -544,6 +585,12 @@ class SVGForeignObjectElement final : public SVGGraphicsElement {
   explicit SVGForeignObjectElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
 };
 
 class SVGGElement final : public SVGGraphicsElement {
@@ -562,6 +609,12 @@ class SVGImageElement final : public SVGGraphicsElement {
   explicit SVGImageElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
 };
 
 class SVGLineElement final : public SVGGeometryElement {
@@ -571,6 +624,12 @@ class SVGLineElement final : public SVGGeometryElement {
   explicit SVGLineElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X1();
+  SVGAnimatedLength* Y1();
+  SVGAnimatedLength* X2();
+  SVGAnimatedLength* Y2();
 };
 
 class SVGLinearGradientElement final : public SVGGradientElement {
@@ -580,6 +639,12 @@ class SVGLinearGradientElement final : public SVGGradientElement {
   explicit SVGLinearGradientElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X1();
+  SVGAnimatedLength* Y1();
+  SVGAnimatedLength* X2();
+  SVGAnimatedLength* Y2();
 };
 
 class SVGMPathElement final : public SVGElement {
@@ -600,6 +665,10 @@ class SVGMarkerElement final : public SVGElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedLength* RefX();
+  SVGAnimatedLength* RefY();
+  SVGAnimatedLength* MarkerWidth();
+  SVGAnimatedLength* MarkerHeight();
   SVGAnimatedEnumeration* MarkerUnits();
 };
 
@@ -612,6 +681,10 @@ class SVGMaskElement final : public SVGElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
   SVGAnimatedEnumeration* MaskUnits();
   SVGAnimatedEnumeration* MaskContentUnits();
 };
@@ -643,6 +716,10 @@ class SVGPatternElement final : public SVGElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
   SVGAnimatedEnumeration* PatternUnits();
   SVGAnimatedEnumeration* PatternContentUnits();
 };
@@ -672,6 +749,14 @@ class SVGRadialGradientElement final : public SVGGradientElement {
   explicit SVGRadialGradientElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* Cx();
+  SVGAnimatedLength* Cy();
+  SVGAnimatedLength* R();
+  SVGAnimatedLength* Fx();
+  SVGAnimatedLength* Fy();
+  SVGAnimatedLength* Fr();
 };
 
 class SVGRectElement final : public SVGGeometryElement {
@@ -681,6 +766,14 @@ class SVGRectElement final : public SVGGeometryElement {
   explicit SVGRectElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
+  SVGAnimatedLength* Rx();
+  SVGAnimatedLength* Ry();
 };
 
 class SVGSVGElement final : public SVGGraphicsElement {
@@ -690,6 +783,13 @@ class SVGSVGElement final : public SVGGraphicsElement {
   explicit SVGSVGElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
+  SVGLength* CreateSVGLength();
 };
 
 class SVGScriptElement final : public SVGElement {
@@ -776,6 +876,7 @@ class SVGTextPathElement final : public SVGTextContentElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedLength* StartOffset();
   SVGAnimatedEnumeration* Method();
   SVGAnimatedEnumeration* Spacing();
   SVGAnimatedEnumeration* Side();
@@ -797,6 +898,12 @@ class SVGUseElement final : public SVGGraphicsElement {
   explicit SVGUseElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLength* X();
+  SVGAnimatedLength* Y();
+  SVGAnimatedLength* Width();
+  SVGAnimatedLength* Height();
 };
 
 class SVGViewElement final : public SVGElement {
