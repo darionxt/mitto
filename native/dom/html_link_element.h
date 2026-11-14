@@ -19,6 +19,19 @@ class HTMLLinkElement final : public HTMLElement {
   explicit HTMLLinkElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface: its token lists, of the link types and
+  // the blocking tokens that Blink supports; sizes supports none.
+  DOMTokenList* RelList() {
+    return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
+  }
+  DOMTokenList* Sizes() {
+    return EnsureTokenList(u"sizes", DOMTokenList::SupportedTokens::kNone);
+  }
+  DOMTokenList* Blocking() {
+    return EnsureTokenList(u"blocking",
+                           DOMTokenList::SupportedTokens::kBlocking);
+  }
 };
 
 }  // namespace mitto

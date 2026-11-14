@@ -853,6 +853,13 @@
   "cell spans": "string:1,1,1/0,3/3,1000/2000,1000/65534,1/1,1/0,7/7,1/1,1/1,65534,5,0,1,1",
   "col span": "string:1,1,4,1000,1000,1,0,1",
   "cell cellIndex in table": "number:1",
-  "table reflected": "string:|3||"
+  "table reflected": "string:|3||",
+  "relList link": "string:true,stylesheet icon,2,true,true,true,false,false,true,true,true,false,false,a b,a b",
+  "relList anchors": "string:a:true/true/true/false/true,noopener,area:true/true/true/false/true,noopener,form:true/true/true/false/true,noopener,a:true/true/true/false/true,noopener",
+  "relList math a": "boolean:false",
+  "link sizes": "string:16x16 32x32|true|16x16 32x32",
+  "link sizes supports": "threw TypeError: Failed to execute 'supports' on 'DOMTokenList': DOMTokenList has no supported tokens.",
+  "blocking": "string:true/true/false/true,render,true/true/false/true,render",
+  "iframe sandbox": "string:true,0,true,true,true,false,true,true,false,2, allow-forms  allow-forms allow-popups , allow-forms  allow-forms allow-popups ,allow-popups"
  }
 }
