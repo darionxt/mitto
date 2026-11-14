@@ -569,7 +569,6 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLDetailsElement"
     file = "html_details_element"
-    header = "html_elements"
     implemented = []
   },
   {
@@ -2052,6 +2051,10 @@ mitto_bindings_interfaces = [
   {
     name = "TextEncoder"
     file = "text_encoder"
+  },
+  {
+    name = "ToggleEvent"
+    file = "toggle_event"
   },
   {
     name = "TreeWalker"

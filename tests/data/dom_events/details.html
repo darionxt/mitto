@@ -1,0 +1,122 @@
+<!doctype html><html><head><title>details</title></head><body>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+const toggles = el => {
+  const log = [];
+  el.addEventListener('toggle', e => log.push([e.constructor.name, e.oldState, e.newState, e.bubbles, e.cancelable, e.composed, e.isTrusted, e.source, e.target === el]));
+  return log;
+};
+(async () => {
+  const r = {};
+  // Opening fires toggle in a task, not at once.
+  let d = document.createElement('details');
+  let log = toggles(d);
+  d.open = true;
+  r.open_sync = log.length;
+  await tick();
+  r.open = log.splice(0);
+  // Changes before the task make one event, which keeps the first old state.
+  d = document.createElement('details');
+  log = toggles(d);
+  d.open = true;
+  d.open = false;
+  await tick();
+  r.open_close = log.splice(0);
+  d.open = true;
+  await tick();
+  d.setAttribute('open', 'x');
+  d.removeAttribute('open');
+  d.open = true;
+  d.open = false;
+  await tick();
+  r.coalesced = log.splice(0);
+  // Opening one of a name closes the others of that name in its tree, at once.
+  const c = document.createElement('div');
+  c.innerHTML = '<details name=g open id=a></details><details name=g id=b></details><details name=h id=c open></details><details name=G id=d open></details>';
+  const [a, b, cc, dd] = c.children;
+  const aLog = toggles(a), bLog = toggles(b);
+  b.open = true;
+  r.accordion = [a.open, b.open, cc.open, dd.open];
+  a.setAttribute('open', '');
+  r.accordion_again = [a.open, b.open];
+  await tick();
+  r.accordion_events = [aLog.splice(0), bLog.splice(0)];
+  // One that joins a group with an open one closes itself, inserted or renamed.
+  c.innerHTML = '<details name=g open></details>';
+  d = document.createElement('details');
+  d.name = 'g';
+  d.open = true;
+  c.appendChild(d);
+  r.inserted = [c.firstChild.open, d.open];
+  c.innerHTML = '<details name=g open></details><details name=k open></details>';
+  c.lastChild.name = 'g';
+  r.renamed = [c.firstChild.open, c.lastChild.open];
+  c.innerHTML = '<details name=g open></details><details name=g open></details><details name=g open></details>';
+  r.parsed_group = Array.from(c.children, e => e.open);
+  document.body.appendChild(c);
+  c.innerHTML = '<details name=q open></details>';
+  const other = document.createElement('div');
+  other.innerHTML = '<details name=q open></details>';
+  document.body.appendChild(other);
+  r.across_parents = [c.firstChild.open, other.firstChild.open];
+  c.remove();
+  other.remove();
+  // A click on the main summary opens and closes its details, and on another summary does nothing.
+  const clicks = [];
+  for (const type of ['click', 'DOMActivate']) document.addEventListener(type, e => clicks.push([type, e.target.localName || e.target.nodeName, e.defaultPrevented]));
+  d = document.createElement('details');
+  d.innerHTML = '<summary>s</summary><summary>t</summary><p>x</p>';
+  document.body.appendChild(d);
+  log = toggles(d);
+  const [s1, s2] = d.children;
+  s1.click();
+  const first = d.open;
+  s2.click();
+  const second = d.open;
+  s1.click();
+  r.summary = [first, second, d.open, clicks.splice(0)];
+  await tick();
+  r.summary_events = log.splice(0);
+  // Not when the click is on a control of its own in the summary.
+  d.innerHTML = '<summary>s<button>b</button><span>x</span><a href=#f>l</a><a>n</a><label>q</label><input type=checkbox><em><b>e</b></em></summary>';
+  const s = d.firstChild;
+  const after = [];
+  for (const sel of ['button', 'span', 'a[href]', 'a:not([href])', 'label', 'input', 'b']) {
+    d.open = false;
+    s.querySelector(sel).click();
+    after.push(sel + '=' + d.open);
+  }
+  r.summary_inner = [after, s.querySelector('input').checked];
+  // Not when a listener cancels the click, nor for a summary outside details.
+  d.open = false;
+  s.addEventListener('click', e => e.preventDefault(), {once: true});
+  s.click();
+  const loose = document.createElement('summary');
+  const holder = document.createElement('div');
+  holder.appendChild(loose);
+  loose.click();
+  r.summary_canceled = [d.open, holder.innerHTML];
+  d.remove();
+  clicks.length = 0;
+  // A copy of an open one fires toggle too, and so does one of another document.
+  d = document.createElement('details');
+  d.open = true;
+  await tick();
+  const copy = d.cloneNode();
+  log = toggles(copy);
+  const od = new Document().createElementNS('http://www.w3.org/1999/xhtml', 'details');
+  const odLog = toggles(od);
+  od.open = true;
+  await tick();
+  r.copy = [log.splice(0), copy.open, odLog.splice(0)];
+  // ToggleEvent's constructor.
+  const e = new ToggleEvent('x', {oldState: 'a', newState: 'b', source: document.body, bubbles: true});
+  const f = new ToggleEvent('y');
+  r.constructor = [e.type, e.oldState, e.newState, e.source === document.body, e.bubbles, e.isTrusted, f.oldState, f.newState, f.source, ToggleEvent.length, String(f)];
+  for (const [name, make] of [['none', () => new ToggleEvent()], ['source', () => new ToggleEvent('x', {source: 1})]]) {
+    try { make(); r['constructor_' + name] = 'no error'; } catch (error) { r['constructor_' + name] = error.name + ': ' + error.message; }
+  }
+  done(r);
+})();
+</script></body></html>

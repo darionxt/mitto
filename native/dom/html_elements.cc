@@ -6,7 +6,6 @@
 #include "mitto/bindings/v8_html_credential_element.h"
 #include "mitto/bindings/v8_html_data_element.h"
 #include "mitto/bindings/v8_html_data_list_element.h"
-#include "mitto/bindings/v8_html_details_element.h"
 #include "mitto/bindings/v8_html_dialog_element.h"
 #include "mitto/bindings/v8_html_directory_element.h"
 #include "mitto/bindings/v8_html_dlist_element.h"
@@ -107,19 +106,6 @@ HTMLDataListElement::HTMLDataListElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLDataListElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLDataListElement::kWrapperTypeInfo;
-}
-
-// static
-HTMLDetailsElement* HTMLDetailsElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<HTMLDetailsElement>(document);
-}
-
-HTMLDetailsElement::HTMLDetailsElement(Document& document)
-    : HTMLElement(document, u"details") {}
-
-const bindings::WrapperTypeInfo* HTMLDetailsElement::GetWrapperTypeInfo()
-    const {
-  return &bindings::V8HTMLDetailsElement::kWrapperTypeInfo;
 }
 
 // static

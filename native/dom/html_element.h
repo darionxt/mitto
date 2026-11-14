@@ -55,6 +55,19 @@ class HTMLElement : public Element {
   // Element's: the summary of its parent details, its first summary child,
   // is focusable, as Blink's HTMLSummaryElement is.
   int32_t DefaultTabIndex() const override;
+
+  // Node's: a summary has activation behaviour, as Blink's
+  // HTMLSummaryElement has: a click on the main summary of a details element
+  // opens or closes it, unless it was on a form control, a label, an embed or
+  // an element with activation behaviour of its own in the summary.
+  bool HasActivationBehavior() const override;
+  void RunActivationBehavior(Event& event,
+                             EventDispatchHandlingState* state) override;
+
+ private:
+  // Whether it is a summary that is the first summary child of a details
+  // element, as Blink's IsMainSummary() says.
+  bool IsMainSummary() const;
 };
 
 }  // namespace mitto
