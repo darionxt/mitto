@@ -3,23 +3,12 @@
 #include <memory>
 #include <utility>
 
-#include "base/check.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
-#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "base/timer/elapsed_timer.h"
-#include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
-#include "mitto/dom/event.h"
-#include "mitto/dom/event_loop.h"
-#include "mitto/dom/html_script_element.h"
-#include "mitto/dom/html_tree_builder.h"
-#include "mitto/dom/pending_script.h"
-#include "mitto/dom/performance_timing_confidence.h"
-#include "mitto/dom/script_loader.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
@@ -27,25 +16,8 @@
 #include "mitto/header_rules.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
-#include "v8/include/v8-isolate.h"
-#include "v8/include/v8-microtask-queue.h"
 
 namespace mitto {
-namespace {
-
-// HTMLDocumentParser's timed budget: 10 milliseconds for each of the first
-// six yields, and 500 after them, as Chrome has it off Android.
-constexpr int kNumYieldsWithDefaultBudget = 6;
-constexpr base::TimeDelta kDefaultParserBudget = base::Milliseconds(10);
-constexpr base::TimeDelta kLongParserBudget = base::Milliseconds(500);
-
-// The HTML Standard's perform a microtask checkpoint, as Blink's event loop
-// performs one before the parser prepares a script.
-void PerformMicrotaskCheckpoint() {
-  v8::MicrotasksScope::PerformCheckpoint(v8::Isolate::GetCurrent());
-}
-
-}  // namespace
 
 DocumentLoader::DocumentLoader(ScriptRunner& runner,
                                PageRequests& requests,
@@ -55,6 +27,15 @@ DocumentLoader::DocumentLoader(ScriptRunner& runner,
 DocumentLoader::~DocumentLoader() = default;
 
 void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
+  // The parser of a document that the window had goes, and what waited for
+  // it of the body before.
+  waiting_body_.clear();
+  if (parser_) {
+    parser_->Detach();
+  }
+  body_bytes_ = 0;
+  body_ended_ = false;
+  data_finished_ = false;
   // The document of the response takes the place of about:blank's, in a
   // context of its own, as Blink makes a new window for a tab's first
   // navigation, whose about:blank has an opaque origin.
@@ -95,8 +76,7 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   timing.alpn_negotiated_protocol = response.alpn_negotiated_protocol;
   timing.was_fetched_via_spdy = response.was_fetched_via_spdy;
   timing.was_alpn_negotiated = response.was_alpn_negotiated;
-  timing.dom_loading = base::TimeTicks::Now();
-  document_->SetReadiness(Document::Readiness::kLoading);
+  document_->SetLoadTiming(timing_);
   // Blink's Document::lastModifiedTime(): the response's Last-Modified, where
   // it parses.
   const std::string last_modified =
@@ -117,10 +97,10 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       content_type.mime_type.empty() ? "text/html" : content_type.mime_type,
       content_type.charset, document_->DefaultView()->Start().locale,
       /*parent=*/nullptr);
-  parser_ = std::make_unique<HtmlDocumentParser>(*document_);
-  // The load event waits for what the document's scripts hold back.
-  document_->SetCheckCompleted(base::BindRepeating(
-      &DocumentLoader::CheckCompleted, weak_factory_.GetWeakPtr()));
+  document_->SetDidDispatchLoadEvent(base::BindRepeating(
+      &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
+  // Document::OpenForNavigation(), with the document loading.
+  parser_ = &document_->OpenForNavigation(*this);
 }
 
 void DocumentLoader::AppendDecoded(std::u16string text) {
@@ -128,14 +108,18 @@ void DocumentLoader::AppendDecoded(std::u16string text) {
   // DecodedDataDocumentParser::UpdateDocument() sets it.
   document_->SetEncoding(decoder_->encoding(),
                          decoder_->EncodingWasDetectedHeuristically());
-  parser_->Append(text);
+  parser_->AppendData(text);
 }
 
 void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
+  if (!parser_) {
+    // What comes once the parser has stopped for good goes unread.
+    requests_->TookBody(kNavigationRequest, bytes.size());
+    return;
+  }
   waiting_body_.push_back(std::move(bytes));
-  // HTMLDocumentParser::Append(): the parser takes it from a task of its own.
-  SchedulePumpTokenizer();
+  parser_->DidReceiveData();
 }
 
 void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
@@ -154,252 +138,41 @@ void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
 
 void DocumentLoader::OnResponseEnded(int net_error) {
   // After a response, a body that stops short still makes a document of what
-  // came, as in Chrome. HTMLDocumentParser::Finish(): a parser that is to go
-  // on from a task ends then.
+  // came, as in Chrome: HTMLDocumentParser::Finish().
   body_ended_ = true;
-  if (!pump_scheduled_) {
-    PumpTokenizerIfPossible();
+  if (parser_) {
+    const cppgc::Persistent<DocumentParser> parser = parser_;
+    parser->Finish();
   }
 }
 
-void DocumentLoader::SchedulePumpTokenizer() {
-  if (!parser_ || pump_scheduled_ || stopping_) {
-    return;
-  }
-  pump_scheduled_ = true;
-  runner_->PostTask(TaskType::kNetworking,
-                    base::BindOnce(
-                        [](const base::WeakPtr<DocumentLoader>& loader) {
-                          if (!loader) {
-                            return;
-                          }
-                          loader->pump_scheduled_ = false;
-                          loader->PumpTokenizerIfPossible();
-                        },
-                        weak_factory_.GetWeakPtr()));
-}
-
-void DocumentLoader::PumpTokenizerIfPossible() {
-  if (!parser_ || IsPaused() || stopping_) {
-    return;
-  }
-  if (PumpTokenizer()) {
-    SchedulePumpTokenizer();
-    return;
-  }
-  if (!IsPaused() && parser_finished_) {
-    PrepareToStopParsing();
-  }
-}
-
-bool DocumentLoader::PumpTokenizer() {
-  // The parser yields once the document has a body and the budget has run
-  // out, which it checks after each script and each piece of the body.
-  const base::ElapsedTimer timer;
-  const base::TimeDelta budget = times_yielded_ <= kNumYieldsWithDefaultBudget
-                                     ? kDefaultParserBudget
-                                     : kLongParserBudget;
-  const auto should_yield = [this, &timer, budget] {
-    if (!document_->Body() || timer.Elapsed() < budget) {
-      return false;
-    }
-    ++times_yielded_;
-    return true;
-  };
-  while (true) {
-    while (HTMLScriptElement* const script = parser_->Pump()) {
-      ProcessScriptElement(*script);
-      if (IsPaused()) {
-        return false;
-      }
-      if (should_yield()) {
-        return true;
-      }
-    }
-    if (!waiting_body_.empty()) {
-      const std::string bytes = std::move(waiting_body_.front());
-      waiting_body_.pop_front();
-      AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
-      requests_->TookBody(kNavigationRequest, bytes.size());
-      if (should_yield()) {
-        return true;
-      }
-      continue;
-    }
-    if (body_ended_ && !parser_finished_) {
-      AppendDecoded(decoder_->Flush());
-      parser_->Finish();
-      parser_finished_ = true;
-      // The parser may still reach scripts before the end.
-      continue;
-    }
-    return false;
-  }
-}
-
-void DocumentLoader::ProcessScriptElement(HTMLScriptElement& element) {
-  // The HTML Standard's script end tag: a microtask checkpoint unless a
-  // script runs, then prepare the script element at a script nesting level
-  // one deeper.
-  if (script_nesting_level_ == 0) {
-    PerformMicrotaskCheckpoint();
-  }
-  ++script_nesting_level_;
-  PendingScript* const pending_script = element.Loader().PrepareScript(
-      script_nesting_level_ == 1
-          ? ScriptLoader::ParserBlockingInlineOption::kAllow
-          : ScriptLoader::ParserBlockingInlineOption::kDeny);
-  --script_nesting_level_;
-  if (pending_script) {
-    switch (pending_script->scheduling_type()) {
-      case ScriptSchedulingType::kDefer:
-        scripts_after_parsing_.emplace_back(pending_script);
-        break;
-      case ScriptSchedulingType::kParserBlocking:
-      case ScriptSchedulingType::kParserBlockingInline:
-        CHECK(!parser_blocking_script_);
-        parser_blocking_script_ = pending_script;
-        if (!pending_script->IsReady()) {
-          pending_script->WatchForLoad(
-              base::BindOnce(&DocumentLoader::PendingScriptFinished,
-                             weak_factory_.GetWeakPtr()));
-        }
-        break;
-      default:
-        NOTREACHED();
-    }
-  }
-  if (parser_blocking_script_ && script_nesting_level_ == 0) {
-    ExecuteParsingBlockingScripts();
-  }
-}
-
-void DocumentLoader::ExecuteParsingBlockingScripts() {
-  while (parser_blocking_script_ && parser_blocking_script_->IsReady()) {
-    PendingScript* const pending_script = parser_blocking_script_.Get();
-    pending_script->StopWatchingForLoad();
-    if (script_nesting_level_ == 0) {
-      PerformMicrotaskCheckpoint();
-    }
-    parser_blocking_script_ = nullptr;
-    ++script_nesting_level_;
-    pending_script->ExecuteScriptBlock();
-    --script_nesting_level_;
-  }
-}
-
-void DocumentLoader::PendingScriptFinished() {
-  runner_->PostTask(TaskType::kInternalContinueScriptLoading,
-                    base::BindOnce(&DocumentLoader::NotifyScriptLoaded,
-                                   weak_factory_.GetWeakPtr()));
-}
-
-void DocumentLoader::NotifyScriptLoaded() {
-  if (stopping_) {
-    AttemptToRunDeferredScriptsAndEnd();
-    return;
-  }
-  ExecuteParsingBlockingScripts();
-  // ResumeParsingAfterPause(): the parser goes on from a later task.
-  if (!IsPaused()) {
-    SchedulePumpTokenizer();
-  }
-}
-
-void DocumentLoader::PrepareToStopParsing() {
-  stopping_ = true;
-  timing_->dom_interactive = base::TimeTicks::Now();
-  document_->SetReadiness(Document::Readiness::kInteractive);
-  // Document::SetReadyState() tells Chrome's browser process, which answers
-  // with the navigation's confidence from a later task: high, as for any
-  // navigation once the browser has started, with its noise.
-  runner_->PostTask(
-      TaskType::kInternalNavigationAssociated,
-      base::BindOnce(
-          [](const cppgc::Persistent<DocumentLoadTiming>& timing) {
-            timing->high_confidence =
-                PerformanceTimingConfidence::DrawHighConfidence();
-          },
-          timing_));
-  AttemptToRunDeferredScriptsAndEnd();
-}
-
-void DocumentLoader::AttemptToRunDeferredScriptsAndEnd() {
-  if (parsing_finished_ || !ExecuteScriptsWaitingForParsing()) {
-    return;
-  }
-  FinishedParsing();
-}
-
-bool DocumentLoader::ExecuteScriptsWaitingForParsing() {
-  // SeparateDeferModuleScriptTasks, which stable has on: one deferred script
-  // in each task.
-  if (scripts_after_parsing_.empty()) {
+bool DocumentLoader::FeedParser() {
+  if (!waiting_body_.empty()) {
+    const std::string bytes = std::move(waiting_body_.front());
+    waiting_body_.pop_front();
+    AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
+    requests_->TookBody(kNavigationRequest, bytes.size());
     return true;
   }
-  PendingScript* const first = scripts_after_parsing_.front().Get();
-  if (!first->IsReady()) {
-    if (!first->IsWatchingForLoad()) {
-      first->WatchForLoad(base::BindOnce(&DocumentLoader::PendingScriptFinished,
-                                         weak_factory_.GetWeakPtr()));
-    }
-    return false;
-  }
-  const cppgc::Persistent<PendingScript> script = first;
-  scripts_after_parsing_.pop_front();
-  script->StopWatchingForLoad();
-  if (script_nesting_level_ == 0) {
-    PerformMicrotaskCheckpoint();
-  }
-  script->ExecuteScriptBlock();
-  if (scripts_after_parsing_.empty()) {
+  if (body_ended_ && !data_finished_) {
+    data_finished_ = true;
+    AppendDecoded(decoder_->Flush());
+    parser_->FinishData();
     return true;
   }
-  runner_->PostTask(
-      TaskType::kInternalContinueScriptLoading,
-      base::BindOnce(
-          [](const base::WeakPtr<DocumentLoader>& loader) {
-            if (loader && loader->ExecuteScriptsWaitingForParsing()) {
-              loader->NotifyScriptLoaded();
-            }
-          },
-          weak_factory_.GetWeakPtr()));
   return false;
 }
 
-void DocumentLoader::FinishedParsing() {
-  parsing_finished_ = true;
-  // DOMContentLoaded at the document, from the task that ends the parse, as
-  // Blink dispatches it. It reaches the document's listeners: events that go
-  // through the tree and on to the window are a Known Gap.
-  bindings::EventInit init;
-  init.bubbles = true;
-  Event* const event = Event::Create(u"DOMContentLoaded", init);
-  event->SetTrusted(true);
-  timing_->dom_content_loaded_event_start = base::TimeTicks::Now();
-  document_->DispatchEvent(event);
-  timing_->dom_content_loaded_event_end = base::TimeTicks::Now();
-  PerformMicrotaskCheckpoint();
-  CheckCompleted();
+void DocumentLoader::ParserDetached() {
+  parser_ = nullptr;
+  // What waits of the body goes unread.
+  for (const std::string& bytes : waiting_body_) {
+    requests_->TookBody(kNavigationRequest, bytes.size());
+  }
+  waiting_body_.clear();
 }
 
-void DocumentLoader::CheckCompleted() {
-  // Document::ShouldComplete(), with what a Page's documents hold back: the
-  // async and in-order scripts.
-  if (!parsing_finished_ || load_fired_ || document_->IsDelayingLoadEvent()) {
-    return;
-  }
-  load_fired_ = true;
-  timing_->dom_complete = base::TimeTicks::Now();
-  document_->SetReadiness(Document::Readiness::kComplete);
-  bindings::EventInit init;
-  Event* const event = Event::Create(u"load", init);
-  event->SetTrusted(true);
-  timing_->load_event_start = base::TimeTicks::Now();
-  if (Window* const window = document_->DefaultView()) {
-    window->DispatchEventWithTarget(event, document_.Get());
-  }
-  timing_->load_event_end = base::TimeTicks::Now();
+void DocumentLoader::DidDispatchLoadEvent() {
   send_.Run(EncodeLoaded());
 }
 

@@ -315,6 +315,10 @@ mitto_bindings_interfaces = [
       "children",
       "hasStorageAccess",
       "featurePolicy",
+      "open",
+      "close",
+      "write",
+      "writeln",
     ]
   },
   {

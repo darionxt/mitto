@@ -454,6 +454,13 @@ bool EventTarget::HasEventListeners(std::u16string_view type) const {
   return false;
 }
 
+void EventTarget::RemoveAllEventListeners() {
+  // A dispatch that runs skips them from now on.
+  while (EventListenerEntry* const entry = first_listener_.Get()) {
+    RemoveEntry(entry);
+  }
+}
+
 void EventTarget::RemoveEntry(EventListenerEntry* entry) {
   entry->set_removed();
   EventListenerEntry* previous = nullptr;

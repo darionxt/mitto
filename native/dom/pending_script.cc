@@ -390,9 +390,17 @@ void PendingScript::ExecuteScriptBlock() {
     element->DispatchErrorEvent();
     return;
   }
-  document.PushCurrentScript(element);
-  RunClassicScript(source, source_url, start_line, start_column, muted_errors);
-  document.PopCurrentScript(element);
+  {
+    // A script from a file cannot write into its document unless the
+    // document was opened for it: the HTML Standard's ignore-destructive-
+    // writes counter.
+    const IgnoreDestructiveWriteCountIncrementer ignore_destructive_writes(
+        is_external ? &document : nullptr);
+    document.PushCurrentScript(element);
+    RunClassicScript(source, source_url, start_line, start_column,
+                     muted_errors);
+    document.PopCurrentScript(element);
+  }
   if (is_external) {
     element->DispatchLoadEvent();
   }

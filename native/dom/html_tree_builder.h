@@ -47,6 +47,15 @@ class HtmlDocumentParser {
   void Append(std::u16string_view markup);
   // Ends the markup.
   void Finish();
+  bool HasSeenEndOfFile() const;
+
+  // The insertion point of document.write(), which the tokenizer keeps
+  // (HtmlTokenizer::PushInsertionPoint()): Insert() adds markup there, or at
+  // the end of the markup while none is set.
+  void PushInsertionPoint();
+  void PopInsertionPoint();
+  bool HasInsertionPoint() const;
+  void Insert(std::u16string_view markup);
 
   // Builds the tree from the markup so far. Returns the script element whose
   // end tag it reached, where the standard would run the script before it

@@ -2918,6 +2918,26 @@ void HtmlDocumentParser::Finish() {
   tokenizer_->Finish();
 }
 
+bool HtmlDocumentParser::HasSeenEndOfFile() const {
+  return tokenizer_->HasSeenEndOfFile();
+}
+
+void HtmlDocumentParser::PushInsertionPoint() {
+  tokenizer_->PushInsertionPoint();
+}
+
+void HtmlDocumentParser::PopInsertionPoint() {
+  tokenizer_->PopInsertionPoint();
+}
+
+bool HtmlDocumentParser::HasInsertionPoint() const {
+  return tokenizer_->HasInsertionPoint();
+}
+
+void HtmlDocumentParser::Insert(std::u16string_view markup) {
+  tokenizer_->Insert(markup);
+}
+
 HTMLScriptElement* HtmlDocumentParser::Pump() {
   HtmlToken token;
   while (tokenizer_->NextToken(token)) {
