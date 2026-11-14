@@ -544,6 +544,10 @@ struct PageResponseStarted {
   // a name of at most 64 characters.
   std::string connection_info;
   std::string alpn_negotiated_protocol;
+  // For the navigation of a document, the Referer that its last hop sent, as
+  // //net kept it through each redirect, which the document gives as
+  // document.referrer: empty for none and for every other request.
+  std::string referrer;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;

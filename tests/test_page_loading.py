@@ -46,7 +46,10 @@ class _Route:
 
 
 class _PageServer:
-    """A local server for pages and their scripts, which records the header lines of each request it gets, in order."""
+    """A local server for pages and their scripts, which records the header lines of each request it gets, in order.
+
+    An OPTIONS request is recorded and routed as "OPTIONS PATH", and answered as GET at PATH where no route has that name.
+    """
 
     def __init__(self) -> None:
         self.routes: dict[str, _Route] = {}
@@ -66,10 +69,12 @@ class _PageServer:
                 self.do_GET()
 
             def do_GET(self) -> None:
+                path = f"OPTIONS {self.path}" if self.command == "OPTIONS" else self.path
                 with server.requested:
-                    server.requests.append((self.path, list(self.headers.items())))
+                    server.requests.append((path, list(self.headers.items())))
                     server.requested.notify_all()
-                route = server.routes.get(self.path, _Route(b"not here", 404, [("Content-Type", "text/plain")]))
+                not_here = _Route(b"not here", 404, [("Content-Type", "text/plain")])
+                route = server.routes.get(path, server.routes.get(self.path, not_here))
                 if route.hold is not None:
                     route.hold.wait(_TIMEOUT_SECONDS)
                 self.send_response(route.status)
@@ -86,6 +91,9 @@ class _PageServer:
                     self.wfile.write(route.body)
 
             def do_HEAD(self) -> None:
+                self.do_GET()
+
+            def do_OPTIONS(self) -> None:
                 self.do_GET()
 
             def log_message(self, format: str, *args: Any) -> None:
@@ -732,6 +740,9 @@ def test_a_cross_origin_fetch_reaches_the_page_only_through_the_cors_check(
             ],
         )
         other.routes["/closed"] = _Route(b"closed", headers=[("Content-Type", "text/plain")])
+        other.routes["OPTIONS /open"] = _Route(
+            headers=[("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Headers", "X-Custom")]
+        )
         url = server.page("/", "<p>cors</p>")
 
         with _open_page(session, url) as page:
@@ -744,16 +755,23 @@ def test_a_cross_origin_fetch_reaches_the_page_only_through_the_cors_check(
             closed = page.evaluate(
                 f"fetch('{other.url('/closed')}').then(() => 'read', error => String(error))", timeout=_TIMEOUT_SECONDS
             )
-            # One that needs a CORS preflight is a Known Gap, and goes nowhere.
+            # One that needs a CORS preflight goes once the preflight allows it, and one that it does not allow goes
+            # nowhere.
             preflighted = page.evaluate(
                 f"fetch('{other.url('/open')}', {{headers: {{'X-Custom': '1'}}}}).then(() => 'read', error => String(error))",
+                timeout=_TIMEOUT_SECONDS,
+            )
+            refused = page.evaluate(
+                f"fetch('{other.url('/open')}', {{headers: {{'X-Other': '1'}}}}).then(() => 'read', error => String(error))",
                 timeout=_TIMEOUT_SECONDS,
             )
 
         assert opened == ["cors", "open", "1", None, "text/plain"]
         assert closed == "TypeError: Failed to fetch"
-        assert preflighted == "TypeError: Failed to fetch"
-        assert len(other.headers_of("/open")) == 1
+        assert (preflighted, refused) == ("read", "TypeError: Failed to fetch")
+        assert len(other.headers_of("/open")) == 2
+        preflights = other.headers_of("OPTIONS /open")
+        assert [dict(headers)["Access-Control-Request-Headers"] for headers in preflights] == ["x-custom", "x-other"]
         # A cross-origin fetch carries the page's origin, and no cookies, since it asks for none.
         origin = url.removesuffix("/")
         assert ("Origin", origin) in other.headers_of("/open")[0]
@@ -873,11 +891,11 @@ def test_each_hop_of_a_cross_origin_fetch_passes_the_cors_check_before_it_is_fol
     assert len(server.headers_of("/allowed")) == 1
 
 
-def test_a_request_that_would_need_a_preflight_does_not_follow_a_redirect_to_another_origin(
+def test_a_request_that_needs_a_preflight_at_another_origin_goes_there_only_if_it_allows(
     session: mitto.Session, server: _PageServer
 ) -> None:
-    # A same-origin POST with a line that is not CORS-safelisted needs no preflight, but a hop to another origin would,
-    # which is a Known Gap, so the redirect is not followed and the other server gets nothing.
+    # A same-origin POST with a line that is not CORS-safelisted needs no preflight, but a hop to another origin does.
+    # That one does not allow X-Custom, so the other server gets the preflight and nothing more.
     with _PageServer() as other:
         other.routes["/dest"] = _Route(
             b"dest", headers=[("Content-Type", "text/plain"), ("Access-Control-Allow-Origin", "*")]
@@ -894,6 +912,7 @@ def test_a_request_that_would_need_a_preflight_does_not_follow_a_redirect_to_ano
 
         assert result == "TypeError: Failed to fetch"
         assert other.headers_of("/dest") == []
+        assert len(other.headers_of("OPTIONS /dest")) == 1
 
 
 def test_a_null_body_reads_as_empty_and_stays_unused_after_the_request_ends(

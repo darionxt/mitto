@@ -258,6 +258,13 @@ void StartNavigation(Window& window,
     ProcessJavaScriptUrl(window, url);
     return;
   }
+  // Mojo carries no URL longer than url::kMaxURLChars, so Chrome's browser
+  // gets none and navigates to about:blank#blocked, which a Page does not:
+  // the navigation starts nothing, a Known Gap. So a navigation's request
+  // always fits in a frame.
+  if (url.possibly_invalid_spec().size() > url::kMaxURLChars) {
+    return;
+  }
   NavigationClient* const client = window.GetNavigationClient();
   if (!client) {
     return;

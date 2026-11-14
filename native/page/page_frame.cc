@@ -13,7 +13,6 @@
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "url/origin.h"
-#include "url/url_constants.h"
 
 namespace mitto {
 namespace {
@@ -42,13 +41,6 @@ void PageFrame::ExpectOpeningNavigation() {
 }
 
 void PageFrame::BeginNavigation(const NavigationRequest& request) {
-  // Mojo carries no URL longer than url::kMaxURLChars, so Chrome's browser
-  // gets none and navigates to about:blank#blocked, which a Page does not:
-  // the navigation starts nothing, a Known Gap. So a navigation's request
-  // always fits in a frame.
-  if (request.url.possibly_invalid_spec().size() > url::kMaxURLChars) {
-    return;
-  }
   const base::TimeTicks now = base::TimeTicks::Now();
   // RenderFrameImpl::BeginNavigationInternal(): a navigation the same as the
   // one that waits, which started less than 3 seconds before while no script
@@ -68,8 +60,6 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   }
   provisional_ = std::make_unique<DocumentLoader>(
       *runner_, *requests_, send_, *this, requests_->NextNumber());
-  provisional_->set_referrer_source(
-      GURL(Window::Current().GetDocument().UrlForBinding()));
   provisional_request_ = request;
   provisional_start_ = now;
   provisional_cookie_writes_ = cookie_jar_->cookie_writes();

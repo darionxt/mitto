@@ -131,6 +131,8 @@ class PageRecord:
         ended: How the Page ended, once its event has come.
         navigated: How the navigation that opened the Page went, once its event has come.
         loaded: Whether the window's load event of a document of the Page has been dispatched.
+        stopped_loading: Whether a document stopped loading before it had loaded, with no new document to load after it:
+            a navigation that it started ended with no document of its own.
         document_url: The URL of the Page's document, once a navigation has given it one.
     """
 
@@ -143,6 +145,7 @@ class PageRecord:
         self.ended: PageEnded | None = None
         self.navigated: PageNavigated | None = None
         self.loaded = False
+        self.stopped_loading = False
         self.document_url: str | None = None
         # The navigations that the Page's documents started, in order, each until a caller takes it once it has ended,
         # and the one whose document loads.
@@ -211,6 +214,14 @@ class PageRecord:
             if self._loading is not None:
                 self._loading.done = True
             self._loading = navigation
+        elif navigation is not None:
+            # A document stops loading when it starts a navigation, so one that had not loaded by then never will. Unless
+            # another took this one's place, nothing comes to load after it.
+            if self._loading is not None:
+                self._loading.done = True
+                self._loading = None
+            if not self.loaded and not event.replaced:
+                self.stopped_loading = True
 
     def _add_navigation(self, navigation: _OwnNavigation) -> None:
         self._navigations.append(navigation)
@@ -227,9 +238,9 @@ class PageRecord:
 
     def load_outcome(self) -> PageNavigated | PageEnded | None:
         """Return how loading the Page's document went, once it has: its navigation, which failed or ended with no
-        document, or whose document, or one that a navigation of it started, has fired its load event, or how the Page
-        ended first."""
-        if self.navigated is not None and (self.navigated.net_error != 0 or self.loaded):
+        document, or whose document, or one that a navigation of it started, has fired its load event or stopped loading
+        for good, or how the Page ended first."""
+        if self.navigated is not None and (self.navigated.net_error != 0 or self.loaded or self.stopped_loading):
             return self.navigated
         return self.ended
 

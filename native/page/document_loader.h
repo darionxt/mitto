@@ -65,12 +65,6 @@ class DocumentLoader final : public PageRequests::Client {
   ~DocumentLoader() override;
 
   uint64_t number() const { return number_; }
-  // The URL of the document that started the navigation, which its document's
-  // referrer comes from, and none for one that the browser started.
-  void set_referrer_source(GURL source) {
-    referrer_source_ = std::move(source);
-  }
-
   // DocumentLoader::StopLoading(), once another document takes the place of
   // this one's: the parser stops, and so does the body, if it still comes.
   void StopLoading();
@@ -134,7 +128,6 @@ class DocumentLoader final : public PageRequests::Client {
   const SendFrame send_;
   const raw_ref<PageFrame> frame_;
   const uint64_t number_;
-  GURL referrer_source_;
   bool response_started_ = false;
   bool parsing_cancelled_ = false;
 

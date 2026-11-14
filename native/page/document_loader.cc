@@ -30,7 +30,6 @@
 #include "mitto/page/page_frame.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
-#include "url/origin.h"
 #include "url/url_util.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-microtask-queue.h"
@@ -43,33 +42,6 @@ namespace {
 constexpr int kNumYieldsWithDefaultBudget = 6;
 constexpr base::TimeDelta kDefaultParserBudget = base::Milliseconds(10);
 constexpr base::TimeDelta kLongParserBudget = base::Milliseconds(500);
-
-// What //net sends as Referer on the last hop of a navigation from a document
-// at `source` that ends at `url`, under Chrome's default policy,
-// strict-origin-when-cross-origin: the document's URL without its fragment
-// and credentials to its own origin, its origin to another, and nothing from
-// HTTPS to HTTP or from a URL that no referrer comes from, such as
-// about:blank's.
-// Upstream: net/url_request/url_request_job.cc
-// Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
-std::u16string ReferrerOf(const GURL& source, const GURL& url) {
-  if (!source.is_valid() || !source.SchemeIsHTTPOrHTTPS()) {
-    return std::u16string();
-  }
-  if (source.SchemeIsCryptographic() && !url.SchemeIsCryptographic()) {
-    return std::u16string();
-  }
-  GURL::Replacements strip;
-  strip.ClearRef();
-  strip.ClearUsername();
-  strip.ClearPassword();
-  const GURL stripped = source.ReplaceComponents(strip);
-  const GURL origin = url::Origin::Create(stripped).GetURL();
-  if (!url::IsSameOriginWith(stripped, url) || stripped.spec().size() > 4096) {
-    return base::UTF8ToUTF16(origin.spec());
-  }
-  return base::UTF8ToUTF16(stripped.spec());
-}
 
 // The HTML Standard's perform a microtask checkpoint, as Blink's event loop
 // performs one before the parser prepares a script.
@@ -142,7 +114,9 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
   document_id_ = document_->DefaultView()->DocumentId();
-  document_->SetReferrer(ReferrerOf(referrer_source_, url_));
+  // The Referer that the navigation's last hop sent, as //net kept it through
+  // its redirects.
+  document_->SetReferrer(base::UTF8ToUTF16(response.referrer));
   document_->SetCancelParsing(base::BindRepeating(
       &DocumentLoader::CancelParsing, weak_factory_.GetWeakPtr()));
   // What DocumentLoader::CommitNavigation() takes from the navigation's
