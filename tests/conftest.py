@@ -1,6 +1,7 @@
 """Fixtures shared by the tests of the native core's binding and of the public API."""
 
 import ctypes
+import os
 from collections.abc import Iterator
 from functools import partial
 
@@ -9,6 +10,16 @@ import pytest
 import mitto
 from mitto import _api, _native
 from tests.session_on_asyncio import SessionOnAsyncio
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip the tests marked alone in a worker of pytest-xdist that has other workers beside it."""
+    if int(os.environ.get("PYTEST_XDIST_WORKER_COUNT", "1")) <= 1:
+        return
+    skip = pytest.mark.skip(reason="times something by the wall clock: run it in a pytest without -n, as CI does")
+    for item in items:
+        if item.get_closest_marker("alone") is not None:
+            item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
