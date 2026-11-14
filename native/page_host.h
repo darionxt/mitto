@@ -419,7 +419,7 @@ class PageHost final : public PageChannel::Delegate {
   // What a document's localStorage and sessionStorage ask, as Chrome's
   // storage service answers a renderer: an area takes its storage key from the
   // URL that the library loaded the document at that binds it.
-  void OnStorageBind(const PageStorageBind& bind, const GURL& document_url);
+  void OnStorageBind(const PageStorageBind& bind, uint64_t document);
   void OnStorageGetAll(const PageStorageGetAll& get_all);
   void OnStorageMutation(PageMessage type, PageStorageMutation mutation);
   void OnStorageUnbind(uint64_t area);
@@ -491,10 +491,14 @@ class PageHost final : public PageChannel::Delegate {
   static std::optional<std::string> DocumentCacheStorageKey(
       const GURL& document_url);
 
-  // The storage key of a document at `document_url`, which the Page names no
-  // part of: its origin's, first party, since a Page's documents are all
-  // top-level. None for a document of an opaque origin, which has no storage.
-  static std::optional<StorageKey> DocumentStorageKey(const GURL& document_url);
+  // The storage key of document `id`, as Chrome works it out for a frame with
+  // third-party storage partitioning, which it turns on: the document's
+  // origin, the site of the top-level document and whether a document from
+  // `id` up is of another site. None for a document of an opaque origin, or
+  // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
+  // document under a top-level one of an opaque origin, whose key no other
+  // top-level document ever has.
+  std::optional<StorageKey> DocumentStorageKey(uint64_t id) const;
 
   // Lets go of every storage area that the Page bound.
   void ReleaseStorage();
@@ -578,6 +582,12 @@ class PageHost final : public PageChannel::Delegate {
   uint64_t last_storage_area_ = 0;
   uint64_t last_storage_observer_ = 0;
   std::unique_ptr<SessionStorageNamespace> session_storage_;
+  // The localStorage and sessionStorage of the frames under a top-level
+  // document of an opaque origin, by that document's ID, which stay in memory
+  // for as long as the Page.
+  std::map<std::pair<uint64_t, PageStorageKind>,
+           std::unique_ptr<SessionStorageNamespace>>
+      opaque_top_storage_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

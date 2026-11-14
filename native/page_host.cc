@@ -1867,32 +1867,38 @@ std::optional<std::string> PageHost::DocumentCacheStorageKey(
   return url::Origin::Create(document_url).GetURL().spec();
 }
 
-// static
-std::optional<StorageKey> PageHost::DocumentStorageKey(
-    const GURL& document_url) {
-  // RenderFrameHostImpl::CalculateStorageKey() for a top-level frame.
+std::optional<StorageKey> PageHost::DocumentStorageKey(uint64_t id) const {
+  // RenderFrameHostImpl::CalculateStorageKey(), with
+  // net::features::kThirdPartyStoragePartitioning on, as in Chrome.
   // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
-  if (!DocumentHasCookies(document_url)) {
+  const Context& context = contexts_.at(id);
+  if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     return std::nullopt;
   }
-  const url::Origin origin = url::Origin::Create(document_url);
-  if (origin.opaque()) {
+  const FrameTree tree = FrameTreeOf(id);
+  if (tree.is_top_level) {
+    return StorageKey::CreateFirstParty(context.origin);
+  }
+  if (tree.top_frame_origin.opaque()) {
     return std::nullopt;
   }
-  return StorageKey::CreateFirstParty(origin);
+  return StorageKey::Create(
+      context.origin, net::SchemefulSite(tree.top_frame_origin),
+      tree.cross_site ? StorageKey::AncestorChainBit::kCrossSite
+                      : StorageKey::AncestorChainBit::kSameSite);
 }
 
 void PageHost::ReleaseStorage() {
   storage_areas_.clear();
   session_storage_.reset();
+  opaque_top_storage_.clear();
 }
 
 // What Chrome's browser checks when a renderer binds an area, in
 // DOMStorageContextWrapper, and the binding, in LocalStorageImpl or the
 // renderer's session storage namespace.
 // Upstream: content/browser/dom_storage/dom_storage_context_wrapper.cc
-void PageHost::OnStorageBind(const PageStorageBind& bind,
-                             const GURL& document_url) {
+void PageHost::OnStorageBind(const PageStorageBind& bind, uint64_t document) {
   if (bind.area <= last_storage_area_ ||
       bind.observer <= last_storage_observer_) {
     Refuse("a storage area or observer numbered as one before it");
@@ -1907,20 +1913,37 @@ void PageHost::OnStorageBind(const PageStorageBind& bind,
     return;
   }
   // A document of an opaque origin throws before it asks.
-  const std::optional<StorageKey> storage_key =
-      DocumentStorageKey(document_url);
-  if (!storage_key) {
+  const Context& context = contexts_.at(document);
+  if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     Refuse("a storage area of a document that has no storage key");
     return;
   }
   StorageAreaImpl* area = nullptr;
-  if (bind.kind == PageStorageKind::kLocal) {
-    area = &network_->storage_context().LocalStorageArea(*storage_key);
-  } else {
-    if (!session_storage_) {
-      session_storage_ = std::make_unique<SessionStorageNamespace>();
+  if (const std::optional<StorageKey> storage_key =
+          DocumentStorageKey(document)) {
+    if (bind.kind == PageStorageKind::kLocal) {
+      area = &network_->storage_context().LocalStorageArea(*storage_key);
+    } else {
+      if (!session_storage_) {
+        session_storage_ = std::make_unique<SessionStorageNamespace>();
+      }
+      area = &session_storage_->Area(*storage_key);
     }
-    area = &session_storage_->Area(*storage_key);
+  } else {
+    // A frame under a top-level document of an opaque origin, such as a data:
+    // URL's. Chrome keys its storage by that origin, which no other top-level
+    // document has, so that what it writes stays among the frames under that
+    // one document. Here it stays in memory, for as long as the Page.
+    uint64_t top = document;
+    while (contexts_.at(top).parent != kNoDocument) {
+      top = contexts_.at(top).parent;
+    }
+    std::unique_ptr<SessionStorageNamespace>& storage =
+        opaque_top_storage_[{top, bind.kind}];
+    if (!storage) {
+      storage = std::make_unique<SessionStorageNamespace>();
+    }
+    area = &storage->Area(StorageKey::CreateFirstParty(context.origin));
   }
   auto storage_area = std::make_unique<StorageArea>(*this, *area, bind.kind);
   if (base::WeakPtr<StorageAreaObserver> observer =
@@ -2565,7 +2588,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnContextGone(frame->gone_context);
       return;
     case PageMessage::kStorageBind:
-      OnStorageBind(frame->storage_bind, document_url);
+      OnStorageBind(frame->storage_bind, frame->document);
       return;
     case PageMessage::kStorageGetAll:
       OnStorageGetAll(frame->storage_get_all);
