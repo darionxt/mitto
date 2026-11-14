@@ -906,5 +906,79 @@
     t.innerHTML = "<div contenteditable><b></b></div>";
     return [e.isContentEditable, t.content.firstChild.firstChild.isContentEditable].join(",");
   });
+  // dataset.
+  run("dataset read", () => {
+    const e = document.createElement("div");
+    e.setAttribute("data-foo", "1");
+    e.setAttribute("data-foo-bar", "2");
+    e.setAttribute("data--x", "3");
+    e.setAttribute("data-a1-b", "4");
+    e.setAttribute("data-", "5");
+    e.setAttribute("datax", "6");
+    e.setAttributeNS("urn:x", "data-ns", "7");
+    const d = e.dataset;
+    return [d, d === e.dataset, d.foo, d.fooBar, d["-x"], d.a1B, d["a1-b"], d[""], d.datax, d.ns, d.nope, JSON.stringify(Object.keys(d)), JSON.stringify(Object.getOwnPropertyNames(d)), "foo" in d, d.hasOwnProperty("fooBar"), JSON.stringify(Object.getOwnPropertyDescriptor(d, "foo"))].map(String).join("|");
+  });
+  run("dataset write", () => {
+    const e = document.createElement("div");
+    const d = e.dataset;
+    d.fooBar = 1;
+    d.x = null;
+    d.Up = "u";
+    d.toString = "t";
+    d["a-1"] = "n";
+    return [e.getAttributeNames().join(" "), e.getAttribute("data-foo-bar"), e.getAttribute("data-x"), JSON.stringify(Object.keys(d)), typeof d.toString, Object.prototype.toString.call(d)].join("|");
+  });
+  run("dataset bad name", () => { document.createElement("div").dataset["a-b"] = 1; });
+  run("dataset bad attribute", () => { document.createElement("div").dataset["a b"] = 1; });
+  run("dataset delete", () => {
+    const e = document.createElement("div");
+    e.setAttribute("data-foo", "1");
+    const d = e.dataset;
+    const r1 = delete d.foo;
+    const r2 = delete d.missing;
+    const r3 = delete d["a-b"];
+    return [r1, r2, r3, e.hasAttribute("data-foo"), JSON.stringify(Object.keys(d))].join("|");
+  });
+  run("dataset define", () => {
+    const d = document.createElement("div").dataset;
+    Object.defineProperty(d, "x", { value: "v" });
+    let accessor = "ok";
+    try { Object.defineProperty(d, "y", { get() { return 1; } }); } catch (e) { accessor = e.name + ": " + e.message; }
+    return [d.x, accessor, JSON.stringify(Object.keys(d))].join("|");
+  });
+  run("dataset override builtins", () => {
+    const e = document.createElement("div");
+    e.setAttribute("data-has-own-property", "h");
+    const d = e.dataset;
+    return [typeof d.hasOwnProperty, d.hasOwnProperty].join("|");
+  });
+  run("dataset symbol", () => { const d = document.createElement("div").dataset; const s = Symbol("k"); d[s] = 1; return [d[s], Object.getOwnPropertySymbols(d).length].join("|"); });
+  run("dataset svg", () => { const e = document.createElementNS(SVG, "rect"); e.dataset.k = "v"; return [e.getAttribute("data-k"), document.createElementNS(MATHML, "mi").dataset + ""].join("|"); });
+  run("dataset strict delete", () => { "use strict"; const d = document.createElement("div").dataset; return delete d.nothing; });
+  run("dataset json", () => { const e = document.createElement("div"); e.dataset.a = "1"; e.dataset.bC = "2"; return JSON.stringify(e.dataset) + "|" + JSON.stringify(Object.assign({}, e.dataset)); });
+  // V8 calls the named setter only when the receiver is the map itself; a setter's error propagates through Reflect.
+  run("dataset receiver", () => {
+    const e = document.createElement("div");
+    const child = Object.create(e.dataset);
+    child.foo = "v";
+    const r = {};
+    const ok = Reflect.set(e.dataset, "k", "w", r);
+    e.setAttribute("data-bar", "1");
+    child.bar = "2";
+    return [e.getAttribute("data-foo"), child.hasOwnProperty("foo"), child.foo, ok, e.hasAttribute("data-k"), r.k, e.getAttribute("data-bar"), child.hasOwnProperty("bar"), JSON.stringify(Object.keys(e.dataset))].join("|");
+  });
+  run("dataset reflect define", () => {
+    const d = document.createElement("div").dataset;
+    const a = Reflect.defineProperty(d, "x", { get() { return 1; } });
+    const b = Reflect.defineProperty(d, "y", { value: "v" });
+    const c = Reflect.defineProperty(d, "z", { value: "v", writable: false });
+    const del = Reflect.deleteProperty(d, "y");
+    return [a, b, c, d.x, d.y, d.z, del, JSON.stringify(Object.keys(d))].join("|");
+  });
+  run("dataset reflect set", () => {
+    const d = document.createElement("div").dataset;
+    return [Reflect.set(d, "a", "1"), Reflect.set(d, "a-b", "1")].join("|");
+  });
   return JSON.stringify(cases, null, 1);
 })()

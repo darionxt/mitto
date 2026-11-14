@@ -162,6 +162,10 @@ mitto_bindings_interfaces = [
     file = "custom_event"
   },
   {
+    name = "DOMStringMap"
+    file = "dom_string_map"
+  },
+  {
     name = "DOMTokenList"
     file = "dom_token_list"
     made_by_known_gaps = true
@@ -605,6 +609,7 @@ mitto_bindings_interfaces = [
       "isContentEditable",
       "tabIndex",
       "click",
+      "dataset",
     ]
   },
   {
@@ -1085,7 +1090,10 @@ mitto_bindings_interfaces = [
   {
     name = "MathMLElement"
     file = "mathml_element"
-    implemented = [ "tabIndex" ]
+    implemented = [
+      "tabIndex",
+      "dataset",
+    ]
   },
   {
     name = "MediaDeviceInfo"
@@ -1566,7 +1574,10 @@ mitto_bindings_interfaces = [
   {
     name = "SVGElement"
     file = "svg_element"
-    implemented = [ "tabIndex" ]
+    implemented = [
+      "tabIndex",
+      "dataset",
+    ]
   },
   {
     name = "SVGEllipseElement"

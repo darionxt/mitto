@@ -28,6 +28,7 @@
 namespace mitto {
 
 class Attr;
+class DOMStringMap;
 class DOMTokenList;
 class NamedNodeMap;
 
@@ -88,6 +89,8 @@ class Element : public Node {
   NamedNodeMap* AttributesForBindings();
   DOMTokenList* ClassList();
   DOMTokenList* Part();
+  // HTMLOrForeignElement's dataset, the same object on every read.
+  DOMStringMap* Dataset();
   Attr* GetAttributeNode(const std::u16string& name);
   Attr* GetAttributeNodeNS(const std::optional<std::u16string>& namespace_uri,
                            const std::u16string& local_name);
@@ -278,6 +281,7 @@ class Element : public Node {
   cppgc::Member<NamedNodeMap> attribute_map_;
   cppgc::Member<DOMTokenList> class_list_;
   cppgc::Member<DOMTokenList> part_;
+  cppgc::Member<DOMStringMap> dataset_;
 };
 
 }  // namespace mitto
