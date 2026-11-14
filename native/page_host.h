@@ -75,13 +75,12 @@ struct PageOptions {
   // process started, as Chrome's NavigationRequest starts a tab's navigation
   // before its renderer runs. What its document's timeOrigin counts from.
   base::TimeTicks navigation_start;
-  // What each Request Kind sends.
-  std::optional<PageRequestTemplate> navigation;
-  std::optional<PageRequestTemplate> script;
-  std::optional<PageRequestTemplate> fetch;
-  // A fetch with a body, whose lines hold the Content-Type where the Persona
-  // puts it, which the page's script gives, or which goes if it gives none.
-  std::optional<PageRequestTemplate> fetch_with_body;
+  // What a request of each Request Kind sends, and for a kind whose requests
+  // can have a body, what one with a body sends, whose lines hold the
+  // Content-Type where the Persona puts it, which the page's script gives, or
+  // which goes if it gives none.
+  std::map<PageRequestKind, PageRequestTemplate> requests;
+  std::map<PageRequestKind, PageRequestTemplate> requests_with_body;
 };
 
 // Returns what mitto_page_open() reads from `json`, or nullopt if it holds an

@@ -54,10 +54,25 @@ constexpr char kUnknownProtocol[] = "unknown";
 constexpr std::string_view kStartKey = "start";
 constexpr std::string_view kUrlKey = "url";
 constexpr std::string_view kRequestsKey = "requests";
-constexpr std::string_view kNavigationKey = "navigation";
-constexpr std::string_view kScriptKey = "script";
-constexpr std::string_view kFetchKey = "fetch";
-constexpr std::string_view kFetchWithBodyKey = "fetch_with_body";
+// The names of the Request Kinds in "requests", as RequestKind's values are in
+// Python, and what follows the name of a kind's template with a body.
+constexpr auto kRequestKindNames =
+    std::to_array<std::pair<std::string_view, PageRequestKind>>({
+        {"navigation", PageRequestKind::kNavigation},
+        {"script", PageRequestKind::kScript},
+        {"fetch", PageRequestKind::kFetch},
+        {"image", PageRequestKind::kImage},
+        {"style", PageRequestKind::kStyle},
+        {"font", PageRequestKind::kFont},
+        {"module", PageRequestKind::kModule},
+        {"xhr", PageRequestKind::kXhr},
+        {"worker", PageRequestKind::kWorker},
+        {"beacon", PageRequestKind::kBeacon},
+        {"iframe", PageRequestKind::kIframe},
+        {"favicon", PageRequestKind::kFavicon},
+    });
+constexpr std::string_view kWithBodySuffix = "_with_body";
+constexpr std::string_view kSecFetchMode = "Sec-Fetch-Mode";
 constexpr std::string_view kHeadersKey = "headers";
 constexpr std::string_view kOptionsKey = "options";
 
@@ -155,22 +170,121 @@ bool ReadTemplates(const base::Value& value, PageOptions& options) {
   if (!value.is_dict()) {
     return false;
   }
-  for (const auto [key, kind] : value.GetDict()) {
-    std::optional<PageRequestTemplate>* const slot =
-        key == kNavigationKey      ? &options.navigation
-        : key == kScriptKey        ? &options.script
-        : key == kFetchKey         ? &options.fetch
-        : key == kFetchWithBodyKey ? &options.fetch_with_body
-                                   : nullptr;
-    if (!slot) {
+  for (const auto [key, item] : value.GetDict()) {
+    std::string_view name = key;
+    const bool with_body = name.ends_with(kWithBodySuffix);
+    if (with_body) {
+      name.remove_suffix(kWithBodySuffix.size());
+    }
+    const auto* const found = std::ranges::find(
+        kRequestKindNames, name,
+        &std::pair<std::string_view, PageRequestKind>::first);
+    std::optional<PageRequestTemplate> request_template = ReadTemplate(item);
+    if (found == kRequestKindNames.end() || !request_template) {
       return false;
     }
-    *slot = ReadTemplate(kind);
-    if (!*slot) {
-      return false;
-    }
+    (with_body ? options.requests_with_body : options.requests)
+        .insert_or_assign(found->second, *std::move(request_template));
   }
   return true;
+}
+
+// The values of RequestOptions for what a Page's request names.
+RequestMode ToRequestMode(PageRequestMode mode) {
+  switch (mode) {
+    case PageRequestMode::kKindDefault:
+    case PageRequestMode::kNavigate:
+      return RequestMode::kNavigate;
+    case PageRequestMode::kSameOrigin:
+      return RequestMode::kSameOrigin;
+    case PageRequestMode::kNoCors:
+      return RequestMode::kNoCors;
+    case PageRequestMode::kCors:
+      return RequestMode::kCors;
+  }
+}
+
+CredentialsMode ToCredentialsMode(PageCredentialsMode credentials) {
+  switch (credentials) {
+    case PageCredentialsMode::kOmit:
+      return CredentialsMode::kOmit;
+    case PageCredentialsMode::kSameOrigin:
+      return CredentialsMode::kSameOrigin;
+    case PageCredentialsMode::kKindDefault:
+    case PageCredentialsMode::kInclude:
+      return CredentialsMode::kInclude;
+  }
+}
+
+// Blink's mapping of a referrer policy to //net's, in
+// network::ReferrerPolicyForUrlRequest().
+// Upstream: services/network/public/cpp/request_destination.cc
+// Upstream: net/url_request/referrer_policy.h
+net::ReferrerPolicy ToNetReferrerPolicy(PageReferrerPolicy policy) {
+  switch (policy) {
+    case PageReferrerPolicy::kNoReferrer:
+      return net::ReferrerPolicy::NO_REFERRER;
+    case PageReferrerPolicy::kNoReferrerWhenDowngrade:
+      return net::ReferrerPolicy::CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
+    case PageReferrerPolicy::kOrigin:
+      return net::ReferrerPolicy::ORIGIN;
+    case PageReferrerPolicy::kOriginWhenCrossOrigin:
+      return net::ReferrerPolicy::ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN;
+    case PageReferrerPolicy::kSameOrigin:
+      return net::ReferrerPolicy::CLEAR_ON_TRANSITION_CROSS_ORIGIN;
+    case PageReferrerPolicy::kStrictOrigin:
+      return net::ReferrerPolicy::
+          ORIGIN_CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
+    case PageReferrerPolicy::kUnsafeUrl:
+      return net::ReferrerPolicy::NEVER_CLEAR;
+    case PageReferrerPolicy::kDocument:
+    case PageReferrerPolicy::kStrictOriginWhenCrossOrigin:
+      return net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN;
+  }
+}
+
+// Puts what a Page's request names in place of what its kind sends: its mode,
+// in the place of the kind's Sec-Fetch-Mode line, with an Origin line first
+// for an element in cors mode, where Blink puts it, its credentials mode, its
+// referrer policy and the URL that Referer starts from, and its priority, as
+// Python's build_request() does for a caller's credentials and mode.
+void ApplyPageRequest(const PageRequest& asked,
+                      net::HttpRequestHeaders& headers,
+                      RequestOptions& options) {
+  FetchParams& fetch = *options.fetch;
+  if (asked.mode != PageRequestMode::kKindDefault &&
+      ToRequestMode(asked.mode) != fetch.mode) {
+    fetch.mode = ToRequestMode(asked.mode);
+    if (headers.HasHeader(kSecFetchMode)) {
+      headers.SetHeader(kSecFetchMode, RequestModeToString(fetch.mode));
+    }
+    if (fetch.mode == RequestMode::kCors && fetch.destination != "empty" &&
+        !headers.HasHeader(net::HttpRequestHeaders::kOrigin)) {
+      net::HttpRequestHeaders with_origin;
+      with_origin.SetHeader(net::HttpRequestHeaders::kOrigin, "null");
+      with_origin.MergeFrom(headers);
+      headers = std::move(with_origin);
+    }
+  }
+  if (asked.credentials != PageCredentialsMode::kKindDefault) {
+    fetch.credentials_mode = ToCredentialsMode(asked.credentials);
+  }
+  if (asked.no_referrer) {
+    fetch.referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+  } else if (asked.referrer_policy != PageReferrerPolicy::kDocument) {
+    fetch.referrer_policy = ToNetReferrerPolicy(asked.referrer_policy);
+  }
+  if (asked.priority != 0) {
+    options.priority =
+        static_cast<net::RequestPriority>(asked.priority - 1);
+  } else if (asked.synchronous) {
+    // ResourceFetcher::ComputeLoadPriority(): a synchronous request is very
+    // high.
+    options.priority = net::HIGHEST;
+  }
+  if (asked.incremental != 0) {
+    options.priority_incremental = asked.incremental == 2;
+  }
 }
 
 // Returns the header lines of a response that a Page may see: all but those
@@ -244,7 +358,8 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json) {
     has_start = true;
   }
   // A navigation sends what the Persona's says.
-  if (!has_start || (options.url && !options.navigation)) {
+  if (!has_start ||
+      (options.url && !options.requests.contains(PageRequestKind::kNavigation))) {
     return std::nullopt;
   }
   return options;
@@ -681,10 +796,12 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
   if (options_.url) {
     // What session.get(url) sends: a navigation that the browser started, from
     // no page.
-    RequestOptions navigation_options = options_.navigation->options;
+    const PageRequestTemplate& navigation =
+        options_.requests.at(PageRequestKind::kNavigation);
+    RequestOptions navigation_options = navigation.options;
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, url::Origin(), *options_.url,
-                 options_.navigation->headers, std::move(navigation_options),
+                 navigation.headers, std::move(navigation_options),
                  std::nullopt, FetchChecks{.is_navigation = true});
   }
   return true;
@@ -727,11 +844,13 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     started.url = asked.url;
     Push(std::move(started));
   }
-  const std::optional<PageRequestTemplate>& request_template =
-      is_navigation ? options_.navigation
-      : !is_fetch   ? options_.script
-      : asked.body  ? options_.fetch_with_body
-                    : options_.fetch;
+  const auto with_body = options_.requests_with_body.find(asked.kind);
+  const auto without_body = options_.requests.find(asked.kind);
+  const PageRequestTemplate* const request_template =
+      asked.body && with_body != options_.requests_with_body.end()
+          ? &with_body->second
+      : without_body != options_.requests.end() ? &without_body->second
+                                                : nullptr;
   GURL url(asked.url);
   // The script's own lines, each name once, with its values joined, in the
   // order the names first come, as Fetch combines them.
@@ -791,6 +910,10 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
   // user's activation, which the browser checks the renderer's word for.
   options.fetch->has_user_activation = asked.user_activation;
   options.validate_cache = asked.reload;
+  ApplyPageRequest(asked, headers, options);
+  if (!asked.referrer.empty()) {
+    options.fetch->referrer_source = referrer;
+  }
   if (asked.body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
             entry.first, net::HttpRequestHeaders::kContentType);
