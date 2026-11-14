@@ -932,32 +932,63 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLTableCellElement"
     file = "html_table_cell_element"
-    header = "html_elements"
-    implemented = []
+    header = "html_table_elements"
+    implemented = [
+      "colSpan",
+      "rowSpan",
+      "cellIndex",
+    ]
   },
   {
     name = "HTMLTableColElement"
     file = "html_table_col_element"
-    header = "html_elements"
-    implemented = []
+    header = "html_table_elements"
+    implemented = [
+      "span",
+    ]
   },
   {
     name = "HTMLTableElement"
     file = "html_table_element"
-    header = "html_elements"
-    implemented = []
+    header = "html_table_elements"
+    implemented = [
+      "caption",
+      "createCaption",
+      "deleteCaption",
+      "tHead",
+      "createTHead",
+      "deleteTHead",
+      "tFoot",
+      "createTFoot",
+      "deleteTFoot",
+      "tBodies",
+      "createTBody",
+      "rows",
+      "insertRow",
+      "deleteRow",
+    ]
   },
   {
     name = "HTMLTableRowElement"
     file = "html_table_row_element"
-    header = "html_elements"
-    implemented = []
+    header = "html_table_elements"
+    implemented = [
+      "rowIndex",
+      "sectionRowIndex",
+      "cells",
+      "insertCell",
+      "deleteCell",
+    ]
   },
   {
     name = "HTMLTableSectionElement"
     file = "html_table_section_element"
-    header = "html_elements"
-    implemented = []
+    header = "html_table_elements"
+    implemented = [
+      "rows",
+      "insertRow",
+      "deleteRow",
+    ]
   },
   {
     name = "HTMLTemplateElement"

@@ -47,6 +47,45 @@ std::vector<std::u16string> SplitClasses(std::u16string_view text,
   return classes;
 }
 
+void AppendRows(Node& section, HeapVector<Element>& rows) {
+  for (Node* child = section.FirstChild(); child;
+       child = child->NextSibling()) {
+    if (child->IsElementNode() &&
+        static_cast<Element*>(child)->HasHTMLTagName(u"tr")) {
+      rows.push_back(static_cast<Element*>(child));
+    }
+  }
+}
+
+// Appends the rows of a table in the order of Blink's HTMLTableRowsCollection:
+// those of each thead child, then the tr children and the rows of each tbody
+// child, then the rows of each tfoot child.
+void AppendTableRows(Node& table, HeapVector<Element>& rows) {
+  for (Node* child = table.FirstChild(); child; child = child->NextSibling()) {
+    if (child->IsElementNode() &&
+        static_cast<Element*>(child)->HasHTMLTagName(u"thead")) {
+      AppendRows(*child, rows);
+    }
+  }
+  for (Node* child = table.FirstChild(); child; child = child->NextSibling()) {
+    if (!child->IsElementNode()) {
+      continue;
+    }
+    auto* const element = static_cast<Element*>(child);
+    if (element->HasHTMLTagName(u"tr")) {
+      rows.push_back(element);
+    } else if (element->HasHTMLTagName(u"tbody")) {
+      AppendRows(*child, rows);
+    }
+  }
+  for (Node* child = table.FirstChild(); child; child = child->NextSibling()) {
+    if (child->IsElementNode() &&
+        static_cast<Element*>(child)->HasHTMLTagName(u"tfoot")) {
+      AppendRows(*child, rows);
+    }
+  }
+}
+
 }  // namespace
 
 bool IsAllNamedElement(const Element& element) {
@@ -152,7 +191,14 @@ bool HTMLCollection::Matches(const Element& element) const {
     case Type::kDocAnchors:
       return element.HasHTMLTagName(u"a") && element.FindAttribute(u"name");
     case Type::kChildren:
+    case Type::kTableRows:
       return true;
+    case Type::kTBodies:
+      return element.HasHTMLTagName(u"tbody");
+    case Type::kSectionRows:
+      return element.HasHTMLTagName(u"tr");
+    case Type::kRowCells:
+      return element.HasHTMLTagName(u"td") || element.HasHTMLTagName(u"th");
     case Type::kTagCollection:
       return name_ == u"*" || name_ == element.TagQName().ToString();
     case Type::kHTMLTagCollection:
@@ -208,10 +254,15 @@ const HeapVector<Element>& HTMLCollection::Elements() const {
   if (!root_ || type_ == Type::kEmpty || type_ == Type::kDocApplets) {
     return elements_;
   }
-  if (type_ == Type::kChildren) {
+  if (type_ == Type::kTableRows) {
+    AppendTableRows(*root_, elements_);
+    return elements_;
+  }
+  if (type_ == Type::kChildren || type_ == Type::kTBodies ||
+      type_ == Type::kSectionRows || type_ == Type::kRowCells) {
     for (Node* child = root_->FirstChild(); child;
          child = child->NextSibling()) {
-      if (child->IsElementNode()) {
+      if (child->IsElementNode() && Matches(*static_cast<Element*>(child))) {
         elements_.push_back(static_cast<Element*>(child));
       }
     }

@@ -32,6 +32,7 @@
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_span_element.h"
 #include "mitto/dom/html_style_element.h"
+#include "mitto/dom/html_table_elements.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/html_title_element.h"
 #include "mitto/dom/html_ulist_element.h"

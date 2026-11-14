@@ -341,57 +341,6 @@ class HTMLTableCaptionElement final : public HTMLElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 };
 
-// The element of each of td, th.
-class HTMLTableCellElement final : public HTMLElement {
- public:
-  static HTMLTableCellElement* Create(Document& document,
-                                      const std::u16string& local_name);
-
-  HTMLTableCellElement(Document& document, const std::u16string& local_name);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
-// The element of each of col, colgroup.
-class HTMLTableColElement final : public HTMLElement {
- public:
-  static HTMLTableColElement* Create(Document& document,
-                                     const std::u16string& local_name);
-
-  HTMLTableColElement(Document& document, const std::u16string& local_name);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
-class HTMLTableElement final : public HTMLElement {
- public:
-  static HTMLTableElement* Create(Document& document);
-
-  explicit HTMLTableElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
-class HTMLTableRowElement final : public HTMLElement {
- public:
-  static HTMLTableRowElement* Create(Document& document);
-
-  explicit HTMLTableRowElement(Document& document);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
-// The element of each of tbody, tfoot, thead.
-class HTMLTableSectionElement final : public HTMLElement {
- public:
-  static HTMLTableSectionElement* Create(Document& document,
-                                         const std::u16string& local_name);
-
-  HTMLTableSectionElement(Document& document, const std::u16string& local_name);
-
-  const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
-};
-
 class HTMLTextAreaElement final : public HTMLElement {
  public:
   static HTMLTextAreaElement* Create(Document& document);

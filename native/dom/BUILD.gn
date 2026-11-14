@@ -175,6 +175,8 @@ source_set("dom") {
     "html_span_element.h",
     "html_style_element.cc",
     "html_style_element.h",
+    "html_table_elements.cc",
+    "html_table_elements.h",
     "html_template_element.cc",
     "html_template_element.h",
     "html_title_element.cc",

@@ -48,11 +48,6 @@
 #include "mitto/bindings/v8_html_source_element.h"
 #include "mitto/bindings/v8_html_sub_menu_element.h"
 #include "mitto/bindings/v8_html_table_caption_element.h"
-#include "mitto/bindings/v8_html_table_cell_element.h"
-#include "mitto/bindings/v8_html_table_col_element.h"
-#include "mitto/bindings/v8_html_table_element.h"
-#include "mitto/bindings/v8_html_table_row_element.h"
-#include "mitto/bindings/v8_html_table_section_element.h"
 #include "mitto/bindings/v8_html_text_area_element.h"
 #include "mitto/bindings/v8_html_time_element.h"
 #include "mitto/bindings/v8_html_track_element.h"
@@ -515,83 +510,6 @@ HTMLTableCaptionElement::HTMLTableCaptionElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLTableCaptionElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLTableCaptionElement::kWrapperTypeInfo;
-}
-
-// static
-HTMLTableCellElement* HTMLTableCellElement::Create(
-    Document& document,
-    const std::u16string& local_name) {
-  return bindings::MakeGarbageCollected<HTMLTableCellElement>(document,
-                                                              local_name);
-}
-
-HTMLTableCellElement::HTMLTableCellElement(Document& document,
-                                           const std::u16string& local_name)
-    : HTMLElement(document, local_name) {}
-
-const bindings::WrapperTypeInfo* HTMLTableCellElement::GetWrapperTypeInfo()
-    const {
-  return &bindings::V8HTMLTableCellElement::kWrapperTypeInfo;
-}
-
-// static
-HTMLTableColElement* HTMLTableColElement::Create(
-    Document& document,
-    const std::u16string& local_name) {
-  return bindings::MakeGarbageCollected<HTMLTableColElement>(document,
-                                                             local_name);
-}
-
-HTMLTableColElement::HTMLTableColElement(Document& document,
-                                         const std::u16string& local_name)
-    : HTMLElement(document, local_name) {}
-
-const bindings::WrapperTypeInfo* HTMLTableColElement::GetWrapperTypeInfo()
-    const {
-  return &bindings::V8HTMLTableColElement::kWrapperTypeInfo;
-}
-
-// static
-HTMLTableElement* HTMLTableElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<HTMLTableElement>(document);
-}
-
-HTMLTableElement::HTMLTableElement(Document& document)
-    : HTMLElement(document, u"table") {}
-
-const bindings::WrapperTypeInfo* HTMLTableElement::GetWrapperTypeInfo() const {
-  return &bindings::V8HTMLTableElement::kWrapperTypeInfo;
-}
-
-// static
-HTMLTableRowElement* HTMLTableRowElement::Create(Document& document) {
-  return bindings::MakeGarbageCollected<HTMLTableRowElement>(document);
-}
-
-HTMLTableRowElement::HTMLTableRowElement(Document& document)
-    : HTMLElement(document, u"tr") {}
-
-const bindings::WrapperTypeInfo* HTMLTableRowElement::GetWrapperTypeInfo()
-    const {
-  return &bindings::V8HTMLTableRowElement::kWrapperTypeInfo;
-}
-
-// static
-HTMLTableSectionElement* HTMLTableSectionElement::Create(
-    Document& document,
-    const std::u16string& local_name) {
-  return bindings::MakeGarbageCollected<HTMLTableSectionElement>(document,
-                                                                 local_name);
-}
-
-HTMLTableSectionElement::HTMLTableSectionElement(
-    Document& document,
-    const std::u16string& local_name)
-    : HTMLElement(document, local_name) {}
-
-const bindings::WrapperTypeInfo* HTMLTableSectionElement::GetWrapperTypeInfo()
-    const {
-  return &bindings::V8HTMLTableSectionElement::kWrapperTypeInfo;
 }
 
 // static

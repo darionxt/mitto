@@ -1,11 +1,11 @@
 // The DOM's HTMLCollection: a live view of the elements under a node that a
 // kind of collection takes, in tree order, as Blink's HTMLCollection and its
 // subclasses read the tree. The document's images, embeds, links, forms,
-// scripts, anchors and applets, a node's children, and what
-// getElementsByTagName(), getElementsByTagNameNS() and
-// getElementsByClassName() give. It keeps the elements it found until a
-// tree changes (dom_tree_version.h), as Blink's collections keep their
-// caches until they are invalidated.
+// scripts, anchors and applets, a node's children, the rows, bodies and
+// cells of a table, and what getElementsByTagName(),
+// getElementsByTagNameNS() and getElementsByClassName() give. It keeps the
+// elements it found until a tree changes (dom_tree_version.h), as Blink's
+// collections keep their caches until they are invalidated.
 //
 // HTMLFormControlsCollection and HTMLOptionsCollection, which have no class,
 // inherit from it, so it is not final.
@@ -54,6 +54,12 @@ class HTMLCollection : public bindings::ScriptWrappable {
     // Always empty, as Chrome's has been since it dropped applets.
     kDocApplets,
     kChildren,
+    // A table's rows, as Blink's HTMLTableRowsCollection orders them, its
+    // tbody children, a section's tr children and a row's td and th children.
+    kTableRows,
+    kTBodies,
+    kSectionRows,
+    kRowCells,
     // getElementsByTagName() in a document that is not HTML.
     kTagCollection,
     // getElementsByTagName() in an HTML document, which matches the name in
