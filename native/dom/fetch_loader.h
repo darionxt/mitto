@@ -65,6 +65,8 @@ class FetchLoader final : public FetchClient {
   v8::Global<v8::Context> context_;
   v8::Global<v8::Promise::Resolver> resolver_;
   const bool head_;
+  // Whether the response is opaque, whose body goes untaken.
+  bool opaque_ = false;
   raw_ptr<FetchController> controller_ = nullptr;
   // The request's signal, which the request keeps while it runs.
   cppgc::Persistent<AbortSignal> signal_;

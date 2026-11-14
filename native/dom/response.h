@@ -46,6 +46,10 @@ class Response final : public bindings::ScriptWrappable {
     kBasic,
     kCors,
     kDefault,
+    // A fetch's of mode no-cors from another origin: status 0, no URL, no
+    // header lines and a null body, as the Fetch Standard's opaque filtered
+    // response.
+    kOpaque,
   };
 
   // `new Response(body, init)`.
@@ -57,6 +61,8 @@ class Response final : public bindings::ScriptWrappable {
                               const bindings::ResponseInit& init,
                               bindings::ExceptionState& exception_state);
   // One that fetch() got, whose body `loader` brings, or none for a null body.
+  // An opaque one's body is null, and `loader` hears only of its collection,
+  // as Blink's internal response holds the body that no script reads.
   static Response* CreateFetched(ResponseType type,
                                  int32_t status,
                                  std::string status_text,

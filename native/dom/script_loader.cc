@@ -12,6 +12,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_script_runner.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "mitto/dom/window.h"
@@ -100,6 +101,37 @@ void QueueErrorEvent(HTMLScriptElement& element) {
                         element->DispatchErrorEvent();
                       },
                       cppgc::Persistent<HTMLScriptElement>(&element)));
+}
+
+// Steps 18, 25 and 26's request of a classic script: the mode and credentials
+// mode that its crossorigin attribute asks for, its referrerpolicy, and the
+// priority that Blink gives it, which a lazy one starts low at, as an async,
+// deferred or script-inserted one is, and which its fetchpriority and its
+// blocking rendering move.
+// Upstream: third_party/blink/renderer/core/script/script_loader.cc
+// Upstream: third_party/blink/renderer/core/html/cross_origin_attribute.cc
+FetchRequestData ClassicScriptRequest(HTMLScriptElement& element,
+                                      bool parser_inserted,
+                                      bool render_blocking) {
+  FetchRequestData request;
+  if (const std::optional<std::u16string> cross_origin =
+          element.GetAttribute(u"crossorigin")) {
+    request.mode = FetchMode::kCors;
+    request.credentials =
+        base::EqualsCaseInsensitiveASCII(*cross_origin, u"use-credentials")
+            ? FetchCredentialsMode::kInclude
+            : FetchCredentialsMode::kSameOrigin;
+  }
+  request.referrer_policy = FetchReferrerPolicyFromString(
+      element.GetAttribute(u"referrerpolicy").value_or(u""));
+  const bool lazy = !parser_inserted || element.HasAttribute(u"async") ||
+                    element.HasAttribute(u"defer");
+  request.priority = ComputeFetchPriority(
+      lazy,
+      FetchPriorityHintFromAttribute(
+          element.GetAttribute(u"fetchpriority").value_or(u"")),
+      render_blocking);
+  return request;
 }
 
 }  // namespace
@@ -229,8 +261,7 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
     return nullptr;
   }
   // Step 24, with Blink's console errors for what the integrity attribute
-  // skips. Step 25's referrer policy, the crossorigin attribute and
-  // fetchpriority do not change a request yet: a Known Gap.
+  // skips.
   IntegrityMetadataSet integrity;
   if (src) {
     const std::optional<std::u16string> integrity_attribute =
@@ -292,7 +323,10 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         return nullptr;
       case ScriptTypeAtPrepare::kClassic:
         prepared_pending_script_ = PendingScript::Fetch(
-            *element_, url, std::move(integrity), std::move(encoding),
+            *element_, url,
+            ClassicScriptRequest(*element_, parser_inserted_,
+                                 potentially_render_blocking),
+            std::move(integrity), std::move(encoding),
             potentially_render_blocking);
         break;
     }

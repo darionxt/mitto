@@ -92,6 +92,15 @@ void PageRequests::Cancel(uint64_t number) {
   send_.Run(EncodeCancel(number));
 }
 
+void PageRequests::LetGo(uint64_t number) {
+  const auto found = open_.find(number);
+  if (found == open_.end()) {
+    return;
+  }
+  found->second.client = nullptr;
+  found->second.timed.reset();
+}
+
 // static
 void PageRequests::AddResourceTiming(Timed& timed,
                                      base::TimeTicks response_end,

@@ -95,6 +95,23 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   const v8::HandleScope handle_scope(isolate_);
   const v8::Local<v8::Context> context = context_.Get(isolate_);
   const v8::Context::Scope context_scope(context);
+  if (head.opaque) {
+    // Upstream: third_party/blink/renderer/core/fetch/fetch_response_data.cc
+    // An opaque filtered response, whose body no script reads. The bytes that
+    // come of it stay untaken, as in a data pipe that nothing drains, until
+    // the request ends or its Response goes.
+    opaque_ = true;
+    Headers* const headers = Headers::Create(Headers::Guard::kImmutable);
+    Response* const response = Response::CreateFetched(
+        Response::ResponseType::kOpaque, /*status=*/0, /*status_text=*/"",
+        /*url=*/u"", /*redirected=*/false, headers, this);
+    response->FollowSignal(signal_.Get());
+    response_ = response;
+    std::ignore = resolver_.Get(isolate_)->Resolve(
+        context, bindings::ToV8(isolate_, response));
+    resolver_.Reset();
+    return;
+  }
   const bool cors = head.cors;
   // What a script reads of the response's header lines: no Set-Cookie, and of
   // a cross-origin response only the safelisted names and the exposed ones,
@@ -138,8 +155,9 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
 
 void FetchLoader::OnResponseBody(std::string bytes) {
   Response* const response = response_.Get();
-  if (!response) {
-    // The Response went, and the request is about to be cancelled.
+  if (!response || opaque_) {
+    // The Response went, and the request is about to be cancelled, or no
+    // script reads its body.
     return;
   }
   if (!response->loader_) {
