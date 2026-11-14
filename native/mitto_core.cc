@@ -350,7 +350,8 @@ class RequestJob final : public net::URLRequest::Delegate,
     request_ = CreateRequest(url_, options_.method, request_headers_);
     if (fetch_rules_) {
       fetch_rules_->ConfigureRequest(*request_);
-      if (fetch_rules_->IsDisallowedByMode()) {
+      // A URL that is not valid fails as such, from //net.
+      if (url_.is_valid() && fetch_rules_->IsDisallowedByMode()) {
         // CorsURLLoader fails it before anything goes out, and its client
         // hears of that from a later task.
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(

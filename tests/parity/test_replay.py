@@ -139,6 +139,15 @@ def test_a_case_that_carries_a_header_counts_any_request_to_its_path_when_none_h
     assert found.matches(_request("/case/cookie"))
 
 
+def test_a_case_whose_path_another_case_holds_is_missing_when_its_request_never_went() -> None:
+    preflight = Case("preflight", "/case/post", "access-control-request-method")
+    post = Case("post", "/case/post", "content-type")
+    recording = _recording_of(_request("/case/post", ("Content-Type", "application/json")))
+
+    assert as_recorded(preflight, recording, [preflight, post]) is preflight
+    assert as_recorded(post, recording, [preflight, post]) is post
+
+
 def test_a_case_that_carries_nothing_stays_the_same_case() -> None:
     # The normal form finds what opened a tunnel by this very object.
     assert as_recorded(PROXY_CONNECT, _recording_of(_request("/case/proxy-navigation"))) is PROXY_CONNECT

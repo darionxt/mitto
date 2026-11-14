@@ -167,7 +167,7 @@ def record(baseline: Baseline) -> dict[str, Json]:
                 raise
             refused = _REFUSED
     recording = server.recording(run.route, host=run.host)
-    cases = [as_recorded(case, recording) for case in run.cases]
+    cases = [as_recorded(case, recording, run.cases) for case in run.cases]
     if not any(_was_recorded(case, recording) for case in cases):
         return {**baseline.fingerprint, _REQUEST: refused}
     ordered = [case for case in cases if case.name in _names(run.ordered)]
@@ -182,12 +182,21 @@ def _was_recorded(case: Case, recording: Recording) -> bool:
     return any(case.matches(request) for connection in recording.connections for request in connection.requests)
 
 
-def as_recorded(case: Case, recording: Recording) -> Case:
+def as_recorded(case: Case, recording: Recording, others: Iterable[Case] = ()) -> Case:
     """Return a case, or if no request carries what it should, the case that any request to its path stands for.
 
-    So a request without its Cookie is a gap in that header, rather than a request that is missing.
+    So a request without its Cookie is a gap in that header, rather than a request that is missing. A request that
+    another case of the run stands for at the same path, such as the request after a preflight, does not count, so a
+    preflight that never went is a request that is missing.
     """
-    return case if case.carries is None or _was_recorded(case, recording) else replace(case, carries=None)
+    if case.carries is None or _was_recorded(case, recording):
+        return case
+    claimed = any(
+        other.path == case.path and other.carries is not None and _was_recorded(other, recording)
+        for other in others
+        if other is not case
+    )
+    return case if claimed else replace(case, carries=None)
 
 
 def find_gaps(baselines: Iterable[Baseline], recorder: Recorder = record) -> list[Gap]:

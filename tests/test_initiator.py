@@ -42,16 +42,18 @@ ERR_UNKNOWN_URL_SCHEME = -302
 # Longer than any local request takes, even on a busy machine.
 TIMEOUT_SECONDS = 30.0
 
-ALL_KINDS = list(mitto.RequestKind)
+WORKER = mitto.RequestKind.WORKER
+# A worker's script never goes to another origin, which its own tests below cover, so the rest leave it out.
+ALL_KINDS = [kind for kind in mitto.RequestKind if kind is not WORKER]
+EVERY_KIND = list(mitto.RequestKind)
 SUBRESOURCES = [mitto.RequestKind.FETCH, mitto.RequestKind.SCRIPT, mitto.RequestKind.IMAGE]
 NO_CORS = [mitto.RequestKind.SCRIPT, mitto.RequestKind.IMAGE]
+# The kinds whose hints go in a navigation's order, which the browser adds.
+NAVIGATIONS = [mitto.RequestKind.NAVIGATION, mitto.RequestKind.IFRAME]
 
 CLIENT_HINTS = ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"]
-FETCH_METADATA = {
-    mitto.RequestKind.NAVIGATION: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-User", "Sec-Fetch-Dest"],
-    mitto.RequestKind.FETCH: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"],
-    mitto.RequestKind.SCRIPT: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"],
-    mitto.RequestKind.IMAGE: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"],
+FETCH_METADATA = {kind: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"] for kind in mitto.RequestKind} | {
+    mitto.RequestKind.NAVIGATION: ["Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-User", "Sec-Fetch-Dest"]
 }
 
 STRICT = "strict=1; Secure; SameSite=Strict"
@@ -628,7 +630,7 @@ def test_an_origin_that_a_redirect_adds_goes_after_the_other_lines(servers: Serv
     assert names.index("Origin") == names.index("Sec-Fetch-Dest") + 1
 
 
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", EVERY_KIND)
 @pytest.mark.parametrize("method", ["GET", "POST"])
 def test_no_placeholder_of_a_persona_reaches_the_wire(servers: Servers, kind: mitto.RequestKind, method: str) -> None:
     with new_session() as session:
@@ -750,7 +752,7 @@ def test_mitto_get_leaves_them_out_too(servers: Servers) -> None:
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "name.localhost"])
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", EVERY_KIND)
 def test_plain_http_to_a_local_host_is_potentially_trustworthy(
     servers: Servers, host: str, kind: mitto.RequestKind
 ) -> None:
@@ -763,8 +765,10 @@ def test_plain_http_to_a_local_host_is_potentially_trustworthy(
 
 
 def _persona_order(kind: mitto.RequestKind) -> list[str]:
-    if kind == mitto.RequestKind.NAVIGATION:
+    if kind in NAVIGATIONS:
         return [*CLIENT_HINTS, *FETCH_METADATA[kind]]
+    if kind is WORKER:
+        return FETCH_METADATA[kind]
     return ["sec-ch-ua-platform", "sec-ch-ua", "sec-ch-ua-mobile", *FETCH_METADATA[kind]]
 
 
@@ -935,7 +939,7 @@ def test_an_initiator_with_a_nul_is_refused(servers: Servers) -> None:
     assert servers.received == []
 
 
-@pytest.mark.parametrize("kind", ALL_KINDS)
+@pytest.mark.parametrize("kind", EVERY_KIND)
 @pytest.mark.parametrize("url", ["not a url", "https://", "//example.test/", "https://example.test:99999/", ""])
 def test_the_native_core_says_what_is_wrong_with_a_url_of_each_kind(kind: mitto.RequestKind, url: str) -> None:
     with new_session() as session, pytest.raises(RequestError) as caught:
