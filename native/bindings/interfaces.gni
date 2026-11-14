@@ -1212,9 +1212,23 @@ mitto_bindings_interfaces = [
     file = "named_node_map"
   },
   {
+    name = "NavigateEvent"
+    file = "navigate_event"
+    made_by_known_gaps = true
+
+    # Only the Page makes one: a page's own needs a FormData, which #281
+    # gives, and deferPageSwap() is not on in Chrome 157.
+    missing = [
+      "constructor",
+      "deferPageSwap",
+    ]
+  },
+  {
     name = "Navigation"
     file = "navigation"
     made_by_known_gaps = true
+
+    # Traversal and updateCurrentEntry() are #280's.
     implemented = [
       "currentEntry",
       "transition",
@@ -1222,6 +1236,8 @@ mitto_bindings_interfaces = [
       "canGoBack",
       "canGoForward",
       "entries",
+      "navigate",
+      "reload",
     ]
   },
   {
@@ -1230,16 +1246,39 @@ mitto_bindings_interfaces = [
     made_by_known_gaps = true
   },
   {
+    name = "NavigationCurrentEntryChangeEvent"
+    file = "navigation_current_entry_change_event"
+    made_by_known_gaps = true
+
+    # The bindings do not write a nullable enumeration yet, which
+    # navigationType gives and the constructor's dictionary holds.
+    missing = [
+      "constructor",
+      "navigationType",
+    ]
+  },
+  {
+    name = "NavigationDestination"
+    file = "navigation_destination"
+  },
+  {
     name = "NavigationHistoryEntry"
     file = "navigation_history_entry"
     made_by_known_gaps = true
-    implemented = [
-      "key",
-      "id",
-      "url",
-      "index",
-      "sameDocument",
-    ]
+
+    # The bindings run its event handler attribute.
+    missing = [ "ondispose" ]
+  },
+  {
+    name = "NavigationPrecommitController"
+    file = "navigation_precommit_controller"
+
+    # A redirect before the commit is a Known Gap.
+    missing = [ "redirect" ]
+  },
+  {
+    name = "NavigationTransition"
+    file = "navigation_transition"
   },
   {
     name = "Navigator"

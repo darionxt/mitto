@@ -22,6 +22,8 @@ struct NavigationRequest {
   // location.reload() and a refresh to the document's URL, which validate
   // what the cache holds.
   bool reload = false;
+  // One that replaces the current entry of the session history.
+  bool replace = false;
 };
 
 class NavigationClient {
