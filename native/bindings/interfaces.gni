@@ -191,6 +191,10 @@ mitto_bindings_interfaces = [
     file = "dom_file_system"
   },
   {
+    name = "DOMImplementation"
+    file = "dom_implementation"
+  },
+  {
     name = "DOMRect"
     file = "dom_rect"
     made_by_known_gaps = true
@@ -281,6 +285,7 @@ mitto_bindings_interfaces = [
       "createNodeIterator",
       "createTreeWalker",
       "currentScript",
+      "implementation",
       "get domain",
       "designMode",
       "scrollingElement",
@@ -357,6 +362,7 @@ mitto_bindings_interfaces = [
       "tagName",
       "innerHTML",
       "outerHTML",
+      "getHTML",
       "firstElementChild",
       "lastElementChild",
       "childElementCount",
@@ -478,6 +484,7 @@ mitto_bindings_interfaces = [
       "pathname",
       "search",
       "hash",
+      "relList",
     ]
   },
   {
@@ -495,6 +502,7 @@ mitto_bindings_interfaces = [
       "pathname",
       "search",
       "hash",
+      "relList",
     ]
   },
   {
@@ -615,6 +623,7 @@ mitto_bindings_interfaces = [
       "tabIndex",
       "click",
       "dataset",
+      "hidden",
     ]
   },
   {
@@ -645,7 +654,9 @@ mitto_bindings_interfaces = [
     name = "HTMLFormElement"
     file = "html_form_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "relList",
+    ]
   },
   {
     name = "HTMLFrameElement"
@@ -690,7 +701,9 @@ mitto_bindings_interfaces = [
     name = "HTMLIFrameElement"
     file = "html_iframe_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "sandbox",
+    ]
   },
   {
     name = "HTMLImageElement"
@@ -736,7 +749,11 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLLinkElement"
     file = "html_link_element"
-    implemented = []
+    implemented = [
+      "relList",
+      "sizes",
+      "blocking",
+    ]
   },
   {
     name = "HTMLLoginElement"
@@ -920,7 +937,9 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLStyleElement"
     file = "html_style_element"
-    implemented = []
+    implemented = [
+      "blocking",
+    ]
   },
   {
     name = "HTMLSubMenuElement"
@@ -1551,7 +1570,9 @@ mitto_bindings_interfaces = [
     name = "SVGAElement"
     file = "svg_a_element"
     header = "svg_elements"
-    implemented = []
+    implemented = [
+      "relList",
+    ]
   },
   {
     name = "SVGAnimateElement"
@@ -2183,5 +2204,12 @@ mitto_bindings_interfaces = [
     name = "WindowProperties"
     file = "window_properties"
     implemented = []
+  },
+  {
+    name = "XMLDocument"
+    file = "xml_document"
+
+    # Document's, which each instance has of its own.
+    implemented = [ "get location" ]
   },
 ]

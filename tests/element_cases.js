@@ -1160,5 +1160,145 @@
   });
   run("cell cellIndex in table", () => { const t = tableOf("<tr><th></th><td id=x></td></tr>"); return t.querySelector("#x").cellIndex; });
   run("table reflected", () => { const t = document.createElement("table"); t.bgColor = null; t.cellPadding = 3; return [t.getAttribute("bgcolor"), t.cellPadding, t.border, document.createElement("td").scope].join("|"); });
+  // Token lists of element classes.
+  run("relList link", () => {
+    const l = document.createElement("link");
+    const r = l.relList;
+    r.add("stylesheet", "icon");
+    const out = [r === l.relList, l.getAttribute("rel"), r.length];
+    for (const t of ["preload", "PRELOAD", "modulepreload", "noopener", "monetization", "compression-dictionary", "allowed-alt-sxg", "prerender", "expect", ""]) out.push(r.supports(t));
+    l.relList = "a b";
+    out.push(l.rel, String(l.relList));
+    return out.join(",");
+  });
+  run("relList anchors", () => {
+    const out = [];
+    for (const [ns, name] of [[HTML, "a"], [HTML, "area"], [HTML, "form"], [SVG, "a"]]) {
+      const e = document.createElementNS(ns, name);
+      const r = e.relList;
+      out.push(name + ":" + [r.supports("noopener"), r.supports("NoReferrer"), r.supports("opener"), r.supports("stylesheet"), r === e.relList].join("/"));
+      r.toggle("noopener");
+      out.push(e.getAttribute("rel"));
+    }
+    return out.join(",");
+  });
+  run("relList math a", () => "relList" in document.createElementNS(MATHML, "a"));
+  run("link sizes", () => { const l = document.createElement("link"); l.sizes.add("16x16", "32x32"); return [l.getAttribute("sizes"), l.sizes === l.sizes, l.sizes.value].join("|"); });
+  run("link sizes supports", () => document.createElement("link").sizes.supports("16x16"));
+  run("blocking", () => {
+    const out = [];
+    for (const name of ["link", "style"]) {
+      const e = document.createElement(name);
+      out.push([e.blocking.supports("render"), e.blocking.supports("RENDER"), e.blocking.supports("full-frame-rate"), e.blocking === e.blocking].join("/"));
+      e.blocking.add("render");
+      out.push(e.getAttribute("blocking"));
+    }
+    return out.join(",");
+  });
+  run("iframe sandbox", () => {
+    const f = document.createElement("iframe");
+    const s = f.sandbox;
+    const out = [s === f.sandbox, s.length];
+    for (const t of ["allow-scripts", "ALLOW-SAME-ORIGIN", "allow-same-site-none-cookies", "allow-top-navigation-to-custom-protocols", "allow-storage-access-by-user-activation", "allow-presentation", "allow-everything"]) out.push(s.supports(t));
+    f.sandbox = " allow-forms  allow-forms allow-popups ";
+    out.push(s.length, s.value, f.getAttribute("sandbox"));
+    s.remove("allow-forms");
+    out.push(f.getAttribute("sandbox"));
+    return out.join(",");
+  });
+  // hidden, getHTML() and document.implementation.
+  run("hidden read", () => {
+    const e = document.createElement("div");
+    const out = [e.hidden];
+    for (const v of ["", "UNTIL-FOUND", "until-found ", "x"]) {
+      e.setAttribute("hidden", v);
+      out.push(e.hidden);
+    }
+    return out.map((v) => JSON.stringify(v)).join(",");
+  });
+  run("hidden write", () => {
+    const e = document.createElement("div");
+    const out = [];
+    for (const v of [true, false, "until-found", "Until-Found", "", "x", 0, 1, -1, NaN, -0, Infinity, null, undefined, {}, [], [1], "0", "false"]) {
+      e.hidden = v;
+      out.push(JSON.stringify(e.getAttribute("hidden")));
+    }
+    return out.join(",");
+  });
+  run("hidden types", () => { const e = document.createElement("div"); e.hidden = "until-found"; const a = typeof e.hidden; e.hidden = 1; return [a, typeof e.hidden, e.hidden, e.outerHTML].join("|"); });
+  run("hidden foreign", () => ["hidden" in document.createElementNS(SVG, "g"), "hidden" in document.createElementNS(MATHML, "mi")].join("|"));
+  run("hidden symbol", () => { document.createElement("div").hidden = Symbol("s"); });
+  run("getHTML", () => {
+    const d = document.createElement("div");
+    d.innerHTML = "<p a=1>x&amp;<template><i>t</i></template></p><!--c-->";
+    return [d.getHTML(), d.getHTML({}), d.getHTML({ serializableShadowRoots: true, shadowRoots: [] }), d.getHTML() === d.innerHTML, d.getHTML(null), d.getHTML(undefined)].join("|");
+  });
+  run("getHTML template", () => { const t = document.createElement("template"); t.innerHTML = "<b>x</b>"; return t.getHTML(); });
+  run("getHTML shadowRoots", () => document.createElement("div").getHTML({ shadowRoots: [document.body] }));
+  run("getHTML not object", () => document.createElement("div").getHTML(5));
+  run("getHTML not iterable", () => document.createElement("div").getHTML({ shadowRoots: 5 }));
+  run("implementation", () => {
+    const i = document.implementation;
+    const d = new Document();
+    return [i === document.implementation, String(i), i.hasFeature(), i.hasFeature("Core", "2.0"), d.implementation === i, d.implementation === d.implementation].join("|");
+  });
+  run("createDocumentType", () => { const t = document.implementation.createDocumentType("html", "-//W3C//DTD", "about:x"); return [t.name, t.publicId, t.systemId, t.ownerDocument === document, t.parentNode, t.nodeName, String(t)].join("|"); });
+  run("createDocumentType names", () => ["a:b", "1a", "", "aé", "a<", "a "].map((n) => { try { return JSON.stringify(document.implementation.createDocumentType(n, "", "").name); } catch (e) { return e.name; } }).join(","));
+  run("createDocumentType space", () => document.implementation.createDocumentType("a b", "", ""));
+  run("createDocumentType gt", () => document.implementation.createDocumentType("a>", "", ""));
+  run("createDocumentType null char", () => document.implementation.createDocumentType("a\u0000", "", ""));
+  run("createDocumentType args", () => document.implementation.createDocumentType("a"));
+  run("createHTMLDocument", () => {
+    const d = document.implementation.createHTMLDocument("T<");
+    return [d.documentElement.outerHTML, d.contentType, d.compatMode, d.URL, d.characterSet, String(d), d.doctype.name, d.title, d.defaultView, d.implementation === document.implementation, d.childNodes.length, d.body.localName].join("|");
+  });
+  run("createHTMLDocument no title", () => {
+    const i = document.implementation;
+    return [i.createHTMLDocument().documentElement.outerHTML, i.createHTMLDocument(undefined).head.childNodes.length, i.createHTMLDocument(null).title, i.createHTMLDocument("").head.childNodes.length].join("|");
+  });
+  run("createHTMLDocument use", () => {
+    const d = document.implementation.createHTMLDocument("x");
+    const p = d.createElement("P");
+    d.body.appendChild(p);
+    p.innerHTML = "<b>y</b>";
+    const imported = document.importNode(d.body, true);
+    return [p.localName, p.namespaceURI, d.getElementsByTagName("b").length, d.querySelector("b").textContent, imported.outerHTML, d.cloneNode(true).body.innerHTML, String(d.cloneNode())].join("|");
+  });
+  run("createDocument", () => {
+    const d = document.implementation.createDocument(HTML, "html", null);
+    return [String(d), d.contentType, d.documentElement.localName, d.documentElement.namespaceURI, String(d.documentElement), d.childNodes.length, d.URL, d.characterSet, d.compatMode, d.doctype, d.defaultView, d.createElement("P").namespaceURI, d.createElement("P").localName, String(d.createElement("p")), String(d.cloneNode()), d.cloneNode().contentType].join("|");
+  });
+  run("createDocument svg", () => {
+    const d = document.implementation.createDocument(SVG, "svg:svg");
+    return [d.contentType, d.documentElement.prefix, d.documentElement.localName, String(d.documentElement), d.createElement("rect").namespaceURI, String(d.cloneNode()), d.cloneNode().contentType].join("|");
+  });
+  run("createDocument other", () => {
+    const i = document.implementation;
+    const d = i.createDocument("urn:x", "a:b");
+    const e = i.createDocument(null, "");
+    const n = i.createDocument(null, null, undefined);
+    return [d.contentType, d.documentElement.prefix, d.documentElement.namespaceURI, e.contentType, e.documentElement, e.childNodes.length, n.childNodes.length, e.createElement("P").namespaceURI, e.createElement("P").localName, String(e.createElement("p"))].join("|");
+  });
+  run("createDocument doctype", () => {
+    const t = document.implementation.createDocumentType("a", "p", "s");
+    const d = document.implementation.createDocument("urn:x", "a", t);
+    return [d.contentType, d.firstChild === t, t.ownerDocument === d, d.lastChild.localName, d.doctype === t, d.childNodes.length].join("|");
+  });
+  run("createDocument moves doctype", () => {
+    const d1 = document.implementation.createHTMLDocument();
+    const t = d1.doctype;
+    const d = document.implementation.createDocument(null, "x", t);
+    return [d1.doctype, t.ownerDocument === d, d.doctype === t].join("|");
+  });
+  run("createDocument bad prefix", () => document.implementation.createDocument(null, "a:b"));
+  run("createDocument bad name", () => document.implementation.createDocument("urn:x", "1a"));
+  run("createDocument xmlns", () => document.implementation.createDocument("urn:x", "xmlns:a"));
+  run("createDocument args", () => document.implementation.createDocument());
+  run("createDocument doctype type", () => document.implementation.createDocument(null, "a", document.body));
+  run("createDocument types", () => {
+    const i = document.implementation;
+    return [i.createDocument(null, "") instanceof XMLDocument, i.createDocument(null, "") instanceof Document, i.createHTMLDocument() instanceof HTMLDocument, Object.getPrototypeOf(i.createDocument(null, "")) === XMLDocument.prototype].join("|");
+  });
+  run("XMLDocument constructor", () => new XMLDocument());
   return JSON.stringify(cases, null, 1);
 })()

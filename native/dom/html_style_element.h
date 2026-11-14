@@ -19,6 +19,10 @@ class HTMLStyleElement final : public HTMLElement {
   explicit HTMLStyleElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  DOMTokenList* Blocking() {
+    return EnsureTokenList(u"blocking",
+                           DOMTokenList::SupportedTokens::kBlocking);
+  }
 };
 
 }  // namespace mitto

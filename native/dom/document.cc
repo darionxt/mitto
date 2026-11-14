@@ -24,6 +24,7 @@
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_type.h"
+#include "mitto/dom/dom_implementation.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/html_all_collection.h"
@@ -114,7 +115,10 @@ Document* Document::CreateHTML() {
   return HTMLDocument::Create();
 }
 
-Document::Document(bool is_html) : Node(nullptr), is_html_(is_html) {
+Document::Document(bool is_html)
+    : Node(nullptr),
+      is_html_(is_html),
+      content_type_(is_html ? u"text/html" : u"application/xml") {
   SetDocumentToSelf(this);
 }
 
@@ -140,6 +144,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   current_script_stack_.Trace(visitor);
   visitor->Trace(template_document_);
   visitor->Trace(template_document_host_);
+  visitor->Trace(implementation_);
   visitor->Trace(traversals_);
 }
 
@@ -341,10 +346,6 @@ void Document::SetReadiness(Readiness readiness) {
 
 std::u16string Document::CompatMode() const {
   return InQuirksMode() ? u"BackCompat" : u"CSS1Compat";
-}
-
-std::u16string Document::ContentType() const {
-  return is_html_ ? u"text/html" : u"application/xml";
 }
 
 DocumentType* Document::Doctype() const {
@@ -581,6 +582,11 @@ Element* Document::CreateElementForBinding(
   if (is_html_) {
     return CreateHTMLElement(*this, base::ToLowerASCII(local_name));
   }
+  // The DOM Standard's createElement(): an XHTML document's elements are of
+  // the HTML namespace too, with their names as given.
+  if (content_type_ == u"application/xhtml+xml") {
+    return CreateHTMLElement(*this, local_name);
+  }
   return Element::Create(*this, std::nullopt, std::nullopt, local_name);
 }
 
@@ -717,12 +723,24 @@ Document& Document::EnsureTemplateDocument() {
 }
 
 Node* Document::CloneWithoutChildren(Document& document) const {
-  Document* const copy = is_html_ ? CreateHTML() : Create();
+  Document* const copy = CloneDocumentWithoutChildren();
   copy->SetCompatibilityMode(compat_mode_);
-  // Blink's CloneDataFromDocument() copies the encoding too.
+  // Blink's CloneDataFromDocument() copies the encoding and the MIME type too.
   copy->encoding_ = encoding_;
+  copy->content_type_ = content_type_;
   copy->encoding_detected_heuristically_ = encoding_detected_heuristically_;
   return copy;
+}
+
+Document* Document::CloneDocumentWithoutChildren() const {
+  return is_html_ ? CreateHTML() : Create();
+}
+
+DOMImplementation* Document::Implementation() {
+  if (!implementation_) {
+    implementation_ = DOMImplementation::Create(*this);
+  }
+  return implementation_;
 }
 
 uint16_t Document::GetNodeType() const {

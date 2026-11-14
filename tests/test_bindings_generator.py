@@ -1583,6 +1583,50 @@ def test_a_class_returns_a_nullable_callback_interface_and_a_nullable_union_of_c
     assert types.to_v8(union, "value") == "ToV8(isolate, value)"
 
 
+def test_a_class_returns_a_union_of_values_and_takes_it_nullable() -> None:
+    # HTMLElement's hidden, a (boolean or unrestricted double or DOMString)?.
+    types = TypeMapper(frozenset(), frozenset())
+    members = (BOOLEAN, IdlType(TypeKind.FLOATING_POINT, "unrestricted double"), IdlType(TypeKind.STRING, "DOMString"))
+    union = IdlType(TypeKind.UNION, "(boolean or unrestricted double or DOMString)", nullable=True, members=members)
+
+    assert types.return_type(union, "x") == "v8::Local<v8::Value>"
+    assert types.to_v8(union, "value") == "value"
+    assert types.argument_type(union, "x") == "const std::optional<BooleanOrUnrestrictedDoubleOrDOMString>&"
+    assert not types.used_unions["BooleanOrUnrestrictedDoubleOrDOMString"].nullable
+    converted = types.from_v8(union, "info[0]", "value", Site(fail="return;", argument_index=0), "x")
+    # Null and undefined leave it empty; anything else converts as the union does.
+    assert converted == [
+        "std::optional<BooleanOrUnrestrictedDoubleOrDOMString> value;",
+        "if (!info[0]->IsNullOrUndefined() &&",
+        "    !FromV8(isolate, info[0], exception_state, &value.emplace())) {",
+        "  return;",
+        "}",
+    ]
+    # A union with an interface is not one of values, and a nullable one with a dictionary takes undefined as the
+    # dictionary.
+    node_or_string = IdlType(
+        TypeKind.UNION, "x", nullable=True, members=(IdlType(TypeKind.INTERFACE, "Node"), members[2])
+    )
+    with pytest.raises(UnhandledError):
+        TypeMapper(frozenset({"Node"}), frozenset()).return_type(node_or_string, "x")
+    with_dictionary = IdlType(TypeKind.UNION, "y", nullable=True, members=(BOOLEAN, IdlType(TypeKind.DICTIONARY, "D")))
+    with pytest.raises(UnhandledError):
+        types.argument_type(with_dictionary, "y")
+
+
+def test_a_sequence_of_an_interface_without_a_class_takes_no_item() -> None:
+    # GetHTMLOptions' shadowRoots: no value is a ShadowRoot while ShadowRoot has no class.
+    types = TypeMapper(frozenset(), frozenset())
+    roots = IdlType(TypeKind.SEQUENCE, "sequence<ShadowRoot>", members=(IdlType(TypeKind.INTERFACE, "ShadowRoot"),))
+    site = Site(fail="return false;", dictionary="GetHTMLOptions", member="shadowRoots")
+
+    assert types.argument_type(roots, "a") == "const std::vector<bindings::ScriptWrappable*>&"
+    assert types.default_value(roots, "[]", "a") == "{}"
+    converted = "\n".join(types.from_v8(roots, "value", "roots", site, "a"))
+    assert 'exception_state.ThrowTypeError(ExceptionMessages::FailedToConvertJSValue("ShadowRoot"));' in converted
+    assert "push_back" not in converted
+
+
 def test_a_stringifier_operation_calls_the_classs_to_string() -> None:
     source = _bindings_of(_interface(stringifier=""), ImplementedInterface("Thing", "mitto/dom/thing.h"))
 

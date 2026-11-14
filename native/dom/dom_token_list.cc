@@ -10,11 +10,68 @@
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_dom_token_list.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/html_names.h"
 #include "mitto/dom/html_parser_idioms.h"
 
 namespace mitto {
 
 namespace {
+
+// Blink's RelList: the link types of a link, and those of a, area and form,
+// which SVG's and MathML's a share.
+constexpr std::u16string_view kLinkRelTokens[] = {
+    u"preload",
+    u"preconnect",
+    u"dns-prefetch",
+    u"stylesheet",
+    u"icon",
+    u"alternate",
+    u"prefetch",
+    u"prerender",
+    u"next",
+    u"manifest",
+    u"apple-touch-icon",
+    u"apple-touch-icon-precomposed",
+    u"canonical",
+    u"modulepreload",
+    u"allowed-alt-sxg",
+    u"compression-dictionary",
+};
+constexpr std::u16string_view kHyperlinkRelTokens[] = {u"noreferrer",
+                                                       u"noopener", u"opener"};
+
+// Blink's kSupportedSandboxTokens.
+constexpr std::u16string_view kSandboxTokens[] = {
+    u"allow-downloads",
+    u"allow-forms",
+    u"allow-modals",
+    u"allow-orientation-lock",
+    u"allow-pointer-lock",
+    u"allow-popups",
+    u"allow-popups-to-escape-sandbox",
+    u"allow-presentation",
+    u"allow-same-origin",
+    u"allow-same-site-none-cookies",
+    u"allow-scripts",
+    u"allow-storage-access-by-user-activation",
+    u"allow-top-navigation",
+    u"allow-top-navigation-by-user-activation",
+};
+
+// Blink's RelList::ValidateTokenValue().
+bool IsSupportedRelToken(const Element& element, std::u16string_view token) {
+  if (element.HasHTMLTagName(u"link")) {
+    return std::ranges::contains(kLinkRelTokens, token);
+  }
+  const QualifiedName& name = element.TagQName();
+  const bool is_hyperlink =
+      element.HasHTMLTagName(u"a") || element.HasHTMLTagName(u"area") ||
+      element.HasHTMLTagName(u"form") ||
+      (name.local_name == u"a" &&
+       (name.namespace_uri == html_names::kSvgNamespace ||
+        name.namespace_uri == html_names::kMathMlNamespace));
+  return is_hyperlink && std::ranges::contains(kHyperlinkRelTokens, token);
+}
 
 bool CheckEmptyToken(const std::u16string& token,
                      bindings::ExceptionState& exception_state) {
@@ -62,9 +119,10 @@ bool Has(const std::vector<std::u16string>& tokens,
 
 // static
 DOMTokenList* DOMTokenList::Create(Element& element,
-                                   std::u16string attribute_name) {
+                                   std::u16string attribute_name,
+                                   SupportedTokens supported_tokens) {
   return bindings::MakeGarbageCollected<DOMTokenList>(
-      &element, std::move(attribute_name));
+      &element, std::move(attribute_name), supported_tokens);
 }
 
 // static
@@ -75,8 +133,12 @@ bindings::ScriptWrappable* DOMTokenList::CreateForKnownGap(
       std::u16string());
 }
 
-DOMTokenList::DOMTokenList(Element* element, std::u16string attribute_name)
-    : element_(element), attribute_name_(std::move(attribute_name)) {}
+DOMTokenList::DOMTokenList(Element* element,
+                           std::u16string attribute_name,
+                           SupportedTokens supported_tokens)
+    : element_(element),
+      attribute_name_(std::move(attribute_name)),
+      supported_tokens_(supported_tokens) {}
 
 DOMTokenList::~DOMTokenList() = default;
 
@@ -246,8 +308,17 @@ bool DOMTokenList::Supports(const std::u16string& token,
 bool DOMTokenList::ValidateTokenValue(
     const std::u16string& token,
     bindings::ExceptionState& exception_state) const {
-  exception_state.ThrowTypeError("DOMTokenList has no supported tokens.");
-  return false;
+  switch (supported_tokens_) {
+    case SupportedTokens::kNone:
+      exception_state.ThrowTypeError("DOMTokenList has no supported tokens.");
+      return false;
+    case SupportedTokens::kRel:
+      return IsSupportedRelToken(*element_, token);
+    case SupportedTokens::kSandbox:
+      return std::ranges::contains(kSandboxTokens, token);
+    case SupportedTokens::kBlocking:
+      return token == u"render";
+  }
 }
 
 std::u16string DOMTokenList::Value() const {
