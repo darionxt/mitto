@@ -43,6 +43,7 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/mathml_element.h"
+#include "mitto/dom/navigation_client.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/page_transition_event.h"
@@ -1205,10 +1206,18 @@ void Document::Open(Window* entered_window,
 }
 
 void Document::Open() {
-  // Stopping a navigation that the page started, canceling javascript: URLs
-  // and form submissions, and the unload of child frames come with the
-  // navigations, forms and frames that a page cannot start yet.
-  //
+  // A navigation that a document started and that waits for its response
+  // stops, with the document's loading, as FrameLoader::StopAllLoaders() has
+  // it, unless an unload event is being dispatched. Canceling javascript:
+  // URLs and form submissions, and the unload of child frames, come with the
+  // forms and frames that a page cannot have yet.
+  NavigationClient* const navigation =
+      window_ ? window_->GetNavigationClient() : nullptr;
+  if (navigation && navigation->HasProvisionalNavigation() &&
+      !PageDismissalEventBeingDispatched()) {
+    CancelParsing();
+    navigation->StopAllLoaders();
+  }
   // Every listener of the document's nodes and its window goes, then a
   // script-created parser loads the document anew.
   RemoveAllEventListenersRecursively();

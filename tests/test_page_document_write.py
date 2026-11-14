@@ -182,6 +182,23 @@ _CASES["write_while_parsing"] = Case(
     }
 )
 
+# open() stops a navigation that the page started and that waits for its response, so the page stays, opened.
+_CASES["open_stops_navigation"] = Case(
+    {
+        "/": _page(
+            "<body><p id=old>old</p><script>"
+            "addEventListener('load', () => setTimeout(() => {"
+            " location.href = '/next';"
+            " document.open(); document.write('<p id=w>w</p>'); log('wrote ' + ids() + ' ' + document.readyState);"
+            " document.close(); log('closed ' + document.readyState);"
+            " mark('next'); setTimeout(() => { log('later ' + location.pathname + ' ' + ids()); finish(logged); }, 700);"
+            "}));"
+            "</script>"
+        ),
+        "/next": Route("<!doctype html><p id=next>next</p>", _HTML, hold="next"),
+    }
+)
+
 # open() from a script that the parser runs keeps the document, and so does close() of a document that the network
 # loads.
 _CASES["open_while_running"] = Case(
@@ -364,6 +381,11 @@ _CHROME: dict[str, list[str]] = {
         "one ",
         "two ab",
         'S<p id="ab" class="c">xy</p><p id="e">&amp;</p><b id="bold">bold network</b><p id="end">end</p>S',
+    ],
+    "open_stops_navigation": [
+        "wrote w loading",
+        "closed complete",
+        "later / w",
     ],
     "open_while_running": [
         "open true loading ",
