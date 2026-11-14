@@ -1433,24 +1433,31 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
           }
           // Its storage writes what it holds before it goes, so that the
           // next Session of its directory finds it, in this process or
-          // another. localStorage does so once the Session has gone, and
-          // then lets its directory go.
+          // another: first localStorage's areas make the changes that wait
+          // for their maps, then the Cache API closes, and once the Session
+          // has gone localStorage writes the rest and lets its directory go.
           session->storage->WhenClosed(base::BindOnce(
               &base::WaitableEvent::Signal, base::Unretained(storage_closed)));
-          CacheStorageContext* const caches =
-              session->cache_storage_context.get();
-          caches->Close(base::BindOnce(
+          StorageContext* const storage = session->storage.get();
+          storage->Close(base::BindOnce(
               [](std::unique_ptr<MittoSession> session,
                  base::WaitableEvent* destroyed) {
-                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-                    FROM_HERE,
-                    base::BindOnce(
-                        [](std::unique_ptr<MittoSession> session,
-                           base::WaitableEvent* destroyed) {
-                          session.reset();
-                          destroyed->Signal();
-                        },
-                        std::move(session), destroyed));
+                CacheStorageContext* const caches =
+                    session->cache_storage_context.get();
+                caches->Close(base::BindOnce(
+                    [](std::unique_ptr<MittoSession> session,
+                       base::WaitableEvent* destroyed) {
+                      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+                          FROM_HERE,
+                          base::BindOnce(
+                              [](std::unique_ptr<MittoSession> session,
+                                 base::WaitableEvent* destroyed) {
+                                session.reset();
+                                destroyed->Signal();
+                              },
+                              std::move(session), destroyed));
+                    },
+                    std::move(session), destroyed));
               },
               std::move(session), destroyed));
         },

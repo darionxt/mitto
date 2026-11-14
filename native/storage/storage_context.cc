@@ -5,6 +5,7 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ref.h"
 #include "base/task/thread_pool.h"
@@ -151,6 +152,15 @@ StorageContext::~StorageContext() {
                        }
                      },
                      std::move(lock_), std::move(closed_)));
+}
+
+void StorageContext::Close(base::OnceClosure ready) {
+  // Each read of a map runs on the blocking sequence, in order, and its reply
+  // comes back here in the same order, so a task posted after them all
+  // replies once every area has loaded and run what waited. No read starts
+  // after this one: every Page has unbound its areas.
+  blocking_task_runner_->PostTaskAndReply(FROM_HERE, base::DoNothing(),
+                                          std::move(ready));
 }
 
 void StorageContext::Open(base::OnceCallback<void(bool)> opened) {

@@ -269,6 +269,27 @@ def test_storage_written_just_before_close_is_kept(blank_page: str, tmp_path: Pa
         assert page.evaluate("[localStorage.length, localStorage.getItem('k99').length]") == [100, 99]
 
 
+def test_a_clear_before_any_read_is_kept_at_close(blank_page: str, tmp_path: Path) -> None:
+    # A clear() that is a document's first use of an area waits in the Session for the area's map, which may not have
+    # loaded when the Session closes right after it. The Session makes the clear before it goes.
+    storage = tmp_path / "storage"
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(blank_page, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        page.evaluate("localStorage.setItem('k', 'v')")
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(blank_page, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        page.evaluate("localStorage.clear()")
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(blank_page, timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert page.evaluate("localStorage.length") == 0
+
+
 def test_a_storage_directory_names_the_machine_whose_storage_it_holds(native_library: Any, tmp_path: Path) -> None:
     storage = tmp_path / "storage"
     first = mitto.Machine.draw(seed=1)

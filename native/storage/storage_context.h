@@ -77,6 +77,13 @@ class StorageContext {
   // before anything else.
   void Open(base::OnceCallback<void(bool)> opened);
 
+  // Runs `ready` once each area that waits for its map has it and has made
+  // the changes that waited for it, such as a clear before any read, so that
+  // the context can go with nothing left behind. Chrome's storage service
+  // drops such changes at shutdown, and counts how often; a Session's close
+  // writes them. Called once every Page has unbound its areas.
+  void Close(base::OnceClosure ready);
+
   // Runs `closed` on another sequence once the context has gone, all that was
   // left to write is written and its files are closed, so that the directory
   // can go to another Session. Every Page has unbound its areas by then.
