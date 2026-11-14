@@ -10,9 +10,11 @@
 #include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
+#include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
@@ -437,22 +439,31 @@ struct InsertionLocation {
 // counters of its use.
 class HtmlTreeBuilder {
  public:
-  // For a document.
-  HtmlTreeBuilder(Document& document, HtmlTokenizer& tokenizer)
-      : document_(&document), tokenizer_(tokenizer) {}
+  // For a document. What the builder refers to stays in `references`, which
+  // outlives it.
+  HtmlTreeBuilder(HtmlTreeBuilderReferences& references,
+                  HtmlTokenizer& tokenizer)
+      : references_(references),
+        document_(&references.document()),
+        tokenizer_(tokenizer) {}
 
   // For a fragment whose context is `context`, as the standard's fragment
   // parsing algorithm sets the builder up. Blink's root is the fragment
   // itself, where the standard's is an html element: the nodes that the
   // fragment ends up with are the same.
-  HtmlTreeBuilder(Element& context, HtmlTokenizer& tokenizer)
-      : document_(&context.GetDocument()),
+  HtmlTreeBuilder(HtmlTreeBuilderReferences& references,
+                  Element& context,
+                  HtmlTokenizer& tokenizer)
+      : references_(references),
+        document_(&references.document()),
         tokenizer_(tokenizer),
         fragment_context_(&context),
         context_entry_{&context, IsHtmlAnnotationXml(context)} {
+    references_->Keep(&context);
     root_ = document_->CreateElement(html_names::kXhtmlNamespace, std::nullopt,
                                      u"html");
-    open_elements_.push_back({root_.Get(), false});
+    references_->Keep(root_);
+    open_elements_.push_back({root_, false});
     // Blink's TokenizerStateForContextElement(), which starts in PLAINTEXT
     // where the standard starts in RAWTEXT or script data, as Blink's fragment
     // parser reports no errors.
@@ -476,6 +487,7 @@ class HtmlTreeBuilder {
       if (node->IsElementNode() &&
           static_cast<Element*>(node)->HasHTMLTagName(u"form")) {
         form_element_ = static_cast<Element*>(node);
+        references_->Keep(form_element_);
         break;
       }
     }
@@ -488,16 +500,17 @@ class HtmlTreeBuilder {
   // Processes one token. Returns the script element whose end tag it was.
   HTMLScriptElement* ProcessToken(HtmlToken& token) {
     ended_script_ = nullptr;
+    CompactReferences();
     if (ShouldProcessTokenInForeignContent(token)) {
       ProcessTokenInForeignContent(token);
     } else {
       ProcessTokenInHtmlContent(token);
     }
     UpdateTokenizerFlags();
-    return std::exchange(ended_script_, nullptr).Get();
+    return std::exchange(ended_script_, nullptr).get();
   }
 
-  Element* fragment_root() const { return root_.Get(); }
+  Element* fragment_root() const { return root_; }
   const std::vector<std::string>& skipped_rules() const {
     return skipped_rules_;
   }
@@ -528,7 +541,7 @@ class HtmlTreeBuilder {
 
   // An element on the stack of open elements.
   struct OpenElement {
-    cppgc::Persistent<Element> element;
+    raw_ptr<Element> element;
     // Whether it is a MathML annotation-xml element whose start tag gave it
     // an encoding that makes it an HTML integration point. Blink reads the
     // attribute from the token, which a script cannot change.
@@ -540,7 +553,7 @@ class HtmlTreeBuilder {
   struct FormattingEntry {
     bool IsMarker() const { return !element; }
 
-    cppgc::Persistent<Element> element;
+    raw_ptr<Element> element;
     HtmlToken token;
   };
 
@@ -703,7 +716,7 @@ class HtmlTreeBuilder {
   // The index of `element` in the stack.
   std::optional<size_t> StackIndexOf(const Element* element) const {
     for (size_t i = open_elements_.size(); i > 0; --i) {
-      if (open_elements_[i - 1].element.Get() == element) {
+      if (open_elements_[i - 1].element.get() == element) {
         return i - 1;
       }
     }
@@ -801,7 +814,7 @@ class HtmlTreeBuilder {
 
   std::optional<size_t> FormattingIndexOf(const Element* element) const {
     for (size_t i = formatting_elements_.size(); i > 0; --i) {
-      if (formatting_elements_[i - 1].element.Get() == element) {
+      if (formatting_elements_[i - 1].element.get() == element) {
         return i - 1;
       }
     }
@@ -840,7 +853,7 @@ class HtmlTreeBuilder {
         return nullptr;
       }
       if (entry.element->HasHTMLTagName(name)) {
-        return entry.element.Get();
+        return entry.element.get();
       }
     }
     return nullptr;
@@ -870,7 +883,7 @@ class HtmlTreeBuilder {
                         return value && *value == attribute.value;
                       });
       if (same_attributes) {
-        candidates.push_back(entry.element.Get());
+        candidates.push_back(entry.element.get());
       }
     }
     for (size_t i = kNoahsArkCapacity - 1; i < candidates.size(); ++i) {
@@ -886,7 +899,7 @@ class HtmlTreeBuilder {
     }
     for (size_t i = formatting_elements_.size(); i > 0; --i) {
       const FormattingEntry& entry = formatting_elements_[i - 1];
-      if (entry.IsMarker() || StackContains(entry.element.Get())) {
+      if (entry.IsMarker() || StackContains(entry.element.get())) {
         if (i < formatting_elements_.size()) {
           return i;
         }
@@ -945,7 +958,36 @@ class HtmlTreeBuilder {
     if (const std::u16string* const is = element->FindAttribute(u"is")) {
       element->SetIsValue(*is);
     }
+    references_->Keep(element);
     return element;
+  }
+
+  // Lets go of the elements that the builder no longer refers to, once they
+  // are many, so that elements that a script removed can go.
+  void CompactReferences() {
+    size_t live = open_elements_.size() + formatting_elements_.size() + 4;
+    if (references_->size() <= 2 * live + 256) {
+      return;
+    }
+    std::vector<Element*> elements;
+    elements.reserve(live);
+    for (const OpenElement& entry : open_elements_) {
+      elements.push_back(entry.element);
+    }
+    for (const FormattingEntry& entry : formatting_elements_) {
+      if (!entry.IsMarker()) {
+        elements.push_back(entry.element);
+      }
+    }
+    for (Element* const element :
+         {static_cast<Element*>(fragment_context_),
+          static_cast<Element*>(root_), static_cast<Element*>(head_element_),
+          static_cast<Element*>(form_element_)}) {
+      if (element) {
+        elements.push_back(element);
+      }
+    }
+    references_->KeepOnly(elements);
   }
 
   static void DetachFromParent(Node& node) {
@@ -1000,10 +1042,10 @@ class HtmlTreeBuilder {
     const std::optional<size_t> last_template = Topmost(u"template");
     const std::optional<size_t> last_table = Topmost(u"table");
     if (last_template && (!last_table || *last_template > *last_table)) {
-      return {open_elements_[*last_template].element.Get(), nullptr};
+      return {open_elements_[*last_template].element.get(), nullptr};
     }
     if (!last_table) {
-      return {open_elements_.front().element.Get(), nullptr};
+      return {open_elements_.front().element.get(), nullptr};
     }
     Element& table = *open_elements_[*last_table].element;
     if (Node* const parent = table.ParentNode()) {
@@ -1012,7 +1054,7 @@ class HtmlTreeBuilder {
           static_cast<Element*>(parent)->HasHTMLTagName(u"template");
       return {parent, is_template ? nullptr : &table};
     }
-    return {open_elements_[*last_table - 1].element.Get(), nullptr};
+    return {open_elements_[*last_table - 1].element.get(), nullptr};
   }
 
   void FosterParent(Node* node) { Insert(FindFosterSite(), node); }
@@ -1241,11 +1283,11 @@ class HtmlTreeBuilder {
       case Mode::kBeforeHtml:
       case Mode::kAfterAfterBody:
       case Mode::kAfterAfterFrameset:
-        Attach({document_.Get(), nullptr},
+        Attach({document_.get(), nullptr},
                Comment::Create(*document_, token.data));
         return;
       case Mode::kAfterBody:
-        Attach({open_elements_.front().element.Get(), nullptr},
+        Attach({open_elements_.front().element.get(), nullptr},
                Comment::Create(*document_, token.data));
         return;
       case Mode::kInTableText:
@@ -1488,7 +1530,7 @@ class HtmlTreeBuilder {
                            u"title"})) {
           // A parse error: the element goes in the head all the same.
           CHECK(head_element_);
-          const cppgc::Persistent<Element> head = head_element_;
+          const cppgc::Persistent<Element> head = head_element_.get();
           Push(head.Get());
           ProcessStartTagForInHead(token);
           RemoveFromStack(head.Get());
@@ -1780,7 +1822,7 @@ class HtmlTreeBuilder {
       if (!SecondElementIsBody() || !frameset_ok_) {
         return;
       }
-      const cppgc::Persistent<Element> body = open_elements_[1].element;
+      const cppgc::Persistent<Element> body = open_elements_[1].element.get();
       DetachFromParent(*body);
       PopUntilPopped(*body);
       InsertHTMLElement(token);
@@ -2285,7 +2327,7 @@ class HtmlTreeBuilder {
       // Blink's feature CorrectTemplateFormParsing is not on for stable: so
       // "any other end tag" follows, inside a template's contents and out.
       if (!IsParsingTemplateContents()) {
-        const cppgc::Persistent<Element> form = form_element_;
+        const cppgc::Persistent<Element> form = form_element_.get();
         form_element_ = nullptr;
         if (!form || !InScope(*form)) {
           return;
@@ -2391,7 +2433,7 @@ class HtmlTreeBuilder {
       for (size_t index = open_elements_.size() - 1; index > *formatting_index;
            --index) {
         if (IsSpecial(*open_elements_[index].element)) {
-          furthest_block = open_elements_[index].element;
+          furthest_block = open_elements_[index].element.get();
         }
       }
       if (!furthest_block) {
@@ -2400,7 +2442,7 @@ class HtmlTreeBuilder {
         return;
       }
       const cppgc::Persistent<Element> common_ancestor =
-          open_elements_[*formatting_index - 1].element;
+          open_elements_[*formatting_index - 1].element.get();
       // The bookmark: the element after which the new formatting element goes
       // in the list, or the formatting element itself while it has not moved.
       cppgc::Persistent<Element> bookmark = formatting_element;
@@ -2408,13 +2450,13 @@ class HtmlTreeBuilder {
 
       cppgc::Persistent<Element> node = furthest_block;
       cppgc::Persistent<Element> next_node =
-          open_elements_[*StackIndexOf(node.Get()) - 1].element;
+          open_elements_[*StackIndexOf(node.Get()) - 1].element.get();
       cppgc::Persistent<Element> last_node = furthest_block;
       int inner_loop_counter = 0;
       while (true) {
         ++inner_loop_counter;
         node = next_node;
-        next_node = open_elements_[*StackIndexOf(node.Get()) - 1].element;
+        next_node = open_elements_[*StackIndexOf(node.Get()) - 1].element.get();
         if (node == formatting_element) {
           break;
         }
@@ -2873,24 +2915,27 @@ class HtmlTreeBuilder {
     }
   }
 
-  const cppgc::Persistent<Document> document_;
+  // What keeps the document and the elements below alive, which the
+  // builder's owner traces.
+  const raw_ref<HtmlTreeBuilderReferences> references_;
+  const raw_ptr<Document> document_;
   const raw_ref<HtmlTokenizer> tokenizer_;
-  const cppgc::Persistent<Element> fragment_context_;
+  const raw_ptr<Element> fragment_context_;
   // The context element as the adjusted current node of a fragment takes it.
   const OpenElement context_entry_;
-  cppgc::Persistent<Element> root_;
+  raw_ptr<Element> root_;
   Mode mode_ = Mode::kInitial;
   Mode original_mode_ = Mode::kInitial;
   std::vector<Mode> template_modes_;
   std::vector<OpenElement> open_elements_;
   std::vector<FormattingEntry> formatting_elements_;
-  cppgc::Persistent<Element> head_element_;
-  cppgc::Persistent<Element> form_element_;
+  raw_ptr<Element> head_element_;
+  raw_ptr<Element> form_element_;
   std::u16string pending_table_characters_;
   bool frameset_ok_ = true;
   bool skip_leading_newline_ = false;
   bool redirect_to_foster_parent_ = false;
-  cppgc::Persistent<HTMLScriptElement> ended_script_;
+  raw_ptr<HTMLScriptElement> ended_script_;
   std::vector<std::string> skipped_rules_;
 };
 
@@ -2902,9 +2947,39 @@ HtmlTokenizer::Options TokenizerOptions() {
 
 }  // namespace
 
-HtmlDocumentParser::HtmlDocumentParser(Document& document)
-    : tokenizer_(std::make_unique<HtmlTokenizer>(TokenizerOptions())),
-      tree_builder_(std::make_unique<HtmlTreeBuilder>(document, *tokenizer_)) {
+HtmlTreeBuilderReferences::HtmlTreeBuilderReferences(Document& document)
+    : document_(&document) {}
+
+HtmlTreeBuilderReferences::~HtmlTreeBuilderReferences() = default;
+
+void HtmlTreeBuilderReferences::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(document_);
+  elements_.Trace(visitor);
+}
+
+void HtmlTreeBuilderReferences::Keep(Element* element) {
+  elements_.push_back(element);
+}
+
+void HtmlTreeBuilderReferences::KeepOnly(
+    const std::vector<Element*>& elements) {
+  elements_.clear();
+  for (Element* const element : elements) {
+    elements_.push_back(element);
+  }
+}
+
+HtmlDocumentParser::HtmlDocumentParser(Document& document,
+                                       HtmlTreeBuilderReferences* references)
+    : own_references_(
+          references
+              ? nullptr
+              : bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(
+                    document)),
+      tokenizer_(std::make_unique<HtmlTokenizer>(TokenizerOptions())),
+      tree_builder_(std::make_unique<HtmlTreeBuilder>(
+          references ? *references : *own_references_,
+          *tokenizer_)) {
   CHECK(!document.HasChildren());
 }
 
@@ -2966,7 +3041,10 @@ NodeVector ParseHtmlFragment(Element& context,
                              std::u16string_view markup,
                              std::vector<std::string>* skipped_rules) {
   HtmlTokenizer tokenizer(TokenizerOptions());
-  HtmlTreeBuilder tree_builder(context, tokenizer);
+  const cppgc::Persistent<HtmlTreeBuilderReferences> references =
+      bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(
+          context.GetDocument());
+  HtmlTreeBuilder tree_builder(*references, context, tokenizer);
   tokenizer.Append(markup);
   tokenizer.Finish();
   HtmlToken token;

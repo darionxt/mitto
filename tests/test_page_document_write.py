@@ -8,6 +8,8 @@ what Chrome 157.0.8103.51 gave by hand, headless on macOS against the same pages
 APIs, and needs a native library with the Page program beside it, as CI's native job installs it on every Host.
 """
 
+import os
+import subprocess
 from collections.abc import Iterator
 from typing import Any
 
@@ -558,3 +560,36 @@ def test_a_script_of_another_site_that_a_write_inserts_is_warned_of_and_fetched(
         assert logged == ["async,defer,inserted,same,x"]
         assert _console_warnings(page, server) == _CHROME_CONSOLE["intervention"]
         assert page.uncaught_errors == []
+
+
+def test_a_document_that_a_script_opened_and_let_go_is_collected() -> None:
+    # The parser of a document that a script opened and never closed holds what its tree builder refers to through the
+    # document, so the document still goes to the collector once the page lets go of it, with an element that a script
+    # removed while the builder held it. gc() is V8's, which --expose-gc gives the Page program.
+    program = os.environ.get("MITTO_PAGE_PROGRAM")
+    if not program:
+        pytest.skip("no Page program; set MITTO_PAGE_PROGRAM to run this test")
+    script = """(async () => {
+        let documentRef, elementRef;
+        (() => {
+            const opened = document.implementation.createHTMLDocument("");
+            opened.write("<div id=d><p>open");
+            const div = opened.getElementById("d");
+            div.remove();
+            opened.write("<i>more");
+            documentRef = new WeakRef(opened);
+            elementRef = new WeakRef(div);
+        })();
+        await new Promise((resolve) => setTimeout(resolve));
+        gc();
+        return [documentRef.deref() === undefined, elementRef.deref() === undefined].join();
+    })()"""
+    result = subprocess.run(
+        [program, "--js-flags=--expose-gc", "-"],
+        input=script,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
+    )
+    assert (result.returncode, result.stderr, result.stdout) == (0, "", "true,true\n")

@@ -85,12 +85,16 @@ DocumentParser::DocumentParser(Document& document, Client* client)
     : document_(&document),
       client_(client),
       created_by_script_(!client),
-      tree_(std::make_unique<HtmlDocumentParser>(document)) {}
+      references_(
+          bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(document)),
+      tree_(std::make_unique<HtmlDocumentParser>(document, references_.Get())) {
+}
 
 DocumentParser::~DocumentParser() = default;
 
 void DocumentParser::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
+  visitor->Trace(references_);
   visitor->Trace(parser_blocking_script_);
   scripts_after_parsing_.Trace(visitor);
 }
@@ -183,9 +187,8 @@ void DocumentParser::Detach() {
   }
   scripts_after_parsing_.clear();
   document_ = nullptr;
-  // The tokenizer and the tree builder hold the document. They go now, unless
-  // a pump or a script that is still on the stack uses them, in which case
-  // they go with the parser.
+  // The tokenizer and the tree builder go now, unless a pump or a script that
+  // is still on the stack uses them, in which case they go with the parser.
   if (!InPumpSession() && !IsExecutingScript() && !tree_->HasInsertionPoint()) {
     tree_.reset();
   }

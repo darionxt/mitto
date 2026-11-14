@@ -44,6 +44,7 @@ class DocWrittenScriptScanner;
 class Document;
 class HTMLScriptElement;
 class HtmlDocumentParser;
+class HtmlTreeBuilderReferences;
 class PendingScript;
 
 class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
@@ -176,6 +177,9 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // it is attached; null for a script-created parser.
   raw_ptr<Client> client_;
   const bool created_by_script_;
+  // What the tree builder refers to, which this traces, so that the document
+  // that holds this can go to the collector.
+  cppgc::Member<HtmlTreeBuilderReferences> references_;
   // The tokenizer and the tree builder, until the parser is detached and
   // nothing on the stack uses them, as a script that runs may still have an
   // insertion point in them once the parser has stopped.
