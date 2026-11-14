@@ -32,7 +32,7 @@ The checks of the Script Fingerprint are tested the same way, with the real Base
 
 ## Baselines
 
-A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds** and `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases**, where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
+A Baseline file is the normal form the capture kit writes, at `tests/baselines/RELEASE/NAME.json` for the main **Request Kinds**, `tests/baselines/RELEASE/cases/NAME.json` for the other **Recording Cases** and `tests/baselines/RELEASE/documents/NAME.json` for [what a document requests](baselines.md#documents), where `RELEASE` is the **Chrome Release**. The file holds one Baseline for each Recording Case in it, and the protocol comes from the file's `protocol` key. The case and the protocol together say which [run](capture.md#recording-cases) recorded it, so its route into the server and the name it starts at. [baselines.md](baselines.md) is how to record them.
 
 Other files under `RELEASE` are left alone: `*.raw.json`, anything that does not end in `.json`, such as `chrome.txt`, which says which Chrome recorded the Baselines, and the Baselines of the **Script Fingerprint** in `RELEASE/script/`, which are [Normal Forms](capture.md#the-normal-form-of-a-script-fingerprint) of what the probe records and not of the wire, and which [their own checks](#the-script-fingerprint) read.
 
@@ -54,8 +54,26 @@ A replay does what a caller of the public API can do today, in `REPLAYS` in `too
 | `plain_http_*` | The case's path over plain HTTP, from the page it came from, or with no Initiator for the navigation | Nothing |
 | `proxy_connect`, `proxy_navigation` | The path of `proxy_navigation` at its name, through the capture server's proxy, which also makes the `CONNECT` | Nothing |
 | `client_hints_*` | A navigation to the page that asks, as `asks` in its `Replay` says, and then the case, as for the cases above | Nothing |
+| The cases of documents | The case's path at its name, with the Request Kind of what asked for it, from the page that asked for it, which its `Referer` names: a stylesheet for its `@import` and fonts, a module for what it imports, the cross-site frame for what it asks for. `asks` sets the cookies that a case carries first, as the case's run did | What only a page can say of a request, whose cases a check skips, as [below](#what-a-session-cannot-replay-of-a-document) |
 
 The page of each case is `page` in its `Replay`, from the pages in `tools/capture/cases.py`, and the Baselines' `Referer` lines say the same.
+
+### What a Session cannot replay of a document
+
+A Session replays the cases of documents as a caller would make them. A page makes some of them in ways that a caller cannot say, and a check skips those until a Page makes the request itself, through the private API, as [the Script Fingerprint's checks](#the-script-fingerprint) run. `made_by_a_page` in each such case's `Replay` names the issue that does it, and `python -m tools.parity` lists them as skipped:
+
+| Cases | What a caller cannot say | Who makes a Page make them |
+| --- | --- | --- |
+| `navigation_location`, `navigation_click`, `navigation_meta_refresh`, `redirect_location_*` | That no user started the navigation, so it has no `Sec-Fetch-User` | [#279](https://github.com/darionxt/mitto/issues/279) |
+| `navigation_history_back` | That it traverses history, without a user's activation | [#280](https://github.com/darionxt/mitto/issues/280) |
+| `xhr_get_sync`, `xhr_post_text_sync` | That the request is synchronous, which Blink gives the highest priority | [#283](https://github.com/darionxt/mitto/issues/283) |
+| `worker_import_scripts`, `worker_fetch`, `worker_blob_fetch` | That a worker asks for it, which sends no hints, at the worker's priority, and with no `Referer` from a `blob:` worker | [#289](https://github.com/darionxt/mitto/issues/289) |
+| `frame_script`, `frame_image`, `frame_fetch`, `frame_nested_fetch` | That a frame of another site asks for it, whose site for cookies is no site | [#285](https://github.com/darionxt/mitto/issues/285) |
+| `document_*` | The priority that Blink gives what a document's markup asks for, and over HTTP/2 and HTTP/3 the order in which it asks | [#284](https://github.com/darionxt/mitto/issues/284) |
+
+The other cases of documents, the frames' own navigations, `frame_nested` and `favicon` among them, have checks now, and what a Session cannot replay of them yet is in the known-gaps list, as for any case.
+
+`order`, which a normal form of documents holds over HTTP/2 and HTTP/3, belongs to the fingerprint of each case it names, and to no other, so it shows only in the `document_*` cases.
 
 When a **Session** gains what a case needs, change its replay to pass it on, and write the list again. `cookie` and the hops of a redirect need no change, because they already make the requests that show it. Only `revalidation` has a cache, since a Session has none by default, and `tests/parity/test_replay.py` checks that every other case sends the same with one.
 
@@ -102,7 +120,7 @@ This needs a native library, and it runs the same comparison as the tests. It al
 
 The Parity Checks of M7 compare what a page sees in a **Page** with what it saw in real Chrome: the Normal Form of what [the probe](runtime.md#the-probe) records, against the Baselines in `tests/baselines/RELEASE/script/`, which [baselines.md](baselines.md#the-script-fingerprint) records.
 
-M8 adds [Recording Cases](capture.md#its-recording-cases) in a frame of the page's origin, a `srcdoc` frame, a frame of another site and a dedicated worker. Each of their files keeps [what differs](capture.md#what-a-later-case-keeps) from `page.json` of the same Chrome Release, and a check makes the case's Normal Form again from the two, so that it compares a Page's whole Normal Form in that case, as for the top-level page. A Page has no frames and no workers yet, so a check skips these cases, and `tools.parity --script` says which it skipped, until a Page has frames ([#285](https://github.com/darionxt/mitto/issues/285)) and dedicated workers ([#289](https://github.com/darionxt/mitto/issues/289)) and those set `in_a_page` of the case's run in [`script_page.py`](../tools/capture/script_page.py). A case with no Baselines yet, as these have none until [#266](https://github.com/darionxt/mitto/issues/266) records them, has no check.
+M8 adds [Recording Cases](capture.md#its-recording-cases) in a frame of the page's origin, a `srcdoc` frame, a frame of another site and a dedicated worker. Each of their files keeps [what differs](capture.md#what-a-later-case-keeps) from `page.json` of the same Chrome Release, and a check makes the case's Normal Form again from the two, so that it compares a Page's whole Normal Form in that case, as for the top-level page. A Page has no frames and no workers yet, so a check skips these cases, and `tools.parity --script` says which it skipped, until a Page has frames ([#285](https://github.com/darionxt/mitto/issues/285)) and dedicated workers ([#289](https://github.com/darionxt/mitto/issues/289)) and those set `in_a_page` of the case's run in [`script_page.py`](../tools/capture/script_page.py). Each Chrome Release of the Supported Window has a Baseline of each of them, which [baselines.md](baselines.md#its-baselines-in-frames-and-workers) records, and a case with no Baseline would have no check.
 
 ### Run them
 
@@ -237,8 +255,11 @@ What the headers say ([the rules](persona.md#the-initiator)) depends on the page
 | `sec-ch-*` staying on a subresource's hop | `FrameFetchContext::AddClientHintsIfNecessary` runs when a request starts, and not on a redirect. `FindClientHintsToRemove` then takes away what the page's permissions policy does not allow the next URL | Blink |
 | `Referer` of the first hop | `SecurityPolicy::GenerateReferrer`, which `URLRequestJob::ComputeReferrerForPolicy` answers the same way | Blink, and `//net` from the second hop |
 | `IsUrlPotentiallyTrustworthy` | Already in `//net` at this Engine Release, so it needs no port | `net/base/is_potentially_trustworthy.cc` |
+| A frame's navigation, the `iframe` kind | `ComputeIsolationInfoForNavigation()` gives it its parent's site for cookies and an `IsolationInfo` of a frame, `ClientHintsExtendedData` its parent's hints, and only the outermost main frame parses `Accept-CH` or makes a `CriticalClientHintsThrottle` | `content/browser/renderer_host/render_frame_host_impl.cc`, `content/browser/client_hints/client_hints.cc`, `content/browser/loader/url_loader_throttles.cc` |
+| Mode `same-origin` | `CorsURLLoader` fails the request with `kDisallowedByMode` once its CORS flag is set, at the start or at a redirect | `services/network/cors/cors_url_loader.cc` |
+| `Origin` on an element in cors mode | `FetchParameters::SetCrossOriginAccessControl()` puts it in Blink's map, and `CorsURLLoader` writes over it only where it needs one | Blink, and `services/network/cors/cors_url_loader.cc` |
 
-So the last four rows hold what comes from outside `//net` and `services/network`. `Sec-Fetch-Frame-Top` and `Sec-Fetch-Frame-Ancestors` are behind features that are off by default and in the Baselines, so they are not ported, and no **Request Kind** is a subframe's, so a page always counts as top-level.
+So the rules of `content`, `components` and Blink are what comes from outside `//net` and `services/network`. `Sec-Fetch-Frame-Top` and `Sec-Fetch-Frame-Ancestors` are behind features that are off by default and in the Baselines, so they are not ported. The parent of an `iframe` counts as top-level, as the page of every other kind does.
 
 A **Persona**'s lines arrive at the native core with the rest of the headers, each in its place, along with what `network::ResourceRequest` would say: `mode`, `destination`, `credentials_mode`, `has_user_activation` and `initiator`. `fixed_headers` names what a caller gave or removed, which no rule touches. A request with none of this, which only `mitto._native` can make, sends what its headers say.
 

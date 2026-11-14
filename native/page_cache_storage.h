@@ -33,28 +33,27 @@ class PageCacheStorage {
  public:
   using Send = base::RepeatingCallback<void(std::string frame)>;
   using Refuse = base::RepeatingCallback<void(std::string why)>;
-  // The storage key of the Page's document, or nullopt if its origin may not
-  // reach the Cache API.
-  using StorageKey = base::RepeatingCallback<std::optional<std::string>()>;
 
   PageCacheStorage(CacheStorageContext& context,
                    StorageQuota& quota,
                    Send send,
-                   Refuse refuse,
-                   StorageKey storage_key);
+                   Refuse refuse);
   PageCacheStorage(const PageCacheStorage&) = delete;
   PageCacheStorage& operator=(const PageCacheStorage&) = delete;
   ~PageCacheStorage();
 
-  void OnCall(PageCacheStorageCall call);
+  // A call of the document whose storage key is `storage_key`, or nullopt if
+  // its origin may not reach the Cache API.
+  void OnCall(PageCacheStorageCall call,
+              const std::optional<std::string>& storage_key);
 
  private:
   class PutBody;
   struct StoredBody;
 
   // Checks that the question's number goes up, and that the document may
-  // reach the Cache API, and returns its storage key.
-  std::optional<std::string> Admit(uint64_t question);
+  // reach the Cache API.
+  bool Admit(uint64_t question, const std::optional<std::string>& storage_key);
   CacheStorageCache* FindCache(uint64_t cache);
 
   void OnOpen(PageCacheStorageCall call, const std::string& storage_key);
@@ -82,7 +81,6 @@ class PageCacheStorage {
   const raw_ref<StorageQuota> quota_;
   const Send send_;
   const Refuse refuse_;
-  const StorageKey storage_key_;
   uint64_t last_question_ = 0;
   // The caches the Page has open, by the number the library gave each.
   std::map<uint64_t, CacheStorageCacheHandle> caches_;

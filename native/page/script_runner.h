@@ -107,13 +107,15 @@ class ScriptRunner final : public base::TaskObserver {
   void RunTask(base::OnceClosure task);
   // Runs `task` as RunTask() does, from a later task of `type`.
   void PostTask(TaskType type, base::OnceClosure task);
-  // Makes a new context, whose window has an empty document at `url`, in
-  // place of the current one, and returns the document. Calls that wait for a
+  // Makes a new context, whose window has an empty document at `url`, the
+  // response of navigation `navigation`, in place of the current one, tells
+  // the Session of it, and returns the document. Calls that wait for a
   // promise of the old context fail, as DevTools' do when a page navigates,
   // and the old window's timers and fetches stop. The new window's
   // performance.timeOrigin is `navigation_start`, and its
   // navigator.connection gives `connection`.
-  Document& CommitDocument(const GURL& url,
+  Document& CommitDocument(uint64_t navigation,
+                           const GURL& url,
                            base::TimeTicks navigation_start,
                            const PageConnection& connection);
   // How the current window's document loads, which its document's loading
@@ -139,9 +141,13 @@ class ScriptRunner final : public base::TaskObserver {
   v8::Local<v8::Context> NewContext(base::TimeTicks time_origin);
   // Gives the current context's window its timers, what its fetch() goes
   // through, and what it reads of the browser and the machine, with
-  // `connection` for its document.
+  // `connection` for its document, and the ID of its document, which it tells
+  // the Session of as made of `source`, the response of `navigation` for one
+  // of a navigation.
   void AttachWindow(v8::Local<v8::Context> context,
-                    const PageConnection& connection);
+                    const PageConnection& connection,
+                    PageDocumentSource source,
+                    uint64_t navigation);
 
   // Returns `value`, the result of `call`, as JSON, or why it cannot be.
   PageEvaluated ResultOf(uint64_t call,
@@ -191,6 +197,8 @@ class ScriptRunner final : public base::TaskObserver {
   std::vector<std::unique_ptr<ChromeObjectData>> chrome_object_data_;
   // How many tasks that report rejections wait to run.
   int reports_queued_ = 0;
+  // The ID of the last document the Page made.
+  uint64_t last_document_id_ = kNoDocument;
   v8::Global<v8::Context> context_;
 };
 

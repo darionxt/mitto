@@ -19,6 +19,7 @@
 #include "base/functional/callback.h"
 #include "mitto/dom/cache_storage_host.h"
 #include "mitto/page/page_reporter.h"
+#include "mitto/page_messages.h"
 
 namespace mitto {
 
@@ -65,6 +66,8 @@ class SessionCacheStorage final : public CacheStorageHost {
 
   SendFrame send_;
   base::RepeatingCallback<void(std::string)> refuse_;
+  // The document whose script asked last.
+  uint64_t document_ = kNoDocument;
   uint64_t last_question_ = 0;
   std::map<uint64_t, Answer> questions_;
   uint64_t last_put_body_ = 0;

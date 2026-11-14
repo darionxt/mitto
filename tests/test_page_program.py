@@ -135,7 +135,8 @@ _EVALUATED = 5
 _CONSOLE = 6
 _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
-_PROTOCOL_VERSION = 16
+_DOCUMENT_COMMITTED = 70
+_PROTOCOL_VERSION = 17
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -218,6 +219,8 @@ class _Session:
     def __init__(self, program: Path) -> None:
         # The console messages and uncaught errors that came before a result, as (type, payload).
         self.reports: list[tuple[int, bytes]] = []
+        # The documents that the Page has told of, as the payloads of their messages, in order.
+        self.documents: list[bytes] = []
         ours, theirs = socket.socketpair()
         self.socket = ours
         self.socket.settimeout(_TIMEOUT_SECONDS)
@@ -233,8 +236,14 @@ class _Session:
         self.socket.sendall(struct.pack("<II", len(payload), message_type) + payload)
 
     def receive(self) -> tuple[int, bytes]:
-        size, message_type = struct.unpack("<II", self._read(8))
-        return message_type, self._read(size)
+        """Return the next message, as (type, payload), but for the documents that the Page tells of, which go to
+        `documents`."""
+        while True:
+            size, message_type = struct.unpack("<II", self._read(8))
+            payload = self._read(size)
+            if message_type != _DOCUMENT_COMMITTED:
+                return message_type, payload
+            self.documents.append(payload)
 
     def start(self, start: dict[str, object] = _DEFAULT_START) -> None:
         assert self.receive() == (_HELLO, struct.pack("<I", _PROTOCOL_VERSION))
@@ -735,6 +744,8 @@ _COOKIE_STORE_CHANGE = 24
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
 _DOCUMENT_URL = "http://www.example.test/page"
+# The ID that the Page gives the document of its navigation, after about:blank's 1, as its messages carry it.
+_DOCUMENT = struct.pack("<Q", 2)
 
 
 def _sized(data: bytes) -> bytes:
@@ -751,10 +762,12 @@ def _request(
     *,
     same_origin: bool = False,
 ) -> bytes:
-    """The payload of a Request: its number, Kind, mode, URL, method and lines, and its body, if it has one."""
+    """The payload of a Request of the navigation's document: its number, Kind, mode, URL, method and lines, and its
+    body, if it has one."""
     has_body = b"\x00" if body is None else b"\x01" + body
     return (
-        struct.pack("<QBB", number, kind, int(same_origin))
+        _DOCUMENT
+        + struct.pack("<QBB", number, kind, int(same_origin))
         + _sized(url.encode())
         + _sized(method.encode())
         + _sized(headers.encode())
@@ -846,16 +859,28 @@ def test_a_page_loads_the_document_that_its_session_sends_and_asks_for_its_scrip
     _end(session, 1)
 
     # The script's write goes first, then its read waits for the answer.
-    assert session.receive() == (_SET_COOKIE, b"set=by script")
+    assert session.receive() == (_SET_COOKIE, _DOCUMENT + b"set=by script")
     message_type, question = session.receive()
-    assert message_type == _GET_COOKIES
-    session.send(_COOKIES, question + b"from=session; set=by script")
-    assert session.receive() == (_LOADED, b"")
+    assert (message_type, question[:8]) == (_GET_COOKIES, _DOCUMENT)
+    session.send(_COOKIES, question[8:] + b"from=session; set=by script")
+    assert session.receive() == (_LOADED, _DOCUMENT)
 
     assert session.evaluate("[document.URL, document.readyState, seen, document.body.lastChild.id]") == (
         False,
         f'["{_DOCUMENT_URL}","complete",["from=session; set=by script",false],"b"]',
     )
+    assert session.close() == 0
+
+
+def test_a_page_tells_its_session_of_each_document_before_anything_the_document_sends(session: _Session) -> None:
+    session.start()
+    _respond(session, 0, _DOCUMENT_URL, "text/html")
+    _body(session, 0, b"<script src=app.js></script>")
+
+    # about:blank's first, as the Page's initial document, then the navigation's, each before its own messages.
+    assert session.receive()[0] == _CREDIT
+    assert session.documents == [struct.pack("<QB", 1, 0), struct.pack("<QBQ", 2, 1, 0)]
+    assert session.receive() == (_REQUEST, _request(1, _SCRIPT_KIND, "http://www.example.test/app.js"))
     assert session.close() == 0
 
 
@@ -871,7 +896,7 @@ def test_a_documents_event_handler_attributes_run_as_it_loads(session: _Session)
     _body(session, 0, document)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(document)))
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
 
     assert session.evaluate("seen.join()") == (False, '"interactive,complete,load #document"')
     assert session.close() == 0
@@ -894,7 +919,7 @@ def test_a_page_gives_credit_only_for_what_its_parser_takes(session: _Session) -
     _end(session, 1)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(second)))
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
     assert session.evaluate("document.getElementById('later').textContent.length") == (False, "2000")
 
 
@@ -908,7 +933,7 @@ def _loaded(session: _Session) -> None:
     _body(session, 0, b"<p>fetch</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
 
 
 # What a page reads of the browser and the machine, from what the Page starts with.
@@ -972,7 +997,7 @@ def test_a_page_tells_its_session_of_each_known_gap_once_for_each_document(sessi
     _body(session, 0, b"<p>another document</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
     assert session.evaluate("new Highlight().priority") == (False, "0")
     assert session.reports == [
         (_KNOWN_GAP, b"new Highlight"),
@@ -988,7 +1013,7 @@ def test_a_page_takes_its_documents_connection_from_the_navigation(session: _Ses
     _body(session, 0, b"<p>connection</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
 
     assert session.evaluate("[navigator.connection.rtt, navigator.connection.downlink]") == (False, "[150,2.4]")
 
@@ -1150,6 +1175,38 @@ def test_a_fetch_whose_body_cannot_fit_in_a_frame_rejects_and_the_page_goes_on(s
     assert session.close() == 0
 
 
+def test_a_fetch_whose_body_fills_a_frame_after_its_documents_id_is_sent_and_one_byte_more_rejects(
+    session: _Session,
+) -> None:
+    session.start()
+    _loaded(session)
+    script = "fetch('/upload', {{method: 'POST', body: new Uint8Array({})}}).then(() => 'sent', error => String(error))"
+
+    # What the frame holds beside the body: the document's ID, the number, the kind and the flags, then the URL, the
+    # method and the header lines, each after its size, and the byte that says a body follows.
+    session.send(_EVALUATE, struct.pack("<Q", 1) + script.format(1).encode())
+    message_type, payload = session.receive()
+    assert message_type == _REQUEST
+    (number,) = struct.unpack_from("<Q", payload, 8)
+    offset = 18
+    for _ in range(3):
+        (size,) = struct.unpack_from("<I", payload, offset)
+        offset += 4 + size
+    assert len(payload) == offset + 2
+    room = _MAX_PAYLOAD_SIZE - offset - 1
+    _end(session, number, -100)
+    assert session.evaluated() == (1, False, '"TypeError: Failed to fetch"')
+
+    assert session.evaluate(script.format(room + 1), call=2) == (False, '"TypeError: Failed to fetch"')
+    session.send(_EVALUATE, struct.pack("<Q", 3) + script.format(room).encode())
+    message_type, payload = session.receive()
+    assert (message_type, len(payload)) == (_REQUEST, _MAX_PAYLOAD_SIZE)
+    (number,) = struct.unpack_from("<Q", payload, 8)
+    _end(session, number, -100)
+    assert session.evaluated() == (3, False, '"TypeError: Failed to fetch"')
+    assert session.close() == 0
+
+
 def test_a_cors_response_shows_only_the_header_names_that_cors_lets_through(session: _Session) -> None:
     # The Session says the response's tainting is cors, which a redirect back to the document's origin keeps.
     session.start()
@@ -1306,7 +1363,7 @@ def test_a_document_of_a_session_runs_in_a_context_of_its_own_and_ends_waiting_c
     _body(session, 0, b"<p>new</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
     assert session.evaluate("[typeof before, document.body.innerHTML]") == (False, '["undefined","<p>new</p>"]')
 
 
@@ -1318,7 +1375,7 @@ def test_notification_permission_is_denied_where_the_document_is_not_a_secure_co
     _body(session, 0, b"<p>insecure</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
     script = """(async () => {
         const seen = [isSecureContext, Notification.permission];
         const answer = Notification.requestPermission((permission) => seen.push("callback " + permission));
@@ -1338,7 +1395,7 @@ def test_permissions_are_denied_where_the_document_is_not_a_secure_context(sessi
     _body(session, 0, b"<p>insecure</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
     names = [
         "accelerometer",
         "background-fetch",
@@ -1406,7 +1463,7 @@ def test_a_documents_feature_policy_allows_what_chromes_allows(session: _Session
     _body(session, 0, b"<p>policy</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
     script = """(() => {
         const p = document.featurePolicy;
         return [[p.allowsFeature("camera"), p.allowsFeature("autoplay"), p.allowsFeature("unknown"),
@@ -1432,7 +1489,7 @@ def _load_policy_page(session: _Session, url: str) -> None:
     _body(session, 0, b"<p>policy</p>")
     assert session.receive()[0] == _CREDIT
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
 
 
 _UNLOAD_SCRIPT = """(() => {
@@ -1716,7 +1773,7 @@ def test_a_page_decodes_its_document_as_utf8_across_the_pieces_it_comes_in(sessi
         _body(session, 0, piece)
         assert session.receive() == (_CREDIT, struct.pack("<QI", 0, len(piece)))
     _end(session, 0)
-    assert session.receive() == (_LOADED, b"")
+    assert session.receive() == (_LOADED, _DOCUMENT)
 
     assert session.evaluate("document.getElementById('text').textContent") == (False, '"café 𝄞"')
     assert session.evaluate("document.body.firstChild.nodeName") == (False, '"P"')

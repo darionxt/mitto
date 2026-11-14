@@ -22,8 +22,8 @@ Each Persona is one file, `src/mitto/personas/NAME.json`, which [`src/mitto/_per
 | `release` | The Chrome Release |
 | `operating_system` | The operating system the Persona claims, independent of the **Host** |
 | `accept_language` | The value for `Accept-Language`, which is a Session setting |
-| `user_agent` | The value for `User-Agent` where no request's headers reach: a `CONNECT` and a fetch for a certificate. `//net` takes it from the Session's context. It is also the `User-Agent` line of each kind |
-| `kinds.KIND.credentials_mode` | `same-origin`, as a page's `fetch()` has unless it asks otherwise, or `include`, as an element has |
+| `user_agent` | The value for `User-Agent` where no request's headers reach: a `CONNECT` and a fetch for a certificate. `//net` takes it from the Session's context. It is also the `User-Agent` line of each kind but `worker`, whose line `//net` adds after `Referer`, as it does for the script of a worker that Chrome's browser asks for |
+| `kinds.KIND.credentials_mode` | `same-origin`, as a page's `fetch()` has unless it asks otherwise, as an `XMLHttpRequest` has without `withCredentials` and as an element in cors mode has, such as a font, or `include`, as another element has |
 | `kinds.KIND.priority` | The request's priority, such as `HIGHEST`, as in the C API's `MITTO_PRIORITY_HIGHEST` |
 | `kinds.KIND.priority_incremental` | Whether the response can be used as it arrives |
 | `kinds.KIND.headers` | `name: value` lines in the order Chrome sends them, with the case HTTP/1.1 sends |
@@ -87,12 +87,17 @@ From the page and the URL of each hop, the native core sets these, in code porte
 | `Referer` | `strict-origin-when-cross-origin`: the whole page on its own origin, its origin elsewhere, and nothing from HTTPS to HTTP. Once it has shrunk it stays that way, also when a redirect comes back |
 | `Origin` on a fetch | The page's origin, for another origin or for a method but `GET` and `HEAD`. Once a redirect has left an origin other than the page's for yet another, it is `null` for the rest of the chain |
 | `Origin` on a navigation | The page's origin for a method but `GET` and `HEAD`, or `null` with no page or from HTTPS to HTTP. `//net` makes it `null` at a redirect to another origin |
-| `Origin` on a script or image | Nothing for `GET` and `HEAD` |
-| `Sec-Fetch-Storage-Access` | `active` with `credentials_mode` of `include`, for a URL that is not of the same site as the page. So a cross-site `script` or `image` sends it, and a `fetch()` does not. A navigation becomes the first party, so it does not either |
+| `Origin` on a script or image | Nothing for `GET` and `HEAD`, nor on a `style`, `favicon` or `worker` |
+| `Origin` on a font or a module | The page's origin, wherever it goes, because Blink sets it for an element in cors mode, in its place among Blink's lines. `//net` and the CORS rules of a `fetch` change it on a redirect, as for a `fetch` |
+| `Origin` on an `xhr` or a `beacon` | As on a `fetch`: the page's origin for another origin or for a method but `GET` and `HEAD`, so a beacon's `POST` sends it to its own origin too |
+| `Sec-Fetch-Storage-Access` | `active` with `credentials_mode` of `include`, for a URL that is not of the same site as the page. So a cross-site `script`, `image`, `style`, `beacon`, `favicon` or `iframe` sends it, and a `fetch()`, an `xhr`, a font or a module does not. A navigation becomes the first party, so it does not either |
+| Mode `same-origin`, which a `worker` has | The request fails with `ERR_FAILED` before it goes to another origin than the page's, at its start or at a redirect, as Chrome's `CorsURLLoader` fails it |
 | `sec-ch-*` and `Sec-Fetch-*` | Only for a URL that is potentially trustworthy, so not over plain HTTP to a host that is not local. A redirect to such a URL takes them away. A redirect from one adds `Sec-Fetch-*` on any kind, and `sec-ch-*` only on a navigation |
 | The place of `sec-ch-*` | A navigation sends them again on each hop, after `Sec-Fetch-Dest`. A subresource keeps them where they are |
 
 `//net` decides from the same page which cookies go ([cookies](parity.md#which-site-a-request-belongs-to)) and which connections a request can use ([partitioning](parity.md#partitioning)).
+
+An `iframe` is the navigation of a frame whose parent is the page of `initiator=`, a top-level page, or without one the page at the root of the origin of its URL. The native core gives it what Chrome's `NavigationRequest` gives a frame: the page's site for cookies on every hop, and an `IsolationInfo` of a frame, with the page's origin as the top frame's and its URL's origin as the frame's, which `//net` moves on each redirect. So a frame of another site gets only `SameSite=None` cookies and sets no others, and says its storage access, as the Baselines of a frame show.
 
 ## Client hints
 
@@ -113,6 +118,8 @@ Chrome sends `sec-ch-ua`, `sec-ch-ua-mobile` and `sec-ch-ua-platform` to everyon
 | A script, image or fetch to its page's origin | What that origin has asked for, at its start |
 | A script, image or fetch to another origin | None, because a page's permissions policy keeps them for its own origin and a Session has no other policy to go by |
 | One of those on a redirect | Keeps what it has within its page's origin. Elsewhere it loses them, and does not get them back if it returns |
+| An `iframe` | What its page's origin has asked for, to that origin alone, as a subresource, and on each hop in a navigation's way and order. Its own origin's `Accept-CH`, `Critical-CH` and frame in ALPS count for nothing, because only the outermost main frame parses them |
+| A `worker` | None: Chrome's browser asks for a worker's script with no hint |
 
 Over plain HTTP to a host that is not local, a request sends no client hints at all.
 
@@ -175,6 +182,21 @@ uv run python -m tools.release persona RELEASE
 
 It takes away what the table above leaves to `//net`. Over the three protocols, a Request Kind differs only in what `//net` adds and in the case of its names, so one list of lines serves all three. The lines of a body come from the cases `navigation_form_*`, `fetch_post_text_*` and `fetch_post_json_same_origin`, in `cases/`, and the client hints from `client_hints_form`, `client_hints_fetch_post`, `client_hints_script` and `client_hints_image`, with `<machine>` for [the hints that follow the machine](#what-they-say). The priority comes from the `priority` header over HTTP/2. The script also holds `credentials_mode` and the `Content-Type` of a body that no Recording Case sends, and refuses a Baseline whose `Content-Type` is not its own. [`tests/release`](../tests/release) checks that it writes each file in the repository byte for byte.
 
+The kinds after the first four come from [the cases of documents](baselines.md#documents), in `documents/`, which hold no hint but those that go by default. Blink holds the lines of every subresource in one map, so their hints come from the case of a kind that has them all:
+
+| Kind | Its lines, priority and `Sec-Fetch-Site` | Its body | Its hints |
+| --- | --- | --- | --- |
+| `style` | `style` | None | `client_hints_script` |
+| `font` | `font` | None | `client_hints_script` |
+| `module` | `module` | None | `client_hints_script` |
+| `xhr` | `xhr_post_text`, and `xhr_get` for the priority | `xhr_post_text` | `client_hints_fetch_post` |
+| `worker` | `worker` | None | None |
+| `beacon` | `beacon_text`, and `beacon_blob`, a body with no `Content-Type`, for the priority | `beacon_text`. A page writes JSON as text | `client_hints_fetch_post` |
+| `iframe` | `frame_same_origin` | None | `client_hints_navigation`, in a navigation's order, but `Sec-Fetch-User`, which a frame's navigation has not |
+| `favicon` | `favicon` | None | `client_hints_image` |
+
+A `User-Agent` that comes after `Referer` in a Baseline is `//net`'s, as on a worker's script, so the kind has no line for it.
+
 `page_features`, [below](#what-a-page-of-each-persona-turns-on-and-off), comes from another script, and the file keeps it when this one writes the rest.
 
 [`tests/test_persona.py`](../tests/test_persona.py) compares the file, with the values of the Machine of mitto 0.1, with every Baseline of the main **Request Kinds** of its Chrome Release, including HTTP/3, and with the order and the values of those cases, without a native library. It writes out what `//net` adds. The [Parity Checks](parity.md) then show what `//net` and the native core really do. In the cases of a body, the value of `Sec-Fetch-Site` is left out there, because the native core sets it from the page.
@@ -235,7 +257,7 @@ A Page of an older Persona can turn off a feature, but it cannot take away what 
 - **Members.** None is missing or extra. Every interface and member that 157 has and 155 or 156 lacks is behind a runtime-enabled feature, in the walks, in [the Baselines of the Script Fingerprint](baselines.md#what-differs-from-chrome-157-in-a-page) and in the diff of Blink's IDL files between the tags. The features that only the older release's file has and has on, 34 for 155 and 18 for 156, shipped for good: the Engine Release has their members with no feature, such as `CSSContainerRule.prototype.conditions`, or they change behaviour only.
 - **The order of members.** Turning a feature off cannot move a member, so a page of 155 or 156 lists these in 157's order, which is a Known Gap of those Personas, for [#206](https://github.com/darionxt/mitto/issues/206). Only four interface objects moved in 156, and the other moves came with 157:
   - On the global, the interface objects `ProgressEvent`, `Lock` and `LockManager` moved from 156 to 157, and `Clipboard`, `ClipboardItem`, `ServiceWorker` and `ServiceWorkerContainer` from 155 to 156. For the first five, Blink's IDL files moved the decision whether a context exposes them between the template and each context.
-  - In prototypes, members that 155 and 156 install after `constructor`, with what each context decides, come before it in 157, with what the template holds ([runtime.md](runtime.md#how-the-generator-works)): `pseudoTarget` of `UIEvent`, `AnimationEvent` and `TransitionEvent`, `onerror` of `Worker` and `SharedWorker`, `closed` and `cancel` of `ReadableStreamDefaultReader` and `ReadableStreamBYOBReader`, `ink`, `mediaCapabilities`, `permissions` and `mediaSession` of `Navigator`, most of the members that modules add to `ServiceWorkerRegistration`, and `toJSON` of `PerformanceSoftNavigation`, `PerformancePaintTiming`, `PerformanceElementTiming`, `LargestContentfulPaint` and `InteractionContentfulPaint`. None of their features changed between the releases, and Blink's `bind_gen` did, so a Persona would need its release's own phase of each member, which no feature gives.
+  - In prototypes, members that 155 and 156 install after `constructor`, with what each context decides, come before it in 157, with what the template holds ([runtime.md](runtime.md#how-the-generator-works)): `pseudoTarget` of `UIEvent`, `AnimationEvent` and `TransitionEvent`, `onerror` of `Worker` and `SharedWorker`, `closed` and `cancel` of `ReadableStreamDefaultReader` and `ReadableStreamBYOBReader`, `ink`, `mediaCapabilities`, `permissions` and `mediaSession` of `Navigator`, most of the members that modules add to `ServiceWorkerRegistration`, and `toJSON` of `PerformanceSoftNavigation`, `PerformancePaintTiming`, `PerformanceElementTiming`, `LargestContentfulPaint` and `InteractionContentfulPaint`. None of their features changed between the releases, and Blink's `bind_gen` did, so a Persona would need its release's own phase of each member, which no feature gives. A dedicated worker shows two more moves of this kind, on interfaces that only a worker has ([baselines.md](baselines.md#what-differs-from-chrome-157-in-frames-and-workers)): `mediaCapabilities` and `permissions` of `WorkerNavigator`, as of `Navigator`, and of `WorkerGlobalScope`, `isSecureContext`, `crossOriginIsolated`, `scheduler` and the operations of the `WindowOrWorkerGlobalScope` mixin but `createImageBitmap` and `fetch`.
   - `vendor`, `vendorSub` and `productSub` of `Navigator` moved within the members that are always there, as 157 moved them into the `NavigatorID` mixin.
 
   The walks leave out the prototypes of `Node`'s interfaces, and the Baselines of the Script Fingerprint, which have them, show that none of them moved ([baselines.md](baselines.md#what-differs-from-chrome-157-in-a-page)).
@@ -252,6 +274,8 @@ Baselines record a fresh connection that goes well. Everything else is the Engin
 | Closing an HTTP/2 session after a protocol error, in `net/spdy/spdy_session.cc` | When a server breaks the protocol |
 | `HttpCacheZstdCompression` and `HttpCacheZstdDecompression` by default from 157, and `LogicalClearHttpCache` from 156 | What a [cache](parity.md#the-http-cache) keeps on disk, and never on the wire |
 | A 206 response that runs past the range asked for fails with `ERR_CONTENT_LENGTH_MISMATCH` instead of going into the cache, in `net/http/partial_data.cc`, `http_cache_writers.cc` and `http_cache_transaction.cc`. 157.0.8103.39 and 156.0.8078.80 have it, and 155.0.8059.86 does not | A Session with a cache, when a server sends more than the range that a request asked for |
+
+No Baseline holds a hint beyond those that go by default on a request of the kinds after the first four, so where their hints go, once a server has asked, comes from the cases above and from Chrome's code: a frame's in a navigation's order, and a font's or a module's in Blink's map with `Origin` first, which Blink sets before it adds the others ([the order](parity.md#the-order-of-a-subresources-lines)).
 
 ## A machine of its own
 

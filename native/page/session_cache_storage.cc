@@ -7,7 +7,9 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/window.h"
 #include "mitto/page_messages.h"
+#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 namespace {
@@ -64,8 +66,15 @@ void SessionCacheStorage::SetSend(
 }
 
 void SessionCacheStorage::Send(const PageCacheStorageCall& call) {
-  send_.Run(EncodeFrame(PageMessage::kCacheStorage,
-                        EncodeCacheStorageCall(call)));
+  // The Page has one document at a time, whose caches these are. A call that
+  // a script makes comes from its window's context; the parts of a put's
+  // body, and what a collected object lets go, come from tasks outside it,
+  // and name the document that asked last.
+  v8::Isolate* const isolate = v8::Isolate::TryGetCurrent();
+  if (isolate && isolate->InContext()) {
+    document_ = Window::Current().DocumentId();
+  }
+  send_.Run(EncodeCacheStorage(document_, call));
 }
 
 void SessionCacheStorage::Ask(PageCacheStorageCall call, Answer answer) {

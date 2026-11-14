@@ -26,6 +26,7 @@
 #include "build/build_config.h"
 #include "mitto/dom/broadcast_channel_service.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/window.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -258,6 +259,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreListen:
       case PageMessage::kBroadcast:
       case PageMessage::kCacheStorage:
+      case PageMessage::kDocumentCommitted:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -318,7 +320,8 @@ class SessionLink final : public PageChannel::Delegate
           broadcast.locked = locked;
           broadcast.data.assign(data.begin(), data.end());
           if (BroadcastFits(broadcast)) {
-            send.Run(EncodeBroadcast(PageMessage::kBroadcast, broadcast));
+            send.Run(
+                EncodeBroadcast(Window::Current().DocumentId(), broadcast));
           }
         },
         send));

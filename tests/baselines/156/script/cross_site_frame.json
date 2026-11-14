@@ -1,0 +1,117 @@
+{
+"format": 1,
+"differs from": "page",
+"objects": [
+{"path": "globalThis",
+ "get": [
+  ["top", ["object", "top"]],
+  ["parent", ["object", "top"]],
+  ["origin", "<cross-site-origin>"],
+  ["innerWidth", 300],
+  ["innerHeight", 150]
+ ]
+},
+{"path": "Notification",
+ "get": [
+  ["permission", "denied"]
+ ]
+},
+{"path": "document",
+ "get": [
+  ["URL", "<cross-site-origin>/script/cross-site-frame/frame"],
+  ["documentURI", "<cross-site-origin>/script/cross-site-frame/frame"],
+  ["domain", "<cross-site-host>"],
+  ["referrer", "<origin>/"],
+  ["fullscreenEnabled", false],
+  ["webkitFullscreenEnabled", false],
+  ["baseURI", "<cross-site-origin>/script/cross-site-frame/frame"]
+ ]
+},
+{"path": "location",
+ "get": [
+  ["href", "<cross-site-origin>/script/cross-site-frame/frame"],
+  ["origin", "<cross-site-origin>"],
+  ["host", "<cross-site-authority>"],
+  ["hostname", "<cross-site-host>"],
+  ["pathname", "/script/cross-site-frame/frame"]
+ ]
+},
+{"path": "top", "kind": "instance", "tag": "Object", "proto": null,
+ "own": [
+  ["0", "-ec", ["object", "globalThis"]],
+  ["window", "-c", ["function", 0], null],
+  ["self", "-c", ["function", 0], null],
+  ["location", "-c", ["function", 0], ["function", 1]],
+  ["closed", "-c", ["function", 0], null],
+  ["frames", "-c", ["function", 0], null],
+  ["length", "-c", ["function", 0], null],
+  ["top", "-c", ["function", 0], null],
+  ["opener", "-c", ["function", 0], null],
+  ["parent", "-c", ["function", 0], null],
+  ["blur", "--c", ["function", 0]],
+  ["close", "--c", ["function", 0]],
+  ["focus", "--c", ["function", 0]],
+  ["postMessage", "--c", ["function", 1]],
+  ["then", "--c", ["undefined"]],
+  ["@@toStringTag", "--c", ["undefined"]],
+  ["@@hasInstance", "--c", ["undefined"]],
+  ["@@isConcatSpreadable", "--c", ["undefined"]]
+ ],
+ "get": [
+  ["window", ["object", "top"]],
+  ["self", ["object", "top"]],
+  ["location", ["object", "top.location"]],
+  ["closed", false],
+  ["frames", ["object", "top"]],
+  ["length", 1],
+  ["top", ["object", "top"]],
+  ["opener", null],
+  ["parent", ["object", "top"]]
+ ]
+},
+{"path": "visualViewport",
+ "get": [
+  ["width", 300],
+  ["height", 150]
+ ]
+},
+{"path": "viewport",
+ "get": [
+  ["segments", null]
+ ]
+},
+{"path": "location.ancestorOrigins",
+ "own": [
+  ["0", "-ec", "<origin>"]
+ ],
+ "get": [
+  ["length", 1]
+ ]
+},
+{"path": "navigation.currentEntry",
+ "get": [
+  ["url", "<cross-site-origin>/script/cross-site-frame/frame"]
+ ]
+},
+{"path": "top.location", "kind": "instance", "tag": "Object", "proto": null,
+ "own": [
+  ["href", "-c", null, ["function", 1]],
+  ["replace", "--c", ["function", 1]],
+  ["then", "--c", ["undefined"]],
+  ["@@toStringTag", "--c", ["undefined"]],
+  ["@@hasInstance", "--c", ["undefined"]],
+  ["@@isConcatSpreadable", "--c", ["undefined"]]
+ ]
+}
+],
+"gone": [
+"viewport.segments",
+"viewport.segments[\"0\"]"
+],
+"values": {
+"matchMedia(): the keywords that match": {"value": {"display-mode": ["browser"], "display-state": "<machine>", "resizable": [], "orientation": ["landscape"], "pointer": "<machine>", "any-pointer": "<machine>", "hover": "<machine>", "any-hover": "<machine>", "scan": [], "color-gamut": "<machine>", "inverted-colors": "<machine>", "prefers-color-scheme": "<machine>", "prefers-contrast": "<machine>", "prefers-reduced-motion": "<machine>", "dynamic-range": "<machine>", "video-dynamic-range": "<machine>", "prefers-reduced-data": [], "prefers-reduced-transparency": "<machine>", "forced-colors": "<machine>", "navigation-controls": [], "device-posture": ["continuous"], "overflow-inline": ["scroll"], "overflow-block": ["scroll"], "update": ["fast"], "scripting": ["enabled"]}},
+"matchMedia(): what agrees with the window and the screen": {"value": {"width = innerWidth": true, "height = innerHeight": true, "aspect-ratio = innerWidth / innerHeight": true, "device-width = screen.width": "<machine>", "device-height = screen.height": "<machine>", "device-aspect-ratio = screen.width / screen.height": "<machine>", "resolution = devicePixelRatio": true, "-webkit-device-pixel-ratio = devicePixelRatio": true}},
+"navigator.permissions.query(): the state of each": {"value": {"accelerometer": {"value": "granted"}, "background-fetch": {"value": "prompt"}, "background-sync": {"value": "granted"}, "camera": {"value": "denied"}, "captured-surface-control": {"value": "denied"}, "clipboard-read": {"value": "denied"}, "clipboard-write": {"value": "denied"}, "display-capture": {"value": "denied"}, "fullscreen": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': Fullscreen Permission only supports allowWithoutGesture:true."}, "geolocation": {"value": "denied"}, "gyroscope": {"value": "granted"}, "idle-detection": {"value": "denied"}, "keyboard-lock": {"value": "granted"}, "local-fonts": {"value": "denied"}, "local-network-access": {"value": "denied"}, "magnetometer": {"value": "granted"}, "microphone": {"value": "denied"}, "midi": {"value": "denied"}, "notifications": {"value": "denied"}, "payment-handler": {"value": "granted"}, "persistent-storage": {"value": "prompt"}, "pointer-lock": {"value": "granted"}, "screen-wake-lock": {"value": "denied"}, "speaker-selection": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': The Speaker Selection API is not enabled."}, "storage-access": {"value": "prompt"}, "system-wake-lock": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': System Wake Lock is not enabled."}, "top-level-storage-access": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': The requested origin is invalid."}, "web-app-installation": {"rejects": "TypeError: Failed to execute 'query' on 'Permissions': The Web App Install API is not enabled."}, "window-management": {"value": "denied"}}},
+"document.featurePolicy.allowedFeatures()": {"value": ["ch-save-data", "deferred-fetch-minimal", "ch-ua", "private-state-token-issuance", "ch-ua-platform", "gamepad", "aria-notify", "ch-ua-high-entropy-values", "ch-ua-mobile", "private-state-token-redemption", "storage-access", "sync-xhr", "picture-in-picture", "media-playback-while-not-visible"]}
+}
+}

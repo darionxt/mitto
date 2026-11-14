@@ -191,13 +191,11 @@ struct PageCacheStorage::StoredBody {
 PageCacheStorage::PageCacheStorage(CacheStorageContext& context,
                                    StorageQuota& quota,
                                    Send send,
-                                   Refuse refuse,
-                                   StorageKey storage_key)
+                                   Refuse refuse)
     : context_(context),
       quota_(quota),
       send_(std::move(send)),
-      refuse_(std::move(refuse)),
-      storage_key_(std::move(storage_key)) {}
+      refuse_(std::move(refuse)) {}
 
 PageCacheStorage::~PageCacheStorage() {
   // Nothing that answers may reach this from here on.
@@ -209,22 +207,23 @@ PageCacheStorage::~PageCacheStorage() {
   }
 }
 
-std::optional<std::string> PageCacheStorage::Admit(uint64_t question) {
+bool PageCacheStorage::Admit(uint64_t question,
+                             const std::optional<std::string>& storage_key) {
   if (question <= last_question_) {
     refuse_.Run(base::StrCat({"a Cache API question numbered ",
                               base::NumberToString(question),
                               ", not larger than the one before"}));
-    return std::nullopt;
+    return false;
   }
   last_question_ = question;
-  std::optional<std::string> storage_key = storage_key_.Run();
   if (!storage_key) {
     // Blink throws a SecurityError before it asks, for a document whose
     // origin may not reach the Cache API.
     refuse_.Run(
         "a Cache API call from a document whose origin may not reach caches");
+    return false;
   }
-  return storage_key;
+  return true;
 }
 
 CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
@@ -238,7 +237,8 @@ CacheStorageCache* PageCacheStorage::FindCache(uint64_t cache) {
   return found->second.value();
 }
 
-void PageCacheStorage::OnCall(PageCacheStorageCall call) {
+void PageCacheStorage::OnCall(PageCacheStorageCall call,
+                              const std::optional<std::string>& storage_key) {
   switch (call.op) {
     case CacheStorageCallOp::kBodyPart:
       OnBodyPart(std::move(call));
@@ -263,8 +263,7 @@ void PageCacheStorage::OnCall(PageCacheStorageCall call) {
     default:
       break;
   }
-  const std::optional<std::string> storage_key = Admit(call.question);
-  if (!storage_key) {
+  if (!Admit(call.question, storage_key)) {
     return;
   }
   const uint64_t question = call.question;

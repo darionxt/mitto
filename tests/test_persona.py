@@ -24,27 +24,53 @@ from tools.capture.normal_form import (
 from tools.capture.normal_form import MACHINE_PLACEHOLDER as NORMAL_FORM_MACHINE_PLACEHOLDER
 from tools.parity import BASELINES_DIRECTORY, Baseline, load_baselines
 from tools.parity.replay import REPLAYS
+from tools.release.persona import KIND_CASES
 
 # The Baselines hold the platform version of the Machine of mitto 0.1, which the normal form does not hide yet.
 MITTO_0_1 = Machine.named("mitto-0.1")
 PERSONAS = {release: load_persona(name).with_machine(MITTO_0_1) for release, name in WINDOWS_PERSONAS.items()}
 ALL_BASELINES = load_baselines(BASELINES_DIRECTORY)
-BASELINES = [baseline for baseline in ALL_BASELINES if baseline.case in {kind.value for kind in RequestKind}]
+MAIN_KINDS = [RequestKind(kind.value) for kind in CaptureRequestKind]
+BASELINES = [baseline for baseline in ALL_BASELINES if baseline.case in {kind.value for kind in MAIN_KINDS}]
+_KINDS_BY_CASE = {case: RequestKind(kind) for kind, case in KIND_CASES.items()}
+KIND_BASELINES = [baseline for baseline in ALL_BASELINES if baseline.case in _KINDS_BY_CASE]
+"""The Baselines of each Request Kind's own request, the main kinds' and those of the documents runs."""
+NEW_KIND_BASELINES = [baseline for baseline in KIND_BASELINES if baseline not in BASELINES]
+
+# A worker's script comes from the browser, which sends it no hints, and //net gives it User-Agent after Referer.
+WORKER = RequestKind.WORKER
+KINDS_WITH_HINTS = [kind for kind in RequestKind if kind is not WORKER]
 
 _CLIENT_HINTS_PREFIX = "client_hints_"
 
-# A Baseline of a refusal holds no headers, and one that has hints depends on what an origin asked for.
+
+def _method(baseline: Baseline) -> str | None:
+    """Return the method of a Baseline's request, from its request line over HTTP/1.1 and its :method otherwise."""
+    request = baseline.fingerprint["request"]
+    if not isinstance(request, dict):
+        return None
+    line = request.get("request_line")
+    if isinstance(line, str):
+        return line.split(" ", 1)[0]
+    headers = request.get("headers")
+    pseudo = [str(item) for item in headers if str(item).startswith(":method: ")] if isinstance(headers, list) else []
+    return pseudo[0].removeprefix(":method: ") if pseudo else None
+
+
+# A Baseline of a refusal holds no headers, one that has hints depends on what an origin asked for, and a preflight is
+# the native core's own request.
 BODY_BASELINES = [
     baseline
     for baseline in ALL_BASELINES
     if REPLAYS[baseline.case].body
     and baseline.fingerprint["request"] != {"refused": True}
     and not baseline.case.startswith(_CLIENT_HINTS_PREFIX)
+    and _method(baseline) == REPLAYS[baseline.case].method
 ]
 
 _ANY_URL = "https://example.test:8444/any/path?query"
 
-# What //net adds, and what says where a request went.
+# What //net adds, what says where a request went, and what the native core adds for a request that leaves its site.
 _NOT_FROM_THE_PERSONA = {
     "host",
     "connection",
@@ -53,6 +79,7 @@ _NOT_FROM_THE_PERSONA = {
     "accept-encoding",
     "accept-language",
     "priority",
+    "sec-fetch-storage-access",
 }
 
 # The native core gives this line its value, from the Initiator, and the Parity Checks show that value. The line still has
@@ -87,11 +114,20 @@ _RANDOM_BOUNDARY = re.compile(r"(----WebKitFormBoundary)[0-9A-Za-z]{16}")
 _DEFAULT_URGENCY = 3
 
 # What //net makes of a request's priority: the urgency for the priority header, and the HTTP/2 stream weight.
-_URGENCY_AND_WEIGHT = {Priority.HIGHEST: (0, 256), Priority.MEDIUM: (1, 220), Priority.LOWEST: (3, 147)}
+_URGENCY_AND_WEIGHT = {
+    Priority.HIGHEST: (0, 256),
+    Priority.MEDIUM: (1, 220),
+    Priority.LOWEST: (3, 147),
+    Priority.IDLE: (4, 110),
+}
+
+
+def _kind(baseline: Baseline) -> RequestKind:
+    return _KINDS_BY_CASE[baseline.case]
 
 
 def _defaults(baseline: Baseline) -> RequestDefaults:
-    return PERSONAS[baseline.release].request_defaults(RequestKind(baseline.case))
+    return PERSONAS[baseline.release].request_defaults(_kind(baseline))
 
 
 def _priority_field(defaults: RequestDefaults) -> str:
@@ -126,11 +162,38 @@ def _name(baseline: Baseline) -> str:
 
 
 def test_the_personas_and_the_baselines_cover_the_same_chrome_releases_request_kinds_and_protocols() -> None:
-    found = {(baseline.release, baseline.case, baseline.protocol) for baseline in BASELINES}
+    found = {(baseline.release, _kind(baseline), baseline.protocol) for baseline in KIND_BASELINES}
 
-    assert found == set(
-        itertools.product(WINDOWS_PERSONAS, (kind.value for kind in RequestKind), (HTTP1, HTTP2, HTTP3))
-    )
+    assert found == set(itertools.product(WINDOWS_PERSONAS, RequestKind, (HTTP1, HTTP2, HTTP3)))
+
+
+def _keeps_origin(baseline: Baseline) -> bool:
+    """Return whether the native core keeps the Persona's Origin line on a kind's own request: for a method but GET and
+    HEAD, and for an element in cors mode, whose Origin Blink sets."""
+    fetch = _defaults(baseline)["fetch"]
+    return _method(baseline) not in {"GET", "HEAD"} or (fetch.mode == "cors" and fetch.destination != "empty")
+
+
+def _without_user_agent_after_referer(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    names = [name.lower() for name, _ in lines]
+    if "user-agent" in names and "referer" in names and names.index("user-agent") > names.index("referer"):
+        return [line for line in lines if line[0].lower() != "user-agent"]
+    return lines
+
+
+@pytest.mark.parametrize("baseline", NEW_KIND_BASELINES, ids=_name)
+def test_the_lines_of_a_kind_of_a_page_are_those_of_its_baseline_in_their_order(baseline: Baseline) -> None:
+    replay = REPLAYS[baseline.case]
+    built = build_request(PERSONAS[baseline.release], replay.method, _ANY_URL, kind=_kind(baseline), **replay.body)
+    lines = [
+        (name, value)
+        for name, value in until_a_server_asks(built["headers"])
+        if name.lower() != "origin" or _keeps_origin(baseline)
+    ]
+
+    recorded = [(name, value) for name, _, value in (line.partition(": ") for line in _header_lines(baseline))]
+
+    assert _from_the_persona(lines) == _from_the_persona(_without_user_agent_after_referer(recorded))
 
 
 @pytest.mark.parametrize("baseline", BASELINES, ids=_name)
@@ -141,7 +204,7 @@ def test_the_headers_are_those_of_the_baseline_in_its_order(baseline: Baseline) 
     assert request["headers"] == _lines_on_the_wire(baseline)
 
 
-@pytest.mark.parametrize("baseline", [item for item in BASELINES if item.protocol == HTTP2], ids=_name)
+@pytest.mark.parametrize("baseline", [item for item in KIND_BASELINES if item.protocol == HTTP2], ids=_name)
 def test_the_priority_gives_the_http2_weight_of_the_baseline(baseline: Baseline) -> None:
     request = baseline.fingerprint["request"]
     _, weight = _URGENCY_AND_WEIGHT[_defaults(baseline)["priority"]]
@@ -150,7 +213,7 @@ def test_the_priority_gives_the_http2_weight_of_the_baseline(baseline: Baseline)
     assert request["priority"] == {"exclusive": True, "weight": weight}
 
 
-@pytest.mark.parametrize("baseline", [item for item in BASELINES if item.protocol == HTTP3], ids=_name)
+@pytest.mark.parametrize("baseline", [item for item in KIND_BASELINES if item.protocol == HTTP3], ids=_name)
 def test_the_priority_gives_the_http3_priority_update_of_the_baseline(baseline: Baseline) -> None:
     request = baseline.fingerprint["request"]
 
@@ -166,6 +229,14 @@ def test_the_priority_gives_the_http3_priority_update_of_the_baseline(baseline: 
         (RequestKind.FETCH, FetchParams("cors", "empty", "same-origin")),
         (RequestKind.SCRIPT, FetchParams("no-cors", "script", "include")),
         (RequestKind.IMAGE, FetchParams("no-cors", "image", "include")),
+        (RequestKind.STYLE, FetchParams("no-cors", "style", "include")),
+        (RequestKind.FONT, FetchParams("cors", "font", "same-origin")),
+        (RequestKind.MODULE, FetchParams("cors", "script", "same-origin")),
+        (RequestKind.XHR, FetchParams("cors", "empty", "same-origin")),
+        (RequestKind.WORKER, FetchParams("same-origin", "worker", "same-origin")),
+        (RequestKind.BEACON, FetchParams("no-cors", "empty", "include")),
+        (RequestKind.IFRAME, FetchParams("navigate", "iframe", "include")),
+        (RequestKind.FAVICON, FetchParams("no-cors", "image", "include")),
     ],
 )
 def test_a_kind_says_what_chrome_says_of_such_a_request(release: str, kind: RequestKind, fetch: FetchParams) -> None:
@@ -178,11 +249,32 @@ def test_the_persona_says_which_chrome_it_presents(release: str) -> None:
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-@pytest.mark.parametrize("kind", RequestKind)
+@pytest.mark.parametrize("kind", KINDS_WITH_HINTS)
 def test_the_user_agent_is_the_one_of_every_request_kind(release: str, kind: RequestKind) -> None:
     headers = dict(PERSONAS[release].request_defaults(kind)["headers"])
 
     assert headers["User-Agent"] == PERSONAS[release].user_agent
+
+
+@pytest.mark.parametrize("baseline", [item for item in KIND_BASELINES if _kind(item) is WORKER], ids=_name)
+def test_a_workers_script_has_the_user_agent_that_net_adds_after_the_referer(baseline: Baseline) -> None:
+    lines = [
+        (name.lower(), value.strip()) for name, _, value in (line.partition(":") for line in _header_lines(baseline))
+    ]
+    names = [name for name, _ in lines]
+
+    assert "user-agent" not in dict(_defaults(baseline)["headers"])
+    assert names.index("user-agent") == names.index("referer") + 1
+    assert dict(lines)["user-agent"] == PERSONAS[baseline.release].user_agent
+
+
+def _header_lines(baseline: Baseline) -> list[str]:
+    """Return the header lines of a Baseline's request, as text."""
+    request = baseline.fingerprint["request"]
+    assert isinstance(request, dict)
+    headers = request["headers"]
+    assert isinstance(headers, list)
+    return [str(line) for line in headers]
 
 
 @pytest.mark.parametrize("baseline", [item for item in ALL_BASELINES if item.case == "proxy_connect"], ids=_name)
@@ -197,8 +289,8 @@ def test_the_user_agent_is_the_one_that_chrome_sends_in_a_connect(baseline: Base
     ]
 
 
-def test_the_request_kinds_are_those_of_the_capture_kit() -> None:
-    assert [kind.value for kind in RequestKind] == [kind.value for kind in CaptureRequestKind]
+def test_the_main_request_kinds_come_first_as_in_the_capture_kit() -> None:
+    assert list(RequestKind)[: len(MAIN_KINDS)] == MAIN_KINDS
 
 
 def _from_the_persona(lines: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -267,7 +359,7 @@ def test_a_subresource_holds_every_hint_with_the_value_of_the_baseline(baseline:
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-@pytest.mark.parametrize("kind", RequestKind)
+@pytest.mark.parametrize("kind", KINDS_WITH_HINTS)
 def test_a_persona_with_a_machine_says_the_machines_value_for_each_hint_that_follows_it(
     release: str, kind: RequestKind
 ) -> None:
@@ -277,7 +369,7 @@ def test_a_persona_with_a_machine_says_the_machines_value_for_each_hint_that_fol
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-@pytest.mark.parametrize("kind", RequestKind)
+@pytest.mark.parametrize("kind", KINDS_WITH_HINTS)
 def test_a_persona_holds_the_placeholder_for_each_hint_that_follows_the_machine(
     release: str, kind: RequestKind
 ) -> None:
@@ -297,7 +389,7 @@ def test_a_persona_with_a_machine_holds_no_placeholder(release: str, kind: Reque
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)
-@pytest.mark.parametrize("kind", RequestKind)
+@pytest.mark.parametrize("kind", KINDS_WITH_HINTS)
 def test_a_persona_has_every_hint_a_server_can_ask_for_and_that_chrome_sends_of_a_kind(
     release: str, kind: RequestKind
 ) -> None:
@@ -305,6 +397,13 @@ def test_a_persona_has_every_hint_a_server_can_ask_for_and_that_chrome_sends_of_
 
     assert names >= HINTS_A_SERVER_ASKS_FOR | SENT_BY_DEFAULT
     assert names.isdisjoint({"width", "sec-ch-width", "save-data"})
+
+
+@pytest.mark.parametrize("release", WINDOWS_PERSONAS)
+def test_a_workers_script_has_no_hint(release: str) -> None:
+    names = {name.lower() for name, _ in PERSONAS[release].request_defaults(WORKER)["headers"]}
+
+    assert names.isdisjoint(HINTS_A_SERVER_ASKS_FOR | SENT_BY_DEFAULT)
 
 
 @pytest.mark.parametrize("release", WINDOWS_PERSONAS)

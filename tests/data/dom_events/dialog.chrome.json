@@ -1,0 +1,409 @@
+{
+ "defaults": [
+  false,
+  "",
+  "none",
+  0,
+  0,
+  0,
+  0
+ ],
+ "show": [
+  [
+   [
+    "ToggleEvent",
+    "beforetoggle",
+    "closed",
+    "open",
+    false,
+    true,
+    false,
+    true,
+    null,
+    true
+   ],
+   "sync",
+   [
+    "ToggleEvent",
+    "toggle",
+    "closed",
+    "open",
+    false,
+    false,
+    false,
+    true,
+    null,
+    true
+   ]
+  ],
+  true,
+  "<dialog open=\"\"></dialog>",
+  "none"
+ ],
+ "show_canceled": [
+  [
+   "beforetoggle/closed/open/true"
+  ],
+  false
+ ],
+ "show_opened_by_listener": [
+  [
+   "beforetoggle/closed/open/true"
+  ],
+  true
+ ],
+ "show_removed_by_listener": [
+  [
+   "beforetoggle/closed/open/true",
+   "toggle/closed/open/false"
+  ],
+  true
+ ],
+ "show_closed_by_listener": [
+  [
+   "beforetoggle/closed/open/true",
+   "toggle/closed/open/false"
+  ],
+  true,
+  ""
+ ],
+ "show_modal_disconnected": [
+  "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': The element is not in a Document.",
+  false
+ ],
+ "modal": [
+  true,
+  true,
+  true,
+  "closerequest",
+  "InvalidStateError: Failed to execute 'show' on 'HTMLDialogElement': The dialog is already open as a modal dialog, and therefore cannot be opened as a non-modal dialog.",
+  "no error"
+ ],
+ "modal_events": [
+  "beforetoggle/closed/open/true",
+  "toggle/closed/open/false"
+ ],
+ "modal_removed": [
+  true,
+  false,
+  "none"
+ ],
+ "modal_inserted_again": [
+  true,
+  false,
+  "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog."
+ ],
+ "show_then_modal": [
+  "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog.",
+  false,
+  true
+ ],
+ "modal_removed_by_listener": [
+  [
+   "beforetoggle/closed/open/true"
+  ],
+  false,
+  false
+ ],
+ "two_modal": [
+  true,
+  true,
+  2
+ ],
+ "close": [
+  [
+   "ToggleEvent",
+   "beforetoggle",
+   "open",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ],
+  "sync false rv",
+  "again rv",
+  [
+   "ToggleEvent",
+   "toggle",
+   "open",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ],
+  "timeout",
+  [
+   "Event",
+   "close",
+   null,
+   null,
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ],
+  "microtask",
+  "frame"
+ ],
+ "close_then_show": [
+  [
+   "beforetoggle/closed/open/true",
+   "beforetoggle/open/closed/false",
+   "beforetoggle/closed/open/true",
+   "toggle/closed/open/false",
+   "close///false",
+   "close at true 2 false"
+  ],
+  true
+ ],
+ "return_value": [
+  "a",
+  "a",
+  "a",
+  "null",
+  "7",
+  "string",
+  "5",
+  "5"
+ ],
+ "close_in_toggle": [
+  [
+   "beforetoggle/closed/open/true",
+   "toggle/closed/open/false",
+   "closing",
+   "beforetoggle/open/closed/false",
+   "close///false"
+  ],
+  false,
+  "in toggle"
+ ],
+ "open_removed_by_closing_listener": [
+  [
+   "beforetoggle/open/closed/false",
+   "toggle/open/closed/false"
+  ],
+  false,
+  "in toggle"
+ ],
+ "close_in_closing_listener": [
+  [
+   "beforetoggle/open/closed/false",
+   "toggle/open/closed/false",
+   "close///false"
+  ],
+  false,
+  "outer"
+ ],
+ "request_close": [
+  [
+   "Event",
+   "cancel",
+   null,
+   null,
+   false,
+   true,
+   false,
+   true,
+   null,
+   true
+  ],
+  [
+   "ToggleEvent",
+   "beforetoggle",
+   "open",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ],
+  "sync false x",
+  [
+   "ToggleEvent",
+   "toggle",
+   "open",
+   "closed",
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ],
+  [
+   "Event",
+   "close",
+   null,
+   null,
+   false,
+   false,
+   false,
+   true,
+   null,
+   true
+  ]
+ ],
+ "request_close_canceled": [
+  "cancel///true",
+  "again no error",
+  "canceled true ",
+  "cancel///true",
+  "beforetoggle/open/closed/false",
+  "second false ",
+  "toggle/open/closed/false",
+  "close///false"
+ ],
+ "request_close_closed_by_none": [
+  false,
+  "z"
+ ],
+ "request_close_closed": [
+  "no error",
+  ""
+ ],
+ "request_close_disconnected": [
+  "no error",
+  true,
+  ""
+ ],
+ "request_close_inserted_open": [
+  [
+   "cancel///true",
+   "beforetoggle/open/closed/false",
+   "toggle/open/closed/false",
+   "close///false"
+  ],
+  false,
+  "inserted"
+ ],
+ "request_close_open_attribute": [
+  [
+   "cancel///true",
+   "beforetoggle/open/closed/false",
+   "toggle/open/closed/false",
+   "close///false"
+  ],
+  false,
+  "attribute"
+ ],
+ "request_close_in_cancel": [
+  [
+   "cancel///true"
+  ],
+  true,
+  "attribute"
+ ],
+ "reopened_in_cancel": [
+  [
+   "cancel///true",
+   "beforetoggle/open/closed/false",
+   "beforetoggle/closed/open/true",
+   "toggle/open/open/false",
+   "close///false"
+  ],
+  true,
+  "c"
+ ],
+ "reopened_and_requested_in_cancel": [
+  [
+   "cancel///true",
+   "beforetoggle/open/closed/false",
+   "beforetoggle/closed/open/true",
+   "cancel///true",
+   "beforetoggle/open/closed/false",
+   "toggle/open/closed/false",
+   "close///false",
+   "close///false"
+  ],
+  false,
+  "again"
+ ],
+ "removed_in_cancel": [
+  [
+   "cancel///true"
+  ],
+  true,
+  "again"
+ ],
+ "closed_by": [
+  "any=any",
+  "ANY=any",
+  "closeRequest=closerequest",
+  "none=none",
+  "bogus=none",
+  "=none",
+  "none",
+  "closerequest",
+  "closerequest",
+  "any",
+  "any"
+ ],
+ "open_attribute": [
+  [],
+  false
+ ],
+ "open_attribute_then_modal": [
+  "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': The dialog is already open as a non-modal dialog, and therefore cannot be opened as a modal dialog.",
+  false
+ ],
+ "open_removed_from_modal": [
+  false,
+  true,
+  "closerequest"
+ ],
+ "modal_again": [
+  [
+   "beforetoggle/closed/open/true",
+   "toggle/closed/open/false"
+  ],
+  true
+ ],
+ "copy": [
+  true,
+  false,
+  "none"
+ ],
+ "parsed": [
+  true,
+  true,
+  false
+ ],
+ "other_document_show": [
+  "no error",
+  true
+ ],
+ "other_document_request_close": [
+  true,
+  ""
+ ],
+ "other_document_show_modal": [
+  "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': Invalid for dialogs within documents that are not fully active.",
+  false
+ ],
+ "other_document_events": [
+  "beforetoggle/closed/open/true",
+  "beforetoggle/open/closed/false",
+  "toggle/closed/closed/false"
+ ],
+ "adopted": [
+  [
+   "beforetoggle/closed/open/true",
+   "cancel///true",
+   "beforetoggle/open/closed/false",
+   "toggle/closed/closed/false",
+   "close///false"
+  ],
+  false,
+  "adopted"
+ ]
+}

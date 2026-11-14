@@ -61,8 +61,10 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
   url_ = GURL(response.url);
   // The Session's base::TimeTicks, which the Page's clock shares.
   document_ = &runner_->CommitDocument(
-      url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
+      response.number, url_,
+      base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
+  document_id_ = document_->DefaultView()->DocumentId();
   // What DocumentLoader::CommitNavigation() takes from the navigation's
   // timings and response, for the window's Performance Timeline and
   // window.chrome. A restart for Critical-CH is a redirect to where the
@@ -400,7 +402,7 @@ void DocumentLoader::CheckCompleted() {
     window->DispatchEventWithTarget(event, document_.Get());
   }
   timing_->load_event_end = base::TimeTicks::Now();
-  send_.Run(EncodeLoaded());
+  send_.Run(EncodeLoaded(document_id_));
 }
 
 }  // namespace mitto

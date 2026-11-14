@@ -52,6 +52,7 @@ class Range;
 class Text;
 class TreeWalker;
 class Window;
+class WindowTasks;
 
 class Document : public Node {
  public:
@@ -94,6 +95,12 @@ class Document : public Node {
   HTMLElement* Body() const;
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
+  // The tasks that the document's elements queue theirs in, as Blink's
+  // GetTaskRunner(): its window's, or for a document of no window, such as
+  // one that createHTMLDocument() made, the current window's, as such a
+  // document of Blink shares the window's execution context. Null outside a
+  // window's context.
+  WindowTasks* GetTasks() const;
   // The window's location, and none for a document of no window.
   mitto::Location* Location() const;
   // The host of the document's origin, and nothing for an opaque one.
