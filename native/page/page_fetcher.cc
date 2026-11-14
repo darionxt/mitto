@@ -81,7 +81,10 @@ void PageFetcher::Fetch(FetchRequestData data,
   started.client().OnStarted(started);
   // A request has to fit in one frame, so a body that leaves it no room, of
   // nearly 16 MiB, fails as a request that cannot be sent does: a Known Gap.
-  const size_t size = 23 + data.url.size() + data.method.size() +
+  // Beside its URL, method, header lines and body, the frame holds 31 bytes:
+  // the document's ID, the number, the kind, the flags, three sizes and the
+  // byte that says whether a body follows.
+  const size_t size = 31 + data.url.size() + data.method.size() +
                       data.headers.size() + (data.body ? data.body->size() : 0);
   if (size > kMaxPayloadSize) {
     started.client().OnResponseEnded(kFailed);
