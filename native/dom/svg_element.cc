@@ -39,10 +39,62 @@ SVGAnimatedString* SVGElement::Result() {
   return AnimatedString(u"result");
 }
 
-void SVGElement::SynchronizeAnimatedAttribute(const QualifiedName& name,
-                                              const std::u16string& value) {
+SVGStringList* SVGElement::RequiredExtensions() {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(u"requiredExtensions", SVGPairHalf::kNone)) {
+    return static_cast<SVGStringList*>(value);
+  }
+  SVGStringList* const value =
+      SVGStringList::Create(*this, u"requiredExtensions", u' ');
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGStringList* SVGElement::SystemLanguage() {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(u"systemLanguage", SVGPairHalf::kNone)) {
+    return static_cast<SVGStringList*>(value);
+  }
+  SVGStringList* const value =
+      SVGStringList::Create(*this, u"systemLanguage", u',');
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedNumberList* SVGElement::AnimatedNumberList(
+    std::u16string_view attribute) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedNumberList*>(value);
+  }
+  SVGAnimatedNumberList* const value =
+      SVGAnimatedNumberList::Create(*this, attribute);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedLengthList* SVGElement::AnimatedLengthList(
+    std::u16string_view attribute,
+    SVGLengthMode mode) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedLengthList*>(value);
+  }
+  SVGAnimatedLengthList* const value =
+      SVGAnimatedLengthList::Create(*this, attribute, mode);
+  animated_values_.push_back(value);
+  return value;
+}
+
+void SVGElement::SynchronizeAnimatedAttribute(
+    const QualifiedName& name,
+    const std::optional<std::u16string>& value) {
   const base::AutoReset<bool> synchronizing(&synchronizing_, true);
-  SetSynchronizedLazyAttribute(name, value);
+  if (value) {
+    SetSynchronizedLazyAttribute(name, *value);
+  } else {
+    RemoveSynchronizedLazyAttribute(name);
+  }
 }
 
 void SVGElement::AttributeChanged(const QualifiedName& name,

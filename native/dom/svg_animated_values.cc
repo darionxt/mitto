@@ -323,7 +323,7 @@ const std::u16string* SVGAnimatedPropertyBase::AttributeValue() const {
 }
 
 void SVGAnimatedPropertyBase::SynchronizeAttribute(
-    const std::u16string& value) {
+    const std::optional<std::u16string>& value) {
   element_->SynchronizeAnimatedAttribute(
       QualifiedName{.local_name = std::u16string(attribute_)}, value);
 }
@@ -334,6 +334,21 @@ void SVGAnimatedPropertyBase::EnsureFresh() {
   }
   stale_ = false;
   Parse(AttributeValue());
+}
+
+SVGAnimatedListBase::SVGAnimatedListBase(SVGElement& element,
+                                         std::u16string_view attribute)
+    : SVGAnimatedPropertyBase(element, attribute, SVGPairHalf::kNone) {}
+
+void SVGAnimatedListBase::ItemChanged(const void* item) {
+  EnsureFresh();
+  if (Holds(item)) {
+    Synchronize();
+  }
+}
+
+SVGLengthMode SVGAnimatedListBase::LengthMode() const {
+  return SVGLengthMode::kOther;
 }
 
 // static
