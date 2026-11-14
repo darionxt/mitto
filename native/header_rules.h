@@ -40,6 +40,21 @@ bool IsForbiddenMethod(std::string_view method);
 // Upstream: services/network/public/cpp/cors/cors.cc
 bool IsCorsSafelistedMethod(std::string_view method);
 
+// Accept, Accept-Language, Content-Language and Content-Type, in any case: the
+// only names that a request of mode no-cors takes from a script.
+// Upstream: services/network/public/cpp/cors/cors.cc
+bool IsNoCorsSafelistedHeaderName(std::string_view name);
+
+// Range, which a script may delete from a request of mode no-cors.
+// Upstream: services/network/public/cpp/cors/cors.cc
+bool IsPrivilegedNoCorsHeaderName(std::string_view name);
+
+// Whether a request of mode no-cors takes the line `name`: `value` from a
+// script: one of those names, with a value that IsCorsSafelistedHeader()
+// passes.
+// Upstream: services/network/public/cpp/cors/cors.cc
+bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value);
+
 // The response header names that a script reads of a cross-origin response
 // beside those that Access-Control-Expose-Headers names.
 // Upstream: services/network/public/cpp/cors/cors.cc

@@ -83,17 +83,27 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           break;
         case mitto::PageMessage::kRequest:
           CHECK_NE(frame->request.number, mitto::kNavigationRequest);
-          // Only a fetch has a mode, and only a navigation the rest.
-          CHECK(!frame->request.same_origin ||
-                frame->request.kind == mitto::PageRequestKind::kFetch);
+          // Only a navigation has a navigation's flags, only a fetch or a
+          // beacon outlives its document, and only a frame's navigation names
+          // a target.
           CHECK((!frame->request.user_activation && !frame->request.reload) ||
-                frame->request.kind == mitto::PageRequestKind::kNavigation);
+                frame->request.kind == mitto::PageRequestKind::kNavigation ||
+                frame->request.kind == mitto::PageRequestKind::kIframe);
+          CHECK(!frame->request.keepalive ||
+                frame->request.kind == mitto::PageRequestKind::kFetch ||
+                frame->request.kind == mitto::PageRequestKind::kBeacon);
+          CHECK((frame->request.target != 0) ==
+                (frame->request.kind == mitto::PageRequestKind::kIframe));
+          CHECK(!frame->request.no_referrer || frame->request.referrer.empty());
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
+          CHECK(base::IsStringUTF8AllowingNoncharacters(
+              frame->request.referrer));
           CHECK(mitto::IsHttpToken(frame->request.method));
           CHECK(!mitto::IsForbiddenMethod(frame->request.method));
           CHECK_EQ(frame->request.url.size() + frame->request.method.size() +
                        frame->request.headers.size() +
-                       frame->request.body.value_or("").size() + 31,
+                       frame->request.referrer.size() +
+                       frame->request.body.value_or("").size() + 48,
                    payload.size());
           break;
         case mitto::PageMessage::kCredit:

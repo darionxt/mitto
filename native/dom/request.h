@@ -1,8 +1,9 @@
 // The Fetch Standard's Request, with what fetch() sends: its URL, method,
-// header lines and a body, and the signal that aborts it, which follows the
-// signal it is given. Its other members, and RequestInit's members that
-// change how a request goes, such as `cache` or `redirect`, are Known Gaps:
-// a value other than the default throws.
+// header lines and a body, its mode, credentials mode, referrer, referrer
+// policy, priority and keepalive flag, and the signal that aborts it, which
+// follows the signal it is given. Its other members, and RequestInit's members
+// that change how a request goes, such as `cache` or `redirect`, are Known
+// Gaps: a value other than the default throws.
 //
 // Upstream: third_party/blink/renderer/core/fetch/request.h
 // Upstream: third_party/blink/renderer/core/fetch/request.cc
@@ -18,6 +19,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/dom/fetcher.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
@@ -29,12 +31,6 @@ class Headers;
 
 class Request final : public bindings::ScriptWrappable {
  public:
-  // The request's mode, of those that the Runtime has.
-  enum class Mode {
-    kCors,
-    kSameOrigin,
-  };
-
   // `new Request(input, init)`, and the first step of fetch().
   static Request* Create(const bindings::RequestOrUSVString& input,
                          const bindings::RequestInit& init,
@@ -61,7 +57,13 @@ class Request final : public bindings::ScriptWrappable {
 
   // What fetch() uses.
   const GURL& url() const { return url_; }
-  Mode mode() const { return mode_; }
+  FetchMode mode() const { return mode_; }
+  FetchCredentialsMode credentials() const { return credentials_; }
+  // kClientReferrer, kNoReferrer, or a URL of the document's origin.
+  const std::string& referrer() const { return referrer_; }
+  FetchReferrerPolicy referrer_policy() const { return referrer_policy_; }
+  FetchPriorityHint priority() const { return priority_; }
+  bool keepalive() const { return keepalive_; }
   const std::optional<std::string>& body() const { return body_; }
 
  private:
@@ -69,7 +71,12 @@ class Request final : public bindings::ScriptWrappable {
   std::string method_ = "GET";
   cppgc::Member<mitto::Headers> headers_;
   std::optional<std::string> body_;
-  Mode mode_ = Mode::kCors;
+  FetchMode mode_ = FetchMode::kCors;
+  FetchCredentialsMode credentials_ = FetchCredentialsMode::kSameOrigin;
+  std::string referrer_ = kClientReferrer;
+  FetchReferrerPolicy referrer_policy_ = FetchReferrerPolicy::kDefault;
+  FetchPriorityHint priority_ = FetchPriorityHint::kAuto;
+  bool keepalive_ = false;
   cppgc::Member<AbortSignal> signal_;
 };
 

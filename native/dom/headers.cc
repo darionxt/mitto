@@ -87,6 +87,16 @@ void Headers::Append(const std::string& name,
   if (guard_ == Guard::kRequest && IsForbiddenRequestHeader(name, value)) {
     return;
   }
+  // A request of mode no-cors takes a line only if the value that its name
+  // then has passes.
+  if (guard_ == Guard::kRequestNoCors) {
+    const std::optional<std::string> current = GetValue(name);
+    if (!IsNoCorsSafelistedHeader(
+            name, current ? base::StrCat({*current, ", ", normalized})
+                          : std::string(normalized))) {
+      return;
+    }
+  }
   if (guard_ == Guard::kResponse && IsForbiddenResponseHeaderName(name)) {
     return;
   }
@@ -104,6 +114,10 @@ void Headers::Remove(const std::string& name,
     return;
   }
   if (guard_ == Guard::kRequest && IsForbiddenRequestHeader(name, "")) {
+    return;
+  }
+  if (guard_ == Guard::kRequestNoCors && !IsNoCorsSafelistedHeaderName(name) &&
+      !IsPrivilegedNoCorsHeaderName(name)) {
     return;
   }
   if (guard_ == Guard::kResponse && IsForbiddenResponseHeaderName(name)) {
@@ -160,6 +174,10 @@ void Headers::Set(const std::string& name,
     return;
   }
   if (guard_ == Guard::kRequest && IsForbiddenRequestHeader(name, value)) {
+    return;
+  }
+  if (guard_ == Guard::kRequestNoCors &&
+      !IsNoCorsSafelistedHeader(name, normalized)) {
     return;
   }
   if (guard_ == Guard::kResponse && IsForbiddenResponseHeaderName(name)) {

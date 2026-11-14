@@ -629,7 +629,7 @@ v8::Local<v8::Promise> Window::Fetch(
   // Session, which makes the preflight first.
   const bool cross_origin = !document_origin.IsSameOriginWith(request->url());
   if (!fetcher_ ||
-      (cross_origin && request->mode() == Request::Mode::kSameOrigin)) {
+      (cross_origin && request->mode() == FetchMode::kSameOrigin)) {
     std::ignore = resolver->Reject(
         context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
                      isolate, "Failed to fetch")));
@@ -640,11 +640,24 @@ v8::Local<v8::Promise> Window::Fetch(
   data.url = request->url().spec();
   data.headers = request->GetHeaders()->ToLines();
   data.body = request->body();
-  data.same_origin = request->mode() == Request::Mode::kSameOrigin;
-  fetcher_->Fetch(std::move(data),
-                  std::make_unique<FetchLoader>(
-                      isolate, context, resolver,
-                      /*head=*/request->Method() == "HEAD", signal));
+  // A fetch's own are mode cors and credentials same-origin.
+  if (request->mode() != FetchMode::kCors) {
+    data.mode = request->mode();
+  }
+  if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
+    data.credentials = request->credentials();
+  }
+  data.referrer = request->referrer();
+  data.referrer_policy = request->referrer_policy();
+  data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
+                                       /*render_blocking=*/false);
+  data.keepalive = request->keepalive();
+  fetcher_->Fetch(std::move(data), std::make_unique<FetchLoader>(
+                                       isolate, context, resolver,
+                                       /*head=*/request->Method() == "HEAD",
+                                       /*credentials=*/request->credentials() ==
+                                           FetchCredentialsMode::kInclude,
+                                       signal));
   return resolver->GetPromise();
 }
 

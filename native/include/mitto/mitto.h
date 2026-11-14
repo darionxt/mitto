@@ -836,7 +836,8 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //                      "options": {"version": 1, "fetch": {...}, ...}},
 //       "script": {...},
 //       "fetch": {...},
-//       "fetch_with_body": {...}
+//       "fetch_with_body": {...},
+//       ...
 //     }
 //   }
 //
@@ -921,16 +922,22 @@ MITTO_EXPORT void mitto_event_free(MittoEvent* event);
 //   in the order mitto_request_start() takes them, each character at most
 //   U+00FF, and "options", what mitto_request_start() reads, with "fetch" and
 //   without "initiator", "fixed_headers", "referrer", a stream body or
-//   timers. "navigation" is required with "url". The Page's own requests use
-//   "script" and "fetch", with the Page's document as their Initiator, and fail
-//   with ERR_NOT_IMPLEMENTED for a kind that is not here. A fetch() with a body
-//   uses "fetch_with_body", whose Content-Type line is where its Persona puts
-//   it: the script's own Content-Type takes its place, or it goes if the script
-//   gives none. A script's other lines take the places of the template's lines
-//   of their names, and the rest follow, as a caller's headers do. A
-//   cross-origin fetch() reaches the Page only if its response passes the CORS
-//   check for a request without credentials, and one that would need a CORS
-//   preflight fails with ERR_NOT_IMPLEMENTED.
+//   timers, by the Request Kind's name, as RequestKind's values are in Python:
+//   "navigation", "script", "fetch", "image", "style", "font", "module",
+//   "xhr", "worker", "beacon", "iframe" and "favicon". "navigation" is required
+//   with "url". The Page's own requests use the template of their kind, with
+//   the Page's document as their Initiator, and fail with ERR_NOT_IMPLEMENTED
+//   for a kind that is not here. A request with a body uses the kind's name
+//   with "_with_body", such as "fetch_with_body", where there is one, whose
+//   Content-Type line is where its Persona puts it: the script's own
+//   Content-Type takes its place, or it goes if the script gives none. A
+//   script's other lines take the places of the template's lines of their
+//   names, and the rest follow, as a caller's headers do. The mode, credentials
+//   mode, referrer policy, referrer and priority that the Page names take the
+//   place of the template's, and a keepalive request goes on after the Page
+//   has gone. A cross-origin fetch() reaches the Page only if its response
+//   passes the CORS check, after the CORS preflight that the library makes
+//   when it needs one.
 //
 // The Page's requests and cookies are the Session's: its scripts' requests go
 // through the Session's connections and cookies, as a request of their kind

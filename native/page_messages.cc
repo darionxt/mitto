@@ -205,15 +205,30 @@ std::string EncodeDocumentFrame(PageMessage type,
 }
 
 bool IsRequestKind(uint8_t kind) {
-  return kind == static_cast<uint8_t>(PageRequestKind::kScript) ||
-         kind == static_cast<uint8_t>(PageRequestKind::kFetch) ||
-         kind == static_cast<uint8_t>(PageRequestKind::kNavigation);
+  return kind >= static_cast<uint8_t>(PageRequestKind::kScript) &&
+         kind <= static_cast<uint8_t>(PageRequestKind::kFavicon);
 }
 
 // The flags of a request.
-constexpr uint8_t kSameOriginFlag = 1;
+// 1 was a fetch of mode same-origin, which the mode says now.
 constexpr uint8_t kUserActivationFlag = 2;
 constexpr uint8_t kReloadFlag = 4;
+constexpr uint8_t kKeepaliveFlag = 8;
+constexpr uint8_t kSynchronousFlag = 16;
+constexpr uint8_t kNoReferrerFlag = 32;
+constexpr uint8_t kRequestFlags = kUserActivationFlag | kReloadFlag |
+                                  kKeepaliveFlag | kSynchronousFlag |
+                                  kNoReferrerFlag;
+
+// The last value of each byte of a request's fixed part.
+constexpr uint8_t kLastRequestMode = static_cast<uint8_t>(PageRequestMode::kCors);
+constexpr uint8_t kLastCredentialsMode =
+    static_cast<uint8_t>(PageCredentialsMode::kInclude);
+constexpr uint8_t kLastReferrerPolicy =
+    static_cast<uint8_t>(PageReferrerPolicy::kUnsafeUrl);
+// 1 and net::HIGHEST, which the Page program cannot name.
+constexpr uint8_t kLastPriority = 6;
+constexpr uint8_t kLastIncremental = 2;
 
 std::string EncodeInt32(int32_t value) {
   return EncodeUint32(static_cast<uint32_t>(value));
@@ -737,8 +752,57 @@ std::optional<std::string> CheckHeaderLines(std::string_view lines) {
   return std::nullopt;
 }
 
+// Whether a request of `kind` may be in `mode` with `credentials`, which 0
+// leaves to the kind, as the Page's elements and scripts can ask.
+std::optional<std::string> CheckRequestModes(const PageRequest& request) {
+  const PageRequestMode mode = request.mode;
+  const PageCredentialsMode credentials = request.credentials;
+  const bool is_default_mode = mode == PageRequestMode::kKindDefault;
+  switch (request.kind) {
+    case PageRequestKind::kNavigation:
+    case PageRequestKind::kIframe:
+      if ((!is_default_mode && mode != PageRequestMode::kNavigate) ||
+          (credentials != PageCredentialsMode::kKindDefault &&
+           credentials != PageCredentialsMode::kInclude)) {
+        return "a navigation with a mode or credentials mode of its own";
+      }
+      return std::nullopt;
+    case PageRequestKind::kWorker:
+      if (!is_default_mode && mode != PageRequestMode::kSameOrigin) {
+        return "a worker's script in a mode other than same-origin";
+      }
+      return std::nullopt;
+    case PageRequestKind::kFetch:
+      if (mode == PageRequestMode::kNavigate) {
+        return "a fetch in mode navigate";
+      }
+      return std::nullopt;
+    case PageRequestKind::kXhr:
+    case PageRequestKind::kFont:
+    case PageRequestKind::kModule:
+      if (!is_default_mode && mode != PageRequestMode::kCors) {
+        return "a request in a mode that its kind never has";
+      }
+      return std::nullopt;
+    case PageRequestKind::kScript:
+    case PageRequestKind::kImage:
+    case PageRequestKind::kStyle:
+    case PageRequestKind::kBeacon:
+    case PageRequestKind::kFavicon:
+      if (!is_default_mode && mode != PageRequestMode::kNoCors &&
+          mode != PageRequestMode::kCors) {
+        return "a request in a mode that its kind never has";
+      }
+      return std::nullopt;
+  }
+  return "a request of an unknown kind";
+}
+
 base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
-  if (bytes.size() < 9) {
+  // The number, the kind, the flags, the mode, the credentials mode, the
+  // referrer policy, the priority, whether it is incremental, the target.
+  constexpr size_t kFixedSize = 8 + 1 + 1 + 5 + 8;
+  if (bytes.size() < kFixedSize) {
     return base::unexpected(WrongSize("request", bytes.size()));
   }
   PageRequest request;
@@ -752,28 +816,46 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
         {"a request of the unknown kind ", base::NumberToString(kind)}));
   }
   request.kind = static_cast<PageRequestKind>(kind);
-  const uint8_t flags =
-      bytes.size() < 10 ? 0xff : static_cast<uint8_t>(bytes[9]);
-  if (flags & ~(kSameOriginFlag | kUserActivationFlag | kReloadFlag)) {
+  const uint8_t flags = static_cast<uint8_t>(bytes[9]);
+  if (flags & ~kRequestFlags) {
     return base::unexpected("a request with flags that are not ones");
   }
-  request.same_origin = flags & kSameOriginFlag;
   request.user_activation = flags & kUserActivationFlag;
   request.reload = flags & kReloadFlag;
-  bytes.remove_prefix(10);
+  request.keepalive = flags & kKeepaliveFlag;
+  request.synchronous = flags & kSynchronousFlag;
+  request.no_referrer = flags & kNoReferrerFlag;
+  const uint8_t mode = static_cast<uint8_t>(bytes[10]);
+  const uint8_t credentials = static_cast<uint8_t>(bytes[11]);
+  const uint8_t referrer_policy = static_cast<uint8_t>(bytes[12]);
+  request.priority = static_cast<uint8_t>(bytes[13]);
+  request.incremental = static_cast<uint8_t>(bytes[14]);
+  if (mode > kLastRequestMode || credentials > kLastCredentialsMode ||
+      referrer_policy > kLastReferrerPolicy ||
+      request.priority > kLastPriority ||
+      request.incremental > kLastIncremental) {
+    return base::unexpected("a request with a value out of range");
+  }
+  request.mode = static_cast<PageRequestMode>(mode);
+  request.credentials = static_cast<PageCredentialsMode>(credentials);
+  request.referrer_policy = static_cast<PageReferrerPolicy>(referrer_policy);
+  request.target = DecodeUint64(bytes.substr(15, 8));
+  bytes.remove_prefix(kFixedSize);
   std::string_view url;
   std::string_view method;
   std::string_view headers;
+  std::string_view referrer;
   if (!TakeSized(bytes, url) || !TakeSized(bytes, method) ||
-      !TakeSized(bytes, headers) || bytes.empty() ||
-      static_cast<uint8_t>(bytes[0]) > 1 ||
+      !TakeSized(bytes, headers) || !TakeSized(bytes, referrer) ||
+      bytes.empty() || static_cast<uint8_t>(bytes[0]) > 1 ||
       (bytes[0] == 0 && bytes.size() != 1)) {
     return base::unexpected("a request that does not hold what it says");
   }
-  if (!IsText(url)) {
-    return base::unexpected("a request whose URL is not UTF-8");
+  if (!IsText(url) || !IsText(referrer)) {
+    return base::unexpected("a request whose URL or referrer is not UTF-8");
   }
   request.url = std::string(url);
+  request.referrer = std::string(referrer);
   if (!IsHttpToken(method) || IsForbiddenMethod(method)) {
     return base::unexpected("a request with a method that a page cannot send");
   }
@@ -790,22 +872,44 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
   if (request.body && without_body) {
     return base::unexpected("a request with a body and the method GET or HEAD");
   }
-  if (request.kind == PageRequestKind::kScript &&
-      (request.method != "GET" || !request.headers.empty() || request.body ||
-       request.same_origin)) {
+  const bool navigates = request.kind == PageRequestKind::kNavigation ||
+                         request.kind == PageRequestKind::kIframe;
+  const bool fetched_by_an_element =
+      request.kind != PageRequestKind::kFetch &&
+      request.kind != PageRequestKind::kXhr &&
+      request.kind != PageRequestKind::kBeacon;
+  if (fetched_by_an_element &&
+      (request.method != "GET" || !request.headers.empty() || request.body)) {
     return base::unexpected(
-        "a script request with a method, header lines, a body or a mode");
+        navigates ? "a navigation with a method, header lines or a body"
+                  : "a request of an element's kind with a method, header "
+                    "lines or a body");
   }
-  if (request.kind != PageRequestKind::kNavigation &&
-      (request.user_activation || request.reload)) {
+  if (std::optional<std::string> why = CheckRequestModes(request)) {
+    return base::unexpected(*why);
+  }
+  if (request.mode == PageRequestMode::kNoCors &&
+      request.method != "GET" && request.method != "HEAD" &&
+      request.method != "POST") {
+    return base::unexpected("a request of mode no-cors with another method");
+  }
+  if (!navigates && (request.user_activation || request.reload)) {
     return base::unexpected(
         "a request that is not a navigation with a navigation's flags");
   }
-  if (request.kind == PageRequestKind::kNavigation &&
-      (request.method != "GET" || !request.headers.empty() || request.body ||
-       request.same_origin)) {
+  if (request.keepalive && request.kind != PageRequestKind::kFetch &&
+      request.kind != PageRequestKind::kBeacon) {
+    return base::unexpected("keepalive on a request that is not a fetch");
+  }
+  if (request.synchronous && request.kind != PageRequestKind::kXhr) {
+    return base::unexpected("a synchronous request that is not an XHR");
+  }
+  if (request.no_referrer && !request.referrer.empty()) {
+    return base::unexpected("a request with no referrer and a referrer");
+  }
+  if ((request.target != 0) != (request.kind == PageRequestKind::kIframe)) {
     return base::unexpected(
-        "a navigation with a method, header lines, a body or a mode");
+        "a target that only a frame's navigation names, and always names");
   }
   return request;
 }
@@ -1431,23 +1535,28 @@ std::string EncodeKnownGap(std::string_view name) {
 }
 
 std::string EncodeRequest(uint64_t document, const PageRequest& request) {
-  const char kind = static_cast<char>(request.kind);
-  const char flags =
-      static_cast<char>((request.same_origin ? kSameOriginFlag : 0) |
-                        (request.user_activation ? kUserActivationFlag : 0) |
-                        (request.reload ? kReloadFlag : 0));
+  const char fixed[] = {
+      static_cast<char>(request.kind),
+      static_cast<char>((request.user_activation ? kUserActivationFlag : 0) |
+                        (request.reload ? kReloadFlag : 0) |
+                        (request.keepalive ? kKeepaliveFlag : 0) |
+                        (request.synchronous ? kSynchronousFlag : 0) |
+                        (request.no_referrer ? kNoReferrerFlag : 0)),
+      static_cast<char>(request.mode),
+      static_cast<char>(request.credentials),
+      static_cast<char>(request.referrer_policy),
+      static_cast<char>(request.priority),
+      static_cast<char>(request.incremental),
+  };
   const char has_body = request.body ? 1 : 0;
   return EncodeDocumentFrame(
       PageMessage::kRequest, document,
-      base::StrCat({EncodeUint64(request.number), std::string_view(&kind, 1),
-                    std::string_view(&flags, 1),
-                    EncodeUint32(static_cast<uint32_t>(request.url.size())),
-                    request.url,
-                    EncodeUint32(static_cast<uint32_t>(request.method.size())),
-                    request.method,
-                    EncodeUint32(static_cast<uint32_t>(request.headers.size())),
-                    request.headers, std::string_view(&has_body, 1),
-                    request.body.value_or("")}));
+      base::StrCat(
+          {EncodeUint64(request.number), std::string_view(fixed, sizeof(fixed)),
+           EncodeUint64(request.target), EncodeSized(request.url),
+           EncodeSized(request.method), EncodeSized(request.headers),
+           EncodeSized(request.referrer), std::string_view(&has_body, 1),
+           request.body.value_or("")}));
 }
 
 std::string EncodeCancel(uint64_t number) {
