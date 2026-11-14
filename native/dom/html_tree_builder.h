@@ -12,11 +12,9 @@
 //
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.cc
-// Upstream:
-// third_party/blink/renderer/core/html/parser/html_construction_site.cc
+// Upstream: third_party/blink/renderer/core/html/parser/html_construction_site.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_element_stack.cc
-// Upstream:
-// third_party/blink/renderer/core/html/parser/html_formatting_element_list.cc
+// Upstream: third_party/blink/renderer/core/html/parser/html_formatting_element_list.cc
 
 #ifndef MITTO_DOM_HTML_TREE_BUILDER_H_
 #define MITTO_DOM_HTML_TREE_BUILDER_H_

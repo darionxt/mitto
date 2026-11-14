@@ -186,16 +186,7 @@ HtmlTokenizer::~HtmlTokenizer() = default;
 
 void HtmlTokenizer::Append(std::u16string_view input) {
   DCHECK(!finished_);
-  // What is used up goes, once it is half of what is kept.
-  if (input_position_ > 0 && input_position_ >= input_.size() / 2) {
-    input_.erase(0, input_position_);
-    for (size_t& insertion_point : insertion_points_) {
-      insertion_point -= input_position_;
-    }
-    inserted_end_ =
-        inserted_end_ > input_position_ ? inserted_end_ - input_position_ : 0;
-    input_position_ = 0;
-  }
+  DiscardReadInput();
   // The standard's preprocessing of the input stream: CR LF and CR become LF.
   // A CR at the end of one piece and an LF at the start of the next are one.
   input_.reserve(input_.size() + input.size());
@@ -211,6 +202,20 @@ void HtmlTokenizer::Append(std::u16string_view input) {
 
 void HtmlTokenizer::Finish() {
   finished_ = true;
+}
+
+void HtmlTokenizer::DiscardReadInput() {
+  // What is used up goes, once it is half of what is kept.
+  if (input_position_ == 0 || input_position_ < input_.size() / 2) {
+    return;
+  }
+  input_.erase(0, input_position_);
+  for (size_t& insertion_point : insertion_points_) {
+    insertion_point -= input_position_;
+  }
+  inserted_end_ =
+      inserted_end_ > input_position_ ? inserted_end_ - input_position_ : 0;
+  input_position_ = 0;
 }
 
 void HtmlTokenizer::PushInsertionPoint() {
@@ -243,6 +248,8 @@ void HtmlTokenizer::Insert(std::u16string_view input) {
   if (text.empty()) {
     return;
   }
+  // A document that document.open() opened takes all of its input this way.
+  DiscardReadInput();
   // What a script wrote before and has been read no longer counts.
   inserted_end_ = std::max(inserted_end_, input_position_);
   if (insertion_points_.empty()) {

@@ -8,8 +8,7 @@
 //
 // Upstream: third_party/blink/renderer/core/dom/document.h
 // Upstream: third_party/blink/renderer/core/dom/document.cc
-// Upstream:
-// third_party/blink/renderer/modules/storage_access/document_storage_access.cc
+// Upstream: third_party/blink/renderer/modules/storage_access/document_storage_access.cc
 
 #ifndef MITTO_DOM_DOCUMENT_H_
 #define MITTO_DOM_DOCUMENT_H_

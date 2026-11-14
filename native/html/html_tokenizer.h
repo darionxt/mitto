@@ -228,6 +228,10 @@ class HtmlTokenizer {
     int column;
   };
 
+  // Lets go of the input that has been read, once it is half of the input
+  // kept, as more comes from the network or a script.
+  void DiscardReadInput();
+
   // Runs one state for one code point. Returns false if the input ran out
   // first.
   bool Step();

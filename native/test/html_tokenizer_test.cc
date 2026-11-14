@@ -542,6 +542,17 @@ size_t CheckInsertionPoints() {
   expect("no end while an insertion point is set", TakeTokens(opened), "[]");
   opened.PopInsertionPoint();
   expect("the end", TakeTokens(opened), "[] EOF");
+
+  // Many writes, each read before the next, which lets go of what was read.
+  HtmlTokenizer many_writes((HtmlTokenizer::Options()));
+  std::string last;
+  for (int i = 0; i < 1000; ++i) {
+    many_writes.Insert(u"<b>x</b>");
+    last = TakeTokens(many_writes);
+  }
+  expect("the last of many writes", last,
+         "[[\"StartTag\", \"b\", {}], [\"Character\", \"x\"], "
+         "[\"EndTag\", \"b\"]]");
   return problems;
 }
 
