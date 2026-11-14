@@ -13,7 +13,8 @@
 // --print-failures prints every failure in the form of the list, without its
 // reasons, and --print-skipped each test that recorded a rule, with the rules.
 //
-// Tests with #script-off are left out: a Page runs scripts.
+// A test with #script-off runs with the scripting flag off, as for a document
+// of no window, and the others with it on, as for a Page's document.
 
 #include "mitto/dom/html_tree_builder.h"
 
@@ -228,8 +229,10 @@ Outcome Run(const Test& test) {
   Outcome outcome;
   std::vector<std::string> lines;
   const cppgc::Persistent<Document> document(Document::CreateHTML());
+  HtmlParserOptions options;
+  options.scripting_flag = !test.script_off;
   if (!test.fragment_context) {
-    outcome.skipped_rules = ParseHtmlDocument(*document, test.data);
+    outcome.skipped_rules = ParseHtmlDocument(*document, test.data, options);
     for (const Node* child = document->FirstChild(); child;
          child = child->NextSibling()) {
       DumpNode(*child, 0, lines);
@@ -248,7 +251,7 @@ Outcome Run(const Test& test) {
     const cppgc::Persistent<Element> element(document->CreateElement(
         namespace_uri, std::nullopt, base::UTF8ToUTF16(name)));
     const NodeVector nodes =
-        ParseHtmlFragment(*element, test.data, &outcome.skipped_rules);
+        ParseHtmlFragment(*element, test.data, options, &outcome.skipped_rules);
     for (const cppgc::Persistent<Node>& node : nodes) {
       DumpNode(*node, 0, lines);
     }
@@ -295,9 +298,6 @@ int RunTests(const base::FilePath& directory,
   std::set<std::string> seen;
   for (const base::FilePath& file : files) {
     for (const Test& test : ReadTests(file)) {
-      if (test.script_off) {
-        continue;
-      }
       seen.insert(test.id);
       const Outcome outcome = Run(test);
       const bool is_listed = listed.contains(test.id);
