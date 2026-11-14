@@ -35,7 +35,7 @@ from tools.parity import (
     mismatches,
 )
 from tools.parity.check import as_recorded, record
-from tools.parity.replay import REPLAYS, protocol_of, proxy_of, replay, run_of, session_settings
+from tools.parity.replay import REPLAYS, protocol_of, proxy_of, replay, run_of, session_settings, through_page
 
 _RELEASE = "157"
 _REFUSED: dict[str, Json] = {"refused": True}
@@ -230,15 +230,23 @@ def test_no_known_gap_says_that_a_replay_went_somewhere_else() -> None:
 
 @pytest.mark.usefixtures("native_library")
 def test_a_cache_in_a_directory_changes_nothing_that_any_case_sends(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every Chrome behind the Baselines had one, and a Session by default has none, so both have to compare alike."""
+    """Every Chrome behind the Baselines had one, and a Session by default has none, so both have to compare alike.
+
+    The cases that a Page makes are left out, as they need the Page program, which their own check has.
+    """
 
     def needs_cache(_case: str) -> bool:
         return True
 
     monkeypatch.setattr("tools.parity.check.needs_cache", needs_cache)
-    baselines = [baseline for baseline in load_baselines(BASELINES_DIRECTORY) if baseline.release == _RELEASE]
+    baselines = [
+        baseline
+        for baseline in load_baselines(BASELINES_DIRECTORY)
+        if baseline.release == _RELEASE and not through_page(baseline.case)
+    ]
+    listed = [gap for gap in _listed_gaps() if gap.release == _RELEASE and not through_page(gap.case)]
 
-    assert not mismatches(find_gaps(baselines), [gap for gap in _listed_gaps() if gap.release == _RELEASE])
+    assert not mismatches(find_gaps(baselines), listed)
 
 
 def _frames_after_a_revalidation(cache: Path | str) -> Json:
