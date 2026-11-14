@@ -2,6 +2,7 @@
 Release's checkout into the repository, and list their tests."""
 
 import json
+import posixpath
 import re
 import shutil
 import subprocess
@@ -153,7 +154,8 @@ def _closure(root: Path, files: set[str]) -> set[str]:
                 if len(candidates) <= _MOST_FILES_OF_A_NAME:
                     references.update(candidates)
         for reference in references:
-            candidates = [reference, f"{reference}.headers", str(Path(reference).parent / "__dir__.headers")]
+            directory_headers = posixpath.join(posixpath.dirname(reference), "__dir__.headers")
+            candidates = [reference, f"{reference}.headers", directory_headers]
             if not Path(reference).suffix and (root / reference).parent.is_dir():
                 # A media file that a test names without its extension, which it picks by what the browser plays.
                 stem = Path(reference).name
@@ -175,7 +177,8 @@ def _references(root: Path, name: str) -> Iterator[str]:
     except OSError:
         return
     found = set(_ABSOLUTE.findall(text))
-    found.update(str(Path(name).parent / relative) for relative in _RELATIVE.findall(text))
+    # Names in the tree are a URL's paths, with "/" on every Host.
+    found.update(posixpath.join(posixpath.dirname(name), relative) for relative in _RELATIVE.findall(text))
     for module, imported in _PYTHON_IMPORT.findall(text):
         path = (module or imported).replace(".", "/")
         found.update((f"{path}.py", path))
