@@ -681,11 +681,21 @@ class RequestJob final : public net::URLRequest::Delegate,
     }
     preflight_ = std::make_unique<PreflightLoader>(
         *session_->context, kTrafficAnnotation, preflight,
-        session_->preflight_cache,
+        session_->preflight_cache, session_->proxy_credentials,
+        base::BindRepeating(&RequestJob::OnPreflightConnected,
+                            weak_ptr_factory_.GetWeakPtr()),
         base::BindOnce(&RequestJob::OnPreflightComplete,
                        weak_ptr_factory_.GetWeakPtr()));
+    // The timers cover the preflight as a hop of the request: its connection,
+    // and then the wait for its answer.
+    StartConnectTimer();
     preflight_->Start();
     return true;
+  }
+
+  void OnPreflightConnected() {
+    connect_timer_.Stop();
+    StartReadTimer();
   }
 
   // The preflight's answer comes in the middle of //net's work on it, so the
@@ -700,6 +710,7 @@ class RequestJob final : public net::URLRequest::Delegate,
   // nothing may touch it afterwards.
   void ContinueAfterPreflight(int net_error) {
     preflight_.reset();
+    read_timer_.Stop();
     if (net_error != net::OK) {
       Finish(net_error);
       return;

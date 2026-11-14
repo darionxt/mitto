@@ -28,6 +28,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/time/time.h"
 #include "mitto/request_options.h"
+#include "net/base/auth.h"
 #include "net/base/isolation_info.h"
 #include "net/base/network_isolation_key.h"
 #include "net/base/request_priority.h"
@@ -170,10 +171,16 @@ class PreflightLoader final : public net::URLRequest::Delegate {
  public:
   using Callback = base::OnceCallback<void(int net_error)>;
 
+  // `on_connected` hears each time the preflight has a connection and waits
+  // for its answer, so that the request's timers can follow it. A proxy that
+  // asks for credentials gets `proxy_credentials` once, as the request's own
+  // hops do, and the preflight still sends no credentials of its own.
   PreflightLoader(net::URLRequestContext& context,
                   const net::NetworkTrafficAnnotationTag& traffic_annotation,
                   const PreflightRequest& actual,
                   PreflightCache& cache,
+                  std::optional<net::AuthCredentials> proxy_credentials,
+                  base::RepeatingClosure on_connected,
                   Callback callback);
 
   PreflightLoader(const PreflightLoader&) = delete;
@@ -184,6 +191,11 @@ class PreflightLoader final : public net::URLRequest::Delegate {
   void Start();
 
   // net::URLRequest::Delegate:
+  int OnConnected(net::URLRequest* request,
+                  const net::TransportInfo& info,
+                  net::CompletionOnceCallback callback) override;
+  void OnAuthRequired(net::URLRequest* request,
+                      const net::AuthChallengeInfo& auth_info) override;
   void OnReceivedRedirect(net::URLRequest* request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
@@ -201,6 +213,9 @@ class PreflightLoader final : public net::URLRequest::Delegate {
 
   const raw_ref<PreflightCache> cache_;
   const PreflightRequest actual_;
+  const std::optional<net::AuthCredentials> proxy_credentials_;
+  bool proxy_auth_answered_ = false;
+  const base::RepeatingClosure on_connected_;
   std::unique_ptr<net::URLRequest> request_;
   Callback callback_;
 };

@@ -459,8 +459,14 @@ PreflightLoader::PreflightLoader(
     const net::NetworkTrafficAnnotationTag& traffic_annotation,
     const PreflightRequest& actual,
     PreflightCache& cache,
+    std::optional<net::AuthCredentials> proxy_credentials,
+    base::RepeatingClosure on_connected,
     Callback callback)
-    : cache_(cache), actual_(actual), callback_(std::move(callback)) {
+    : cache_(cache),
+      actual_(actual),
+      proxy_credentials_(std::move(proxy_credentials)),
+      on_connected_(std::move(on_connected)),
+      callback_(std::move(callback)) {
   // CreatePreflightRequest(), steps 1 to 5 of the CORS-preflight fetch.
   request_ = context.CreateRequest(actual_.url, actual_.priority, this,
                                    traffic_annotation,
@@ -520,6 +526,29 @@ PreflightLoader::~PreflightLoader() = default;
 
 void PreflightLoader::Start() {
   request_->Start();
+}
+
+int PreflightLoader::OnConnected(net::URLRequest* request,
+                                 const net::TransportInfo& info,
+                                 net::CompletionOnceCallback callback) {
+  on_connected_.Run();
+  return net::OK;
+}
+
+void PreflightLoader::OnAuthRequired(net::URLRequest* request,
+                                     const net::AuthChallengeInfo& auth_info) {
+  // A server's challenge is its answer, which is not ok. A proxy's gets the
+  // Session's credentials once, as the request's own hops would.
+  if (!auth_info.is_proxy) {
+    request->CancelAuth();
+    return;
+  }
+  if (!proxy_credentials_ || proxy_auth_answered_) {
+    request->CancelWithError(net::ERR_PROXY_AUTH_REQUESTED);
+    return;
+  }
+  proxy_auth_answered_ = true;
+  request->SetAuth(*proxy_credentials_);
 }
 
 void PreflightLoader::OnReceivedRedirect(net::URLRequest* request,

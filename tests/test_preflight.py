@@ -5,9 +5,11 @@ response has to say, and the Session's cache of what it allowed, as the native c
 Chrome's network service. Every name resolves to a local server, which answers a preflight as the URL's query says.
 """
 
+import base64
 import http.server
 import ssl
 import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,9 +19,13 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 
 import mitto
-from mitto import RequestError
+from mitto import RequestError, RequestTimeoutError
 from mitto._native import PrivateSettings
+from tests.local_certificates import serving
+from tests.local_proxy import LocalProxy
 from tests.local_server import LocalHTTPServer
+from tools.capture import CASE_HOST, CROSS_SITE_HOST, DOCUMENTS_START_PATH, HTTP2, CaptureServer
+from tools.capture.cases import has_header
 
 pytestmark = pytest.mark.usefixtures("native_library", "both_apis")
 
@@ -59,8 +65,9 @@ class RecordingServer(LocalHTTPServer):
 
 
 class RecordingHandler(http.server.BaseHTTPRequestHandler):
-    """Records a request. Its query says how to answer a preflight: acao, acac, acam, acah, max_age and status. With
-    to, any request is redirected there. Any other request gets 200 with Access-Control-Allow-Origin: *."""
+    """Records a request. Its query says how to answer a preflight: acao, acac, acam, acah, max_age and status, and
+    stall, the seconds to wait first. With to, any request is redirected there. Any other request gets 200 with
+    Access-Control-Allow-Origin: *."""
 
     protocol_version = "HTTP/1.1"
 
@@ -76,6 +83,7 @@ class RecordingHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Access-Control-Allow-Origin", "*")
         else:
+            time.sleep(float(query.get("stall", "0")))
             self.send_response(int(query.get("status", "200")))
             for key, name in (
                 ("acao", "Access-Control-Allow-Origin"),
@@ -403,3 +411,67 @@ def test_a_redirect_whose_preflight_does_not_allow_the_request_goes_no_further(s
 
     assert caught.value.net_error == ERR_FAILED
     assert [method for method, _, _ in _requests(server)] == ["POST", "OPTIONS"]
+
+
+# Timers and a proxy
+
+
+def test_a_preflight_that_does_not_answer_in_time_ends_the_request(server: Server) -> None:
+    session = mitto.Session(
+        timeout=mitto.Timeout(read=0.5),
+        _settings=PrivateSettings(
+            ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH],
+            host_resolver_rules="MAP * 127.0.0.1",
+        ),
+    )
+    with session, pytest.raises(RequestTimeoutError):
+        session.put(server.https(CROSS_SITE, **ALLOW_EVERYTHING, stall="3"), kind="fetch", initiator=page(server))
+
+    assert methods(server) == ["OPTIONS"]
+
+
+def test_a_preflight_at_a_redirect_that_does_not_answer_in_time_ends_the_request(server: Server) -> None:
+    session = mitto.Session(
+        timeout=mitto.Timeout(read=0.5),
+        _settings=PrivateSettings(
+            ignore_certificate_errors_spki_list=[PRIVATE_CERTIFICATE_SPKI_HASH],
+            host_resolver_rules="MAP * 127.0.0.1",
+        ),
+    )
+    with session, pytest.raises(RequestTimeoutError):
+        session.post(
+            server.https(HOST, "/hop", to=server.https(CROSS_SITE, "/end", **ALLOW_EVERYTHING, stall="3")),
+            kind="fetch",
+            json={"a": 1},
+            initiator=page(server),
+        )
+
+    assert methods(server) == ["POST", "OPTIONS"]
+
+
+_PROXY_USER = "someone"
+_PROXY_PASSWORD = "hunter2"
+_PROXY_BASIC = "Basic " + base64.b64encode(f"{_PROXY_USER}:{_PROXY_PASSWORD}".encode()).decode()
+
+
+def test_a_preflight_answers_a_proxy_that_asks_for_credentials() -> None:
+    with (
+        serving(LocalProxy(authorization=_PROXY_BASIC)) as proxy,
+        CaptureServer() as capture,
+        mitto.Session(
+            proxy=f"http://{_PROXY_USER}:{_PROXY_PASSWORD}@127.0.0.1:{proxy.port}",
+            _settings=PrivateSettings(ignore_certificate_errors_spki_list=[capture.spki_hash]),
+        ) as session,
+    ):
+        response = session.post(
+            capture.url(HTTP2, host=CROSS_SITE_HOST, path="/case/fetch-post-json-cross-site"),
+            kind="fetch",
+            json={"json": "body"},
+            initiator=capture.url(HTTP2, host=CASE_HOST, path=DOCUMENTS_START_PATH),
+        )
+        recording = capture.recording(HTTP2, host=CROSS_SITE_HOST)
+
+    assert response.status == 200
+    requests = [request for connection in recording.connections for request in connection.requests]
+    assert [has_header(request, "access-control-request-method") for request in requests] == [True, False]
+    assert any(request.header("Proxy-Authorization") == _PROXY_BASIC for request in proxy.requests)
