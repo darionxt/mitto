@@ -1,5 +1,6 @@
 #include "mitto/dom/svg_element.h"
 
+#include "base/auto_reset.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_svg_element.h"
 #include "mitto/dom/html_names.h"
@@ -19,6 +20,164 @@ SVGElement::~SVGElement() = default;
 
 const bindings::WrapperTypeInfo* SVGElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGElement::kWrapperTypeInfo;
+}
+
+void SVGElement::Trace(cppgc::Visitor* visitor) const {
+  Element::Trace(visitor);
+  animated_values_.Trace(visitor);
+}
+
+SVGAnimatedString* SVGElement::ClassName() {
+  return AnimatedString(u"class");
+}
+
+SVGAnimatedString* SVGElement::Href() {
+  return AnimatedString(u"href");
+}
+
+SVGAnimatedString* SVGElement::Result() {
+  return AnimatedString(u"result");
+}
+
+void SVGElement::SynchronizeAnimatedAttribute(const QualifiedName& name,
+                                              const std::u16string& value) {
+  const base::AutoReset<bool> synchronizing(&synchronizing_, true);
+  SetSynchronizedLazyAttribute(name, value);
+}
+
+void SVGElement::AttributeChanged(const QualifiedName& name,
+                                  const std::u16string* old_value,
+                                  const std::u16string* new_value) {
+  Element::AttributeChanged(name, old_value, new_value);
+  if (synchronizing_) {
+    return;
+  }
+  for (size_t i = 0; i < animated_values_.size(); ++i) {
+    if (animated_values_[i]->ReadsAttribute(name)) {
+      animated_values_[i]->AttributeChanged();
+    }
+  }
+}
+
+SVGAnimatedPropertyBase* SVGElement::FindAnimated(std::u16string_view attribute,
+                                                  SVGPairHalf half) const {
+  for (size_t i = 0; i < animated_values_.size(); ++i) {
+    SVGAnimatedPropertyBase* const value = animated_values_[i];
+    if (value->AttributeName() == attribute && value->Half() == half) {
+      return value;
+    }
+  }
+  return nullptr;
+}
+
+SVGAnimatedString* SVGElement::AnimatedString(std::u16string_view attribute) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedString*>(value);
+  }
+  SVGAnimatedString* const value = SVGAnimatedString::Create(*this, attribute);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedBoolean* SVGElement::AnimatedBoolean(std::u16string_view attribute) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedBoolean*>(value);
+  }
+  SVGAnimatedBoolean* const value =
+      SVGAnimatedBoolean::Create(*this, attribute);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedEnumeration* SVGElement::AnimatedEnumeration(
+    std::u16string_view attribute,
+    const SVGEnumerationMap& map,
+    uint16_t initial_value) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedEnumeration*>(value);
+  }
+  SVGAnimatedEnumeration* const value =
+      SVGAnimatedEnumeration::Create(*this, attribute, map, initial_value);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedInteger* SVGElement::AnimatedInteger(std::u16string_view attribute,
+                                                int32_t initial_value) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedInteger*>(value);
+  }
+  SVGAnimatedInteger* const value =
+      SVGAnimatedInteger::Create(*this, attribute, initial_value);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedInteger* SVGElement::AnimatedOrder(SVGPairHalf half) {
+  if (SVGAnimatedPropertyBase* const value = FindAnimated(u"order", half)) {
+    return static_cast<SVGAnimatedInteger*>(value);
+  }
+  // Blink's SVGAnimatedOrder: 3 by 3 until the attribute says otherwise.
+  constexpr int32_t kInitialOrder = 3;
+  SVGAnimatedInteger* const first = SVGAnimatedInteger::CreateOrderHalf(
+      *this, SVGPairHalf::kFirst, kInitialOrder);
+  SVGAnimatedInteger* const second = SVGAnimatedInteger::CreateOrderHalf(
+      *this, SVGPairHalf::kSecond, kInitialOrder);
+  first->SetOtherHalf(*second);
+  second->SetOtherHalf(*first);
+  animated_values_.push_back(first);
+  animated_values_.push_back(second);
+  return half == SVGPairHalf::kFirst ? first : second;
+}
+
+SVGAnimatedNumber* SVGElement::AnimatedNumber(
+    std::u16string_view attribute,
+    float initial_value,
+    SVGAnimatedNumber::Syntax syntax) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedNumber*>(value);
+  }
+  SVGAnimatedNumber* const value =
+      SVGAnimatedNumber::Create(*this, attribute, initial_value, syntax);
+  animated_values_.push_back(value);
+  return value;
+}
+
+SVGAnimatedNumber* SVGElement::AnimatedNumberHalf(std::u16string_view attribute,
+                                                  SVGPairHalf half,
+                                                  float initial_value) {
+  if (SVGAnimatedPropertyBase* const value = FindAnimated(attribute, half)) {
+    return static_cast<SVGAnimatedNumber*>(value);
+  }
+  SVGAnimatedNumber* const first = SVGAnimatedNumber::CreateHalf(
+      *this, attribute, SVGPairHalf::kFirst, initial_value);
+  SVGAnimatedNumber* const second = SVGAnimatedNumber::CreateHalf(
+      *this, attribute, SVGPairHalf::kSecond, initial_value);
+  first->SetOtherHalf(*second);
+  second->SetOtherHalf(*first);
+  animated_values_.push_back(first);
+  animated_values_.push_back(second);
+  return half == SVGPairHalf::kFirst ? first : second;
+}
+
+SVGAnimatedLength* SVGElement::AnimatedLength(
+    std::u16string_view attribute,
+    SVGLengthMode mode,
+    SVGAnimatedLength::Initial initial,
+    bool text_length) {
+  if (SVGAnimatedPropertyBase* const value =
+          FindAnimated(attribute, SVGPairHalf::kNone)) {
+    return static_cast<SVGAnimatedLength*>(value);
+  }
+  SVGAnimatedLength* const value =
+      SVGAnimatedLength::Create(*this, attribute, mode, initial, text_length);
+  animated_values_.push_back(value);
+  return value;
 }
 
 }  // namespace mitto

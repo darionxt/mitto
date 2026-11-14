@@ -165,6 +165,13 @@ size_t Window::AnimationFrameCallbackCount() const {
   return animation_frames_ ? animation_frames_->size() : 0;
 }
 
+void Window::EnqueueAnimationFrameEvent(EventTarget& target,
+                                        mitto::Event& event) {
+  if (animation_frames_) {
+    animation_frames_->EnqueueEvent(target, event);
+  }
+}
+
 size_t Window::ScheduledTaskCount() const {
   return scheduler_ ? scheduler_->pending_tasks() : 0;
 }

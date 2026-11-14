@@ -14,6 +14,7 @@ from mitto._persona import WINDOWS_PERSONAS
 from tools.capture.probe import RecordValue
 from tools.capture.script_delta import dumps_script_delta, script_delta
 from tools.capture.script_normal_form import FRAME_MACHINE_PLACES, MACHINE_PLACES, Computed, Getter
+from tools.capture.script_page import SCRIPT_RUNS
 from tools.parity import BASELINES_DIRECTORY, BaselineError, KnownGapsError, dumps_known_gaps, mismatches
 from tools.parity.script import ScriptBaseline, ScriptRecording, find_script_gaps, load_script_baselines
 from tools.parity.script_gaps import (
@@ -59,11 +60,11 @@ def test_a_baseline_has_no_gap_with_itself(chrome_157: Form, page: Form) -> None
     assert differences(chrome_157, page) == []
 
 
-def test_each_release_of_the_supported_window_has_a_baseline_of_the_page() -> None:
+def test_each_release_of_the_supported_window_has_a_baseline_of_each_case() -> None:
     baselines = load_script_baselines(BASELINES_DIRECTORY)
 
     assert [(baseline.release, baseline.case) for baseline in baselines] == [
-        (release, "page") for release in sorted(WINDOWS_PERSONAS)
+        (release, run.case) for release in sorted(WINDOWS_PERSONAS) for run in SCRIPT_RUNS
     ]
 
 

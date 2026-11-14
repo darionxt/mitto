@@ -1,0 +1,2020 @@
+{
+  "format": 1,
+  "protocol": "h2",
+  "tls": {
+    "record_version": "TLS 1.0",
+    "legacy_version": "TLS 1.2",
+    "session_id_length": 32,
+    "cipher_suites": [
+      "GREASE",
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+      "TLS_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_RSA_WITH_AES_256_CBC_SHA"
+    ],
+    "compression_methods": [
+      "null"
+    ],
+    "extensions": [
+      {
+        "type": "GREASE",
+        "length": 0
+      },
+      {
+        "type": "GREASE",
+        "length": 1
+      },
+      {
+        "type": "server_name",
+        "names": [
+          "<host>"
+        ]
+      },
+      {
+        "type": "status_request",
+        "data": "0100000000"
+      },
+      {
+        "type": "supported_groups",
+        "groups": [
+          "GREASE",
+          "X25519MLKEM768",
+          "x25519",
+          "secp256r1",
+          "secp384r1"
+        ]
+      },
+      {
+        "type": "ec_point_formats",
+        "formats": [
+          "uncompressed"
+        ]
+      },
+      {
+        "type": "signature_algorithms",
+        "algorithms": [
+          "GREASE",
+          "mldsa44",
+          "mldsa65",
+          "mldsa87",
+          "ecdsa_secp256r1_sha256",
+          "rsa_pss_rsae_sha256",
+          "rsa_pkcs1_sha256",
+          "ecdsa_secp384r1_sha384",
+          "rsa_pss_rsae_sha384",
+          "rsa_pkcs1_sha384",
+          "rsa_pss_rsae_sha512",
+          "rsa_pkcs1_sha512"
+        ]
+      },
+      {
+        "type": "application_layer_protocol_negotiation",
+        "protocols": [
+          "h2",
+          "http/1.1"
+        ]
+      },
+      {
+        "type": "signed_certificate_timestamp"
+      },
+      {
+        "type": "extended_master_secret"
+      },
+      {
+        "type": "compress_certificate",
+        "algorithms": [
+          "brotli"
+        ]
+      },
+      {
+        "type": "session_ticket"
+      },
+      {
+        "type": "supported_versions",
+        "versions": [
+          "GREASE",
+          "TLS 1.3",
+          "TLS 1.2"
+        ]
+      },
+      {
+        "type": "psk_key_exchange_modes",
+        "modes": [
+          "psk_dhe_ke"
+        ]
+      },
+      {
+        "type": "key_share",
+        "shares": [
+          {
+            "group": "GREASE",
+            "key_length": 1
+          },
+          {
+            "group": "X25519MLKEM768",
+            "key_length": 1216
+          },
+          {
+            "group": "x25519",
+            "key_length": 32
+          }
+        ]
+      },
+      {
+        "type": "application_settings",
+        "protocols": [
+          "h2"
+        ]
+      },
+      {
+        "type": "trust_anchors",
+        "anchors": [
+          "82df130201",
+          "82df130206",
+          "82df13020d",
+          "82df13020e",
+          "82df13020f",
+          "82df130212",
+          "82df130213",
+          "82df130214",
+          "839a648c9b2d0107",
+          "839a648c9b2d0108",
+          "839a648c9b2d0109",
+          "839a648c9b2d010a",
+          "839a648c9b2d010b",
+          "839a648c9b2d010c",
+          "839a648c9b2d010d",
+          "839a648c9b2d0112",
+          "839a648c9b2d0113",
+          "d6790901",
+          "d6790904",
+          "d6790905",
+          "d6790906",
+          "d6790907",
+          "d6790908",
+          "d679090a",
+          "d679090b",
+          "d679090c",
+          "d679090d",
+          "d679090f"
+        ]
+      },
+      {
+        "type": "encrypted_client_hello",
+        "client_hello": "outer",
+        "kdf": "HKDF-SHA256",
+        "aead": "AES-128-GCM"
+      },
+      {
+        "type": "renegotiation_info",
+        "data": "00"
+      }
+    ]
+  },
+  "http2": {
+    "preface": [
+      {
+        "type": "SETTINGS",
+        "settings": [
+          "HEADER_TABLE_SIZE: 65536",
+          "ENABLE_PUSH: 0",
+          "INITIAL_WINDOW_SIZE: 6291456",
+          "MAX_HEADER_LIST_SIZE: 262144"
+        ]
+      },
+      {
+        "type": "WINDOW_UPDATE",
+        "stream": 0,
+        "increment": 15663105
+      }
+    ]
+  },
+  "requests": {
+    "style": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/style",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/css,*/*;q=0.1",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: style",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "style_import": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/style-import",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/css,*/*;q=0.1",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: style",
+        "referer: <origin>/case/style",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "style_cross_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/style-cross-site",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/css,*/*;q=0.1",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: style",
+        "sec-fetch-storage-access: active",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "font": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/font",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: font",
+        "referer: <origin>/case/style",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "font_cross_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/font-cross-site",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: font",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "module": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/module",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "module_static_import": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/module-static-import",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/module",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "module_dynamic_import": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/module-dynamic-import",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/module",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "module_cross_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/module-cross-site",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "xhr_get": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/xhr-get",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "xhr_get_cross_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/xhr-get-cross-site",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "xhr_post_text": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/xhr-post-text",
+        "content-length: 9",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "content-type: text/plain;charset=UTF-8",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "text body"
+    },
+    "xhr_get_sync": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/xhr-get-sync",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "xhr_post_text_sync": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/xhr-post-text-sync",
+        "content-length: 9",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "content-type: text/plain;charset=UTF-8",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "text body"
+    },
+    "worker": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/worker",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: same-origin",
+        "sec-fetch-dest: worker",
+        "referer: <origin>/case/documents-start",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ]
+    },
+    "worker_import_scripts": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/worker-import-scripts",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/worker",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "worker_fetch": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/worker-fetch",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/worker",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "worker_module": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/worker-module",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: same-origin",
+        "sec-fetch-dest: worker",
+        "referer: <origin>/case/documents-start",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ]
+    },
+    "worker_blob_fetch": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/worker-blob-fetch",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "beacon_text": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/beacon-text",
+        "content-length: 9",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "content-type: text/plain;charset=UTF-8",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "text body"
+    },
+    "beacon_blob": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/beacon-blob",
+        "content-length: 9",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "blob body"
+    },
+    "beacon_form_data": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/beacon-form-data",
+        "content-length: 140",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "content-type: multipart/form-data; boundary=----WebKitFormBoundary<random>",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "------WebKitFormBoundary<random>\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nmitto\r\n------WebKitFormBoundary<random>--\r\n"
+    },
+    "beacon_text_cross_site": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 110
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/beacon-text-cross-site",
+        "content-length: 9",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "content-type: text/plain;charset=UTF-8",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "sec-fetch-storage-access: active",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=4, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "text body"
+    },
+    "fetch_later": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/fetch-later",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "preflight": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: OPTIONS",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/fetch-post-json-cross-site",
+        "accept: */*",
+        "access-control-request-method: POST",
+        "access-control-request-headers: content-type",
+        "origin: <origin>",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-fetch-mode: cors",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "fetch_post_json_cross_site": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/fetch-post-json-cross-site",
+        "content-length: 15",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "content-type: application/json",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "{\"json\":\"body\"}"
+    },
+    "fetch_credentials_omit": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <same-site-authority>",
+        ":scheme: https",
+        ":path: /case/fetch-credentials-omit",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "fetch_credentials_same_origin": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <same-site-authority>",
+        ":scheme: https",
+        ":path: /case/fetch-credentials-same-origin",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "fetch_credentials_include": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <same-site-authority>",
+        ":scheme: https",
+        ":path: /case/fetch-credentials-include",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "origin: <origin>",
+        "sec-fetch-site: same-site",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "cookie: mitto=1",
+        "priority: u=1, i"
+      ]
+    },
+    "fetch_no_cors": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/fetch-no-cors",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: empty",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "navigation_location": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/navigation-location",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: document",
+        "referer: <origin>/case/documents-start",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "navigation_click": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/navigation-click",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: document",
+        "referer: <origin>/case/navigation-location",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "navigation_meta_refresh": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/navigation-meta-refresh",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: document",
+        "referer: <origin>/case/navigation-click",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "redirect_location_1": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/redirect-location-1",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: document",
+        "referer: <origin>/case/navigation-meta-refresh",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "redirect_location_2": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/redirect-location-2",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: document",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "frame_same_origin": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/frame-same-origin",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: iframe",
+        "referer: <origin>/case/documents-frames",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "frame_same_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <same-site-authority>",
+        ":scheme: https",
+        ":path: /case/frame-same-site",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-site",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: iframe",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "frame_cross_site": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/frame-cross-site",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: iframe",
+        "sec-fetch-storage-access: active",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "frame_script": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/frame-script",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: script",
+        "sec-fetch-storage-access: active",
+        "referer: <cross-site-origin>/case/frame-cross-site",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "frame_image": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 147
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/frame-image",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: image",
+        "sec-fetch-storage-access: active",
+        "referer: <cross-site-origin>/case/frame-cross-site",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: i"
+      ]
+    },
+    "frame_fetch": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/frame-fetch",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "referer: <cross-site-origin>/case/frame-cross-site",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "frame_nested": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/frame-nested",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: iframe",
+        "sec-fetch-storage-access: active",
+        "referer: <cross-site-origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "cookie: none=1",
+        "priority: u=0, i"
+      ]
+    },
+    "frame_nested_fetch": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/frame-nested-fetch",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: empty",
+        "sec-fetch-storage-access: active",
+        "referer: <origin>/case/frame-nested",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "cookie: none=1",
+        "priority: u=1, i"
+      ]
+    },
+    "document_style": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-style",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/css,*/*;q=0.1",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: style",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "document_preload_style": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-preload-style",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/css,*/*;q=0.1",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: style",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0"
+      ]
+    },
+    "document_preload_script": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-preload-script",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "document_preload_image": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 147
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-preload-image",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: image",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: i"
+      ]
+    },
+    "document_preload_font": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-preload-font",
+        "origin: <origin>",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: cors",
+        "sec-fetch-dest: font",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "document_script": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-script",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1"
+      ]
+    },
+    "document_image_small": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 147
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-image-small",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: image",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: i"
+      ]
+    },
+    "document_image": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 183
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-image",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: image",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=2, i"
+      ]
+    },
+    "document_style_body": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 183
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-style-body",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: text/css,*/*;q=0.1",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: style",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=2"
+      ]
+    },
+    "document_script_deferred": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 147
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/document-script-deferred",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: */*",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: script",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9"
+      ]
+    },
+    "favicon": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 220
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /favicon.ico",
+        "sec-ch-ua-platform: \"Windows\"",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "accept: image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: no-cors",
+        "sec-fetch-dest: image",
+        "referer: <origin>/case/document",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=1, i"
+      ]
+    },
+    "navigation_form_get": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/navigation-form-get?name=mitto&a+b%26c=d+e%26f%2Bg",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-user: ?1",
+        "sec-fetch-dest: document",
+        "referer: <origin>/case/documents-forms",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ]
+    },
+    "navigation_form_text": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/navigation-form-text",
+        "content-length: 27",
+        "cache-control: max-age=0",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "content-type: text/plain",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "origin: <origin>",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: same-origin",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-user: ?1",
+        "sec-fetch-dest: document",
+        "referer: <origin>/case/navigation-form-get?name=mitto&a+b%26c=d+e%26f%2Bg",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "name=mitto\r\na b&c=d e&f+g\r\n"
+    },
+    "navigation_form_cross_site": {
+      "flags": [
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: POST",
+        ":authority: <cross-site-authority>",
+        ":scheme: https",
+        ":path: /case/navigation-form-cross-site",
+        "content-length: 30",
+        "cache-control: max-age=0",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "content-type: application/x-www-form-urlencoded",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "origin: <origin>",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-user: ?1",
+        "sec-fetch-dest: document",
+        "referer: <origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "priority: u=0, i"
+      ],
+      "later_frames": [
+        {
+          "type": "DATA",
+          "flags": [
+            "END_STREAM"
+          ]
+        }
+      ],
+      "body": "name=mitto&a+b%26c=d+e%26f%2Bg"
+    },
+    "navigation_history_back": {
+      "flags": [
+        "END_STREAM",
+        "END_HEADERS",
+        "PRIORITY"
+      ],
+      "priority": {
+        "exclusive": true,
+        "weight": 256
+      },
+      "headers": [
+        ":method: GET",
+        ":authority: <authority>",
+        ":scheme: https",
+        ":path: /case/navigation-history-back",
+        "sec-ch-ua: \"Not-A.Brand\";v=\"99\", \"Google Chrome\";v=\"157\", \"Chromium\";v=\"157\"",
+        "sec-ch-ua-mobile: ?0",
+        "sec-ch-ua-platform: \"Windows\"",
+        "upgrade-insecure-requests: 1",
+        "user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        "accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "sec-fetch-site: cross-site",
+        "sec-fetch-mode: navigate",
+        "sec-fetch-dest: document",
+        "referer: <cross-site-origin>/",
+        "accept-encoding: gzip, deflate, br, zstd",
+        "accept-language: en-US,en;q=0.9",
+        "cookie: mitto=1",
+        "priority: u=0, i"
+      ]
+    }
+  },
+  "order": [
+    "document_style",
+    "document_preload_style",
+    "document_preload_script",
+    "document_preload_font",
+    "document_script",
+    "document_image",
+    "document_style_body",
+    "document_preload_image",
+    "document_image_small",
+    "document_script_deferred"
+  ]
+}
