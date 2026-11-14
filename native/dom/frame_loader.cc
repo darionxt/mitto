@@ -20,6 +20,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/hash_change_event.h"
+#include "mitto/dom/navigation.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/pop_state_event.h"
 #include "mitto/dom/window.h"
@@ -137,15 +138,39 @@ void FireHashChange(std::u16string old_url, std::u16string new_url) {
 // once, the Session hears of it, popstate fires at the window with the
 // entry's state, null for a fragment's, and hashchange from a task of the DOM
 // manipulation task source if the fragment changed.
-void CommitSameDocumentNavigation(Window& window, const GURL& url) {
+void CommitSameDocumentNavigation(Window& window,
+                                  const FrameLoadRequest& request,
+                                  FrameLoadType type) {
+  const GURL& url = request.url;
+  // The navigate event first, which may cancel it, or intercept it, which
+  // commits it already.
+  Navigation::NavigateParams params;
+  params.url = url;
+  params.fragment = true;
+  params.load_type = type;
+  params.source_element = request.source_element;
+  if (window.Navigation()->DispatchNavigateEvent(params) !=
+      Navigation::DispatchResult::kContinue) {
+    return;
+  }
   Document& document = window.GetDocument();
   const GURL old_url(document.UrlForBinding());
   const bool hash_change =
       EqualIgnoringFragment(url, old_url) &&
       (url.has_ref() != old_url.has_ref() || url.ref() != old_url.ref());
+  if (hash_change && window.GetTasks()) {
+    window.GetTasks()->PostTask(
+        TaskType::kDOMManipulation,
+        base::BindOnce(&FireHashChange, base::UTF8ToUTF16(old_url.spec()),
+                       base::UTF8ToUTF16(url.spec())));
+  }
   document.SetUrl(base::UTF8ToUTF16(url.spec()));
   if (NavigationClient* const client = window.GetNavigationClient()) {
     client->DidNavigateWithinDocument(url);
+  }
+  window.Navigation()->UpdateForNavigation(url, type, /*keep_state=*/true);
+  if (!window.HasContext()) {
+    return;
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   bindings::PopStateEventInit init;
@@ -153,12 +178,6 @@ void CommitSameDocumentNavigation(Window& window, const GURL& url) {
   PopStateEvent* const popstate = PopStateEvent::Create(u"popstate", init);
   popstate->SetTrusted(true);
   window.DispatchEvent(popstate);
-  if (hash_change && window.GetTasks()) {
-    window.GetTasks()->PostTask(
-        TaskType::kDOMManipulation,
-        base::BindOnce(&FireHashChange, base::UTF8ToUTF16(old_url.spec()),
-                       base::UTF8ToUTF16(url.spec())));
-  }
 }
 
 // Runs the script of a javascript: URL in the current window, from its task,
@@ -213,7 +232,7 @@ void Navigate(Window& window,
   if (!RateLimiter().CanProceed(window)) {
     return;
   }
-  if (type == FrameLoadType::kStandard &&
+  if (type == FrameLoadType::kStandard && !request.force_history_push &&
       ShouldReplaceCurrentEntry(window, request)) {
     type = FrameLoadType::kReplaceCurrentItem;
   }
@@ -251,7 +270,7 @@ void StartNavigation(Window& window,
   // ShouldPerformFragmentNavigation().
   if (type != FrameLoadType::kReload && url.has_ref() &&
       EqualIgnoringFragment(url, GURL(document.UrlForBinding()))) {
-    CommitSameDocumentNavigation(window, url);
+    CommitSameDocumentNavigation(window, request, type);
     return;
   }
   if (url.SchemeIs(url::kJavaScriptScheme)) {
@@ -265,8 +284,18 @@ void StartNavigation(Window& window,
   if (url.possibly_invalid_spec().size() > url::kMaxURLChars) {
     return;
   }
+  // The navigate event, which may cancel the navigation, or intercept it,
+  // which makes it one within the document, committed already.
+  Navigation::NavigateParams params;
+  params.url = url;
+  params.load_type = type;
+  params.source_element = request.source_element;
+  if (window.Navigation()->DispatchNavigateEvent(params) !=
+      Navigation::DispatchResult::kContinue) {
+    return;
+  }
   NavigationClient* const client = window.GetNavigationClient();
-  if (!client) {
+  if (!client || !window.HasContext()) {
     return;
   }
   // RenderFrameImpl::BeginNavigation(): beforeunload, which lets it go on,
@@ -280,6 +309,7 @@ void StartNavigation(Window& window,
   NavigationRequest navigation;
   navigation.url = url;
   navigation.reload = type == FrameLoadType::kReload;
+  navigation.replace = type == FrameLoadType::kReplaceCurrentItem;
   client->BeginNavigation(navigation);
 }
 
