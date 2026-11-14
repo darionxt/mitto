@@ -174,7 +174,7 @@ enum class PageMessage : uint32_t {
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
-  kDocumentCommitted = 27,
+  kDocumentCommitted = 70,
 };
 
 // Whether a message of `type` names the document it comes from: each of the

@@ -189,8 +189,9 @@ uint64_t DecodeUint64(std::string_view bytes) {
 }
 
 bool IsKnown(uint32_t type) {
-  return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kDocumentCommitted);
+  return (type >= static_cast<uint32_t>(PageMessage::kHello) &&
+          type <= static_cast<uint32_t>(PageMessage::kBroadcastReceived)) ||
+         type == static_cast<uint32_t>(PageMessage::kDocumentCommitted);
 }
 
 // The frame of a message that names `document`, which comes first.
