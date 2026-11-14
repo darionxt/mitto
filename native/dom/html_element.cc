@@ -1,14 +1,22 @@
 #include "mitto/dom/html_element.h"
 
+#include <cmath>
+#include <optional>
+#include <string>
+#include <variant>
+
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_html_element.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/html_input_element.h"
 #include "mitto/dom/html_names.h"
+#include "v8/include/v8-isolate.h"
+#include "v8/include/v8-primitive.h"
 
 namespace mitto {
 
@@ -129,6 +137,43 @@ int32_t HTMLElement::DefaultTabIndex() const {
     }
   }
   return -1;
+}
+
+v8::Local<v8::Value> HTMLElement::Hidden() const {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const std::u16string* const value = FindAttribute(u"hidden");
+  if (!value) {
+    return v8::False(isolate);
+  }
+  if (base::EqualsCaseInsensitiveASCII(*value, u"until-found")) {
+    return bindings::ToV8String(isolate, u"until-found");
+  }
+  return v8::True(isolate);
+}
+
+void HTMLElement::SetHidden(
+    const std::optional<bindings::BooleanOrUnrestrictedDoubleOrDOMString>&
+        value) {
+  bool present = false;
+  std::u16string attribute_value;
+  if (!value) {
+    present = false;
+  } else if (const bool* const boolean = std::get_if<bool>(&*value)) {
+    present = *boolean;
+  } else if (const double* const number = std::get_if<double>(&*value)) {
+    present = *number != 0 && !std::isnan(*number);
+  } else {
+    const std::u16string& string = std::get<std::u16string>(*value);
+    present = !string.empty();
+    if (base::EqualsCaseInsensitiveASCII(string, u"until-found")) {
+      attribute_value = u"until-found";
+    }
+  }
+  if (present) {
+    SetAttributeWithoutValidation(u"hidden", attribute_value);
+  } else {
+    RemoveAttribute(QualifiedName{.local_name = u"hidden"});
+  }
 }
 
 std::u16string HTMLElement::Dir() const {

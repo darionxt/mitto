@@ -191,6 +191,10 @@ mitto_bindings_interfaces = [
     file = "dom_file_system"
   },
   {
+    name = "DOMImplementation"
+    file = "dom_implementation"
+  },
+  {
     name = "DOMRect"
     file = "dom_rect"
     made_by_known_gaps = true
@@ -281,6 +285,7 @@ mitto_bindings_interfaces = [
       "createNodeIterator",
       "createTreeWalker",
       "currentScript",
+      "implementation",
       "get domain",
       "designMode",
       "scrollingElement",
@@ -357,6 +362,7 @@ mitto_bindings_interfaces = [
       "tagName",
       "innerHTML",
       "outerHTML",
+      "getHTML",
       "firstElementChild",
       "lastElementChild",
       "childElementCount",
@@ -612,6 +618,7 @@ mitto_bindings_interfaces = [
       "tabIndex",
       "click",
       "dataset",
+      "hidden",
     ]
   },
   {
@@ -2188,5 +2195,12 @@ mitto_bindings_interfaces = [
     name = "WindowProperties"
     file = "window_properties"
     implemented = []
+  },
+  {
+    name = "XMLDocument"
+    file = "xml_document"
+
+    # Document's, which each instance has of its own.
+    implemented = [ "get location" ]
   },
 ]

@@ -2046,6 +2046,8 @@ def _write_dictionaries(definitions: Definitions, types: TypeMapper) -> tuple[st
         "namespace mitto::bindings {",
         "",
         "class ExceptionState;",
+        # The items of a sequence of an interface without a class, such as GetHTMLOptions' shadowRoots.
+        "class ScriptWrappable;",
         "",
     ]
     source = [
