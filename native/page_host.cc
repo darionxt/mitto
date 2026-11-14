@@ -814,8 +814,12 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
 
 void PageHost::OnCancel(uint64_t number) {
   // A navigation that the Page let go after its response came, before it
-  // made a document of it, gives none.
-  navigation_responses_.erase(number);
+  // made a document of it, as when another takes its place, has ended too.
+  if (const auto pending = navigation_responses_.find(number);
+      pending != navigation_responses_.end()) {
+    PushNavigated(pending->second.url.spec(), 0, net::ERR_ABORTED);
+    navigation_responses_.erase(pending);
+  }
   const auto found = requests_.find(number);
   if (found == requests_.end()) {
     // The request may have ended since the Page let it go.
@@ -880,9 +884,9 @@ void PageHost::OnResponseStarted(Request& request, const RequestEvent& event) {
     return;
   }
   if (request.is_navigation()) {
-    // The document that the Page makes of it, which it tells the library of.
-    navigation_responses_[request.number()] = GURL(event.url);
-    PushNavigated(event.url, event.status, net::OK);
+    // The document that the Page makes of it, which it tells the library of,
+    // and the caller hears of then.
+    navigation_responses_[request.number()] = {GURL(event.url), event.status};
   }
   if (channel_) {
     PageResponseStarted response;
@@ -1425,6 +1429,7 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     return;
   }
   GURL url;
+  std::optional<int32_t> navigated_status;
   switch (committed.source) {
     case PageDocumentSource::kInitialEmpty:
       // The Page's first document, before any other.
@@ -1442,7 +1447,8 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
                              ", which has no response"}));
         return;
       }
-      url = std::move(found->second);
+      url = std::move(found->second.url);
+      navigated_status = found->second.status;
       navigation_responses_.erase(found);
       break;
     }
@@ -1451,9 +1457,14 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   // It takes the place of the top-level document, the only one a Page has,
   // whose messages all came before this.
   documents_.clear();
-  documents_.emplace(committed.document, std::move(url));
+  documents_.emplace(committed.document, url);
   // The old document's CookieStore listened over a pipe that went with it.
   cookie_store_subscription_.reset();
+  // The navigation's document has taken the place of the Page's, after every
+  // message of the old one, its load among them.
+  if (navigated_status) {
+    PushNavigated(url.spec(), *navigated_status, net::OK);
+  }
 }
 
 void PageHost::OnSameDocumentNavigation(uint64_t document,
@@ -1595,12 +1606,6 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
       OnSetCookie(frame->cookie_line, document_url);
       return;
     case PageMessage::kLoaded: {
-      // A document whose place the response of a navigation takes, as the
-      // caller has heard already, loaded before the Page made the new one:
-      // the caller waits for no load of it.
-      if (!navigation_responses_.empty()) {
-        return;
-      }
       PageEvent event;
       event.type = MITTO_PAGE_EVENT_LOADED;
       Push(std::move(event));

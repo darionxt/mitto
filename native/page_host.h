@@ -388,9 +388,13 @@ class PageHost final : public PageChannel::Delegate {
   std::map<uint64_t, GURL> documents_;
   // The largest ID the Page has given a document.
   uint64_t last_document_id_ = kNoDocument;
-  // The final URLs of the navigations whose responses the Page has and has
-  // not made a document of yet, by number.
-  std::map<uint64_t, GURL> navigation_responses_;
+  // The navigations whose responses the Page has and has not made a document
+  // of yet, by number: the final URL and the status.
+  struct NavigationResponse {
+    GURL url;
+    int32_t status = 0;
+  };
+  std::map<uint64_t, NavigationResponse> navigation_responses_;
   // While a document's CookieStore listens: what tells it of each change, and
   // the document's URL.
   std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;

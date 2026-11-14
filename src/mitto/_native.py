@@ -762,9 +762,9 @@ class KnownGap:
 
 @dataclass(frozen=True, slots=True)
 class PageNavigated:
-    """A navigation has its response, and its document takes the place of the Page's; or it ended with no document, as
-    one whose response is a 204 or a download does; or it failed before a response. The Page keeps its document but in
-    the first case. The navigation that opening the Page started has one, and so does each that a PageNavigationStarted
+    """A navigation has its response, and the Page has made its document, which takes the place of the Page's after every
+    event of the old one; or it ended with no document, as one whose response is a 204 or a download does; or another
+    took its place first; or it failed before a response. The Page keeps its document but in the first case. The navigation that opening the Page started has one, and so does each that a PageNavigationStarted
     said, in the order they started.
 
     Attributes:
@@ -786,8 +786,8 @@ class PageNavigated:
 
     @property
     def replaced(self) -> bool:
-        """Whether the navigation ended before a response because another took its place, which may still give a
-        document."""
+        """Whether the navigation ended before the Page made its document because another took its place, which may still
+        give a document."""
         return self.net_error == _ERR_ABORTED and self.status == 0
 
 

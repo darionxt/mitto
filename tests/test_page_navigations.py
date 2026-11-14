@@ -346,9 +346,8 @@ def test_a_navigation_ends_once_its_own_document_has_loaded_and_not_the_one_it_l
     release.start()
 
     with _open_page(session, first) as page:
-        assert page.url == second
-        assert page.evaluate("[document.title, document.readyState, window.slow]") == ["Second", "complete", 1]
         assert _next(page).url == second
+        assert page.evaluate("[document.title, document.readyState, window.slow]") == ["Second", "complete", 1]
     release.cancel()
 
 
@@ -441,6 +440,25 @@ def test_a_new_navigation_takes_the_place_of_one_that_waits_and_the_same_one_is_
         assert _next(page).url == fast
         hold.set()
     assert server.paths().count("/slow") == 1
+
+
+def test_a_navigation_whose_response_came_ends_when_another_takes_its_place_before_its_document(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.page("/a", "<title>A</title>")
+    server.routes["/nothing"] = _Route(status=204)
+    url = server.page("/", "<title>Start</title>")
+
+    with _open_page(session, url) as page:
+        # The script runs on until the first navigation's response has come, then starts one that keeps the document.
+        page.evaluate(
+            "location.href = '/a'; const end = Date.now() + 1000; while (Date.now() < end); location.href = '/nothing'"
+        )
+        with pytest.raises(mitto.RequestError, match="ERR_ABORTED"):
+            _next(page)
+        assert _next(page) == PageNavigation(url=server.url("/nothing"), status=204, kept_document=True)
+        assert page.url == url
+        assert page.evaluate("[document.title, location.href]") == ["Start", url]
 
 
 def test_an_opening_navigation_to_a_204_leaves_the_page_at_about_blank(session: mitto.Session, server: _Server) -> None:
