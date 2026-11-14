@@ -190,7 +190,7 @@ uint64_t DecodeUint64(std::string_view bytes) {
 
 bool IsKnown(uint32_t type) {
   return type >= static_cast<uint32_t>(PageMessage::kHello) &&
-         type <= static_cast<uint32_t>(PageMessage::kDocumentCommitted);
+         type <= static_cast<uint32_t>(PageMessage::kSameDocumentNavigation);
 }
 
 // The frame of a message that names `document`, which comes first.
@@ -202,8 +202,14 @@ std::string EncodeDocumentFrame(PageMessage type,
 
 bool IsRequestKind(uint8_t kind) {
   return kind == static_cast<uint8_t>(PageRequestKind::kScript) ||
-         kind == static_cast<uint8_t>(PageRequestKind::kFetch);
+         kind == static_cast<uint8_t>(PageRequestKind::kFetch) ||
+         kind == static_cast<uint8_t>(PageRequestKind::kNavigation);
 }
+
+// The flags of a request.
+constexpr uint8_t kSameOriginFlag = 1;
+constexpr uint8_t kUserActivationFlag = 2;
+constexpr uint8_t kReloadFlag = 4;
 
 std::string EncodeInt32(int32_t value) {
   return EncodeUint32(static_cast<uint32_t>(value));
@@ -742,10 +748,14 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
         {"a request of the unknown kind ", base::NumberToString(kind)}));
   }
   request.kind = static_cast<PageRequestKind>(kind);
-  if (bytes.size() < 10 || static_cast<uint8_t>(bytes[9]) > 1) {
-    return base::unexpected("a request with a mode that is not one");
+  const uint8_t flags =
+      bytes.size() < 10 ? 0xff : static_cast<uint8_t>(bytes[9]);
+  if (flags & ~(kSameOriginFlag | kUserActivationFlag | kReloadFlag)) {
+    return base::unexpected("a request with flags that are not ones");
   }
-  request.same_origin = bytes[9] == 1;
+  request.same_origin = flags & kSameOriginFlag;
+  request.user_activation = flags & kUserActivationFlag;
+  request.reload = flags & kReloadFlag;
   bytes.remove_prefix(10);
   std::string_view url;
   std::string_view method;
@@ -781,6 +791,17 @@ base::expected<PageRequest, std::string> ReadRequest(std::string_view bytes) {
        request.same_origin)) {
     return base::unexpected(
         "a script request with a method, header lines, a body or a mode");
+  }
+  if (request.kind != PageRequestKind::kNavigation &&
+      (request.user_activation || request.reload)) {
+    return base::unexpected(
+        "a request that is not a navigation with a navigation's flags");
+  }
+  if (request.kind == PageRequestKind::kNavigation &&
+      (request.method != "GET" || !request.headers.empty() || request.body ||
+       request.same_origin)) {
+    return base::unexpected(
+        "a navigation with a method, header lines, a body or a mode");
   }
   return request;
 }
@@ -1404,12 +1425,15 @@ std::string EncodeKnownGap(std::string_view name) {
 
 std::string EncodeRequest(uint64_t document, const PageRequest& request) {
   const char kind = static_cast<char>(request.kind);
-  const char same_origin = request.same_origin ? 1 : 0;
+  const char flags =
+      static_cast<char>((request.same_origin ? kSameOriginFlag : 0) |
+                        (request.user_activation ? kUserActivationFlag : 0) |
+                        (request.reload ? kReloadFlag : 0));
   const char has_body = request.body ? 1 : 0;
   return EncodeDocumentFrame(
       PageMessage::kRequest, document,
       base::StrCat({EncodeUint64(request.number), std::string_view(&kind, 1),
-                    std::string_view(&same_origin, 1),
+                    std::string_view(&flags, 1),
                     EncodeUint32(static_cast<uint32_t>(request.url.size())),
                     request.url,
                     EncodeUint32(static_cast<uint32_t>(request.method.size())),
@@ -1596,8 +1620,15 @@ std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
   return EncodeFrame(PageMessage::kDocumentCommitted, payload);
 }
 
+std::string EncodeSameDocumentNavigation(uint64_t document,
+                                         std::string_view url) {
+  return EncodeDocumentFrame(PageMessage::kSameDocumentNavigation, document,
+                             url);
+}
+
 bool NamesDocument(PageMessage type) {
   switch (type) {
+    case PageMessage::kSameDocumentNavigation:
     case PageMessage::kRequest:
     case PageMessage::kGetCookies:
     case PageMessage::kSetCookie:
@@ -1779,6 +1810,12 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.committed = *committed;
       return frame;
     }
+    case PageMessage::kSameDocumentNavigation:
+      if (!IsText(payload)) {
+        return base::unexpected("a same-document URL that is not UTF-8");
+      }
+      frame.same_document_url = std::move(payload);
+      return frame;
     case PageMessage::kStart:
     case PageMessage::kEvaluate:
     case PageMessage::kResponseStarted:
@@ -1925,6 +1962,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kCookieStoreListen:
     case PageMessage::kBroadcast:
     case PageMessage::kDocumentCommitted:
+    case PageMessage::kSameDocumentNavigation:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

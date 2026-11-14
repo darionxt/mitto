@@ -63,6 +63,16 @@ source_set("string_hasher") {
   deps = [ "//base" ]
 }
 
+# Which MIME types Chrome shows as a document, which the library and the Page
+# program both decide navigations by.
+source_set("mime_types") {
+  sources = [
+    "mime_types.cc",
+    "mime_types.h",
+  ]
+  deps = [ "//base" ]
+}
+
 source_set("page_channel") {
   sources = [
     "page_channel.h",
@@ -146,6 +156,7 @@ shared_library("mitto_core") {
   defines = [ "MITTO_IMPLEMENTATION" ]
   deps = [
     ":icu_data",
+    ":mime_types",
     ":page_channel",
     ":string_hasher",
     "//base",

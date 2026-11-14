@@ -40,7 +40,15 @@ from mitto._native import (
     encode_url,
     finished_response,
 )
-from mitto._page import KEPT_REPORTS, PageRecord, loaded_url, outcome_of, take_waiting_events
+from mitto._page import (
+    KEPT_REPORTS,
+    PageNavigation,
+    PageRecord,
+    loaded_url,
+    navigation_of,
+    outcome_of,
+    take_waiting_events,
+)
 from mitto._persona import ENGINE_RELEASE_PERSONA
 from mitto._request import AsyncRequestOptions, BuiltRequest, RequestOptions
 from mitto._response import AsyncResponseStream, Response, join_chunks, to_async_response_stream, to_response
@@ -294,7 +302,8 @@ class AsyncPage:
     @property
     def url(self) -> str:
         """The URL of the Page's document, as Page.url says."""
-        return self._url
+        self._take_waiting_events()
+        return self._record.document_url or self._url
 
     @property
     def process_id(self) -> int:
@@ -363,7 +372,29 @@ class AsyncPage:
         except TimeoutError:
             assert seconds is not None
             raise PageTimeoutError(seconds) from None
-        self._url = loaded_url(self._native, self._url, outcome)
+        self._url = loaded_url(self._native, self._url, self._record, outcome)
+
+    async def wait_for_navigation(self, *, timeout: float | None = None) -> PageNavigation:
+        """Return how the next navigation that the Page's documents started ended, once it has, as
+        Page.wait_for_navigation() does.
+
+        Raises:
+            TypeError: As Page.wait_for_navigation() does.
+            ValueError: As Page.wait_for_navigation() does.
+            RequestError: As Page.wait_for_navigation() does.
+            PageEndedError: As Page.wait_for_navigation() does.
+            PageTimeoutError: As Page.wait_for_navigation() does.
+            RuntimeError: If this runs on another event loop than its AsyncSession's.
+        """
+        seconds = to_seconds(timeout)
+        self._require_open()
+        try:
+            async with asyncio.timeout(seconds):
+                outcome = await self._wait_until(self._record.take_navigation)
+        except TimeoutError:
+            assert seconds is not None
+            raise PageTimeoutError(seconds) from None
+        return navigation_of(self._native, outcome)
 
     async def close(self) -> None:
         """Close the Page, as Page.close() does, off the event loop for the wait, which goes on if the caller is cancelled.

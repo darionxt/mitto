@@ -289,6 +289,11 @@ class PageHost final : public PageChannel::Delegate {
   // A document that the Page has made, which takes the place of the one
   // before it.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);
+  // A navigation within document `document` that gave it the URL `url`.
+  void OnSameDocumentNavigation(uint64_t document, const std::string& url);
+  // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
+  // with `net_error`, and `status` for one that kept the document.
+  void PushNavigated(std::string url, int32_t status, int32_t net_error);
   // The URL that the library loaded document `document` at, or null after
   // refusing a message that names a document that is not the Page's.
   const GURL* DocumentUrl(uint64_t document, uint32_t type);
@@ -306,6 +311,9 @@ class PageHost final : public PageChannel::Delegate {
     bool unsafe_lines = false;
     // Mode same-origin: no hop may go to another origin.
     bool same_origin = false;
+    // A navigation, whose response the Page makes a document of, unless it
+    // is a 204, a 205 or a download.
+    bool is_navigation = false;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
