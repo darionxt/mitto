@@ -7,7 +7,6 @@ connection, and are skipped when this machine has no native library.
 import ctypes
 import http.server
 import pickle
-import socket
 import threading
 from collections.abc import Iterator
 from typing import Any
@@ -17,7 +16,7 @@ import pytest
 import mitto
 from mitto._errors import ERROR_TYPES_BY_NAME, ERROR_TYPES_BY_PREFIX, request_error
 from mitto._native import PrivateSettings
-from tests.local_server import LocalHTTPServer
+from tests.local_server import LocalHTTPServer, refused_port
 from tools.capture import HTTP2, CaptureServer
 
 pytestmark = pytest.mark.usefixtures("both_apis")
@@ -112,9 +111,7 @@ def test_a_name_that_does_not_resolve() -> None:
 
 @pytest.mark.usefixtures("native_library")
 def test_a_connection_that_is_refused() -> None:
-    with socket.create_server(("127.0.0.1", 0)) as listener:
-        url = f"http://127.0.0.1:{listener.getsockname()[1]}/"
-
+    url = f"http://127.0.0.1:{refused_port()}/"
     with mitto.Session() as session, pytest.raises(mitto.ConnectionFailedError) as caught:
         session.get(url)
 

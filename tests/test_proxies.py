@@ -14,6 +14,7 @@ from mitto._native import PrivateSettings
 from mitto._persona import ENGINE_RELEASE_PERSONA, WINDOWS_PERSONAS, load_persona
 from tests.local_certificates import TlsServer, generate_leaf, generate_root, serving
 from tests.local_proxy import DIGEST_CHALLENGE, LocalProxy
+from tests.local_server import refused_port
 from tools.capture import CASE_HOST, CASES, HTTP1, HTTP2, SAME_SITE_HOST, CaptureServer, normal_form
 from tools.parity import BASELINES_DIRECTORY, differences, fingerprint, load_baselines
 
@@ -49,12 +50,6 @@ def _socks5_with_credentials(proxy: LocalProxy) -> str:
 
 def _private_settings(server: CaptureServer) -> PrivateSettings:
     return PrivateSettings(ignore_certificate_errors_spki_list=[server.spki_hash])
-
-
-def _free_port() -> int:
-    """Return a port that nothing listens on."""
-    with socket.create_server(("127.0.0.1", 0)) as listener:
-        return listener.getsockname()[1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -553,7 +548,7 @@ def test_a_proxy_that_is_down_is_an_error_and_not_a_reason_to_go_directly(start:
         settings = _private_settings(server)
         settings["host_resolver_rules"] = server.host_resolver_rules
         with (
-            mitto.Session(proxy=f"{start}127.0.0.1:{_free_port()}", _settings=settings) as session,
+            mitto.Session(proxy=f"{start}127.0.0.1:{refused_port()}", _settings=settings) as session,
             pytest.raises(mitto.ProxyError) as caught,
         ):
             session.get(server.url(HTTP2, host=CASE_HOST))
@@ -565,7 +560,7 @@ def test_a_proxy_that_is_down_is_an_error_and_not_a_reason_to_go_directly(start:
 def test_a_loopback_name_goes_around_the_proxy_as_in_chrome() -> None:
     with (
         CaptureServer() as server,
-        mitto.Session(proxy=f"http://127.0.0.1:{_free_port()}", _settings=_private_settings(server)) as session,
+        mitto.Session(proxy=f"http://127.0.0.1:{refused_port()}", _settings=_private_settings(server)) as session,
     ):
         response = session.get(server.url(HTTP2))
 
@@ -575,7 +570,7 @@ def test_a_loopback_name_goes_around_the_proxy_as_in_chrome() -> None:
 @pytest.mark.usefixtures("native_library")
 def test_the_environment_says_nothing_about_a_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _ENVIRONMENT_PROXY_VARIABLES:
-        monkeypatch.setenv(name, f"http://127.0.0.1:{_free_port()}")
+        monkeypatch.setenv(name, f"http://127.0.0.1:{refused_port()}")
 
     with CaptureServer() as server:
         settings = _private_settings(server)
@@ -710,7 +705,7 @@ def test_a_refused_proxy_keeps_its_password_out_of_the_error(proxy: str) -> None
 @pytest.mark.parametrize("scheme", ["http", "socks5"])
 def test_a_request_that_fails_keeps_the_proxys_password_out_of_everything_it_shows(scheme: str) -> None:
     with (
-        mitto.Session(proxy=f"{scheme}://{_USER}:{_PASSWORD}@127.0.0.1:{_free_port()}") as session,
+        mitto.Session(proxy=f"{scheme}://{_USER}:{_PASSWORD}@127.0.0.1:{refused_port()}") as session,
         pytest.raises(mitto.ProxyError) as caught,
     ):
         session.get(f"{_ORIGIN}/")

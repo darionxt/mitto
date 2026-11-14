@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import signal
 import sys
 from pathlib import Path
+from types import FrameType
 
 from tools.capture.cases import RECORDING_RUNS, RESUMPTION_RUNS, Case, Run
 from tools.capture.devtools import PageClicker
@@ -110,8 +112,10 @@ def _record(server: CaptureServer, runs: list[Run | ScriptRun], out: Path) -> in
     # The first case's Normal Form, once written, which a later case's file keeps what differs from. Records come in
     # the order their pages post them, so a later case waits for it.
     first: dict[str, RecordValue] | None = None
+    ctrl_c = _CtrlC()
+    previous_handler = signal.signal(signal.SIGINT, ctrl_c.note)
     try:
-        while pending:
+        while pending and not ctrl_c.came:
             for run in list(pending):
                 if _waits_for_the_first_case(run, pending):
                     continue
@@ -124,10 +128,28 @@ def _record(server: CaptureServer, runs: list[Run | ScriptRun], out: Path) -> in
                     failed = form is None or failed
                 else:
                     failed = not _write(server, run, out) or failed
-    except KeyboardInterrupt:
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+    if ctrl_c.came:
         _say_what_waited(server, pending)
         return 130
     return 1 if failed else 0
+
+
+class _CtrlC:
+    """Notes that Ctrl-C came, for the wait for the pages to stop at its next short wait.
+
+    A KeyboardInterrupt would come wherever the main thread is, which can be inside threading.Event.wait() after it let
+    go of its lock and before it took it back. Leaving the wait then raises RuntimeError instead, and the command line
+    exits 1.
+    """
+
+    def __init__(self) -> None:
+        self.came = False
+
+    def note(self, signal_number: int, frame: FrameType | None) -> None:
+        """Handle SIGINT."""
+        self.came = True
 
 
 def _waits_for_the_first_case(run: Run | ScriptRun, pending: list[Run | ScriptRun]) -> bool:

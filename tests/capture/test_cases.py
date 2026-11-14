@@ -18,6 +18,7 @@ import pytest
 
 from tests.capture.clients import Answer, Http2Client, client_context, connect, http1_exchange
 from tests.capture.http3_client import Http3Client
+from tests.local_server import unused_ports
 from tools.capture import (
     CASE_HOST,
     CASES,
@@ -659,10 +660,7 @@ def test_the_server_can_be_at_a_test_name() -> None:
 
 
 def test_a_named_plain_http_and_proxy_port_serve_there() -> None:
-    with socket.socket() as first, socket.socket() as second:
-        first.bind(("127.0.0.1", 0))
-        second.bind(("127.0.0.1", 0))
-        plain, proxy = first.getsockname()[1], second.getsockname()[1]
+    plain, proxy = unused_ports(2)
     with CaptureServer(plain_http_port=plain, proxy_port=proxy) as server:
         assert server.port(PLAIN_HTTP) == plain
         assert server.port(PROXY) == proxy
@@ -670,13 +668,7 @@ def test_a_named_plain_http_and_proxy_port_serve_there() -> None:
 
 
 def free_tcp_ports(count: int) -> list[int]:
-    sockets = [socket.socket() for _ in range(count)]
-    for sock in sockets:
-        sock.bind(("127.0.0.1", 0))
-    ports = [sock.getsockname()[1] for sock in sockets]
-    for sock in sockets:
-        sock.close()
-    return ports
+    return unused_ports(count)
 
 
 def _go_through_run(entry: dict[str, str], proxy_port: int) -> None:
@@ -717,9 +709,7 @@ def _post_a_record(entry: dict[str, str]) -> None:
 
 def test_command_line_goes_through_every_run_and_says_how(tmp_path: Path) -> None:
     http1_port, http2_port, plain_http_port, proxy_port, script_port = free_tcp_ports(5)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        http3_port = sock.getsockname()[1]
+    http3_port = unused_ports(1, socket.SOCK_DGRAM)[0]
     command = [
         sys.executable,
         "-m",

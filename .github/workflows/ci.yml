@@ -261,6 +261,12 @@ jobs:
           MITTO_PAGE_PROGRAM="$("$ENVIRONMENT_PYTHON" -c 'import importlib.util, os, sys; print(os.path.join(importlib.util.find_spec("mitto").submodule_search_locations[0], sys.argv[1]))' "$PAGE_PROGRAM")"
           export MITTO_WHEEL MITTO_PAGE_PROGRAM
           "$ENVIRONMENT_PYTHON" -m pytest -rs -n auto
+      # The tests that time something by the wall clock, which the workers above would hold up, and so skip.
+      - name: Test what runs alone
+        env:
+          ENVIRONMENT_PYTHON: ${{ runner.temp }}/wheel-env/${{ matrix.environment-python }}
+        run: |
+          "$ENVIRONMENT_PYTHON" -m pytest -rs -m alone
       # The C test program opens Pages with the installed Page program beside the library, as the wheel holds them, and
       # kills the processes on each side. Only these tests run it here: the sanitizer builds run its other scenarios.
       - name: Test Pages through the C API
