@@ -191,6 +191,8 @@ uint64_t DecodeUint64(std::string_view bytes) {
 bool IsKnown(uint32_t type) {
   return (type >= static_cast<uint32_t>(PageMessage::kHello) &&
           type <= static_cast<uint32_t>(PageMessage::kBroadcastReceived)) ||
+         (type >= static_cast<uint32_t>(PageMessage::kCacheStorage) &&
+          type <= static_cast<uint32_t>(PageMessage::kCacheStorageAnswer)) ||
          (type >= static_cast<uint32_t>(PageMessage::kDocumentCommitted) &&
           type <= static_cast<uint32_t>(PageMessage::kSameDocumentNavigation));
 }
@@ -1612,6 +1614,12 @@ std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast) {
                              EncodeBroadcastPayload(broadcast));
 }
 
+std::string EncodeCacheStorage(uint64_t document,
+                               const PageCacheStorageCall& call) {
+  return EncodeDocumentFrame(PageMessage::kCacheStorage, document,
+                             EncodeCacheStorageCall(call));
+}
+
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
   return EncodeFrame(PageMessage::kBroadcastReceived,
                      EncodeBroadcastPayload(broadcast));
@@ -1644,6 +1652,7 @@ bool NamesDocument(PageMessage type) {
     case PageMessage::kCookieStoreSet:
     case PageMessage::kCookieStoreListen:
     case PageMessage::kBroadcast:
+    case PageMessage::kCacheStorage:
       return true;
     default:
       return false;
@@ -1808,6 +1817,15 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.broadcast = *std::move(broadcast);
       return frame;
     }
+    case PageMessage::kCacheStorage: {
+      base::expected<PageCacheStorageCall, std::string> call =
+          ReadCacheStorageCall(payload);
+      if (!call.has_value()) {
+        return base::unexpected(std::move(call).error());
+      }
+      frame.cache_storage_call = *std::move(call);
+      return frame;
+    }
     case PageMessage::kDocumentCommitted: {
       base::expected<PageDocumentCommitted, std::string> committed =
           ReadDocumentCommitted(payload);
@@ -1833,6 +1851,7 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
     case PageMessage::kBroadcastReceived:
+    case PageMessage::kCacheStorageAnswer:
       return base::unexpected(WrongWay(type, "a Page"));
   }
   NOTREACHED();
@@ -1954,6 +1973,15 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       frame.broadcast = *std::move(broadcast);
       return frame;
     }
+    case PageMessage::kCacheStorageAnswer: {
+      base::expected<PageCacheStorageAnswer, std::string> answer =
+          ReadCacheStorageAnswer(payload);
+      if (!answer.has_value()) {
+        return base::unexpected(std::move(answer).error());
+      }
+      frame.cache_storage_answer = *std::move(answer);
+      return frame;
+    }
     case PageMessage::kEvaluated:
     case PageMessage::kConsole:
     case PageMessage::kUncaughtError:
@@ -1968,6 +1996,7 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kCookieStoreSet:
     case PageMessage::kCookieStoreListen:
     case PageMessage::kBroadcast:
+    case PageMessage::kCacheStorage:
     case PageMessage::kDocumentCommitted:
     case PageMessage::kSameDocumentNavigation:
       return base::unexpected(WrongWay(type, "a Session"));

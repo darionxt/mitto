@@ -187,6 +187,22 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
   return request;
 }
 
+// static
+Request* Request::CreateFromStored(
+    GURL url,
+    std::string method,
+    const std::vector<std::pair<std::string, std::string>>& headers) {
+  Request* const request = bindings::MakeGarbageCollected<Request>();
+  request->url_ = std::move(url);
+  request->method_ = std::move(method);
+  request->signal_ = AbortSignal::CreateComposite({});
+  request->headers_ = Headers::Create(Headers::Guard::kRequest);
+  for (const auto& [name, value] : headers) {
+    request->headers_->AppendLine(name, value);
+  }
+  return request;
+}
+
 Request::Request() = default;
 Request::~Request() = default;
 

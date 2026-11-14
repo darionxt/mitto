@@ -33,6 +33,7 @@ namespace mitto {
 class AttachedTraversals;
 class Attr;
 class Comment;
+class CacheStorageHost;
 class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
@@ -236,6 +237,12 @@ class Document : public Node {
   // has in a new tab, and its cookie attribute throws.
   void SetCookieJar(CookieJar* cookie_jar) { cookie_jar_ = cookie_jar; }
   CookieJar* GetCookieJar() const { return cookie_jar_; }
+  // Where the document's Cache API reaches its Session's caches, which only a
+  // document that the Session loaded over HTTP or HTTPS has.
+  void SetCacheStorageHost(CacheStorageHost* host) {
+    cache_storage_host_ = host;
+  }
+  CacheStorageHost* GetCacheStorageHost() const { return cache_storage_host_; }
   Readiness GetReadiness() const { return readiness_; }
   // Sets the readiness, and fires readystatechange at the document for
   // interactive and complete, as Blink's Document::SetReadyState() does.
@@ -393,6 +400,7 @@ class Document : public Node {
   base::RepeatingClosure cancel_parsing_;
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
+  raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   cppgc::Member<Window> window_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;
