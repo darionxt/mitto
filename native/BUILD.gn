@@ -203,7 +203,7 @@ shared_library("mitto_core") {
   # allocation functions, is exported regardless, and an exported C++ symbol
   # could clash with one in the process that loads the library. On Windows a
   # library exports what this list names and what its code marks dllexport, and
-  # //base marks one function so: see docs/building.md.
+  # //base and SQLite mark one function each so: see docs/building.md.
   if (is_win) {
     inputs = [ "mitto_core.def" ]
     ldflags = [ "/DEF:" + rebase_path(inputs[0], root_build_dir) ]
