@@ -1,27 +1,15 @@
 // Loads a document of the Page from the response of a navigation, the one
 // that its Session makes when the Page opens or one that its document starts,
 // on the Page program's main thread: a new context for it, which the Page's
-// frame makes once the old document has unloaded (page_frame.h), the HTML
-// parser fed as the body arrives, decoded with the
-// encoding that Chrome works out for it (text_resource_decoder_builder.h), the
-// scripts that the parser runs, and the document's readiness with
-// DOMContentLoaded and load, as Blink's HTMLDocumentParser and
-// HTMLParserScriptRunner have them.
-//
-// The parser takes the body from tasks of the networking task source, and
-// yields after a budget of time, as Chrome's does. It runs an inline script
-// as soon as it reaches its end tag, and waits for a parser-blocking one,
-// which goes on from a task of a very high priority once the script is
-// ready, and the parser after it from a later task. Deferred scripts run
-// after parsing, each from a task of its own, then DOMContentLoaded fires,
-// and load once nothing holds it back, such as an async script, with pageshow
-// after it. A navigation that the document starts while it loads stops the
-// parser, and no load event fires.
+// frame makes once the old document has unloaded (page_frame.h), and the
+// document's parser (document_parser.h), which this feeds the body as the
+// parser takes it, decoded with the encoding that Chrome works out for it
+// (text_resource_decoder_builder.h). What arrives waits until the parser
+// takes it, and the Session has no credit for it until then. A navigation
+// that the document starts while it loads stops the parser, and no load
+// event fires.
 //
 // Upstream: third_party/blink/renderer/core/loader/document_loader.cc
-// Upstream: third_party/blink/renderer/core/html/parser/html_document_parser.cc
-// Upstream: third_party/blink/renderer/core/script/html_parser_script_runner.cc
-// Upstream: third_party/blink/renderer/core/dom/document.cc
 
 #ifndef MITTO_PAGE_DOCUMENT_LOADER_H_
 #define MITTO_PAGE_DOCUMENT_LOADER_H_
@@ -30,11 +18,11 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "base/containers/circular_deque.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
+#include "mitto/dom/document_parser.h"
 #include "mitto/page/page_requests.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
@@ -43,14 +31,12 @@ namespace mitto {
 
 class Document;
 class DocumentLoadTiming;
-class HTMLScriptElement;
-class HtmlDocumentParser;
 class PageFrame;
-class PendingScript;
 class ScriptRunner;
 class TextResourceDecoder;
 
-class DocumentLoader final : public PageRequests::Client {
+class DocumentLoader final : public PageRequests::Client,
+                             public DocumentParser::Client {
  public:
   // Loads the response of navigation `number` into a document of `frame`.
   DocumentLoader(ScriptRunner& runner,
@@ -77,51 +63,16 @@ class DocumentLoader final : public PageRequests::Client {
   // go: nothing may come after it.
   void OnResponseEnded(int net_error) override;
 
+  // DocumentParser::Client:
+  bool FeedParser() override;
+  void ParserDetached() override;
+
  private:
-  // Document::CancelParsing(): the parser stops where it is, and the scripts
-  // that it waited for, or that wait for the end of parsing, never run. What
-  // more of the body comes is taken and dropped.
-  void CancelParsing();
   // Gives the parser what the decoder decoded, after the document has taken
   // the decoder's encoding.
   void AppendDecoded(std::u16string text);
-
-  // HTMLDocumentParser::SchedulePumpTokenizer(): the parser goes on from a
-  // task of the networking task source.
-  void SchedulePumpTokenizer();
-  // PumpTokenizerIfPossible(): feeds the parser what has arrived until it
-  // yields, waits for a script, or needs more, and ends the parse once all
-  // of the body is in.
-  void PumpTokenizerIfPossible();
-  // PumpTokenizer(): returns whether the parser yielded.
-  bool PumpTokenizer();
-  // Whether the parser waits for a parser-blocking script.
-  bool IsPaused() const { return parser_blocking_script_; }
-
-  // HTMLParserScriptRunner::ProcessScriptElement(): prepares a script whose
-  // end tag the parser reached.
-  void ProcessScriptElement(HTMLScriptElement& element);
-  // ExecuteParsingBlockingScripts(): runs the parser-blocking script once it
-  // is ready.
-  void ExecuteParsingBlockingScripts();
-  // A script that the parser waits for is ready: the parser goes on from a
-  // task of a very high priority, as Blink posts NotifyScriptLoaded().
-  void PendingScriptFinished();
-  void NotifyScriptLoaded();
-
-  // The HTML Standard's "the end", once the parser has taken all of the body:
-  // interactive, the deferred scripts, each from a task of its own, then
-  // DOMContentLoaded, and load once nothing holds it back.
-  void PrepareToStopParsing();
-  void AttemptToRunDeferredScriptsAndEnd();
-  // ExecuteScriptsWaitingForParsing(): returns whether every deferred script
-  // has run.
-  bool ExecuteScriptsWaitingForParsing();
-  // Document::FinishedParsing().
-  void FinishedParsing();
-  // Document::CheckCompleted(): complete and load, once parsing has finished
-  // and nothing holds the load event back.
-  void CheckCompleted();
+  // Tells the Session that the window's load event has been dispatched.
+  void DidDispatchLoadEvent();
 
   const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;
@@ -129,7 +80,6 @@ class DocumentLoader final : public PageRequests::Client {
   const raw_ref<PageFrame> frame_;
   const uint64_t number_;
   bool response_started_ = false;
-  bool parsing_cancelled_ = false;
 
   GURL url_;
   cppgc::Persistent<Document> document_;
@@ -139,29 +89,17 @@ class DocumentLoader final : public PageRequests::Client {
   cppgc::Persistent<DocumentLoadTiming> timing_;
   // How many bytes of the body have come, as decoded as the Page gets them.
   uint64_t body_bytes_ = 0;
-  std::unique_ptr<HtmlDocumentParser> parser_;
+  // The document's parser, until it stops for good, as when the document has
+  // loaded or document.open() has replaced it.
+  cppgc::Persistent<DocumentParser> parser_;
   // Decodes the body as Blink's TextResourceDecoder does, with the encoding
   // that the response, the document or Chrome's detector gives.
   std::unique_ptr<TextResourceDecoder> decoder_;
-  // Pieces of the body that have arrived and wait for the parser. The
-  // Session has no credit for them until the parser takes them.
+  // Pieces of the body that have arrived and wait for the parser.
   base::circular_deque<std::string> waiting_body_;
   bool body_ended_ = false;
-  bool parser_finished_ = false;
-  bool pump_scheduled_ = false;
-  // How often the parser has yielded, after which it has a longer budget.
-  int times_yielded_ = 0;
-  // The parser's script nesting level.
-  int script_nesting_level_ = 0;
-  // Once the parser has taken all of the body: the end has started, parsing
-  // has finished with DOMContentLoaded, and load has fired.
-  bool stopping_ = false;
-  bool parsing_finished_ = false;
-  bool load_fired_ = false;
-  // The script that the parser waits for, if any.
-  cppgc::Persistent<PendingScript> parser_blocking_script_;
-  // The scripts that run after parsing, in document order.
-  base::circular_deque<cppgc::Persistent<PendingScript>> scripts_after_parsing_;
+  // Whether the parser has had all of the body.
+  bool data_finished_ = false;
   base::WeakPtrFactory<DocumentLoader> weak_factory_{this};
 };
 

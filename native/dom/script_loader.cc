@@ -12,6 +12,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_script_runner.h"
+#include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/subresource_integrity.h"
@@ -322,6 +323,13 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         // Module scripts are a Known Gap.
         return nullptr;
       case ScriptTypeAtPrepare::kClassic:
+        // Chrome's intervention against a script of another site that
+        // blocks the parser and that document.write() inserted.
+        MaybeDisallowFetchForDocWrittenScript(
+            url,
+            !parser_inserted_ || element_->HasAttribute(u"async") ||
+                element_->HasAttribute(u"defer"),
+            element_document);
         prepared_pending_script_ = PendingScript::Fetch(
             *element_, url,
             ClassicScriptRequest(*element_, parser_inserted_,
@@ -342,16 +350,20 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         // Import maps, web bundles, speculation rules and module scripts are
         // Known Gaps.
         return nullptr;
-      case ScriptTypeAtPrepare::kClassic:
+      case ScriptTypeAtPrepare::kClassic: {
         // DevTools names an inline script that the parser inserted after its
         // document, with its errors counted from where its text starts, and
-        // one that the DOM inserted after nothing, from its start.
+        // one that the DOM inserted, or that document.write() wrote, after
+        // nothing, from its start, as Blink resets the position in a write.
+        const bool named =
+            parser_inserted_ && !element_document.IsInDocumentWrite();
         prepared_pending_script_ = PendingScript::CreateInline(
             *element_, source_text,
-            parser_inserted_ ? GURL(element_document.UrlForBinding()) : GURL(),
-            parser_inserted_ ? element_->StartLine() : 0,
-            parser_inserted_ ? element_->StartColumn() : 0);
+            named ? GURL(element_document.UrlForBinding()) : GURL(),
+            named ? element_->StartLine() : 0,
+            named ? element_->StartColumn() : 0);
         break;
+      }
     }
   }
 

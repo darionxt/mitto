@@ -18,10 +18,13 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/time/time.h"
+#include "mitto/dom/document_parser.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
 #include "mitto/dom/node.h"
@@ -39,6 +42,7 @@ class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
 class CustomElementRegistry;
+class DocumentLoadTiming;
 class DocumentScriptRunner;
 class DocumentType;
 class Element;
@@ -70,6 +74,28 @@ class Document : public Node {
     kLoading,
     kInteractive,
     kComplete,
+  };
+
+  // Blink's ParsingState: whether a parser loads the document, and whether
+  // DOMContentLoaded is being dispatched once it has finished.
+  enum class ParsingState {
+    kParsing,
+    kInDOMContentLoaded,
+    kFinishedParsing,
+  };
+
+  // Blink's LoadEventProgress: how far the document is through its load event
+  // and, once a navigation leaves it, through being unloaded.
+  enum class LoadEventProgress {
+    kLoadEventNotRun,
+    kLoadEventInProgress,
+    kLoadEventCompleted,
+    kBeforeUnloadEventInProgress,
+    kBeforeUnloadEventHandled,
+    kPageHideInProgress,
+    kUnloadVisibilityChangeInProgress,
+    kUnloadEventInProgress,
+    kUnloadEventHandled,
   };
 
   // new Document(): an XML document, which is not an HTML document.
@@ -183,6 +209,24 @@ class Document : public Node {
       bindings::ExceptionState& exception_state);
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
+  // The HTML Standard's dynamic markup insertion, as Blink's Document runs
+  // it: open() with no more than two arguments opens the document anew, with
+  // a script-created parser, and returns it, and with three opens a window,
+  // as window.open() does. write() and writeln() insert markup at the
+  // parser's insertion point, or open the document first if it has none.
+  // close() ends the input of a script-created parser.
+  Document* Open(const std::u16string& type,
+                 const std::u16string& replace,
+                 bindings::ExceptionState& exception_state);
+  Window* Open(const std::u16string& url,
+               const std::u16string& name,
+               const std::u16string& features,
+               bindings::ExceptionState& exception_state);
+  void Close(bindings::ExceptionState& exception_state);
+  void Write(const std::vector<std::u16string>& text,
+             bindings::ExceptionState& exception_state);
+  void Writeln(const std::vector<std::u16string>& text,
+               bindings::ExceptionState& exception_state);
   // The script element whose classic script runs, and null outside one: an
   // HTMLOrSVGScriptElement, as the bindings return a union of interfaces.
   bindings::ScriptWrappable* CurrentScriptForBinding() const;
@@ -246,8 +290,9 @@ class Document : public Node {
   }
   CacheStorageHost* GetCacheStorageHost() const { return cache_storage_host_; }
   Readiness GetReadiness() const { return readiness_; }
-  // Sets the readiness, and fires readystatechange at the document for
-  // interactive and complete, as Blink's Document::SetReadyState() does.
+  // Sets the readiness, marks when it changed the first time in the load
+  // timing, and fires readystatechange at the document, as Blink's
+  // Document::SetReadyState() does.
   void SetReadiness(Readiness readiness);
   // An element of the class that its namespace and name call for, as Blink's
   // Document::CreateRawElement() makes it: for the HTML namespace, the HTML
@@ -298,30 +343,44 @@ class Document : public Node {
   // no style sheets.
   bool IsScriptExecutionReady() const { return true; }
   // What holds the load event back, such as an async script that has not
-  // run. Once nothing does, `check_completed`, which the Page's loader gives,
-  // runs from a task, as Blink's load event delay timer runs.
+  // run. Once nothing does, CheckCompleted() runs from a task, as Blink's
+  // load event delay timer runs it.
   void IncrementLoadEventDelayCount() { ++load_event_delay_count_; }
   void DecrementLoadEventDelayCount();
   bool IsDelayingLoadEvent() const { return load_event_delay_count_ > 0; }
-  void SetCheckCompleted(base::RepeatingClosure check_completed) {
-    check_completed_ = std::move(check_completed);
+
+  // How the document loads, as Blink's Document and its frame's loader see
+  // it.
+  //
+  // The parser that loads the document, its response's or the
+  // script-created one of open(), until the document has loaded, and null
+  // otherwise.
+  DocumentParser* Parser() const { return parser_.Get(); }
+  // Document::OpenForNavigation(): a parser for the document's response,
+  // which `client` feeds, with the document loading.
+  DocumentParser& OpenForNavigation(DocumentParser::Client& client);
+  // Document::CancelParsing(), as stopping the document's loading does: the
+  // parser goes, the document is complete, and open() and write() do nothing
+  // from then on if a parser was parsing.
+  void CancelParsing();
+  ParsingState GetParsingState() const { return parsing_state_; }
+  // Document::FinishedParsing(), once the parser is done: DOMContentLoaded,
+  // a microtask checkpoint, then CheckCompleted() for a document of a window.
+  void FinishedParsing();
+  // Document::CheckCompleted(): complete, and the window's load event, once
+  // parsing has finished and nothing holds the load event back.
+  void CheckCompleted();
+  // The load timing of the window's navigation, which the readiness, the
+  // parser's end and the load event mark, each the first time.
+  void SetLoadTiming(DocumentLoadTiming* timing);
+  // What runs each time the window's load event has been dispatched.
+  void SetDidDispatchLoadEvent(base::RepeatingClosure did_dispatch) {
+    did_dispatch_load_event_ = std::move(did_dispatch);
   }
+  // Whether write() or writeln() runs.
+  bool IsInDocumentWrite() const { return write_recursion_depth_ > 0; }
 
   // What a navigation does to the document, as Blink's Document has it.
-  //
-  // Blink's LoadEventProgress: how far the document is through its load event
-  // and, once a navigation leaves it, through being unloaded.
-  enum class LoadEventProgress {
-    kLoadEventNotRun,
-    kLoadEventInProgress,
-    kLoadEventCompleted,
-    kBeforeUnloadEventInProgress,
-    kBeforeUnloadEventHandled,
-    kPageHideInProgress,
-    kUnloadVisibilityChangeInProgress,
-    kUnloadEventInProgress,
-    kUnloadEventHandled,
-  };
   LoadEventProgress GetLoadEventProgress() const {
     return load_event_progress_;
   }
@@ -344,24 +403,19 @@ class Document : public Node {
   // the event: Chrome asks the user to stay only on a page that the user has
   // activated, which a page in a Page never is, and says so in the console.
   bool DispatchBeforeUnloadEvent();
-  // Document::Abort(): stops the parser, so that nothing more of the body is
-  // parsed, and makes the document complete, with readystatechange, whose
-  // load event then never fires, as a navigation that starts while it loads
-  // has it.
+  // Document::Abort(): CancelParsing(), so that nothing more of the body is
+  // parsed, and the document is complete, with readystatechange, whose load
+  // event then never fires, as a navigation that starts while it loads has
+  // it.
   void Abort();
-  // Document::DispatchUnloadEvents(): stops the parser, then fires pagehide
-  // at the window, visibilitychange at the document while the page is
-  // visible, and unload at the window, once a navigation's document is about
-  // to take its place.
+  // Document::DispatchUnloadEvents(): the parser stops for good, then
+  // pagehide at the window, visibilitychange at the document while the page
+  // is visible, and unload at the window, once a navigation's document is
+  // about to take its place.
   void DispatchUnloadEvents();
   // When its unload event started and ended, null until it has.
   base::TimeTicks UnloadEventStart() const { return unload_event_start_; }
   base::TimeTicks UnloadEventEnd() const { return unload_event_end_; }
-  // What stops the parser of the document that a Page loads, which its loader
-  // gives.
-  void SetCancelParsing(base::RepeatingClosure cancel_parsing) {
-    cancel_parsing_ = std::move(cancel_parsing);
-  }
   // The refresh that the document's response or a meta element asks for,
   // made the first time.
   HttpRefreshScheduler& GetHttpRefreshScheduler();
@@ -384,7 +438,28 @@ class Document : public Node {
   }
 
  private:
+  friend class IgnoreDestructiveWriteCountIncrementer;
+  friend class IgnoreOpensDuringUnloadCountIncrementer;
+  friend class ThrowOnDynamicMarkupInsertionCountIncrementer;
+
   void ThrowCookiesDenied(bindings::ExceptionState& exception_state) const;
+  // The document-open steps, from an `entered_window` that may be null, and
+  // what they do once the checks have passed, as Blink splits them.
+  void Open(Window* entered_window, bindings::ExceptionState& exception_state);
+  void Open();
+  // Document::ImplicitOpen(): the document emptied and loading, with a new
+  // parser.
+  DocumentParser& ImplicitOpen(DocumentParser::Client* client);
+  void DetachParser();
+  // write(), once the strings are one.
+  void Write(const std::u16string& text,
+             Window* entered_window,
+             bindings::ExceptionState& exception_state);
+  // Document::DispatchLoadEventAndFinalize().
+  void DispatchLoadEventAndFinalize();
+  // Node::RemoveAllEventListenersRecursively() and the window's, as
+  // document.open() erases them.
+  void RemoveAllEventListenersRecursively();
   // Blink's Document::UpdateBaseURL().
   void UpdateBaseUrl();
 
@@ -402,10 +477,8 @@ class Document : public Node {
   std::optional<base::Time> last_modified_;
   // A document that no parser is loading is complete, as Blink's starts.
   Readiness readiness_ = Readiness::kComplete;
-  LoadEventProgress load_event_progress_ = LoadEventProgress::kLoadEventNotRun;
   std::u16string referrer_;
   bool initial_empty_ = false;
-  base::RepeatingClosure cancel_parsing_;
   std::unique_ptr<HttpRefreshScheduler> http_refresh_scheduler_;
   base::TimeTicks unload_event_start_;
   base::TimeTicks unload_event_end_;
@@ -435,7 +508,85 @@ class Document : public Node {
   HeapVector<HTMLScriptElement> current_script_stack_;
   int load_event_delay_count_ = 0;
   bool load_event_check_pending_ = false;
-  base::RepeatingClosure check_completed_;
+  cppgc::Member<DocumentParser> parser_;
+  cppgc::Member<DocumentLoadTiming> load_timing_;
+  base::RepeatingClosure did_dispatch_load_event_;
+  // A document that no parser loads has finished parsing and loading, as
+  // Blink's starts.
+  ParsingState parsing_state_ = ParsingState::kFinishedParsing;
+  LoadEventProgress load_event_progress_ =
+      LoadEventProgress::kLoadEventCompleted;
+  // The HTML Standard's counters of dynamic markup insertion.
+  int ignore_destructive_write_count_ = 0;
+  int ignore_opens_during_unload_count_ = 0;
+  int throw_on_dynamic_markup_insertion_count_ = 0;
+  // How deep write() calls nest, past which they do nothing, as Blink's
+  // kCMaxWriteRecursionDepth has it.
+  int write_recursion_depth_ = 0;
+  bool write_recursion_is_too_deep_ = false;
+  // The HTML Standard's active parser was aborted.
+  bool ignore_opens_and_writes_for_abort_ = false;
+};
+
+// The HTML Standard's ignore-destructive-writes counter of `document`, which
+// may be null, is one higher while the scope lasts, as a script from a file
+// runs.
+class IgnoreDestructiveWriteCountIncrementer {
+ public:
+  explicit IgnoreDestructiveWriteCountIncrementer(Document* document)
+      : count_(document ? &document->ignore_destructive_write_count_
+                        : nullptr) {
+    if (count_) {
+      ++*count_;
+    }
+  }
+  IgnoreDestructiveWriteCountIncrementer(
+      const IgnoreDestructiveWriteCountIncrementer&) = delete;
+  IgnoreDestructiveWriteCountIncrementer& operator=(
+      const IgnoreDestructiveWriteCountIncrementer&) = delete;
+  ~IgnoreDestructiveWriteCountIncrementer() {
+    if (count_) {
+      --*count_;
+    }
+  }
+
+ private:
+  const raw_ptr<int> count_;
+};
+
+// The ignore-opens-during-unload counter, as the unload of a document runs.
+class IgnoreOpensDuringUnloadCountIncrementer {
+ public:
+  explicit IgnoreOpensDuringUnloadCountIncrementer(Document& document)
+      : count_(document.ignore_opens_during_unload_count_) {
+    ++*count_;
+  }
+  IgnoreOpensDuringUnloadCountIncrementer(
+      const IgnoreOpensDuringUnloadCountIncrementer&) = delete;
+  IgnoreOpensDuringUnloadCountIncrementer& operator=(
+      const IgnoreOpensDuringUnloadCountIncrementer&) = delete;
+  ~IgnoreOpensDuringUnloadCountIncrementer() { --*count_; }
+
+ private:
+  const raw_ref<int> count_;
+};
+
+// The throw-on-dynamic-markup-insertion counter, as the parser runs a custom
+// element's constructor.
+class ThrowOnDynamicMarkupInsertionCountIncrementer {
+ public:
+  explicit ThrowOnDynamicMarkupInsertionCountIncrementer(Document& document)
+      : count_(document.throw_on_dynamic_markup_insertion_count_) {
+    ++*count_;
+  }
+  ThrowOnDynamicMarkupInsertionCountIncrementer(
+      const ThrowOnDynamicMarkupInsertionCountIncrementer&) = delete;
+  ThrowOnDynamicMarkupInsertionCountIncrementer& operator=(
+      const ThrowOnDynamicMarkupInsertionCountIncrementer&) = delete;
+  ~ThrowOnDynamicMarkupInsertionCountIncrementer() { --*count_; }
+
+ private:
+  const raw_ref<int> count_;
 };
 
 }  // namespace mitto

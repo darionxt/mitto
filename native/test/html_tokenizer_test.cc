@@ -457,6 +457,105 @@ size_t CheckTextPositions() {
   return problems;
 }
 
+// Takes the tokens that the tokenizer has, in TokensOf()'s form, and says
+// "EOF" after them for the end of the input.
+std::string TakeTokens(
+    HtmlTokenizer& tokenizer,
+    HtmlTokenizer::ZeroBasedPosition* start_tag_position = nullptr) {
+  std::vector<HtmlToken> tokens;
+  HtmlToken token;
+  bool end_of_file = false;
+  while (tokenizer.NextToken(token)) {
+    if (token.type == HtmlToken::Type::kStartTag && start_tag_position) {
+      *start_tag_position = tokenizer.TextPosition();
+    }
+    end_of_file |= token.type == HtmlToken::Type::kEndOfFile;
+    tokens.push_back(std::move(token));
+  }
+  return TokensOf(tokens) + (end_of_file ? " EOF" : "");
+}
+
+// The insertion point of document.write(), as the parser sets it around a
+// script: the tokenizer reads up to the innermost one, what is inserted goes
+// there, a CR at the end of one write and an LF at the start of the next are
+// one line feed, the end of the input waits for the insertion points to go,
+// and what is inserted does not move the positions after it. Returns how many
+// steps are wrong.
+size_t CheckInsertionPoints() {
+  size_t problems = 0;
+  const auto expect = [&problems](const std::string& step,
+                                  const std::string& actual,
+                                  const std::string& expected) {
+    if (actual != expected) {
+      ++problems;
+      printf("insertion points, %s: %s, not %s\n", step.c_str(), actual.c_str(),
+             expected.c_str());
+    }
+  };
+
+  HtmlTokenizer tokenizer((HtmlTokenizer::Options()));
+  tokenizer.Append(u"<s></s>R\n<p>");
+  tokenizer.Finish();
+  // Up to the end tag, as the parser stops there to run a script.
+  HtmlToken token;
+  while (tokenizer.NextToken(token) && token.type != HtmlToken::Type::kEndTag) {
+  }
+  tokenizer.PushInsertionPoint();
+  expect("nothing past the insertion point", TakeTokens(tokenizer), "[]");
+  tokenizer.Insert(u"1<t>2");
+  std::vector<HtmlToken> written;
+  while (tokenizer.NextToken(token)) {
+    written.push_back(token);
+    if (token.type == HtmlToken::Type::kStartTag) {
+      break;
+    }
+  }
+  expect("what was written", TokensOf(written),
+         "[[\"Character\", \"1\"], [\"StartTag\", \"t\", {}]]");
+  // A script that the written markup holds writes before the rest of it.
+  tokenizer.PushInsertionPoint();
+  tokenizer.Insert(u"X\r");
+  tokenizer.Insert(u"\nY");
+  expect("written within", TakeTokens(tokenizer),
+         "[[\"Character\", \"X\\u000AY\"]]");
+  tokenizer.PopInsertionPoint();
+  expect("the rest of what was written", TakeTokens(tokenizer),
+         "[[\"Character\", \"2\"]]");
+  tokenizer.Insert(u"3");
+  expect("written after it", TakeTokens(tokenizer), "[[\"Character\", \"3\"]]");
+  tokenizer.PopInsertionPoint();
+  HtmlTokenizer::ZeroBasedPosition position{-1, -1};
+  expect("the network's", TakeTokens(tokenizer, &position),
+         "[[\"Character\", \"R\\u000A\"], [\"StartTag\", \"p\", {}]] EOF");
+  expect("the position after the network's start tag",
+         base::StringPrintf("%d:%d", position.line, position.column), "1:3");
+
+  // A document that document.open() opened: what is written goes at the end,
+  // and the input ends once no insertion point is set.
+  HtmlTokenizer opened((HtmlTokenizer::Options()));
+  opened.Insert(u"<p>a");
+  opened.Insert(u"b");
+  expect("opened", TakeTokens(opened),
+         "[[\"StartTag\", \"p\", {}], [\"Character\", \"ab\"]]");
+  opened.PushInsertionPoint();
+  opened.Finish();
+  expect("no end while an insertion point is set", TakeTokens(opened), "[]");
+  opened.PopInsertionPoint();
+  expect("the end", TakeTokens(opened), "[] EOF");
+
+  // Many writes, each read before the next, which lets go of what was read.
+  HtmlTokenizer many_writes((HtmlTokenizer::Options()));
+  std::string last;
+  for (int i = 0; i < 1000; ++i) {
+    many_writes.Insert(u"<b>x</b>");
+    last = TakeTokens(many_writes);
+  }
+  expect("the last of many writes", last,
+         "[[\"StartTag\", \"b\", {}], [\"Character\", \"x\"], "
+         "[\"EndTag\", \"b\"]]");
+  return problems;
+}
+
 int Main() {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
@@ -498,7 +597,7 @@ int Main() {
     return 1;
   }
 
-  size_t problems = CheckTextPositions();
+  size_t problems = CheckTextPositions() + CheckInsertionPoints();
   size_t failures = 0;
   size_t listed_failures = 0;
   for (const Run& run : runs) {

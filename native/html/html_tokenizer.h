@@ -151,6 +151,24 @@ class HtmlTokenizer {
 
   // Ends the input stream.
   void Finish();
+  // Whether Finish() has been called.
+  bool HasSeenEndOfFile() const { return finished_; }
+
+  // The HTML Standard's insertion point, as Blink's HTMLInputStream and
+  // InsertionPointRecord keep it for document.write(): the parser sets one
+  // just before the next input character while a script it reached runs, and
+  // takes it back to the one before once the script is done. While one is
+  // set, the tokenizer reads no further than it and does not see the end of
+  // the input, and Insert() adds there.
+  void PushInsertionPoint();
+  void PopInsertionPoint();
+  bool HasInsertionPoint() const { return !insertion_points_.empty(); }
+  // Adds what a script wrote at the insertion point, or at the end of the
+  // input while none is set, as for a document that document.open() opened.
+  // Its CR LF and CR become LF as the network's do, and its characters do
+  // not count in the positions of what comes after them, as Blink excludes
+  // them from line numbers.
+  void Insert(std::u16string_view input);
 
   // Moves the next token into `token` and returns true, or returns false if
   // the input so far holds no more. Characters come as character tokens,
@@ -209,6 +227,10 @@ class HtmlTokenizer {
     int line;
     int column;
   };
+
+  // Lets go of the input that has been read, once it is half of the input
+  // kept, as more comes from the network or a script.
+  void DiscardReadInput();
 
   // Runs one state for one code point. Returns false if the input ran out
   // first.
@@ -272,11 +294,28 @@ class HtmlTokenizer {
   bool force_null_character_replacement_ = false;
   bool allow_cdata_ = false;
 
+  // Where the input that the tokenizer may read so far ends: the innermost
+  // insertion point, or the end of the input.
+  size_t ReadableEnd() const {
+    return insertion_points_.empty() ? input_.size() : insertion_points_.back();
+  }
+  // Whether the tokenizer has reached the end of the input once it has read
+  // what it may: Finish() has been called and no insertion point is set.
+  bool ReadsEndOfFile() const { return finished_ && insertion_points_.empty(); }
+
   // The input, with CR LF and CR already LF, and what of it is used up.
   std::u16string input_;
   size_t input_position_ = 0;
   bool last_input_was_cr_ = false;
   bool finished_ = false;
+  // The insertion points, innermost last, as offsets in `input_`. An outer
+  // one is never before an inner one.
+  std::vector<size_t> insertion_points_;
+  // Where what scripts wrote ends in `input_`: what is unread before it came
+  // from Insert(), and what is after it from the network, as a script writes
+  // only before what the network has given.
+  size_t inserted_end_ = 0;
+  bool last_inserted_was_cr_ = false;
 
   // The current input character, and whether it was U+0000 before it became
   // U+FFFD, as Blink replaces it in most states before they see it.

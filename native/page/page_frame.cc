@@ -83,6 +83,20 @@ void PageFrame::DidNavigateWithinDocument(const GURL& url) {
   }
 }
 
+bool PageFrame::HasProvisionalNavigation() const {
+  return provisional_ != nullptr;
+}
+
+void PageFrame::StopAllLoaders() {
+  if (current_) {
+    current_->StopLoading();
+  }
+  if (provisional_) {
+    requests_->Cancel(provisional_->number());
+    provisional_.reset();
+  }
+}
+
 Document& PageFrame::CommitNavigation(DocumentLoader& loader,
                                       const GURL& url,
                                       base::TimeTicks navigation_start,
