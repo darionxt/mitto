@@ -9,6 +9,7 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/processing_instruction.h"
 
 namespace mitto {
 
@@ -168,6 +169,20 @@ void AppendNode(std::u16string& markup, const Node& node) {
       markup += static_cast<const CharacterData&>(node).Data();
       markup += u"-->";
       break;
+    // MarkupFormatter::AppendProcessingInstruction() ends one with "?>" in
+    // HTML too.
+    case Node::kProcessingInstructionNode:
+      markup += u"<?";
+      markup += static_cast<const ProcessingInstruction&>(node).Target();
+      markup += u' ';
+      markup += static_cast<const CharacterData&>(node).Data();
+      markup += u"?>";
+      break;
+    // HTML serializes one as text.
+    case Node::kCdataSectionNode:
+      AppendEscaped(markup, static_cast<const CharacterData&>(node).Data(),
+                    /*in_attribute=*/false);
+      break;
     case Node::kDocumentTypeNode:
       markup += u"<!DOCTYPE ";
       markup += static_cast<const DocumentType&>(node).Name();
@@ -194,6 +209,12 @@ std::u16string SerializeNode(const Node& node) {
   std::u16string markup;
   AppendNode(markup, node);
   return markup;
+}
+
+std::u16string EscapeAttributeValue(std::u16string_view value) {
+  std::u16string escaped;
+  AppendEscaped(escaped, value, /*in_attribute=*/true);
+  return escaped;
 }
 
 }  // namespace mitto

@@ -14,7 +14,8 @@
 
 namespace mitto {
 
-class Text final : public CharacterData {
+// Not final: CDATASection is a Text, as in Blink.
+class Text : public CharacterData {
  public:
   // new Text(data), in the current Window's document.
   static Text* Create(const std::u16string& data);
