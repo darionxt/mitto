@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <variant>
 
+#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
@@ -18,6 +19,7 @@
 #include "mitto/bindings/v8_document.h"
 #include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
+#include "mitto/dom/before_unload_event.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
@@ -37,6 +39,7 @@
 #include "mitto/dom/mathml_element.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
+#include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/range.h"
@@ -342,6 +345,98 @@ void Document::SetReadiness(Readiness readiness) {
   Event* const event = Event::Create(u"readystatechange", init);
   event->SetTrusted(true);
   DispatchEvent(event);
+}
+
+bool Document::PageDismissalEventBeingDispatched() const {
+  switch (load_event_progress_) {
+    case LoadEventProgress::kBeforeUnloadEventInProgress:
+    case LoadEventProgress::kPageHideInProgress:
+    case LoadEventProgress::kUnloadVisibilityChangeInProgress:
+    case LoadEventProgress::kUnloadEventInProgress:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void Document::SetInitialEmptyDocument() {
+  initial_empty_ = true;
+  load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
+}
+
+bool Document::DispatchBeforeUnloadEvent() {
+  if (!window_ || !Body()) {
+    return true;
+  }
+  // A navigation that a beforeunload listener starts.
+  if (load_event_progress_ == LoadEventProgress::kBeforeUnloadEventInProgress) {
+    return false;
+  }
+  BeforeUnloadEvent* const event = BeforeUnloadEvent::Create();
+  {
+    const base::AutoReset<LoadEventProgress> in_progress(
+        &load_event_progress_, LoadEventProgress::kBeforeUnloadEventInProgress);
+    window_->DispatchEventWithTarget(event, this);
+  }
+  if (!event->ReturnValue().empty() || event->DefaultPrevented()) {
+    // Intervention::GenerateReport(), as no user ever activated the page.
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        "Blocked attempt to show a 'beforeunload' confirmation panel for a "
+        "frame that never had a user gesture since its load. "
+        "https://www.chromestatus.com/feature/5082396709879808");
+  }
+  // FrameLoader::BeforeUnloadDoneWillUnload().
+  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
+  return true;
+}
+
+void Document::Abort() {
+  // CancelParsing(): the parser goes, and the document is complete. The
+  // refresh that the document scheduled goes with it.
+  if (cancel_parsing_) {
+    cancel_parsing_.Run();
+  }
+  SetReadiness(Readiness::kComplete);
+  if (!LoadEventFinished()) {
+    load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
+  }
+}
+
+void Document::DispatchUnloadEvents() {
+  if (cancel_parsing_) {
+    cancel_parsing_.Run();
+  }
+  if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun ||
+      load_event_progress_ >= LoadEventProgress::kPageHideInProgress ||
+      !window_) {
+    return;
+  }
+  load_event_progress_ = LoadEventProgress::kPageHideInProgress;
+  window_->DispatchEventWithTarget(
+      PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/false),
+      this);
+  // The page is visible until this changes it, which Hidden() reads.
+  const bool page_visible = window_ && !Hidden();
+  load_event_progress_ = LoadEventProgress::kUnloadVisibilityChangeInProgress;
+  if (page_visible) {
+    for (const char16_t* type :
+         {u"visibilitychange", u"webkitvisibilitychange"}) {
+      bindings::EventInit init;
+      init.bubbles = true;
+      Event* const event = Event::Create(type, init);
+      event->SetTrusted(true);
+      DispatchEvent(event);
+    }
+  }
+  load_event_progress_ = LoadEventProgress::kUnloadEventInProgress;
+  if (window_) {
+    bindings::EventInit init;
+    Event* const event = Event::Create(u"unload", init);
+    event->SetTrusted(true);
+    window_->DispatchEventWithTarget(event, this);
+  }
+  load_event_progress_ = LoadEventProgress::kUnloadEventHandled;
 }
 
 std::u16string Document::CompatMode() const {

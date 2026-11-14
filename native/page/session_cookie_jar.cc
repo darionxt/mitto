@@ -54,6 +54,7 @@ void SessionCookieJar::SetCookie(const std::u16string& line) {
   if (bytes.size() > kMaxCookieLineSize) {
     return;
   }
+  ++cookie_writes_;
   send_.Run(EncodeSetCookie(Window::Current().DocumentId(), bytes));
 }
 

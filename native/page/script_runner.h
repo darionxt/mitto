@@ -41,8 +41,8 @@ class DOMTimerCoordinator;
 class AnimationFrameController;
 class IdleTaskController;
 class Document;
-class DocumentLoader;
 class PageFetcher;
+class PageFrame;
 class PageRequests;
 class SessionCookieJar;
 class WindowTasks;
@@ -176,7 +176,8 @@ class ScriptRunner final : public base::TaskObserver {
   std::set<uint64_t> waiting_calls_;
   raw_ptr<SessionCookieJar> cookie_jar_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
-  std::unique_ptr<DocumentLoader> loader_;
+  // The Page's frame, which loads its documents.
+  std::unique_ptr<PageFrame> frame_;
   // The current window's timers and what its fetch() goes through.
   std::unique_ptr<DOMTimerCoordinator> timers_;
   std::unique_ptr<IdleTaskController> idle_tasks_;

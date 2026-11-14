@@ -1332,6 +1332,23 @@ SVGAnimatedEnumeration* SVGMarkerElement::MarkerUnits() {
   return AnimatedEnumeration(u"markerUnits", kMarkerUnits, 2);
 }
 
+SVGAnimatedEnumeration* SVGMarkerElement::OrientType() {
+  return AnimatedOrient()->OrientType();
+}
+
+SVGAnimatedAngle* SVGMarkerElement::OrientAngle() {
+  return AnimatedOrient();
+}
+
+void SVGMarkerElement::SetOrientToAuto() {
+  SetAttributeWithoutValidation(u"orient", u"auto");
+}
+
+// The angle's string in its unit, a turn too.
+void SVGMarkerElement::SetOrientToAngle(SVGAngle* angle) {
+  SetAttributeWithoutValidation(u"orient", angle->Target().ValueAsString());
+}
+
 // static
 SVGMaskElement* SVGMaskElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGMaskElement>(document);
@@ -1449,6 +1466,14 @@ const bindings::WrapperTypeInfo* SVGPolygonElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGPolygonElement::kWrapperTypeInfo;
 }
 
+SVGPointList* SVGPolygonElement::PointsFromJavascript() {
+  return AnimatedPointList()->BaseVal();
+}
+
+SVGPointList* SVGPolygonElement::AnimatedPoints() {
+  return AnimatedPointList()->AnimVal();
+}
+
 // static
 SVGPolylineElement* SVGPolylineElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<SVGPolylineElement>(document);
@@ -1460,6 +1485,14 @@ SVGPolylineElement::SVGPolylineElement(Document& document)
 const bindings::WrapperTypeInfo* SVGPolylineElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8SVGPolylineElement::kWrapperTypeInfo;
+}
+
+SVGPointList* SVGPolylineElement::PointsFromJavascript() {
+  return AnimatedPointList()->BaseVal();
+}
+
+SVGPointList* SVGPolylineElement::AnimatedPoints() {
+  return AnimatedPointList()->AnimVal();
 }
 
 // static
@@ -1579,12 +1612,24 @@ SVGAnimatedLength* SVGSVGElement::Height() {
                         SVGAnimatedLength::Initial::kPercent100);
 }
 
+SVGAngle* SVGSVGElement::CreateSVGAngle() {
+  return SVGAngle::Create();
+}
+
 SVGLength* SVGSVGElement::CreateSVGLength() {
   return SVGLength::Create();
 }
 
 SVGNumber* SVGSVGElement::CreateSVGNumber() {
   return SVGNumber::Create();
+}
+
+SVGPoint* SVGSVGElement::CreateSVGPoint() {
+  return SVGPoint::Create();
+}
+
+SVGRect* SVGSVGElement::CreateSVGRect() {
+  return SVGRect::Create();
 }
 
 // static
