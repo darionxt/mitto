@@ -109,6 +109,24 @@ void BindOptionalSize(sql::Statement& statement,
   }
 }
 
+// Makes the schema of a new database, or checks that of one that a version
+// this one can read wrote. The transaction and the meta table end with this,
+// so before the caller lets a database go that this refused.
+bool InitializeSchema(sql::Database& database) {
+  sql::Transaction transaction(&database);
+  if (!transaction.Begin()) {
+    return false;
+  }
+  if (!sql::MetaTable::DoesTableExist(&database) && !CreateSchema(database)) {
+    return false;
+  }
+  sql::MetaTable meta_table;
+  return meta_table.Init(&database, kCurrentSchemaVersion,
+                         kCompatibleSchemaVersion) &&
+         meta_table.GetCompatibleVersionNumber() <= kCurrentSchemaVersion &&
+         transaction.Commit();
+}
+
 }  // namespace
 
 LocalStorageDatabase::MapUpdate::MapUpdate(StorageKey storage_key)
@@ -132,21 +150,7 @@ bool LocalStorageDatabase::Open(const base::FilePath& path) {
     database_.reset();
     return false;
   }
-  sql::Transaction transaction(database_.get());
-  if (!transaction.Begin()) {
-    database_.reset();
-    return false;
-  }
-  if (!sql::MetaTable::DoesTableExist(database_.get()) &&
-      !CreateSchema(*database_)) {
-    database_.reset();
-    return false;
-  }
-  sql::MetaTable meta_table;
-  if (!meta_table.Init(database_.get(), kCurrentSchemaVersion,
-                       kCompatibleSchemaVersion) ||
-      meta_table.GetCompatibleVersionNumber() > kCurrentSchemaVersion ||
-      !transaction.Commit()) {
+  if (!InitializeSchema(*database_)) {
     database_.reset();
     return false;
   }

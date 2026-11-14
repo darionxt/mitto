@@ -11,10 +11,12 @@ import dataclasses
 import errno
 import http.server
 import json
+import sqlite3
 import subprocess
 import sys
 import threading
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -343,6 +345,19 @@ def test_one_session_at_a_time_has_a_storage_directory(native_library: Any, tmp_
         assert error.value.errno == errno.EBUSY
     with mitto.Session(_storage=storage):
         pass
+
+
+def test_a_storage_directory_of_a_later_version_is_refused(native_library: Any, tmp_path: Path) -> None:
+    # A database whose meta table says that a later version wrote it, in a form this one cannot read.
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    with closing(sqlite3.connect(storage / "LocalStorage")) as database:
+        database.execute("CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR)")
+        database.executemany("INSERT INTO meta VALUES (?, ?)", [("version", "2"), ("last_compatible_version", "2")])
+        database.commit()
+
+    with pytest.raises(OSError, match="cannot keep storage in"):
+        mitto.Session(_storage=storage)
 
 
 def test_a_storage_directory_that_names_no_machine_is_refused(native_library: Any, tmp_path: Path) -> None:
