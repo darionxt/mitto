@@ -30,12 +30,14 @@ class Response;
 class FetchLoader final : public FetchClient, public BodyLoader {
  public:
   // `resolver` is fetch()'s, in `context`. The response of a HEAD request,
-  // `head`, has a null body. `signal` is the request's, which has not
+  // `head`, has a null body. `credentials` says that the request's
+  // credentials mode is include. `signal` is the request's, which has not
   // aborted.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
               v8::Local<v8::Promise::Resolver> resolver,
               bool head,
+              bool credentials,
               AbortSignal* signal);
 
   FetchLoader(const FetchLoader&) = delete;
@@ -62,6 +64,7 @@ class FetchLoader final : public FetchClient, public BodyLoader {
   v8::Global<v8::Context> context_;
   v8::Global<v8::Promise::Resolver> resolver_;
   const bool head_;
+  const bool credentials_;
   // Whether the response is opaque, whose body goes untaken.
   bool opaque_ = false;
   raw_ptr<FetchController> controller_ = nullptr;

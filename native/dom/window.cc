@@ -652,10 +652,12 @@ v8::Local<v8::Promise> Window::Fetch(
   data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
                                        /*render_blocking=*/false);
   data.keepalive = request->keepalive();
-  fetcher_->Fetch(std::move(data),
-                  std::make_unique<FetchLoader>(
-                      isolate, context, resolver,
-                      /*head=*/request->Method() == "HEAD", signal));
+  fetcher_->Fetch(std::move(data), std::make_unique<FetchLoader>(
+                                       isolate, context, resolver,
+                                       /*head=*/request->Method() == "HEAD",
+                                       /*credentials=*/request->credentials() ==
+                                           FetchCredentialsMode::kInclude,
+                                       signal));
   return resolver->GetPromise();
 }
 

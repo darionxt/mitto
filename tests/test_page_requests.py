@@ -188,6 +188,32 @@ def test_a_fetchs_credentials_mode_says_whether_the_sessions_cookies_go(
     assert page_lines == caller_lines
 
 
+def test_an_exposed_star_shows_every_header_only_to_a_fetch_without_credentials(
+    session: mitto.Session, server: _Server, other: _Server
+) -> None:
+    # With credentials, "*" in Access-Control-Expose-Headers is a name like any other, as Blink reads it.
+    url = server.page("/", "<p>exposed</p>")
+    other.text(
+        "/exposed",
+        "exposed",
+        [
+            ("Access-Control-Allow-Origin", server.origin),
+            ("Access-Control-Allow-Credentials", "true"),
+            ("Access-Control-Expose-Headers", "*"),
+            ("X-Shown", "1"),
+        ],
+    )
+
+    with _open_page(session, url) as page:
+        shown = page.evaluate(
+            f"Promise.all(['omit', 'include'].map(credentials => fetch('{other.url('/exposed')}', {{credentials}})"
+            ".then(response => response.headers.get('x-shown'))))",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert shown == ["1", None]
+
+
 def test_a_no_cors_fetch_gives_an_opaque_response_and_sends_only_safelisted_lines(
     session: mitto.Session, server: _Server, other: _Server
 ) -> None:
@@ -368,3 +394,19 @@ def test_a_scripts_crossorigin_attribute_makes_its_request_a_cors_one(
     session.get(other.url("/anonymous.js"), kind="script", initiator=url, mode="cors", credentials="same-origin")
     page_lines, caller_lines = other.headers_of("/anonymous.js")
     assert page_lines == caller_lines
+
+
+def test_the_cache_api_keeps_an_opaque_response_opaque(session: mitto.Session, server: _Server, other: _Server) -> None:
+    url = server.page("/", "<p>cache</p>")
+    other.text("/closed", "closed")
+
+    with _open_page(session, url) as page:
+        kept = page.evaluate(
+            "(async () => { const cache = await caches.open('opaque');"
+            f" await cache.put('/kept', await fetch('{other.url('/closed')}', {{mode: 'no-cors'}}));"
+            " const response = await cache.match('/kept');"
+            " return [response.type, response.status, response.url, await response.text()]; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert kept == ["opaque", 0, "", ""]

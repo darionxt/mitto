@@ -29,9 +29,10 @@ bool IsNullBodyStatus(int32_t status) {
          status == 304;
 }
 
-// The names that Access-Control-Expose-Headers lists, in lower case. A
-// request without credentials, as each of the Runtime's cross-origin ones
-// is, exposes every name with "*".
+// The names that Access-Control-Expose-Headers lists, in lower case, with
+// "*" among them, which exposes every name only for a request without
+// credentials, as Blink's ExtractCorsExposedHeaderNamesList() has it.
+// Upstream: third_party/blink/renderer/platform/loader/cors/cors.cc
 std::set<std::string> ExposedHeaderNames(const Headers& headers) {
   std::set<std::string> names;
   const std::optional<std::string> list =
@@ -71,11 +72,13 @@ FetchLoader::FetchLoader(v8::Isolate* isolate,
                          v8::Local<v8::Context> context,
                          v8::Local<v8::Promise::Resolver> resolver,
                          bool head,
+                         bool credentials,
                          AbortSignal* signal)
     : isolate_(isolate),
       context_(isolate, context),
       resolver_(isolate, resolver),
       head_(head),
+      credentials_(credentials),
       signal_(signal) {
   signal->AddAlgorithm(bindings::MakeGarbageCollected<AbortFetchAlgorithm>(
       weak_factory_.GetWeakPtr()));
@@ -129,12 +132,14 @@ void FetchLoader::OnResponseStarted(const FetchResponseHead& head) {
   Headers* const headers = Headers::Create(Headers::Guard::kNone);
   const std::set<std::string> exposed =
       cors ? ExposedHeaderNames(*all) : std::set<std::string>();
+  // With credentials, "*" is a name like any other.
+  const bool expose_all = !credentials_ && exposed.contains("*");
   for (const auto& [name, value] : all->list()) {
     if (IsForbiddenResponseHeaderName(name)) {
       continue;
     }
     if (cors && !IsCorsSafelistedResponseHeaderName(name) &&
-        !exposed.contains(base::ToLowerASCII(name)) && !exposed.contains("*")) {
+        !exposed.contains(base::ToLowerASCII(name)) && !expose_all) {
       continue;
     }
     headers->AppendLine(name, value);
