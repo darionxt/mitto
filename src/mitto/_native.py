@@ -62,9 +62,11 @@ __all__ = [
     "PageLoaded",
     "PageMediaDevices",
     "PageNavigated",
+    "PageNavigationStarted",
     "PageNavigator",
     "PageRequestTemplate",
     "PageStart",
+    "PageUrlChanged",
     "PageUserAgentData",
     "Priority",
     "PrivateSettings",
@@ -85,7 +87,7 @@ __all__ = [
 ]
 
 # The MITTO_ABI_VERSION of the C header this module is written against. Change it together with the declarations below.
-ABI_VERSION = 11
+ABI_VERSION = 12
 
 # The MITTO_SETTINGS_VERSION of the C header this module is written against.
 SETTINGS_VERSION = 1
@@ -116,6 +118,9 @@ _ERR_CACHE_LOCK_TIMEOUT = -409
 # script.
 _ERR_FILE_NOT_FOUND = -6
 _ERR_MSG_TOO_BIG = -142
+
+# What a Page's navigation that ended with no document, as a 204 or a download does, ends with, beside its status.
+_ERR_ABORTED = -3
 
 # The longest script, in bytes of UTF-8, that a Page takes: what one message over its channel carries.
 MAX_SCRIPT_SIZE = 16 * 1024 * 1024 - 8
@@ -175,6 +180,8 @@ class PageEventType(enum.IntEnum):
     NAVIGATED = 5
     LOADED = 6
     KNOWN_GAP = 7
+    NAVIGATION_STARTED = 8
+    URL_CHANGED = 9
 
 
 class ConsoleLevel(enum.IntEnum):
@@ -755,19 +762,56 @@ class KnownGap:
 
 @dataclass(frozen=True, slots=True)
 class PageNavigated:
-    """The navigation that opening the Page started has its response, and its document takes about:blank's place; or it
-    failed before a response, and the Page keeps about:blank.
+    """A navigation has its response, and the Page has made its document, which takes the place of the Page's after every
+    event of the old one; or it ended with no document, as one whose response is a 204 or a download does; or another
+    took its place first; or it failed before a response. The Page keeps its document but in the first case. The navigation that opening the Page started has one, and so does each that a PageNavigationStarted
+    said, in the order they started.
 
     Attributes:
-        url: The URL of the document, after any redirects, or the URL that the navigation failed at.
+        url: The URL of the document, after any redirects, or the URL that the navigation ended or failed at.
         status: The response's HTTP status code, or 0 if it failed.
-        net_error: 0 if the navigation has a response, and otherwise the negative Chromium net error code it failed with,
-            which NativePage.request_error() turns into the error that a request raises for it.
+        net_error: 0 if the navigation has a document, ERR_ABORTED (-3) with a status if it ended with none, and otherwise
+            the negative Chromium net error code it failed with, which NativePage.request_error() turns into the error
+            that a request raises for it.
     """
 
     url: str
     status: int
     net_error: int
+
+    @property
+    def kept_document(self) -> bool:
+        """Whether the navigation ended with no document, and the Page keeps the one it has."""
+        return self.net_error == _ERR_ABORTED and self.status != 0
+
+    @property
+    def replaced(self) -> bool:
+        """Whether the navigation ended before the Page made its document because another took its place, which may still
+        give a document."""
+        return self.net_error == _ERR_ABORTED and self.status == 0
+
+
+@dataclass(frozen=True, slots=True)
+class PageNavigationStarted:
+    """The document started a navigation to another document, such as through location or a link, which the Session
+    makes. A PageNavigated says how it ends.
+
+    Attributes:
+        url: Where it goes.
+    """
+
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class PageUrlChanged:
+    """A navigation within the document, such as one to a fragment, gave it another URL, with no request.
+
+    Attributes:
+        url: The document's new URL.
+    """
+
+    url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -775,7 +819,17 @@ class PageLoaded:
     """The window's load event has been dispatched: the document and its classic scripts have loaded and run."""
 
 
-NativePageEvent = PageEvaluated | PageEnded | ConsoleMessage | UncaughtError | KnownGap | PageNavigated | PageLoaded
+NativePageEvent = (
+    PageEvaluated
+    | PageEnded
+    | ConsoleMessage
+    | UncaughtError
+    | KnownGap
+    | PageNavigated
+    | PageLoaded
+    | PageNavigationStarted
+    | PageUrlChanged
+)
 
 
 class NativePage:
@@ -866,7 +920,7 @@ class FetchParams:
     """What a request made for a page says of itself, in the terms of Chrome's network::ResourceRequest.
 
     Attributes:
-        mode: "navigate", "cors" or "no-cors".
+        mode: "navigate", "same-origin", "cors" or "no-cors".
         destination: What Sec-Fetch-Dest says, such as "document" or "empty".
         credentials_mode: "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
         has_user_activation: Whether Sec-Fetch-User says that the user started it.
@@ -1751,10 +1805,18 @@ def _copy_page_event(native: MittoPageEvent) -> NativePageEvent:
         case PageEventType.KNOWN_GAP:
             return KnownGap(name=message)
         case PageEventType.NAVIGATED:
-            url = ctypes.string_at(native.url, native.url_size).decode(errors="replace") if native.url else ""
-            return PageNavigated(url=url, status=native.status, net_error=native.net_error)
+            return PageNavigated(url=_event_url(native), status=native.status, net_error=native.net_error)
         case PageEventType.LOADED:
             return PageLoaded()
+        case PageEventType.NAVIGATION_STARTED:
+            return PageNavigationStarted(url=_event_url(native))
+        case PageEventType.URL_CHANGED:
+            return PageUrlChanged(url=_event_url(native))
+
+
+def _event_url(native: MittoPageEvent) -> str:
+    """Return the URL that a Page's event holds."""
+    return ctypes.string_at(native.url, native.url_size).decode(errors="replace") if native.url else ""
 
 
 def _parse_headers(block: bytes) -> tuple[tuple[str, str], ...]:

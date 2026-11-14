@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 15
+_PROTOCOL_VERSION = 17
 
 
 def _script_request(number: int, url: str) -> str:
@@ -223,15 +223,19 @@ def _script_request(number: int, url: str) -> str:
     return _fetch_request(number, url, kind=1)
 
 
-def _fetch_request(number: int, url: str, method: str = "GET", lines: str = "", kind: int = 2) -> str:
-    """The Python expression of a Request's payload, with no body, which a fake Page program sends."""
+def _fetch_request(
+    number: int, url: str, method: str = "GET", lines: str = "", kind: int = 2, document: int = 1, flags: int = 0
+) -> str:
+    """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends."""
     return (
-        f"struct.pack('<QBBI', {number}, {kind}, 0, {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
+        f"struct.pack('<QQBBI', {document}, {number}, {kind}, {flags}, {len(url)}) + b'{url}' "
+        f"+ struct.pack('<I', {len(method)}) "
         f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + b'\\x00'"
     )
 
 
-_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
+# The hello, and the Page's initial about:blank, document 1.
+_HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack('<QB', 1, 0))"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the fake Page program is a script")
@@ -311,6 +315,43 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))"
             f"{_HELLO}\nsend(8, {_script_request(0, 'http://127.0.0.1:1/a.js')})",
             "the library refused a message from the Page: a request numbered 0, which is the navigation's",
             id="navigation-number",
+        ),
+        pytest.param(
+            "unknown-document",
+            f"{_HELLO}\nsend(10, struct.pack('<QQ', 5, 1))",
+            "the library refused a message from the Page: message type 10 of document 5, which is not one of the"
+            " Page's",
+            id="unknown-document",
+        ),
+        pytest.param(
+            "document-numbered-again",
+            f"{_HELLO}\nsend(70, struct.pack('<QB', 1, 0))",
+            "the library refused a message from the Page: a document numbered 1, after one numbered 1",
+            id="document-numbered-again",
+        ),
+        pytest.param(
+            "document-of-no-response",
+            f"{_HELLO}\nsend(70, struct.pack('<QBQ', 2, 1, 0))",
+            "the library refused a message from the Page: a document of navigation 0, which has no response",
+            id="document-of-no-response",
+        ),
+        pytest.param(
+            "same-document-elsewhere",
+            f"{_HELLO}\nsend(71, struct.pack('<Q', 1) + b'http://elsewhere.test/')",
+            "the library refused a message from the Page: a same-document navigation to another origin",
+            id="same-document-elsewhere",
+        ),
+        pytest.param(
+            "navigation-with-a-method",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', method='POST', kind=3)})",
+            "the library refused a message from the Page: a navigation with a method, header lines, a body or a mode",
+            id="navigation-with-a-method",
+        ),
+        pytest.param(
+            "fetch-with-activation",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=2)})",
+            "the library refused a message from the Page: a request that is not a navigation with a navigation's flags",
+            id="fetch-with-activation",
         ),
         pytest.param(
             "page-refuses",

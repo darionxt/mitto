@@ -14,6 +14,7 @@
 #include "mitto/encoding/text_resource_decoder.h"
 #include "mitto/encoding/text_resource_decoder_builder.h"
 #include "mitto/header_rules.h"
+#include "mitto/page/page_frame.h"
 #include "mitto/page/resource_timing.h"
 #include "mitto/page/script_runner.h"
 
@@ -21,29 +22,52 @@ namespace mitto {
 
 DocumentLoader::DocumentLoader(ScriptRunner& runner,
                                PageRequests& requests,
-                               SendFrame send)
-    : runner_(runner), requests_(requests), send_(std::move(send)) {}
+                               SendFrame send,
+                               PageFrame& frame,
+                               uint64_t number)
+    : runner_(runner),
+      requests_(requests),
+      send_(std::move(send)),
+      frame_(frame),
+      number_(number) {}
 
-DocumentLoader::~DocumentLoader() = default;
-
-void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
-  // The parser of a document that the window had goes, and what waited for
-  // it of the body before.
+DocumentLoader::~DocumentLoader() {
+  // The parser holds this as its client, so it stops for good first.
   waiting_body_.clear();
   if (parser_) {
-    parser_->Detach();
+    const cppgc::Persistent<DocumentParser> parser = parser_;
+    parser->Detach();
   }
-  body_bytes_ = 0;
-  body_ended_ = false;
-  data_finished_ = false;
-  // The document of the response takes the place of about:blank's, in a
-  // context of its own, as Blink makes a new window for a tab's first
-  // navigation, whose about:blank has an opaque origin.
+}
+
+void DocumentLoader::StopLoading() {
+  // The parser stops for good, and the body too, if it still comes.
+  if (parser_) {
+    const cppgc::Persistent<DocumentParser> parser = parser_;
+    parser->Detach();
+  }
+  if (response_started_ && !body_ended_) {
+    body_ended_ = true;
+    requests_->Cancel(number_);
+  }
+}
+
+void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
+  response_started_ = true;
+  // The document of the response takes the place of the frame's, in a
+  // context of its own, once the old one has unloaded, as Blink makes a new
+  // window for a tab's first navigation, whose about:blank has an opaque
+  // origin, and for each later one.
   url_ = GURL(response.url);
   // The Session's base::TimeTicks, which the Page's clock shares.
-  document_ = &runner_->CommitDocument(
-      url_, base::TimeTicks() + base::Microseconds(response.navigation_start),
+  document_ = &frame_->CommitNavigation(
+      *this, url_,
+      base::TimeTicks() + base::Microseconds(response.navigation_start),
       response.connection);
+  document_id_ = document_->DefaultView()->DocumentId();
+  // The Referer that the navigation's last hop sent, as //net kept it through
+  // its redirects.
+  document_->SetReferrer(base::UTF8ToUTF16(response.referrer));
   // What DocumentLoader::CommitNavigation() takes from the navigation's
   // timings and response, for the window's Performance Timeline and
   // window.chrome. A restart for Critical-CH is a redirect to where the
@@ -115,7 +139,7 @@ void DocumentLoader::OnResponseBody(std::string bytes) {
   body_bytes_ += bytes.size();
   if (!parser_) {
     // What comes once the parser has stopped for good goes unread.
-    requests_->TookBody(kNavigationRequest, bytes.size());
+    requests_->TookBody(number_, bytes.size());
     return;
   }
   waiting_body_.push_back(std::move(bytes));
@@ -137,6 +161,12 @@ void DocumentLoader::OnResponseTotals(const PageResponseEnded& ended) {
 }
 
 void DocumentLoader::OnResponseEnded(int net_error) {
+  if (!response_started_) {
+    // No document: a 204, a download, a failure, or another navigation that
+    // took its place. The frame keeps its document and lets this go.
+    frame_->NavigationEndedWithoutDocument(*this);
+    return;
+  }
   // After a response, a body that stops short still makes a document of what
   // came, as in Chrome: HTMLDocumentParser::Finish().
   body_ended_ = true;
@@ -151,7 +181,7 @@ bool DocumentLoader::FeedParser() {
     const std::string bytes = std::move(waiting_body_.front());
     waiting_body_.pop_front();
     AppendDecoded(decoder_->Decode(base::as_byte_span(bytes)));
-    requests_->TookBody(kNavigationRequest, bytes.size());
+    requests_->TookBody(number_, bytes.size());
     return true;
   }
   if (body_ended_ && !data_finished_) {
@@ -167,13 +197,13 @@ void DocumentLoader::ParserDetached() {
   parser_ = nullptr;
   // What waits of the body goes unread.
   for (const std::string& bytes : waiting_body_) {
-    requests_->TookBody(kNavigationRequest, bytes.size());
+    requests_->TookBody(number_, bytes.size());
   }
   waiting_body_.clear();
 }
 
 void DocumentLoader::DidDispatchLoadEvent() {
-  send_.Run(EncodeLoaded());
+  send_.Run(EncodeLoaded(document_id_));
 }
 
 }  // namespace mitto

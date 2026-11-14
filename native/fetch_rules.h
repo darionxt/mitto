@@ -110,6 +110,26 @@ class FetchRules {
     return accept_ch_restart_limit_ == 0;
   }
 
+  // Whether the request has to fail before it goes where it is about to go,
+  // because its mode is same-origin and that is another origin than its page's:
+  // CorsURLLoader's CorsError::kDisallowedByMode. To ask after
+  // ConfigureRequest() and WillFollowRedirect().
+  bool IsDisallowedByMode() const {
+    return fetch_cors_flag_ && params_.mode == RequestMode::kSameOrigin;
+  }
+
+  // CorsURLLoader::CheckPreflightRequired(): whether a request in cors mode
+  // with this method and these lines needs a preflight where it is about to
+  // go, which is another origin than its page's. To ask after
+  // ConfigureRequest() or WillFollowRedirect().
+  bool NeedsPreflight(std::string_view method,
+                      const net::HttpRequestHeaders& headers) const;
+
+  const FetchParams& params() const { return params_; }
+
+  // Whether a redirect has made the request's origin "null".
+  bool tainted() const { return tainted_; }
+
   // To call for what takes the place of `old_request`, once it has its URL,
   // method and headers, and before it starts.
   void ConfigureRestartedRequest(net::URLRequest& request,
@@ -125,13 +145,24 @@ class FetchRules {
                           net::HttpRequestHeaders& modified_headers);
 
  private:
+  // Whether this is the navigation of a frame, whose parent is the page, and
+  // not one of a top-level page.
+  bool IsSubframeNavigation() const;
+
+  // Whether Blink holds the Origin line in its HTTPHeaderMap, with the page's
+  // origin as its value: FetchParameters::SetCrossOriginAccessControl() sets it
+  // for an element in cors mode, such as a font or a module script. A fetch()
+  // and an XMLHttpRequest, whose destination is empty, get theirs from
+  // CorsURLLoader only where it needs one.
+  bool OriginIsBlinksLine() const;
+
   // url_loader_util::SetRequestCredentials(). The decision not to send
   // credentials lasts for the rest of the request. `url` is the URL it is about
   // to go to.
   void SetRequestCredentials(net::URLRequest& request, const GURL& url) const;
 
-  // A cross-origin request in cors mode, once and for all: `fetch_cors_flag_`
-  // in network::cors::CorsURLLoader.
+  // A cross-origin request in cors or same-origin mode, once and for all:
+  // `fetch_cors_flag_` in network::cors::CorsURLLoader.
   void SetCorsFlagIfNeeded(const GURL& url);
 
   // CorsURLLoader::ShouldIncludeOriginHeader(). A setting that blocks cookies

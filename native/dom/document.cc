@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <variant>
 
+#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
@@ -22,6 +23,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
+#include "mitto/dom/before_unload_event.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
@@ -43,6 +45,7 @@
 #include "mitto/dom/mathml_element.h"
 #include "mitto/dom/node_iterator.h"
 #include "mitto/dom/node_lists_node_data.h"
+#include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/permissions_policy.h"
 #include "mitto/dom/qualified_name.h"
@@ -187,6 +190,17 @@ void Document::Trace(cppgc::Visitor* visitor) const {
 
 mitto::Location* Document::Location() const {
   return window_ ? window_->Location() : nullptr;
+}
+
+WindowTasks* Document::GetTasks() const {
+  if (window_) {
+    return window_->GetTasks();
+  }
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (!isolate || !isolate->InContext()) {
+    return nullptr;
+  }
+  return Window::Current().GetTasks();
 }
 
 // SecurityOrigin::Domain(): the host, which an opaque origin lacks.
@@ -398,6 +412,91 @@ void Document::SetReadiness(Readiness readiness) {
   Event* const event = Event::Create(u"readystatechange", init);
   event->SetTrusted(true);
   DispatchEvent(event);
+}
+
+bool Document::PageDismissalEventBeingDispatched() const {
+  switch (load_event_progress_) {
+    case LoadEventProgress::kBeforeUnloadEventInProgress:
+    case LoadEventProgress::kPageHideInProgress:
+    case LoadEventProgress::kUnloadVisibilityChangeInProgress:
+    case LoadEventProgress::kUnloadEventInProgress:
+      return true;
+    default:
+      return false;
+  }
+}
+
+void Document::SetInitialEmptyDocument() {
+  initial_empty_ = true;
+  load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
+}
+
+bool Document::DispatchBeforeUnloadEvent() {
+  if (!window_ || !Body()) {
+    return true;
+  }
+  // A navigation that a beforeunload listener starts.
+  if (load_event_progress_ == LoadEventProgress::kBeforeUnloadEventInProgress) {
+    return false;
+  }
+  BeforeUnloadEvent* const event = BeforeUnloadEvent::Create();
+  {
+    const base::AutoReset<LoadEventProgress> in_progress(
+        &load_event_progress_, LoadEventProgress::kBeforeUnloadEventInProgress);
+    window_->DispatchEventWithTarget(event, this);
+  }
+  if (!event->ReturnValue().empty() || event->DefaultPrevented()) {
+    // Intervention::GenerateReport(), as no user ever activated the page.
+    window_->AddConsoleMessage(
+        ConsoleLevel::kError,
+        "Blocked attempt to show a 'beforeunload' confirmation panel for a "
+        "frame that never had a user gesture since its load. "
+        "https://www.chromestatus.com/feature/5082396709879808");
+  }
+  // FrameLoader::BeforeUnloadDoneWillUnload().
+  load_event_progress_ = LoadEventProgress::kBeforeUnloadEventHandled;
+  return true;
+}
+
+void Document::Abort() {
+  // CancelParsing(): the parser goes, and the document is complete. The
+  // refresh that the document scheduled goes with it.
+  CancelParsing();
+}
+
+void Document::DispatchUnloadEvents() {
+  // The parser stops for good, and what more of the body comes goes unread.
+  DetachParser();
+  if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun ||
+      load_event_progress_ >= LoadEventProgress::kPageHideInProgress ||
+      !window_) {
+    return;
+  }
+  load_event_progress_ = LoadEventProgress::kPageHideInProgress;
+  window_->DispatchEventWithTarget(
+      PageTransitionEvent::CreateTrusted(u"pagehide", /*persisted=*/false),
+      this);
+  // The page is visible until this changes it, which Hidden() reads.
+  const bool page_visible = window_ && !Hidden();
+  load_event_progress_ = LoadEventProgress::kUnloadVisibilityChangeInProgress;
+  if (page_visible) {
+    for (const char16_t* type :
+         {u"visibilitychange", u"webkitvisibilitychange"}) {
+      bindings::EventInit init;
+      init.bubbles = true;
+      Event* const event = Event::Create(type, init);
+      event->SetTrusted(true);
+      DispatchEvent(event);
+    }
+  }
+  load_event_progress_ = LoadEventProgress::kUnloadEventInProgress;
+  if (window_) {
+    bindings::EventInit init;
+    Event* const event = Event::Create(u"unload", init);
+    event->SetTrusted(true);
+    window_->DispatchEventWithTarget(event, this);
+  }
+  load_event_progress_ = LoadEventProgress::kUnloadEventHandled;
 }
 
 std::u16string Document::CompatMode() const {
@@ -935,7 +1034,8 @@ DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client) {
   const cppgc::Persistent<DocumentParser> parser = parser_.Get();
   parsing_state_ = ParsingState::kParsing;
   SetReadiness(Readiness::kLoading);
-  if (load_event_progress_ != LoadEventProgress::kLoadEventInProgress) {
+  if (load_event_progress_ != LoadEventProgress::kLoadEventInProgress &&
+      !PageDismissalEventBeingDispatched()) {
     load_event_progress_ = LoadEventProgress::kLoadEventNotRun;
   }
   return *parser;
@@ -1017,6 +1117,11 @@ void Document::DispatchLoadEventAndFinalize() {
     } else {
       window->DispatchEventWithTarget(event, this);
     }
+    // LocalDOMWindow::DispatchLoadAndPageshowEvents(): pageshow right after
+    // load, at the window with the document as its target.
+    window->DispatchEventWithTarget(
+        PageTransitionEvent::CreateTrusted(u"pageshow", /*persisted=*/false),
+        this);
   }
   load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
   if (window_ && !did_dispatch_load_event_.is_null()) {

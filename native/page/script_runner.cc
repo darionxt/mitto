@@ -28,8 +28,8 @@
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
-#include "mitto/page/document_loader.h"
 #include "mitto/page/page_fetcher.h"
+#include "mitto/page/page_frame.h"
 #include "mitto/page/page_isolate.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -136,8 +136,8 @@ std::optional<std::string> ScriptRunner::Start(
   cookie_jar_ = &cookie_jar;
   cookie_jar_->SetSend(send_);
   requests_ = std::make_unique<PageRequests>(send_, std::move(refuse));
-  loader_ = std::make_unique<DocumentLoader>(*this, *requests_, send_);
-  requests_->SetNavigationClient(*loader_);
+  frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar);
+  frame_->ExpectOpeningNavigation();
   // As Blink sets the time zone that its browser process reads.
   // Upstream: third_party/blink/renderer/core/timezone/timezone_controller.cc
   std::unique_ptr<icu::TimeZone> time_zone(icu::TimeZone::createTimeZone(
@@ -178,7 +178,8 @@ std::optional<std::string> ScriptRunner::Start(
   const v8::Local<v8::Context> context =
       NewContext(bindings::PerIsolateData::From(isolate_)->time_origin());
   context_.Reset(isolate_, context);
-  AttachWindow(context, start_.connection);
+  AttachWindow(context, start_.connection, PageDocumentSource::kInitialEmpty,
+               kNavigationRequest);
   base::CurrentThread::Get()->AddTaskObserver(this);
   return std::nullopt;
 }
@@ -199,8 +200,16 @@ v8::Local<v8::Context> ScriptRunner::NewContext(base::TimeTicks time_origin) {
 }
 
 void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
-                                const PageConnection& connection) {
+                                const PageConnection& connection,
+                                PageDocumentSource source,
+                                uint64_t navigation) {
   const v8::Context::Scope context_scope(context);
+  // The Session hears of the document before anything that it sends.
+  PageDocumentCommitted committed;
+  committed.document = ++last_document_id_;
+  committed.source = source;
+  committed.navigation = navigation;
+  send_.Run(EncodeDocumentCommitted(committed));
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
   animation_frames_ =
@@ -212,8 +221,13 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   window.SetIdleTasks(idle_tasks_.get());
   window.SetAnimationFrames(animation_frames_.get());
   window.SetFetcher(fetcher_.get());
+  window.SetNavigationClient(frame_.get());
   window.SetTasks(window_tasks_.get());
+  if (source == PageDocumentSource::kInitialEmpty) {
+    window.GetDocument().SetInitialEmptyDocument();
+  }
   window.SetStart(start_, connection);
+  window.SetDocumentId(committed.document);
   window.SetDocumentLoadTiming(chrome_object_data_.back()->load_timing.Get());
   window.SetConsoleSink(base::BindRepeating(
       [](const SendFrame& send, ConsoleLevel level, std::string text) {
@@ -354,7 +368,8 @@ void ScriptRunner::PostTask(TaskType type, base::OnceClosure task) {
                                 std::move(task)));
 }
 
-Document& ScriptRunner::CommitDocument(const GURL& url,
+Document& ScriptRunner::CommitDocument(uint64_t navigation,
+                                       const GURL& url,
                                        base::TimeTicks navigation_start,
                                        const PageConnection& connection) {
   const v8::HandleScope handle_scope(isolate_);
@@ -369,6 +384,7 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
     Window::Current().SetIdleTasks(nullptr);
     Window::Current().SetAnimationFrames(nullptr);
     Window::Current().SetFetcher(nullptr);
+    Window::Current().SetNavigationClient(nullptr);
     Window::Current().SetTasks(nullptr);
   }
   timers_.reset();
@@ -393,7 +409,8 @@ Document& ScriptRunner::CommitDocument(const GURL& url,
   MemoryInfo::SetProcessLockedToSite(url.SchemeIsHTTPOrHTTPS());
   const v8::Local<v8::Context> context = NewContext(time_origin);
   context_.Reset(isolate_, context);
-  AttachWindow(context, connection);
+  AttachWindow(context, connection, PageDocumentSource::kNavigationResponse,
+               navigation);
   const v8::Context::Scope context_scope(context);
   Document* const document = Document::CreateHTML();
   document->SetUrl(base::UTF8ToUTF16(url.spec()));

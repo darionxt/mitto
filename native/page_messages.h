@@ -29,7 +29,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 15;
+inline constexpr uint32_t kPageProtocolVersion = 17;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -48,10 +48,19 @@ inline constexpr size_t kMaxEvaluatedTextSize = kMaxPayloadSize - 9;
 // The longest text that one kConsole carries.
 inline constexpr size_t kMaxConsoleTextSize = kMaxPayloadSize - 1;
 
+// The longest line that one kSetCookie carries, after its document's ID.
+inline constexpr size_t kMaxCookieLineSize = kMaxPayloadSize - 8;
+
 // The number of the request that the Session makes when the Page opens: its
 // navigation, whose response is the Page's document. The Page numbers its own
 // requests from 1 up.
 inline constexpr uint64_t kNavigationRequest = 0;
+
+// Each document that a Page makes has an ID that the Page picks, larger than
+// that of each document before it, from 1 up, and each message that comes from
+// a document names it, so that the library works out its Initiator and its
+// cookies from what it loaded itself, and never from what the Page says.
+inline constexpr uint64_t kNoDocument = 0;
 
 // The net error of a kResponseEnded whose request has all of its body:
 // net::OK, which the Page program, with no //net, cannot name.
@@ -100,19 +109,21 @@ enum class PageMessage : uint32_t {
   // To the Session: an error that no script caught, such as a promise rejected
   // with no handler, in UTF-8.
   kUncaughtError = 7,
-  // To the Session: a request of the Page's, as PageRequest says. Its number
-  // is larger than that of each request before it.
+  // To the Session: the ID of the document that asks, as a 64-bit number, and
+  // a request of the Page's, as PageRequest says. Its number is larger than
+  // that of each request before it.
   kRequest = 8,
   // To the Session: the number of a request, as a 64-bit number, and how many
   // more bytes of its body the Page has taken, as a 32-bit number. The Session
   // may send that many more.
   kCredit = 9,
-  // To the Session: the number of a question for the document's cookies, as a
-  // 64-bit number. kCookies answers it.
+  // To the Session: the ID of the document, and the number of a question for
+  // its cookies, each a 64-bit number. kCookies answers it.
   kGetCookies = 10,
-  // To the Session: what a script set document.cookie to, in UTF-8.
+  // To the Session: the ID of the document, and what a script set its cookie
+  // to, in UTF-8.
   kSetCookie = 11,
-  // To the Session, with no payload: the window's load event has been
+  // To the Session: the ID of a document whose window's load event has been
   // dispatched.
   kLoaded = 12,
   // To the Page: the response of a request, as PageResponseStarted says.
@@ -135,14 +146,14 @@ enum class PageMessage : uint32_t {
   // Known Gap, such as "URL.prototype.href", in UTF-8, the first time the
   // document reaches it.
   kKnownGap = 18,
-  // To the Session: a question of the document's CookieStore, as
-  // PageCookieStoreGet says. kCookieStoreCookies answers it.
+  // To the Session: the ID of the document, and a question of its
+  // CookieStore, as PageCookieStoreGet says. kCookieStoreCookies answers it.
   kCookieStoreGet = 19,
-  // To the Session: a cookie for the document's CookieStore to store, as
-  // PageCookieStoreSet says. kCookieStoreStored answers it.
+  // To the Session: the ID of the document, and a cookie for its CookieStore
+  // to store, as PageCookieStoreSet says. kCookieStoreStored answers it.
   kCookieStoreSet = 20,
-  // To the Session: a byte, 1 for the document's CookieStore to hear of each
-  // change to the document's cookies, and 0 to stop.
+  // To the Session: the ID of the document, and a byte, 1 for its CookieStore
+  // to hear of each change to its cookies, and 0 to stop.
   kCookieStoreListen = 21,
   // To the Page: the cookies that a kCookieStoreGet asked for, as
   // PageCookieStoreCookies says.
@@ -153,20 +164,33 @@ enum class PageMessage : uint32_t {
   // To the Page, while the CookieStore listens: a change to the document's
   // cookies, as PageCookieStoreChange says.
   kCookieStoreChange = 24,
-  // To the Session: a message of one of the document's BroadcastChannels, as
-  // PageBroadcast says, for the Session's other Pages whose documents are of
-  // the same origin.
+  // To the Session: the ID of the document, and a message of one of its
+  // BroadcastChannels, as PageBroadcast says, for the Session's other Pages
+  // whose documents are of the same origin.
   kBroadcast = 25,
   // To the Page: a message of a BroadcastChannel of another Page of the
   // Session whose document is of the same origin, as PageBroadcast says.
   kBroadcastReceived = 26,
+  // To the Session: a document that the Page has made, as
+  // PageDocumentCommitted says. It takes the place of the document before it,
+  // whose messages all came before this.
+  kDocumentCommitted = 70,
+  // To the Session: the ID of a document, and the URL in UTF-8 that a
+  // navigation within it gave it, such as one to a fragment, which is of the
+  // document's origin.
+  kSameDocumentNavigation = 71,
 };
 
+// Whether a message of `type` names the document it comes from: each of the
+// Page's that a document sends. The ID comes first in its payload.
+bool NamesDocument(PageMessage type);
+
 // The Request Kinds that a Page asks its Session for, beside the navigation
-// that opens it.
+// that opens it: a navigation is one that its document starts.
 enum class PageRequestKind : uint8_t {
   kScript = 1,
   kFetch = 2,
+  kNavigation = 3,
 };
 
 // The level of a console message, as the console method that wrote it says.
@@ -420,13 +444,15 @@ struct PageEvaluated {
   std::string text;
 };
 
-// A request that a Page asks its Session for. Its Initiator is the Page's
-// document, as the Session loaded it, so the Page does not say it.
+// A request that a Page asks its Session for. Its Initiator is the document
+// that asks, as the Session loaded it, so the Page names the document and does
+// not say its URL.
 //
 // Its payload is the number, as a 64-bit number, the Kind, as a byte, a byte
-// that is 1 for a fetch of mode same-origin, the URL, the method and the
-// header lines, each after its size as a 32-bit number, and then a byte that is
-// 1 if a body follows, which is the rest.
+// of flags, 1 for a fetch of mode same-origin, 2 for a navigation that the
+// user activated and 4 for a navigation that reloads, the URL, the method and
+// the header lines, each after its size as a 32-bit number, and then a byte
+// that is 1 if a body follows, which is the rest.
 struct PageRequest {
   PageRequest();
   PageRequest(PageRequest&&);
@@ -447,12 +473,37 @@ struct PageRequest {
   std::optional<std::string> body;
   // A fetch of mode same-origin, which no hop may take to another origin.
   bool same_origin = false;
+  // A navigation whose document had transient user activation, which sends
+  // Sec-Fetch-User.
+  bool user_activation = false;
+  // A navigation that reloads the document, as location.reload() does, which
+  // validates what the cache holds.
+  bool reload = false;
 };
 
 // How much more of a request's body a Page has taken.
 struct PageCredit {
   uint64_t number = 0;
   uint32_t bytes = 0;
+};
+
+// What a document that the Page has made is made of.
+enum class PageDocumentSource : uint8_t {
+  // The Page's first document, about:blank, whose origin is opaque.
+  kInitialEmpty = 0,
+  // The response of a navigation, whose URL after its redirects is the
+  // document's.
+  kNavigationResponse = 1,
+};
+
+// A document that a Page has made. Its payload is the ID, a 64-bit number, the
+// source, a byte, and for a navigation's response the navigation's number, a
+// 64-bit number.
+struct PageDocumentCommitted {
+  uint64_t document = kNoDocument;
+  PageDocumentSource source = PageDocumentSource::kInitialEmpty;
+  // For kNavigationResponse.
+  uint64_t navigation = kNavigationRequest;
 };
 
 // The response of a request, after any redirects, which the Session follows
@@ -493,6 +544,10 @@ struct PageResponseStarted {
   // a name of at most 64 characters.
   std::string connection_info;
   std::string alpn_negotiated_protocol;
+  // For the navigation of a document, the Referer that its last hop sent, as
+  // //net kept it through each redirect, which the document gives as
+  // document.referrer: empty for none and for every other request.
+  std::string referrer;
   // The header lines, each "name: value" and a line feed, as the C API's
   // events hold them, but for Set-Cookie and Set-Cookie2.
   std::string headers;
@@ -657,6 +712,8 @@ struct FrameFromPage {
   ~FrameFromPage();
 
   PageMessage type = PageMessage::kHello;
+  // The document that a message of a type that NamesDocument() comes from.
+  uint64_t document = kNoDocument;
   // kHello.
   uint32_t version = 0;
   // kRefused: why the Page refused.
@@ -687,6 +744,10 @@ struct FrameFromPage {
   bool cookie_store_listen = false;
   // kBroadcast.
   PageBroadcast broadcast;
+  // kDocumentCommitted.
+  PageDocumentCommitted committed;
+  // kSameDocumentNavigation: the document's new URL.
+  std::string same_document_url;
 };
 
 // A frame from a Session, once checked. Which fields it uses depends on
@@ -751,13 +812,15 @@ std::string EncodeUncaughtError(std::string_view text);
 // `name` is at most kMaxPayloadSize bytes.
 std::string EncodeKnownGap(std::string_view name);
 // The request fits in a frame.
-std::string EncodeRequest(const PageRequest& request);
+// Each of the Page's messages that NamesDocument() takes the document's ID
+// first.
+std::string EncodeRequest(uint64_t document, const PageRequest& request);
 std::string EncodeCancel(uint64_t number);
 std::string EncodeCredit(const PageCredit& credit);
-std::string EncodeGetCookies(uint64_t question);
-// `line` is at most kMaxPayloadSize bytes.
-std::string EncodeSetCookie(std::string_view line);
-std::string EncodeLoaded();
+std::string EncodeGetCookies(uint64_t document, uint64_t question);
+// `line` is at most kMaxCookieLineSize bytes.
+std::string EncodeSetCookie(uint64_t document, std::string_view line);
+std::string EncodeLoaded(uint64_t document);
 // The URL and the headers fit in a frame.
 std::string EncodeResponseStarted(const PageResponseStarted& response);
 // `bytes` is at most kBodyWindow bytes.
@@ -766,19 +829,26 @@ std::string EncodeResponseEnded(const PageResponseEnded& ended);
 // `line` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeCookies(uint64_t answer, std::string_view line);
 // The name fits in a frame.
-std::string EncodeCookieStoreGet(const PageCookieStoreGet& get);
+std::string EncodeCookieStoreGet(uint64_t document,
+                                 const PageCookieStoreGet& get);
 // The cookie fits in a frame.
-std::string EncodeCookieStoreSet(const PageCookieStoreSet& set);
-std::string EncodeCookieStoreListen(bool listen);
+std::string EncodeCookieStoreSet(uint64_t document,
+                                 const PageCookieStoreSet& set);
+std::string EncodeCookieStoreListen(uint64_t document, bool listen);
 // The cookies fit in a frame.
 std::string EncodeCookieStoreCookies(const PageCookieStoreCookies& cookies);
 std::string EncodeCookieStoreStored(uint64_t answer, bool stored);
 // The cookie fits in a frame.
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
-// Whether a broadcast fits in a frame.
+// Whether a broadcast fits in a frame, with the ID of its document.
 bool BroadcastFits(const PageBroadcast& broadcast);
-// The broadcast fits in a frame. `type` is kBroadcast or kBroadcastReceived.
-std::string EncodeBroadcast(PageMessage type, const PageBroadcast& broadcast);
+// The broadcast fits in a frame.
+std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
+std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
+std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
+// `url` is at most kMaxPayloadSize - 8 bytes.
+std::string EncodeSameDocumentNavigation(uint64_t document,
+                                         std::string_view url);
 
 // Returns what a frame from a Page says, or why the Session refuses it.
 base::expected<FrameFromPage, std::string> ReadFrameFromPage(

@@ -465,6 +465,14 @@ A string enum, so that `kind="fetch"` and `kind=mitto.RequestKind.FETCH` are the
 | `RequestKind.FETCH` | `"fetch"` | A page's `fetch()` that does not ask for a `credentials` mode, so `same-origin` |
 | `RequestKind.SCRIPT` | `"script"` | A `<script>`, which has no body, and whose cookies go by `SameSite` alone |
 | `RequestKind.IMAGE` | `"image"` | An `<img>`, which has no body, and whose cookies go by `SameSite` alone |
+| `RequestKind.STYLE` | `"style"` | A stylesheet that a `<link rel="stylesheet">` or an `@import` asks for, which has no body |
+| `RequestKind.FONT` | `"font"` | A font that an `@font-face` asks for, in mode `cors` with `same-origin` credentials, so it sends `Origin` to its own origin too, and no cookie to another |
+| `RequestKind.MODULE` | `"module"` | A `<script type="module">` or what a module imports, in mode `cors` with `same-origin` credentials, as a font |
+| `RequestKind.XHR` | `"xhr"` | A page's `XMLHttpRequest` that does not set `withCredentials`, so `same-origin`, as a `fetch` |
+| `RequestKind.WORKER` | `"worker"` | The script of a dedicated worker, which the browser asks for, with no client hints and with `User-Agent` after `Referer`. Its mode is `same-origin`, so one that starts at or a redirect that goes to another origin than its page's fails with `ERR_FAILED` and sends nothing there |
+| `RequestKind.BEACON` | `"beacon"` | A page's `navigator.sendBeacon()`, in mode `no-cors` with credentials, so it sends `Origin` with its `POST` |
+| `RequestKind.IFRAME` | `"iframe"` | The navigation of an `<iframe>` whose parent is the page of `initiator=`, which has no body. Its cookies are those of a frame of that page, so a frame of another site gets no `SameSite` `Strict` or `Lax` cookie, and the origin it goes to keeps none of the client hints it asks for |
+| `RequestKind.FAVICON` | `"favicon"` | A page's icon, which the browser asks for at a higher priority than an image's |
 
 ### `initiator=`
 
@@ -472,7 +480,7 @@ The URL of the page the request is made from, which counts as a top-level page. 
 
 Without it, a navigation counts as started by the browser, and a subresource as coming from the page at the root of the origin of its URL. A URL that is not valid ends the request with `ERR_INVALID_ARGUMENT`. One that holds a NUL character or a lone surrogate, which UTF-8 cannot encode, raises a `ValueError` that names `initiator`, and a value that is neither text nor `None` raises a `TypeError`.
 
-A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows.
+A `fetch` to another origin than its page's sends and stores no cookie, for the rest of its chain, as a page's `fetch()` does. A `script` or `image` still sends those that `SameSite` allows. A `fetch`, `xhr`, `font` or `module` to another origin that Chrome would send a CORS preflight for, such as a `PUT` or a `POST` with `json=`, sends one first, and goes only if its answer allows it, as [persona.md](persona.md#a-cors-preflight) says. Otherwise the request raises a `RequestError` with `ERR_FAILED`.
 
 ```python
 page = "https://example.test/page"

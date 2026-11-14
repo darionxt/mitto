@@ -8,7 +8,19 @@ from typing import Any, Self
 import pytest
 
 from mitto import RequestError, Session
-from tools.capture import CASES, HTTP1, HTTP2, HTTP3, RUNS, CaptureServer, Case, Run, normal_form
+from tools.capture import (
+    CASES,
+    DOCUMENT_CASES,
+    DOCUMENT_RUNS,
+    HTTP1,
+    HTTP2,
+    HTTP3,
+    RUNS,
+    CaptureServer,
+    Case,
+    Run,
+    normal_form,
+)
 from tools.capture.cases import PROXY_CONNECT
 from tools.capture.http1 import Http1Request
 from tools.capture.recording import ConnectionRecord, Json, Recording
@@ -66,10 +78,10 @@ class _FailingSession:
 
 
 def test_every_recording_case_has_a_replay() -> None:
-    assert set(REPLAYS) == {case.name for case in CASES}
+    assert set(REPLAYS) == {case.name for case in (*CASES, *DOCUMENT_CASES)}
 
 
-@pytest.mark.parametrize("run", RUNS, ids=lambda run: run.name)
+@pytest.mark.parametrize("run", [*RUNS, *DOCUMENT_RUNS], ids=lambda run: run.name)
 def test_each_case_of_a_run_finds_the_run_by_its_name_and_protocol(run: Run) -> None:
     for case in run.cases:
         assert run_of(case.name, protocol_of(run.route)) is run
@@ -81,6 +93,22 @@ def test_no_run_records_a_case_over_a_protocol_it_does_not_have() -> None:
     assert run_of("no_such_case", HTTP1) is None
 
 
+def test_only_cases_of_documents_wait_for_a_page_and_each_names_a_later_issue_of_m8() -> None:
+    waiting = {name: replay.made_by_a_page for name, replay in REPLAYS.items() if replay.made_by_a_page is not None}
+
+    assert set(waiting) <= {case.name for case in DOCUMENT_CASES}
+    assert set(waiting.values()) <= {279, 280, 283, 284, 285, 289}
+
+
+def test_a_check_skips_a_case_that_only_a_page_makes() -> None:
+    def recorder(baseline: Baseline) -> dict[str, Json]:
+        raise AssertionError(f"{baseline.case} was replayed")
+
+    baseline = Baseline(_RELEASE, "document_style", HTTP2, {"request": None})
+
+    assert find_gaps([baseline], recorder) == []
+
+
 def test_only_a_later_hop_and_what_opens_a_tunnel_ask_for_another_case() -> None:
     starts = {name: replay.start for name, replay in REPLAYS.items() if replay.start is not None}
 
@@ -89,6 +117,9 @@ def test_only_a_later_hop_and_what_opens_a_tunnel_ask_for_another_case() -> None
         **{f"client_hints_redirect_fetch_{hop}": "client_hints_redirect_fetch_1" for hop in range(1, 5)},
         **{f"client_hints_redirect_navigation_{hop}": "client_hints_redirect_navigation_1" for hop in range(1, 6)},
         "proxy_connect": "proxy_navigation",
+        **{f"redirect_location_{hop}": "redirect_location_1" for hop in range(1, 3)},
+        # A preflight is what the request that needs it makes first.
+        "preflight": "fetch_post_json_cross_site",
     }
 
 
@@ -106,6 +137,15 @@ def test_a_case_that_carries_a_header_counts_any_request_to_its_path_when_none_h
 
     assert found.carries is None
     assert found.matches(_request("/case/cookie"))
+
+
+def test_a_case_whose_path_another_case_holds_is_missing_when_its_request_never_went() -> None:
+    preflight = Case("preflight", "/case/post", "access-control-request-method")
+    post = Case("post", "/case/post", "content-type")
+    recording = _recording_of(_request("/case/post", ("Content-Type", "application/json")))
+
+    assert as_recorded(preflight, recording, [preflight, post]) is preflight
+    assert as_recorded(post, recording, [preflight, post]) is post
 
 
 def test_a_case_that_carries_nothing_stays_the_same_case() -> None:

@@ -63,6 +63,7 @@ class IdleTaskController;
 class Location;
 class MediaQueryList;
 class Navigation;
+class NavigationClient;
 class Navigator;
 class Performance;
 class Scheduler;
@@ -216,6 +217,13 @@ class Window final : public WindowProperties {
   // What fetch() asks the Session through. Without one, it fails.
   void SetFetcher(Fetcher* fetcher) { fetcher_ = fetcher; }
   Fetcher* GetFetcher() const { return fetcher_; }
+  // What a navigation of the window's frame to another document asks the
+  // Session through. Without one, as in the Page program given a script or
+  // once the context is gone, such a navigation does not start.
+  void SetNavigationClient(NavigationClient* client) {
+    navigation_client_ = client;
+  }
+  NavigationClient* GetNavigationClient() const { return navigation_client_; }
   // The tasks of the window's context, which the Page program keeps, and
   // which go with it: without them, a task posted to the window never runs.
   void SetTasks(WindowTasks* tasks) { tasks_ = tasks; }
@@ -230,8 +238,12 @@ class Window final : public WindowProperties {
   void SetAnimationFrames(AnimationFrameController* animation_frames) {
     animation_frames_ = animation_frames;
   }
-  // How many animation frame callbacks wait for a frame.
+  // How many animation frame callbacks and events wait for a frame.
   size_t AnimationFrameCallbackCount() const;
+  // `event` fires at `target` in the next animation frame, before its
+  // callbacks, as Blink's Document::EnqueueAnimationFrameEvent() does. Nothing
+  // fires in a window with no frames.
+  void EnqueueAnimationFrameEvent(EventTarget& target, mitto::Event& event);
   // How many scheduler.postTask() callbacks and scheduler.yield()
   // continuations wait.
   size_t ScheduledTaskCount() const;
@@ -260,6 +272,11 @@ class Window final : public WindowProperties {
   void SetStart(const PageStart& start, const PageConnection& connection);
   // What the window reads of the browser and the machine.
   const PageStart& Start() const { return start_; }
+  // The ID by which the Page names the window's document to its Session, which
+  // each message of the document carries (page_messages.h). kNoDocument for a
+  // window that no Session loaded, as in the Page program given a script.
+  void SetDocumentId(uint64_t id) { document_id_ = id; }
+  uint64_t DocumentId() const { return document_id_; }
   // How the window's document loads, which performance.timing and the
   // navigation's entry read. Without one, as in the Page program given a
   // script, the window starts one at its time origin.
@@ -312,8 +329,10 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Event> current_event_;
   PageStart start_;
   PageConnection connection_;
+  uint64_t document_id_ = kNoDocument;
   raw_ptr<DOMTimerCoordinator> timers_ = nullptr;
   raw_ptr<Fetcher> fetcher_ = nullptr;
+  raw_ptr<NavigationClient> navigation_client_ = nullptr;
   std::map<uint64_t, base::OnceClosure> signal_timers_;
   std::vector<base::OnceClosure> context_destroyed_callbacks_;
   uint64_t next_signal_timer_ = 0;

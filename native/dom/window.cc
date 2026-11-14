@@ -45,7 +45,6 @@
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
 #include "mitto/dom/visual_viewport.h"
-#include "mitto/header_rules.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "v8/include/v8-context.h"
@@ -163,6 +162,13 @@ void Window::CancelAnimationFrame(int32_t handle) {
 
 size_t Window::AnimationFrameCallbackCount() const {
   return animation_frames_ ? animation_frames_->size() : 0;
+}
+
+void Window::EnqueueAnimationFrameEvent(EventTarget& target,
+                                        mitto::Event& event) {
+  if (animation_frames_) {
+    animation_frames_->EnqueueEvent(target, event);
+  }
 }
 
 size_t Window::ScheduledTaskCount() const {
@@ -600,16 +606,12 @@ v8::Local<v8::Promise> Window::Fetch(
   }
   const url::Origin document_origin = url::Origin::Create(
       GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
+  // A cross-origin request of mode same-origin fails before anything goes, as
+  // CorsURLLoader fails it. One that needs a CORS preflight goes to the
+  // Session, which makes the preflight first.
   const bool cross_origin = !document_origin.IsSameOriginWith(request->url());
-  // A cross-origin request that needs a CORS preflight is a Known Gap, which
-  // the Session refuses too.
-  bool needs_preflight = !IsCorsSafelistedMethod(request->Method());
-  for (const auto& [name, value] : request->GetHeaders()->list()) {
-    needs_preflight |= !IsCorsSafelistedRequestHeader(name, value);
-  }
   if (!fetcher_ ||
-      (cross_origin &&
-       (request->mode() == Request::Mode::kSameOrigin || needs_preflight))) {
+      (cross_origin && request->mode() == Request::Mode::kSameOrigin)) {
     std::ignore = resolver->Reject(
         context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
                      isolate, "Failed to fetch")));

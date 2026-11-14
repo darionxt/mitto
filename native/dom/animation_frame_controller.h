@@ -3,8 +3,9 @@
 // them. A callback runs in the next frame that the event loop begins, with the
 // frame's time on the document's clock, coarsened, and every callback of a
 // frame gets the same time. A callback asked for in a frame runs in the next.
-// The Page lays nothing out, so these are the only rendering steps that its
-// frames run.
+// Events that the DOM queues for a frame, such as a dialog's close, fire in it
+// before the callbacks. The Page lays nothing out, so these are the only
+// rendering steps that its frames run.
 //
 // Upstream: third_party/blink/renderer/core/frame/local_dom_window.cc
 // Upstream: third_party/blink/renderer/core/dom/scripted_animation_controller.cc
@@ -29,6 +30,9 @@
 
 namespace mitto {
 
+class Event;
+class EventTarget;
+
 class AnimationFrameController {
  public:
   // The callbacks run in `context`.
@@ -44,15 +48,20 @@ class AnimationFrameController {
   // webkitRequestAnimationFrame(), gets the frame's time on the wall clock.
   int32_t RequestAnimationFrame(v8::Local<v8::Function> callback, bool legacy);
   void CancelAnimationFrame(int32_t id);
+  // ScriptedAnimationController::EnqueueEvent(): `event` fires at `target` in
+  // the next frame, before its callbacks.
+  void EnqueueEvent(EventTarget& target, Event& event);
 
-  // How many callbacks wait for a frame.
-  size_t size() const { return callbacks_.size(); }
+  // How many callbacks and events wait for a frame.
+  size_t size() const { return callbacks_.size() + events_.size(); }
 
  private:
   struct FrameCallback;
+  struct QueuedEvent;
 
   void ScheduleAnimationIfNeeded();
   void ServiceScriptedAnimations(base::TimeTicks frame_time);
+  void DispatchEvents();
   void ExecuteFrameCallbacks(double high_res_now_ms,
                              double high_res_now_ms_legacy);
 
@@ -62,6 +71,7 @@ class AnimationFrameController {
   // runs.
   std::vector<std::unique_ptr<FrameCallback>> callbacks_;
   std::vector<std::unique_ptr<FrameCallback>> callbacks_to_invoke_;
+  std::vector<std::unique_ptr<QueuedEvent>> events_;
   int32_t last_id_ = 0;
   bool frame_requested_ = false;
   // The document's animation clock, from its zero, which never goes back.

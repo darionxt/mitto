@@ -55,24 +55,6 @@ bool IsHttpWhitespace(char c) {
   return c == '\t' || c == '\n' || c == '\r' || c == ' ';
 }
 
-// The bytes that make a safelisted header's value unsafe.
-bool IsCorsUnsafeRequestHeaderByte(char c) {
-  const auto byte = static_cast<unsigned char>(c);
-  return (byte < 0x20 && byte != 0x09) || c == '"' || c == '(' || c == ')' ||
-         c == ':' || c == '<' || c == '>' || c == '?' || c == '@' || c == '[' ||
-         c == '\\' || c == ']' || c == '{' || c == '}' || byte == 0x7F;
-}
-
-bool IsSafeLanguageValue(std::string_view value) {
-  for (const char c : value) {
-    if (!base::IsAsciiAlphaNumeric(c) && c != ' ' && c != '*' && c != ',' &&
-        c != '-' && c != '.' && c != ';' && c != '=') {
-      return false;
-    }
-  }
-  return true;
-}
-
 }  // namespace
 
 bool IsHttpToken(std::string_view text) {
@@ -151,40 +133,6 @@ bool IsForbiddenMethod(std::string_view method) {
 
 bool IsCorsSafelistedMethod(std::string_view method) {
   return method == "GET" || method == "HEAD" || method == "POST";
-}
-
-bool IsCorsSafelistedRequestHeader(std::string_view name,
-                                   std::string_view value) {
-  if (value.size() > 128) {
-    return false;
-  }
-  if (base::EqualsCaseInsensitiveASCII(name, "accept")) {
-    for (const char c : value) {
-      if (IsCorsUnsafeRequestHeaderByte(c)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (base::EqualsCaseInsensitiveASCII(name, "accept-language") ||
-      base::EqualsCaseInsensitiveASCII(name, "content-language")) {
-    return IsSafeLanguageValue(value);
-  }
-  if (base::EqualsCaseInsensitiveASCII(name, "content-type")) {
-    for (const char c : value) {
-      if (IsCorsUnsafeRequestHeaderByte(c)) {
-        return false;
-      }
-    }
-    // The MIME type's essence, before any parameter.
-    std::string_view essence = value.substr(0, value.find(';'));
-    essence = base::TrimWhitespaceASCII(essence, base::TRIM_ALL);
-    return base::EqualsCaseInsensitiveASCII(
-               essence, "application/x-www-form-urlencoded") ||
-           base::EqualsCaseInsensitiveASCII(essence, "multipart/form-data") ||
-           base::EqualsCaseInsensitiveASCII(essence, "text/plain");
-  }
-  return false;
 }
 
 bool IsCorsSafelistedResponseHeaderName(std::string_view name) {

@@ -270,37 +270,54 @@ class PageHost final : public PageChannel::Delegate {
   void OnFrame(uint32_t type, std::string payload) override;
   void OnChannelClosed(PageChannel::Closed closed, std::string why) override;
 
-  // What the Page asks for.
-  void OnRequest(PageRequest asked);
+  // What the Page asks for. Each of these that comes from a document has the
+  // URL that the library loaded it at, never one that the Page names.
+  void OnRequest(PageRequest asked, const GURL& document_url);
   void OnCredit(const PageCredit& credit);
-  void OnGetCookies(uint64_t question);
-  void OnSetCookie(const std::string& line);
+  void OnGetCookies(uint64_t question, const GURL& document_url);
+  void OnSetCookie(const std::string& line, const GURL& document_url);
   void OnCancel(uint64_t number);
   // What the document's CookieStore asks, as Chrome's RestrictedCookieManager
   // answers it, always for the document that the Session loaded.
-  void OnCookieStoreGet(PageCookieStoreGet get);
-  void OnCookieStoreSet(PageCookieStoreSet set);
-  void OnCookieStoreListen(bool listen);
+  void OnCookieStoreGet(PageCookieStoreGet get, const GURL& document_url);
+  void OnCookieStoreSet(PageCookieStoreSet set, const GURL& document_url);
+  void OnCookieStoreListen(bool listen, const GURL& document_url);
   // A message of one of the document's BroadcastChannels, for the Session's
   // other Pages of the document's origin, which the library takes from the
   // document it loaded, not from the Page.
-  void OnBroadcast(const PageBroadcast& broadcast);
+  void OnBroadcast(const PageBroadcast& broadcast, const GURL& document_url);
+  // A document that the Page has made, which takes the place of the one
+  // before it.
+  void OnDocumentCommitted(const PageDocumentCommitted& committed);
+  // A navigation within document `document` that gave it the URL `url`.
+  void OnSameDocumentNavigation(uint64_t document, const std::string& url);
+  // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
+  // with `net_error`, and `status` for one that kept the document.
+  void PushNavigated(std::string url, int32_t status, int32_t net_error);
+  // The URL that the library loaded document `document` at, or null after
+  // refusing a message that names a document that is not the Page's.
+  const GURL* DocumentUrl(uint64_t document, uint32_t type);
+  // The URL of the Page's top-level document, or an empty one before the Page
+  // has made one.
+  GURL TopDocumentUrl() const;
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
   struct FetchChecks {
     // A fetch, whose responses from another origin pass the CORS check.
     bool is_fetch = false;
-    // The script set a line that a hop to another origin would need a CORS
-    // preflight for.
-    bool unsafe_lines = false;
     // Mode same-origin: no hop may go to another origin.
     bool same_origin = false;
+    // A navigation, whose response the Page makes a document of, unless it
+    // is a 204, a 205 or a download.
+    bool is_navigation = false;
   };
 
   // Starts a request numbered `number`, whose client is a Request that
-  // `requests_` holds, and which goes on only as `checks` allow.
+  // `requests_` holds, and which goes on only as `checks` allow, for a
+  // document of `document_origin`, opaque for a navigation.
   void StartRequest(uint64_t number,
+                    const url::Origin& document_origin,
                     GURL url,
                     net::HttpRequestHeaders headers,
                     RequestOptions options,
@@ -326,12 +343,13 @@ class PageHost final : public PageChannel::Delegate {
                               const net::CookieAccessResultList& excluded);
   void OnCookieStoreChange(const net::CookieChangeInfo& change);
 
-  // Whether the Page's document can have cookies, which only one that the
-  // Session loaded over HTTP or HTTPS can.
-  bool DocumentHasCookies() const;
-  // The partition of the document's cookies, as Chrome's
+  // Whether a document at `document_url` can have cookies, which only one that
+  // the Session loaded over HTTP or HTTPS can.
+  static bool DocumentHasCookies(const GURL& document_url);
+  // The partition of the cookies of a document at `document_url`, as Chrome's
   // RestrictedCookieManager for a top-level frame has it.
-  std::optional<net::CookiePartitionKey> DocumentPartitionKey() const;
+  static std::optional<net::CookiePartitionKey> DocumentPartitionKey(
+      const GURL& document_url);
 
   // What navigator.connection gives a document at `url`: what the renderer
   // process of its site gives for its host, as for a subresource to it.
@@ -362,12 +380,25 @@ class PageHost final : public PageChannel::Delegate {
   const raw_ref<PageNetwork> network_;
   std::unique_ptr<PageChannel> channel_;
   PageOptions options_;
-  // The URL of the document that the navigation loaded, after its redirects:
-  // the Initiator of the Page's requests, and whose cookies document.cookie
-  // reads and writes. Empty until one has loaded.
-  GURL document_url_;
-  // While the document's CookieStore listens: what tells it of each change.
+  // The Page's documents, by the ID that the Page gave each, with the URL
+  // that the library loaded it at, after its navigation's redirects: the
+  // Initiator of its requests, and whose cookies its document.cookie reads and
+  // writes. A Page has one, its top-level document, once it has told the
+  // library of it.
+  std::map<uint64_t, GURL> documents_;
+  // The largest ID the Page has given a document.
+  uint64_t last_document_id_ = kNoDocument;
+  // The navigations whose responses the Page has and has not made a document
+  // of yet, by number: the final URL and the status.
+  struct NavigationResponse {
+    GURL url;
+    int32_t status = 0;
+  };
+  std::map<uint64_t, NavigationResponse> navigation_responses_;
+  // While a document's CookieStore listens: what tells it of each change, and
+  // the document's URL.
   std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;
+  GURL cookie_store_url_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

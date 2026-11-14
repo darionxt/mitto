@@ -63,7 +63,15 @@ uint64_t PageRequests::Start(PageRequest request,
   timed.window = &Window::Current();
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
-  send_.Run(EncodeRequest(request));
+  // The Session works out the Initiator from the document that asks.
+  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
+  return request.number;
+}
+
+uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
+  request.number = next_number_++;
+  open_[request.number].client = &client;
+  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
   return request.number;
 }
 
@@ -131,6 +139,11 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
 
 PageRequests::Open* PageRequests::Find(uint64_t number,
                                        std::string_view message) {
+  if (number == kNavigationRequest && !navigation_seen_ && navigation_client_) {
+    // The Session makes the navigation itself, at most once.
+    navigation_seen_ = true;
+    open_[kNavigationRequest].client = navigation_client_;
+  }
   const auto found = open_.find(number);
   if (found == open_.end()) {
     refuse_.Run(
@@ -142,12 +155,6 @@ PageRequests::Open* PageRequests::Find(uint64_t number,
 }
 
 void PageRequests::OnResponseStarted(const PageResponseStarted& response) {
-  if (response.number == kNavigationRequest && !navigation_seen_ &&
-      navigation_client_) {
-    // The Session makes the navigation itself, at most once.
-    navigation_seen_ = true;
-    open_[kNavigationRequest].client = navigation_client_;
-  }
   Open* const open = Find(response.number, "a response");
   if (!open) {
     return;

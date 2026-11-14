@@ -248,11 +248,17 @@ v8::Intercepted IndexedSetter(
     uint32_t index,
     v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<v8::Boolean>& info) {
-  if (!PropertiesOf(info).indexed_getter) {
+  const IndexedAndNamedProperties& properties = PropertiesOf(info);
+  if (!properties.indexed_getter) {
     return NamedSetter(NameOfIndex(info.GetIsolate(), index), value, info);
   }
-  // Web IDL's [[Set]]: OrdinarySetWithOwnDescriptor() ends in
-  // [[DefineOwnProperty]], which fails without an indexed property setter.
+  // Web IDL's [[Set]]: the indexed property setter, or else
+  // OrdinarySetWithOwnDescriptor() ends in [[DefineOwnProperty]], which fails
+  // without one.
+  if (properties.indexed_setter) {
+    properties.indexed_setter(info.GetIsolate(), info.Holder(), index, value);
+    return v8::Intercepted::kYes;
+  }
   ThrowIfShouldThrow(info, "Indexed property setter is not supported.");
   return v8::Intercepted::kYes;
 }
@@ -298,9 +304,18 @@ v8::Intercepted IndexedDefiner(
                         info);
   }
   // Web IDL's [[DefineOwnProperty]], step 1: false for an accessor, and false
-  // without an indexed property setter.
+  // without an indexed property setter, which otherwise sets the value.
   if (descriptor.has_get() || descriptor.has_set()) {
     ThrowIfShouldThrow(info, "Accessor properties are not allowed.");
+    return v8::Intercepted::kYes;
+  }
+  const IndexedAndNamedProperties& properties = PropertiesOf(info);
+  if (properties.indexed_setter) {
+    v8::Isolate* const isolate = info.GetIsolate();
+    properties.indexed_setter(isolate, info.Holder(), index,
+                              descriptor.has_value()
+                                  ? descriptor.value()
+                                  : v8::Undefined(isolate).As<v8::Value>());
     return v8::Intercepted::kYes;
   }
   ThrowIfShouldThrow(info, "Index property setter is not supported.");
@@ -317,10 +332,11 @@ v8::Intercepted IndexedDescriptor(
   if (IndexedGetter(index, info) == v8::Intercepted::kNo) {
     return v8::Intercepted::kNo;
   }
-  // LegacyPlatformObjectGetOwnProperty, step 1.2: not writable without an
+  // LegacyPlatformObjectGetOwnProperty, step 1.2: writable only with an
   // indexed property setter, enumerable and configurable.
   info.GetReturnValue().Set(DataPropertyDescriptor(
-      isolate, info.GetReturnValue().Get(), /*writable=*/false,
+      isolate, info.GetReturnValue().Get(),
+      /*writable=*/PropertiesOf(info).indexed_setter != nullptr,
       /*enumerable=*/true));
   return v8::Intercepted::kYes;
 }

@@ -230,6 +230,14 @@ class Element : public Node {
   bool HasHTMLTagName(std::u16string_view name) const {
     return IsHTMLElement() && tag_name_.local_name == name;
   }
+  // Blink's SetSynchronizedLazyAttribute(): sets the attribute `name` to
+  // `value` as an SVG animated value writes back what a page set, with no
+  // record for mutation observers.
+  void SetSynchronizedLazyAttribute(const QualifiedName& name,
+                                    const std::u16string& value);
+  // The same for a value that is null, such as an empty SVG list's, which
+  // removes the attribute.
+  void RemoveSynchronizedLazyAttribute(const QualifiedName& name);
   // Called once the attribute `name` has changed from `old_value` to
   // `new_value`, null for none, through the DOM and the parser alike, as
   // Blink's Element::AttributeChanged() is.
@@ -259,11 +267,16 @@ class Element : public Node {
   // Every change to the attributes goes through these, as through Blink's
   // AppendAttributeInternal(), SetAttributeInternal() and
   // RemoveAttributeInternal().
+  // `record` is false only for Blink's kBySynchronizationOfLazyAttribute,
+  // which makes no record for observers.
   void AppendAttributeInternal(const QualifiedName& name,
-                               const std::u16string& value);
-  void SetAttributeValueInternal(size_t index, const std::u16string& value);
+                               const std::u16string& value,
+                               bool record = true);
+  void SetAttributeValueInternal(size_t index,
+                                 const std::u16string& value,
+                                 bool record = true);
   // Detaches the attribute's node too, which keeps its value.
-  void RemoveAttributeInternal(size_t index);
+  void RemoveAttributeInternal(size_t index, bool record = true);
   // The node of the attribute of `name`'s local name and namespace, if any.
   Attr* AttrIfExists(const QualifiedName& name) const;
   // Blink's DetachAttribute(): the node of the attribute at `index`, made if

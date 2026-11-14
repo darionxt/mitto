@@ -56,6 +56,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         CHECK(!frame.error().empty());
         continue;
       }
+      // A message of a document names it first, never as 0.
+      if (mitto::NamesDocument(frame->type)) {
+        CHECK_GE(payload.size(), 8u);
+        CHECK_NE(frame->document, mitto::kNoDocument);
+      } else {
+        CHECK_EQ(frame->document, mitto::kNoDocument);
+      }
       switch (frame->type) {
         case mitto::PageMessage::kHello:
           CHECK_EQ(payload.size(), 4u);
@@ -76,12 +83,17 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           break;
         case mitto::PageMessage::kRequest:
           CHECK_NE(frame->request.number, mitto::kNavigationRequest);
+          // Only a fetch has a mode, and only a navigation the rest.
+          CHECK(!frame->request.same_origin ||
+                frame->request.kind == mitto::PageRequestKind::kFetch);
+          CHECK((!frame->request.user_activation && !frame->request.reload) ||
+                frame->request.kind == mitto::PageRequestKind::kNavigation);
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->request.url));
           CHECK(mitto::IsHttpToken(frame->request.method));
           CHECK(!mitto::IsForbiddenMethod(frame->request.method));
           CHECK_EQ(frame->request.url.size() + frame->request.method.size() +
                        frame->request.headers.size() +
-                       frame->request.body.value_or("").size() + 23,
+                       frame->request.body.value_or("").size() + 31,
                    payload.size());
           break;
         case mitto::PageMessage::kCredit:
@@ -89,13 +101,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           CHECK_LE(frame->credit.bytes, mitto::kBodyWindow);
           break;
         case mitto::PageMessage::kGetCookies:
-          CHECK_EQ(payload.size(), 8u);
+          CHECK_EQ(payload.size(), 16u);
           break;
         case mitto::PageMessage::kSetCookie:
           CHECK(base::IsStringUTF8AllowingNoncharacters(frame->cookie_line));
           break;
         case mitto::PageMessage::kLoaded:
-          CHECK(payload.empty());
+          CHECK_EQ(payload.size(), 8u);
           break;
         case mitto::PageMessage::kCancel:
           CHECK_EQ(payload.size(), 8u);
@@ -108,7 +120,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           const mitto::PageCookieStoreGet& get = frame->cookie_store_get;
           CHECK(base::IsStringUTF8AllowingNoncharacters(get.name));
           CHECK(!get.all || get.name.empty());
-          CHECK_EQ(get.name.size() + 9, payload.size());
+          CHECK_EQ(get.name.size() + 17, payload.size());
           break;
         }
         case mitto::PageMessage::kCookieStoreSet: {
@@ -122,19 +134,34 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
               static_cast<uint8_t>(set.same_site),
               static_cast<uint8_t>(mitto::PageCookieSameSite::kNoRestriction));
           CHECK_EQ(set.name.size() + set.value.size() + set.domain.size() +
-                       set.path.size() + 30,
+                       set.path.size() + 38,
                    payload.size());
           break;
         }
         case mitto::PageMessage::kCookieStoreListen:
-          CHECK_EQ(payload.size(), 1u);
+          CHECK_EQ(payload.size(), 9u);
           break;
         case mitto::PageMessage::kBroadcast: {
           const mitto::PageBroadcast& broadcast = frame->broadcast;
           CHECK(base::IsStringUTF8AllowingNoncharacters(broadcast.name));
           CHECK(mitto::BroadcastFits(broadcast));
-          CHECK_EQ(broadcast.name.size() + broadcast.data.size() + 5,
+          CHECK_EQ(broadcast.name.size() + broadcast.data.size() + 13,
                    payload.size());
+          break;
+        }
+        case mitto::PageMessage::kSameDocumentNavigation:
+          CHECK(base::IsStringUTF8AllowingNoncharacters(
+              frame->same_document_url));
+          CHECK_EQ(frame->same_document_url.size() + 8, payload.size());
+          break;
+        case mitto::PageMessage::kDocumentCommitted: {
+          const mitto::PageDocumentCommitted& committed = frame->committed;
+          CHECK_NE(committed.document, mitto::kNoDocument);
+          CHECK_EQ(
+              payload.size(),
+              committed.source == mitto::PageDocumentSource::kNavigationResponse
+                  ? 17u
+                  : 9u);
           break;
         }
         case mitto::PageMessage::kStart:

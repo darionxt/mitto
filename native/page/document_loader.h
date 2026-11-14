@@ -1,9 +1,13 @@
-// Loads the Page's document from the response of the navigation that its
-// Session makes when the Page opens, on the Page program's main thread: a new
-// context for it, and the document's parser (document_parser.h), which this
-// feeds the body as the parser takes it, decoded with the encoding that Chrome
-// works out for it (text_resource_decoder_builder.h). What arrives waits
-// until the parser takes it, and the Session has no credit for it until then.
+// Loads a document of the Page from the response of a navigation, the one
+// that its Session makes when the Page opens or one that its document starts,
+// on the Page program's main thread: a new context for it, which the Page's
+// frame makes once the old document has unloaded (page_frame.h), and the
+// document's parser (document_parser.h), which this feeds the body as the
+// parser takes it, decoded with the encoding that Chrome works out for it
+// (text_resource_decoder_builder.h). What arrives waits until the parser
+// takes it, and the Session has no credit for it until then. A navigation
+// that the document starts while it loads stops the parser, and no load
+// event fires.
 //
 // Upstream: third_party/blink/renderer/core/loader/document_loader.cc
 
@@ -27,23 +31,36 @@ namespace mitto {
 
 class Document;
 class DocumentLoadTiming;
+class PageFrame;
 class ScriptRunner;
 class TextResourceDecoder;
 
 class DocumentLoader final : public PageRequests::Client,
                              public DocumentParser::Client {
  public:
-  DocumentLoader(ScriptRunner& runner, PageRequests& requests, SendFrame send);
+  // Loads the response of navigation `number` into a document of `frame`.
+  DocumentLoader(ScriptRunner& runner,
+                 PageRequests& requests,
+                 SendFrame send,
+                 PageFrame& frame,
+                 uint64_t number);
 
   DocumentLoader(const DocumentLoader&) = delete;
   DocumentLoader& operator=(const DocumentLoader&) = delete;
 
   ~DocumentLoader() override;
 
+  uint64_t number() const { return number_; }
+  // DocumentLoader::StopLoading(), once another document takes the place of
+  // this one's: the parser stops, and so does the body, if it still comes.
+  void StopLoading();
+
   // PageRequests::Client, for the navigation:
   void OnResponseStarted(const PageResponseStarted& response) override;
   void OnResponseBody(std::string bytes) override;
   void OnResponseTotals(const PageResponseEnded& ended) override;
+  // A navigation that ends with no response tells the frame, which lets this
+  // go: nothing may come after it.
   void OnResponseEnded(int net_error) override;
 
   // DocumentParser::Client:
@@ -60,9 +77,14 @@ class DocumentLoader final : public PageRequests::Client,
   const raw_ref<ScriptRunner> runner_;
   const raw_ref<PageRequests> requests_;
   const SendFrame send_;
+  const raw_ref<PageFrame> frame_;
+  const uint64_t number_;
+  bool response_started_ = false;
 
   GURL url_;
   cppgc::Persistent<Document> document_;
+  // The ID by which the Page names the document to its Session.
+  uint64_t document_id_ = 0;
   // How the document loads, which its window's Performance Timeline reads.
   cppgc::Persistent<DocumentLoadTiming> timing_;
   // How many bytes of the body have come, as decoded as the Page gets them.
