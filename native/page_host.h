@@ -34,6 +34,7 @@
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_change_dispatcher.h"
 #include "net/cookies/cookie_partition_key.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/http/http_request_headers.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -305,39 +306,106 @@ class PageHost final : public PageChannel::Delegate {
   void OnFrame(uint32_t type, std::string payload) override;
   void OnChannelClosed(PageChannel::Closed closed, std::string why) override;
 
-  // What the Page asks for. Each of these that comes from a document has the
-  // URL that the library loaded it at, never one that the Page names.
-  void OnRequest(PageRequest asked, const GURL& document_url);
+  // A context of the Page's: a document, or a dedicated worker, by the ID
+  // that the Page gave it.
+  struct Context {
+    // A document's URL, as the library loaded it after its navigation's
+    // redirects, or about:blank; a worker's script's final URL, or its blob:
+    // or data: URL.
+    GURL url;
+    // A document's origin, its URL's, or for a frame's initial about:blank its
+    // parent's; a worker's, its creator's, or an opaque one for data:.
+    url::Origin origin;
+    // The document whose frame element holds a document's frame, or the
+    // context that started a worker; kNoDocument for the top-level document.
+    uint64_t parent = kNoDocument;
+    bool is_worker = false;
+  };
+
+  // What a document's cookie calls are made for, as its frame's
+  // RestrictedCookieManager has them: its URL, its frame's site for cookies,
+  // and its partition.
+  struct CookieContext {
+    CookieContext();
+    CookieContext(const CookieContext&);
+    CookieContext& operator=(const CookieContext&);
+    ~CookieContext();
+
+    GURL url;
+    net::SiteForCookies site_for_cookies;
+    std::optional<net::CookiePartitionKey> partition_key;
+  };
+
+  // What the Page asks for. Each of these that comes from a context has what
+  // the library loaded it as, never what the Page names.
+  void OnRequest(PageRequest asked, uint64_t context_id);
   void OnCredit(const PageCredit& credit);
-  void OnGetCookies(uint64_t question, const GURL& document_url);
-  void OnSetCookie(const std::string& line, const GURL& document_url);
+  void OnGetCookies(uint64_t question, const CookieContext& context);
+  void OnSetCookie(const std::string& line, const CookieContext& context);
   void OnCancel(uint64_t number);
   // What the document's CookieStore asks, as Chrome's RestrictedCookieManager
   // answers it, always for the document that the Session loaded.
-  void OnCookieStoreGet(PageCookieStoreGet get, const GURL& document_url);
-  void OnCookieStoreSet(PageCookieStoreSet set, const GURL& document_url);
-  void OnCookieStoreListen(bool listen, const GURL& document_url);
+  void OnCookieStoreGet(PageCookieStoreGet get, const CookieContext& context);
+  void OnCookieStoreSet(PageCookieStoreSet set, const CookieContext& context);
+  void OnCookieStoreListen(bool listen,
+                           uint64_t document,
+                           const CookieContext& context);
   // A message of one of the document's BroadcastChannels, for the Session's
   // other Pages of the document's origin, which the library takes from the
   // document it loaded, not from the Page.
   void OnBroadcast(const PageBroadcast& broadcast, const GURL& document_url);
-  // A document that the Page has made, which takes the place of the one
-  // before it.
+  // A document that the Page has made, which takes the place of the
+  // top-level one, or of its frame's document, or is a frame's first one.
   void OnDocumentCommitted(const PageDocumentCommitted& committed);
+  // A dedicated worker that a context has started.
+  void OnWorkerStarted(const PageWorkerStarted& started);
+  // A context that goes while its parent stays.
+  void OnContextGone(uint64_t context_id);
   // A navigation within document `document` that gave it the URL `url`.
   void OnSameDocumentNavigation(uint64_t document, const std::string& url);
   // Pushes MITTO_PAGE_EVENT_NAVIGATED for a navigation that ended at `url`
   // with `net_error`, and `status` for one that kept the document.
   void PushNavigated(std::string url, int32_t status, int32_t net_error);
-  // The URL that the library loaded document `document` at, or null after
-  // refusing a message that names a document that is not the Page's.
-  const GURL* DocumentUrl(uint64_t document, uint32_t type);
+  // Context `id`, or null after refusing a message of `type` that names a
+  // context that is not the Page's.
+  const Context* ContextOf(uint64_t id, uint32_t type);
+  // The URL that what a context asks for is judged by: its own, or its
+  // origin's for a frame's initial about:blank or a worker of a blob: URL.
+  static GURL ContextUrl(const Context& context);
+  // Context `id` and each context under it: the documents of its frames, the
+  // workers it started, and theirs.
+  std::set<uint64_t> ContextsUnder(uint64_t id) const;
+  // Forgets `ids`, which go, with what waits for them, and lets their
+  // keepalive requests go on without them.
+  void ForgetContexts(const std::set<uint64_t>& ids);
+  // Lets each keepalive request of `ids`, or of every context for null, go on
+  // without the Page, which hears that it ended.
+  void LetKeepaliveRequestsGo(const std::set<uint64_t>* ids);
+  // What a request of context `id` goes as, beside its Kind's: its
+  // Initiator, its referrer's source, and its frame's place in the frame
+  // tree. For a frame's navigation, `parent` is the frame's parent, from
+  // which the tree counts.
+  void FillContextFetch(uint64_t id, uint64_t parent, FetchParams& fetch) const;
   // The URL of the Page's top-level document, or an empty one before the Page
   // has made one.
   GURL TopDocumentUrl() const;
+  // What the cookie calls of document `id` are made for.
+  CookieContext CookieContextOf(uint64_t id) const;
+  // Where document `id`'s frame is in the frame tree: the top-level
+  // document's origin, and whether a document from `id` up is of another
+  // site, or of another origin, than the top-level one.
+  struct FrameTree {
+    url::Origin top_frame_origin;
+    bool is_top_level = true;
+    bool cross_site = false;
+    bool cross_origin = false;
+  };
+  FrameTree FrameTreeOf(uint64_t id) const;
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
-  void OnCacheStorage(PageCacheStorageCall call, const GURL& document_url);
+  void OnCacheStorage(PageCacheStorageCall call,
+                      uint64_t context_id,
+                      const GURL& document_url);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -361,9 +429,10 @@ class PageHost final : public PageChannel::Delegate {
   };
 
   // Starts a request numbered `number`, whose client is a Request that
-  // `requests_` holds, and which goes on only as `checks` allow, for a
-  // document of `document_origin`, opaque for a navigation.
+  // `requests_` holds, and which goes on only as `checks` allow, for context
+  // `context_id` of `document_origin`, opaque for a navigation.
   void StartRequest(uint64_t number,
+                    uint64_t context_id,
                     const url::Origin& document_origin,
                     GURL url,
                     net::HttpRequestHeaders headers,
@@ -385,15 +454,19 @@ class PageHost final : public PageChannel::Delegate {
   void SendCookieStoreCookies(const PageCookieStoreGet& get,
                               const net::CookieAccessResultList& cookies,
                               const net::CookieAccessResultList& excluded);
-  void OnCookieStoreChange(const net::CookieChangeInfo& change);
+  void OnCookieStoreChange(uint64_t document,
+                           const net::CookieChangeInfo& change);
 
   // Whether a document at `document_url` can have cookies, which only one that
   // the Session loaded over HTTP or HTTPS can.
   static bool DocumentHasCookies(const GURL& document_url);
-  // The partition of the cookies of a document at `document_url`, as Chrome's
-  // RestrictedCookieManager for a top-level frame has it.
-  static std::optional<net::CookiePartitionKey> DocumentPartitionKey(
-      const GURL& document_url);
+  // The partition of the cookies of a frame of `frame_origin` under a
+  // top-level frame of `top_frame_origin`, with `site_for_cookies`, as
+  // Chrome's RestrictedCookieManager has it.
+  static std::optional<net::CookiePartitionKey> FramePartitionKey(
+      const url::Origin& top_frame_origin,
+      const url::Origin& frame_origin,
+      const net::SiteForCookies& site_for_cookies);
   // The storage key of a document at `document_url`, as
   // StorageKey::Serialize() writes it, if it may reach the Cache API: one of
   // an HTTP or HTTPS URL in a secure context. A top-level document's key is
@@ -430,14 +503,30 @@ class PageHost final : public PageChannel::Delegate {
   const raw_ref<PageNetwork> network_;
   std::unique_ptr<PageChannel> channel_;
   PageOptions options_;
-  // The Page's documents, by the ID that the Page gave each, with the URL
-  // that the library loaded it at, after its navigation's redirects: the
-  // Initiator of its requests, and whose cookies its document.cookie reads and
-  // writes. A Page has one, its top-level document, once it has told the
-  // library of it.
-  std::map<uint64_t, GURL> documents_;
-  // The largest ID the Page has given a document.
-  uint64_t last_document_id_ = kNoDocument;
+  // The Page's contexts, its documents and dedicated workers, by the ID that
+  // the Page gave each: the Initiator of their requests, and whose cookies a
+  // document's document.cookie reads and writes. A Page has one top-level
+  // document once it has told the library of it, and the documents of its
+  // frames and its workers under it.
+  std::map<uint64_t, Context> contexts_;
+  // The largest ID the Page has given a context.
+  uint64_t last_context_id_ = kNoDocument;
+  // The navigations of frames whose responses the Page has and has not made a
+  // document of yet, by number: the final URL, the frame's parent and its
+  // document that the new one replaces.
+  struct FrameNavigationResponse {
+    GURL url;
+    uint64_t parent = kNoDocument;
+    uint64_t target = kNoDocument;
+  };
+  std::map<uint64_t, FrameNavigationResponse> frame_navigation_responses_;
+  // The responses of the scripts of workers that the Page has and has not
+  // started yet, by number: the context that asked and the final URL.
+  struct WorkerScript {
+    uint64_t creator = kNoDocument;
+    GURL url;
+  };
+  std::map<uint64_t, WorkerScript> worker_scripts_;
   // The navigations whose responses the Page has and has not made a document
   // of yet, by number: the final URL and the status.
   struct NavigationResponse {
@@ -445,10 +534,18 @@ class PageHost final : public PageChannel::Delegate {
     int32_t status = 0;
   };
   std::map<uint64_t, NavigationResponse> navigation_responses_;
-  // While a document's CookieStore listens: what tells it of each change, and
-  // the document's URL.
-  std::unique_ptr<net::CookieChangeSubscription> cookie_store_subscription_;
-  GURL cookie_store_url_;
+  // The documents whose CookieStores listen, by ID: what tells each of each
+  // change, and what its cookie calls are made for.
+  struct CookieStoreListener {
+    CookieStoreListener();
+    CookieStoreListener(CookieStoreListener&&);
+    CookieStoreListener& operator=(CookieStoreListener&&);
+    ~CookieStoreListener();
+
+    std::unique_ptr<net::CookieChangeSubscription> subscription;
+    CookieContext context;
+  };
+  std::map<uint64_t, CookieStoreListener> cookie_store_listeners_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

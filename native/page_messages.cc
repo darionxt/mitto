@@ -194,7 +194,10 @@ bool IsKnown(uint32_t type) {
          (type >= static_cast<uint32_t>(PageMessage::kCacheStorage) &&
           type <= static_cast<uint32_t>(PageMessage::kCacheStorageAnswer)) ||
          (type >= static_cast<uint32_t>(PageMessage::kDocumentCommitted) &&
-          type <= static_cast<uint32_t>(PageMessage::kSameDocumentNavigation));
+          type <=
+              static_cast<uint32_t>(PageMessage::kSameDocumentNavigation)) ||
+         (type >= static_cast<uint32_t>(PageMessage::kWorkerStarted) &&
+          type <= static_cast<uint32_t>(PageMessage::kContextGone));
 }
 
 // The frame of a message that names `document`, which comes first.
@@ -1060,12 +1063,13 @@ base::expected<PageCookieStoreCookies, std::string> ReadCookieStoreCookies(
 
 base::expected<PageCookieStoreChange, std::string> ReadCookieStoreChange(
     std::string_view payload) {
-  if (payload.empty() || static_cast<uint8_t>(payload[0]) > 1) {
+  if (payload.size() < 9 || static_cast<uint8_t>(payload[8]) > 1) {
     return base::unexpected("a change of cookies that is not valid");
   }
   PageCookieStoreChange change;
-  change.deleted = payload[0] == 1;
-  std::string_view bytes = payload.substr(1);
+  change.document = DecodeUint64(payload.substr(0, 8));
+  change.deleted = payload[8] == 1;
+  std::string_view bytes = payload.substr(9);
   std::optional<PageCookie> cookie = TakeCookie(bytes);
   if (!cookie || !bytes.empty()) {
     return base::unexpected("a change of cookies that is not valid");
@@ -1093,11 +1097,11 @@ base::expected<PageBroadcast, std::string> ReadBroadcast(
   return broadcast;
 }
 
-// A document that the Page has made: its ID, a byte for its source, and for a
-// navigation's response the navigation's number.
+// A document that the Page has made: its ID, a byte for its source, its
+// parent, and for a navigation's response the navigation's number.
 base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
     std::string_view payload) {
-  if (payload.size() != 9 && payload.size() != 17) {
+  if (payload.size() != 17 && payload.size() != 25) {
     return base::unexpected(WrongSize("document", payload.size()));
   }
   PageDocumentCommitted committed;
@@ -1107,17 +1111,58 @@ base::expected<PageDocumentCommitted, std::string> ReadDocumentCommitted(
       source == static_cast<uint8_t>(PageDocumentSource::kNavigationResponse);
   if ((source != static_cast<uint8_t>(PageDocumentSource::kInitialEmpty) &&
        !from_response) ||
-      (payload.size() == 17) != from_response) {
+      (payload.size() == 25) != from_response) {
     return base::unexpected("a document that is not valid");
   }
   if (committed.document == kNoDocument) {
     return base::unexpected("a document numbered 0");
   }
   committed.source = static_cast<PageDocumentSource>(source);
+  committed.parent = DecodeUint64(payload.substr(9, 8));
+  if (committed.parent == committed.document) {
+    return base::unexpected("a document that is its own parent");
+  }
   if (from_response) {
-    committed.navigation = DecodeUint64(payload.substr(9, 8));
+    committed.navigation = DecodeUint64(payload.substr(17, 8));
   }
   return committed;
+}
+
+base::expected<PageWorkerStarted, std::string> ReadWorkerStarted(
+    std::string payload) {
+  // The worker, its creator, the source, the flags and the request.
+  constexpr size_t kFixedSize = 8 + 8 + 1 + 1 + 8;
+  if (payload.size() < kFixedSize) {
+    return base::unexpected(WrongSize("worker", payload.size()));
+  }
+  const std::string_view bytes = payload;
+  PageWorkerStarted started;
+  started.worker = DecodeUint64(bytes.substr(0, 8));
+  started.creator = DecodeUint64(bytes.substr(8, 8));
+  const uint8_t source = static_cast<uint8_t>(bytes[16]);
+  const uint8_t flags = static_cast<uint8_t>(bytes[17]);
+  started.request = DecodeUint64(bytes.substr(18, 8));
+  started.url = payload.substr(kFixedSize);
+  if (started.worker == kNoDocument || started.creator == kNoDocument ||
+      started.worker == started.creator) {
+    return base::unexpected("a worker that is not valid");
+  }
+  if (source < static_cast<uint8_t>(PageWorkerSource::kScriptResponse) ||
+      source > static_cast<uint8_t>(PageWorkerSource::kData) || flags > 1) {
+    return base::unexpected("a worker with a value out of range");
+  }
+  started.source = static_cast<PageWorkerSource>(source);
+  started.module = flags == 1;
+  const bool from_response =
+      started.source == PageWorkerSource::kScriptResponse;
+  // Only a script's response has a request, never the navigation, and only a
+  // blob: URL is named.
+  if (from_response != (started.request != kNavigationRequest) ||
+      (started.source == PageWorkerSource::kBlob) != !started.url.empty() ||
+      !IsText(started.url)) {
+    return base::unexpected("a worker whose source does not match the rest");
+  }
+  return started;
 }
 
 base::expected<PageCredit, std::string> ReadCredit(std::string_view payload) {
@@ -1337,6 +1382,11 @@ PageConsoleMessage::PageConsoleMessage(PageConsoleMessage&&) = default;
 PageConsoleMessage& PageConsoleMessage::operator=(PageConsoleMessage&&) =
     default;
 PageConsoleMessage::~PageConsoleMessage() = default;
+
+PageWorkerStarted::PageWorkerStarted() = default;
+PageWorkerStarted::PageWorkerStarted(PageWorkerStarted&&) = default;
+PageWorkerStarted& PageWorkerStarted::operator=(PageWorkerStarted&&) = default;
+PageWorkerStarted::~PageWorkerStarted() = default;
 
 FrameFromPage::FrameFromPage() = default;
 FrameFromPage::FrameFromPage(FrameFromPage&&) = default;
@@ -1699,13 +1749,26 @@ std::string EncodeCookieStoreStored(uint64_t answer, bool stored) {
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change) {
   const char deleted = change.deleted ? 1 : 0;
   return EncodeFrame(PageMessage::kCookieStoreChange,
-                     base::StrCat({std::string_view(&deleted, 1),
+                     base::StrCat({EncodeUint64(change.document),
+                                   std::string_view(&deleted, 1),
                                    EncodeCookie(change.cookie)}));
 }
 
 bool BroadcastFits(const PageBroadcast& broadcast) {
   return broadcast.name.size() <= kMaxPayloadSize - 13 &&
          broadcast.data.size() <= kMaxPayloadSize - 13 - broadcast.name.size();
+}
+
+bool BroadcastReceivedFits(const PageBroadcast& broadcast) {
+  // The origin and the name after their sizes, the byte that says whether it
+  // is locked, and the data.
+  const size_t fixed = 4 + 4 + 1;
+  return broadcast.origin.size() <= kMaxPayloadSize - fixed &&
+         broadcast.name.size() <=
+             kMaxPayloadSize - fixed - broadcast.origin.size() &&
+         broadcast.data.size() <= kMaxPayloadSize - fixed -
+                                      broadcast.origin.size() -
+                                      broadcast.name.size();
 }
 
 namespace {
@@ -1731,17 +1794,33 @@ std::string EncodeCacheStorage(uint64_t document,
 
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast) {
   return EncodeFrame(PageMessage::kBroadcastReceived,
-                     EncodeBroadcastPayload(broadcast));
+                     base::StrCat({EncodeSized(broadcast.origin),
+                                   EncodeBroadcastPayload(broadcast)}));
 }
 
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed) {
   const char source = static_cast<char>(committed.source);
-  std::string payload = base::StrCat(
-      {EncodeUint64(committed.document), std::string_view(&source, 1)});
+  std::string payload = base::StrCat({EncodeUint64(committed.document),
+                                      std::string_view(&source, 1),
+                                      EncodeUint64(committed.parent)});
   if (committed.source == PageDocumentSource::kNavigationResponse) {
     payload += EncodeUint64(committed.navigation);
   }
   return EncodeFrame(PageMessage::kDocumentCommitted, payload);
+}
+
+std::string EncodeWorkerStarted(const PageWorkerStarted& started) {
+  const char source_and_flags[] = {static_cast<char>(started.source),
+                                   static_cast<char>(started.module ? 1 : 0)};
+  return EncodeFrame(
+      PageMessage::kWorkerStarted,
+      base::StrCat({EncodeUint64(started.worker), EncodeUint64(started.creator),
+                    std::string_view(source_and_flags, 2),
+                    EncodeUint64(started.request), started.url}));
+}
+
+std::string EncodeContextGone(uint64_t context) {
+  return EncodeFrame(PageMessage::kContextGone, EncodeUint64(context));
 }
 
 std::string EncodeSameDocumentNavigation(uint64_t document,
@@ -1944,6 +2023,24 @@ base::expected<FrameFromPage, std::string> ReadFrameFromPage(
       frame.committed = *committed;
       return frame;
     }
+    case PageMessage::kWorkerStarted: {
+      base::expected<PageWorkerStarted, std::string> started =
+          ReadWorkerStarted(std::move(payload));
+      if (!started.has_value()) {
+        return base::unexpected(std::move(started).error());
+      }
+      frame.worker_started = *std::move(started);
+      return frame;
+    }
+    case PageMessage::kContextGone:
+      if (payload.size() != 8) {
+        return base::unexpected(WrongSize("context gone", payload.size()));
+      }
+      frame.gone_context = DecodeUint64(payload);
+      if (frame.gone_context == kNoDocument) {
+        return base::unexpected("a context numbered 0");
+      }
+      return frame;
     case PageMessage::kSameDocumentNavigation:
       if (!IsText(payload)) {
         return base::unexpected("a same-document URL that is not UTF-8");
@@ -2074,12 +2171,18 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
       return frame;
     }
     case PageMessage::kBroadcastReceived: {
+      std::string_view bytes = payload;
+      std::string_view origin;
+      if (!TakeSized(bytes, origin) || !IsText(origin)) {
+        return base::unexpected("a received broadcast that is not valid");
+      }
       base::expected<PageBroadcast, std::string> broadcast =
-          ReadBroadcast(payload);
+          ReadBroadcast(bytes);
       if (!broadcast.has_value()) {
         return base::unexpected(std::move(broadcast).error());
       }
       frame.broadcast = *std::move(broadcast);
+      frame.broadcast.origin = std::string(origin);
       return frame;
     }
     case PageMessage::kCacheStorageAnswer: {
@@ -2108,6 +2211,8 @@ base::expected<FrameFromSession, std::string> ReadFrameFromSession(
     case PageMessage::kCacheStorage:
     case PageMessage::kDocumentCommitted:
     case PageMessage::kSameDocumentNavigation:
+    case PageMessage::kWorkerStarted:
+    case PageMessage::kContextGone:
       return base::unexpected(WrongWay(type, "a Session"));
   }
   NOTREACHED();

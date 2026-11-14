@@ -30,7 +30,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 19;
+inline constexpr uint32_t kPageProtocolVersion = 20;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -162,7 +162,7 @@ enum class PageMessage : uint32_t {
   // To the Page: the number of a kCookieStoreSet, as a 64-bit number, and a
   // byte, 1 if the cookie was stored and 0 if not.
   kCookieStoreStored = 23,
-  // To the Page, while the CookieStore listens: a change to the document's
+  // To the Page, while a document's CookieStore listens: a change to its
   // cookies, as PageCookieStoreChange says.
   kCookieStoreChange = 24,
   // To the Session: the ID of the document, and a message of one of its
@@ -170,7 +170,7 @@ enum class PageMessage : uint32_t {
   // whose documents are of the same origin.
   kBroadcast = 25,
   // To the Page: a message of a BroadcastChannel of another Page of the
-  // Session whose document is of the same origin, as PageBroadcast says.
+  // Session whose context is of the origin it names, as PageBroadcast says.
   kBroadcastReceived = 26,
   // 27 to 39 are the storage messages' to come.
   // To the Session: what the document's CacheStorage or one of its Caches
@@ -187,6 +187,14 @@ enum class PageMessage : uint32_t {
   // navigation within it gave it, such as one to a fragment, which is of the
   // document's origin.
   kSameDocumentNavigation = 71,
+  // To the Session: a dedicated worker that a context of the Page has
+  // started, as PageWorkerStarted says. Its ID is one of the documents', in
+  // the same order.
+  kWorkerStarted = 100,
+  // To the Session: the ID of a context that goes while its parent stays, a
+  // frame's document that its element let go or a worker that ended, which
+  // the Page names no more. The contexts under it go with it.
+  kContextGone = 101,
 };
 
 // Whether a message of `type` names the document it comes from: each of the
@@ -573,13 +581,47 @@ enum class PageDocumentSource : uint8_t {
 };
 
 // A document that a Page has made. Its payload is the ID, a 64-bit number, the
-// source, a byte, and for a navigation's response the navigation's number, a
-// 64-bit number.
+// source, a byte, the parent, a 64-bit number, and for a navigation's response
+// the navigation's number, a 64-bit number.
 struct PageDocumentCommitted {
   uint64_t document = kNoDocument;
   PageDocumentSource source = PageDocumentSource::kInitialEmpty;
+  // The document whose frame element holds this document's frame, or
+  // kNoDocument for the top-level document.
+  uint64_t parent = kNoDocument;
   // For kNavigationResponse.
   uint64_t navigation = kNavigationRequest;
+};
+
+// Where a dedicated worker's script comes from.
+enum class PageWorkerSource : uint8_t {
+  // The response of a request of Kind worker that the worker's creator made.
+  kScriptResponse = 1,
+  // A blob: URL of the creator's origin.
+  kBlob = 2,
+  // A data: URL, which gives the worker an opaque origin.
+  kData = 3,
+};
+
+// A dedicated worker that a context of the Page has started. Its payload is
+// the worker's ID, a 64-bit number larger than that of each document and
+// worker before it, the ID of the context that started it, a 64-bit number,
+// the source, a byte, a byte of flags, 1 for a module worker, the number of
+// the request that fetched its script for kScriptResponse, and 0 for the
+// others, a 64-bit number, and then, for kBlob, its URL in UTF-8, which is the
+// rest.
+struct PageWorkerStarted {
+  PageWorkerStarted();
+  PageWorkerStarted(PageWorkerStarted&&);
+  PageWorkerStarted& operator=(PageWorkerStarted&&);
+  ~PageWorkerStarted();
+
+  uint64_t worker = kNoDocument;
+  uint64_t creator = kNoDocument;
+  PageWorkerSource source = PageWorkerSource::kScriptResponse;
+  bool module = false;
+  uint64_t request = 0;
+  std::string url;
 };
 
 // The response of a request, after any redirects, which the Session follows
@@ -755,7 +797,9 @@ struct PageCookieStoreCookies {
 
 // A change to the document's cookies that a CookieStore hears of: a cookie
 // that was set, or one that went, whose value and expiry it does not hand on.
+// Its payload names the document whose CookieStore listens first.
 struct PageCookieStoreChange {
+  uint64_t document = kNoDocument;
   bool deleted = false;
   PageCookie cookie;
 };
@@ -778,6 +822,10 @@ struct PageBroadcast {
   std::string name;
   bool locked = false;
   std::string data;
+  // For kBroadcastReceived: the serialized origin of the documents that sent
+  // it, whose channels alone it reaches. Its payload starts with it, after its
+  // size.
+  std::string origin;
 };
 
 // A frame from a Page, once checked. Which fields it uses depends on `type`.
@@ -824,6 +872,10 @@ struct FrameFromPage {
   PageCacheStorageCall cache_storage_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
+  // kWorkerStarted.
+  PageWorkerStarted worker_started;
+  // kContextGone.
+  uint64_t gone_context = kNoDocument;
   // kSameDocumentNavigation: the document's new URL.
   std::string same_document_url;
 };
@@ -922,6 +974,8 @@ std::string EncodeCookieStoreStored(uint64_t answer, bool stored);
 std::string EncodeCookieStoreChange(const PageCookieStoreChange& change);
 // Whether a broadcast fits in a frame, with the ID of its document.
 bool BroadcastFits(const PageBroadcast& broadcast);
+// Whether a received broadcast fits in a frame, with its origin.
+bool BroadcastReceivedFits(const PageBroadcast& broadcast);
 // The broadcast fits in a frame.
 std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
 // The frame of a call of document `document`'s Cache API.
@@ -929,6 +983,8 @@ std::string EncodeCacheStorage(uint64_t document,
                                const PageCacheStorageCall& call);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
+std::string EncodeWorkerStarted(const PageWorkerStarted& started);
+std::string EncodeContextGone(uint64_t context);
 // `url` is at most kMaxPayloadSize - 8 bytes.
 std::string EncodeSameDocumentNavigation(uint64_t document,
                                          std::string_view url);

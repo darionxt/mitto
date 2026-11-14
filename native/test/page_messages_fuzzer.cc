@@ -173,13 +173,33 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         case mitto::PageMessage::kDocumentCommitted: {
           const mitto::PageDocumentCommitted& committed = frame->committed;
           CHECK_NE(committed.document, mitto::kNoDocument);
+          CHECK_NE(committed.document, committed.parent);
           CHECK_EQ(
               payload.size(),
               committed.source == mitto::PageDocumentSource::kNavigationResponse
-                  ? 17u
-                  : 9u);
+                  ? 25u
+                  : 17u);
           break;
         }
+        case mitto::PageMessage::kWorkerStarted: {
+          const mitto::PageWorkerStarted& started = frame->worker_started;
+          CHECK_NE(started.worker, mitto::kNoDocument);
+          CHECK_NE(started.creator, mitto::kNoDocument);
+          CHECK_NE(started.worker, started.creator);
+          // Only a script's response names its request, and only a blob: URL
+          // is named.
+          CHECK_EQ(started.source == mitto::PageWorkerSource::kScriptResponse,
+                   started.request != mitto::kNavigationRequest);
+          CHECK_EQ(started.source == mitto::PageWorkerSource::kBlob,
+                   !started.url.empty());
+          CHECK(base::IsStringUTF8AllowingNoncharacters(started.url));
+          CHECK_EQ(started.url.size() + 26, payload.size());
+          break;
+        }
+        case mitto::PageMessage::kContextGone:
+          CHECK_NE(frame->gone_context, mitto::kNoDocument);
+          CHECK_EQ(payload.size(), 8u);
+          break;
         case mitto::PageMessage::kStart:
         case mitto::PageMessage::kEvaluate:
         case mitto::PageMessage::kResponseStarted:

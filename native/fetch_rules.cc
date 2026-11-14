@@ -195,28 +195,28 @@ void FetchRules::ConfigureSiteAndReferrer(net::URLRequest& request) {
   if (IsSubframeNavigation()) {
     // What NavigationRequest gives a frame's navigation:
     // RenderFrameHostImpl::ComputeIsolationInfoForNavigation(), from the
-    // parent up, which here is a top-level page. The site for cookies stays
-    // the parent's on each hop, and //net moves only the frame's origin, so a
-    // frame of another site gets no SameSite cookie but None.
+    // parent up, which for a caller's request is a top-level page. The site
+    // for cookies stays the parent's on each hop, and //net moves only the
+    // frame's origin, so a frame of another site gets no SameSite cookie but
+    // None.
     // Upstream: content/browser/renderer_host/render_frame_host_impl.cc
-    const net::SiteForCookies site_for_cookies =
-        net::SiteForCookies::FromOrigin(*initiator_);
+    const net::SiteForCookies site_for_cookies = FrameSiteForCookies();
     request.set_site_for_cookies(site_for_cookies);
     request.set_isolation_info(net::IsolationInfo::Create(
-        net::IsolationInfo::RequestType::kSubFrame, *initiator_,
+        net::IsolationInfo::RequestType::kSubFrame, TopFrameOrigin(),
         url::Origin::Create(url), site_for_cookies));
   } else if (params_.mode == RequestMode::kNavigate) {
     SetUpTopLevelNavigation(request);
   } else {
-    // A page counts as a top-level one, since nothing says it has a parent. A
-    // subresource has its page's site for cookies and for partitioning,
-    // whatever its own URL and wherever a redirect takes it.
-    const net::SiteForCookies site_for_cookies =
-        net::SiteForCookies::FromOrigin(*initiator_);
+    // A subresource has its frame's site for cookies and partitioning, as
+    // RenderFrameHostImpl::GetIsolationInfoForSubresources() gives it,
+    // whatever its own URL and wherever a redirect takes it. A caller's page
+    // counts as a top-level one, since nothing says it has a parent.
+    const net::SiteForCookies site_for_cookies = FrameSiteForCookies();
     request.set_site_for_cookies(site_for_cookies);
-    request.set_isolation_info(
-        net::IsolationInfo::Create(net::IsolationInfo::RequestType::kOther,
-                                   *initiator_, *initiator_, site_for_cookies));
+    request.set_isolation_info(net::IsolationInfo::Create(
+        net::IsolationInfo::RequestType::kOther, TopFrameOrigin(), *initiator_,
+        site_for_cookies));
   }
   request.set_initiator(initiator_);
   SetRequestCredentials(request, url);
@@ -346,14 +346,21 @@ bool FetchRules::ShouldAddClientHint(
            (sent_by_default || client_hints_store_->IsEnabled(origin, name) ||
             additional_hints.contains(base::ToLowerASCII(name)));
   }
+  // A dedicated worker sends none, as #265 recorded Chrome's.
+  if (params_.from_worker) {
+    return false;
+  }
   // FrameFetchContext::ShouldSendClientHint(), and for a frame's navigation
-  // ClientHintsExtendedData, whose main frame is the page. The page's origin
+  // ClientHintsExtendedData, whose main frame is the top-level one. Its origin
   // decides, and with no permissions policy of its own the page only lets its
-  // own origin have anything but what goes by default.
+  // own origin have anything but what goes by default, through frames of that
+  // origin alone.
+  const url::Origin& top_frame_origin = TopFrameOrigin();
   return net::IsUrlPotentiallyTrustworthy(url) &&
          (sent_by_default ||
-          (initiator_->IsSameOriginWith(url) &&
-           client_hints_store_->IsEnabled(*initiator_, name)));
+          (!params_.cross_origin_ancestor &&
+           top_frame_origin.IsSameOriginWith(url) &&
+           client_hints_store_->IsEnabled(top_frame_origin, name)));
 }
 
 std::string FetchRules::NavigationClientHintValue(std::string_view name,
@@ -490,7 +497,7 @@ std::optional<FetchRules::Restart> FetchRules::OnResponseHeaders(
   // third-party context cannot clear it.
   if (parsed.clears_client_hints &&
       (params_.mode == RequestMode::kNavigate ||
-       net::SchemefulSite(*initiator_) == net::SchemefulSite(origin))) {
+       net::SchemefulSite(TopFrameOrigin()) == net::SchemefulSite(origin))) {
     client_hints_store_->ClearClientHints(origin);
   }
   if (params_.mode != RequestMode::kNavigate) {
@@ -660,6 +667,18 @@ void FetchRules::SetCorsFlagIfNeeded(const GURL& url) {
 
 bool FetchRules::ShouldIncludeOriginHeader(std::string_view method) const {
   return fetch_cors_flag_ || NeedsHTTPOrigin(method);
+}
+
+const url::Origin& FetchRules::TopFrameOrigin() const {
+  return params_.top_frame_origin ? *params_.top_frame_origin : *initiator_;
+}
+
+net::SiteForCookies FetchRules::FrameSiteForCookies() const {
+  // The top-level frame's, unless a frame on the way up is of another site,
+  // as RenderFrameHostImpl::ComputeSiteForCookies() walks the frame tree.
+  return params_.cross_site_ancestor
+             ? net::SiteForCookies()
+             : net::SiteForCookies::FromOrigin(TopFrameOrigin());
 }
 
 std::string FetchRules::OriginHeaderValue() const {

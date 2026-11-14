@@ -137,7 +137,7 @@ _UNCAUGHT_ERROR = 7
 _KNOWN_GAP = 18
 _DOCUMENT_COMMITTED = 70
 _SAME_DOCUMENT_NAVIGATION = 71
-_PROTOCOL_VERSION = 19
+_PROTOCOL_VERSION = 20
 _MAX_PAYLOAD_SIZE = 16 * 1024 * 1024
 _PAGE_REFUSED = 1
 # What a Machine drawn from the table and an en-US Persona start a Page with.
@@ -742,6 +742,7 @@ _COOKIE_STORE_GET = 19
 _COOKIE_STORE_COOKIES = 22
 _COOKIE_STORE_STORED = 23
 _COOKIE_STORE_CHANGE = 24
+_BROADCAST_RECEIVED = 26
 _BODY_WINDOW = 64 * 1024
 _SCRIPT_KIND = 1
 _DOCUMENT_URL = "http://www.example.test/page"
@@ -892,7 +893,7 @@ def test_a_page_tells_its_session_of_each_document_before_anything_the_document_
 
     # about:blank's first, as the Page's initial document, then the navigation's, each before its own messages.
     assert session.receive()[0] == _CREDIT
-    assert session.documents == [struct.pack("<QB", 1, 0), struct.pack("<QBQ", 2, 1, 0)]
+    assert session.documents == [struct.pack("<QBQ", 1, 0, 0), struct.pack("<QBQQ", 2, 1, 0, 0)]
     assert session.receive() == (_REQUEST, _request(1, _SCRIPT_KIND, "http://www.example.test/app.js"))
     assert session.close() == 0
 
@@ -1177,6 +1178,25 @@ def test_a_fetchs_request_init_reaches_the_session_in_its_request(session: _Sess
     assert session.close() == 0
 
 
+def test_a_broadcast_from_another_page_reaches_only_the_channels_of_its_origin(session: _Session) -> None:
+    # The Session names the origin of the Page that sent it. A channel that it reaches fires an event, whatever its
+    # bytes read back as.
+    session.start()
+    _loaded(session)
+    assert session.evaluate(
+        "window.heard = []; const channel = new BroadcastChannel('news');"
+        " channel.onmessage = channel.onmessageerror = (e) => heard.push(e.type); 'listening'"
+    ) == (False, '"listening"')
+    for origin in (b"http://elsewhere.test", b"http://www.example.test"):
+        session.send(_BROADCAST_RECEIVED, _sized(origin) + _sized(b"news") + b"\x00" + b"not a value")
+
+    assert session.evaluate("new Promise((resolve) => setTimeout(() => resolve(heard.length), 50))", call=2) == (
+        False,
+        "1",
+    )
+    assert session.close() == 0
+
+
 def test_a_fetchs_body_gets_credit_only_once_a_script_reads_it(session: _Session) -> None:
     session.start()
     _loaded(session)
@@ -1367,7 +1387,7 @@ def test_a_page_refuses_more_of_a_body_than_it_has_given_credit_for(session: _Se
         ),
         pytest.param(
             _COOKIE_STORE_CHANGE,
-            b"\x01\x08\x00" + bytes(8) + bytes(16),
+            _DOCUMENT + b"\x01\x08\x00" + bytes(8) + bytes(16),
             "a change of cookies that is not valid",
             id="cookie-store-unknown-flag",
         ),
@@ -1864,7 +1884,7 @@ def test_a_document_starts_a_navigation_that_its_session_makes_and_whose_respons
     _respond(session, 1, "http://www.example.test/next", "text/html")
     _body(session, 1, document)
     assert session.receive() == (_CREDIT, struct.pack("<QI", 1, len(document)))
-    assert session.documents[-1] == struct.pack("<QBQ", 3, 1, 1)
+    assert session.documents[-1] == struct.pack("<QBQQ", 3, 1, 0, 1)
     _end(session, 1)
     assert session.receive() == (_LOADED, struct.pack("<Q", 3))
     assert session.evaluate("[document.URL, document.title]", call=2) == (
@@ -1893,5 +1913,5 @@ def test_a_navigation_that_ends_with_no_response_keeps_the_document(session: _Se
     assert session.evaluated() == (1, False, '"/nothing"')
     session.send(_RESPONSE_ENDED, _ended(1, _ERR_ABORTED))
     assert session.evaluate("[window.marker, document.URL]", call=2) == (False, f'["kept","{_DOCUMENT_URL}"]')
-    assert session.documents == [struct.pack("<QB", 1, 0), struct.pack("<QBQ", 2, 1, 0)]
+    assert session.documents == [struct.pack("<QBQ", 1, 0, 0), struct.pack("<QBQQ", 2, 1, 0, 0)]
     assert session.close() == 0
