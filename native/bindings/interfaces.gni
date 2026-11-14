@@ -190,6 +190,12 @@ mitto_bindings_interfaces = [
     file = "custom_event"
   },
   {
+    # location.ancestorOrigins, a Known Gap, gives an empty one.
+    name = "DOMStringList"
+    file = "dom_string_list"
+    made_by_known_gaps = true
+  },
+  {
     name = "DOMStringMap"
     file = "dom_string_map"
   },
@@ -1121,6 +1127,84 @@ mitto_bindings_interfaces = [
       "length",
       "state",
     ]
+  },
+  {
+    name = "IDBCursor"
+    file = "idb_cursor"
+  },
+  {
+    name = "IDBCursorWithValue"
+    file = "idb_cursor_with_value"
+  },
+  {
+    # Its event handler attributes run as every event handler attribute does.
+    name = "IDBDatabase"
+    file = "idb_database"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onabort",
+      "onclose",
+      "onerror",
+      "onversionchange",
+    ]
+  },
+  {
+    # StorageBucket's indexedDB, a Known Gap, gives one of no window.
+    name = "IDBFactory"
+    file = "idb_factory"
+    made_by_known_gaps = true
+  },
+  {
+    name = "IDBIndex"
+    file = "idb_index"
+  },
+  {
+    name = "IDBKeyRange"
+    file = "idb_key_range"
+  },
+  {
+    name = "IDBObjectStore"
+    file = "idb_object_store"
+  },
+  {
+    name = "IDBOpenDBRequest"
+    file = "idb_open_db_request"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onblocked",
+      "onupgradeneeded",
+    ]
+  },
+  {
+    name = "IDBRecord"
+    file = "idb_record"
+  },
+  {
+    name = "IDBRequest"
+    file = "idb_request"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onsuccess",
+      "onerror",
+    ]
+  },
+  {
+    name = "IDBTransaction"
+    file = "idb_transaction"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onabort",
+      "oncomplete",
+      "onerror",
+    ]
+  },
+  {
+    name = "IDBVersionChangeEvent"
+    file = "idb_version_change_event"
   },
   {
     name = "IdleDeadline"
@@ -2651,6 +2735,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "window",
       "caches",
+      "indexedDB",
       "webkitRequestFileSystem",
       "self",
       "document",

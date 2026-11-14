@@ -33,6 +33,7 @@
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/idb_factory.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
@@ -118,6 +119,7 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(scheduler_);
   visitor->Trace(cookie_store_);
   visitor->Trace(caches_);
+  visitor->Trace(indexed_db_);
   visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
 }
@@ -304,6 +306,13 @@ mitto::CacheStorage* Window::Caches(
     caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
   }
   return caches_.Get();
+}
+
+IDBFactory* Window::IndexedDB() {
+  if (!indexed_db_) {
+    indexed_db_ = bindings::MakeGarbageCollected<IDBFactory>(this);
+  }
+  return indexed_db_.Get();
 }
 
 // DOMScheduler::scheduler(): the window's supplement.

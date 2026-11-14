@@ -20,6 +20,7 @@
 #include "base/containers/span.h"
 #include "base/types/expected.h"
 #include "mitto/cache_storage_messages.h"
+#include "mitto/indexed_db_messages.h"
 
 namespace base {
 class DictValue;
@@ -179,6 +180,13 @@ enum class PageMessage : uint32_t {
   // To the Page: what the Session answers the Cache API, as
   // cache_storage_messages.h says.
   kCacheStorageAnswer = 41,
+  // To the Session: what the document's IDBFactory, or one of its
+  // IDBDatabases, IDBTransactions or IDBCursors, asks, as
+  // indexed_db_messages.h says.
+  kIndexedDb = 42,
+  // To the Page: what the Session answers IndexedDB, and what it tells a
+  // connection, as indexed_db_messages.h says.
+  kIndexedDbCallback = 43,
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
@@ -754,6 +762,8 @@ struct FrameFromPage {
   PageBroadcast broadcast;
   // kCacheStorage.
   PageCacheStorageCall cache_storage_call;
+  // kIndexedDb.
+  PageIndexedDbCall indexed_db_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
   // kSameDocumentNavigation: the document's new URL.
@@ -799,6 +809,8 @@ struct FrameFromSession {
   PageBroadcast broadcast;
   // kCacheStorageAnswer.
   PageCacheStorageAnswer cache_storage_answer;
+  // kIndexedDbCallback.
+  PageIndexedDbCallback indexed_db_callback;
 };
 
 // Returns the frame of a message of `type` with `payload`, which is at most
@@ -859,6 +871,8 @@ std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
 // The frame of a call of document `document`'s Cache API.
 std::string EncodeCacheStorage(uint64_t document,
                                const PageCacheStorageCall& call);
+// The frame of a call of document `document`'s IndexedDB.
+std::string EncodeIndexedDb(uint64_t document, const PageIndexedDbCall& call);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
 // `url` is at most kMaxPayloadSize - 8 bytes.

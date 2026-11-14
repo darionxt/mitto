@@ -20,6 +20,7 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
+#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
@@ -214,6 +215,9 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   // What the document before asked of the Session's storage goes with it.
   if (cache_storage_host_) {
     cache_storage_host_->DocumentCommitted(committed.document);
+  }
+  if (indexed_db_host_) {
+    indexed_db_host_->DocumentCommitted(committed.document);
   }
   timers_ = std::make_unique<DOMTimerCoordinator>(isolate_, context);
   idle_tasks_ = std::make_unique<IdleTaskController>(isolate_, context);
@@ -424,6 +428,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   if (url.SchemeIsHTTPOrHTTPS()) {
     document->SetCookieJar(cookie_jar_);
     document->SetCacheStorageHost(cache_storage_host_);
+    document->SetIndexedDbHost(indexed_db_host_);
   }
   Window::Current().SetDocument(document);
   return *document;

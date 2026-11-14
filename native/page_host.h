@@ -45,7 +45,9 @@ class CookieStore;
 namespace mitto {
 
 class CacheStorageContext;
+class IndexedDbContext;
 class PageCacheStorage;
+class PageIndexedDb;
 class PageHost;
 class ReadyRequests;
 class StorageQuota;
@@ -126,6 +128,8 @@ class PageNetwork {
   // storage.
   virtual CacheStorageContext& cache_storage() = 0;
   virtual StorageQuota& storage_quota() = 0;
+  // The Session's IndexedDB, which its Pages share.
+  virtual IndexedDbContext& indexed_db() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -310,6 +314,9 @@ class PageHost final : public PageChannel::Delegate {
   // What the document's Cache API asks, which PageCacheStorage serves,
   // with the storage key of the document that asks.
   void OnCacheStorage(PageCacheStorageCall call, const GURL& document_url);
+  // What the document's IndexedDB asks, which PageIndexedDb serves, with the
+  // storage key of the document that asks.
+  void OnIndexedDb(PageIndexedDbCall call, const GURL& document_url);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -365,6 +372,10 @@ class PageHost final : public PageChannel::Delegate {
   // an HTTP or HTTPS URL in a secure context. A top-level document's key is
   // its origin, first party.
   static std::optional<std::string> DocumentCacheStorageKey(
+      const GURL& document_url);
+  // The storage key of a document at `document_url`, if it may reach
+  // IndexedDB: one of an HTTP or HTTPS URL, whose origin is not opaque.
+  static std::optional<std::string> DocumentIndexedDbStorageKey(
       const GURL& document_url);
 
   // What navigator.connection gives a document at `url`: what the renderer
@@ -433,6 +444,8 @@ class PageHost final : public PageChannel::Delegate {
   // The first number that the next document's Cache API gives a cache or a
   // stored body, past those of the documents before.
   uint64_t next_cache_storage_number_ = 1;
+  // The document's IndexedDB, from its first call until the Page goes.
+  std::unique_ptr<PageIndexedDb> indexed_db_;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

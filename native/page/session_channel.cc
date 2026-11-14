@@ -29,6 +29,7 @@
 #include "mitto/dom/window.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cache_storage.h"
+#include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_cookie_jar.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_messages.h"
@@ -81,16 +82,20 @@ class SessionLink final : public PageChannel::Delegate
               scoped_refptr<base::SingleThreadTaskRunner> inspector,
               scoped_refptr<base::SingleThreadTaskRunner> networking,
               scoped_refptr<base::SingleThreadTaskRunner> misc_platform_api,
+              scoped_refptr<base::SingleThreadTaskRunner> database_access,
               StartV8Callback start_v8,
               SessionCookieJar& cookie_jar,
-              SessionCacheStorage& cache_storage)
+              SessionCacheStorage& cache_storage,
+              SessionIndexedDb& indexed_db)
       : main_thread_(std::move(main_thread)),
         inspector_(std::move(inspector)),
         networking_(std::move(networking)),
         misc_platform_api_(std::move(misc_platform_api)),
+        database_access_(std::move(database_access)),
         start_v8_(std::move(start_v8)),
         cookie_jar_(cookie_jar),
-        cache_storage_(cache_storage) {}
+        cache_storage_(cache_storage),
+        indexed_db_(indexed_db) {}
 
   SessionLink(const SessionLink&) = delete;
   SessionLink& operator=(const SessionLink&) = delete;
@@ -243,6 +248,18 @@ class SessionLink final : public PageChannel::Delegate
                            base::Unretained(&*cache_storage_),
                            std::move(frame->cache_storage_answer)));
         return;
+      case PageMessage::kIndexedDbCallback:
+        if (!started_) {
+          Refuse("an IndexedDB callback came before the start");
+          return;
+        }
+        // Blink binds IndexedDB's interfaces to this queue.
+        database_access_->PostTask(
+            FROM_HERE,
+            base::BindOnce(&SessionIndexedDb::OnCallback,
+                           base::Unretained(&*indexed_db_),
+                           std::move(frame->indexed_db_callback)));
+        return;
       case PageMessage::kRefused:
       case PageMessage::kEvaluated:
       case PageMessage::kConsole:
@@ -259,6 +276,7 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreListen:
       case PageMessage::kBroadcast:
       case PageMessage::kCacheStorage:
+      case PageMessage::kIndexedDb:
       case PageMessage::kDocumentCommitted:
       case PageMessage::kSameDocumentNavigation:
         // Handled above, or refused by ReadFrameFromSession().
@@ -327,8 +345,10 @@ class SessionLink final : public PageChannel::Delegate
         },
         send));
     cache_storage_->SetSend(send, refuse);
+    indexed_db_->SetSend(send, refuse);
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     runner_->SetCacheStorageHost(*cache_storage_);
+    runner_->SetIndexedDbHost(*indexed_db_);
     if (std::optional<std::string> why = runner_->Start(
             start, std::move(send), std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
@@ -416,6 +436,7 @@ class SessionLink final : public PageChannel::Delegate
   const scoped_refptr<base::SingleThreadTaskRunner> inspector_;
   const scoped_refptr<base::SingleThreadTaskRunner> networking_;
   const scoped_refptr<base::SingleThreadTaskRunner> misc_platform_api_;
+  const scoped_refptr<base::SingleThreadTaskRunner> database_access_;
   // These are the main thread's. The runner lives from the start until the
   // process ends.
   StartV8Callback start_v8_;
@@ -423,6 +444,7 @@ class SessionLink final : public PageChannel::Delegate
   // These live until the process ends. The I/O thread hands them answers.
   const raw_ref<SessionCookieJar> cookie_jar_;
   const raw_ref<SessionCacheStorage> cache_storage_;
+  const raw_ref<SessionIndexedDb> indexed_db_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
   bool started_ = false;
@@ -464,6 +486,7 @@ std::optional<SessionArgument> ParseSessionArgument(std::string_view argument) {
 void ServeSession(SessionArgument session, StartV8Callback start_v8) {
   SessionCookieJar cookie_jar;
   SessionCacheStorage cache_storage;
+  SessionIndexedDb indexed_db;
 
   // Reads the channel while a script runs, so that the Page process ends when
   // it closes, even in the middle of a script that never ends.
@@ -482,7 +505,8 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
           event_loop->TaskRunner(TaskType::kInternalInspector),
           event_loop->TaskRunner(TaskType::kNetworking),
           event_loop->TaskRunner(TaskType::kMiscPlatformAPI),
-          std::move(start_v8), cookie_jar, cache_storage)
+          event_loop->TaskRunner(TaskType::kDatabaseAccess),
+          std::move(start_v8), cookie_jar, cache_storage, indexed_db)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),

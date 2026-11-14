@@ -334,6 +334,16 @@ v8::Local<v8::Value> ToV8ByteStringArray(v8::Isolate* isolate,
 // The number, or null.
 v8::Local<v8::Value> ToV8NullableNumber(v8::Isolate* isolate,
                                         std::optional<double> number);
+// The integer as a Number, or null, as ToV8Traits<IDLNullable<T>> gives a
+// nullable integer, such as IDBVersionChangeEvent's newVersion.
+template <typename T>
+v8::Local<v8::Value> ToV8NullableInteger(v8::Isolate* isolate,
+                                         const std::optional<T>& integer) {
+  if (!integer) {
+    return v8::Null(isolate);
+  }
+  return v8::Number::New(isolate, static_cast<double>(*integer));
+}
 // The object, or null for an empty one.
 v8::Local<v8::Value> ToV8NullableObject(v8::Isolate* isolate,
                                         v8::Local<v8::Object> object);

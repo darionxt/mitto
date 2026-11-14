@@ -51,6 +51,7 @@
 #include "build/build_config.h"
 #include "mitto/body_stream.h"
 #include "mitto/cache_storage/cache_storage_context.h"
+#include "mitto/indexed_db/indexed_db_context.h"
 #include "mitto/client_hints.h"
 #include "mitto/connect_retrying_socket_factory.h"
 #include "mitto/cookie_json.h"
@@ -167,6 +168,7 @@ struct MittoSession final : public mitto::PageNetwork {
                          const mitto::PageBroadcast& broadcast) override;
   mitto::CacheStorageContext& cache_storage() override;
   mitto::StorageQuota& storage_quota() override;
+  mitto::IndexedDbContext& indexed_db() override;
 
   // Says that this Session has its directory for the HTTP cache, if any. It
   // comes first, so that it goes after everything that writes there.
@@ -192,10 +194,11 @@ struct MittoSession final : public mitto::PageNetwork {
   // After `context`, because a request has to go before its context does.
   std::set<std::unique_ptr<mitto::RequestJob>, base::UniquePtrComparator> jobs;
   // What a page's storage holds, which the Session's Pages share: the quota
-  // of each storage key first, which the Cache API reports to. Before
-  // `pages`, which use it.
+  // of each storage key first, which the Cache API and IndexedDB report to.
+  // Before `pages`, which use it.
   std::unique_ptr<mitto::StorageQuota> quota_manager;
   std::unique_ptr<mitto::CacheStorageContext> cache_storage_context;
+  std::unique_ptr<mitto::IndexedDbContext> indexed_db_context;
   mitto::ReadyRequests ready_requests;
   // After `ready_requests`, which a Page lists its handle in.
   std::set<std::unique_ptr<mitto::PageHost>, base::UniquePtrComparator> pages;
@@ -1006,6 +1009,10 @@ mitto::StorageQuota& MittoSession::storage_quota() {
   return *quota_manager;
 }
 
+mitto::IndexedDbContext& MittoSession::indexed_db() {
+  return *indexed_db_context;
+}
+
 void MittoSession::BroadcastFromPage(const mitto::PageHost& from,
                                      const url::Origin& origin,
                                      const mitto::PageBroadcast& broadcast) {
@@ -1120,6 +1127,8 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
       base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
   session->cache_storage_context = std::make_unique<CacheStorageContext>(
       /*directory=*/std::nullopt, *session->quota_manager);
+  session->indexed_db_context =
+      std::make_unique<IndexedDbContext>(*session->quota_manager);
   session->cert_net_fetcher =
       base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
@@ -1321,6 +1330,7 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
           // Its storage writes what it holds before it goes, so that the
           // next Session of its directory finds it, in this process or
           // another.
+          session->indexed_db_context->Close();
           CacheStorageContext* const caches =
               session->cache_storage_context.get();
           caches->Close(base::BindOnce(
