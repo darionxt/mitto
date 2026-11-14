@@ -215,7 +215,7 @@ def _fake_page_program(tmp_path: Path, name: str, script: str) -> Path:
 
 
 # The version of the messages of native/page_messages.h.
-_PROTOCOL_VERSION = 17
+_PROTOCOL_VERSION = 19
 
 
 def _script_request(number: int, url: str) -> str:
@@ -224,13 +224,26 @@ def _script_request(number: int, url: str) -> str:
 
 
 def _fetch_request(
-    number: int, url: str, method: str = "GET", lines: str = "", kind: int = 2, document: int = 1, flags: int = 0
+    number: int,
+    url: str,
+    method: str = "GET",
+    lines: str = "",
+    kind: int = 2,
+    document: int = 1,
+    flags: int = 0,
+    *,
+    fixed: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0),
+    target: int = 0,
 ) -> str:
-    """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends."""
+    """The Python expression of a Request's payload, with no body, from `document`, which a fake Page program sends.
+
+    `fixed` holds its mode, credentials mode, referrer policy, priority and whether it is incremental, 0 each for the
+    kind's own, and it has no referrer."""
     return (
-        f"struct.pack('<QQBBI', {document}, {number}, {kind}, {flags}, {len(url)}) + b'{url}' "
-        f"+ struct.pack('<I', {len(method)}) "
-        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + b'\\x00'"
+        f"struct.pack('<QQBB', {document}, {number}, {kind}, {flags}) "
+        f"+ struct.pack('<BBBBBQ', *{fixed}, {target}) "
+        f"+ struct.pack('<I', {len(url)}) + b'{url}' + struct.pack('<I', {len(method)}) "
+        f"+ b'{method}' + struct.pack('<I', {len(lines)}) + {lines.encode()!r} + struct.pack('<I', 0) + b'\\x00'"
     )
 
 
@@ -294,7 +307,7 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack
         pytest.param(
             "script-with-lines",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', lines='X-A: 1' + chr(10), kind=1)})",
-            "the library refused a message from the Page: a script request with a method, header lines, a body or a mode",
+            "the library refused a message from the Page: a request of an element's kind with a method, header lines or a body",
             id="script-with-lines",
         ),
         pytest.param(
@@ -344,7 +357,7 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack
         pytest.param(
             "navigation-with-a-method",
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', method='POST', kind=3)})",
-            "the library refused a message from the Page: a navigation with a method, header lines, a body or a mode",
+            "the library refused a message from the Page: a navigation with a method, header lines or a body",
             id="navigation-with-a-method",
         ),
         pytest.param(
@@ -352,6 +365,42 @@ _HELLO = f"send(1, struct.pack('<I', {_PROTOCOL_VERSION}))\nsend(70, struct.pack
             f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=2)})",
             "the library refused a message from the Page: a request that is not a navigation with a navigation's flags",
             id="fetch-with-activation",
+        ),
+        pytest.param(
+            "retired-flag",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', flags=1)})",
+            "the library refused a message from the Page: a request with flags that are not ones",
+            id="retired-flag",
+        ),
+        pytest.param(
+            "script-kept-alive",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/a.js', kind=1, flags=8)})",
+            "the library refused a message from the Page: keepalive on a request that is not a fetch",
+            id="script-kept-alive",
+        ),
+        pytest.param(
+            "fetch-with-a-target",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', target=5)})",
+            "the library refused a message from the Page: a target that only a frame's navigation names, and always names",
+            id="fetch-with-a-target",
+        ),
+        pytest.param(
+            "priority-out-of-range",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', fixed=(0, 0, 0, 7, 0))})",
+            "the library refused a message from the Page: a request with a value out of range",
+            id="priority-out-of-range",
+        ),
+        pytest.param(
+            "worker-in-cors-mode",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/w.js', kind=9, fixed=(4, 0, 0, 0, 0))})",
+            "the library refused a message from the Page: a worker's script in a mode other than same-origin",
+            id="worker-in-cors-mode",
+        ),
+        pytest.param(
+            "no-cors-put",
+            f"{_HELLO}\nsend(8, {_fetch_request(1, 'http://127.0.0.1:1/', method='PUT', fixed=(3, 0, 0, 0, 0))})",
+            "the library refused a message from the Page: a request of mode no-cors with another method",
+            id="no-cors-put",
         ),
         pytest.param(
             "page-refuses",

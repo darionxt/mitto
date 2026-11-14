@@ -53,19 +53,6 @@ std::string_view OriginRelationString(
   }
 }
 
-std::string_view RequestModeToString(RequestMode mode) {
-  switch (mode) {
-    case RequestMode::kNavigate:
-      return "navigate";
-    case RequestMode::kSameOrigin:
-      return "same-origin";
-    case RequestMode::kCors:
-      return "cors";
-    case RequestMode::kNoCors:
-      return "no-cors";
-  }
-}
-
 // Walk through a URL chain and a pending redirect url to calculate their
 // relationship to the origin.
 net::OriginRelation GetRelationOfURLChainToOrigin(
@@ -187,6 +174,19 @@ void SetSecFetchStorageAccessHeader(
 }
 
 }  // namespace
+
+std::string_view RequestModeToString(RequestMode mode) {
+  switch (mode) {
+    case RequestMode::kNavigate:
+      return "navigate";
+    case RequestMode::kSameOrigin:
+      return "same-origin";
+    case RequestMode::kCors:
+      return "cors";
+    case RequestMode::kNoCors:
+      return "no-cors";
+  }
+}
 
 bool IsFixedHeader(const FetchParams& params, std::string_view name) {
   return params.fixed_headers.contains(base::ToLowerASCII(name));

@@ -17,6 +17,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "mitto/dom/fetcher.h"
+#include "mitto/dom/response.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-persistent-handle.h"
 #include "v8/include/v8-promise.h"
@@ -26,15 +27,17 @@ namespace mitto {
 class AbortSignal;
 class Response;
 
-class FetchLoader final : public FetchClient {
+class FetchLoader final : public FetchClient, public BodyLoader {
  public:
   // `resolver` is fetch()'s, in `context`. The response of a HEAD request,
-  // `head`, has a null body. `signal` is the request's, which has not
+  // `head`, has a null body. `credentials` says that the request's
+  // credentials mode is include. `signal` is the request's, which has not
   // aborted.
   FetchLoader(v8::Isolate* isolate,
               v8::Local<v8::Context> context,
               v8::Local<v8::Promise::Resolver> resolver,
               bool head,
+              bool credentials,
               AbortSignal* signal);
 
   FetchLoader(const FetchLoader&) = delete;
@@ -48,13 +51,9 @@ class FetchLoader final : public FetchClient {
   void OnResponseBody(std::string bytes) override;
   void OnResponseEnded(int net_error) override;
 
-  // What its Response tells it: a script reads the body, so what has come and
-  // what comes is taken.
-  void ReaderStarted();
-  // The Response has been collected, so the rest of the body is not wanted.
-  // Called during garbage collection, which may not run scripts or free
-  // handles, so it cancels the request from a later task.
-  void ResponseCollected();
+  // BodyLoader: it cancels the request once its Response has been collected.
+  void ReaderStarted() override;
+  void ResponseCollected() override;
   // The request's signal aborted. Destroys this.
   void Abort();
 
@@ -65,6 +64,9 @@ class FetchLoader final : public FetchClient {
   v8::Global<v8::Context> context_;
   v8::Global<v8::Promise::Resolver> resolver_;
   const bool head_;
+  const bool credentials_;
+  // Whether the response is opaque, whose body goes untaken.
+  bool opaque_ = false;
   raw_ptr<FetchController> controller_ = nullptr;
   // The request's signal, which the request keeps while it runs.
   cppgc::Persistent<AbortSignal> signal_;

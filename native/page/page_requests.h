@@ -90,6 +90,12 @@ class PageRequests {
   // hears nothing more of it.
   void Cancel(uint64_t number);
 
+  // Lets keepalive request `number` go on without its client, which hears
+  // nothing more of it, and without its document, which is going and adds no
+  // entry of it. The Session lets it outlive the document, and ends it for
+  // the Page, once it hears of the next document.
+  void LetGo(uint64_t number);
+
   // The client of request `number` has taken `bytes` more of its body.
   void TookBody(uint64_t number, size_t bytes);
 

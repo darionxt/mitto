@@ -44,8 +44,11 @@ class CookieStore;
 
 namespace mitto {
 
+class CacheStorageContext;
+class PageCacheStorage;
 class PageHost;
 class ReadyRequests;
+class StorageQuota;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
 // header lines in their order, and its options, with no Initiator, which the
@@ -75,13 +78,12 @@ struct PageOptions {
   // process started, as Chrome's NavigationRequest starts a tab's navigation
   // before its renderer runs. What its document's timeOrigin counts from.
   base::TimeTicks navigation_start;
-  // What each Request Kind sends.
-  std::optional<PageRequestTemplate> navigation;
-  std::optional<PageRequestTemplate> script;
-  std::optional<PageRequestTemplate> fetch;
-  // A fetch with a body, whose lines hold the Content-Type where the Persona
-  // puts it, which the page's script gives, or which goes if it gives none.
-  std::optional<PageRequestTemplate> fetch_with_body;
+  // What a request of each Request Kind sends, and for a kind whose requests
+  // can have a body, what one with a body sends, whose lines hold the
+  // Content-Type where the Persona puts it, which the page's script gives, or
+  // which goes if it gives none.
+  std::map<PageRequestKind, PageRequestTemplate> requests;
+  std::map<PageRequestKind, PageRequestTemplate> requests_with_body;
 };
 
 // Returns what mitto_page_open() reads from `json`, or nullopt if it holds an
@@ -92,6 +94,31 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json);
 // service allows a renderer process. One that asks for more is refused.
 // Upstream: services/network/network_context.h
 inline constexpr size_t kMaxPageRequests = 2700;
+
+// The keepalive requests in flight, and the bytes of their URLs and header
+// lines, as the network service's KeepaliveStatisticsRecorder counts them, of
+// a Session or of one of its Pages. Each request counts until it ends, after
+// its Page has gone too.
+// Upstream: services/network/keepalive_statistics_recorder.h
+struct KeepaliveInFlight final : public base::RefCounted<KeepaliveInFlight> {
+  KeepaliveInFlight();
+
+  size_t requests = 0;
+  size_t bytes = 0;
+
+ private:
+  friend class base::RefCounted<KeepaliveInFlight>;
+  ~KeepaliveInFlight();
+};
+
+// How many keepalive requests may be in flight at once, of a Session and of
+// one Page, which stands for its top-level frame, and how many bytes of URLs
+// and header lines one Page's may hold. One past these fails with
+// ERR_INSUFFICIENT_RESOURCES.
+// Upstream: services/network/url_loader_factory.h
+inline constexpr size_t kMaxKeepaliveRequests = 2048;
+inline constexpr size_t kMaxKeepaliveRequestsPerPage = 256;
+inline constexpr size_t kMaxKeepaliveBytesPerPage = 512 * 1024;
 
 // What a Page's Session gives it, on the network thread: its requests and its
 // cookies.
@@ -109,6 +136,9 @@ class PageNetwork {
 
   virtual net::CookieStore& cookie_store() = 0;
 
+  // The keepalive requests of the Session's Pages in flight.
+  virtual const scoped_refptr<KeepaliveInFlight>& keepalive_in_flight() = 0;
+
   // The Session's network estimate and salts, or null for a Session that has
   // none.
   virtual const NetworkQuality* GetNetworkQuality() const = 0;
@@ -119,6 +149,10 @@ class PageNetwork {
   virtual void BroadcastFromPage(const PageHost& from,
                                  const url::Origin& origin,
                                  const PageBroadcast& broadcast) = 0;
+  // The Session's Cache API, which its Pages share, and the quota of its
+  // storage.
+  virtual CacheStorageContext& cache_storage() = 0;
+  virtual StorageQuota& storage_quota() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -264,6 +298,7 @@ class PageHost final : public PageChannel::Delegate {
   base::WeakPtr<PageHost> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
  private:
+  class ResponseChecks;
   class Request;
 
   // PageChannel::Delegate:
@@ -300,14 +335,26 @@ class PageHost final : public PageChannel::Delegate {
   // The URL of the Page's top-level document, or an empty one before the Page
   // has made one.
   GURL TopDocumentUrl() const;
+  // What the document's Cache API asks, which PageCacheStorage serves,
+  // with the storage key of the document that asks.
+  void OnCacheStorage(PageCacheStorageCall call, const GURL& document_url);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
   struct FetchChecks {
-    // A fetch, whose responses from another origin pass the CORS check.
-    bool is_fetch = false;
+    // Mode cors, a fetch's or an element's, whose responses from another
+    // origin pass the CORS check.
+    bool cors = false;
     // Mode same-origin: no hop may go to another origin.
     bool same_origin = false;
+    // Mode no-cors: a response from another origin is opaque, and needs no
+    // CORS check.
+    bool no_cors = false;
+    // Credentials mode include, whose CORS check wants the request's own
+    // origin and Access-Control-Allow-Credentials.
+    bool credentials = false;
+    // A request that outlives its document and its Page.
+    bool keepalive = false;
     // A navigation, whose response the Page makes a document of, unless it
     // is a 204, a 205 or a download.
     bool is_navigation = false;
@@ -326,9 +373,6 @@ class PageHost final : public PageChannel::Delegate {
 
   // What a Request hears of its job.
   void OnResponseStarted(Request& request, const RequestEvent& event);
-  // Whether a response or redirect of `request` may go on: not one of a fetch
-  // whose response tainting is cors that fails the CORS check.
-  bool AllowsResponse(Request& request, const RequestEvent& event);
   void OnBodyRead(Request& request, size_t size);
   // This deletes `request`.
   void OnRequestFinished(Request& request, int net_error);
@@ -349,6 +393,12 @@ class PageHost final : public PageChannel::Delegate {
   // The partition of the cookies of a document at `document_url`, as Chrome's
   // RestrictedCookieManager for a top-level frame has it.
   static std::optional<net::CookiePartitionKey> DocumentPartitionKey(
+      const GURL& document_url);
+  // The storage key of a document at `document_url`, as
+  // StorageKey::Serialize() writes it, if it may reach the Cache API: one of
+  // an HTTP or HTTPS URL in a secure context. A top-level document's key is
+  // its origin, first party.
+  static std::optional<std::string> DocumentCacheStorageKey(
       const GURL& document_url);
 
   // What navigator.connection gives a document at `url`: what the renderer
@@ -403,6 +453,10 @@ class PageHost final : public PageChannel::Delegate {
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
   uint64_t last_request_number_ = kNavigationRequest;
+  // The Page's keepalive requests in flight, with those that have outlived
+  // their documents.
+  const scoped_refptr<KeepaliveInFlight> keepalive_in_flight_ =
+      base::MakeRefCounted<KeepaliveInFlight>();
   bool hello_received_ = false;
   // Why the Page refused what the library sent, if it did.
   std::optional<std::string> refused_by_page_;
@@ -412,6 +466,11 @@ class PageHost final : public PageChannel::Delegate {
   bool ended_ = false;
   // The calls in progress, which the Page answers in any order.
   std::set<uint64_t> calls_;
+  // The document's Cache API, from its first call.
+  std::unique_ptr<PageCacheStorage> cache_storage_;
+  // The first number that the next document's Cache API gives a cache or a
+  // stored body, past those of the documents before.
+  uint64_t next_cache_storage_number_ = 1;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

@@ -697,16 +697,21 @@ class _InterfaceWriter:
             )
         cpp_name = self.method_name(attribute)
         return_type = self.types.return_type(attribute.idl_type, where)
+        receiver = self._receiver()
+        if self.types.reduce(attribute.idl_type).kind is TypeKind.PROMISE:
+            # Web IDL: an error in the getter of a promise attribute rejects the promise it gives, as for an operation
+            # that returns one, so a receiver of another kind gives a rejected promise, as bind_gen's getter does.
+            receiver = ["ExceptionToRejectPromiseScope reject_promise_scope(info);", *self._promise_receiver()]
         raises = attribute.extended_attributes.values_of("RaisesException")
         if "RaisesException" not in attribute.extended_attributes or (raises and "Getter" not in raises):
             call = f"impl->{cpp_name}()"
             return self._add_callback(
-                name, [*self._receiver(), f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
+                name, [*receiver, f"info.GetReturnValue().Set({self.types.to_v8(attribute.idl_type, call)});"]
             )
         return self._add_callback(
             name,
             [
-                *self._receiver(),
+                *receiver,
                 self._exception_state(),
                 f"{return_type} result = impl->{cpp_name}(exception_state);",
                 "if (exception_state.HadException()) {",
@@ -1534,9 +1539,10 @@ class _InterfaceWriter:
             data = ""
             if getter.startswith("&KnownGap") or setter.startswith("&KnownGap"):
                 data = f", {self._known_gap_data(property_)}"
-            if getter.startswith("&KnownGap") and self.types.reduce(member.idl_type).kind is TypeKind.PROMISE:
-                # As for an operation that returns a promise: no signature, so that the Known Gap's getter rejects for
-                # a receiver of another kind, as bind_gen's make_check_receiver() and its promise scope do.
+            if self.types.reduce(member.idl_type).kind is TypeKind.PROMISE:
+                # As for an operation that returns a promise: no signature, so that the getter, a Known Gap's or the
+                # class's, rejects for a receiver of another kind, as bind_gen's make_check_receiver() and its promise
+                # scope do.
                 signature = "v8::Local<v8::Signature>()"
             return [
                 f"{install}({first}, {target}, {signature}, {_quote(member.name)}, kInterfaceName, {getter}, "

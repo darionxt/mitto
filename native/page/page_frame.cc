@@ -6,11 +6,14 @@
 #include "base/location.h"
 #include "base/task/sequenced_task_runner.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/navigation.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/document_loader.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "url/origin.h"
 
 namespace mitto {
 namespace {
@@ -100,6 +103,15 @@ Document& PageFrame::CommitNavigation(DocumentLoader& loader,
                                       const PageConnection& connection) {
   std::unique_ptr<DocumentLoader> committing = Take(loader);
   Document& old_document = Window::Current().GetDocument();
+  // The old document's entries, which the new one keeps those of its origin
+  // of, with how the navigation went.
+  Navigation::Carried carried =
+      Window::Current().Navigation()->CarryForNextDocument();
+  if (committing->number() != kNavigationRequest) {
+    carried.navigation_type = provisional_request_.reload    ? u"reload"
+                              : provisional_request_.replace ? u"replace"
+                                                             : u"push";
+  }
   if (old_document.IsInitialEmptyDocument()) {
     // FrameLoader::DetachDocument(), for a frame that has committed no
     // navigation yet: the unload events first, then the loading stops.
@@ -116,8 +128,23 @@ Document& PageFrame::CommitNavigation(DocumentLoader& loader,
     old_document.DispatchUnloadEvents();
   }
   current_ = std::move(committing);
-  return runner_->CommitDocument(current_->number(), url, navigation_start,
-                                 connection);
+  const GURL old_url(old_document.UrlForBinding());
+  const base::TimeTicks unload_event_start = old_document.UnloadEventStart();
+  const base::TimeTicks unload_event_end = old_document.UnloadEventEnd();
+  Document& document = runner_->CommitDocument(current_->number(), url,
+                                               navigation_start, connection);
+  // The old document's unload times go to a new one of its origin, as
+  // Blink's UnloadEventTimingInfo carries them.
+  DocumentLoadTiming& timing = runner_->document_load_timing();
+  timing.unload_event_start = unload_event_start;
+  timing.unload_event_end = unload_event_end;
+  timing.has_same_origin_as_previous_document =
+      url::IsSameOriginWith(old_url, url);
+  timing.is_reload =
+      current_->number() != kNavigationRequest && provisional_request_.reload;
+  // The isolate's current context is the old document's again here.
+  document.DefaultView()->Navigation()->SetCarried(std::move(carried));
+  return document;
 }
 
 void PageFrame::NavigationEndedWithoutDocument(DocumentLoader& loader) {

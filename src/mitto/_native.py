@@ -922,7 +922,7 @@ class FetchParams:
     Attributes:
         mode: "navigate", "same-origin", "cors" or "no-cors".
         destination: What Sec-Fetch-Dest says, such as "document" or "empty".
-        credentials_mode: "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
+        credentials_mode: "omit", "same-origin", as a page's fetch() has unless it asks otherwise, or "include".
         has_user_activation: Whether Sec-Fetch-User says that the user started it.
         initiator: The URL of the page it comes from. Without one, a navigation counts as started by the browser and a
             subresource as coming from the page at the root of the origin of its URL.
@@ -1544,7 +1544,8 @@ class Session:
             url: Where the Page navigates once it opens, through this Session, whose PageNavigated and PageLoaded events
                 say how that went, or None to stay at about:blank.
             requests: What a request of each Request Kind sends, by the kind's value: "navigation", needed with `url`,
-                and "script" and "fetch", for the Page's own requests, and "fetch_with_body" for a fetch() with a body.
+                and each kind of the Page's own requests, such as "script" and "fetch", with "fetch_with_body" and the
+                like for a request of a kind that takes a body when it has one.
 
         Raises:
             ValueError: If this Session has been closed, or the native core refuses `start`. A time zone or locale that

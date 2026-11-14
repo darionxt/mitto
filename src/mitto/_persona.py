@@ -204,6 +204,10 @@ class Persona:
         kinds = {kind: _with_values(data, values) for kind, data in self._kinds.items()}
         return dataclasses.replace(self, _kinds=kinds)
 
+    def takes_body(self, kind: RequestKind) -> bool:
+        """Return whether Chrome sends a body with a request of `kind`, so that a body adds lines of its own."""
+        return "body" in self._kinds[kind]
+
     def content_type(self, kind: RequestKind, body: EncodedBody | StreamBody) -> str | None:
         """Return the Content-Type that this Persona's Chrome gives `body` on a request of `kind`, or None for none.
 

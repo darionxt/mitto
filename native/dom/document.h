@@ -8,11 +8,13 @@
 //
 // Upstream: third_party/blink/renderer/core/dom/document.h
 // Upstream: third_party/blink/renderer/core/dom/document.cc
-// Upstream: third_party/blink/renderer/modules/storage_access/document_storage_access.cc
+// Upstream:
+// third_party/blink/renderer/modules/storage_access/document_storage_access.cc
 
 #ifndef MITTO_DOM_DOCUMENT_H_
 #define MITTO_DOM_DOCUMENT_H_
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -36,6 +38,7 @@ namespace mitto {
 class AttachedTraversals;
 class Attr;
 class Comment;
+class CacheStorageHost;
 class CookieJar;
 class DOMImplementation;
 class DocumentFragment;
@@ -48,6 +51,7 @@ class HTMLAllCollection;
 class HTMLElement;
 class HTMLHeadElement;
 class HTMLScriptElement;
+class HttpRefreshScheduler;
 class Location;
 class NodeIterator;
 class PermissionsPolicy;
@@ -280,6 +284,12 @@ class Document : public Node {
   // has in a new tab, and its cookie attribute throws.
   void SetCookieJar(CookieJar* cookie_jar) { cookie_jar_ = cookie_jar; }
   CookieJar* GetCookieJar() const { return cookie_jar_; }
+  // Where the document's Cache API reaches its Session's caches, which only a
+  // document that the Session loaded over HTTP or HTTPS has.
+  void SetCacheStorageHost(CacheStorageHost* host) {
+    cache_storage_host_ = host;
+  }
+  CacheStorageHost* GetCacheStorageHost() const { return cache_storage_host_; }
   Readiness GetReadiness() const { return readiness_; }
   // Sets the readiness, marks when it changed the first time in the load
   // timing, and fires readystatechange at the document, as Blink's
@@ -404,6 +414,12 @@ class Document : public Node {
   // is visible, and unload at the window, once a navigation's document is
   // about to take its place.
   void DispatchUnloadEvents();
+  // When its unload event started and ended, null until it has.
+  base::TimeTicks UnloadEventStart() const { return unload_event_start_; }
+  base::TimeTicks UnloadEventEnd() const { return unload_event_end_; }
+  // The refresh that the document's response or a meta element asks for,
+  // made the first time.
+  HttpRefreshScheduler& GetHttpRefreshScheduler();
 
   // The live ranges and node iterators of the document, which the DOM tells
   // as its trees change, made when one is first attached.
@@ -464,8 +480,12 @@ class Document : public Node {
   Readiness readiness_ = Readiness::kComplete;
   std::u16string referrer_;
   bool initial_empty_ = false;
+  std::unique_ptr<HttpRefreshScheduler> http_refresh_scheduler_;
+  base::TimeTicks unload_event_start_;
+  base::TimeTicks unload_event_end_;
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
+  raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   cppgc::Member<Window> window_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;

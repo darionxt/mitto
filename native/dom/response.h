@@ -37,6 +37,22 @@ class AbortSignal;
 class FetchLoader;
 class Headers;
 
+// What brings a Response its body while it loads: a fetch's request, or a
+// body that the Cache API stored. It clears the Response's hold on it when it
+// goes.
+class BodyLoader {
+ public:
+  // A script reads the body, so what has come and what comes is taken.
+  virtual void ReaderStarted() = 0;
+  // The Response has been collected, so the rest of the body is not wanted.
+  // Called during garbage collection, which may not run scripts or free
+  // handles, so the loader stops from a later task.
+  virtual void ResponseCollected() = 0;
+
+ protected:
+  virtual ~BodyLoader() = default;
+};
+
 class Response final : public bindings::ScriptWrappable {
   CPPGC_USING_PRE_FINALIZER(Response, Dispose);
 
@@ -46,6 +62,10 @@ class Response final : public bindings::ScriptWrappable {
     kBasic,
     kCors,
     kDefault,
+    // A fetch's of mode no-cors from another origin: status 0, no URL, no
+    // header lines and a null body, as the Fetch Standard's opaque filtered
+    // response.
+    kOpaque,
   };
 
   // `new Response(body, init)`.
@@ -56,14 +76,17 @@ class Response final : public bindings::ScriptWrappable {
   static Response* StaticJson(v8::Local<v8::Value> data,
                               const bindings::ResponseInit& init,
                               bindings::ExceptionState& exception_state);
-  // One that fetch() got, whose body `loader` brings, or none for a null body.
+  // One that fetch() got, or that the Cache API stored, whose body `loader`
+  // brings, or none for a null body. An opaque one's body is null, and
+  // `loader` hears only of its collection, as Blink's internal response holds
+  // the body that no script reads.
   static Response* CreateFetched(ResponseType type,
                                  int32_t status,
                                  std::string status_text,
                                  std::u16string url,
                                  bool redirected,
                                  Headers* headers,
-                                 FetchLoader* loader);
+                                 BodyLoader* loader);
 
   Response();
   ~Response() override;
@@ -83,6 +106,10 @@ class Response final : public bindings::ScriptWrappable {
   v8::Local<v8::Promise> ArrayBuffer(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Json(bindings::ExceptionState& exception_state);
   v8::Local<v8::Promise> Text(bindings::ExceptionState& exception_state);
+
+  // Gives a Response with a null body the loader of a body that the Cache API
+  // stored, which brings it once a script reads it.
+  void AttachBodyLoader(BodyLoader* loader);
 
   // What its FetchLoader tells it.
   //
@@ -151,12 +178,13 @@ class Response final : public bindings::ScriptWrappable {
   // What ReadAll() calls back once the rest of the body has come.
   base::OnceCallback<void(std::optional<std::string>)> whole_body_reader_;
   // What brings the body while it loads.
-  raw_ptr<FetchLoader> loader_ = nullptr;
+  raw_ptr<BodyLoader> loader_ = nullptr;
   cppgc::Member<AbortSignal> signal_;
   // What a read of an aborted body rejects with.
   v8::TracedReference<v8::Value> abort_reason_;
 
   friend class FetchLoader;
+  friend class CacheBodyLoader;
   friend class AbortBodyAlgorithm;
 };
 

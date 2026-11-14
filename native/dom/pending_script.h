@@ -15,6 +15,7 @@
 #include <string_view>
 
 #include "base/functional/callback.h"
+#include "mitto/dom/fetcher.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/garbage-collected.h"
@@ -65,11 +66,13 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
                                      int start_line,
                                      int start_column);
   // `element`'s script at `url`, which this fetches through its window's
-  // Fetcher, as a script that blocks rendering if `render_blocking`, checks
-  // against `integrity`, and decodes as `encoding` unless its response or a
-  // byte order mark names another.
+  // Fetcher, with the mode, credentials mode, referrer policy and priority
+  // that `request` has, as a script that blocks rendering if
+  // `render_blocking`, checks against `integrity`, and decodes as `encoding`
+  // unless its response or a byte order mark names another.
   static PendingScript* Fetch(HTMLScriptElement& element,
                               const GURL& url,
+                              FetchRequestData request,
                               IntegrityMetadataSet integrity,
                               std::string encoding,
                               bool render_blocking);
@@ -113,7 +116,9 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
     kErrorOccurred,
   };
 
-  void StartFetch(const GURL& url, bool render_blocking);
+  void StartFetch(const GURL& url,
+                  FetchRequestData request,
+                  bool render_blocking);
   // ClassicPendingScript::NotifyFinished(): the checks of the response.
   void NotifyFinished(int net_error,
                       int status,

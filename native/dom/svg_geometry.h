@@ -38,6 +38,7 @@ class ExceptionState;
 }  // namespace bindings
 
 class SVGElement;
+class SVGMatrix;
 
 // SVGRect.
 
@@ -298,8 +299,8 @@ class SVGPoint final : public bindings::ScriptWrappable {
   static SVGPoint* ForItem(SVGListItem<std::array<float, 2>>& item,
                            bool read_only,
                            SVGAnimatedListBase* binding);
-  // The one a Known Gap gives, such as matrixTransform()'s until SVGMatrix
-  // comes: a point of no list, whose wrapper is of `info`.
+  // The one a Known Gap gives, such as getPointAtLength()'s: a point of no
+  // list, whose wrapper is of `info`.
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);
 
@@ -316,6 +317,8 @@ class SVGPoint final : public bindings::ScriptWrappable {
   void SetX(float value, bindings::ExceptionState& exception_state);
   float Y() const { return item_->value[1]; }
   void SetY(float value, bindings::ExceptionState& exception_state);
+  // A new point of no list.
+  SVGPoint* MatrixTransform(SVGMatrix* matrix);
 
   // What a list's insertion takes, as SVGNumber's.
   SVGListItem<std::array<float, 2>>* ItemToInsert(SVGAnimatedListBase& list);

@@ -16,7 +16,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
-#include "mitto/bindings/exception_messages.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
@@ -42,6 +41,7 @@
 #include "mitto/dom/html_head_element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/mathml_element.h"
 #include "mitto/dom/navigation_client.h"
 #include "mitto/dom/node_iterator.h"
@@ -464,6 +464,13 @@ bool Document::DispatchBeforeUnloadEvent() {
   return true;
 }
 
+HttpRefreshScheduler& Document::GetHttpRefreshScheduler() {
+  if (!http_refresh_scheduler_) {
+    http_refresh_scheduler_ = std::make_unique<HttpRefreshScheduler>(*this);
+  }
+  return *http_refresh_scheduler_;
+}
+
 void Document::Abort() {
   // CancelParsing(): the parser goes, and the document is complete. The
   // refresh that the document scheduled goes with it.
@@ -505,7 +512,9 @@ void Document::DispatchUnloadEvents() {
     bindings::EventInit init;
     Event* const event = Event::Create(u"unload", init);
     event->SetTrusted(true);
+    unload_event_start_ = base::TimeTicks::Now();
     window_->DispatchEventWithTarget(event, this);
+    unload_event_end_ = base::TimeTicks::Now();
   }
   load_event_progress_ = LoadEventProgress::kUnloadEventHandled;
 }
@@ -1067,6 +1076,9 @@ void Document::CancelParsing() {
   DetachParser();
   parsing_state_ = ParsingState::kFinishedParsing;
   SetReadiness(Readiness::kComplete);
+  if (http_refresh_scheduler_) {
+    http_refresh_scheduler_->Cancel();
+  }
   if (load_event_progress_ < LoadEventProgress::kLoadEventCompleted) {
     load_event_progress_ = LoadEventProgress::kLoadEventCompleted;
   }
@@ -1107,6 +1119,10 @@ void Document::CheckCompleted() {
   SetReadiness(Readiness::kComplete);
   if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun) {
     DispatchLoadEventAndFinalize();
+  }
+  // The refresh's delay starts once the load event has finished.
+  if (window_ && http_refresh_scheduler_) {
+    http_refresh_scheduler_->MaybeStartTimer();
   }
 }
 
@@ -1166,11 +1182,7 @@ Window* Document::Open(const std::u16string& url,
                                       "The document has no window associated.");
     return nullptr;
   }
-  // window.open(), which the Runtime refuses, with no context in its message,
-  // until a page can open a window.
-  bindings::ExceptionState(v8::Isolate::GetCurrent())
-      .ThrowTypeError(bindings::ExceptionMessages::NotImplemented());
-  return nullptr;
+  return window_->Open(url, name, features, exception_state);
 }
 
 void Document::Open(Window* entered_window,
@@ -1216,14 +1228,18 @@ void Document::Open(Window* entered_window,
 }
 
 void Document::Open() {
-  // A navigation that a document started and that waits for its response
-  // stops, with the document's loading, as FrameLoader::StopAllLoaders() has
-  // it, unless an unload event is being dispatched. Canceling javascript:
+  // A navigation that a document started and that waits for its response,
+  // or a refresh due now, stops, with the document's loading, as
+  // FrameLoader::StopAllLoaders() has it, unless an unload event is being
+  // dispatched. Canceling javascript:
   // URLs and form submissions, and the unload of child frames, come with the
   // forms and frames that a page cannot have yet.
   NavigationClient* const navigation =
       window_ ? window_->GetNavigationClient() : nullptr;
-  if (navigation && navigation->HasProvisionalNavigation() &&
+  if (navigation &&
+      (navigation->HasProvisionalNavigation() ||
+       (http_refresh_scheduler_ &&
+        http_refresh_scheduler_->IsScheduledWithin(base::TimeDelta()))) &&
       !PageDismissalEventBeingDispatched()) {
     CancelParsing();
     navigation->StopAllLoaders();

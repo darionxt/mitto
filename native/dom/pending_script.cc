@@ -230,6 +230,7 @@ PendingScript* PendingScript::CreateInline(HTMLScriptElement& element,
 // static
 PendingScript* PendingScript::Fetch(HTMLScriptElement& element,
                                     const GURL& url,
+                                    FetchRequestData request,
                                     IntegrityMetadataSet integrity,
                                     std::string encoding,
                                     bool render_blocking) {
@@ -237,7 +238,7 @@ PendingScript* PendingScript::Fetch(HTMLScriptElement& element,
       element, /*is_external=*/true);
   script->integrity_ = std::move(integrity);
   script->encoding_ = std::move(encoding);
-  script->StartFetch(url, render_blocking);
+  script->StartFetch(url, std::move(request), render_blocking);
   return script;
 }
 
@@ -256,7 +257,9 @@ void PendingScript::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(original_window_);
 }
 
-void PendingScript::StartFetch(const GURL& url, bool render_blocking) {
+void PendingScript::StartFetch(const GURL& url,
+                               FetchRequestData request,
+                               bool render_blocking) {
   fetch_url_ = url;
   Window* const window = original_window_.Get();
   Fetcher* const fetcher = window ? window->GetFetcher() : nullptr;
@@ -266,7 +269,6 @@ void PendingScript::StartFetch(const GURL& url, bool render_blocking) {
     state_ = State::kErrorOccurred;
     return;
   }
-  FetchRequestData request;
   request.destination = FetchDestination::kScript;
   request.method = "GET";
   request.url = url.spec();

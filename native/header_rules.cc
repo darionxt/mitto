@@ -1,9 +1,14 @@
 #include "mitto/header_rules.h"
 
+#include <stdint.h>
+
+#include <algorithm>
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
@@ -53,6 +58,35 @@ constexpr std::array<std::string_view, 3> kForbiddenMethods = {
 
 bool IsHttpWhitespace(char c) {
   return c == '\t' || c == '\n' || c == '\r' || c == ' ';
+}
+
+// https://fetch.spec.whatwg.org/#cors-unsafe-request-header-byte
+bool IsCorsUnsafeRequestHeaderByte(char c) {
+  const auto u = static_cast<uint8_t>(c);
+  return (u < 0x20 && u != 0x09) || u == 0x22 || u == 0x28 || u == 0x29 ||
+         u == 0x3a || u == 0x3c || u == 0x3e || u == 0x3f || u == 0x40 ||
+         u == 0x5b || u == 0x5c || u == 0x5d || u == 0x7b || u == 0x7d ||
+         u == 0x7f;
+}
+
+// net::ExtractMimeTypeFromMediaType(), without accepting a comma-separated
+// list: the type and subtype before any parameters, if both are tokens.
+// Upstream: net/base/mime_util.cc
+std::optional<std::string> ExtractMimeType(std::string_view media_type) {
+  const std::vector<std::string_view> components =
+      base::SplitStringPiece(media_type.substr(0, media_type.find(';')), "/",
+                             base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (components.size() != 2) {
+    return std::nullopt;
+  }
+  const std::string_view type =
+      base::TrimWhitespaceASCII(components[0], base::TRIM_LEADING);
+  const std::string_view subtype =
+      base::TrimWhitespaceASCII(components[1], base::TRIM_TRAILING);
+  if (!IsHttpToken(type) || !IsHttpToken(subtype)) {
+    return std::nullopt;
+  }
+  return base::StrCat({type, "/", subtype});
 }
 
 }  // namespace
@@ -133,6 +167,41 @@ bool IsForbiddenMethod(std::string_view method) {
 
 bool IsCorsSafelistedMethod(std::string_view method) {
   return method == "GET" || method == "HEAD" || method == "POST";
+}
+
+bool IsNoCorsSafelistedHeaderName(std::string_view name) {
+  return base::EqualsCaseInsensitiveASCII(name, "accept") ||
+         base::EqualsCaseInsensitiveASCII(name, "accept-language") ||
+         base::EqualsCaseInsensitiveASCII(name, "content-language") ||
+         base::EqualsCaseInsensitiveASCII(name, "content-type");
+}
+
+bool IsPrivilegedNoCorsHeaderName(std::string_view name) {
+  return base::EqualsCaseInsensitiveASCII(name, "range");
+}
+
+bool IsNoCorsSafelistedHeader(std::string_view name, std::string_view value) {
+  if (!IsNoCorsSafelistedHeaderName(name) || value.size() > 128) {
+    return false;
+  }
+  if (base::EqualsCaseInsensitiveASCII(name, "accept")) {
+    return !std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte);
+  }
+  if (base::EqualsCaseInsensitiveASCII(name, "content-type")) {
+    if (std::ranges::any_of(value, IsCorsUnsafeRequestHeaderByte)) {
+      return false;
+    }
+    const std::optional<std::string> mime_type =
+        ExtractMimeType(base::ToLowerASCII(value));
+    return mime_type &&
+           (*mime_type == "application/x-www-form-urlencoded" ||
+            *mime_type == "multipart/form-data" || *mime_type == "text/plain");
+  }
+  // Accept-Language and Content-Language.
+  return std::ranges::all_of(value, [](char c) {
+    return base::IsAsciiAlphaNumeric(c) || c == ' ' || c == '*' || c == ',' ||
+           c == '-' || c == '.' || c == ';' || c == '=';
+  });
 }
 
 bool IsCorsSafelistedResponseHeaderName(std::string_view name) {

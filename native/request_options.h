@@ -11,6 +11,7 @@
 #include "base/time/time.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_request_headers.h"
+#include "net/url_request/referrer_policy.h"
 #include "url/gurl.h"
 
 namespace mitto {
@@ -23,7 +24,7 @@ enum class RequestMode {
   kNoCors,
 };
 
-// The values of network::mojom::CredentialsMode that a Request Kind has.
+// The values of network::mojom::CredentialsMode.
 enum class CredentialsMode {
   kOmit,
   kSameOrigin,
@@ -48,6 +49,15 @@ struct FetchParams {
 
   // The URL of the page the request comes from. Always valid.
   std::optional<GURL> initiator;
+
+  // The referrer policy of the request, or strict-origin-when-cross-origin,
+  // Chrome's default, which no Baseline's page changes. A Page's request can
+  // name another.
+  std::optional<net::ReferrerPolicy> referrer_policy;
+
+  // The URL that Referer starts from, of the initiator's origin, in place of
+  // the initiator itself, as fetch()'s `referrer` asks. Always valid.
+  std::optional<GURL> referrer_source;
 
   // The names of the headers that are the caller's, in lower case.
   std::set<std::string> fixed_headers;

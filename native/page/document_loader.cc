@@ -9,6 +9,7 @@
 #include "base/time/time.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/http_refresh_scheduler.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
@@ -125,6 +126,18 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
   // Document::OpenForNavigation(), with the document loading.
   parser_ = &document_->OpenForNavigation(*this);
+  // DocumentLoader::CreateParserPostCommit(): the response's Refresh, before
+  // anything of the body. A header's value is Latin-1.
+  const std::string refresh = HeaderField(response.headers, "refresh");
+  if (!refresh.empty()) {
+    std::u16string latin1;
+    latin1.reserve(refresh.size());
+    for (const char c : refresh) {
+      latin1.push_back(static_cast<unsigned char>(c));
+    }
+    document_->GetHttpRefreshScheduler().MaybeHandle(
+        latin1, HttpRefreshScheduler::Source::kHeader);
+  }
 }
 
 void DocumentLoader::AppendDecoded(std::u16string text) {

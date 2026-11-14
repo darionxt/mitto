@@ -18,17 +18,21 @@
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
+#include "mitto/page_cache_storage.h"
 #include "mitto/ready_requests.h"
+#include "mitto/sec_header_helpers.h"
 #include "net/base/io_buffer.h"
 #include "net/base/isolation_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/schemeful_site.h"
+#include "net/base/url_util.h"
 #include "net/cookies/cookie_access_delegate.h"
 #include "net/cookies/cookie_access_params.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -54,10 +58,25 @@ constexpr char kUnknownProtocol[] = "unknown";
 constexpr std::string_view kStartKey = "start";
 constexpr std::string_view kUrlKey = "url";
 constexpr std::string_view kRequestsKey = "requests";
-constexpr std::string_view kNavigationKey = "navigation";
-constexpr std::string_view kScriptKey = "script";
-constexpr std::string_view kFetchKey = "fetch";
-constexpr std::string_view kFetchWithBodyKey = "fetch_with_body";
+// The names of the Request Kinds in "requests", as RequestKind's values are in
+// Python, and what follows the name of a kind's template with a body.
+constexpr auto kRequestKindNames =
+    std::to_array<std::pair<std::string_view, PageRequestKind>>({
+        {"navigation", PageRequestKind::kNavigation},
+        {"script", PageRequestKind::kScript},
+        {"fetch", PageRequestKind::kFetch},
+        {"image", PageRequestKind::kImage},
+        {"style", PageRequestKind::kStyle},
+        {"font", PageRequestKind::kFont},
+        {"module", PageRequestKind::kModule},
+        {"xhr", PageRequestKind::kXhr},
+        {"worker", PageRequestKind::kWorker},
+        {"beacon", PageRequestKind::kBeacon},
+        {"iframe", PageRequestKind::kIframe},
+        {"favicon", PageRequestKind::kFavicon},
+    });
+constexpr std::string_view kWithBodySuffix = "_with_body";
+constexpr std::string_view kSecFetchMode = "Sec-Fetch-Mode";
 constexpr std::string_view kHeadersKey = "headers";
 constexpr std::string_view kOptionsKey = "options";
 
@@ -155,22 +174,121 @@ bool ReadTemplates(const base::Value& value, PageOptions& options) {
   if (!value.is_dict()) {
     return false;
   }
-  for (const auto [key, kind] : value.GetDict()) {
-    std::optional<PageRequestTemplate>* const slot =
-        key == kNavigationKey      ? &options.navigation
-        : key == kScriptKey        ? &options.script
-        : key == kFetchKey         ? &options.fetch
-        : key == kFetchWithBodyKey ? &options.fetch_with_body
-                                   : nullptr;
-    if (!slot) {
+  for (const auto [key, item] : value.GetDict()) {
+    std::string_view name = key;
+    const bool with_body = name.ends_with(kWithBodySuffix);
+    if (with_body) {
+      name.remove_suffix(kWithBodySuffix.size());
+    }
+    const auto found = std::ranges::find(
+        kRequestKindNames, name,
+        &std::pair<std::string_view, PageRequestKind>::first);
+    std::optional<PageRequestTemplate> request_template = ReadTemplate(item);
+    if (found == kRequestKindNames.end() || !request_template) {
       return false;
     }
-    *slot = ReadTemplate(kind);
-    if (!*slot) {
-      return false;
-    }
+    (with_body ? options.requests_with_body : options.requests)
+        .insert_or_assign(found->second, *std::move(request_template));
   }
   return true;
+}
+
+// The values of RequestOptions for what a Page's request names.
+RequestMode ToRequestMode(PageRequestMode mode) {
+  switch (mode) {
+    case PageRequestMode::kKindDefault:
+    case PageRequestMode::kNavigate:
+      return RequestMode::kNavigate;
+    case PageRequestMode::kSameOrigin:
+      return RequestMode::kSameOrigin;
+    case PageRequestMode::kNoCors:
+      return RequestMode::kNoCors;
+    case PageRequestMode::kCors:
+      return RequestMode::kCors;
+  }
+}
+
+CredentialsMode ToCredentialsMode(PageCredentialsMode credentials) {
+  switch (credentials) {
+    case PageCredentialsMode::kOmit:
+      return CredentialsMode::kOmit;
+    case PageCredentialsMode::kSameOrigin:
+      return CredentialsMode::kSameOrigin;
+    case PageCredentialsMode::kKindDefault:
+    case PageCredentialsMode::kInclude:
+      return CredentialsMode::kInclude;
+  }
+}
+
+// Blink's mapping of a referrer policy to //net's, in
+// network::ReferrerPolicyForUrlRequest().
+// Upstream: services/network/public/cpp/request_destination.cc
+// Upstream: net/url_request/referrer_policy.h
+net::ReferrerPolicy ToNetReferrerPolicy(PageReferrerPolicy policy) {
+  switch (policy) {
+    case PageReferrerPolicy::kNoReferrer:
+      return net::ReferrerPolicy::NO_REFERRER;
+    case PageReferrerPolicy::kNoReferrerWhenDowngrade:
+      return net::ReferrerPolicy::CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
+    case PageReferrerPolicy::kOrigin:
+      return net::ReferrerPolicy::ORIGIN;
+    case PageReferrerPolicy::kOriginWhenCrossOrigin:
+      return net::ReferrerPolicy::ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN;
+    case PageReferrerPolicy::kSameOrigin:
+      return net::ReferrerPolicy::CLEAR_ON_TRANSITION_CROSS_ORIGIN;
+    case PageReferrerPolicy::kStrictOrigin:
+      return net::ReferrerPolicy::
+          ORIGIN_CLEAR_ON_TRANSITION_FROM_SECURE_TO_INSECURE;
+    case PageReferrerPolicy::kUnsafeUrl:
+      return net::ReferrerPolicy::NEVER_CLEAR;
+    case PageReferrerPolicy::kDocument:
+    case PageReferrerPolicy::kStrictOriginWhenCrossOrigin:
+      return net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN;
+  }
+}
+
+// Puts what a Page's request names in place of what its kind sends: its mode,
+// in the place of the kind's Sec-Fetch-Mode line, with an Origin line first
+// for an element in cors mode, where Blink puts it, its credentials mode, its
+// referrer policy and the URL that Referer starts from, and its priority, as
+// Python's build_request() does for a caller's credentials and mode.
+void ApplyPageRequest(const PageRequest& asked,
+                      net::HttpRequestHeaders& headers,
+                      RequestOptions& options) {
+  FetchParams& fetch = *options.fetch;
+  if (asked.mode != PageRequestMode::kKindDefault &&
+      ToRequestMode(asked.mode) != fetch.mode) {
+    fetch.mode = ToRequestMode(asked.mode);
+    if (headers.HasHeader(kSecFetchMode)) {
+      headers.SetHeader(kSecFetchMode, RequestModeToString(fetch.mode));
+    }
+    if (fetch.mode == RequestMode::kCors && fetch.destination != "empty" &&
+        !headers.HasHeader(net::HttpRequestHeaders::kOrigin)) {
+      net::HttpRequestHeaders with_origin;
+      with_origin.SetHeader(net::HttpRequestHeaders::kOrigin, "null");
+      with_origin.MergeFrom(headers);
+      headers = std::move(with_origin);
+    }
+  }
+  if (asked.credentials != PageCredentialsMode::kKindDefault) {
+    fetch.credentials_mode = ToCredentialsMode(asked.credentials);
+  }
+  if (asked.no_referrer) {
+    fetch.referrer_policy = net::ReferrerPolicy::NO_REFERRER;
+  } else if (asked.referrer_policy != PageReferrerPolicy::kDocument) {
+    fetch.referrer_policy = ToNetReferrerPolicy(asked.referrer_policy);
+  }
+  if (asked.priority != 0) {
+    options.priority =
+        static_cast<net::RequestPriority>(asked.priority - 1);
+  } else if (asked.synchronous) {
+    // ResourceFetcher::ComputeLoadPriority(): a synchronous request is very
+    // high.
+    options.priority = net::HIGHEST;
+  }
+  if (asked.incremental != 0) {
+    options.priority_incremental = asked.incremental == 2;
+  }
 }
 
 // Returns the header lines of a response that a Page may see: all but those
@@ -244,7 +362,8 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json) {
     has_start = true;
   }
   // A navigation sends what the Persona's says.
-  if (!has_start || (options.url && !options.navigation)) {
+  if (!has_start ||
+      (options.url && !options.requests.contains(PageRequestKind::kNavigation))) {
     return std::nullopt;
   }
   return options;
@@ -459,6 +578,157 @@ bool TimingAllowOriginAllows(const std::string& value,
 
 }  // namespace
 
+KeepaliveInFlight::KeepaliveInFlight() = default;
+KeepaliveInFlight::~KeepaliveInFlight() = default;
+
+namespace {
+
+// What a keepalive request counts for among the bytes in flight: its URL and
+// its header lines, as URLLoaderFactory counts them.
+// Upstream: services/network/url_loader_factory.cc
+size_t KeepaliveBytes(const GURL& url, const net::HttpRequestHeaders& headers) {
+  size_t bytes = url.spec().size();
+  for (const net::HttpRequestHeaders::HeaderKeyValuePair& header :
+       headers.GetHeaderVector()) {
+    bytes += header.key.size() + header.value.size();
+  }
+  return bytes;
+}
+
+// A keepalive request's place among those in flight of its Session and of its
+// Page, which it gives back when it ends.
+class KeepaliveShare {
+ public:
+  KeepaliveShare(scoped_refptr<KeepaliveInFlight> session,
+                 scoped_refptr<KeepaliveInFlight> page,
+                 size_t bytes)
+      : session_(std::move(session)), page_(std::move(page)), bytes_(bytes) {
+    ++session_->requests;
+    ++page_->requests;
+    page_->bytes += bytes_;
+  }
+
+  KeepaliveShare(const KeepaliveShare&) = delete;
+  KeepaliveShare& operator=(const KeepaliveShare&) = delete;
+
+  ~KeepaliveShare() {
+    --session_->requests;
+    --page_->requests;
+    page_->bytes -= bytes_;
+  }
+
+ private:
+  const scoped_refptr<KeepaliveInFlight> session_;
+  const scoped_refptr<KeepaliveInFlight> page_;
+  const size_t bytes_;
+};
+
+}  // namespace
+
+// The checks that a Page's request is held to on each of its responses,
+// redirects included, before the redirect is followed or any of the response
+// goes to the Page, as Chrome's network service holds them: the Fetch
+// Standard's CORS check, and mode same-origin's. A keepalive request takes
+// them along when it outlives its Page.
+// Upstream: services/network/cors/cors_url_loader.cc
+// Upstream: services/network/public/cpp/cors/cors.cc
+class PageHost::ResponseChecks {
+ public:
+  ResponseChecks(FetchChecks checks, url::Origin document_origin, GURL url)
+      : checks_(checks),
+        document_origin_(std::move(document_origin)),
+        last_url_(std::move(url)) {}
+
+  const FetchChecks& checks() const { return checks_; }
+  // The origin of the document that asked, opaque for a navigation.
+  const url::Origin& document_origin() const { return document_origin_; }
+  // Whether a hop has gone to another origin than the document's, which
+  // makes the response tainting cors.
+  bool cors() const { return cors_; }
+
+  // Whether the response that `event` describes passes.
+  bool Allows(const RequestEvent& event) {
+    if (!checks_.cors && !checks_.same_origin) {
+      return true;
+    }
+    Reach(GURL(event.url));
+    // A redirect to another origin of a fetch of mode same-origin is not
+    // followed, as in Chrome. The library asks the next origin first for one
+    // that would need a CORS preflight there.
+    if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED && checks_.same_origin &&
+        !document_origin_.IsSameOriginWith(GURL(event.new_url))) {
+      return false;
+    }
+    if (!cors_) {
+      return true;
+    }
+    // Access-Control-Allow-Origin has to name the request's origin, which a
+    // tainted one serializes as "null", or be "*" for one without
+    // credentials. One with credentials also needs
+    // Access-Control-Allow-Credentials: true, in lower case.
+    const std::string origin =
+        tainted_ ? std::string("null") : document_origin_.Serialize();
+    std::optional<std::string> allowed;
+    std::optional<std::string> allow_credentials;
+    for (const std::string_view line : base::SplitStringPieceUsingSubstr(
+             event.headers, "\r\n", base::KEEP_WHITESPACE,
+             base::SPLIT_WANT_NONEMPTY)) {
+      const size_t colon = line.find(':');
+      if (colon == std::string_view::npos) {
+        continue;
+      }
+      const std::string_view name = line.substr(0, colon);
+      // Access-Control-Allow-Credentials counts only for a request with
+      // credentials, as the CORS check reads it only then.
+      std::optional<std::string>* const slot =
+          base::EqualsCaseInsensitiveASCII(name, "access-control-allow-origin")
+              ? &allowed
+          : checks_.credentials && base::EqualsCaseInsensitiveASCII(
+                                       name, "access-control-allow-credentials")
+              ? &allow_credentials
+              : nullptr;
+      if (!slot) {
+        continue;
+      }
+      // More than one line is a failure, as a value that lists more than one.
+      if (*slot) {
+        return false;
+      }
+      *slot = std::string(
+          base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL));
+    }
+    if (checks_.credentials) {
+      return allowed == origin && allow_credentials == "true";
+    }
+    return allowed && (*allowed == "*" || *allowed == origin);
+  }
+
+ private:
+  // Follows the request to its response at `url`, a redirect's or the last,
+  // and works out its response tainting and its tainted origin as the Fetch
+  // Standard does.
+  void Reach(const GURL& url) {
+    // A redirect from a URL of another origin than the document's to one of
+    // yet another origin taints the request's origin.
+    if (!url::IsSameOriginWith(url, last_url_) &&
+        !document_origin_.IsSameOriginWith(last_url_)) {
+      tainted_ = true;
+    }
+    // Once any hop goes to another origin, the response is a CORS one.
+    if (!document_origin_.IsSameOriginWith(url)) {
+      cors_ = true;
+    }
+    last_url_ = url;
+  }
+
+  const FetchChecks checks_;
+  const url::Origin document_origin_;
+  // The URL of the hop the request is at.
+  GURL last_url_;
+  bool cors_ = false;
+  bool tainted_ = false;
+};
+
 // One request of a Page's, which hears how its job goes and sends that to the
 // Page, reading the body only as far as the Page has given credit.
 class PageHost::Request final : public RequestClient {
@@ -470,10 +740,8 @@ class PageHost::Request final : public RequestClient {
           FetchChecks checks)
       : host_(host),
         number_(number),
-        document_origin_(std::move(document_origin)),
         first_url_(url),
-        last_url_(std::move(url)),
-        checks_(checks),
+        response_checks_(checks, std::move(document_origin), std::move(url)),
         start_(base::TimeTicks::Now()),
         buffer_(base::MakeRefCounted<net::IOBufferWithSize>(kBodyWindow)) {}
 
@@ -488,7 +756,7 @@ class PageHost::Request final : public RequestClient {
   }
 
   uint64_t number() const { return number_; }
-  bool is_navigation() const { return checks_.is_navigation; }
+  bool is_navigation() const { return checks().is_navigation; }
   // The URL the request started at.
   const GURL& first_url() const { return first_url_; }
   // A navigation whose response the Page makes no document of, such as a
@@ -497,38 +765,22 @@ class PageHost::Request final : public RequestClient {
   bool keeps_document() const { return keeps_document_; }
   void set_keeps_document() { keeps_document_ = true; }
   // The origin of the document that asked, opaque for a navigation.
-  const url::Origin& document_origin() const { return document_origin_; }
-  const FetchChecks& checks() const { return checks_; }
-  bool cors() const { return cors_; }
-  bool tainted() const { return tainted_; }
-
-  // Follows the request to its response at `url`, a redirect's or the last,
-  // and works out its response tainting and its tainted origin as the Fetch
-  // Standard does, for a Page's document at `document_origin`.
-  void Reach(const GURL& url, const url::Origin& document_origin) {
-    // A redirect from a URL of another origin than the document's to one of
-    // yet another origin taints the request's origin.
-    if (!url::IsSameOriginWith(url, last_url_) &&
-        !document_origin.IsSameOriginWith(last_url_)) {
-      tainted_ = true;
-    }
-    // Once any hop goes to another origin, the response is a CORS one.
-    if (!document_origin.IsSameOriginWith(url)) {
-      cors_ = true;
-    }
-    last_url_ = url;
+  const url::Origin& document_origin() const {
+    return response_checks_.document_origin();
   }
+  const FetchChecks& checks() const { return response_checks_.checks(); }
+  bool cors() const { return response_checks_.cors(); }
   base::TimeTicks start() const { return start_; }
   bool started() const { return started_; }
   uint32_t credit() const { return credit_; }
 
   // What the Performance Timeline needs of the hops so far.
   bool timing_allow_passed() const { return !timing_allow_failed_; }
-  // Whether the response's tainting is opaque: a script's, which is a fetch of
-  // mode no-cors, once a hop has left the document's origin. A navigation's
-  // is basic.
+  // Whether the response's tainting is opaque: that of a request of mode
+  // no-cors, such as a script's or a fetch() that asks for it, once a hop has
+  // left the document's origin. A navigation's is basic.
   bool opaque() const {
-    return !is_navigation() && !checks_.is_fetch && timing_cross_origin_;
+    return !is_navigation() && checks().no_cors && timing_cross_origin_;
   }
   uint32_t redirect_count() const { return redirect_count_; }
   bool cross_origin_redirect() const { return cross_origin_redirect_; }
@@ -579,6 +831,22 @@ class PageHost::Request final : public RequestClient {
   }
 
   void set_job(base::WeakPtr<RunningRequest> job) { job_ = std::move(job); }
+  // Lets the job go on without this Request, if it is still running, held to
+  // the same checks, and still counting among the keepalive requests in
+  // flight until it ends.
+  void DetachJob() {
+    if (job_) {
+      job_->Detach(base::BindRepeating(
+          [](ResponseChecks* checks, const KeepaliveShare*,
+             const RequestEvent& event) { return checks->Allows(event); },
+          base::Owned(std::make_unique<ResponseChecks>(response_checks_)),
+          base::Owned(std::move(keepalive_share_))));
+      job_.reset();
+    }
+  }
+  void set_keepalive_share(std::unique_ptr<KeepaliveShare> share) {
+    keepalive_share_ = std::move(share);
+  }
   void set_started() { started_ = true; }
   void AddCredit(uint32_t bytes) { credit_ += bytes; }
   base::span<const uint8_t> TakeRead(size_t size) {
@@ -600,13 +868,13 @@ class PageHost::Request final : public RequestClient {
 
   // RequestClient:
   bool AllowsResponse(const RequestEvent& event) override {
-    return host_->AllowsResponse(*this, event);
+    return response_checks_.Allows(event);
   }
   void OnResponseEvent(RequestEvent event) override {
-    CheckTimingAllowOrigin(event, document_origin_);
+    CheckTimingAllowOrigin(event, document_origin());
     // The job follows each redirect, and the Page sees only where it ends.
     if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED) {
-      FollowRedirect(event, document_origin_);
+      FollowRedirect(event, document_origin());
     }
     if (event.type == MITTO_EVENT_RESPONSE_STARTED) {
       host_->OnResponseStarted(*this, event);
@@ -628,14 +896,11 @@ class PageHost::Request final : public RequestClient {
  private:
   const raw_ref<PageHost> host_;
   const uint64_t number_;
-  const url::Origin document_origin_;
   const GURL first_url_;
   bool keeps_document_ = false;
-  // The URL of the hop the request is at.
-  GURL last_url_;
-  const FetchChecks checks_;
-  bool cors_ = false;
-  bool tainted_ = false;
+  ResponseChecks response_checks_;
+  // A keepalive request's place among those in flight.
+  std::unique_ptr<KeepaliveShare> keepalive_share_;
   const base::TimeTicks start_;
   const scoped_refptr<net::IOBufferWithSize> buffer_;
   base::WeakPtr<RunningRequest> job_;
@@ -665,6 +930,7 @@ PageHost::PageHost(scoped_refptr<PageEvents> events,
       network_(network) {}
 
 PageHost::~PageHost() {
+  cache_storage_.reset();
   AbandonRequests();
 }
 
@@ -681,10 +947,12 @@ bool PageHost::Start(PageChannelEnd ours, PageOptions options) {
   if (options_.url) {
     // What session.get(url) sends: a navigation that the browser started, from
     // no page.
-    RequestOptions navigation_options = options_.navigation->options;
+    const PageRequestTemplate& navigation =
+        options_.requests.at(PageRequestKind::kNavigation);
+    RequestOptions navigation_options = navigation.options;
     navigation_options.fetch->initiator = std::nullopt;
     StartRequest(kNavigationRequest, url::Origin(), *options_.url,
-                 options_.navigation->headers, std::move(navigation_options),
+                 navigation.headers, std::move(navigation_options),
                  std::nullopt, FetchChecks{.is_navigation = true});
   }
   return true;
@@ -699,6 +967,11 @@ void PageHost::StartRequest(uint64_t number,
                             FetchChecks checks) {
   auto request =
       std::make_unique<Request>(*this, number, document_origin, url, checks);
+  if (checks.keepalive) {
+    request->set_keepalive_share(std::make_unique<KeepaliveShare>(
+        network_->keepalive_in_flight(), keepalive_in_flight_,
+        KeepaliveBytes(url, headers)));
+  }
   Request& client = *request;
   requests_.emplace(number, std::move(request));
   client.set_job(
@@ -719,7 +992,6 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
                          " requests at once"}));
     return;
   }
-  const bool is_fetch = asked.kind == PageRequestKind::kFetch;
   const bool is_navigation = asked.kind == PageRequestKind::kNavigation;
   if (is_navigation) {
     PageEvent started;
@@ -727,12 +999,25 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     started.url = asked.url;
     Push(std::move(started));
   }
-  const std::optional<PageRequestTemplate>& request_template =
-      is_navigation ? options_.navigation
-      : !is_fetch   ? options_.script
-      : asked.body  ? options_.fetch_with_body
-                    : options_.fetch;
+  const auto with_body = options_.requests_with_body.find(asked.kind);
+  const auto without_body = options_.requests.find(asked.kind);
+  const PageRequestTemplate* const request_template =
+      asked.body && with_body != options_.requests_with_body.end()
+          ? &with_body->second
+      : without_body != options_.requests.end() ? &without_body->second
+                                                : nullptr;
   GURL url(asked.url);
+  // The Page names only a referrer of its document's origin, as Fetch makes
+  // any other the document's own URL.
+  GURL referrer;
+  if (!asked.referrer.empty()) {
+    referrer = GURL(asked.referrer);
+    if (!referrer.is_valid() ||
+        !url::Origin::Create(document_url).IsSameOriginWith(referrer)) {
+      Refuse("a request whose referrer is not a URL of its document's origin");
+      return;
+    }
+  }
   // The script's own lines, each name once, with its values joined, in the
   // order the names first come, as Fetch combines them.
   std::vector<std::pair<std::string, std::string>> lines;
@@ -763,7 +1048,7 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     // A document that the Session did not load, such as about:blank, has no
     // Initiator that a request can name.
     net_error = net::ERR_ACCESS_DENIED;
-  } else if (is_fetch && asked.same_origin &&
+  } else if (asked.mode == PageRequestMode::kSameOrigin &&
              !url::Origin::Create(document_url).IsSameOriginWith(url)) {
     // A cross-origin fetch of mode same-origin fails, as in Chrome. Another
     // has the CORS check held to its response, after the preflight that the
@@ -791,6 +1076,10 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
   // user's activation, which the browser checks the renderer's word for.
   options.fetch->has_user_activation = asked.user_activation;
   options.validate_cache = asked.reload;
+  ApplyPageRequest(asked, headers, options);
+  if (!asked.referrer.empty()) {
+    options.fetch->referrer_source = referrer;
+  }
   if (asked.body && !std::ranges::any_of(lines, [](const auto& entry) {
         return base::EqualsCaseInsensitiveASCII(
             entry.first, net::HttpRequestHeaders::kContentType);
@@ -801,15 +1090,36 @@ void PageHost::OnRequest(PageRequest asked, const GURL& document_url) {
     headers.SetHeader(name, value);
     options.fetch->fixed_headers.insert(base::ToLowerASCII(name));
   }
+  // One keepalive request too many, or too large, fails as in Chrome.
+  if (asked.keepalive) {
+    const KeepaliveInFlight& in_session = *network_->keepalive_in_flight();
+    if (in_session.requests >= kMaxKeepaliveRequests ||
+        keepalive_in_flight_->requests >= kMaxKeepaliveRequestsPerPage ||
+        keepalive_in_flight_->bytes + KeepaliveBytes(url, headers) >
+            kMaxKeepaliveBytesPerPage) {
+      PageResponseEnded ended;
+      ended.number = asked.number;
+      ended.net_error = net::ERR_INSUFFICIENT_RESOURCES;
+      channel_->Send(EncodeResponseEnded(ended));
+      return;
+    }
+  }
+  const RequestMode options_mode = options.fetch->mode;
+  const CredentialsMode options_credentials = options.fetch->credentials_mode;
   std::optional<std::vector<char>> body;
   if (asked.body) {
     body.emplace(asked.body->begin(), asked.body->end());
   }
-  StartRequest(asked.number, url::Origin::Create(document_url), std::move(url),
-               std::move(headers), std::move(options), std::move(body),
-               FetchChecks{.is_fetch = is_fetch,
-                           .same_origin = asked.same_origin,
-                           .is_navigation = is_navigation});
+  StartRequest(
+      asked.number, url::Origin::Create(document_url), std::move(url),
+      std::move(headers), std::move(options), std::move(body),
+      FetchChecks{
+          .cors = options_mode == RequestMode::kCors,
+          .same_origin = options_mode == RequestMode::kSameOrigin,
+          .no_cors = options_mode == RequestMode::kNoCors,
+          .credentials = options_credentials == CredentialsMode::kInclude,
+          .keepalive = asked.keepalive,
+          .is_navigation = is_navigation});
 }
 
 void PageHost::OnCancel(uint64_t number) {
@@ -945,53 +1255,6 @@ PageConnection PageHost::ConnectionOf(const GURL& url) const {
   return {.rtt = renderer.rtt, .downlink = renderer.downlink};
 }
 
-bool PageHost::AllowsResponse(Request& request, const RequestEvent& event) {
-  const FetchChecks& checks = request.checks();
-  if (!checks.is_fetch) {
-    return true;
-  }
-  // Upstream: services/network/cors/cors_url_loader.cc
-  // Upstream: services/network/public/cpp/cors/cors.cc
-  // The Fetch Standard's CORS check, on each response of a fetch whose
-  // response tainting is cors, redirects included, before the redirect is
-  // followed or any of the response goes to the Page, as Chrome's network
-  // service does it. A Page's cross-origin fetches have no credentials, so
-  // Access-Control-Allow-Origin has to name the request's origin, which a
-  // tainted one serializes as "null", or be "*".
-  const url::Origin& document_origin = request.document_origin();
-  request.Reach(GURL(event.url), document_origin);
-  // A redirect to another origin of a fetch of mode same-origin is not
-  // followed, as in Chrome. The library asks the next origin first for one
-  // that would need a CORS preflight there.
-  if (event.type == MITTO_EVENT_REDIRECT_FOLLOWED && checks.same_origin &&
-      !document_origin.IsSameOriginWith(GURL(event.new_url))) {
-    return false;
-  }
-  if (!request.cors()) {
-    return true;
-  }
-  const std::string origin =
-      request.tainted() ? std::string("null") : document_origin.Serialize();
-  std::optional<std::string> allowed;
-  for (const std::string_view line : base::SplitStringPieceUsingSubstr(
-           event.headers, "\r\n", base::KEEP_WHITESPACE,
-           base::SPLIT_WANT_NONEMPTY)) {
-    const size_t colon = line.find(':');
-    if (colon == std::string_view::npos ||
-        !base::EqualsCaseInsensitiveASCII(line.substr(0, colon),
-                                          "access-control-allow-origin")) {
-      continue;
-    }
-    // More than one line is a failure, as a value that lists more than one.
-    if (allowed) {
-      return false;
-    }
-    allowed = std::string(
-        base::TrimWhitespaceASCII(line.substr(colon + 1), base::TRIM_ALL));
-  }
-  return allowed && (*allowed == "*" || *allowed == origin);
-}
-
 void PageHost::OnBodyRead(Request& request, size_t size) {
   const base::span<const uint8_t> bytes = request.TakeRead(size);
   if (request.keeps_document()) {
@@ -1035,7 +1298,13 @@ void PageHost::OnRequestFinished(Request& request, int net_error) {
 }
 
 void PageHost::AbandonRequests() {
-  // Each Request abandons its job as it goes.
+  // A keepalive request goes on without its Page, and the Session finishes
+  // it. Each other Request abandons its job as it goes.
+  for (auto& [number, request] : requests_) {
+    if (request->checks().keepalive) {
+      request->DetachJob();
+    }
+  }
   requests_.clear();
 }
 
@@ -1388,6 +1657,47 @@ void PageHost::OnBroadcast(const PageBroadcast& broadcast,
   network_->BroadcastFromPage(*this, origin, broadcast);
 }
 
+void PageHost::OnCacheStorage(PageCacheStorageCall call,
+                              const GURL& document_url) {
+  if (!cache_storage_) {
+    cache_storage_ = std::make_unique<PageCacheStorage>(
+        network_->cache_storage(), network_->storage_quota(),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string frame) {
+              if (host && host->channel_ && !host->refused_by_library_) {
+                host->channel_->Send(std::move(frame));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string why) {
+              if (host && !host->refused_by_library_) {
+                host->Refuse(std::move(why));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        next_cache_storage_number_);
+  }
+  cache_storage_->OnCall(std::move(call),
+                         DocumentCacheStorageKey(document_url));
+}
+
+// static
+std::optional<std::string> PageHost::DocumentCacheStorageKey(
+    const GURL& document_url) {
+  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
+  // an origin that is not opaque, of a potentially trustworthy URL.
+  if (!DocumentHasCookies(document_url)) {
+    return std::nullopt;
+  }
+  if (!document_url.SchemeIs(url::kHttpsScheme) &&
+      !net::IsLocalhost(document_url)) {
+    return std::nullopt;
+  }
+  // StorageKey::Serialize() of a first-party key: the origin and a slash.
+  return url::Origin::Create(document_url).GetURL().spec();
+}
+
 void PageHost::DeliverBroadcast(const url::Origin& origin,
                                 const PageBroadcast& broadcast) {
   const GURL document_url = TopDocumentUrl();
@@ -1418,6 +1728,9 @@ void PageHost::EndWithSession() {
   }
   AbandonRequests();
   channel_.reset();
+  // A put that waits for the rest of its body from the Page fails, so that
+  // its cache, and the Session's storage, may close.
+  cache_storage_.reset();
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
@@ -1455,9 +1768,29 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   }
   last_document_id_ = committed.document;
   // It takes the place of the top-level document, the only one a Page has,
-  // whose messages all came before this.
+  // whose messages all came before this. Its keepalive requests go on without
+  // it, and the Page, which let them go, hears that they ended.
+  for (auto it = requests_.begin(); it != requests_.end();) {
+    if (!it->second->checks().keepalive) {
+      ++it;
+      continue;
+    }
+    it->second->DetachJob();
+    PageResponseEnded ended;
+    ended.number = it->first;
+    ended.net_error = net::ERR_ABORTED;
+    channel_->Send(EncodeResponseEnded(ended));
+    it = requests_.erase(it);
+  }
   documents_.clear();
   documents_.emplace(committed.document, url);
+  // The old document's Cache API goes with it, as its pipes go with its
+  // context in Chrome: its puts that wait for a body fail, and what it held
+  // is let go. The new document's numbers go on from its.
+  if (cache_storage_) {
+    next_cache_storage_number_ = cache_storage_->NextNumber();
+    cache_storage_.reset();
+  }
   // The old document's CookieStore listened over a pipe that went with it.
   cookie_store_subscription_.reset();
   // The navigation's document has taken the place of the Page's, after every
@@ -1636,6 +1969,9 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kDocumentCommitted:
       OnDocumentCommitted(frame->committed);
       return;
+    case PageMessage::kCacheStorage:
+      OnCacheStorage(std::move(frame->cache_storage_call), document_url);
+      return;
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
       return;
@@ -1649,6 +1985,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kCookieStoreStored:
     case PageMessage::kCookieStoreChange:
     case PageMessage::kBroadcastReceived:
+    case PageMessage::kCacheStorageAnswer:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }
@@ -1672,8 +2009,14 @@ void PageHost::Refuse(std::string why) {
 }
 
 void PageHost::WaitForExit() {
-  // A Page that has gone needs nothing more from the network.
+  // A Page that has gone needs nothing more from the network, and a put that
+  // waits for the rest of its body from it fails. Not at once: what refuses
+  // the Page may be the Cache API's own call.
   AbandonRequests();
+  if (cache_storage_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(cache_storage_));
+  }
   // What was sent already still reaches the Page, if it reads it.
   channel_.reset();
   if (waiting_for_exit_ || ended_) {
