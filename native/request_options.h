@@ -25,6 +25,7 @@ enum class RequestMode {
 
 // The values of network::mojom::CredentialsMode that a Request Kind has.
 enum class CredentialsMode {
+  kOmit,
   kSameOrigin,
   kInclude,
 };
