@@ -582,8 +582,14 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLDialogElement"
     file = "html_dialog_element"
-    header = "html_elements"
-    implemented = []
+    implemented = [
+      "returnValue",
+      "closedBy",
+      "show",
+      "showModal",
+      "close",
+      "requestClose",
+    ]
   },
   {
     name = "HTMLDirectoryElement"

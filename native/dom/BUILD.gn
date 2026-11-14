@@ -137,6 +137,8 @@ source_set("dom") {
     "html_collection.h",
     "html_details_element.cc",
     "html_details_element.h",
+    "html_dialog_element.cc",
+    "html_dialog_element.h",
     "html_div_element.cc",
     "html_div_element.h",
     "html_document.cc",

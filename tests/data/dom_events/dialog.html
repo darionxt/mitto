@@ -1,0 +1,292 @@
+<!doctype html><html><head><title>dialog</title></head><body>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+const frame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+// Past the toggle task and the frame that fires close.
+const settle = async () => { await tick(); await frame(); await frame(); };
+const events = (dialog, full) => {
+  const log = [];
+  for (const type of ['beforetoggle', 'toggle', 'cancel', 'close']) {
+    dialog.addEventListener(type, e => log.push(full
+      ? [e.constructor.name, e.type, e.oldState, e.newState, e.bubbles, e.cancelable, e.composed, e.isTrusted, e.source, e.target === dialog]
+      : [e.type, e.oldState, e.newState, e.cancelable].join('/')));
+  }
+  return log;
+};
+const error = f => { try { f(); return 'no error'; } catch (e) { return e.name + ': ' + e.message; } };
+const connected = () => document.body.appendChild(document.createElement('dialog'));
+(async () => {
+  const r = {};
+  let d = document.createElement('dialog');
+  r.defaults = [d.open, d.returnValue, d.closedBy, d.show.length, d.showModal.length, d.close.length, d.requestClose.length];
+
+  // show(): beforetoggle at once, which may cancel it, then toggle in a task; a second show() does nothing. A
+  // disconnected dialog opens too.
+  d = document.createElement('dialog');
+  let log = events(d, true);
+  d.show();
+  log.push('sync');
+  d.show();
+  await tick();
+  r.show = [log.splice(0), d.open, d.outerHTML, d.closedBy];
+  d = connected();
+  log = events(d);
+  d.addEventListener('beforetoggle', e => e.preventDefault(), {once: true});
+  d.show();
+  await settle();
+  r.show_canceled = [log.splice(0), d.open];
+  d.addEventListener('beforetoggle', () => d.setAttribute('open', ''), {once: true});
+  d.show();
+  await settle();
+  r.show_opened_by_listener = [log.splice(0), d.open];
+  d.remove();
+  d = connected();
+  log = events(d);
+  d.addEventListener('beforetoggle', () => d.remove(), {once: true});
+  d.show();
+  await settle();
+  r.show_removed_by_listener = [log.splice(0), d.open];
+  d = connected();
+  log = events(d);
+  d.addEventListener('beforetoggle', () => d.close('inner'), {once: true});
+  d.show();
+  await settle();
+  r.show_closed_by_listener = [log.splice(0), d.open, d.returnValue];
+  d.remove();
+
+  // showModal(): its errors, :modal, closedBy's Auto state, and what a removal leaves.
+  d = document.createElement('dialog');
+  r.show_modal_disconnected = [error(() => d.showModal()), d.open];
+  d = connected();
+  log = events(d);
+  d.showModal();
+  r.modal = [d.open, d.matches(':modal'), d.matches(':open'), d.closedBy, error(() => d.show()), error(() => d.showModal())];
+  await settle();
+  r.modal_events = log.splice(0);
+  d.remove();
+  r.modal_removed = [d.open, d.matches(':modal'), d.closedBy];
+  document.body.append(d);
+  r.modal_inserted_again = [d.open, d.matches(':modal'), error(() => d.showModal())];
+  d.close();
+  d.remove();
+  d = connected();
+  d.show();
+  r.show_then_modal = [error(() => d.showModal()), d.matches(':modal'), d.matches(':open')];
+  d.close();
+  d.remove();
+  d = connected();
+  log = events(d);
+  d.addEventListener('beforetoggle', () => d.remove(), {once: true});
+  d.showModal();
+  await settle();
+  r.modal_removed_by_listener = [log.splice(0), d.open, d.matches(':modal')];
+  const first = connected();
+  const second = connected();
+  first.showModal();
+  second.showModal();
+  r.two_modal = [first.matches(':modal'), second.matches(':modal'), document.querySelectorAll(':modal').length];
+  second.close();
+  first.close();
+  first.remove();
+  second.remove();
+
+  // close(): beforetoggle, which cannot cancel it, the return value, toggle in a task, and close in the next frame
+  // before its callbacks, with its microtasks first.
+  d = connected();
+  d.show();
+  await settle();
+  log = events(d, true);
+  d.close('rv');
+  log.push('sync ' + d.open + ' ' + d.returnValue);
+  setTimeout(() => log.push('timeout'), 0);
+  requestAnimationFrame(() => log.push('frame'));
+  d.close('again');
+  log.push('again ' + d.returnValue);
+  d.addEventListener('close', () => Promise.resolve().then(() => log.push('microtask')), {once: true});
+  await settle();
+  r.close = log.splice(0);
+  d.remove();
+  d = document.createElement('dialog');
+  log = events(d);
+  d.addEventListener('close', e => log.push(['close at', e.target === d, e.eventPhase, d.isConnected].join(' ')));
+  d.show();
+  d.close();
+  d.show();
+  await settle();
+  r.close_then_show = [log.splice(0), d.open];
+  d = document.createElement('dialog');
+  const values = [];
+  for (const value of ['a', undefined, 'skip', null, 7]) {
+    d.show();
+    if (value === 'skip') {
+      d.close();
+    } else {
+      d.close(value);
+    }
+    values.push(d.returnValue);
+  }
+  d.returnValue = 5;
+  values.push(typeof d.returnValue, d.returnValue);
+  d.close('closed');
+  values.push(d.returnValue);
+  r.return_value = values;
+  d = connected();
+  log = events(d);
+  d.addEventListener('toggle', () => { log.push('closing'); d.close('in toggle'); }, {once: true});
+  d.show();
+  await settle();
+  await settle();
+  r.close_in_toggle = [log.splice(0), d.open, d.returnValue];
+  d.show();
+  await settle();
+  log.splice(0);
+  d.addEventListener('beforetoggle', () => d.removeAttribute('open'), {once: true});
+  d.close('x');
+  await settle();
+  r.open_removed_by_closing_listener = [log.splice(0), d.open, d.returnValue];
+  d.show();
+  await settle();
+  log.splice(0);
+  d.addEventListener('beforetoggle', () => d.close('inner'), {once: true});
+  d.close('outer');
+  await settle();
+  r.close_in_closing_listener = [log.splice(0), d.open, d.returnValue];
+  d.remove();
+
+  // requestClose(): cancel, which may keep it open, then close() with its return value; nothing for a dialog that is
+  // closed or not in a document, and a requestClose() in a cancel listener or of a watcher that a listener replaced.
+  d = connected();
+  d.show();
+  await settle();
+  log = events(d, true);
+  d.requestClose('x');
+  log.push('sync ' + d.open + ' ' + d.returnValue);
+  await settle();
+  r.request_close = log.splice(0);
+  d.remove();
+  d = connected();
+  log = events(d);
+  d.showModal();
+  await settle();
+  log.splice(0);
+  d.addEventListener('cancel', e => { e.preventDefault(); log.push('again ' + error(() => d.requestClose('inner'))); }, {once: true});
+  d.requestClose('y');
+  log.push('canceled ' + d.open + ' ' + d.returnValue);
+  d.requestClose();
+  log.push('second ' + d.open + ' ' + d.returnValue);
+  await settle();
+  r.request_close_canceled = log.splice(0);
+  d.closedBy = 'none';
+  d.showModal();
+  d.requestClose('z');
+  r.request_close_closed_by_none = [d.open, d.returnValue];
+  d.remove();
+  d = document.createElement('dialog');
+  log = events(d);
+  r.request_close_closed = [error(() => d.requestClose('q')), d.returnValue];
+  d.setAttribute('open', '');
+  r.request_close_disconnected = [error(() => d.requestClose('q')), d.open, d.returnValue];
+  document.body.append(d);
+  d.requestClose('inserted');
+  await settle();
+  r.request_close_inserted_open = [log.splice(0), d.open, d.returnValue];
+  d.setAttribute('open', '');
+  d.requestClose('attribute');
+  await settle();
+  r.request_close_open_attribute = [log.splice(0), d.open, d.returnValue];
+  d.show();
+  await settle();
+  log.splice(0);
+  d.addEventListener('cancel', () => d.requestClose('inner'), {once: true});
+  d.requestClose('outer');
+  await settle();
+  r.request_close_in_cancel = [log.splice(0), d.open, d.returnValue];
+  d.addEventListener('cancel', () => { d.close('c'); d.show(); }, {once: true});
+  d.requestClose('outer');
+  await settle();
+  r.reopened_in_cancel = [log.splice(0), d.open, d.returnValue];
+  d.addEventListener('cancel', () => { d.close('c'); d.show(); d.requestClose('again'); }, {once: true});
+  d.requestClose('outer');
+  await settle();
+  r.reopened_and_requested_in_cancel = [log.splice(0), d.open, d.returnValue];
+  d.show();
+  await settle();
+  log.splice(0);
+  d.addEventListener('cancel', () => d.remove(), {once: true});
+  d.requestClose('outer');
+  await settle();
+  r.removed_in_cancel = [log.splice(0), d.open, d.returnValue];
+
+  // closedBy reflects the closedby attribute's keyword, and its Auto state follows the modal flag.
+  d = document.createElement('dialog');
+  const closedBy = [];
+  for (const value of ['any', 'ANY', 'closeRequest', 'none', 'bogus', '']) {
+    d.closedBy = value;
+    closedBy.push(d.getAttribute('closedby') + '=' + d.closedBy);
+  }
+  d.removeAttribute('closedby');
+  closedBy.push(d.closedBy);
+  document.body.append(d);
+  d.showModal();
+  closedBy.push(d.closedBy);
+  d.closedBy = 'x';
+  closedBy.push(d.closedBy);
+  d.closedBy = 'any';
+  closedBy.push(d.closedBy);
+  d.close();
+  closedBy.push(d.closedBy);
+  d.remove();
+  r.closed_by = closedBy;
+
+  // The open attribute alone fires nothing, and a modal dialog whose attribute goes stays modal.
+  d = connected();
+  log = events(d);
+  d.open = true;
+  await settle();
+  d.open = false;
+  await settle();
+  r.open_attribute = [log.splice(0), d.open];
+  d.setAttribute('open', '');
+  r.open_attribute_then_modal = [error(() => d.showModal()), d.matches(':modal')];
+  d.removeAttribute('open');
+  d.showModal();
+  await settle();
+  log.splice(0);
+  d.removeAttribute('open');
+  r.open_removed_from_modal = [d.open, d.matches(':modal'), d.closedBy];
+  d.showModal();
+  await settle();
+  r.modal_again = [log.splice(0), d.matches(':modal')];
+  const copy = d.cloneNode();
+  document.body.append(copy);
+  r.copy = [copy.open, copy.matches(':modal'), copy.closedBy];
+  copy.remove();
+  d.close();
+  d.remove();
+  const holder = document.createElement('div');
+  holder.innerHTML = '<dialog open></dialog>';
+  r.parsed = [holder.firstChild.open, holder.firstChild.matches(':open'), holder.firstChild.matches(':modal')];
+
+  // A document with no window: show() works and toggle fires, showModal() throws, requestClose() does nothing, and
+  // close fires no event, until the dialog comes to this document.
+  const other = new Document();
+  d = other.createElementNS('http://www.w3.org/1999/xhtml', 'dialog');
+  other.append(d);
+  log = events(d);
+  r.other_document_show = [error(() => d.show()), d.open];
+  d.requestClose('other');
+  r.other_document_request_close = [d.open, d.returnValue];
+  d.close();
+  r.other_document_show_modal = [error(() => d.showModal()), d.open];
+  await settle();
+  r.other_document_events = log.splice(0);
+  d.show();
+  document.body.append(d);
+  d.requestClose('adopted');
+  await settle();
+  r.adopted = [log.splice(0), d.open, d.returnValue];
+  d.remove();
+  done(r);
+})();
+</script></body></html>
