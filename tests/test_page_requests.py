@@ -166,6 +166,16 @@ def test_a_fetchs_credentials_mode_says_whether_the_sessions_cookies_go(
         [("Access-Control-Allow-Origin", server.origin), ("Access-Control-Allow-Credentials", "true")],
     )
     server.text("/omitted", "omitted")
+    # Access-Control-Allow-Credentials counts only for a request with credentials, even twice.
+    other.text(
+        "/doubled",
+        "doubled",
+        [
+            ("Access-Control-Allow-Origin", "*"),
+            ("Access-Control-Allow-Credentials", "true"),
+            ("Access-Control-Allow-Credentials", "true"),
+        ],
+    )
 
     with _open_page(session, url) as page:
         outcomes = [
@@ -174,9 +184,10 @@ def test_a_fetchs_credentials_mode_says_whether_the_sessions_cookies_go(
             # A response that allows any origin does not pass for a request with credentials.
             _outcome(page, f"fetch('{other.url('/any')}', {{credentials: 'include'}})"),
             _outcome(page, "fetch('/omitted', {credentials: 'omit'})"),
+            _outcome(page, f"fetch('{other.url('/doubled')}')"),
         ]
 
-    assert outcomes == [["cors", 200], ["cors", 200], "TypeError: Failed to fetch", ["basic", 200]]
+    assert outcomes == [["cors", 200], ["cors", 200], "TypeError: Failed to fetch", ["basic", 200], ["cors", 200]]
     without, with_credentials = other.headers_of("/any")
     assert _value(without, "Cookie") is None
     assert _value(with_credentials, "Cookie") == "who=mitto"

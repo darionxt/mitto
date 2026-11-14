@@ -678,11 +678,13 @@ class PageHost::ResponseChecks {
         continue;
       }
       const std::string_view name = line.substr(0, colon);
+      // Access-Control-Allow-Credentials counts only for a request with
+      // credentials, as the CORS check reads it only then.
       std::optional<std::string>* const slot =
           base::EqualsCaseInsensitiveASCII(name, "access-control-allow-origin")
               ? &allowed
-          : base::EqualsCaseInsensitiveASCII(name,
-                                             "access-control-allow-credentials")
+          : checks_.credentials && base::EqualsCaseInsensitiveASCII(
+                                       name, "access-control-allow-credentials")
               ? &allow_credentials
               : nullptr;
       if (!slot) {
