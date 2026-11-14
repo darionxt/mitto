@@ -11,6 +11,9 @@ import mitto
 from mitto import _api, _native
 from tests.session_on_asyncio import SessionOnAsyncio
 
+# The copy of web-platform-tests holds no tests of pytest's, and 11,000 files to walk.
+collect_ignore = ["wpt"]
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Skip the tests marked alone in a worker of pytest-xdist that has other workers beside it."""
