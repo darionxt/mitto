@@ -496,7 +496,7 @@ uv run tools/workspace/export.py build /absolute/path/to/new/directory --config 
 | `fuzz` | AddressSanitizer and libFuzzer | `session_settings_fuzzer`, `request_options_fuzzer`, `cookies_fuzzer`, `socks5_auth_fuzzer`, `client_hints_fuzzer`, `html_tokenizer_fuzzer`, `media_query_fuzzer`, `css_selector_fuzzer`, `page_messages_fuzzer` | 2.2 GiB |
 | `runtime-asan` | AddressSanitizer and LeakSanitizer | The Page program, the tree builder's test and the Web IDL database, as `runtime` does, instead of the library | 3.1 GiB |
 | `runtime-ubsan` | UndefinedBehaviorSanitizer | The same | 2.7 GiB |
-| `runtime-fuzz` | AddressSanitizer and libFuzzer | `html_tree_builder_fuzzer` alone, with V8, as the Runtime's args build it | SIZE_DIR |
+| `runtime-fuzz` | AddressSanitizer and libFuzzer | `html_tree_builder_fuzzer` alone, with V8, as the Runtime's args build it | 3.5 GiB |
 
 Each of them stops at the first report.
 
@@ -534,8 +534,8 @@ Builds of the native core are from two runs from a cold cache, and those of the 
 | | `asan` | `ubsan` | `fuzz` | `runtime-asan` | `runtime-ubsan` | `runtime-fuzz` |
 | --- | --- | --- | --- | --- | --- | --- |
 | Build | 19 and 26 minutes | 17 and 20 minutes | 24 and 26 minutes | 63 minutes | 66 minutes | 66 and 89 minutes |
-| Cached, compressed | 65 MiB | 41 MiB | 182 MiB | 89 MiB | 70 MiB | SIZE_PROGRAM |
-| Build directory in the cache | 426 MiB | 356 MiB | 622 MiB | 609 MiB | 536 MiB | SIZE_OBJECTS |
+| Cached, compressed | 65 MiB | 41 MiB | 182 MiB | 89 MiB | 70 MiB | 109 MiB |
+| Build directory in the cache | 426 MiB | 356 MiB | 622 MiB | 609 MiB | 536 MiB | 681 MiB |
 
 ### What `main`, a pull request and the nightly run build
 
