@@ -2655,6 +2655,33 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "URL"
+    file = "url"
+
+    # createObjectURL() and revokeObjectURL(), of the File API's blob URLs, are
+    # Known Gaps.
+    missing = [
+      "createObjectURL",
+      "revokeObjectURL",
+    ]
+  },
+  {
+    name = "URLSearchParams"
+    file = "url_search_params"
+
+    # Iterating over it is a Known Gap until the Runtime has pair iterators.
+    implemented = [
+      "size",
+      "append",
+      "delete",
+      "get",
+      "getAll",
+      "has",
+      "set",
+      "sort",
+    ]
+  },
+  {
     name = "UserActivation"
     file = "user_activation"
     made_by_known_gaps = true
