@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include <array>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -583,12 +584,36 @@ int IntegerWidth(IdlTypeKind kind) {
   }
 }
 
+// A converted integer of one integer type as the integer of `kind`, of the
+// same width and the other signedness, keeps it: the same bits, as Blink's
+// KeyboardEvent keeps an unsigned long keyCode in an int, so 4294967295 reads
+// as -1 and -1 as 4294967295.
+v8::Local<v8::Value> ToSignednessOf(v8::Isolate* isolate,
+                                    v8::Local<v8::Context> context,
+                                    IdlTypeKind kind,
+                                    v8::Local<v8::Value> value) {
+  double number = 0;
+  if (!value->NumberValue(context).To(&number)) {
+    return value;
+  }
+  const double range = std::ldexp(1.0, IntegerWidth(kind));
+  const bool is_signed =
+      kind == IdlTypeKind::kByte || kind == IdlTypeKind::kShort ||
+      kind == IdlTypeKind::kLong || kind == IdlTypeKind::kLongLong;
+  if (is_signed && number >= range / 2) {
+    number -= range;
+  } else if (!is_signed && number < 0) {
+    number += range;
+  }
+  return v8::Number::New(isolate, number);
+}
+
 // Whether a member of an event's init dictionary, of type `member`, can
 // initialize the attribute of the same name, of type `attribute`: the same
 // type, a sequence for a frozen array of the same items, or an integer of the
-// same width with the other signedness, whose value converts to the same bits
-// either way, as KeyboardEvent's constructor keeps its unsigned long charCode
-// and keyCode for its long attributes.
+// same width with the other signedness, which keeps its bits, as
+// KeyboardEvent's constructor keeps its unsigned long charCode and keyCode for
+// its long attributes.
 bool InitializesAttribute(const IdlTypeInfo& member,
                           const IdlTypeInfo& attribute) {
   if (member.kind == IdlTypeKind::kSequence &&
@@ -770,6 +795,10 @@ bool InitializeEventAttributes(v8::Isolate* isolate,
       continue;
     } else if (!DefaultFromLiteral(isolate, context, member).ToLocal(&item)) {
       return false;
+    }
+    if (member.type->kind != attribute->type->kind &&
+        IntegerWidth(member.type->kind) != 0) {
+      item = ToSignednessOf(isolate, context, attribute->type->kind, item);
     }
     v8::Local<v8::Value> value;
     if (!AttributeValueOf(isolate, context, *attribute->type, item)
