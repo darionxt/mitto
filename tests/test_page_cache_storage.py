@@ -126,3 +126,25 @@ def test_a_document_of_an_opaque_origin_may_not_reach_caches(server_origin: str)
         outcome
         == "SecurityError: Failed to read the 'caches' property from 'Window': Access to cache storage is denied."
     )
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_session_closes_while_a_put_waits_for_its_body(server_origin: str) -> None:
+    def put_and_close() -> None:
+        with mitto.Session() as session:
+            # The Page stays open: the Session ends it as it closes.
+            page = session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS)  # pyright: ignore[reportPrivateUsage]
+            # The put sends its 128 MiB a megabyte at a time, as the Session asks. The Session answers has() once it
+            # has the put, whose body is still on its way when the Session closes.
+            page.evaluate(
+                "(async () => { const c = await caches.open('big');"
+                " c.put('/res/big', new Response(new Uint8Array(128 << 20)));"
+                " await new Promise((resolve) => setTimeout(resolve, 0)); await caches.has('big'); })()",
+                timeout=_TIMEOUT_SECONDS,
+            )
+
+    closer = threading.Thread(target=put_and_close, daemon=True)
+    closer.start()
+    closer.join(timeout=_TIMEOUT_SECONDS)
+
+    assert not closer.is_alive()

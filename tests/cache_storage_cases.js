@@ -136,6 +136,24 @@
   const bytesBack = new Uint8Array(await (await a.match('/res/bytes')).arrayBuffer());
   out.bytes = [bytesBack.length, bytesBack.every((v, i) => v === i % 251)];
 
+  // Lines of one name: Blink keeps the first one's value as it stores the
+  // response, and matches by the first Vary line alone.
+  {
+    const dup = await caches.open('dup');
+    const lines = [['X-One', 'one'], ['X-One', 'two'], ['Vary', 'X-A'], ['Vary', 'X-B']];
+    const made = new Response('d', {headers: lines});
+    const before = [made.headers.get('x-one'), made.headers.get('vary')];
+    await dup.put('/res/dup', made);
+    const back = await dup.match('/res/dup');
+    const asked = (headers) => new Request('/res/dup2', {headers});
+    await dup.put(asked({'X-A': '1', 'X-B': '1'}), new Response('e', {headers: lines}));
+    out.duplicateLines = [before, [back.headers.get('x-one'), back.headers.get('vary')],
+      Boolean(await dup.match(asked({'X-A': '1', 'X-B': '1'}))),
+      Boolean(await dup.match(asked({'X-A': '1', 'X-B': '2'}))),
+      Boolean(await dup.match(asked({'X-A': '2', 'X-B': '1'})))];
+    await caches.delete('dup');
+  }
+
   // A deleted cache still answers through its object, and is no longer listed.
   out.deleteCache = [await caches.delete('b'), await caches.keys(), await caches.has('b'),
     await (await b.match('/res/b'))?.text(), await caches.delete('b')];

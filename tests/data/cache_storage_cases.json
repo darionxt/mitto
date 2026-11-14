@@ -230,6 +230,19 @@
   300000,
   true
  ],
+ "duplicateLines": [
+  [
+   "one, two",
+   "X-A, X-B"
+  ],
+  [
+   "one",
+   "X-A"
+  ],
+  true,
+  true,
+  false
+ ],
  "deleteCache": [
   true,
   [

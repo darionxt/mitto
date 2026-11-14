@@ -18,6 +18,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
@@ -1378,6 +1379,9 @@ void PageHost::EndWithSession() {
   }
   AbandonRequests();
   channel_.reset();
+  // A put that waits for the rest of its body from the Page fails, so that
+  // its cache, and the Session's storage, may close.
+  cache_storage_.reset();
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
@@ -1594,8 +1598,14 @@ void PageHost::Refuse(std::string why) {
 }
 
 void PageHost::WaitForExit() {
-  // A Page that has gone needs nothing more from the network.
+  // A Page that has gone needs nothing more from the network, and a put that
+  // waits for the rest of its body from it fails. Not at once: what refuses
+  // the Page may be the Cache API's own call.
   AbandonRequests();
+  if (cache_storage_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(cache_storage_));
+  }
   // What was sent already still reaches the Page, if it reads it.
   channel_.reset();
   if (waiting_for_exit_ || ended_) {

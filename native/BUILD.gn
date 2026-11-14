@@ -263,6 +263,7 @@ if (use_libfuzzer) {
     # How the library reads what a Page sends, which may be hostile.
     sources = [ "test/page_messages_fuzzer.cc" ]
     deps = [
+      ":icu_data",
       ":page_channel",
       "//base",
     ]
