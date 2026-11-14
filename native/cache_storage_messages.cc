@@ -406,7 +406,9 @@ std::string EncodeCacheStorageCall(const PageCacheStorageCall& call) {
 }
 
 bool CacheStorageCallFits(const PageCacheStorageCall& call) {
-  return EncodeCacheStorageCall(call).size() <= kMaxPayloadSize;
+  // Its frame starts with the ID of the document that asks.
+  return EncodeCacheStorageCall(call).size() <=
+         kMaxPayloadSize - sizeof(uint64_t);
 }
 
 base::expected<PageCacheStorageCall, std::string> ReadCacheStorageCall(

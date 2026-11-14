@@ -191,11 +191,18 @@ struct PageCacheStorage::StoredBody {
 PageCacheStorage::PageCacheStorage(CacheStorageContext& context,
                                    StorageQuota& quota,
                                    Send send,
-                                   Refuse refuse)
+                                   Refuse refuse,
+                                   uint64_t first_number)
     : context_(context),
       quota_(quota),
       send_(std::move(send)),
-      refuse_(std::move(refuse)) {}
+      refuse_(std::move(refuse)),
+      next_cache_(first_number),
+      next_stored_body_(first_number) {}
+
+uint64_t PageCacheStorage::NextNumber() const {
+  return std::max(next_cache_, next_stored_body_);
+}
 
 PageCacheStorage::~PageCacheStorage() {
   // Nothing that answers may reach this from here on.

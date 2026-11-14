@@ -421,6 +421,9 @@ class PageHost final : public PageChannel::Delegate {
   std::set<uint64_t> calls_;
   // The document's Cache API, from its first call.
   std::unique_ptr<PageCacheStorage> cache_storage_;
+  // The first number that the next document's Cache API gives a cache or a
+  // stored body, past those of the documents before.
+  uint64_t next_cache_storage_number_ = 1;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

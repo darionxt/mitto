@@ -7,9 +7,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "mitto/dom/event_loop.h"
-#include "mitto/dom/window.h"
 #include "mitto/page_messages.h"
-#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 namespace {
@@ -66,14 +64,6 @@ void SessionCacheStorage::SetSend(
 }
 
 void SessionCacheStorage::Send(const PageCacheStorageCall& call) {
-  // The Page has one document at a time, whose caches these are. A call that
-  // a script makes comes from its window's context; the parts of a put's
-  // body, and what a collected object lets go, come from tasks outside it,
-  // and name the document that asked last.
-  v8::Isolate* const isolate = v8::Isolate::TryGetCurrent();
-  if (isolate && isolate->InContext()) {
-    document_ = Window::Current().DocumentId();
-  }
   send_.Run(EncodeCacheStorage(document_, call));
 }
 
@@ -143,16 +133,34 @@ void SessionCacheStorage::ReleaseStoredBody(uint64_t body) {
 }
 
 void SessionCacheStorage::ReleaseCache(uint64_t cache) {
+  // A cache of a document before has gone with it.
+  if (caches_.erase(cache) == 0) {
+    return;
+  }
   PageCacheStorageCall call;
   call.op = CacheStorageCallOp::kReleaseCache;
   call.cache = cache;
   Send(call);
 }
 
+void SessionCacheStorage::DocumentCommitted(uint64_t document) {
+  document_ = document;
+  questions_.clear();
+  put_bodies_.clear();
+  stored_bodies_.clear();
+  caches_.clear();
+  last_question_before_ = last_question_;
+  last_put_body_before_ = last_put_body_;
+}
+
 void SessionCacheStorage::OnAnswer(PageCacheStorageAnswer answer) {
   switch (answer.op) {
     case CacheStorageAnswerOp::kBodyWanted: {
       const auto found = put_bodies_.find(answer.body);
+      if (found == put_bodies_.end() && answer.body <= last_put_body_before_) {
+        // A put of a document before, which has gone.
+        return;
+      }
       if (found == put_bodies_.end()) {
         refuse_.Run(base::StrCat({"a request for Cache put body ",
                                   base::NumberToString(answer.body),
@@ -207,11 +215,18 @@ void SessionCacheStorage::OnAnswer(PageCacheStorageAnswer answer) {
       break;
   }
   const auto found = questions_.find(answer.question);
+  if (found == questions_.end() && answer.question <= last_question_before_) {
+    // A question of a document before, which has gone.
+    return;
+  }
   if (found == questions_.end()) {
     refuse_.Run(base::StrCat({"an answer to Cache API question ",
                               base::NumberToString(answer.question),
                               ", which no script waits for"}));
     return;
+  }
+  if (answer.op == CacheStorageAnswerOp::kOpened && answer.error == 0) {
+    caches_.insert(answer.cache);
   }
   Answer callback = std::move(found->second);
   questions_.erase(found);

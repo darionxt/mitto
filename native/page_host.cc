@@ -1327,7 +1327,8 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
                 host->Refuse(std::move(why));
               }
             },
-            weak_factory_.GetWeakPtr()));
+            weak_factory_.GetWeakPtr()),
+        next_cache_storage_number_);
   }
   cache_storage_->OnCall(std::move(call),
                          DocumentCacheStorageKey(document_url));
@@ -1420,6 +1421,13 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
   // whose messages all came before this.
   documents_.clear();
   documents_.emplace(committed.document, std::move(url));
+  // The old document's Cache API goes with it, as its pipes go with its
+  // context in Chrome: its puts that wait for a body fail, and what it held
+  // is let go. The new document's numbers go on from its.
+  if (cache_storage_) {
+    next_cache_storage_number_ = cache_storage_->NextNumber();
+    cache_storage_.reset();
+  }
   // The old document's CookieStore listened over a pipe that went with it.
   cookie_store_subscription_.reset();
 }

@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 
@@ -45,6 +46,7 @@ class SessionCacheStorage final : public CacheStorageHost {
   void CreditStoredBody(uint64_t body, uint32_t bytes) override;
   void ReleaseStoredBody(uint64_t body) override;
   void ReleaseCache(uint64_t cache) override;
+  void DocumentCommitted(uint64_t document) override;
 
   // On the main thread, from a task of its own: what the Session sent.
   void OnAnswer(PageCacheStorageAnswer answer);
@@ -66,13 +68,19 @@ class SessionCacheStorage final : public CacheStorageHost {
 
   SendFrame send_;
   base::RepeatingCallback<void(std::string)> refuse_;
-  // The document whose script asked last.
+  // The Page's document, which every call names.
   uint64_t document_ = kNoDocument;
   uint64_t last_question_ = 0;
   std::map<uint64_t, Answer> questions_;
   uint64_t last_put_body_ = 0;
   std::map<uint64_t, std::string> put_bodies_;
   std::map<uint64_t, StoredBody> stored_bodies_;
+  // The caches that the Session opened for the document.
+  std::set<uint64_t> caches_;
+  // The last question and put body of the documents before, whose answers
+  // and requests may still be on their way, and go unheard.
+  uint64_t last_question_before_ = 0;
+  uint64_t last_put_body_before_ = 0;
 };
 
 }  // namespace mitto

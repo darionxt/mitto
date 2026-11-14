@@ -58,6 +58,11 @@ class CacheStorageHost {
   // The Page no longer uses a cache that the Session opened for it.
   virtual void ReleaseCache(uint64_t cache) = 0;
 
+  // The Page has made document `document`, which takes the place of the one
+  // before it: what that one asked, held or opened goes, as its Mojo pipes go
+  // with its context, and nothing of it reaches the Session from here on.
+  virtual void DocumentCommitted(uint64_t document) = 0;
+
  protected:
   virtual ~CacheStorageHost() = default;
 };

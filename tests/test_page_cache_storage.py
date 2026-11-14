@@ -148,3 +148,17 @@ def test_a_session_closes_while_a_put_waits_for_its_body(server_origin: str) -> 
     closer.join(timeout=_TIMEOUT_SECONDS)
 
     assert not closer.is_alive()
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_call_too_large_for_a_frame_fails_without_ending_the_page(server_origin: str) -> None:
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        # The call takes 16,777,215 bytes, which fit a frame only without the ID of the document that asks.
+        outcome = page.evaluate(
+            "caches.open('x'.repeat(8388601)).then(() => 'opened', (e) => e.name)",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        alive = page.evaluate("1 + 1", timeout=_TIMEOUT_SECONDS)
+
+    assert outcome != "opened"
+    assert alive == 2

@@ -34,10 +34,13 @@ class PageCacheStorage {
   using Send = base::RepeatingCallback<void(std::string frame)>;
   using Refuse = base::RepeatingCallback<void(std::string why)>;
 
+  // The numbers of the Page's caches and stored bodies start at
+  // `first_number`, past those of the hosts of its documents before.
   PageCacheStorage(CacheStorageContext& context,
                    StorageQuota& quota,
                    Send send,
-                   Refuse refuse);
+                   Refuse refuse,
+                   uint64_t first_number = 1);
   PageCacheStorage(const PageCacheStorage&) = delete;
   PageCacheStorage& operator=(const PageCacheStorage&) = delete;
   ~PageCacheStorage();
@@ -46,6 +49,9 @@ class PageCacheStorage {
   // its origin may not reach the Cache API.
   void OnCall(PageCacheStorageCall call,
               const std::optional<std::string>& storage_key);
+
+  // The first number that no cache or stored body has had.
+  uint64_t NextNumber() const;
 
  private:
   class PutBody;
