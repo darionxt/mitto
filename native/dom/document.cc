@@ -433,6 +433,11 @@ void Document::SetInitialEmptyDocument() {
 }
 
 bool Document::DispatchBeforeUnloadEvent() {
+  // The HTML Standard's prompt to unload, which FrameLoader::ShouldClose()
+  // runs with the ignore-opens-during-unload counter up, so that open() and
+  // write() do nothing meanwhile.
+  const IgnoreOpensDuringUnloadCountIncrementer ignore_opens_during_unload(
+      *this);
   if (!window_ || !Body()) {
     return true;
   }
@@ -466,6 +471,11 @@ void Document::Abort() {
 }
 
 void Document::DispatchUnloadEvents() {
+  // The HTML Standard's unload a document, which Blink's frame runs with the
+  // ignore-opens-during-unload counter up, so that open() and write() do
+  // nothing meanwhile.
+  const IgnoreOpensDuringUnloadCountIncrementer ignore_opens_during_unload(
+      *this);
   // The parser stops for good, and what more of the body comes goes unread.
   DetachParser();
   if (load_event_progress_ == LoadEventProgress::kLoadEventNotRun ||

@@ -199,6 +199,42 @@ _CASES["open_stops_navigation"] = Case(
     }
 )
 
+# open() from a DOMContentLoaded listener leaves the document to complete: the parser that it made goes with the load
+# event, so a later write opens the document anew.
+_CASES["open_in_domcontentloaded"] = Case(
+    {
+        "/": _page(
+            "<body><p id=old>old</p><script>"
+            "document.addEventListener('DOMContentLoaded', () => {"
+            " document.open(); document.write('<p id=a>a</p>');"
+            " log('in DOMContentLoaded ' + ids() + ' ' + document.readyState); });"
+            "setTimeout(() => {"
+            " log('timer ' + ids() + ' ' + document.readyState);"
+            " document.write('<p id=b>b</p>'); log('wrote ' + ids() + ' ' + document.readyState);"
+            " document.close(); log('closed ' + ids() + ' ' + document.readyState); finish(logged); }, 300);"
+            "</script>"
+        ),
+    }
+)
+
+# A write and open() in a beforeunload listener do nothing, as the ignore-opens-during-unload counter is up.
+_CASES["write_in_beforeunload"] = Case(
+    {
+        "/": _page(
+            "<body><p id=old>old</p><script>"
+            "addEventListener('load', () => setTimeout(() => {"
+            " addEventListener('beforeunload', () => {"
+            "  document.write('<p id=w>w</p>'); document.open();"
+            "  log('in beforeunload ' + ids() + ' ' + document.readyState); });"
+            " location.href = '/next';"
+            " log('after ' + ids() + ' ' + document.readyState); finish(logged);"
+            "}));"
+            "</script>"
+        ),
+        "/next": Route("<!doctype html><p id=next>next</p>", _HTML, hold="never"),
+    }
+)
+
 # open() from a script that the parser runs keeps the document, and so does close() of a document that the network
 # loads.
 _CASES["open_while_running"] = Case(
@@ -382,6 +418,12 @@ _CHROME: dict[str, list[str]] = {
         "two ab",
         'S<p id="ab" class="c">xy</p><p id="e">&amp;</p><b id="bold">bold network</b><p id="end">end</p>S',
     ],
+    "open_in_domcontentloaded": [
+        "in DOMContentLoaded a loading",
+        "timer a complete",
+        "wrote b loading",
+        "closed b complete",
+    ],
     "open_stops_navigation": [
         "wrote w loading",
         "closed complete",
@@ -432,6 +474,10 @@ _CHROME: dict[str, list[str]] = {
         "later loading new",
         "load complete",
         "closed complete",
+    ],
+    "write_in_beforeunload": [
+        "in beforeunload old complete",
+        "after old complete",
     ],
     "written_parser_blocking": [
         "s1 after write s1,x",
