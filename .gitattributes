@@ -5,3 +5,7 @@
 # html_tree_builder_test reads html5lib's tree construction tests line by line,
 # where a line ends with LF alone.
 native/test/html5lib_tree/*.dat -text
+
+# The copy of web-platform-tests holds files whose line endings and bytes are what a
+# test checks, such as CRLF in a response that wptserve sends as it is.
+tests/wpt/wpt/** -text
