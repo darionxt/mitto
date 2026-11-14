@@ -29,6 +29,7 @@ class SVGComponentTransferFunctionElement : public SVGElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedNumberList* TableValues();
   SVGAnimatedEnumeration* Type();
   SVGAnimatedNumber* Slope();
   SVGAnimatedNumber* Intercept();
@@ -101,6 +102,13 @@ class SVGTextContentElement : public SVGGraphicsElement {
 class SVGTextPositioningElement : public SVGTextContentElement {
  public:
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface.
+  SVGAnimatedLengthList* X();
+  SVGAnimatedLengthList* Y();
+  SVGAnimatedLengthList* Dx();
+  SVGAnimatedLengthList* Dy();
+  SVGAnimatedNumberList* Rotate();
 
  protected:
   SVGTextPositioningElement(Document& document,
@@ -235,6 +243,7 @@ class SVGFEColorMatrixElement final
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedNumberList* Values();
   SVGAnimatedString* In1();
   SVGAnimatedEnumeration* Type();
 };
@@ -281,6 +290,7 @@ class SVGFEConvolveMatrixElement final
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
 
   // The members of the interface.
+  SVGAnimatedNumberList* KernelMatrix();
   SVGAnimatedString* In1();
   SVGAnimatedInteger* OrderX();
   SVGAnimatedInteger* OrderY();
@@ -790,6 +800,7 @@ class SVGSVGElement final : public SVGGraphicsElement {
   SVGAnimatedLength* Width();
   SVGAnimatedLength* Height();
   SVGLength* CreateSVGLength();
+  SVGNumber* CreateSVGNumber();
 };
 
 class SVGScriptElement final : public SVGElement {

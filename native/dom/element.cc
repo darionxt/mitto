@@ -159,9 +159,11 @@ void Element::SetAttributeValueInternal(size_t index,
                    &attributes_[index].value);
 }
 
-void Element::RemoveAttributeInternal(size_t index) {
-  EnqueueAttributeMutation(*this, attributes_[index].name,
-                           attributes_[index].value);
+void Element::RemoveAttributeInternal(size_t index, bool record) {
+  if (record) {
+    EnqueueAttributeMutation(*this, attributes_[index].name,
+                             attributes_[index].value);
+  }
   IncrementDomTreeVersion();
   // Blink's RemoveAttributeInternal(): the attribute's node keeps the value.
   if (Attr* const attr = AttrIfExists(attributes_[index].name)) {
@@ -397,6 +399,12 @@ void Element::SetSynchronizedLazyAttribute(const QualifiedName& name,
     return;
   }
   AppendAttributeInternal(name, value, /*record=*/false);
+}
+
+void Element::RemoveSynchronizedLazyAttribute(const QualifiedName& name) {
+  if (const std::optional<size_t> index = FindAttributeIndex(name)) {
+    RemoveAttributeInternal(*index, /*record=*/false);
+  }
 }
 
 void Element::RemoveAttribute(const QualifiedName& name) {
