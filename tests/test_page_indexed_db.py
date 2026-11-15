@@ -174,3 +174,26 @@ def test_a_navigation_closes_the_old_document_s_connections(server_origin: str) 
         )
 
     assert outcome == ["/next", ["upgrade", 1], ["success", 2]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_call_too_large_for_a_frame_fails_with_blink_s_error(server_origin: str) -> None:
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        # Values travel whole in a frame of 16 MiB: past that, a call fails as one past Mojo's limit does in Chrome.
+        outcome = page.evaluate(
+            "new Promise((resolve) => { const r = indexedDB.open('large', 1);"
+            " r.onupgradeneeded = () => r.result.createObjectStore('s');"
+            " r.onsuccess = () => { const out = []; const tx = r.result.transaction('s', 'readwrite');"
+            " const s = tx.objectStore('s');"
+            " const put = s.put(new Uint8Array(17 << 20), 1);"
+            " put.onerror = (e) => { e.preventDefault(); out.push([put.error.name, put.error.message.split(' (')[0]]); };"
+            " const count = s.count(new Uint8Array(9 << 20));"
+            " count.onerror = (e) => { e.preventDefault(); out.push(count.error.name); };"
+            " tx.oncomplete = tx.onabort = () => resolve(out); }; })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert outcome == [
+        ["UnknownError", "The serialized keys and/or value are too large"],
+        "UnknownError",
+    ]

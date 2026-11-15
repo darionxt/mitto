@@ -24,12 +24,20 @@ bool EndsCall(const PageIndexedDbCallback& callback) {
   }
 }
 
-// What a call that cannot be sent hears instead, as an error of its own.
+// What a call that cannot be sent hears instead, as an error of its own: the
+// error that Blink's IDBTransaction::Put() gives one too large for a Mojo
+// message, with the size of a frame. Like Blink's, the Session does not count
+// it among the errors it sent.
 PageIndexedDbCallback TooLargeAnswer(const PageIndexedDbCall& call) {
   PageIndexedDbCallback answer;
   answer.call = call.call;
   answer.error = IndexedDbException::kUnknownError;
-  answer.message = u"The serialized value is too large.";
+  answer.message = base::StrCat(
+      {u"The serialized keys and/or value are too large (size=",
+       base::NumberToString16(EncodeIndexedDbCall(call).size()),
+       u" bytes, max=",
+       base::NumberToString16(kMaxPayloadSize - sizeof(uint64_t)),
+       u" bytes)."});
   switch (call.op) {
     case IndexedDbCallOp::kPut:
       answer.op = IndexedDbCallbackOp::kPutResult;

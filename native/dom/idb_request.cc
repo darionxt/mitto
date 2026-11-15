@@ -327,20 +327,29 @@ void IDBRequest::HandleError(IndexedDbException code,
       OnResultReadyOf(transaction_.Get())));
 }
 
+// The Session answers these with success or not, as Mojo's default answer
+// does, and the transaction's abort says why; only a call too large to send
+// hears an error of its own, which nothing else would answer.
 void IDBRequest::OnClear(const PageIndexedDbCallback& answer) {
-  if (answer.success) {
+  if (answer.error != IndexedDbException::kNoError) {
+    HandleError(answer.error, answer.message);
+  } else if (answer.success) {
     HandleResponse();
   }
 }
 
 void IDBRequest::OnDelete(const PageIndexedDbCallback& answer) {
-  if (answer.success) {
+  if (answer.error != IndexedDbException::kNoError) {
+    HandleError(answer.error, answer.message);
+  } else if (answer.success) {
     HandleResponse();
   }
 }
 
 void IDBRequest::OnCount(const PageIndexedDbCallback& answer) {
-  if (answer.success) {
+  if (answer.error != IndexedDbException::kNoError) {
+    HandleError(answer.error, answer.message);
+  } else if (answer.success) {
     HandleResponse(static_cast<int64_t>(answer.count));
   }
 }
