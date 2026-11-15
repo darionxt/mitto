@@ -5037,7 +5037,6 @@
 {"test": "dom/nodes/moveBefore/nonce.html", "subtest": "Element nonce content attribute is not cleared after move", "chrome": "PASS", "mitto": "FAIL: new_parent is not defined"},
 {"test": "dom/nodes/moveBefore/object-crash-regression.html", "subtest": "Moving an object element does not crash", "chrome": "PASS", "mitto": "FAIL: p is not defined"},
 {"test": "dom/nodes/moveBefore/popover-preserve.html", "subtest": "when reparenting an open popover, it shouldn't be closed automatically", "chrome": "PASS", "mitto": "FAIL: assert_equals: expected Element node <div popover=\"\">\nPopover\n</div> but got null", "owner": "M9"},
-{"test": "dom/nodes/moveBefore/preserve-render-blocking-script.html", "subtest": "A moved script should keep its render-blocking state", "chrome": "PASS", "mitto": "FAIL: assert_array_equals: lengths differ, expected array [\"script\", \"render\"] length 2, got [\"render\"] length 1", "owner": "#270"},
 {"test": "dom/nodes/moveBefore/preserve-render-blocking-style.html", "subtest": "A moved script should keep its render-blocking state", "chrome": "PASS", "mitto": "FAIL: assert_equals: expected (string) \"rgb(0, 128, 0)\" but got (undefined) undefined"},
 {"test": "dom/nodes/moveBefore/relevant-mutations.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"},
 {"test": "dom/nodes/moveBefore/select-option-optgroup.html", "subtest": "Option selectedness is updated on option and optgroup DOM moves", "chrome": "PASS", "mitto": "FAIL: assert_true: A is selected by default expected true got false", "owner": "#281"},

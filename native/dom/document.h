@@ -420,10 +420,15 @@ class Document : public Node {
   // a microtask checkpoint, then CheckCompleted() for a document of a window.
   void FinishedParsing();
   // Document::WillInsertBody(), as the parser inserts the body: a document
-  // with something to show begins rendering, as
-  // BeginLifecycleUpdatesIfRenderingReady() does with no stylesheet to wait
-  // for.
+  // with something to show begins rendering, once no script blocks it.
   void WillInsertBody();
+  // RenderBlockingResourceManager's pending scripts: a potentially
+  // render-blocking script that is fetched before the body blocks the
+  // rendering of a document of a window, as the HTML Standard's
+  // render-blocking element set has it, until it runs or its fetch goes.
+  // Removing the last one begins rendering if the body is there.
+  void AddPendingRenderBlockingScript(Element& script);
+  void RemovePendingRenderBlockingScript(Element& script);
   // Document::CheckCompleted(): complete, and the window's load event, once
   // parsing has finished and nothing holds the load event back.
   void CheckCompleted();
@@ -531,6 +536,9 @@ class Document : public Node {
   // parser.
   DocumentParser& ImplicitOpen(DocumentParser::Client* client);
   void DetachParser();
+  // Document::BeginLifecycleUpdatesIfRenderingReady(): the window begins
+  // rendering once no script blocks it.
+  void BeginLifecycleUpdatesIfRenderingReady();
   // write(), once the strings are one.
   void Write(const std::u16string& text,
              Window* entered_window,
@@ -589,6 +597,7 @@ class Document : public Node {
   GURL base_url_ = GURL("about:blank");
   cppgc::Member<DocumentScriptRunner> script_runner_;
   HeapVector<Element> current_script_stack_;
+  WeakHeapVector<Element> pending_render_blocking_scripts_;
   int load_event_delay_count_ = 0;
   bool load_event_check_pending_ = false;
   cppgc::Member<DocumentParser> parser_;

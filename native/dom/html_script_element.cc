@@ -249,6 +249,8 @@ void HTMLScriptElement::AttributeChanged(const QualifiedName& name,
     loader_->HandleSourceAttribute(new_value ? *new_value : std::u16string());
   } else if (name.local_name == u"async") {
     loader_->HandleAsyncAttribute();
+  } else if (name.local_name == u"blocking" && !IsPotentiallyRenderBlocking()) {
+    GetDocument().RemovePendingRenderBlockingScript(*this);
   }
 }
 
