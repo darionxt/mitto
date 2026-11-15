@@ -393,10 +393,11 @@ def test_native_library_has_the_expected_abi_version(native_library: ctypes.CDLL
 def test_native_library_exports_the_c_api_and_nothing_else() -> None:
     library = _native.find_library()
     assert library is not None
-    # Except on Windows the one function that //base marks __declspec(dllexport), which no exports list can take away.
-    # Windows looks up an import in the DLL it names, so it cannot clash with anything, and //base only looks for it in
-    # the program that started the process.
-    windows_extra: set[str] = {"GetHandleVerifier"} if sys.platform == "win32" else set()
+    # Except on Windows the function that //base marks __declspec(dllexport), and the one that SQLite's amalgamation
+    # marks so for its dbdata extension, which no exports list can take away. Windows looks up an import in the DLL it
+    # names, so they cannot clash with anything, //base only looks for its function in the program that started the
+    # process, and SQLite only calls its own.
+    windows_extra: set[str] = {"GetHandleVerifier", "sqlite3_dbdata_init"} if sys.platform == "win32" else set()
 
     assert exported_names(library) == c_api() | windows_extra
 
