@@ -21583,6 +21583,7 @@
 {"test": "html/the-xhtml-syntax/parsing-xhtml-documents/xhtml-mathml-dtd-entity-9.htm", "subtest": null, "chrome": "OK", "mitto": "ERROR: Uncaught TypeError: Cannot read properties of null (reading 'run')"},
 {"test": "html/the-xhtml-syntax/parsing-xhtml-documents/xml-stylesheet-blocking.xhtml", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT"},
 {"test": "html/webappapis/animation-frames/callback-cross-realm-report-exception.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
+{"test": "html/webappapis/animation-frames/spurious-frame-callbacks-optimization.html", "subtest": null, "chrome": null, "mitto": "FLAKY", "owner": "#291"},
 {"test": "html/webappapis/atob/base64.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "html/webappapis/dynamic-markup-insertion/closing-the-input-stream/document-close-with-pending-script.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#285"},
 {"test": "html/webappapis/dynamic-markup-insertion/closing-the-input-stream/document.close-01.xhtml", "subtest": "document.close in XHTML", "chrome": "PASS", "mitto": "FAIL: assert_throws_dom: document.close in XHTML should throw an INVALID_STATE_ERR  function \"function() {\n    document.close();\n  }\" did not throw", "owner": "#269"},
