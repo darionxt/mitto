@@ -1445,6 +1445,17 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "PageRevealEvent"
+    file = "page_reveal_event"
+    made_by_known_gaps = true
+
+    # A Page has no view transitions: only the Page makes one.
+    missing = [
+      "constructor",
+      "viewTransition",
+    ]
+  },
+  {
     name = "PageTransitionEvent"
     file = "page_transition_event"
   },
