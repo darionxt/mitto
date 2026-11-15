@@ -1294,7 +1294,10 @@ bool MatchesDisabled(const Element& element) {
 
 bool IsChecked(const Element& element) {
   if (element.HasHTMLTagName(u"input")) {
-    return IsInputChecked(element, InputType(element));
+    // Blink's SelectorChecker never takes an input as both checked and
+    // indeterminate.
+    return IsInputChecked(element, InputType(element)) &&
+           !IsIndeterminate(element);
   }
   return element.HasHTMLTagName(u"option") && IsOptionSelected(element);
 }
