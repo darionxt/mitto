@@ -532,3 +532,37 @@ def test_a_processing_instruction_takes_xmlns_with_no_prefix_as_an_attribute(pro
     """
 
     assert _evaluate(program, script) == '["a","xmlns:"] u a="1" xmlns:="u" c="3" / [] null c="3"'
+
+
+def test_an_img_that_gets_its_id_in_the_tree_leaves_without_a_trace(program: Path) -> None:
+    # Blink counts an img's ID once when the img gets it in the tree but twice when it comes in with both, and takes it
+    # away twice as it leaves, which does nothing for a name no longer there. An img that loses its name keeps its
+    # ID's property, which gives the prototype's value, as Chrome 157 gave.
+    script = """
+        const out = [];
+        const a = document.createElement('img');
+        a.name = 'n1';
+        document.body.append(a);
+        a.id = 'x1';
+        out.push([document.x1 === a, window.x1 === a].join());
+        a.remove();
+        out.push(['x1' in document, 'n1' in document, String(window.x1)].join());
+        const b = document.createElement('img');
+        b.name = 'n2';
+        b.id = 'x2';
+        document.body.append(b);
+        b.removeAttribute('name');
+        out.push(['x2' in document, String(document.x2)].join());
+        b.remove();
+        out.push(['x2' in document, String(document.x2)].join());
+        document.body.append(b);
+        b.name = 'n3';
+        out.push(['x2' in document, document.x2 === b].join());
+        b.remove();
+        out.push(['x2' in document, 'n3' in document].join());
+        out.join(' | ')
+    """
+
+    assert _evaluate(program, script) == (
+        "true,true | false,false,undefined | true,undefined | true,undefined | true,true | false,false"
+    )

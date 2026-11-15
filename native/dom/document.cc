@@ -1036,9 +1036,11 @@ void Document::RemoveNamedItem(const std::u16string& name) {
   if (name.empty()) {
     return;
   }
-  const auto found = named_item_counts_.find(name);
-  CHECK(found != named_item_counts_.end());
-  if (--found->second == 0) {
+  // Blink's HashCountedSet::erase() does nothing for a name it does not
+  // hold: an img counts its ID once when it gets the ID in the tree but twice
+  // when it comes in with both, and takes it away twice as it leaves.
+  if (const auto found = named_item_counts_.find(name);
+      found != named_item_counts_.end() && --found->second == 0) {
     named_item_counts_.erase(found);
     std::erase(named_items_, name);
   }
@@ -1054,9 +1056,8 @@ void Document::AddElementById(const std::u16string& id) {
 }
 
 void Document::RemoveElementById(const std::u16string& id) {
-  const auto found = id_counts_.find(id);
-  CHECK(found != id_counts_.end());
-  if (--found->second == 0) {
+  if (const auto found = id_counts_.find(id);
+      found != id_counts_.end() && --found->second == 0) {
     id_counts_.erase(found);
   }
 }
