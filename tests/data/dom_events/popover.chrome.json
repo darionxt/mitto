@@ -82,5 +82,11 @@
   "k,s",
   "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': The dialog is already open as a Popover, and therefore cannot be opened as a modal dialog.",
   "InvalidStateError: Failed to execute 'showPopover' on 'HTMLElement': The dialog is already open as a dialog, and therefore cannot be opened as a popover."
+ ],
+ "reentrant": [
+  "null",
+  false,
+  40,
+  "39"
  ]
 }

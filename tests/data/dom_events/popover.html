@@ -116,6 +116,20 @@ const open = () => [...document.querySelectorAll(':popover-open')].map(e => e.id
   popoverDialog.showModal();
   r.dialog.push(error(() => popoverDialog.showPopover()));
   popoverDialog.close();
+
+  // A beforetoggle listener that runs while the type of a dialog that shows as a popover changes may add attributes
+  // and remove the popover attribute before the dialog's own hook reads the change.
+  const changing = document.createElement('dialog');
+  changing.popover = 'manual';
+  document.body.append(changing);
+  changing.showPopover();
+  changing.addEventListener('beforetoggle', () => {
+    for (let i = 0; i < 40; i++) changing.setAttribute('data-x' + i, String(i));
+    changing.removeAttribute('popover');
+  }, {once: true});
+  changing.setAttribute('popover', 'auto');
+  r.reentrant = [String(changing.popover), changing.matches(':popover-open'), changing.attributes.length,
+                 changing.getAttribute('data-x39')];
   await tick();
   done(r);
 })();

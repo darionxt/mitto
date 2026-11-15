@@ -213,13 +213,16 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
   }
   IncrementDomTreeVersion();
   attributes_.push_back({name, value});
-  // The hook reads the attribute as it is stored.
-  const Attribute& added = attributes_.back();
+  // The hook reads a copy of the attribute as it is stored, as Blink's
+  // AttributeModificationParams hold the caller's values, since what a hook
+  // runs, such as a popover's beforetoggle listeners, may change the
+  // attributes and move them.
+  const Attribute added = attributes_.back();
   UpdateNonce(added.name, &added.value);
   ForgetExplicitlySetElements(added.name);
   AttributeChanged(added.name, nullptr, &added.value);
-  if (connected && IsIdAttribute(added.name)) {
-    UpdateId(nullptr, &attributes_.back().value);
+  if (IsConnected() && IsIdAttribute(added.name)) {
+    UpdateId(nullptr, &added.value);
   }
 }
 
@@ -245,10 +248,11 @@ void Element::SetAttributeValueInternal(size_t index,
   if (connected && IsIdAttribute(attributes_[index].name)) {
     UpdateId(&old_value, &attributes_[index].value);
   }
-  UpdateNonce(attributes_[index].name, &attributes_[index].value);
-  ForgetExplicitlySetElements(attributes_[index].name);
-  AttributeChanged(attributes_[index].name, &old_value,
-                   &attributes_[index].value);
+  // The hook reads a copy, as when one is added.
+  const Attribute changed = attributes_[index];
+  UpdateNonce(changed.name, &changed.value);
+  ForgetExplicitlySetElements(changed.name);
+  AttributeChanged(changed.name, &old_value, &changed.value);
 }
 
 void Element::RemoveAttributeInternal(size_t index, bool record) {
