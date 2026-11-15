@@ -5,10 +5,11 @@
 // It has every insertion mode, foster parenting, the list of active formatting
 // elements with the adoption agency algorithm, framesets, and SVG and MathML
 // elements, templates with their contents, and parses fragments for any
-// context element, with the scripting flag on or off. Where the DOM lacks what
-// a rule needs, such as a ProcessingInstruction node, the builder goes on as
-// near Chrome's tree as it can and records the rule, which tests read to tell
-// such a rule from a wrong tree.
+// context element, with the scripting flag on or off, processing instructions,
+// and the patching of `<template for>`. Where the DOM lacks what a rule needs,
+// such as a declarative shadow root, the builder goes on as near Chrome's tree
+// as it can and records the rule, which tests read to tell such a rule from a
+// wrong tree.
 //
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.cc
@@ -16,6 +17,7 @@
 // Upstream: third_party/blink/renderer/core/html/parser/html_element_stack.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_formatting_element_list.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_parser_options.cc
+// Upstream: third_party/blink/renderer/core/html/parser/patch.cc
 
 #ifndef MITTO_DOM_HTML_TREE_BUILDER_H_
 #define MITTO_DOM_HTML_TREE_BUILDER_H_
@@ -53,7 +55,7 @@ struct HtmlParserOptions {
   bool scripting_flag = false;
 };
 
-// What a tree builder refers to: its document and every element that it holds,
+// What a tree builder refers to: its document and every node that it holds,
 // as Blink's HTMLTreeBuilder traces them, for the builder's owner to trace or
 // to hold. A parser that a document holds traces these, rather than holding
 // them with Persistents, which would keep the document from the collector
@@ -67,16 +69,16 @@ class HtmlTreeBuilderReferences final
   void Trace(cppgc::Visitor* visitor) const;
 
   Document& document() const { return *document_; }
-  // Keeps `element` while the builder may refer to it.
-  void Keep(Element* element);
-  // Keeps `elements` alone, without allocating on the C++ heap, so that none
-  // of them can go meanwhile.
-  void KeepOnly(const std::vector<Element*>& elements);
-  size_t size() const { return elements_.size(); }
+  // Keeps `node` while the builder may refer to it.
+  void Keep(Node* node);
+  // Keeps `nodes` alone, without allocating on the C++ heap, so that none of
+  // them can go meanwhile.
+  void KeepOnly(const std::vector<Node*>& nodes);
+  size_t size() const { return nodes_.size(); }
 
  private:
   cppgc::Member<Document> document_;
-  HeapVector<Element> elements_;
+  HeapVector<Node> nodes_;
 };
 
 // Parses a document's markup into a Document, which must have no children, as

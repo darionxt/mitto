@@ -15,9 +15,13 @@
 
 # The HTML Standard has since added processing instructions, which Blink parses
 # with its feature HTMLProcessingInstruction, on for stable in the Engine
-# Release. The tokenizer then makes nothing of <? at the end of the input,
-# where these tests, which predate them, expect a bogus comment.
+# Release: a ProcessingInstruction node, and nothing for <? at the end of the
+# input, where these tests, which predate them, expect a bogus comment.
+# html5lib has since changed to match.
+html5test-com.dat:11  # <?import namespace="foo" implementation="#bar">
 tests1.dat:39  # <?
+tests1.dat:43  # <?COMMENT?>
+tests1.dat:46  # <?COM--MENT?>
 
 # The Engine Release parses select as the HTML Standard has since had it, for
 # customizable select: with no insertion mode of its own, so that elements

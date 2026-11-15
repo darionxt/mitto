@@ -36,6 +36,7 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
+#include "mitto/dom/processing_instruction.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "v8/include/cppgc/persistent.h"
@@ -140,6 +141,16 @@ std::string Dump(const Node& root) {
         }
         break;
       }
+      case Node::kProcessingInstructionNode:
+        out += "<?" +
+               base::UTF16ToUTF8(
+                   static_cast<const mitto::ProcessingInstruction*>(node)
+                       ->Target()) +
+               " " +
+               base::UTF16ToUTF8(
+                   static_cast<const mitto::CharacterData*>(node)->Data()) +
+               "?>";
+        break;
       case Node::kTextNode:
       case Node::kCommentNode:
         out += "\"" +
