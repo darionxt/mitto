@@ -125,6 +125,8 @@ ScriptRunner::ScriptRunner(v8::Isolate* isolate) : isolate_(isolate) {}
 ScriptRunner::~ScriptRunner() {
   if (!context_.IsEmpty()) {
     base::CurrentThread::Get()->RemoveTaskObserver(this);
+    isolate_->RemoveMicrotasksCompletedCallback(
+        &ScriptRunner::OnMicrotasksCompleted, this);
   }
 }
 
@@ -183,6 +185,8 @@ std::optional<std::string> ScriptRunner::Start(
   AttachWindow(context, start_.connection, PageDocumentSource::kInitialEmpty,
                kNavigationRequest);
   base::CurrentThread::Get()->AddTaskObserver(this);
+  isolate_->AddMicrotasksCompletedCallback(&ScriptRunner::OnMicrotasksCompleted,
+                                           this);
   return std::nullopt;
 }
 
@@ -310,21 +314,10 @@ void ScriptRunner::EndTask() {
     return;
   }
   const v8::HandleScope handle_scope(isolate_);
-  // As Blink's scheduler does after each task.
+  // As Blink's scheduler does after each task. Its end queues the report of
+  // the promises left rejected with no handler, as every checkpoint's does.
   v8::MicrotasksScope::PerformCheckpoint(isolate_);
-  // As Blink's RejectedPromises::ProcessQueue(): the promises that the task
-  // left rejected with no handler are reported from a task of their own, so
-  // that a handler that a task queued before it adds is in time.
-  std::vector<PageReporter::Rejection> rejections =
-      reporter_->TakeUnhandledRejections();
-  if (!rejections.empty()) {
-    ++reports_queued_;
-    EventLoop::Get()
-        ->TaskRunner(TaskType::kDOMManipulation)
-        ->PostTask(FROM_HERE, base::BindOnce(&ScriptRunner::ReportRejections,
-                                             base::Unretained(this),
-                                             std::move(rejections)));
-  }
+  QueueRejectionReport();
   // Results wait for the reports queued before them.
   if (reports_queued_ > 0) {
     return;
@@ -334,6 +327,31 @@ void ScriptRunner::EndTask() {
   for (const PageEvaluated& evaluated : settled) {
     send_.Run(EncodeEvaluated(evaluated));
   }
+}
+
+// static
+void ScriptRunner::OnMicrotasksCompleted(v8::Isolate* isolate, void* data) {
+  static_cast<ScriptRunner*>(data)->QueueRejectionReport();
+}
+
+void ScriptRunner::QueueRejectionReport() {
+  if (context_.IsEmpty()) {
+    return;
+  }
+  // As Blink's RejectedPromises::ProcessQueue(): the promises rejected with no
+  // handler since the last checkpoint are reported from a task of their own,
+  // so that a handler that a task queued before it adds is in time.
+  std::vector<PageReporter::Rejection> rejections =
+      reporter_->TakeUnhandledRejections();
+  if (rejections.empty()) {
+    return;
+  }
+  ++reports_queued_;
+  EventLoop::Get()
+      ->TaskRunner(TaskType::kDOMManipulation)
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&ScriptRunner::ReportRejections,
+                                base::Unretained(this), std::move(rejections)));
 }
 
 void ScriptRunner::ReportRejections(

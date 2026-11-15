@@ -233,6 +233,10 @@ _EVENTS_AS_CHROME = {
         "const e = new KeyboardEvent('keydown', {key: 'a', code: 'KeyA', repeat: true, location: 1, shiftKey: true}); return [e.key, e.code, e.repeat, e.location, e.shiftKey, e.isComposing].join()",
         "value: a,KeyA,true,1,true,false",
     ),
+    "KeyboardEvent's legacy codes keep their bits": (
+        "const e = new KeyboardEvent('keydown', {charCode: 7, keyCode: 4294967295}); const f = new KeyboardEvent('keydown', {keyCode: -1, charCode: 2147483648}); return [e.charCode, e.keyCode, f.keyCode, f.charCode].join()",
+        "value: 7,-1,-1,-2147483648",
+    ),
     "ErrorEvent": (
         "const o = {}; const e = new ErrorEvent('error', {message: 'm', filename: 'f', lineno: 3, colno: 4, error: o}); return [e.message, e.filename, e.lineno, e.colno, e.error === o].join()",
         "value: m,f,3,4,true",
