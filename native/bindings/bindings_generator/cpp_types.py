@@ -401,7 +401,7 @@ class TypeMapper:
             if element.kind is TypeKind.INTERFACE and element.nullable:
                 # Null or an object, as navigator.getGamepads() gives nulls for a gamepad that is not there.
                 return "std::vector<bindings::ScriptWrappable*>"
-            if element.kind is TypeKind.STRING and element.name == "DOMString" and not element.nullable:
+            if element.kind is TypeKind.STRING and element.name in ("DOMString", "USVString") and not element.nullable:
                 return "std::vector<std::u16string>"
             if element.kind is TypeKind.STRING and element.name == "ByteString" and not element.nullable:
                 return "std::vector<std::string>"
@@ -824,6 +824,13 @@ class TypeMapper:
             # A boolean default of a union with a boolean member, such as importNode()'s options = false.
             self._register_union(idl_type, where)
             return f"{union_name(idl_type)}({literal})"
+        string = next((member for member in idl_type.members if member.kind is TypeKind.STRING), None)
+        if kind is TypeKind.UNION and literal.startswith('"') and string is not None:
+            # A string default of a union with a string member, such as URLSearchParams' init = "".
+            self._register_union(idl_type, where)
+            if string.name == "ByteString":
+                return f"{union_name(idl_type)}(std::string({literal}))"
+            return f"{union_name(idl_type)}(std::u16string(u{literal}))"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
         if (
