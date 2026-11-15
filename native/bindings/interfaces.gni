@@ -292,7 +292,7 @@ mitto_bindings_interfaces = [
       "doctype",
       "documentElement",
       "title",
-      "get body",
+      "body",
       "head",
       "defaultView",
       "cookie",
@@ -525,6 +525,7 @@ mitto_bindings_interfaces = [
     name = "HTMLAnchorElement"
     file = "html_anchor_element"
     implemented = [
+      "text",
       "href",
       "origin",
       "protocol",
