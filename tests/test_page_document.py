@@ -566,3 +566,175 @@ def test_an_img_that_gets_its_id_in_the_tree_leaves_without_a_trace(program: Pat
     assert _evaluate(program, script) == (
         "true,true | false,false,undefined | true,undefined | true,undefined | true,true | false,false"
     )
+
+
+def test_the_body_setter_and_other_document_accessors_follow_blink(program: Path) -> None:
+    # As Chrome 157 gave: the body setter's checks and their messages, an SVG document's title in its root's SVG title
+    # child, a.text as textContent, document.all.item() with nothing given, a base element in a document with no
+    # window, and an input's type from its type attribute of no namespace.
+    script = """
+        const out = [];
+        const t = (f) => { try { out.push(f()); } catch (e) { out.push(e.name + ': ' + e.message); } };
+        t(() => { document.body = null; });
+        t(() => { document.body = document.createElement('div'); });
+        t(() => {
+          const doc = document.implementation.createHTMLDocument('');
+          doc.removeChild(doc.documentElement);
+          doc.body = doc.createElement('body');
+        });
+        t(() => {
+          const doc = document.implementation.createHTMLDocument('');
+          const body = doc.createElement('body');
+          doc.body = body;
+          return [doc.body === body, doc.documentElement.children.length].join();
+        });
+        t(() => {
+          const doc = document.implementation.createDocument('http://www.w3.org/2000/svg', 'svg', null);
+          const before = doc.title;
+          doc.title = 'foo';
+          const title = doc.documentElement.firstChild;
+          return [JSON.stringify(before), title.localName, title.namespaceURI, doc.title].join();
+        });
+        t(() => {
+          const a = document.createElement('a');
+          a.innerHTML = 'a <b>b</b> <!--x-->c ';
+          const before = a.text;
+          a.text = 'x';
+          return JSON.stringify([before, a.innerHTML, a.childNodes.length]);
+        });
+        t(() => {
+          const d = document.createElement('div');
+          d.id = 'undefined';
+          document.body.append(d);
+          const r = [document.all.item(), document.all.item(undefined), document.all(), document.all.item('undefined') === d];
+          d.remove();
+          return r.map(String).join();
+        });
+        t(() => {
+          const doc = document.implementation.createHTMLDocument('');
+          const base = doc.createElement('base');
+          base.href = 'http://example.com/';
+          doc.head.appendChild(base);
+          return doc.baseURI;
+        });
+        t(() => {
+          const input = document.createElement('input');
+          input.setAttributeNS('urn:x', 'type', 'file');
+          return input.type;
+        });
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script, "<!DOCTYPE html><body>").split("\n") == [
+        "HierarchyRequestError: Failed to set the 'body' property on 'Document': The 1st argument provided is either "
+        "null, or an invalid HTMLElement object.",
+        "HierarchyRequestError: Failed to set the 'body' property on 'Document': The new body element is of type "
+        "'DIV'. It must be either a 'BODY' or 'FRAMESET' element.",
+        "HierarchyRequestError: Failed to set the 'body' property on 'Document': No document element exists.",
+        "true,2",
+        '"",title,http://www.w3.org/2000/svg,foo',
+        '["a b c ","x",1]',
+        "null,null,null,true",
+        "http://example.com/",
+        "text",
+    ]
+
+
+def test_aria_element_reflection_follows_blink(program: Path) -> None:
+    # As Chrome 157 gave: the IDs of the content attribute name elements in the element's tree, connected or not; the
+    # same frozen array while the elements stay the same; an element that a page set holds only while it is in the
+    # element's tree, and a change of the attribute forgets it, but for aria-actions, which Blink's list of element
+    # reflection attributes leaves out; an empty list counts as none set; and aria-labeledby counts for
+    # aria-labelledby alone.
+    script = """
+        const out = [];
+        const ids = (a) => a === null ? 'null' : a === undefined ? 'undef'
+            : Array.isArray(a) ? '[' + a.map(e => e.id).join(',') + ']' : a.id;
+        const mk = (id) => { const d = document.createElement('div'); d.id = id; document.body.append(d); return d; };
+        const w = document.createElement('div');
+        w.innerHTML = '<div id=x1></div><div id=x2></div>'
+            + '<div id=e aria-labelledby="x1  x2 nope" aria-activedescendant=x2 aria-controls=""></div>';
+        const e = w.lastChild;
+        out.push([ids(e.ariaLabelledByElements), ids(e.ariaActiveDescendantElement), ids(e.ariaControlsElements),
+                  ids(e.ariaDetailsElements), ids(e.ariaOwnsElements)].join(' '));
+        const x = e.ariaLabelledByElements;
+        out.push([x === e.ariaLabelledByElements, Object.isFrozen(x)].join());
+        w.firstChild.id = 'x0';
+        out.push([x === e.ariaLabelledByElements, ids(e.ariaLabelledByElements)].join());
+        const a = mk('a'), b = mk('b'), f = mk('f');
+        f.ariaFlowToElements = [b, a, b];
+        out.push([JSON.stringify(f.getAttribute('aria-flowto')), ids(f.ariaFlowToElements)].join(' '));
+        f.setAttribute('aria-flowto', 'a');
+        out.push(ids(f.ariaFlowToElements));
+        f.ariaFlowToElements = null;
+        out.push([f.hasAttribute('aria-flowto'), ids(f.ariaFlowToElements)].join(' '));
+        const d = document.createElement('div');
+        f.ariaActiveDescendantElement = d;
+        out.push(ids(f.ariaActiveDescendantElement));
+        document.body.append(d);
+        out.push(f.ariaActiveDescendantElement === d);
+        f.ariaActionsElements = [a];
+        f.setAttribute('aria-actions', 'zz');
+        out.push(ids(f.ariaActionsElements));
+        f.ariaActionsElements = [];
+        f.removeAttribute('aria-actions');
+        out.push(ids(f.ariaActionsElements));
+        f.setAttribute('aria-labeledby', 'a');
+        out.push(ids(f.ariaLabelledByElements));
+        f.setAttribute('aria-labelledby', '');
+        out.push(ids(f.ariaLabelledByElements));
+        try { f.ariaControlsElements = [1]; } catch (error) { out.push(error.message); }
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script, "<!DOCTYPE html><body>").split("\n") == [
+        "[x1,x2] x2 [] null undef",
+        "true,true",
+        "false,[x2]",
+        '"" [b,a]',
+        "[a]",
+        "false null",
+        "null",
+        "true",
+        "[a]",
+        "null",
+        "[a]",
+        "[]",
+        "Failed to set the 'ariaControlsElements' property on 'Element': Failed to convert value to 'Element'.",
+    ]
+
+
+def test_a_buttons_command_gives_only_the_keywords_chrome_enables(program: Path) -> None:
+    # As Chrome 157 gave: a keyword in lower case, a custom command as it is, and "" for another value, the
+    # commands behind flags that Chrome leaves off, and a submit button of a form; commandForElement reflects the
+    # commandfor element whatever the button is.
+    script = """
+        const out = [];
+        const b = document.createElement('button');
+        for (const v of ['show-modal', 'SHOW-modal', '--Foo', 'fooBar', 'toggle-overscroll', 'show-picker', 'Request-Close']) {
+          b.setAttribute('command', v);
+          out.push(JSON.stringify(b.command));
+        }
+        const form = document.createElement('form');
+        form.append(b);
+        document.body.append(form);
+        const target = document.createElement('div');
+        target.id = 't';
+        document.body.append(target);
+        b.setAttribute('command', 'close');
+        b.setAttribute('commandfor', 't');
+        out.push([b.type, JSON.stringify(b.command), b.commandForElement === target].join());
+        b.type = 'submit';
+        b.disabled = true;
+        out.push([JSON.stringify(b.command), b.commandForElement === target].join());
+        const other = document.createElement('div');
+        b.commandForElement = other;
+        out.push([JSON.stringify(b.getAttribute('commandfor')), String(b.commandForElement)].join());
+        document.body.append(other);
+        out.push(b.commandForElement === other);
+        out.join(' ')
+    """
+
+    assert _evaluate(program, script, "<!DOCTYPE html><body>") == (
+        '"show-modal" "show-modal" "--Foo" "" "" "" "request-close" button,"close",true "",true "",null true'
+    )

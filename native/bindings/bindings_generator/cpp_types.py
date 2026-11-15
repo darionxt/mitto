@@ -281,6 +281,11 @@ class TypeMapper:
         if kind is TypeKind.CALLBACK_FUNCTION:
             # Empty for null, when the type is nullable.
             return "v8::Local<v8::Function>"
+        if kind is TypeKind.FROZEN_ARRAY and idl_type.nullable and not self._holds_no_object(idl_type.members[0]):
+            # Empty for null and undefined, as Blink's IDLNullable<IDLArray<T>> takes them, such as for the frozen
+            # arrays of elements that reflect ARIA's relationships.
+            element = self.value_type(idl_type.members[0], where)
+            return f"const std::optional<std::vector<{element}>>&"
         if kind is TypeKind.SEQUENCE and not idl_type.nullable:
             if self._holds_no_object(idl_type.members[0]):
                 # Always empty: no object is of an interface without a class, as no ShadowRoot is for
@@ -619,6 +624,27 @@ class TypeMapper:
                 lines.append("} else {")
             lines += [f"  exception_state.ThrowTypeError({message});", f"  {site.fail}", "}"]
             return lines
+        if kind is TypeKind.FROZEN_ARRAY:
+            # A nullable frozen array, which argument_type() allows: none for null and undefined, else a sequence.
+            element_type = idl_type.members[0]
+            element = self._name("element")
+            item = self._name("item")
+            items = self._name("items")
+            inner = self.from_v8(element_type, item, element, Site(fail="return false;", element=True), where)
+            return [
+                f"{cpp_type} {target};",
+                f"if (!{value}->IsNullOrUndefined()) {{",
+                f"  {cpp_type.removeprefix('std::optional<').removesuffix('>')} {items};",
+                f"  if (!IterateSequence(isolate, {value}, exception_state, [&](v8::Local<v8::Value> {item}) {{",
+                *["        " + line for line in inner],
+                f"        {items}.push_back(std::move({element}));",
+                "        return true;",
+                "      })) {",
+                f"    {site.fail}",
+                "  }",
+                f"  {target} = std::move({items});",
+                "}",
+            ]
         if kind is TypeKind.SEQUENCE:
             if idl_type.nullable:
                 raise self._refuse(idl_type, where, "a value")

@@ -24,6 +24,7 @@
 #include "mitto/dom/markup_serializer.h"
 #include "mitto/dom/mutation_observer.h"
 #include "mitto/dom/named_node_map.h"
+#include "mitto/dom/script_values.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
 #include "url/gurl.h"
@@ -47,6 +48,53 @@ bool IsIdAttribute(const QualifiedName& name) {
 
 bool IsNameAttribute(const QualifiedName& name) {
   return !name.namespace_uri && name.local_name == u"name";
+}
+
+// Blink's IsElementReflectionAttribute(), of the attributes of no namespace.
+bool IsElementReflectionAttribute(const QualifiedName& name) {
+  if (name.namespace_uri) {
+    return false;
+  }
+  static constexpr std::u16string_view kNames[] = {
+      u"aria-activedescendant", u"aria-controls",     u"aria-describedby",
+      u"aria-details",          u"aria-errormessage", u"aria-flowto",
+      u"aria-labeledby",        u"aria-labelledby",   u"aria-owns",
+      u"popovertarget",         u"commandfor",        u"interestfor",
+      u"selectedcontentelement"};
+  return std::ranges::find(kNames, name.local_name) != std::end(kNames);
+}
+
+QualifiedName AttributeOfNoNamespace(std::u16string_view name) {
+  return QualifiedName{.local_name = std::u16string(name)};
+}
+
+// Blink's getElementByIdIncludingDisconnected(): the first element of `id` in
+// the tree of `element`, connected or not.
+Element* ElementByIdIncludingDisconnected(const Element& element,
+                                          std::u16string_view id) {
+  if (id.empty()) {
+    return nullptr;
+  }
+  if (element.IsConnected()) {
+    return element.GetDocument().GetElementById(std::u16string(id));
+  }
+  Node& root = element.TreeRoot();
+  for (Node* node = root.FirstChild(); node; node = node->NextInTree(&root)) {
+    if (node->IsElementNode()) {
+      const std::u16string* value =
+          static_cast<Element*>(node)->FindAttribute(u"id");
+      if (value && *value == id) {
+        return static_cast<Element*>(node);
+      }
+    }
+  }
+  return nullptr;
+}
+
+// ElementIsDescendantOfShadowIncludingAncestor(), which with no shadow trees
+// is whether both are in one tree.
+bool InTreeOf(const Element& element, const Element& candidate) {
+  return &candidate.TreeRoot() == &element.TreeRoot();
 }
 
 // Whether an attribute's value changed, null being none, as Blink compares
@@ -88,6 +136,8 @@ const bindings::WrapperTypeInfo* Element::GetWrapperTypeInfo() const {
 void Element::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   attr_nodes_.Trace(visitor);
+  explicitly_set_attr_elements_.Trace(visitor);
+  cached_attr_associated_elements_.Trace(visitor);
   token_lists_.Trace(visitor);
   visitor->Trace(attribute_map_);
   visitor->Trace(class_list_);
@@ -166,6 +216,7 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
   // The hook reads the attribute as it is stored.
   const Attribute& added = attributes_.back();
   UpdateNonce(added.name, &added.value);
+  ForgetExplicitlySetElements(added.name);
   AttributeChanged(added.name, nullptr, &added.value);
   if (connected && IsIdAttribute(added.name)) {
     UpdateId(nullptr, &attributes_.back().value);
@@ -195,6 +246,7 @@ void Element::SetAttributeValueInternal(size_t index,
     UpdateId(&old_value, &attributes_[index].value);
   }
   UpdateNonce(attributes_[index].name, &attributes_[index].value);
+  ForgetExplicitlySetElements(attributes_[index].name);
   AttributeChanged(attributes_[index].name, &old_value,
                    &attributes_[index].value);
 }
@@ -223,7 +275,182 @@ void Element::RemoveAttributeInternal(size_t index, bool record) {
     UpdateId(&removed.value, nullptr);
   }
   UpdateNonce(removed.name, nullptr);
+  ForgetExplicitlySetElements(removed.name);
   AttributeChanged(removed.name, &removed.value, nullptr);
+}
+
+ExplicitlySetAttrElement::ExplicitlySetAttrElement(std::u16string_view name,
+                                                   Element* element)
+    : name(name), element(element) {}
+
+ExplicitlySetAttrElement::~ExplicitlySetAttrElement() = default;
+
+void ExplicitlySetAttrElement::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(element);
+}
+
+CachedAttrAssociatedElements::CachedAttrAssociatedElements(
+    std::u16string_view name)
+    : name(name) {}
+
+CachedAttrAssociatedElements::~CachedAttrAssociatedElements() = default;
+
+void CachedAttrAssociatedElements::Trace(cppgc::Visitor* visitor) const {
+  elements.Trace(visitor);
+  visitor->Trace(array);
+}
+
+void Element::ForgetExplicitlySetElements(const QualifiedName& name) {
+  // SynchronizeContentAttributeAndElementReference().
+  if (IsElementReflectionAttribute(name)) {
+    ForgetElementsSetFor(name.local_name);
+  }
+}
+
+void Element::ForgetElementsSetFor(std::u16string_view name) {
+  explicitly_set_attr_elements_.EraseIf(
+      [name](ExplicitlySetAttrElement* entry) { return entry->name == name; });
+}
+
+Element* Element::GetElementAttribute(std::u16string_view name) const {
+  for (size_t i = 0; i < explicitly_set_attr_elements_.size(); ++i) {
+    const ExplicitlySetAttrElement* entry = explicitly_set_attr_elements_[i];
+    if (entry->name == name) {
+      // Only while it is in a valid scope.
+      return InTreeOf(*this, *entry->element) ? entry->element.Get() : nullptr;
+    }
+  }
+  const std::u16string* id = FindAttribute(name);
+  return id ? ElementByIdIncludingDisconnected(*this, *id) : nullptr;
+}
+
+void Element::SetElementAttribute(std::u16string_view name, Element* element) {
+  if (!element) {
+    // The element and the content attribute go.
+    RemoveAttribute(AttributeOfNoNamespace(name));
+    return;
+  }
+  SetAttributeWithoutValidation(name, std::u16string());
+  ForgetElementsSetFor(name);
+  explicitly_set_attr_elements_.push_back(
+      bindings::MakeGarbageCollected<ExplicitlySetAttrElement>(name, element));
+}
+
+std::optional<std::vector<Element*>> Element::GetAttrAssociatedElements(
+    std::u16string_view name) const {
+  bool explicitly_set = false;
+  std::vector<Element*> elements;
+  for (size_t i = 0; i < explicitly_set_attr_elements_.size(); ++i) {
+    const ExplicitlySetAttrElement* entry = explicitly_set_attr_elements_[i];
+    if (entry->name == name) {
+      explicitly_set = true;
+      if (InTreeOf(*this, *entry->element)) {
+        elements.push_back(entry->element);
+      }
+    }
+  }
+  if (explicitly_set) {
+    return elements;
+  }
+  // aria-labeledby counts for aria-labelledby when only it is there.
+  std::u16string_view attribute = name;
+  if (name == u"aria-labelledby" && !FindAttribute(u"aria-labelledby") &&
+      FindAttribute(u"aria-labeledby")) {
+    attribute = u"aria-labeledby";
+  }
+  const std::u16string* value = FindAttribute(attribute);
+  if (!value) {
+    return std::nullopt;
+  }
+  // The IDs, split on ASCII whitespace.
+  size_t start = 0;
+  while (start < value->size()) {
+    while (start < value->size() && IsHTMLSpace((*value)[start])) {
+      ++start;
+    }
+    size_t end = start;
+    while (end < value->size() && !IsHTMLSpace((*value)[end])) {
+      ++end;
+    }
+    if (end > start) {
+      if (Element* candidate = ElementByIdIncludingDisconnected(
+              *this, std::u16string_view(*value).substr(start, end - start))) {
+        elements.push_back(candidate);
+      }
+    }
+    start = end;
+  }
+  return elements;
+}
+
+v8::Local<v8::Value> Element::GetElementArrayAttribute(
+    std::u16string_view name) {
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  const std::optional<std::vector<Element*>> elements =
+      GetAttrAssociatedElements(name);
+  if (!elements) {
+    cached_attr_associated_elements_.EraseIf(
+        [name](CachedAttrAssociatedElements* cached) {
+          return cached->name == name;
+        });
+    return v8::Null(isolate);
+  }
+  CachedAttrAssociatedElements* cached = nullptr;
+  for (size_t i = 0; i < cached_attr_associated_elements_.size(); ++i) {
+    if (cached_attr_associated_elements_[i]->name == name) {
+      cached = cached_attr_associated_elements_[i];
+      break;
+    }
+  }
+  // The same array while the elements are the same.
+  bool same = cached && cached->elements.size() == elements->size();
+  for (size_t i = 0; same && i < elements->size(); ++i) {
+    same = cached->elements[i] == (*elements)[i];
+  }
+  if (same) {
+    return cached->array.Get(isolate);
+  }
+  if (!cached) {
+    cached = bindings::MakeGarbageCollected<CachedAttrAssociatedElements>(name);
+    cached_attr_associated_elements_.push_back(cached);
+  }
+  cached->elements.clear();
+  std::vector<v8::Local<v8::Value>> wrappers;
+  for (Element* element : *elements) {
+    cached->elements.push_back(element);
+    wrappers.push_back(element->ToV8(isolate));
+  }
+  const v8::Local<v8::Array> array = FrozenArray(isolate, wrappers);
+  cached->array.Reset(isolate, array);
+  return array;
+}
+
+void Element::SetElementArrayAttribute(
+    std::u16string_view name,
+    const std::optional<std::vector<Element*>>& elements) {
+  if (!elements) {
+    ForgetElementsSetFor(name);
+    RemoveAttribute(AttributeOfNoNamespace(name));
+    return;
+  }
+  // aria-actions, which IsElementReflectionAttribute() does not list, keeps
+  // the elements set before through the change of its attribute, so they go
+  // here. An empty list counts as none set, as in Blink.
+  SetAttributeWithoutValidation(name, std::u16string());
+  ForgetElementsSetFor(name);
+  for (Element* element : *elements) {
+    // Each once, in order, as Blink's linked hash set keeps them.
+    bool seen = false;
+    for (size_t i = 0; i < explicitly_set_attr_elements_.size(); ++i) {
+      const ExplicitlySetAttrElement* entry = explicitly_set_attr_elements_[i];
+      seen = seen || (entry->name == name && entry->element == element);
+    }
+    if (!seen) {
+      explicitly_set_attr_elements_.push_back(
+          bindings::MakeGarbageCollected<ExplicitlySetAttrElement>(name,
+                                                                   element));
+    }
+  }
 }
 
 Element::NamedItemType Element::GetNamedItemType() const {

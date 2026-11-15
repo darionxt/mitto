@@ -458,6 +458,14 @@ mitto_bindings_interfaces = [
       "attributes",
       "classList",
       "part",
+      "ariaActiveDescendantElement",
+      "ariaActionsElements",
+      "ariaControlsElements",
+      "ariaDescribedByElements",
+      "ariaDetailsElements",
+      "ariaErrorMessageElements",
+      "ariaFlowToElements",
+      "ariaLabelledByElements",
     ]
   },
   {
@@ -587,6 +595,8 @@ mitto_bindings_interfaces = [
       "formAction",
       "formEnctype",
       "formMethod",
+      "command",
+      "commandForElement",
     ]
   },
   {

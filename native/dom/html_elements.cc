@@ -846,6 +846,66 @@ void HTMLButtonElement::SetFormMethod(const std::u16string& method) {
   SetAttributeWithoutValidation(u"formmethod", method);
 }
 
+namespace {
+
+// The keywords of Blink's GetCommandEventType() that Chrome enables: the
+// popover and dialog commands. Those of HTMLCommandActionsV2 and
+// OverscrollAreas are behind flags that Chrome Releases leave off.
+constexpr std::u16string_view kCommandKeywords[] = {
+    u"toggle-popover", u"show-popover", u"hide-popover",
+    u"close",          u"show-modal",   u"request-close"};
+
+}  // namespace
+
+bool HTMLButtonElement::CanBeCommandInvoker() const {
+  // IsFormAssociatedSubmitButton(), of the form that it is in; the form
+  // attribute comes with forms.
+  if (Type() != u"submit") {
+    return true;
+  }
+  for (Element* ancestor = ParentElement(); ancestor;
+       ancestor = ancestor->ParentElement()) {
+    if (ancestor->HasHTMLTagName(u"form")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::u16string HTMLButtonElement::Command() const {
+  if (!CanBeCommandInvoker()) {
+    return std::u16string();
+  }
+  const std::u16string* const action = FindAttribute(u"command");
+  if (!action || action->empty()) {
+    return std::u16string();
+  }
+  if (action->starts_with(u"--")) {
+    return *action;
+  }
+  for (const std::u16string_view keyword : kCommandKeywords) {
+    if (base::EqualsCaseInsensitiveASCII(*action, keyword)) {
+      return std::u16string(keyword);
+    }
+  }
+  return std::u16string();
+}
+
+void HTMLButtonElement::SetCommand(const std::u16string& command) {
+  SetAttributeWithoutValidation(u"command", command);
+}
+
+Element* HTMLButtonElement::CommandForElement() const {
+  // [Reflect=commandfor]: the element, whatever the button is, as the
+  // bindings give it in Blink, unlike HTMLElement::commandForElement(), which
+  // a command's activation reads.
+  return GetElementAttribute(u"commandfor");
+}
+
+void HTMLButtonElement::SetCommandForElement(Element* element) {
+  SetElementAttribute(u"commandfor", element);
+}
+
 // A command or commandfor attribute makes a button of no valid type a button,
 // which removing it leaves, until the type attribute changes.
 void HTMLButtonElement::AttributeChanged(const QualifiedName& name,
