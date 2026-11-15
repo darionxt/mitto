@@ -208,6 +208,7 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(feature_policy_);
   visitor->Trace(script_runner_);
   current_script_stack_.Trace(visitor);
+  pending_render_blocking_scripts_.Trace(visitor);
   visitor->Trace(template_document_);
   visitor->Trace(template_document_host_);
   visitor->Trace(implementation_);
@@ -1447,14 +1448,44 @@ void Document::FinishedParsing() {
   // never had a body renders now, the fragment of its URL indicates its
   // target, then it may complete.
   if (window_) {
-    window_->BeginLifecycleUpdates();
+    BeginLifecycleUpdatesIfRenderingReady();
     ProcessUrlFragment(GURL(UrlForBinding()));
     CheckCompleted();
   }
 }
 
 void Document::WillInsertBody() {
-  if (window_) {
+  BeginLifecycleUpdatesIfRenderingReady();
+}
+
+void Document::AddPendingRenderBlockingScript(Element& script) {
+  // Blink makes the manager for an HTML document of a window, which takes
+  // scripts until the body is there.
+  if (!window_ || !is_html_ || Body()) {
+    return;
+  }
+  pending_render_blocking_scripts_.push_back(&script);
+}
+
+void Document::RemovePendingRenderBlockingScript(Element& script) {
+  bool found = false;
+  pending_render_blocking_scripts_.EraseIf([&script, &found](Element* item) {
+    found |= item == &script;
+    // One that the collector took has gone too, as from Blink's set.
+    return item == &script || !item;
+  });
+  // Document::RenderBlockingResourceUnblocked().
+  if (found && Body()) {
+    BeginLifecycleUpdatesIfRenderingReady();
+  }
+}
+
+void Document::BeginLifecycleUpdatesIfRenderingReady() {
+  if (!window_) {
+    return;
+  }
+  pending_render_blocking_scripts_.EraseIf([](Element* item) { return !item; });
+  if (pending_render_blocking_scripts_.empty()) {
     window_->BeginLifecycleUpdates();
   }
 }

@@ -225,6 +225,14 @@ Node::InsertionNotificationRequest HTMLScriptElement::InsertedInto(
              : InsertionNotificationRequest::kInsertionDone;
 }
 
+void HTMLScriptElement::RemovedFrom(Node& insertion_point) {
+  HTMLElement::RemovedFrom(insertion_point);
+  // Blink's RemovedFrom(), while the element is still its document's, before
+  // another document adopts it. Blink keeps the script blocking through
+  // moveBefore(), which a Page does not have.
+  GetDocument().RemovePendingRenderBlockingScript(*this);
+}
+
 void HTMLScriptElement::DidNotifySubtreeInsertionsToDocument() {
   loader_->DidNotifySubtreeInsertionsToDocument();
 }
@@ -249,6 +257,8 @@ void HTMLScriptElement::AttributeChanged(const QualifiedName& name,
     loader_->HandleSourceAttribute(new_value ? *new_value : std::u16string());
   } else if (name.local_name == u"async") {
     loader_->HandleAsyncAttribute();
+  } else if (name.local_name == u"blocking" && !IsPotentiallyRenderBlocking()) {
+    GetDocument().RemovePendingRenderBlockingScript(*this);
   }
 }
 

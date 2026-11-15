@@ -346,6 +346,13 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         // Module scripts are a Known Gap.
         return nullptr;
       case ScriptTypeAtPrepare::kClassic:
+        // Step 31.7: block rendering on el, which Blink does ahead of the
+        // steps of each type. A module script, a Known Gap that never runs,
+        // blocks nothing.
+        if (potentially_render_blocking) {
+          element_document.AddPendingRenderBlockingScript(
+              ScriptElement().AsElement());
+        }
         // Chrome's intervention against a script of another site that
         // blocks the parser and that document.write() inserted.
         MaybeDisallowFetchForDocWrittenScript(
