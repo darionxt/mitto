@@ -218,6 +218,30 @@ _CASES["inserted_moved"] = Case(
     }
 )
 
+# SVG scripts that the DOM inserts: as soon as each arrives, unless an async attribute that comes and goes made them
+# run in order. Each first script waits until the second has been served.
+_CASES["svg_inserted_order"] = Case(
+    {
+        "/": _page(
+            "<svg id=g></svg><script>"
+            "function svgScript(id, inOrder, onload) {"
+            " const s = document.createElementNS('http://www.w3.org/2000/svg', 'script'); s.id = id;"
+            " s.setAttribute('href', '/' + id + '.js');"
+            " if (inOrder) { s.setAttribute('async', ''); s.removeAttribute('async'); }"
+            " s.addEventListener('load', () => { log(id + ' load'); if (onload) { onload(); } });"
+            " document.getElementById('g').append(s); }"
+            "svgScript('a1', false, () => {"
+            " svgScript('o1', true); svgScript('o2', true, () => setTimeout(() => finish(logged), 100)); });"
+            "svgScript('a2');"
+            "</script>"
+        ),
+        "/a1.js": _js("log('a1 ' + current());", hold="served:/a2.js"),
+        "/a2.js": _js("log('a2 ' + current());"),
+        "/o1.js": _js("log('o1 ' + current());", hold="served:/o2.js"),
+        "/o2.js": _js("log('o2 ' + current());"),
+    }
+)
+
 # Which types and languages run, nomodule, event and for, and HTMLScriptElement.supports().
 _TYPES = [
     ("no type", ""),
@@ -590,6 +614,16 @@ _CHROME: dict[str, list[str]] = {
         "marked",
         "i ran i",
         "i load connected false",
+    ],
+    "svg_inserted_order": [
+        "a2 a2",
+        "a2 load",
+        "a1 a1",
+        "a1 load",
+        "o1 o1",
+        "o1 load",
+        "o2 o2",
+        "o2 load",
     ],
     "script_types": [
         "no type",

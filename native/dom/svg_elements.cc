@@ -1829,6 +1829,10 @@ void SVGScriptElement::AttributeChanged(const QualifiedName& name,
                      *name.namespace_uri == html_names::kXlinkNamespace);
   if (href) {
     loader_->HandleSourceAttribute(SourceAttributeValue().value_or(u""));
+  } else if (!name.namespace_uri && name.local_name == u"async") {
+    // ParseAttribute(), as SvgScriptElementAsyncAttribute has it: a script
+    // whose async attribute comes or goes is no longer forced async.
+    loader_->HandleAsyncAttribute();
   }
 }
 
