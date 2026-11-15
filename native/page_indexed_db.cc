@@ -7,6 +7,7 @@
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/sequenced_task_runner.h"
 #include "mitto/indexed_db/engine.h"
 #include "mitto/indexed_db/indexed_db_context.h"
 #include "mitto/page_messages.h"
@@ -83,13 +84,20 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
       return;
     }
     gave_connection_ = true;
-    if (!host_->AdoptConnection(connection_, std::move(connection))) {
-      return;
-    }
     PageIndexedDbCallback callback;
     callback.op = IndexedDbCallbackOp::kUpgradeNeeded;
     callback.old_version = old_version;
     callback.metadata = metadata;
+    if (!Fits(callback)) {
+      // Closing the connection aborts the upgrade, whose error the Page has
+      // heard already.
+      FailForSize();
+      DropConnection(std::move(connection));
+      return;
+    }
+    if (!host_->AdoptConnection(connection_, std::move(connection))) {
+      return;
+    }
     Send(std::move(callback));
   }
 
@@ -98,17 +106,36 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
     if (!host_) {
       return;
     }
+    PageIndexedDbCallback callback;
+    callback.op = IndexedDbCallbackOp::kOpenSuccess;
+    callback.metadata = metadata;
+    const bool fits = Fits(callback);
     if (connection) {
       // Opened without an upgrade: its transaction's number was never used.
       gave_connection_ = true;
       host_->transactions_.erase(transaction_);
+      if (!fits) {
+        FailForSize();
+        DropConnection(std::move(connection));
+        return;
+      }
       if (!host_->AdoptConnection(connection_, std::move(connection))) {
         return;
       }
+    } else if (!fits) {
+      // After an upgrade, whose database the Page holds: it closes, as one
+      // that the browser closes does.
+      FailForSize();
+      const auto found = host_->connections_.find(connection_);
+      if (found != host_->connections_.end() && found->second) {
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE,
+            base::BindOnce(&IndexedDbConnection::CloseAndReportForceClose,
+                           found->second->AsWeakPtr(),
+                           "The result is too large."));
+      }
+      return;
     }
-    PageIndexedDbCallback callback;
-    callback.op = IndexedDbCallbackOp::kOpenSuccess;
-    callback.metadata = metadata;
     Send(std::move(callback));
   }
 
@@ -121,9 +148,36 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
 
  private:
   void Send(PageIndexedDbCallback callback) {
-    if (host_) {
+    if (host_ && !failed_) {
       host_->SendReply(call_, std::move(callback));
     }
+  }
+
+  bool Fits(PageIndexedDbCallback& callback) const {
+    callback.call = call_;
+    return IndexedDbCallbackFits(callback);
+  }
+
+  // A database whose metadata is too large for a frame, which Chrome's larger
+  // Mojo messages hold: the open fails, and hears nothing more.
+  void FailForSize() {
+    PageIndexedDbCallback error;
+    error.op = IndexedDbCallbackOp::kError;
+    error.error = IndexedDbException::kUnknownError;
+    error.message = u"The result is too large.";
+    Send(std::move(error));
+    failed_ = true;
+  }
+
+  // Lets go of a connection that the Page never took, and of its numbers. It
+  // closes in a task of its own, as a renderer's dropped remote does, rather
+  // than inside the open that gave it.
+  void DropConnection(std::unique_ptr<IndexedDbConnection> connection) {
+    host_->connections_.erase(connection_);
+    host_->connection_contexts_.erase(connection_);
+    host_->transactions_.erase(transaction_);
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(connection));
   }
 
   const base::WeakPtr<PageIndexedDb> host_;
@@ -133,6 +187,7 @@ class PageIndexedDb::FactoryClient final : public IndexedDbFactoryClient {
   const uint64_t connection_;
   const uint64_t transaction_;
   bool gave_connection_ = false;
+  bool failed_ = false;
 };
 
 // blink.mojom.IDBDatabaseCallbacks of one connection.
@@ -584,6 +639,11 @@ void PageIndexedDb::SendCallback(PageIndexedDbCallback callback) {
     }
     PageIndexedDbCallback error;
     error.op = callback.op;
+    if (callback.op == IndexedDbCallbackOp::kUpgradeNeeded ||
+        callback.op == IndexedDbCallbackOp::kOpenSuccess) {
+      // These carry no error: the factory's own answer does.
+      error.op = IndexedDbCallbackOp::kError;
+    }
     error.call = callback.call;
     error.connection = callback.connection;
     error.transaction = callback.transaction;

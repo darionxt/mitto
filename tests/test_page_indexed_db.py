@@ -213,3 +213,26 @@ def test_a_name_too_large_for_a_frame_aborts_its_transaction(server_origin: str)
 
     assert outcome == "AbortError"
     assert databases == []
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_open_whose_database_is_too_large_for_a_frame_fails(server_origin: str) -> None:
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        # Two stores' names of 10 MiB each in UTF-16 fit a frame one at a time, but the database's metadata does not.
+        outcome = page.evaluate(
+            "(async () => { const log = [];"
+            " const open = (version) => new Promise((resolve) => {"
+            " const r = version ? indexedDB.open('meta', version) : indexedDB.open('meta');"
+            " r.onupgradeneeded = () => { const db = r.result; if (db.objectStoreNames.length) { return; }"
+            " db.onclose = () => { log.push('close'); resolve(); };"
+            " db.createObjectStore('a'.repeat(5 << 20)); db.createObjectStore('b'.repeat(5 << 20));"
+            " r.transaction.oncomplete = () => log.push('complete'); };"
+            " r.onsuccess = () => { log.push('success'); r.result.close(); resolve(); };"
+            " r.onerror = () => { log.push(`${r.error.name}: ${r.error.message}`); if (version !== 1) { resolve(); } }; });"
+            " await open(1); await open(undefined); await open(2);"
+            " log.push(await indexedDB.databases()); return log; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    too_large = "UnknownError: The result is too large."
+    assert outcome == ["complete", too_large, "close", too_large, too_large, [{"name": "meta", "version": 1}]]
