@@ -17,6 +17,8 @@ PageTransitionEvent* PageTransitionEvent::CreateTrusted(
     const std::u16string& type,
     bool persisted) {
   bindings::PageTransitionEventInit init;
+  init.bubbles = true;
+  init.cancelable = true;
   init.persisted = persisted;
   PageTransitionEvent* const event = Create(type, init);
   event->SetTrusted(true);

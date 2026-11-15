@@ -36,7 +36,8 @@ _RECORD_EVENTS = """
     document.cookie = 'events=' + (seen ? seen + ',' : '') + name;
   };
   addEventListener('beforeunload', () => record('beforeunload'));
-  addEventListener('pagehide', (e) => record('pagehide ' + e.persisted + ' ' + e.target.nodeName));
+  addEventListener('pagehide', (e) =>
+    record(['pagehide', e.persisted, e.bubbles, e.cancelable, e.target.nodeName].join(' ')));
   document.addEventListener('visibilitychange', () => record('visibilitychange ' + document.visibilityState));
   addEventListener('unload', () => record('unload'));
 </script>
@@ -214,7 +215,8 @@ def test_the_old_document_unloads_before_the_new_one_takes_its_place(session: mi
         "/second",
         "<script>window.seen = [];"
         "addEventListener('load', () => seen.push('load'));"
-        "addEventListener('pageshow', (e) => seen.push('pageshow ' + e.persisted + ' ' + e.target.nodeName));"
+        "addEventListener('pageshow', (e) => seen.push("
+        "['pageshow', e.persisted, e.bubbles, e.cancelable, e.target.nodeName].join(' ')));"
         "</script>",
     )
     first = server.page("/first", f"<body>{_RECORD_EVENTS}")
@@ -222,13 +224,14 @@ def test_the_old_document_unloads_before_the_new_one_takes_its_place(session: mi
     with _open_page(session, first) as page:
         page.evaluate("location.href = '/second'")
         assert _next(page).url == second
-        assert page.evaluate("seen") == ["load", "pageshow false #document"]
+        # Blink makes both page transition events bubble and cancelable.
+        assert page.evaluate("seen") == ["load", "pageshow false true true #document"]
         # The seed of the Session's Persona deprecates unload on every page of HTTP or HTTPS, so the listener was
         # refused, as Chrome refuses it, with the console's word.
         assert page.console_messages[0] == _native.ConsoleMessage(
             level="error", text="Permissions policy violation: unload is not allowed in this document."
         )
-    assert _events(session) == ["beforeunload", "pagehide false #document", "visibilitychange hidden"]
+    assert _events(session) == ["beforeunload", "pagehide false true true #document", "visibilitychange hidden"]
 
 
 def test_a_navigation_within_the_document_changes_its_url_with_popstate_then_hashchange(
