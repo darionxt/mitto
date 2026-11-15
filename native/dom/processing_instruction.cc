@@ -9,6 +9,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_processing_instruction.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/markup_serializer.h"
 #include "mitto/dom/qualified_name.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
@@ -416,11 +417,11 @@ std::vector<std::u16string> ProcessingInstruction::GetAttributeNames() {
   return names;
 }
 
-// MarkupFormatter::AppendAttributeValue() escapes each value as an HTML
-// attribute's. Blink's SetDataFromAttributeChange() writes the data as
-// observers hear of it, without moving live ranges in it and without reading
-// it again, so the attributes stay as set even where XML would read the data
-// otherwise.
+// MarkupFormatter::AppendAttributeValue() escapes each value as an attribute's
+// of the document's kind of markup, HTML or XML. Blink's
+// SetDataFromAttributeChange() writes the data as observers hear of it,
+// without moving live ranges in it and without reading it again, so the
+// attributes stay as set even where XML would read the data otherwise.
 void ProcessingInstruction::UpdateDataFromAttributes() {
   std::u16string data;
   for (size_t i = 0; i < attributes_.size(); ++i) {
@@ -429,7 +430,8 @@ void ProcessingInstruction::UpdateDataFromAttributes() {
     }
     data += attributes_[i].first;
     data += u"=\"";
-    data += EscapeAttributeValue(attributes_[i].second);
+    data += EscapeAttributeValue(attributes_[i].second,
+                                 GetDocument().IsHTMLDocument());
     data += u'"';
   }
   SetDataWithoutUpdate(data);

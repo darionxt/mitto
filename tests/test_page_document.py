@@ -357,3 +357,26 @@ def test_a_processing_instruction_with_a_namespace_declared_twice_has_no_attribu
     """
 
     assert _evaluate(program, script) == '[] [] ["a"]'
+
+
+def test_a_processing_instruction_escapes_attributes_by_its_documents_markup(program: Path) -> None:
+    # HTML escapes a no-break space and keeps tabs and line breaks, XML writes those as character references and keeps
+    # the no-break space, so that an XML document reads the value back, as Chrome 157 gave.
+    script = """
+        const show = (data) => [...data].map((c) => {
+          const code = c.charCodeAt(0);
+          return code < 32 || code > 126 ? `U+${code.toString(16)}` : c;
+        }).join('');
+        const value = '\\u00a0<>&"\\'\\t\\n\\r x';
+        [document, new Document()].map((doc) => {
+          const pi = doc.createProcessingInstruction('t', '');
+          pi.setAttribute('a', value);
+          const data = show(pi.data);
+          pi.data = pi.data;
+          return `${data} ${pi.getAttribute('a') === value}`;
+        }).join(' | ')
+    """
+
+    assert _evaluate(program, script) == (
+        "a=\"&nbsp;&lt;&gt;&amp;&quot;'U+9U+aU+d x\" false | a=\"U+a0&lt;&gt;&amp;&quot;'&#9;&#10;&#13; x\" true"
+    )

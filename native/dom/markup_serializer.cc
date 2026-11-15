@@ -221,9 +221,41 @@ std::u16string SerializeNode(const Node& node) {
   return markup;
 }
 
-std::u16string EscapeAttributeValue(std::u16string_view value) {
+std::u16string EscapeAttributeValue(std::u16string_view value,
+                                    bool for_html) {
   std::u16string escaped;
-  AppendEscaped(escaped, value, /*in_attribute=*/true);
+  if (for_html) {
+    AppendEscaped(escaped, value, /*in_attribute=*/true);
+    return escaped;
+  }
+  // Blink's kEntityMaskInAttributeValue.
+  for (const char16_t c : value) {
+    switch (c) {
+      case '&':
+        escaped += u"&amp;";
+        break;
+      case '<':
+        escaped += u"&lt;";
+        break;
+      case '>':
+        escaped += u"&gt;";
+        break;
+      case '"':
+        escaped += u"&quot;";
+        break;
+      case '\t':
+        escaped += u"&#9;";
+        break;
+      case '\n':
+        escaped += u"&#10;";
+        break;
+      case '\r':
+        escaped += u"&#13;";
+        break;
+      default:
+        escaped += c;
+    }
+  }
   return escaped;
 }
 
