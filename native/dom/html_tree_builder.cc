@@ -6,15 +6,18 @@
 #include <initializer_list>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/document.h"
@@ -24,11 +27,13 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_template_element.h"
+#include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/text.h"
 #include "mitto/html/html_token.h"
 #include "mitto/html/html_tokenizer.h"
 #include "v8/include/cppgc/persistent.h"
+#include "v8/include/v8-isolate.h"
 
 namespace mitto {
 
@@ -564,6 +569,18 @@ class HtmlTreeBuilder {
     HtmlToken token;
   };
 
+  // Blink's Patch, for a template whose for attribute names markers, as
+  // DocumentPatching, on for stable in the Engine Release, has it: the
+  // template's children go in `parent`, and the template goes nowhere.
+  // DeclarativeFragment, which would buffer a patch or fetch it, is
+  // experimental, so no patch here does.
+  struct Patch {
+    raw_ptr<Node> parent;
+    raw_ptr<Node> start_marker;
+    // None for a start marker with no end marker.
+    raw_ptr<Node> end_marker;
+  };
+
   static bool IsHtmlAnnotationXml(const Element& element) {
     if (!IsMathMlElementNamed(element, {u"annotation-xml"})) {
       return false;
@@ -665,7 +682,9 @@ class HtmlTreeBuilder {
 
   void Pop() {
     CHECK_GT(open_elements_.size(), 1u);
+    Element& element = *open_elements_.back().element;
     open_elements_.pop_back();
+    FinishParsingChildren(element);
   }
 
   // Pops elements until one of the HTML namespace named `name` is popped.
@@ -718,7 +737,13 @@ class HtmlTreeBuilder {
     }
   }
 
-  void PopAll() { open_elements_.clear(); }
+  void PopAll() {
+    while (!open_elements_.empty()) {
+      Element& element = *open_elements_.back().element;
+      open_elements_.pop_back();
+      FinishParsingChildren(element);
+    }
+  }
 
   // The index of `element` in the stack.
   std::optional<size_t> StackIndexOf(const Element* element) const {
@@ -734,10 +759,11 @@ class HtmlTreeBuilder {
     return StackIndexOf(element).has_value();
   }
 
-  void RemoveFromStack(const Element* element) {
+  void RemoveFromStack(Element* element) {
     if (const std::optional<size_t> index = StackIndexOf(element)) {
       open_elements_.erase(open_elements_.begin() +
                            static_cast<ptrdiff_t>(*index));
+      FinishParsingChildren(*element);
     }
   }
 
@@ -934,16 +960,23 @@ class HtmlTreeBuilder {
   }
 
   // Blink's OwnerDocumentForCurrentNode(): the document of what goes in the
-  // current node, which for a template is its contents' template document.
+  // current node, which for a template is its contents' template document,
+  // or for a patching one the document of where its patch puts its children.
   Document& OwnerDocumentForCurrentNode() const {
     if (open_elements_.empty()) {
       return *document_;
     }
-    Element& node = CurrentNode();
-    if (IsTemplate(node)) {
-      return static_cast<HTMLTemplateElement&>(node).Content()->GetDocument();
+    Node* node = &CurrentNode();
+    while (IsTemplate(*node)) {
+      const auto it = patches_.find(static_cast<Element*>(node));
+      if (it == patches_.end()) {
+        return static_cast<HTMLTemplateElement*>(node)
+            ->Content()
+            ->GetDocument();
+      }
+      node = it->second.parent;
     }
-    return node.GetDocument();
+    return node->GetDocument();
   }
 
   // Blink's "create an element for the token". The attributes of a foreign
@@ -972,18 +1005,19 @@ class HtmlTreeBuilder {
   // Lets go of the elements that the builder no longer refers to, once they
   // are many, so that elements that a script removed can go.
   void CompactReferences() {
-    size_t live = open_elements_.size() + formatting_elements_.size() + 4;
+    size_t live = open_elements_.size() + formatting_elements_.size() +
+                  4 * patches_.size() + 4;
     if (references_->size() <= 2 * live + 256) {
       return;
     }
-    std::vector<Element*> elements;
-    elements.reserve(live);
+    std::vector<Node*> nodes;
+    nodes.reserve(live);
     for (const OpenElement& entry : open_elements_) {
-      elements.push_back(entry.element);
+      nodes.push_back(entry.element);
     }
     for (const FormattingEntry& entry : formatting_elements_) {
       if (!entry.IsMarker()) {
-        elements.push_back(entry.element);
+        nodes.push_back(entry.element);
       }
     }
     for (Element* const element :
@@ -991,10 +1025,19 @@ class HtmlTreeBuilder {
           static_cast<Element*>(root_), static_cast<Element*>(head_element_),
           static_cast<Element*>(form_element_)}) {
       if (element) {
-        elements.push_back(element);
+        nodes.push_back(element);
       }
     }
-    references_->KeepOnly(elements);
+    for (const auto& [template_element, patch] : patches_) {
+      for (Node* const node :
+           {static_cast<Node*>(template_element), patch.parent.get(),
+            patch.start_marker.get(), patch.end_marker.get()}) {
+        if (node) {
+          nodes.push_back(node);
+        }
+      }
+    }
+    references_->KeepOnly(nodes);
   }
 
   static void DetachFromParent(Node& node) {
@@ -1004,13 +1047,26 @@ class HtmlTreeBuilder {
   }
 
   // The standard's "appropriate place for inserting a node" for a template:
-  // the end of its contents.
-  static void AdjustForTemplate(InsertionLocation& location) {
-    if (IsTemplate(*location.parent)) {
-      location.parent =
-          static_cast<HTMLTemplateElement*>(location.parent.Get())->Content();
-      location.next_child = nullptr;
+  // the end of its contents, or where its patch puts its children
+  // (Patch::Apply()): before the patch's end marker while that is still in
+  // the patch's parent, else at the parent's end.
+  void AdjustForTemplate(InsertionLocation& location) const {
+    if (!IsTemplate(*location.parent)) {
+      return;
     }
+    auto* const template_element =
+        static_cast<HTMLTemplateElement*>(location.parent.Get());
+    if (const auto it = patches_.find(template_element); it != patches_.end()) {
+      const Patch& patch = it->second;
+      location.parent = patch.parent.get();
+      location.next_child =
+          patch.end_marker && patch.end_marker->ParentNode() == patch.parent
+              ? patch.end_marker.get()
+              : nullptr;
+      return;
+    }
+    location.parent = template_element->Content();
+    location.next_child = nullptr;
   }
 
   void Insert(InsertionLocation location, Node* child) {
@@ -1141,19 +1197,141 @@ class HtmlTreeBuilder {
   // Blink's InsertHTMLTemplateElement(). A template with a shadowrootmode in
   // a document attaches a declarative shadow root to the current node, which
   // shadow trees will do; until then the template goes in as Blink puts one
-  // whose root cannot attach.
+  // whose root cannot attach, and does not patch, as one whose root attached
+  // would not. A template whose for attribute names markers that a patch
+  // finds goes nowhere: its children go where the markers are.
   void InsertHTMLTemplateElement(const HtmlToken& token) {
     Element* const element = CreateElement(token, html_names::kXhtmlNamespace);
     const std::u16string* const mode =
         FindTokenAttribute(token, u"shadowrootmode");
-    if (!IsFragment() && mode &&
+    const bool attaches_shadow_root =
+        !IsFragment() && mode &&
         (base::EqualsCaseInsensitiveASCII(*mode, u"open") ||
-         base::EqualsCaseInsensitiveASCII(*mode, u"closed"))) {
+         base::EqualsCaseInsensitiveASCII(*mode, u"closed"));
+    if (attaches_shadow_root) {
       Skip("declarative shadow roots");
     }
     const InsertionLocation location = CurrentInsertionLocation();
     Push(element, &token);
+    if (const std::u16string* const target = element->FindAttribute(u"for");
+        target && !attaches_shadow_root) {
+      if (const std::optional<Patch> patch =
+              PreparePatch(location.parent.Get(), *target)) {
+        patches_.emplace(element, *patch);
+        for (Node* const node : {patch->parent.get(), patch->start_marker.get(),
+                                 patch->end_marker.get()}) {
+          if (node) {
+            references_->Keep(node);
+          }
+        }
+        return;
+      }
+    }
     Attach(location, element);
+  }
+
+  // Blink's Patch::Prepare() for `<template for=marker_name>`, whose children
+  // would go in `scope`: the markers named so in the nearest scope that is no
+  // template, the document's element for the body. A <?marker name=…> patch
+  // goes before the marker; a <?start name=…> one replaces what lies between
+  // it and its <?end>, which a page's removal takes out at once, or all that
+  // follows it with no end. None for an empty name, which DeclarativeFragment,
+  // experimental, would take.
+  std::optional<Patch> PreparePatch(Node* scope,
+                                    const std::u16string& marker_name) {
+    while (IsTemplate(*scope)) {
+      const auto it = patches_.find(static_cast<Element*>(scope));
+      scope = it != patches_.end()
+                  ? it->second.parent.get()
+                  : static_cast<HTMLTemplateElement*>(scope)->Content();
+    }
+    if (marker_name.empty()) {
+      return std::nullopt;
+    }
+    Document& document = scope->GetDocument();
+    if (scope == document.Body()) {
+      scope = document.DocumentElement();
+    }
+    for (Node* node = scope->FirstChild(); node;
+         node = NextInTree(*node, *scope)) {
+      if (node->GetNodeType() != Node::kProcessingInstructionNode) {
+        continue;
+      }
+      auto* const marker = static_cast<ProcessingInstruction*>(node);
+      if (marker->GetAttribute(u"name").value_or(u"") != marker_name) {
+        continue;
+      }
+      if (marker->Target() == u"marker") {
+        return Patch{marker->ParentNode(), marker, marker};
+      }
+      if (marker->Target() != u"start") {
+        continue;
+      }
+      Node* const parent = marker->ParentNode();
+      Node* end_marker = nullptr;
+      std::vector<cppgc::Persistent<Node>> removed;
+      int depth = 0;
+      for (Node* next = marker->NextSibling(); next;
+           next = next->NextSibling()) {
+        if (next->GetNodeType() == Node::kProcessingInstructionNode) {
+          const std::u16string& target =
+              static_cast<ProcessingInstruction*>(next)->Target();
+          if (target == u"start") {
+            ++depth;
+          } else if (target == u"end") {
+            if (depth == 0) {
+              end_marker = next;
+              break;
+            }
+            --depth;
+          }
+        }
+        removed.emplace_back(next);
+      }
+      // NodeRemovalScope: the page's removal, which mutation observers hear
+      // of, while document.write() throws.
+      {
+        const ThrowOnDynamicMarkupInsertionCountIncrementer throw_on_write(
+            document);
+        for (const cppgc::Persistent<Node>& removed_node : removed) {
+          bindings::ExceptionState exception_state(v8::Isolate::GetCurrent());
+          removed_node->Remove(exception_state);
+        }
+      }
+      return Patch{parent, marker, end_marker};
+    }
+    return std::nullopt;
+  }
+
+  // NodeTraversal::Next() within `root`: the node after `node` in tree order.
+  static Node* NextInTree(const Node& node, const Node& root) {
+    if (Node* const child = node.FirstChild()) {
+      return child;
+    }
+    for (const Node* current = &node; current != &root;
+         current = current->ParentNode()) {
+      if (Node* const next = current->NextSibling()) {
+        return next;
+      }
+    }
+    return nullptr;
+  }
+
+  // Blink's FinishParsingChildren() of an element that leaves the stack of
+  // open elements: a patching template's patch finishes
+  // (Patch::Finalize()), its markers and the template going.
+  void FinishParsingChildren(Element& element) {
+    const auto it = patches_.find(&element);
+    if (it == patches_.end()) {
+      return;
+    }
+    const Patch patch = it->second;
+    patches_.erase(it);
+    DetachFromParent(*patch.start_marker);
+    if (patch.end_marker && patch.end_marker != patch.start_marker) {
+      DetachFromParent(*patch.end_marker);
+    }
+    DetachFromParent(element);
   }
 
   void MergeAttributes(Element& element, const HtmlToken& token) {
@@ -1252,7 +1430,7 @@ class HtmlTreeBuilder {
         ProcessComment(token);
         return;
       case HtmlToken::Type::kProcessingInstruction:
-        ProcessProcessingInstruction();
+        ProcessProcessingInstruction(token);
         return;
       case HtmlToken::Type::kEndOfFile:
         ProcessEndOfFile();
@@ -1263,12 +1441,39 @@ class HtmlTreeBuilder {
     }
   }
 
-  void ProcessProcessingInstruction() {
-    if (mode_ == Mode::kInTableText) {
-      DefaultForInTableText();
+  // Blink's ProcessProcessingInstruction(), as HTMLProcessingInstruction, on
+  // for stable in the Engine Release, has it: in the document's modes before
+  // and after its element, on the document, and in "after body" on the html
+  // element, as a comment goes.
+  void ProcessProcessingInstruction(const HtmlToken& token) {
+    switch (mode_) {
+      case Mode::kInitial:
+      case Mode::kBeforeHtml:
+      case Mode::kAfterAfterBody:
+      case Mode::kAfterAfterFrameset:
+        Attach(
+            {document_.get(), nullptr},
+            ProcessingInstruction::Create(*document_, token.name, token.data));
+        return;
+      case Mode::kAfterBody:
+        Attach(
+            {open_elements_.front().element.get(), nullptr},
+            ProcessingInstruction::Create(*document_, token.name, token.data));
+        return;
+      case Mode::kInTableText:
+        DefaultForInTableText();
+        ProcessProcessingInstruction(token);
+        return;
+      default:
+        InsertProcessingInstruction(token);
+        return;
     }
-    // Blink inserts a ProcessingInstruction node, which has no class here.
-    Skip("processing instructions");
+  }
+
+  void InsertProcessingInstruction(const HtmlToken& token) {
+    Attach(CurrentInsertionLocation(),
+           ProcessingInstruction::Create(OwnerDocumentForCurrentNode(),
+                                         token.name, token.data));
   }
 
   void ProcessDoctype(const HtmlToken& token) {
@@ -2902,7 +3107,7 @@ class HtmlTreeBuilder {
       case HtmlToken::Type::kDoctype:
         return;
       case HtmlToken::Type::kProcessingInstruction:
-        ProcessProcessingInstruction();
+        InsertProcessingInstruction(token);
         return;
       case HtmlToken::Type::kComment:
         InsertComment(token.data);
@@ -2998,6 +3203,8 @@ class HtmlTreeBuilder {
   bool skip_leading_newline_ = false;
   bool redirect_to_foster_parent_ = false;
   raw_ptr<HTMLScriptElement> ended_script_;
+  // The patch of each patching template that is still open.
+  base::flat_map<Element*, Patch> patches_;
   std::vector<std::string> skipped_rules_;
 };
 
@@ -3016,20 +3223,18 @@ HtmlTreeBuilderReferences::~HtmlTreeBuilderReferences() = default;
 
 void HtmlTreeBuilderReferences::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
-  elements_.Trace(visitor);
+  nodes_.Trace(visitor);
 }
 
-void HtmlTreeBuilderReferences::Keep(Element* element) {
-  elements_.push_back(element);
+void HtmlTreeBuilderReferences::Keep(Node* node) {
+  nodes_.push_back(node);
 }
 
-void HtmlTreeBuilderReferences::KeepOnly(
-    const std::vector<Element*>& elements) {
+void HtmlTreeBuilderReferences::KeepOnly(const std::vector<Node*>& nodes) {
   // In place, with nothing allocated on the C++ heap, so that no collection
-  // runs while an element that the builder still holds is out of the list.
-  const base::flat_set<const Element*> kept(elements.begin(), elements.end());
-  elements_.EraseIf(
-      [&kept](Element* element) { return !kept.contains(element); });
+  // runs while a node that the builder still holds is out of the list.
+  const base::flat_set<const Node*> kept(nodes.begin(), nodes.end());
+  nodes_.EraseIf([&kept](Node* node) { return !kept.contains(node); });
 }
 
 HtmlParserOptions HtmlParserOptions::ForDocument(const Document& document) {
