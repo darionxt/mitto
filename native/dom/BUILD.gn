@@ -310,6 +310,8 @@ source_set("dom") {
     "objects_behind.h",
     "page_interfaces.cc",
     "page_interfaces.h",
+    "page_reveal_event.cc",
+    "page_reveal_event.h",
     "page_transition_event.cc",
     "page_transition_event.h",
     "pending_script.cc",

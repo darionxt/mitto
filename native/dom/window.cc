@@ -176,6 +176,18 @@ void Window::EnqueueAnimationFrameEvent(EventTarget& target,
   }
 }
 
+void Window::DeferLifecycleUpdates() {
+  if (animation_frames_) {
+    animation_frames_->DeferLifecycleUpdates();
+  }
+}
+
+void Window::BeginLifecycleUpdates() {
+  if (animation_frames_) {
+    animation_frames_->BeginLifecycleUpdates();
+  }
+}
+
 size_t Window::ScheduledTaskCount() const {
   return scheduler_ ? scheduler_->pending_tasks() : 0;
 }

@@ -52,9 +52,13 @@ void HTMLMetaElement::ProcessHttpEquiv() {
   if (!content || !http_equiv || http_equiv->empty()) {
     return;
   }
+  // HttpEquiv::Process().
   if (base::EqualsCaseInsensitiveASCII(*http_equiv, u"refresh")) {
     GetDocument().GetHttpRefreshScheduler().MaybeHandle(
         *content, HttpRefreshScheduler::Source::kMetaTag);
+  } else if (base::EqualsCaseInsensitiveASCII(*http_equiv,
+                                              u"content-language")) {
+    GetDocument().SetContentLanguage(*content);
   }
 }
 

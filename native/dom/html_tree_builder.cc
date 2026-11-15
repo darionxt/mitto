@@ -1126,6 +1126,8 @@ class HtmlTreeBuilder {
     Element* const body = CreateElement(token, html_names::kXhtmlNamespace);
     Attach(CurrentInsertionLocation(), body);
     Push(body);
+    // HTMLConstructionSite::InsertHTMLBodyElement().
+    document_->WillInsertBody();
   }
 
   void InsertHTMLHtmlElement(const HtmlToken& token) {
