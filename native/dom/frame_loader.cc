@@ -18,6 +18,7 @@
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/error_reporting.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/navigation.h"
@@ -178,6 +179,11 @@ void CommitSameDocumentNavigation(Window& window,
   PopStateEvent* const popstate = PopStateEvent::Create(u"popstate", init);
   popstate->SetTrusted(true);
   window.DispatchEvent(popstate);
+  // FrameLoader::ProcessScrollForSameDocumentNavigation(), after the events
+  // of the commit: this navigation's fragment indicates the document's
+  // target, also when a listener has navigated on meanwhile, as Blink takes
+  // the URL that it commits.
+  document.ProcessUrlFragment(url);
 }
 
 // Runs the script of a javascript: URL in the current window, from its task,
@@ -193,18 +199,19 @@ void ExecuteJavaScriptUrl(std::u16string source) {
   const v8::TryCatch try_catch(isolate);
   v8::Local<v8::String> code;
   v8::Local<v8::Script> script;
+  // ClassicScript::CreateUnspecifiedScript(): no URL of its own, and its
+  // errors, a SyntaxError among them, go to the window as they are.
+  v8::ScriptOrigin origin = ClassicScriptOrigin(v8::String::Empty(isolate),
+                                                /*muted_errors=*/false, 0, 0);
   if (source.size() <= static_cast<size_t>(v8::String::kMaxLength) &&
       v8::String::NewFromTwoByte(
           isolate, reinterpret_cast<const uint16_t*>(source.data()),
           v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
           .ToLocal(&code) &&
-      v8::Script::Compile(context, code).ToLocal(&script)) {
+      v8::Script::Compile(context, code, &origin).ToLocal(&script)) {
     std::ignore = script->Run(context);
   }
-  if (try_catch.HasCaught() && try_catch.CanContinue()) {
-    bindings::ReportException(isolate, try_catch.Exception(),
-                              try_catch.Message());
-  }
+  ReportScriptException(isolate, try_catch);
 }
 
 // Document::ProcessJavaScriptUrl(): the script of `url` runs from a task of
