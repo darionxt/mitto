@@ -22,12 +22,15 @@ class ToggleEvent final : public Event {
   static ToggleEvent* Create(const std::u16string& type,
                              const bindings::ToggleEventInit& init);
   // A trusted event that does not bubble, from `old_state` to `new_state`,
-  // "open" or "closed", as Blink's details and dialog elements make it: a
-  // dialog's beforetoggle for opening can be canceled.
+  // "open" or "closed", as Blink's details and dialog elements and popovers
+  // make it: a dialog's or a popover's beforetoggle for opening can be
+  // canceled, and a popover's events name the element that showed it, if
+  // any.
   static ToggleEvent* CreateTrusted(const std::u16string& type,
                                     const std::u16string& old_state,
                                     const std::u16string& new_state,
-                                    bool cancelable = false);
+                                    bool cancelable = false,
+                                    Element* source = nullptr);
 
   ToggleEvent(const std::u16string& type,
               const bindings::ToggleEventInit& init);

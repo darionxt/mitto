@@ -13,6 +13,8 @@
 
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/element.h"
+#include "mitto/dom/popover_data.h"
+#include "v8/include/cppgc/member.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-value.h"
 
@@ -65,6 +67,47 @@ class HTMLElement : public Element {
   // Blink's HTMLElement::click() does for a script.
   void Click() { DispatchSimulatedClick(); }
 
+  // The Popover API, as Blink's togglePopover(), showPopover() and
+  // hidePopover() run it: the beforetoggle event, the popover stacks, which
+  // showing an auto or hint popover closes down to its nearest open popover
+  // ancestor, and the toggle event that a task fires, which a later change
+  // folds into itself. A Page has no focus, top layer, close watcher or
+  // light dismiss for a popover yet.
+  bool TogglePopover(
+      const std::optional<bindings::TogglePopoverOptionsOrBoolean>& options,
+      bindings::ExceptionState& exception_state);
+  void ShowPopover(const std::optional<bindings::ShowPopoverOptions>& options,
+                   bindings::ExceptionState& exception_state);
+  void HidePopover(bindings::ExceptionState& exception_state);
+
+  // Whether its popover attribute makes it a popover, of which type.
+  bool IsPopover() const { return popover_data_; }
+  PopoverValueType PopoverType() const;
+  // Whether it shows as a popover, which :popover-open matches, as Blink's
+  // popoverOpen() says.
+  bool PopoverOpen() const;
+  PopoverData* GetPopoverData() const { return popover_data_.Get(); }
+
+  enum class HidePopoverTransitionBehavior {
+    kFireEventsAndWaitForTransitions,
+    kNoEventsNoWaiting,
+  };
+  void ShowPopoverInternal(Element* invoker,
+                           bindings::ExceptionState* exception_state);
+  void HidePopoverInternal(Element* invoker,
+                           HidePopoverTransitionBehavior transition_behavior,
+                           bindings::ExceptionState* exception_state);
+  // Hides every open popover above `endpoint` in its stack, or every one for
+  // null, as Blink's HideAllPopoversUntil() does.
+  static void HideAllPopoversUntil(
+      const HTMLElement* endpoint,
+      Document& document,
+      HidePopoverTransitionBehavior transition_behavior);
+  // The open popover that an element entering the top layer, such as a
+  // dialog that shows, is nested in, whose stack keeps its popovers open.
+  static const HTMLElement* TopLayerElementPopoverAncestor(
+      Element& top_layer_element);
+
   // Element's: the summary of its parent details, its first summary child,
   // is focusable, as Blink's HTMLSummaryElement is.
   int32_t DefaultTabIndex() const override;
@@ -83,10 +126,16 @@ class HTMLElement : public Element {
   virtual Element* FormOwner() const;
 
   // Element's: an event handler content attribute, such as onclick, sets the
-  // handler, as Blink's HTMLElement::ParseAttribute() does.
+  // handler, as Blink's HTMLElement::ParseAttribute() does, and the popover
+  // attribute makes it a popover or not.
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+
+  // Node's: a popover that leaves the document hides, with no event.
+  void RemovedFrom(Node& insertion_point) override;
+
+  void Trace(cppgc::Visitor* visitor) const override;
 
  protected:
   // Element's: the copy's event handler content attributes set handlers, as
@@ -106,6 +155,19 @@ class HTMLElement : public Element {
   // Whether it is a summary that is the first summary child of a details
   // element, as Blink's IsMainSummary() says.
   bool IsMainSummary() const;
+
+  enum class PopoverTriggerAction { kShow, kHide, kToggle };
+  // Blink's IsPopoverReady(): whether it can be shown or hidden now, or else
+  // an exception for one of the reasons that throw.
+  bool IsPopoverReady(PopoverTriggerAction action,
+                      bindings::ExceptionState* exception_state,
+                      bool include_event_handler_text,
+                      Document* expected_document) const;
+  // Blink's UpdatePopoverAttribute(): a change of type hides it, and no valid
+  // value leaves it no popover.
+  void UpdatePopoverAttribute(const std::u16string* value);
+
+  cppgc::Member<PopoverData> popover_data_;
 };
 
 }  // namespace mitto

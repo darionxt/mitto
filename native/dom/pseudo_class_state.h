@@ -53,6 +53,9 @@ bool IsDefined(const Element& element);
 bool IsOpen(const Element& element);
 // A dialog that showModal() opened, as no fullscreen element is.
 bool IsModal(const Element& element);
+// :popover-open: an HTML element that shows as a popover, as Blink's
+// popoverOpen() says.
+bool IsPopoverOpen(const Element& element);
 // :-internal-text-field, which Blink lets an author's selector name.
 bool IsTextField(const Element& element);
 // :dir(rtl) for true, :dir(ltr) for false.

@@ -92,6 +92,11 @@ void HTMLDialogElement::Show(bindings::ExceptionState& exception_state) {
     return;
   }
   SetAttributeWithoutValidation(u"open", std::u16string());
+  // Top layer elements like dialogs can be nested inside popovers: the
+  // others close.
+  HideAllPopoversUntil(
+      TopLayerElementPopoverAncestor(*this), GetDocument(),
+      HidePopoverTransitionBehavior::kFireEventsAndWaitForTransitions);
 }
 
 void HTMLDialogElement::ShowModal(bindings::ExceptionState& exception_state) {
@@ -109,6 +114,13 @@ void HTMLDialogElement::ShowModal(bindings::ExceptionState& exception_state) {
                                       "The element is not in a Document.");
     return;
   }
+  if (IsPopover() && PopoverOpen()) {
+    exception_state.ThrowDOMException(
+        "InvalidStateError",
+        "The dialog is already open as a Popover, and therefore cannot be "
+        "opened as a modal dialog.");
+    return;
+  }
   if (!GetDocument().DefaultView()) {
     exception_state.ThrowDOMException(
         "InvalidStateError",
@@ -122,6 +134,9 @@ void HTMLDialogElement::ShowModal(bindings::ExceptionState& exception_state) {
   // This makes the close watcher, now that the dialog is modal.
   SetAttributeWithoutValidation(u"open", std::u16string());
   SetCloseWatcherEnabledState();
+  HideAllPopoversUntil(
+      TopLayerElementPopoverAncestor(*this), GetDocument(),
+      HidePopoverTransitionBehavior::kFireEventsAndWaitForTransitions);
 }
 
 void HTMLDialogElement::Close(
@@ -229,7 +244,8 @@ bool HTMLDialogElement::DispatchToggleEvents(bool opening, bool as_modal) {
   if (!DispatchEvent(before_event)) {
     return false;
   }
-  if (opening && (IsOpen() || (as_modal && !IsConnected()))) {
+  if (opening && (IsOpen() || (as_modal && (!IsConnected() ||
+                                            (IsPopover() && PopoverOpen()))))) {
     return false;
   }
   if (pending_toggle_event_) {

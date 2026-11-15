@@ -1465,6 +1465,11 @@ bool IsModal(const Element& element) {
          static_cast<const HTMLDialogElement&>(element).IsModal();
 }
 
+bool IsPopoverOpen(const Element& element) {
+  return element.IsHTMLElement() &&
+         static_cast<const HTMLElement&>(element).PopoverOpen();
+}
+
 bool IsTextField(const Element& element) {
   return element.HasHTMLTagName(u"input") &&
          IsTextFieldType(InputType(element));

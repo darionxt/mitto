@@ -402,6 +402,8 @@ source_set("dom") {
     "plugin_array.h",
     "pop_state_event.cc",
     "pop_state_event.h",
+    "popover_data.cc",
+    "popover_data.h",
     "presentation_availability.cc",
     "presentation_availability.h",
     "presentation_request.cc",

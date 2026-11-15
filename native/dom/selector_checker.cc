@@ -626,6 +626,8 @@ bool SelectorChecker::CheckPseudoClass(const CssSimpleSelector& selector,
       return state::IsOpen(element);
     case Pseudo::kModal:
       return state::IsModal(element);
+    case Pseudo::kPopoverOpen:
+      return state::IsPopoverOpen(element);
     case Pseudo::kTextField:
       return state::IsTextField(element);
     case Pseudo::kLang:
@@ -641,11 +643,10 @@ bool SelectorChecker::CheckPseudoClass(const CssSimpleSelector& selector,
       return &element == element.GetDocument().CssTarget();
     default:
       // What needs input, focus, style, layout, media, a fullscreen element,
-      // a popover shown, a view transition, autofill or custom element state,
-      // none of which a Page has: :hover, :active, :focus, :focus-visible,
-      // :focus-within, :autofill, :fullscreen, :popover-open,
-      // :picture-in-picture, :state() and the rest, as Chrome answers them for
-      // a page without them.
+      // a view transition, autofill or custom element state, none of which a
+      // Page has: :hover, :active, :focus, :focus-visible, :focus-within,
+      // :autofill, :fullscreen, :picture-in-picture, :state() and the rest,
+      // as Chrome answers them for a page without them.
       return false;
   }
 }
