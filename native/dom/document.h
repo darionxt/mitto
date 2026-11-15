@@ -31,6 +31,7 @@
 #include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/v8-promise.h"
 
@@ -152,6 +153,9 @@ class Document : public Node {
     SetBodyAttribute(u"alink", color);
   }
   HTMLElement* Body() const;
+  // Blink's setBody(): a body or frameset element takes the place of the
+  // body, or goes at the end of the document element, with its checks.
+  void SetBody(HTMLElement* body, bindings::ExceptionState& exception_state);
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
   // The tasks that the document's elements queue theirs in, as Blink's
@@ -164,6 +168,11 @@ class Document : public Node {
   mitto::Location* Location() const;
   // The host of the document's origin, and nothing for an opaque one.
   std::u16string Domain() const;
+  // The document's origin: the one that a document made by new Document() or
+  // DOMImplementation takes from the document that made it, as Blink's
+  // DocumentInit::WithExecutionContext() gives it, or else its URL's.
+  url::Origin GetOrigin() const;
+  void SetOrigin(const url::Origin& origin) { origin_ = origin; }
   std::u16string DesignMode() const { return design_mode_ ? u"on" : u"off"; }
   bool InDesignMode() const { return design_mode_; }
   void SetDesignMode(const std::u16string& value);
@@ -578,6 +587,8 @@ class Document : public Node {
                              HTMLCollection::Type type);
 
   const bool is_html_;
+  // The origin it took from the document that made it, if any.
+  std::optional<url::Origin> origin_;
   std::u16string content_type_;
   // How many times each named item was added and not yet removed, and the
   // named items in the order in which they came.

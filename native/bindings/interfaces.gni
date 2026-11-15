@@ -292,7 +292,7 @@ mitto_bindings_interfaces = [
       "doctype",
       "documentElement",
       "title",
-      "get body",
+      "body",
       "head",
       "defaultView",
       "cookie",
@@ -458,6 +458,14 @@ mitto_bindings_interfaces = [
       "attributes",
       "classList",
       "part",
+      "ariaActiveDescendantElement",
+      "ariaActionsElements",
+      "ariaControlsElements",
+      "ariaDescribedByElements",
+      "ariaDetailsElements",
+      "ariaErrorMessageElements",
+      "ariaFlowToElements",
+      "ariaLabelledByElements",
     ]
   },
   {
@@ -525,6 +533,7 @@ mitto_bindings_interfaces = [
     name = "HTMLAnchorElement"
     file = "html_anchor_element"
     implemented = [
+      "text",
       "href",
       "origin",
       "protocol",
@@ -586,6 +595,8 @@ mitto_bindings_interfaces = [
       "formAction",
       "formEnctype",
       "formMethod",
+      "command",
+      "commandForElement",
     ]
   },
   {

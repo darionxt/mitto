@@ -67,6 +67,11 @@ class HTMLAnchorElement final : public HTMLAnchorElementBase {
   explicit HTMLAnchorElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // text, which Blink's IDL implements as textContent: the descendant text,
+  // which the setter replaces with one Text node.
+  std::u16string TextContent() const { return DescendantTextContent(); }
+  void SetTextContent(const std::u16string& text);
 };
 
 }  // namespace mitto

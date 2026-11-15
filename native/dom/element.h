@@ -25,12 +25,46 @@
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/qualified_name.h"
+#include "v8/include/cppgc/garbage-collected.h"
+#include "v8/include/cppgc/member.h"
+#include "v8/include/v8-forward.h"
+#include "v8/include/v8-local-handle.h"
+#include "v8/include/v8-traced-handle.h"
 
 namespace mitto {
 
 class Attr;
 class DOMStringMap;
+class Element;
 class NamedNodeMap;
+
+// An element that a page set for an attribute that reflects elements, as an
+// entry of Blink's ExplicitlySetAttrElementsMap. Blink holds them weakly; a
+// Page holds them, which only a garbage collection could tell apart.
+class ExplicitlySetAttrElement final
+    : public cppgc::GarbageCollected<ExplicitlySetAttrElement> {
+ public:
+  ExplicitlySetAttrElement(std::u16string_view name, Element* element);
+  ~ExplicitlySetAttrElement();
+  void Trace(cppgc::Visitor* visitor) const;
+
+  const std::u16string name;
+  const cppgc::Member<Element> element;
+};
+
+// The frozen array of elements that an attribute's getter gave last, and the
+// elements it holds, as Blink's CachedAttrAssociatedElementsMap keeps it.
+class CachedAttrAssociatedElements final
+    : public cppgc::GarbageCollected<CachedAttrAssociatedElements> {
+ public:
+  explicit CachedAttrAssociatedElements(std::u16string_view name);
+  ~CachedAttrAssociatedElements();
+  void Trace(cppgc::Visitor* visitor) const;
+
+  const std::u16string name;
+  HeapVector<Element> elements;
+  v8::TracedReference<v8::Array> array;
+};
 
 class Element : public Node {
  public:
@@ -251,6 +285,82 @@ class Element : public Node {
                                 const std::u16string* old_value,
                                 const std::u16string* new_value) {}
 
+  // Blink's element reflection, of an attribute that
+  // IsElementReflectionAttribute() lists, such as commandfor or
+  // aria-activedescendant: the element that a page set, while it is in a tree
+  // of this element's, or else the first that the attribute names by ID in
+  // this element's tree, connected or not. A change of the attribute forgets
+  // the element that a page set, and setting one sets the attribute to "".
+  Element* GetElementAttribute(std::u16string_view name) const;
+  void SetElementAttribute(std::u16string_view name, Element* element);
+  // The same for one that names several, as Blink's
+  // GetAttrAssociatedElements(): none without the attribute.
+  std::optional<std::vector<Element*>> GetAttrAssociatedElements(
+      std::u16string_view name) const;
+  // GetElementArrayAttribute(): them as a frozen array, the same array while
+  // they stay the same, or null without the attribute.
+  v8::Local<v8::Value> GetElementArrayAttribute(std::u16string_view name);
+  void SetElementArrayAttribute(
+      std::u16string_view name,
+      const std::optional<std::vector<Element*>>& elements);
+
+  // The members of AriaRelationshipAttributes.
+  Element* AriaActiveDescendantElement() const {
+    return GetElementAttribute(u"aria-activedescendant");
+  }
+  void SetAriaActiveDescendantElement(Element* element) {
+    SetElementAttribute(u"aria-activedescendant", element);
+  }
+  v8::Local<v8::Value> AriaActionsElements() {
+    return GetElementArrayAttribute(u"aria-actions");
+  }
+  void SetAriaActionsElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-actions", elements);
+  }
+  v8::Local<v8::Value> AriaControlsElements() {
+    return GetElementArrayAttribute(u"aria-controls");
+  }
+  void SetAriaControlsElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-controls", elements);
+  }
+  v8::Local<v8::Value> AriaDescribedByElements() {
+    return GetElementArrayAttribute(u"aria-describedby");
+  }
+  void SetAriaDescribedByElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-describedby", elements);
+  }
+  v8::Local<v8::Value> AriaDetailsElements() {
+    return GetElementArrayAttribute(u"aria-details");
+  }
+  void SetAriaDetailsElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-details", elements);
+  }
+  v8::Local<v8::Value> AriaErrorMessageElements() {
+    return GetElementArrayAttribute(u"aria-errormessage");
+  }
+  void SetAriaErrorMessageElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-errormessage", elements);
+  }
+  v8::Local<v8::Value> AriaFlowToElements() {
+    return GetElementArrayAttribute(u"aria-flowto");
+  }
+  void SetAriaFlowToElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-flowto", elements);
+  }
+  v8::Local<v8::Value> AriaLabelledByElements() {
+    return GetElementArrayAttribute(u"aria-labelledby");
+  }
+  void SetAriaLabelledByElements(
+      const std::optional<std::vector<Element*>>& elements) {
+    SetElementArrayAttribute(u"aria-labelledby", elements);
+  }
+
   // Blink's NamedItemType: which of its name and ID an element of an HTML
   // document's tree adds to the document's named items, which document[name]
   // finds: the name, the name or the ID, or the ID only while the element has
@@ -334,6 +444,10 @@ class Element : public Node {
   // HTMLElement::OnNonceAttrChanged(), for an element of any namespace that
   // has the mixin.
   void UpdateNonce(const QualifiedName& name, const std::u16string* value);
+  // SynchronizeContentAttributeAndElementReference(): forgets the elements
+  // set for `name` if IsElementReflectionAttribute() lists it.
+  void ForgetExplicitlySetElements(const QualifiedName& name);
+  void ForgetElementsSetFor(std::u16string_view name);
 
   QualifiedName tag_name_;
   std::vector<Attribute> attributes_;
@@ -342,6 +456,10 @@ class Element : public Node {
   // The nodes of the attributes that a page has asked for, as Blink's
   // AttrNodeList.
   HeapVector<Attr> attr_nodes_;
+  // Element reflection's elements that a page set for `name`, which a change
+  // of an attribute that IsElementReflectionAttribute() lists forgets.
+  HeapVector<ExplicitlySetAttrElement> explicitly_set_attr_elements_;
+  HeapVector<CachedAttrAssociatedElements> cached_attr_associated_elements_;
   HeapVector<DOMTokenList> token_lists_;
   cppgc::Member<NamedNodeMap> attribute_map_;
   cppgc::Member<DOMTokenList> class_list_;

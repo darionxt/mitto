@@ -82,6 +82,17 @@ namespace mitto {
 
 namespace {
 
+// Whether `node` is an element of the SVG namespace whose local name is
+// `local_name`, case-sensitively.
+bool IsSVGElementNamed(const Node* node, std::u16string_view local_name) {
+  if (!node || !node->IsElementNode()) {
+    return false;
+  }
+  const QualifiedName& name = static_cast<const Element*>(node)->TagQName();
+  return name.namespace_uri == html_names::kSvgNamespace &&
+         name.local_name == local_name;
+}
+
 void ThrowInvalidTagName(const std::u16string& name,
                          bindings::ExceptionState& exception_state) {
   exception_state.ThrowDOMException(
@@ -155,7 +166,13 @@ std::u16string StripAndCollapseWhitespace(const std::u16string& text) {
 
 // static
 Document* Document::Create() {
-  return bindings::MakeGarbageCollected<Document>(false);
+  // new Document(): the origin of the current window's document.
+  Document* const document = bindings::MakeGarbageCollected<Document>(false);
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  if (isolate && isolate->InContext() && Window::Current().HasDocument()) {
+    document->SetOrigin(Window::Current().GetDocument().GetOrigin());
+  }
+  return document;
 }
 
 // static
@@ -215,9 +232,13 @@ WindowTasks* Document::GetTasks() const {
   return Window::Current().GetTasks();
 }
 
+url::Origin Document::GetOrigin() const {
+  return origin_ ? *origin_ : url::Origin::Create(GURL(url_));
+}
+
 // SecurityOrigin::Domain(): the host, which an opaque origin lacks.
 std::u16string Document::Domain() const {
-  const url::Origin origin = url::Origin::Create(GURL(url_));
+  const url::Origin origin = GetOrigin();
   return origin.opaque() ? std::u16string() : base::UTF8ToUTF16(origin.host());
 }
 
@@ -579,7 +600,18 @@ void Document::SetBodyAttribute(std::u16string_view name,
 }
 
 std::u16string Document::Title() const {
-  // The first title element in the document, in tree order.
+  // The HTML Standard: in a document whose element is an SVG svg element, the
+  // first SVG title element child of it.
+  if (Element* const root = DocumentElement(); IsSVGElementNamed(root, u"svg")) {
+    for (const Node* child = root->FirstChild(); child;
+         child = child->NextSibling()) {
+      if (IsSVGElementNamed(child, u"title")) {
+        return StripAndCollapseWhitespace(child->ChildTextContent());
+      }
+    }
+    return std::u16string();
+  }
+  // Otherwise the first HTML title element in the document, in tree order.
   for (const Node* node = FirstChild(); node; node = node->NextInTree(this)) {
     if (node->IsElementNode() &&
         static_cast<const Element*>(node)->HasHTMLTagName(u"title")) {
@@ -630,6 +662,33 @@ void Document::SetEncoding(std::string_view encoding,
 
 void Document::SetTitle(const std::u16string& title) {
   Element* const root = DocumentElement();
+  if (IsSVGElementNamed(root, u"svg")) {
+    // The root's first SVG title element child, or a new one inserted as its
+    // first child.
+    Element* title_element = nullptr;
+    for (Node* child = root->FirstChild(); child; child = child->NextSibling()) {
+      if (IsSVGElementNamed(child, u"title")) {
+        title_element = static_cast<Element*>(child);
+        break;
+      }
+    }
+    if (!title_element) {
+      title_element =
+          CreateElement(html_names::kSvgNamespace, std::nullopt, u"title");
+      if (Node* const first = root->FirstChild()) {
+        root->ParserInsertBefore(title_element, *first);
+      } else {
+        root->ParserAppendChild(title_element);
+      }
+    }
+    // String replace all, one record for observers.
+    const ChildListMutationScope mutation(*title_element);
+    title_element->RemoveChildren();
+    if (!title.empty()) {
+      title_element->ParserAppendChild(Text::Create(*this, title));
+    }
+    return;
+  }
   if (!root || !root->IsHTMLElement()) {
     return;
   }
@@ -672,6 +731,40 @@ HTMLElement* Document::Body() const {
     }
   }
   return nullptr;
+}
+
+void Document::SetBody(HTMLElement* body,
+                       bindings::ExceptionState& exception_state) {
+  if (!body) {
+    exception_state.ThrowDOMException(
+        "HierarchyRequestError",
+        "The 1st argument provided is either null, or an invalid HTMLElement "
+        "object.");
+    return;
+  }
+  Element* const root = DocumentElement();
+  if (!root) {
+    exception_state.ThrowDOMException("HierarchyRequestError",
+                                      "No document element exists.");
+    return;
+  }
+  if (!body->HasHTMLTagName(u"body") && !body->HasHTMLTagName(u"frameset")) {
+    exception_state.ThrowDOMException(
+        "HierarchyRequestError",
+        base::StrCat({"The new body element is of type '",
+                      base::UTF16ToUTF8(body->TagName()),
+                      "'. It must be either a 'BODY' or 'FRAMESET' element."}));
+    return;
+  }
+  HTMLElement* const old_body = Body();
+  if (old_body == body) {
+    return;
+  }
+  if (old_body) {
+    root->ReplaceChild(body, old_body, exception_state);
+  } else {
+    root->AppendChild(body, exception_state);
+  }
 }
 
 HTMLHeadElement* Document::Head() const {
@@ -1217,9 +1310,11 @@ void Document::ProcessBaseElement() {
     return;
   }
   // The HTML Standard's frozen base URL: the fallback base URL for a URL of
-  // data or javascript, or for a document whose scripts cannot run.
-  base_element_url_ =
-      !data_or_javascript && window_ ? base_element_url : FallbackBaseUrl();
+  // data or javascript. Blink also gives it to a document of no execution
+  // context, but every document of a Page has one, those that a script makes
+  // as much as its window's, as DocumentInit::WithExecutionContext() gives
+  // them theirs.
+  base_element_url_ = !data_or_javascript ? base_element_url : FallbackBaseUrl();
   UpdateBaseUrl();
 }
 
