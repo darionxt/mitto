@@ -16,6 +16,7 @@
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/pending_script.h"
+#include "mitto/dom/script_element_base.h"
 #include "mitto/dom/script_loader.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
@@ -297,7 +298,7 @@ bool DocumentParser::PumpTokenizer() {
     return should_yield;
   };
   while (!IsStopped() && !IsPaused()) {
-    if (HTMLScriptElement* const script = tree_->Pump()) {
+    if (Element* const script = tree_->Pump()) {
       ProcessScriptElement(*script);
       if (IsStopped() || IsPaused()) {
         break;
@@ -424,7 +425,7 @@ void DocumentParser::StopParsing() {
   scheduled_ = Scheduled::kNotScheduled;
 }
 
-void DocumentParser::ProcessScriptElement(HTMLScriptElement& element) {
+void DocumentParser::ProcessScriptElement(Element& element) {
   ProcessScriptElementInternal(element);
   // A microtask of the checkpoint may have detached the parser, as
   // document.open() does.
@@ -442,7 +443,7 @@ void DocumentParser::ProcessScriptElement(HTMLScriptElement& element) {
   ExecuteParsingBlockingScripts();
 }
 
-void DocumentParser::ProcessScriptElementInternal(HTMLScriptElement& element) {
+void DocumentParser::ProcessScriptElementInternal(Element& element) {
   // The HTML Standard's script end tag: a microtask checkpoint unless a
   // script runs, then, with the insertion point just after the end tag,
   // prepare the script element at a script nesting level one deeper, which
@@ -452,10 +453,11 @@ void DocumentParser::ProcessScriptElementInternal(HTMLScriptElement& element) {
   }
   const InsertionPointRecord insertion_point(*tree_);
   const ScopedCounter nesting_level(script_nesting_level_);
-  PendingScript* const pending_script = element.Loader().PrepareScript(
-      script_nesting_level_ == 1
-          ? ScriptLoader::ParserBlockingInlineOption::kAllow
-          : ScriptLoader::ParserBlockingInlineOption::kDeny);
+  PendingScript* const pending_script =
+      ToScriptElement(element)->Loader().PrepareScript(
+          script_nesting_level_ == 1
+              ? ScriptLoader::ParserBlockingInlineOption::kAllow
+              : ScriptLoader::ParserBlockingInlineOption::kDeny);
   if (!pending_script) {
     return;
   }

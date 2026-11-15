@@ -1,11 +1,12 @@
-"""Tests of the storage keys that the library works out for the localStorage of a Page's frames, from the frame tree.
+"""Tests of the storage keys that the library works out for the localStorage and IndexedDB of a Page's frames, from the
+frame tree.
 
 The Page program makes no frame yet, so a fake Page program stands in for it, as in tests/test_page_contexts.py: a
 Python script beside a copy of the library, which speaks the messages of native/page_messages.h. Under a top-level
 document of 127.0.0.1 it commits a frame of localhost, another site, with a frame of 127.0.0.1 in it, and a frame's
-initial about:blank of 127.0.0.1, and each binds localStorage, reads it and writes it. A Session in another process,
-with a storage directory, opens the Page, and the test reads what the directory holds afterwards. Another fake Page
-sends a change that Blink would not write, which the library refuses.
+initial about:blank of 127.0.0.1, and each binds localStorage, reads it and writes it, or lists and opens databases. A
+Session in another process, with a storage directory, opens the Page, and the test reads what the directory holds
+afterwards. Another fake Page sends a change that Blink would not write, which the library refuses.
 """
 
 import http.server
@@ -18,6 +19,7 @@ import sys
 import textwrap
 import threading
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +115,38 @@ _FAKE_PAGE = textwrap.dedent(
             if payload[8] == 1:
                 return found
 
+    # IndexedDB's calls, after the document's ID, and the answers to those of them that have a number.
+    def idb(document, payload):
+        send(42, struct.pack("<Q", document) + payload)
+
+    def idb_answer(call):
+        while True:
+            message_type, payload = receive()
+            if message_type == 43 and payload[0] in (1, 3, 4, 6) and struct.unpack_from("<Q", payload, 1)[0] == call:
+                return payload
+
+    def idb_open(document, call, connection, transaction):
+        # Database d at version 1, whose upgrade commits at once.
+        name = "d".encode("utf-16-le")
+        idb(document, struct.pack("<BQQQI", 2, call, connection, transaction, 1) + name + struct.pack("<q", 1))
+        assert idb_answer(call)[0] == 3
+        idb(document, struct.pack("<BQq", 25, transaction, 0))
+        assert idb_answer(call)[0] == 4
+
+    def idb_names(document, call):
+        idb(document, struct.pack("<BQ", 1, call))
+        # After the operation, the call, the error and its message: how many databases, and each name and version.
+        rest = idb_answer(call)[10:]
+        rest = rest[4 + 2 * struct.unpack_from("<I", rest)[0] :]
+        count = struct.unpack_from("<I", rest)[0]
+        rest = rest[4:]
+        names = []
+        for _ in range(count):
+            size = struct.unpack_from("<I", rest)[0]
+            names.append(rest[4 : 4 + 2 * size].decode("utf-16-le"))
+            rest = rest[4 + 2 * size + 8 :]
+        return names
+
     send(1, struct.pack("<I", {version}))
     send(70, struct.pack("<QBQ", 1, 0, 0))
     wait_for_end(0)
@@ -149,6 +183,25 @@ _FRAME_ACTIONS = textwrap.dedent(
     put(3, b"k", b"nested")
     bind(7, 4, 6)
     seen["blank"] = entries(4, 7)
+    send(5, struct.pack("<QB", call, 0) + json.dumps(seen).encode())
+    """
+)
+
+# The same frames, but each lists the databases it sees once the top-level document has opened one, and the two frames
+# of other storage keys open one of their own.
+_INDEXED_DB_ACTIONS = textwrap.dedent(
+    """\
+    frame(2, 3, 1, 4, "{frame}")
+    frame(4, 5, 2, 6, "{nested}")
+    send(70, struct.pack("<QBQ", 7, 0, 2))
+
+    idb_open(2, 1, 1, 1)
+    seen = {{}}
+    seen["frame"] = idb_names(4, 2)
+    seen["nested"] = idb_names(6, 3)
+    seen["blank"] = idb_names(7, 4)
+    idb_open(4, 5, 2, 2)
+    idb_open(6, 6, 3, 3)
     send(5, struct.pack("<QB", call, 0) + json.dumps(seen).encode())
     """
 )
@@ -280,6 +333,25 @@ def test_a_frames_local_storage_is_partitioned_by_the_top_level_site(
         f"http://127.0.0.1:{top.port}/".encode(): b"\x01top",
         f"http://localhost:{frame_site.port}/^0http://127.0.0.1".encode(): b"\x01frame",
         f"http://127.0.0.1:{top.port}/^31".encode(): b"\x01nested",
+    }
+
+
+def test_a_frames_databases_are_partitioned_by_the_top_level_site(
+    tmp_path: Path, top: _Server, frame_site: _Server
+) -> None:
+    storage = tmp_path / "storage"
+    actions = _INDEXED_DB_ACTIONS.format(frame=frame_site.url("/frame-page"), nested=top.url("/nested-page"))
+    seen = _run_page(tmp_path, top, actions, storage)
+
+    # Only the frame's about:blank of the top-level document's origin, directly under it, sees its database.
+    assert seen == {"frame": [], "nested": [], "blank": ["d"]}
+    # The file keys each database's entries as localStorage keys its maps.
+    with closing(sqlite3.connect(storage / "IndexedDB")) as database:
+        held = {key for (key,) in database.execute("SELECT DISTINCT storage_key FROM entries").fetchall()}
+    assert held == {
+        f"http://127.0.0.1:{top.port}/".encode(),
+        f"http://localhost:{frame_site.port}/^0http://127.0.0.1".encode(),
+        f"http://127.0.0.1:{top.port}/^31".encode(),
     }
 
 

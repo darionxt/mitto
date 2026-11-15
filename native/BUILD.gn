@@ -139,6 +139,8 @@ shared_library("mitto_core") {
     "indexed_db/engine.h",
     "indexed_db/indexed_db_context.cc",
     "indexed_db/indexed_db_context.h",
+    "indexed_db/indexed_db_file.cc",
+    "indexed_db/indexed_db_file.h",
     "indexed_db/kv_store.cc",
     "indexed_db/kv_store.h",
     "indexed_db/lock_manager.cc",

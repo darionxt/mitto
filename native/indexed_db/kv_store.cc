@@ -1,8 +1,17 @@
 #include "mitto/indexed_db/kv_store.h"
 
+#include <utility>
+
 namespace mitto {
 
 MemoryKvStore::MemoryKvStore() = default;
+
+MemoryKvStore::MemoryKvStore(KvEntries entries, Writer writer)
+    : entries_(std::move(entries)), writer_(std::move(writer)) {
+  for (const auto& [key, value] : entries_) {
+    size_ += static_cast<int64_t>(key.size() + value.size());
+  }
+}
 MemoryKvStore::~MemoryKvStore() = default;
 
 std::optional<std::string> MemoryKvStore::Get(std::string_view key) {
@@ -60,6 +69,9 @@ bool MemoryKvStore::Commit(const KvBatch& batch) {
     } else {
       entries_.emplace(key, *value);
     }
+  }
+  if (writer_) {
+    writer_.Run(batch);
   }
   return true;
 }

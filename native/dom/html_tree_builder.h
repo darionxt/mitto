@@ -39,7 +39,6 @@ namespace mitto {
 
 class Document;
 class Element;
-class HTMLScriptElement;
 class HtmlTokenizer;
 class HtmlTreeBuilder;
 
@@ -119,7 +118,7 @@ class HtmlDocumentParser {
   // end tag it reached, where the standard would run the script before it
   // goes on, or null once it needs more markup or has reached the end. Call
   // it again to go on.
-  HTMLScriptElement* Pump();
+  Element* Pump();
 
   // The rules the tree builder could not follow so far, each once, in the
   // order it first met them.
@@ -145,18 +144,28 @@ std::vector<std::string> ParseHtmlDocument(Document& document,
 // template is the template's contents' document.
 HtmlParserOptions FragmentParserOptions(const Element& context);
 
+// What a fragment's script elements are, as Blink's ParserContentPolicy has
+// it: the parser's and already started, so that they never run, as innerHTML's
+// are, or neither, so that they run once the DOM connects them, as
+// createContextualFragment()'s do
+// (kAllowScriptingContentAndDoNotMarkAlreadyStarted).
+enum class FragmentScripts { kAlreadyStarted, kRunnable };
+
 // The HTML Standard's fragment parsing algorithm for `context`, of any
 // namespace, which innerHTML, outerHTML and insertAdjacentHTML() use: the nodes
 // that `markup` makes, with no parent. `skipped_rules`, if not null, gets the
 // rules the tree builder could not follow. The options are
-// FragmentParserOptions(context), unless given.
+// FragmentParserOptions(context), unless given, and the scripts already
+// started, unless `scripts` says otherwise.
 NodeVector ParseHtmlFragment(Element& context,
                              std::u16string_view markup,
                              std::vector<std::string>* skipped_rules = nullptr);
-NodeVector ParseHtmlFragment(Element& context,
-                             std::u16string_view markup,
-                             const HtmlParserOptions& options,
-                             std::vector<std::string>* skipped_rules = nullptr);
+NodeVector ParseHtmlFragment(
+    Element& context,
+    std::u16string_view markup,
+    const HtmlParserOptions& options,
+    std::vector<std::string>* skipped_rules = nullptr,
+    FragmentScripts scripts = FragmentScripts::kAlreadyStarted);
 
 }  // namespace mitto
 

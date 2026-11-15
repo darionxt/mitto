@@ -19,6 +19,7 @@
 #include "mitto/dom/error_reporting.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/script_element_base.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
@@ -213,7 +214,7 @@ class PendingScript::FetchClient final : public mitto::FetchClient {
 };
 
 // static
-PendingScript* PendingScript::CreateInline(HTMLScriptElement& element,
+PendingScript* PendingScript::CreateInline(ScriptElementBase& element,
                                            std::u16string source,
                                            GURL source_url,
                                            int start_line,
@@ -228,7 +229,7 @@ PendingScript* PendingScript::CreateInline(HTMLScriptElement& element,
 }
 
 // static
-PendingScript* PendingScript::Fetch(HTMLScriptElement& element,
+PendingScript* PendingScript::Fetch(ScriptElementBase& element,
                                     const GURL& url,
                                     FetchRequestData request,
                                     IntegrityMetadataSet integrity,
@@ -242,10 +243,10 @@ PendingScript* PendingScript::Fetch(HTMLScriptElement& element,
   return script;
 }
 
-PendingScript::PendingScript(HTMLScriptElement& element, bool is_external)
-    : element_(&element),
-      original_element_document_(&element.GetDocument()),
-      original_window_(element.GetDocument().DefaultView()),
+PendingScript::PendingScript(ScriptElementBase& element, bool is_external)
+    : element_(&element.AsElement()),
+      original_element_document_(&element.AsElement().GetDocument()),
+      original_window_(element.AsElement().GetDocument().DefaultView()),
       is_external_(is_external),
       state_(is_external ? State::kWaitingForResource : State::kReady) {}
 
@@ -304,7 +305,7 @@ bool PendingScript::IsEligibleForLowPriorityAsyncScriptExecution() const {
   if (IsSameSite(fetch_url_, GURL(document->UrlForBinding()))) {
     return false;
   }
-  return !element_->IsPotentiallyRenderBlocking();
+  return !ToScriptElement(*element_)->IsPotentiallyRenderBlocking();
 }
 
 void PendingScript::NotifyFinished(int net_error,
@@ -371,7 +372,7 @@ void PendingScript::AdvanceReadyState(State state) {
 }
 
 void PendingScript::ExecuteScriptBlock() {
-  HTMLScriptElement* const element = element_.Get();
+  Element* const element = element_.Get();
   const State state = state_;
   const bool is_external = is_external_;
   const bool muted_errors = muted_errors_;
@@ -393,7 +394,7 @@ void PendingScript::ExecuteScriptBlock() {
   }
   // Steps 2 to 6 of execute the script element.
   if (state == State::kErrorOccurred) {
-    element->DispatchErrorEvent();
+    ToScriptElement(*element)->DispatchErrorEvent();
     return;
   }
   {
@@ -408,7 +409,7 @@ void PendingScript::ExecuteScriptBlock() {
     document.PopCurrentScript(element);
   }
   if (is_external) {
-    element->DispatchLoadEvent();
+    ToScriptElement(*element)->DispatchLoadEvent();
   }
 }
 

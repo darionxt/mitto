@@ -95,6 +95,12 @@ class Element : public Node {
                                 DOMTokenList::SupportedTokens supported_tokens);
   // HTMLOrForeignElement's dataset, the same object on every read.
   DOMStringMap* Dataset();
+  // HTMLOrSVGOrMathMLElement's nonce, as Blink's Element::nonce() keeps it
+  // apart from the content attribute: a change of the attribute to a value
+  // that is not empty sets it, removing the attribute clears it, and the
+  // setter leaves the attribute alone.
+  std::u16string Nonce() const { return nonce_.value_or(u""); }
+  void SetNonce(const std::u16string& nonce) { nonce_ = nonce; }
   Attr* GetAttributeNode(const std::u16string& name);
   Attr* GetAttributeNodeNS(const std::optional<std::u16string>& namespace_uri,
                            const std::u16string& local_name);
@@ -297,9 +303,14 @@ class Element : public Node {
                            Element& context,
                            bindings::ExceptionState& exception_state);
 
+  // HTMLElement::OnNonceAttrChanged(), for an element of any namespace that
+  // has the mixin.
+  void UpdateNonce(const QualifiedName& name, const std::u16string* value);
+
   QualifiedName tag_name_;
   std::vector<Attribute> attributes_;
   std::optional<std::u16string> is_value_;
+  std::optional<std::u16string> nonce_;
   // The nodes of the attributes that a page has asked for, as Blink's
   // AttrNodeList.
   HeapVector<Attr> attr_nodes_;

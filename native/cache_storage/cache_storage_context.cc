@@ -11,6 +11,7 @@
 #include "crypto/hash.h"
 #include "mitto/cache_storage/cache_storage.h"
 #include "mitto/cache_storage/cache_storage_cache.h"
+#include "mitto/storage/storage_key.h"
 
 namespace mitto {
 namespace {
@@ -37,9 +38,8 @@ class CacheStorageContext::KeyQuota final : public CacheStorageQuota {
   }
 
   void NotifyModified(int64_t delta) override {
-    quota_->NotifyModified(storage_key_,
-                           StorageQuota::ClientType::kServiceWorkerCache,
-                           delta);
+    quota_->NotifyModified(
+        storage_key_, StorageQuota::ClientType::kServiceWorkerCache, delta);
   }
 
  private:
@@ -75,8 +75,10 @@ CacheStorageContext::~CacheStorageContext() = default;
 CacheStorage& CacheStorageContext::ForKey(const std::string& storage_key) {
   std::unique_ptr<Key>& key = keys_[storage_key];
   if (!key) {
+    // A key under a top-level document of an opaque origin, which no later
+    // document has, stays in memory.
     base::FilePath directory;
-    if (directory_) {
+    if (directory_ && !IsSerializedUnderOpaqueTop(storage_key)) {
       directory = directory_->AppendASCII(kCacheStorageDirectoryName)
                       .AppendASCII(KeyDirectoryName(storage_key));
     }

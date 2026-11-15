@@ -1,7 +1,10 @@
 #include "mitto/dom/svg_elements.h"
 
+#include <optional>
+#include <string>
 #include <string_view>
 
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_svg_a_element.h"
 #include "mitto/bindings/v8_svg_animate_element.h"
@@ -73,6 +76,9 @@
 #include "mitto/bindings/v8_svg_tspan_element.h"
 #include "mitto/bindings/v8_svg_use_element.h"
 #include "mitto/bindings/v8_svg_view_element.h"
+#include "mitto/dom/event.h"
+#include "mitto/dom/html_names.h"
+#include "mitto/dom/script_loader.h"
 
 namespace mitto {
 
@@ -1666,10 +1672,178 @@ SVGScriptElement* SVGScriptElement::Create(Document& document) {
 }
 
 SVGScriptElement::SVGScriptElement(Document& document)
-    : SVGElement(document, u"script") {}
+    : SVGElement(document, u"script"),
+      loader_(bindings::MakeGarbageCollected<ScriptLoader>(*this)) {}
 
 const bindings::WrapperTypeInfo* SVGScriptElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGScriptElement::kWrapperTypeInfo;
+}
+
+void SVGScriptElement::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(loader_);
+  SVGElement::Trace(visitor);
+}
+
+void SVGScriptElement::SetCreatedByParser(Document& parser_document) {
+  loader_->SetCreatedByParser(parser_document);
+}
+
+void SVGScriptElement::SetAlreadyStarted() {
+  loader_->SetAlreadyStarted();
+}
+
+void SVGScriptElement::SetStartPosition(int line, int column) {
+  start_line_ = line;
+  start_column_ = column;
+}
+
+Element& SVGScriptElement::AsElement() {
+  return *this;
+}
+
+const Element& SVGScriptElement::AsElement() const {
+  return *this;
+}
+
+ScriptLoader& SVGScriptElement::Loader() const {
+  return *loader_;
+}
+
+int SVGScriptElement::StartLine() const {
+  return start_line_;
+}
+
+int SVGScriptElement::StartColumn() const {
+  return start_column_;
+}
+
+std::optional<std::u16string> SVGScriptElement::SourceAttributeValue() const {
+  // SVGURIReference::LegacyHrefString(): href, or else xlink:href.
+  if (std::optional<std::u16string> href =
+          GetAttributeNS(std::nullopt, u"href")) {
+    return href;
+  }
+  return GetAttributeNS(std::u16string(html_names::kXlinkNamespace), u"href");
+}
+
+std::optional<std::u16string> SVGScriptElement::TypeAttributeValue() const {
+  return GetAttribute(u"type");
+}
+
+std::optional<std::u16string> SVGScriptElement::LanguageAttributeValue() const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> SVGScriptElement::EventAttributeValue() const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> SVGScriptElement::ForAttributeValue() const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> SVGScriptElement::CharsetAttributeValue() const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> SVGScriptElement::IntegrityAttributeValue()
+    const {
+  return GetAttribute(u"integrity");
+}
+
+std::optional<std::u16string> SVGScriptElement::CrossOriginAttributeValue()
+    const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> SVGScriptElement::ReferrerPolicyAttributeValue()
+    const {
+  return std::nullopt;
+}
+
+std::optional<std::u16string> SVGScriptElement::FetchPriorityAttributeValue()
+    const {
+  return std::nullopt;
+}
+
+bool SVGScriptElement::AsyncAttributeValue() const {
+  // SvgScriptElementAsyncAttribute, stable in Chrome 157.
+  return HasAttribute(u"async");
+}
+
+bool SVGScriptElement::DeferAttributeValue() const {
+  return false;
+}
+
+bool SVGScriptElement::NomoduleAttributeValue() const {
+  return false;
+}
+
+bool SVGScriptElement::IsPotentiallyRenderBlocking() const {
+  return false;
+}
+
+void SVGScriptElement::DispatchLoadEvent() {
+  bindings::EventInit init;
+  Event* const event = Event::Create(u"load", init);
+  event->SetTrusted(true);
+  DispatchEvent(event);
+}
+
+void SVGScriptElement::DispatchErrorEvent() {
+  bindings::EventInit init;
+  Event* const event = Event::Create(u"error", init);
+  event->SetTrusted(true);
+  DispatchEvent(event);
+}
+
+Node::InsertionNotificationRequest SVGScriptElement::InsertedInto(
+    Node& insertion_point) {
+  SVGElement::InsertedInto(insertion_point);
+  return insertion_point.IsConnected()
+             ? InsertionNotificationRequest::
+                   kInsertionShouldCallDidNotifySubtreeInsertions
+             : InsertionNotificationRequest::kInsertionDone;
+}
+
+void SVGScriptElement::DidNotifySubtreeInsertionsToDocument() {
+  loader_->DidNotifySubtreeInsertionsToDocument();
+}
+
+void SVGScriptElement::ChildrenChanged(ChildrenChangeType type,
+                                       Node& child,
+                                       bool by_parser) {
+  SVGElement::ChildrenChanged(type, child, by_parser);
+  loader_->ChildrenChanged(type == ChildrenChangeType::kElementInserted ||
+                           type == ChildrenChangeType::kNonElementInserted);
+}
+
+void SVGScriptElement::AttributeChanged(const QualifiedName& name,
+                                        const std::u16string* old_value,
+                                        const std::u16string* new_value) {
+  SVGElement::AttributeChanged(name, old_value, new_value);
+  // SvgAttributeChanged() for SVGURIReference's attributes: the source that
+  // href, or else xlink:href, gives now.
+  const bool href = name.local_name == u"href" &&
+                    (!name.namespace_uri ||
+                     *name.namespace_uri == html_names::kXlinkNamespace);
+  if (href) {
+    loader_->HandleSourceAttribute(SourceAttributeValue().value_or(u""));
+  } else if (!name.namespace_uri && name.local_name == u"async") {
+    // ParseAttribute(), as SvgScriptElementAsyncAttribute has it: a script
+    // whose async attribute comes or goes is no longer forced async.
+    loader_->HandleAsyncAttribute();
+  }
+}
+
+Node* SVGScriptElement::CloneWithoutChildren(Document& document) const {
+  // A copy of a script that has already started has too.
+  auto* const copy = static_cast<SVGScriptElement*>(
+      SVGElement::CloneWithoutChildren(document));
+  if (loader_->AlreadyStarted()) {
+    copy->Loader().SetAlreadyStarted();
+  }
+  return copy;
 }
 
 // static

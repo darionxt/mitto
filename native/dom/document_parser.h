@@ -43,7 +43,7 @@ namespace mitto {
 
 class DocWrittenScriptScanner;
 class Document;
-class HTMLScriptElement;
+class Element;
 class HtmlDocumentParser;
 class HtmlTreeBuilderReferences;
 class PendingScript;
@@ -163,8 +163,8 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   void StopParsing();
 
   // HTMLParserScriptRunner's.
-  void ProcessScriptElement(HTMLScriptElement& element);
-  void ProcessScriptElementInternal(HTMLScriptElement& element);
+  void ProcessScriptElement(Element& element);
+  void ProcessScriptElementInternal(Element& element);
   void ExecuteParsingBlockingScripts();
   void ExecutePendingParserBlockingScriptAndDispatchEvent();
   void PendingScriptFinished();

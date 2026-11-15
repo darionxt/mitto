@@ -28,6 +28,7 @@
 
 namespace mitto {
 
+class IndexedDbBucket;
 class IndexedDbConnection;
 class IndexedDbContext;
 class IndexedDbCursor;
@@ -61,6 +62,7 @@ class PageIndexedDb {
   void OnFactoryCall(PageIndexedDbCall call,
                      uint64_t context,
                      const std::optional<std::string>& storage_key);
+  void RunFactoryCall(PageIndexedDbCall call, IndexedDbBucket& bucket);
   void OnDatabaseCall(PageIndexedDbCall call, IndexedDbConnection& connection);
   void OnTransactionCall(PageIndexedDbCall call);
   void OnCursorCall(PageIndexedDbCall call);

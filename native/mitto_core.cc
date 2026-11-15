@@ -1204,18 +1204,19 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
     base::TimeTicks doh_probes_start_time) {
   auto session = std::make_unique<MittoSession>();
   session->http_cache_directory_lock = std::move(http_cache_directory_lock);
-  // Kept in memory, with Incognito's quota, until the Session has a
-  // directory for its storage.
+  // In the Session's storage directory, or in memory, with Incognito's quota,
+  // without one.
+  session->storage = std::make_unique<StorageContext>(
+      settings.storage_directory, std::move(storage_directory_lock));
   session->quota_manager = std::make_unique<StorageQuota>(
-      /*directory=*/std::nullopt,
+      settings.storage_directory,
       base::SysInfo::AmountOfTotalPhysicalMemory().InBytes(),
       base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()}));
   session->cache_storage_context = std::make_unique<CacheStorageContext>(
-      /*directory=*/std::nullopt, *session->quota_manager);
-  session->indexed_db_context =
-      std::make_unique<IndexedDbContext>(*session->quota_manager);
-  session->storage = std::make_unique<StorageContext>(
-      settings.storage_directory, std::move(storage_directory_lock));
+      settings.storage_directory, *session->quota_manager);
+  session->indexed_db_context = std::make_unique<IndexedDbContext>(
+      *session->quota_manager, settings.storage_directory,
+      session->storage->blocking_task_runner());
   session->cert_net_fetcher =
       base::MakeRefCounted<net::CertNetFetcherURLRequest>();
   if (settings.dns_nameserver) {
@@ -1302,6 +1303,35 @@ std::unique_ptr<MittoSession> CreateSessionOnNetworkThread(
 // thread that all Sessions live on. It is never destroyed, because the library
 // cannot know when the process that loaded it stops using it. That is why the
 // library is built to stay loaded until the process exits.
+// The steps of a Session's close on the network thread, after IndexedDB's,
+// each once the one before has finished. Each keeps the Session, which goes
+// last, and `destroyed` is signaled once it has.
+void EndClosedSession(std::unique_ptr<MittoSession> session,
+                      base::WaitableEvent* destroyed) {
+  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(
+                     [](std::unique_ptr<MittoSession> session,
+                        base::WaitableEvent* destroyed) {
+                       session.reset();
+                       destroyed->Signal();
+                     },
+                     std::move(session), destroyed));
+}
+
+void CloseCacheStorage(std::unique_ptr<MittoSession> session,
+                       base::WaitableEvent* destroyed) {
+  CacheStorageContext* const caches = session->cache_storage_context.get();
+  caches->Close(
+      base::BindOnce(&EndClosedSession, std::move(session), destroyed));
+}
+
+void CloseLocalStorage(std::unique_ptr<MittoSession> session,
+                       base::WaitableEvent* destroyed) {
+  StorageContext* const storage = session->storage.get();
+  storage->Close(
+      base::BindOnce(&CloseCacheStorage, std::move(session), destroyed));
+}
+
 class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
  public:
   static NetworkCore& Get() {
@@ -1374,12 +1404,23 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
     base::WaitableEvent done;
     PostTask(base::BindOnce(
         [](MittoSession* session, bool* opened, base::WaitableEvent* done) {
+          // localStorage's database, then IndexedDB's.
           session->storage->Open(base::BindOnce(
-              [](bool* opened, base::WaitableEvent* done, bool result) {
-                *opened = result;
-                done->Signal();
+              [](MittoSession* session, bool* opened, base::WaitableEvent* done,
+                 bool result) {
+                if (!result) {
+                  done->Signal();
+                  return;
+                }
+                session->indexed_db_context->Open(base::BindOnce(
+                    [](bool* opened, base::WaitableEvent* done, bool result) {
+                      *opened = result;
+                      done->Signal();
+                    },
+                    opened, done));
               },
-              base::Unretained(opened), base::Unretained(done)));
+              base::Unretained(session), base::Unretained(opened),
+              base::Unretained(done)));
         },
         base::Unretained(&session), base::Unretained(&opened),
         base::Unretained(&done)));
@@ -1442,35 +1483,17 @@ class NetworkCore final : public net::SystemDnsConfigChangeNotifier::Observer {
           }
           // Its storage writes what it holds before it goes, so that the
           // next Session of its directory finds it, in this process or
-          // another: first IndexedDB's connections close and localStorage's
-          // areas make the changes that wait for their maps, then the Cache
-          // API closes, and once the Session has gone localStorage writes the
-          // rest and lets its directory go.
-          session->indexed_db_context->Close();
+          // another: first IndexedDB's connections close and its file takes
+          // what they committed, then localStorage's areas make the changes
+          // that wait for their maps, then the Cache API closes, and once the
+          // Session has gone localStorage writes the rest and lets its
+          // directory go.
           session->storage->WhenClosed(base::BindOnce(
               &base::WaitableEvent::Signal, base::Unretained(storage_closed)));
-          StorageContext* const storage = session->storage.get();
-          storage->Close(base::BindOnce(
-              [](std::unique_ptr<MittoSession> session,
-                 base::WaitableEvent* destroyed) {
-                CacheStorageContext* const caches =
-                    session->cache_storage_context.get();
-                caches->Close(base::BindOnce(
-                    [](std::unique_ptr<MittoSession> session,
-                       base::WaitableEvent* destroyed) {
-                      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-                          FROM_HERE,
-                          base::BindOnce(
-                              [](std::unique_ptr<MittoSession> session,
-                                 base::WaitableEvent* destroyed) {
-                                session.reset();
-                                destroyed->Signal();
-                              },
-                              std::move(session), destroyed));
-                    },
-                    std::move(session), destroyed));
-              },
-              std::move(session), destroyed));
+          IndexedDbContext* const indexed_db =
+              session->indexed_db_context.get();
+          indexed_db->Close(base::BindOnce(&CloseLocalStorage,
+                                           std::move(session), destroyed));
         },
         std::move(session), base::Unretained(&processes),
         base::Unretained(&destroyed), base::Unretained(&storage_closed)));

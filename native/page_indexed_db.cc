@@ -322,29 +322,45 @@ void PageIndexedDb::OnFactoryCall(
     RefuseCall("IndexedDB of a document whose origin may not reach it");
     return;
   }
-  IndexedDbBucket& bucket = context_->ForKey(*storage_key);
+  if (call.op == IndexedDbCallOp::kOpen) {
+    if (call.version < 1 &&
+        call.version != IndexedDbDatabaseMetadata::kNoVersion) {
+      RefuseCall("an IndexedDB open of a version that is not valid");
+      return;
+    }
+    if (ConnectionInUse(call.connection) ||
+        transactions_.contains(call.transaction)) {
+      RefuseCall(base::StrCat({"an IndexedDB open with connection ",
+                               base::NumberToString(call.connection),
+                               " or transaction ",
+                               base::NumberToString(call.transaction),
+                               ", which the Page uses already"}));
+      return;
+    }
+    connections_.emplace(call.connection, nullptr);
+    connection_contexts_.emplace(call.connection, context);
+    transactions_.emplace(call.transaction, call.connection);
+  }
+  // The databases of a storage key load from the Session's file before its
+  // first call, as Chrome's browser opens a bucket's store.
+  context_->WithBucket(
+      *storage_key,
+      base::BindOnce(&PageIndexedDb::RunFactoryCall, weak_factory_.GetWeakPtr(),
+                     std::move(call)));
+}
+
+void PageIndexedDb::RunFactoryCall(PageIndexedDbCall call,
+                                   IndexedDbBucket& bucket) {
   switch (call.op) {
     case IndexedDbCallOp::kGetDatabaseInfo:
       bucket.GetDatabaseInfo(ReplyTo(call.call));
       return;
     case IndexedDbCallOp::kOpen: {
-      if (call.version < 1 &&
-          call.version != IndexedDbDatabaseMetadata::kNoVersion) {
-        RefuseCall("an IndexedDB open of a version that is not valid");
+      // The context that asked has gone while the databases loaded, and its
+      // connection's numbers with it.
+      if (!connection_contexts_.contains(call.connection)) {
         return;
       }
-      if (ConnectionInUse(call.connection) ||
-          transactions_.contains(call.transaction)) {
-        RefuseCall(base::StrCat({"an IndexedDB open with connection ",
-                                 base::NumberToString(call.connection),
-                                 " or transaction ",
-                                 base::NumberToString(call.transaction),
-                                 ", which the Page uses already"}));
-        return;
-      }
-      connections_.emplace(call.connection, nullptr);
-      connection_contexts_.emplace(call.connection, context);
-      transactions_.emplace(call.transaction, call.connection);
       const base::WeakPtr<PageIndexedDb> self = weak_factory_.GetWeakPtr();
       bucket.Open(std::move(call.name), call.version, call.transaction,
                   reinterpret_cast<uintptr_t>(this),
