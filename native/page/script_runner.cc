@@ -345,9 +345,9 @@ void ScriptRunner::QueueRejectionReport() {
   ++reports_queued_;
   EventLoop::Get()
       ->TaskRunner(TaskType::kDOMManipulation)
-      ->PostTask(FROM_HERE, base::BindOnce(&ScriptRunner::ReportRejections,
-                                           base::Unretained(this),
-                                           std::move(rejections)));
+      ->PostTask(FROM_HERE,
+                 base::BindOnce(&ScriptRunner::ReportRejections,
+                                base::Unretained(this), std::move(rejections)));
 }
 
 void ScriptRunner::ReportRejections(
