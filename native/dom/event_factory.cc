@@ -15,6 +15,7 @@
 #include "mitto/dom/hash_change_event.h"
 #include "mitto/dom/message_event.h"
 #include "mitto/dom/objects_behind.h"
+#include "mitto/dom/storage_event.h"
 
 namespace mitto {
 
@@ -45,6 +46,10 @@ Event* CreateMessageEvent() {
 
 Event* CreateHashChangeEvent() {
   return HashChangeEvent::Create(u"", bindings::HashChangeEventInit());
+}
+
+Event* CreateStorageEvent() {
+  return StorageEvent::Create(u"", bindings::StorageEventInit());
 }
 
 Event* CreateBeforeUnloadEvent() {
@@ -83,7 +88,7 @@ constexpr EventInterfaceName kEventInterfaceNames[] = {
     {u"DragEvent", nullptr, &bindings::V8DragEvent::kWrapperTypeInfo},
     {u"FocusEvent", nullptr, &bindings::V8FocusEvent::kWrapperTypeInfo},
     {u"HashChangeEvent", &CreateHashChangeEvent, nullptr},
-    {u"StorageEvent", nullptr, &bindings::V8StorageEvent::kWrapperTypeInfo},
+    {u"StorageEvent", &CreateStorageEvent, nullptr},
     {u"SVGEvents", &CreateEvent, nullptr},
     {u"TextEvent", nullptr, &bindings::V8TextEvent::kWrapperTypeInfo},
     // create_event_deprecated()
