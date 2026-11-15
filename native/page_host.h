@@ -24,6 +24,7 @@
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "mitto/network_quality.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
@@ -489,17 +490,6 @@ class PageHost final : public PageChannel::Delegate {
       const url::Origin& top_frame_origin,
       const url::Origin& frame_origin,
       const net::SiteForCookies& site_for_cookies);
-  // The storage key of a document at `document_url`, as
-  // StorageKey::Serialize() writes it, if it may reach the Cache API: one of
-  // an HTTP or HTTPS URL in a secure context. A top-level document's key is
-  // its origin, first party.
-  static std::optional<std::string> DocumentCacheStorageKey(
-      const GURL& document_url);
-  // The storage key of a document at `document_url`, if it may reach
-  // IndexedDB: one of an HTTP or HTTPS URL, whose origin is not opaque.
-  static std::optional<std::string> DocumentIndexedDbStorageKey(
-      const GURL& document_url);
-
   // The storage key of document `id`, as Chrome works it out for a frame with
   // third-party storage partitioning, which it turns on: the document's
   // origin, the site of the top-level document and whether a document from
@@ -508,6 +498,13 @@ class PageHost final : public PageChannel::Delegate {
   // document under a top-level one of an opaque origin, whose key no other
   // top-level document ever has.
   std::optional<StorageKey> DocumentStorageKey(uint64_t id) const;
+
+  // The storage key of context `id`'s IndexedDB and Cache API, as
+  // StorageKey::Serialize() writes it: DocumentStorageKey()'s, or for a
+  // context under a top-level document of an opaque origin one of that
+  // document's own, which the Session keeps in memory. None for a context of
+  // an opaque origin, or one that is not of an HTTP or HTTPS URL.
+  std::optional<std::string> ContextSerializedStorageKey(uint64_t id);
 
   // Lets go of every storage area that the Page bound.
   void ReleaseStorage();
@@ -597,6 +594,9 @@ class PageHost final : public PageChannel::Delegate {
   std::map<std::pair<uint64_t, PageStorageKind>,
            std::unique_ptr<SessionStorageNamespace>>
       opaque_top_storage_;
+  // What stands for the opaque origin of each top-level document whose frames
+  // have asked for IndexedDB or the Cache API, by that document's ID.
+  std::map<uint64_t, base::UnguessableToken> opaque_top_nonces_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;

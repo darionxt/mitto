@@ -202,9 +202,9 @@ bool ReadTemplates(const base::Value& value, PageOptions& options) {
     if (with_body) {
       name.remove_suffix(kWithBodySuffix.size());
     }
-    const auto found = std::ranges::find(
-        kRequestKindNames, name,
-        &std::pair<std::string_view, PageRequestKind>::first);
+    const auto found =
+        std::ranges::find(kRequestKindNames, name,
+                          &std::pair<std::string_view, PageRequestKind>::first);
     std::optional<PageRequestTemplate> request_template = ReadTemplate(item);
     if (found == kRequestKindNames.end() || !request_template) {
       return false;
@@ -301,8 +301,7 @@ void ApplyPageRequest(const PageRequest& asked,
     fetch.referrer_policy = ToNetReferrerPolicy(asked.referrer_policy);
   }
   if (asked.priority != 0) {
-    options.priority =
-        static_cast<net::RequestPriority>(asked.priority - 1);
+    options.priority = static_cast<net::RequestPriority>(asked.priority - 1);
   } else if (asked.synchronous) {
     // ResourceFetcher::ComputeLoadPriority(): a synchronous request is very
     // high.
@@ -384,8 +383,8 @@ std::optional<PageOptions> ParsePageOptions(std::string_view json) {
     has_start = true;
   }
   // A navigation sends what the Persona's says.
-  if (!has_start ||
-      (options.url && !options.requests.contains(PageRequestKind::kNavigation))) {
+  if (!has_start || (options.url && !options.requests.contains(
+                                        PageRequestKind::kNavigation))) {
     return std::nullopt;
   }
   return options;
@@ -458,8 +457,7 @@ int PageEvents::PushReport(PageEvent event) {
          "many waited untaken"});
   }
   const size_t pushed = note ? 2 : 1;
-  const size_t bytes =
-      event.message.size() + (note ? note->message.size() : 0);
+  const size_t bytes = event.message.size() + (note ? note->message.size() : 0);
   // Neither sum can wrap: what waits stays within the limits, and one
   // message is at most a frame.
   if (waiting_reports_ + pushed > kMaxWaitingReports ||
@@ -1871,8 +1869,14 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
             weak_factory_.GetWeakPtr()),
         next_cache_storage_number_);
   }
-  cache_storage_->OnCall(std::move(call), context_id,
-                         DocumentCacheStorageKey(document_url));
+  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
+  // an origin that is not opaque, of a potentially trustworthy URL.
+  std::optional<std::string> storage_key;
+  if (document_url.SchemeIs(url::kHttpsScheme) ||
+      net::IsLocalhost(document_url)) {
+    storage_key = ContextSerializedStorageKey(context_id);
+  }
+  cache_storage_->OnCall(std::move(call), context_id, storage_key);
 }
 
 void PageHost::OnIndexedDb(PageIndexedDbCall call,
@@ -1896,36 +1900,33 @@ void PageHost::OnIndexedDb(PageIndexedDbCall call,
             },
             weak_factory_.GetWeakPtr()));
   }
-  indexed_db_->OnCall(std::move(call), context_id,
-                      DocumentIndexedDbStorageKey(document_url));
-}
-
-// static
-std::optional<std::string> PageHost::DocumentIndexedDbStorageKey(
-    const GURL& document_url) {
   // IDBFactory's check that the origin may reach databases: not an opaque
   // one, which a Page's documents only have outside HTTP and HTTPS.
-  if (!DocumentHasCookies(document_url)) {
-    return std::nullopt;
-  }
-  // StorageKey::Serialize() of a first-party key: the origin and a slash.
-  return url::Origin::Create(document_url).GetURL().spec();
+  indexed_db_->OnCall(std::move(call), context_id,
+                      ContextSerializedStorageKey(context_id));
 }
 
-// static
-std::optional<std::string> PageHost::DocumentCacheStorageKey(
-    const GURL& document_url) {
-  // GlobalCacheStorage::CanCreateCacheStorage() and caches' [SecureContext]:
-  // an origin that is not opaque, of a potentially trustworthy URL.
-  if (!DocumentHasCookies(document_url)) {
+std::optional<std::string> PageHost::ContextSerializedStorageKey(uint64_t id) {
+  const Context& context = contexts_.at(id);
+  if (!DocumentHasCookies(ContextUrl(context)) || context.origin.opaque()) {
     return std::nullopt;
   }
-  if (!document_url.SchemeIs(url::kHttpsScheme) &&
-      !net::IsLocalhost(document_url)) {
-    return std::nullopt;
+  if (const std::optional<StorageKey> storage_key = DocumentStorageKey(id)) {
+    return storage_key->Serialize();
   }
-  // StorageKey::Serialize() of a first-party key: the origin and a slash.
-  return url::Origin::Create(document_url).GetURL().spec();
+  // A frame under a top-level document of an opaque origin, such as a data:
+  // URL's, whose key has that origin's nonce, which no other top-level
+  // document has, so that what it keeps stays among the frames under that one
+  // document.
+  uint64_t top = id;
+  while (contexts_.at(top).parent != kNoDocument) {
+    top = contexts_.at(top).parent;
+  }
+  const auto [nonce, added] = opaque_top_nonces_.try_emplace(top);
+  if (added) {
+    nonce->second = base::UnguessableToken::Create();
+  }
+  return SerializeUnderOpaqueTop(context.origin, nonce->second);
 }
 
 std::optional<StorageKey> PageHost::DocumentStorageKey(uint64_t id) const {

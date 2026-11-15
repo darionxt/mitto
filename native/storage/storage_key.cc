@@ -14,6 +14,8 @@ namespace {
 // Blink's EncodedAttribute, which a serialized key writes after a "^".
 constexpr char kTopLevelSiteSeparator[] = "^0";
 constexpr char kAncestorChainBitSeparator[] = "^3";
+constexpr char kTopLevelSiteOpaqueNonceHighSeparator[] = "^4";
+constexpr char kTopLevelSiteOpaqueNonceLowSeparator[] = "^5";
 
 }  // namespace
 
@@ -77,6 +79,20 @@ std::strong_ordering operator<=>(const StorageKey& first,
                : std::strong_ordering::greater;
   }
   return first.ancestor_chain_bit_ <=> second.ancestor_chain_bit_;
+}
+
+std::string SerializeUnderOpaqueTop(const url::Origin& origin,
+                                    const base::UnguessableToken& top_nonce) {
+  return base::StrCat(
+      {origin.GetURL().spec(), kTopLevelSiteOpaqueNonceHighSeparator,
+       base::NumberToString(top_nonce.GetHighForSerialization()),
+       kTopLevelSiteOpaqueNonceLowSeparator,
+       base::NumberToString(top_nonce.GetLowForSerialization())});
+}
+
+bool IsSerializedUnderOpaqueTop(std::string_view serialized) {
+  return serialized.find(kTopLevelSiteOpaqueNonceHighSeparator) !=
+         std::string_view::npos;
 }
 
 }  // namespace mitto

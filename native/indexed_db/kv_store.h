@@ -1,7 +1,9 @@
 // An ordered store of bytes, which IndexedDB's backing store of one storage
 // key keeps all of its databases in, as Chrome's on-disk store keeps them in
 // one LevelDB: keys sort as memcmp() sorts them, and a batch of writes goes
-// in whole or not at all. The memory store holds it until the Session goes.
+// in whole or not at all. The memory store holds it until the Session goes,
+// and in a Session with a storage directory it is also what the file holds of
+// the storage key, which each commit writes through to.
 //
 // Upstream: content/browser/indexed_db/instance/leveldb/backing_store.cc
 
@@ -17,10 +19,15 @@
 #include <string_view>
 #include <vector>
 
+#include "base/functional/callback.h"
+
 namespace mitto {
 
 // A batch of writes: each key's new value, or nullopt to remove it.
 using KvBatch = std::map<std::string, std::optional<std::string>>;
+
+// The entries of a store, in the order of their keys.
+using KvEntries = std::map<std::string, std::string, std::less<>>;
 
 class KvStore {
  public:
@@ -45,7 +52,13 @@ class KvStore {
 
 class MemoryKvStore final : public KvStore {
  public:
+  // What takes each batch once it is committed, to keep it elsewhere.
+  using Writer = base::RepeatingCallback<void(const KvBatch& batch)>;
+
   MemoryKvStore();
+  // A store that holds `entries` to start with, and hands each batch that it
+  // commits to `writer`.
+  MemoryKvStore(KvEntries entries, Writer writer);
   MemoryKvStore(const MemoryKvStore&) = delete;
   MemoryKvStore& operator=(const MemoryKvStore&) = delete;
   ~MemoryKvStore() override;
@@ -59,8 +72,9 @@ class MemoryKvStore final : public KvStore {
   int64_t Size() const override;
 
  private:
-  std::map<std::string, std::string, std::less<>> entries_;
+  KvEntries entries_;
   int64_t size_ = 0;
+  const Writer writer_;
 };
 
 }  // namespace mitto

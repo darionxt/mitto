@@ -13,7 +13,9 @@
 
 #include <compare>
 #include <string>
+#include <string_view>
 
+#include "base/unguessable_token.h"
 #include "net/base/schemeful_site.h"
 #include "url/origin.h"
 
@@ -70,6 +72,18 @@ class StorageKey {
   net::SchemefulSite top_level_site_;
   AncestorChainBit ancestor_chain_bit_;
 };
+
+// The key, as StorageKey::Serialize() writes them, of `origin`'s storage in a
+// frame under a top-level document of an opaque origin, such as a data: URL's:
+// Chrome writes that origin's nonce after "^4" and "^5", which `top_nonce`
+// stands for, one that no other top-level document of the Session has. No
+// later document has such a key, so a Session keeps its IndexedDB and Cache
+// API in memory.
+std::string SerializeUnderOpaqueTop(const url::Origin& origin,
+                                    const base::UnguessableToken& top_nonce);
+
+// Whether `serialized` is such a key.
+bool IsSerializedUnderOpaqueTop(std::string_view serialized);
 
 }  // namespace mitto
 
