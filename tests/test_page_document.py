@@ -378,5 +378,19 @@ def test_a_processing_instruction_escapes_attributes_by_its_documents_markup(pro
     """
 
     assert _evaluate(program, script) == (
-        "a=\"&nbsp;&lt;&gt;&amp;&quot;'U+9U+aU+d x\" false | a=\"U+a0&lt;&gt;&amp;&quot;'&#9;&#10;&#13; x\" true"
+        'a="&nbsp;&lt;&gt;&amp;&quot;\'U+9U+aU+d x" false | a="U+a0&lt;&gt;&amp;&quot;\'&#9;&#10;&#13; x" true'
     )
+
+
+def test_a_processing_instruction_takes_xmlns_with_no_prefix_as_an_attribute(program: Path) -> None:
+    # "xmlns:" declares nothing to libxml2, so it is an attribute like any other, twice too, as Chrome 157 gave.
+    script = """
+        ['a="1" xmlns:="u"', 'a="1" xmlns:="u" xmlns:="v"'].map((data) => {
+          const pi = document.createProcessingInstruction('t', data);
+          const read = `${JSON.stringify(pi.getAttributeNames())} ${pi.getAttribute('xmlns:')}`;
+          pi.setAttribute('c', '3');
+          return `${read} ${pi.data}`;
+        }).join(' / ')
+    """
+
+    assert _evaluate(program, script) == '["a","xmlns:"] u a="1" xmlns:="u" c="3" / [] null c="3"'

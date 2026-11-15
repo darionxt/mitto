@@ -256,7 +256,9 @@ std::optional<Attributes> ParsePseudoAttributes(std::u16string_view data) {
       index = next;
     }
     spaced = false;
-    if (name == u"xmlns" || name.starts_with(u"xmlns:")) {
+    // "xmlns:" with no prefix is an ordinary attribute to libxml2.
+    if (name == u"xmlns" ||
+        (name.starts_with(u"xmlns:") && name != u"xmlns:")) {
       if (std::ranges::contains(declarations, name)) {
         return std::nullopt;
       }
