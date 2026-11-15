@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/dom/element.h"
@@ -76,7 +77,32 @@ class HTMLElement : public Element {
   void RunActivationBehavior(Event& event,
                              EventDispatchHandlingState* state) override;
 
+  // The form element that it belongs to, whose scope an event handler that a
+  // content attribute set runs in, as Blink's HTMLElement::formOwner() gives
+  // it: none but for a form-associated element.
+  virtual Element* FormOwner() const;
+
+  // Element's: an event handler content attribute, such as onclick, sets the
+  // handler, as Blink's HTMLElement::ParseAttribute() does.
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
+
+ protected:
+  // Element's: the copy's event handler content attributes set handlers, as
+  // Blink's CloneAttributesFrom() runs them through AttributeChanged().
+  void DidCloneAttributes() override;
+
+  // The window's event whose handler the content attribute `name` sets in
+  // place of the element's, as a body's and a frameset's do, or empty.
+  virtual std::u16string_view WindowEventNameForAttributeName(
+      const QualifiedName& name) const;
+
  private:
+  // The handler that the event handler content attribute `name` sets, with
+  // `value`, null for none.
+  void ParseEventHandlerAttribute(const QualifiedName& name,
+                                  const std::u16string* value);
   // Whether it is a summary that is the first summary child of a details
   // element, as Blink's IsMainSummary() says.
   bool IsMainSummary() const;

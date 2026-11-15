@@ -1,7 +1,9 @@
 // The event handler attributes of a page's EventTargets, such as
 // window.onload, which the bindings reach through PerIsolateData's hooks: each
 // is the listener of an EventTarget, which its dispatch runs. An
-// HTMLBodyElement's handlers of the window's events are its window's.
+// HTMLBodyElement's and an HTMLFrameSetElement's handlers of the window's
+// events are its window's. The content attributes that set handlers are in
+// event_handler_attributes.h.
 
 #ifndef MITTO_DOM_EVENT_HANDLERS_H_
 #define MITTO_DOM_EVENT_HANDLERS_H_

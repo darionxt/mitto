@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "mitto/dom/heap_vector.h"
+#include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
@@ -100,6 +101,9 @@ class HtmlDocumentParser {
   // Ends the markup.
   void Finish();
   bool HasSeenEndOfFile() const;
+  // Where the tokenizer is, as Blink's HTMLDocumentParser::GetTextPosition()
+  // gives it.
+  MarkupPosition TextPosition() const;
 
   // The insertion point of document.write(), which the tokenizer keeps
   // (HtmlTokenizer::PushInsertionPoint()): Insert() adds markup there, or at
