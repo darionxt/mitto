@@ -107,8 +107,17 @@ void AnimationFrameController::EnqueueEvent(EventTarget& target, Event& event) {
   ScheduleAnimationIfNeeded();
 }
 
+void AnimationFrameController::BeginLifecycleUpdates() {
+  if (!lifecycle_updates_deferred_) {
+    return;
+  }
+  lifecycle_updates_deferred_ = false;
+  ScheduleAnimationIfNeeded();
+}
+
 void AnimationFrameController::ScheduleAnimationIfNeeded() {
-  if (frame_requested_ || (callbacks_.empty() && events_.empty())) {
+  if (frame_requested_ || lifecycle_updates_deferred_ ||
+      (callbacks_.empty() && events_.empty())) {
     return;
   }
   frame_requested_ = true;

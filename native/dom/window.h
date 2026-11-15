@@ -268,6 +268,11 @@ class Window final : public WindowProperties {
   // callbacks, as Blink's Document::EnqueueAnimationFrameEvent() does. Nothing
   // fires in a window with no frames.
   void EnqueueAnimationFrameEvent(EventTarget& target, mitto::Event& event);
+  // The window's frames wait until its document is ready to render, as
+  // LocalFrameView's lifecycle updates do, from a navigation's commit until
+  // Document::BeginLifecycleUpdatesIfRenderingReady().
+  void DeferLifecycleUpdates();
+  void BeginLifecycleUpdates();
   // How many scheduler.postTask() callbacks and scheduler.yield()
   // continuations wait.
   size_t ScheduledTaskCount() const;

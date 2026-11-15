@@ -21,8 +21,8 @@ class PageTransitionEvent final : public Event {
   static PageTransitionEvent* Create(
       const std::u16string& type,
       const bindings::PageTransitionEventInit& init);
-  // A trusted event that neither bubbles nor can be canceled, as Blink's
-  // document makes it for a window.
+  // A trusted event that bubbles and can be canceled, as Blink's
+  // PageTransitionEvent(type, persisted) makes it for a window.
   static PageTransitionEvent* CreateTrusted(const std::u16string& type,
                                             bool persisted);
 
