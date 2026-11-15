@@ -309,13 +309,18 @@ def test_a_script_fires_load_once_it_has_run_and_error_when_it_cannot_run(
         "}</script>",
     )
 
+    # The error of the script with no URL is a task of the DOM manipulation task source, queued as the parser reaches
+    # it, and the deferred scripts run once parsing has ended and each response has come. A response that comes before
+    # the parser reaches the script with no URL is a task before its error, so the order between the two sources
+    # depends on the network, in Chrome as in a Page: only the order within each holds.
     with _open_page(session, url) as page:
-        assert page.evaluate("seen") == [
-            "error '' true",
+        seen: list[str] = page.evaluate("seen")
+        assert [line for line in seen if line != "error '' true"] == [
             "ran",
             "load '/fine.js' true",
             "error '/missing.js' true",
         ]
+        assert seen.count("error '' true") == 1
 
 
 def test_a_script_whose_mime_type_cannot_run_fires_error_as_in_chrome(
