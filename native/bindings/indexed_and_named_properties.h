@@ -95,7 +95,6 @@ void InstallIndexedAndNamedProperties(
     v8::Local<v8::ObjectTemplate> instance_template,
     const IndexedAndNamedProperties& properties);
 
-}  // namespace mitto::bindings
 // What the class of WindowProperties gives for the HTML Standard's named
 // properties object, Web IDL's named properties object of Window.
 struct NamedPropertiesObject {
@@ -118,5 +117,6 @@ void InstallNamedPropertiesObject(
     v8::Local<v8::ObjectTemplate> prototype_template,
     const NamedPropertiesObject& properties);
 
+}  // namespace mitto::bindings
 
 #endif  // MITTO_BINDINGS_INDEXED_AND_NAMED_PROPERTIES_H_
