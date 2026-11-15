@@ -15,22 +15,37 @@
 #include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/html_script_element.h"
+#include "mitto/dom/script_element_base.h"
 #include "mitto/dom/subresource_integrity.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/encoding/text_encoding_registry.h"
+#include "third_party/icu/source/common/unicode/uchar.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/persistent.h"
 
 namespace mitto {
 namespace {
 
-// The HTML Standard's ASCII whitespace, and the vertical tab that Blink's
-// StripWhiteSpace() strips too.
-constexpr std::u16string_view kStripped = u" \t\n\v\f\r";
+// Blink's IsSpaceOrNewline(): ASCII whitespace with the vertical tab, and
+// beyond ASCII each character whose bidirectional class is white space, such
+// as U+1680 and U+3000.
+bool IsSpaceOrNewline(char16_t c) {
+  return c <= 0x7F ? c == u' ' || (c >= u'\t' && c <= u'\r')
+                   : u_charDirection(c) == U_WHITE_SPACE_NEUTRAL;
+}
 
+// Blink's String::StripWhiteSpace().
 std::u16string StripWhiteSpace(std::u16string_view text) {
-  return std::u16string(base::TrimString(text, kStripped, base::TRIM_ALL));
+  size_t start = 0;
+  size_t end = text.size();
+  while (start < end && IsSpaceOrNewline(text[start])) {
+    ++start;
+  }
+  while (end > start && IsSpaceOrNewline(text[end - 1])) {
+    --end;
+  }
+  return std::u16string(text.substr(start, end - start));
 }
 
 // StripLeadingAndTrailingHtmlSpaces(): the HTML Standard's ASCII whitespace.
@@ -90,18 +105,18 @@ bool TypeIs(const std::optional<std::u16string>& type,
 
 // Queues an element task on the DOM manipulation task source to fire error
 // at `element`.
-void QueueErrorEvent(HTMLScriptElement& element) {
-  Window* const window = element.GetDocument().DefaultView();
+void QueueErrorEvent(ScriptElementBase& element) {
+  Window* const window = element.AsElement().GetDocument().DefaultView();
   WindowTasks* const tasks = window ? window->GetTasks() : nullptr;
   if (!tasks) {
     return;
   }
   tasks->PostTask(TaskType::kDOMManipulation,
                   base::BindOnce(
-                      [](const cppgc::Persistent<HTMLScriptElement>& element) {
-                        element->DispatchErrorEvent();
+                      [](const cppgc::Persistent<Element>& element) {
+                        ToScriptElement(*element)->DispatchErrorEvent();
                       },
-                      cppgc::Persistent<HTMLScriptElement>(&element)));
+                      cppgc::Persistent<Element>(&element.AsElement())));
 }
 
 // Steps 18, 25 and 26's request of a classic script: the mode and credentials
@@ -111,12 +126,12 @@ void QueueErrorEvent(HTMLScriptElement& element) {
 // blocking rendering move.
 // Upstream: third_party/blink/renderer/core/script/script_loader.cc
 // Upstream: third_party/blink/renderer/core/html/cross_origin_attribute.cc
-FetchRequestData ClassicScriptRequest(HTMLScriptElement& element,
+FetchRequestData ClassicScriptRequest(ScriptElementBase& element,
                                       bool parser_inserted,
                                       bool render_blocking) {
   FetchRequestData request;
   if (const std::optional<std::u16string> cross_origin =
-          element.GetAttribute(u"crossorigin")) {
+          element.CrossOriginAttributeValue()) {
     request.mode = FetchMode::kCors;
     request.credentials =
         base::EqualsCaseInsensitiveASCII(*cross_origin, u"use-credentials")
@@ -124,20 +139,25 @@ FetchRequestData ClassicScriptRequest(HTMLScriptElement& element,
             : FetchCredentialsMode::kSameOrigin;
   }
   request.referrer_policy = FetchReferrerPolicyFromString(
-      element.GetAttribute(u"referrerpolicy").value_or(u""));
-  const bool lazy = !parser_inserted || element.HasAttribute(u"async") ||
-                    element.HasAttribute(u"defer");
+      element.ReferrerPolicyAttributeValue().value_or(u""));
+  const bool lazy = !parser_inserted || element.AsyncAttributeValue() ||
+                    element.DeferAttributeValue();
   request.priority = ComputeFetchPriority(
       lazy,
       FetchPriorityHintFromAttribute(
-          element.GetAttribute(u"fetchpriority").value_or(u"")),
+          element.FetchPriorityAttributeValue().value_or(u"")),
       render_blocking);
   return request;
 }
 
 }  // namespace
 
-ScriptLoader::ScriptLoader(HTMLScriptElement& element) : element_(&element) {}
+ScriptLoader::ScriptLoader(ScriptElementBase& element)
+    : element_(&element.AsElement()) {}
+
+ScriptElementBase& ScriptLoader::ScriptElement() const {
+  return *ToScriptElement(*element_);
+}
 
 ScriptLoader::~ScriptLoader() = default;
 
@@ -194,9 +214,10 @@ void ScriptLoader::HandleSourceAttribute(const std::u16string& source) {
 }
 
 bool ScriptLoader::IsScriptForEventSupported() const {
-  const std::optional<std::u16string> event = element_->GetAttribute(u"event");
+  const std::optional<std::u16string> event =
+      ScriptElement().EventAttributeValue();
   const std::optional<std::u16string> for_attribute =
-      element_->GetAttribute(u"for");
+      ScriptElement().ForAttributeValue();
   if (script_type_ != ScriptTypeAtPrepare::kClassic || !event ||
       !for_attribute) {
     return true;
@@ -218,12 +239,13 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   // Steps 2 to 4.
   const bool was_parser_inserted = parser_inserted_;
   parser_inserted_ = false;
-  if (was_parser_inserted && !element_->HasAttribute(u"async")) {
+  if (was_parser_inserted && !ScriptElement().AsyncAttributeValue()) {
     force_async_ = true;
   }
   // Steps 5 to 7.
   const std::u16string source_text = element_->ChildTextContent();
-  const std::optional<std::u16string> src = element_->GetAttribute(u"src");
+  const std::optional<std::u16string> src =
+      ScriptElement().SourceAttributeValue();
   if (!src && source_text.empty()) {
     return nullptr;
   }
@@ -233,8 +255,9 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   Document& element_document = element_->GetDocument();
   Window* const context_window = element_document.DefaultView();
   // Steps 8 to 11.
-  script_type_ = GetScriptTypeAtPrepare(element_->GetAttribute(u"type"),
-                                        element_->GetAttribute(u"language"));
+  script_type_ =
+      GetScriptTypeAtPrepare(ScriptElement().TypeAttributeValue(),
+                             ScriptElement().LanguageAttributeValue());
   if (script_type_ == ScriptTypeAtPrepare::kInvalid) {
     return nullptr;
   }
@@ -254,7 +277,7 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   }
   // Step 17.
   if (script_type_ == ScriptTypeAtPrepare::kClassic &&
-      element_->HasAttribute(u"nomodule")) {
+      ScriptElement().NomoduleAttributeValue()) {
     return nullptr;
   }
   // Step 19.
@@ -266,7 +289,7 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   IntegrityMetadataSet integrity;
   if (src) {
     const std::optional<std::u16string> integrity_attribute =
-        element_->GetAttribute(u"integrity");
+        ScriptElement().IntegrityAttributeValue();
     if (integrity_attribute && !integrity_attribute->empty()) {
       std::vector<std::string> messages;
       integrity = ParseIntegrityAttribute(*integrity_attribute, &messages);
@@ -279,29 +302,29 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
   // Steps 21 and 22: the encoding that the charset attribute names, with no
   // white space trimmed, or else the node document's.
   const std::optional<std::u16string> charset =
-      element_->GetAttribute(u"charset");
+      ScriptElement().CharsetAttributeValue();
   std::string encoding = charset ? CanonicalTextEncodingName(*charset) : "";
   if (encoding.empty()) {
     encoding = element_document.Encoding();
   }
   const bool potentially_render_blocking =
-      element_->IsPotentiallyRenderBlocking();
+      ScriptElement().IsPotentiallyRenderBlocking();
 
   if (src) {
     // Step 31.
     if (script_type_ == ScriptTypeAtPrepare::kImportMap) {
-      QueueErrorEvent(*element_);
+      QueueErrorEvent(ScriptElement());
       return nullptr;
     }
     const std::u16string stripped_src = StripHtmlSpaces(*src);
     if (stripped_src.empty()) {
-      QueueErrorEvent(*element_);
+      QueueErrorEvent(ScriptElement());
       return nullptr;
     }
     is_external_script_ = true;
     const GURL url = element_document.CompleteUrl(stripped_src);
     if (!url.is_valid()) {
-      QueueErrorEvent(*element_);
+      QueueErrorEvent(ScriptElement());
       return nullptr;
     }
     switch (script_type_) {
@@ -312,12 +335,12 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         context_window->AddConsoleMessage(
             ConsoleLevel::kError,
             "External speculation rules are not yet supported.");
-        QueueErrorEvent(*element_);
+        QueueErrorEvent(ScriptElement());
         return nullptr;
       case ScriptTypeAtPrepare::kWebBundle:
         context_window->AddConsoleMessage(
             ConsoleLevel::kError, "External webbundle is not yet supported.");
-        QueueErrorEvent(*element_);
+        QueueErrorEvent(ScriptElement());
         return nullptr;
       case ScriptTypeAtPrepare::kModule:
         // Module scripts are a Known Gap.
@@ -327,12 +350,12 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         // blocks the parser and that document.write() inserted.
         MaybeDisallowFetchForDocWrittenScript(
             url,
-            !parser_inserted_ || element_->HasAttribute(u"async") ||
-                element_->HasAttribute(u"defer"),
+            !parser_inserted_ || ScriptElement().AsyncAttributeValue() ||
+                ScriptElement().DeferAttributeValue(),
             element_document);
         prepared_pending_script_ = PendingScript::Fetch(
-            *element_, url,
-            ClassicScriptRequest(*element_, parser_inserted_,
+            ScriptElement(), url,
+            ClassicScriptRequest(ScriptElement(), parser_inserted_,
                                  potentially_render_blocking),
             std::move(integrity), std::move(encoding),
             potentially_render_blocking);
@@ -358,10 +381,10 @@ PendingScript* ScriptLoader::PrepareScript(ParserBlockingInlineOption option) {
         const bool named =
             parser_inserted_ && !element_document.IsInDocumentWrite();
         prepared_pending_script_ = PendingScript::CreateInline(
-            *element_, source_text,
+            ScriptElement(), source_text,
             named ? GURL(element_document.UrlForBinding()) : GURL(),
-            named ? element_->StartLine() : 0,
-            named ? element_->StartColumn() : 0);
+            named ? ScriptElement().StartLine() : 0,
+            named ? ScriptElement().StartColumn() : 0);
         break;
       }
     }
@@ -393,13 +416,13 @@ ScriptSchedulingType ScriptLoader::GetScriptSchedulingTypePerSpec(
     ParserBlockingInlineOption option) const {
   // Step 31 for an external classic script.
   if (is_external_script_) {
-    if (element_->HasAttribute(u"async") || force_async_) {
+    if (ScriptElement().AsyncAttributeValue() || force_async_) {
       return ScriptSchedulingType::kAsync;
     }
     if (!parser_inserted_) {
       return ScriptSchedulingType::kInOrder;
     }
-    if (element_->HasAttribute(u"defer")) {
+    if (ScriptElement().DeferAttributeValue()) {
       return ScriptSchedulingType::kDefer;
     }
     return ScriptSchedulingType::kParserBlocking;

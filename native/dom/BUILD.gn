@@ -436,6 +436,8 @@ source_set("dom") {
     "screen.h",
     "screen_orientation.cc",
     "screen_orientation.h",
+    "script_element_base.cc",
+    "script_element_base.h",
     "script_loader.cc",
     "script_loader.h",
     "script_values.cc",
