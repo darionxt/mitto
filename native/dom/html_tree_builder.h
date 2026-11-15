@@ -5,16 +5,17 @@
 // It has every insertion mode, foster parenting, the list of active formatting
 // elements with the adoption agency algorithm, framesets, and SVG and MathML
 // elements, templates with their contents, and parses fragments for any
-// context element. Where the DOM lacks what a rule needs, such as a
-// ProcessingInstruction node, the builder goes on as near Chrome's tree as it
-// can and records the rule, which tests read to tell such a rule from a wrong
-// tree.
+// context element, with the scripting flag on or off. Where the DOM lacks what
+// a rule needs, such as a ProcessingInstruction node, the builder goes on as
+// near Chrome's tree as it can and records the rule, which tests read to tell
+// such a rule from a wrong tree.
 //
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.h
 // Upstream: third_party/blink/renderer/core/html/parser/html_tree_builder.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_construction_site.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_element_stack.cc
 // Upstream: third_party/blink/renderer/core/html/parser/html_formatting_element_list.cc
+// Upstream: third_party/blink/renderer/core/html/parser/html_parser_options.cc
 
 #ifndef MITTO_DOM_HTML_TREE_BUILDER_H_
 #define MITTO_DOM_HTML_TREE_BUILDER_H_
@@ -38,6 +39,19 @@ class Element;
 class HTMLScriptElement;
 class HtmlTokenizer;
 class HtmlTreeBuilder;
+
+// What Blink's HTMLParserOptions holds of a parse.
+struct HtmlParserOptions {
+  // The options for a parse into `document`, as HTMLParserOptions(Document*)
+  // gives them: the scripting flag is on for a document that has a window,
+  // whose scripts a Page always runs, and off for one of no window, such as
+  // createHTMLDocument()'s or a template's contents.
+  static HtmlParserOptions ForDocument(const Document& document);
+
+  // The HTML Standard's scripting flag. On, noscript holds raw text. Off, its
+  // contents are markup, with the "in head noscript" insertion mode.
+  bool scripting_flag = false;
+};
 
 // What a tree builder refers to: its document and every element that it holds,
 // as Blink's HTMLTreeBuilder traces them, for the builder's owner to trace or
@@ -70,9 +84,13 @@ class HtmlTreeBuilderReferences final
 class HtmlDocumentParser {
  public:
   // What the tree builder refers to stays in `references`, which outlives
-  // this, or, with none, in references that this holds.
+  // this, or, with none, in references that this holds. The options are the
+  // document's, HtmlParserOptions::ForDocument(), unless given.
   explicit HtmlDocumentParser(Document& document,
                               HtmlTreeBuilderReferences* references = nullptr);
+  HtmlDocumentParser(Document& document,
+                     const HtmlParserOptions& options,
+                     HtmlTreeBuilderReferences* references = nullptr);
   HtmlDocumentParser(const HtmlDocumentParser&) = delete;
   HtmlDocumentParser& operator=(const HtmlDocumentParser&) = delete;
   ~HtmlDocumentParser();
@@ -108,16 +126,30 @@ class HtmlDocumentParser {
 };
 
 // Parses all of `markup` into `document`, which must have no children, and
-// returns the rules the tree builder could not follow.
+// returns the rules the tree builder could not follow. The options are the
+// document's, HtmlParserOptions::ForDocument(), unless given.
 std::vector<std::string> ParseHtmlDocument(Document& document,
                                            std::u16string_view markup);
+std::vector<std::string> ParseHtmlDocument(Document& document,
+                                           std::u16string_view markup,
+                                           const HtmlParserOptions& options);
+
+// The options of a fragment parse for `context`, as Blink's fragment parser
+// gives them: those of the document that the fragment is made in, which for a
+// template is the template's contents' document.
+HtmlParserOptions FragmentParserOptions(const Element& context);
 
 // The HTML Standard's fragment parsing algorithm for `context`, of any
 // namespace, which innerHTML, outerHTML and insertAdjacentHTML() use: the nodes
 // that `markup` makes, with no parent. `skipped_rules`, if not null, gets the
-// rules the tree builder could not follow.
+// rules the tree builder could not follow. The options are
+// FragmentParserOptions(context), unless given.
 NodeVector ParseHtmlFragment(Element& context,
                              std::u16string_view markup,
+                             std::vector<std::string>* skipped_rules = nullptr);
+NodeVector ParseHtmlFragment(Element& context,
+                             std::u16string_view markup,
+                             const HtmlParserOptions& options,
                              std::vector<std::string>* skipped_rules = nullptr);
 
 }  // namespace mitto
