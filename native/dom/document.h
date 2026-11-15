@@ -27,6 +27,7 @@
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
+#include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/member.h"
@@ -371,6 +372,10 @@ class Document : public Node {
   // script-created one of open(), until the document has loaded, and null
   // otherwise.
   DocumentParser* Parser() const { return parser_.Get(); }
+  // ScriptController::EventHandlerPosition(): where the document's parser is,
+  // while it has one, for the handlers that content attributes set, and the
+  // start of the markup otherwise.
+  MarkupPosition EventHandlerPosition() const;
   // Document::OpenForNavigation(): a parser for the document's response,
   // which `client` feeds, with the document loading.
   DocumentParser& OpenForNavigation(DocumentParser::Client& client);

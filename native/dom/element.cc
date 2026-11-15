@@ -876,6 +876,7 @@ Node* Element::CloneWithoutChildren(Document& document) const {
       tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);
   copy->attributes_ = attributes_;
   copy->is_value_ = is_value_;
+  copy->DidCloneAttributes();
   return copy;
 }
 

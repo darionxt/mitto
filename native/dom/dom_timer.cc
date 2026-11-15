@@ -12,6 +12,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/timer/timer.h"
 #include "mitto/bindings/v8_conversions.h"
+#include "mitto/dom/error_reporting.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-function.h"
@@ -290,15 +291,20 @@ void DOMTimerCoordinator::Execute(const Action& action) {
         context, context->Global(), base::checked_cast<int>(arguments.size()),
         arguments.data());
   } else {
+    // Blink's ScheduledAction: a classic script of no URL whose errors are
+    // not muted (kDoNotSanitize), even when a script of another origin set
+    // it, so that an error reports the document's URL and its error object.
     v8::Local<v8::String> source;
     v8::Local<v8::Script> script;
+    v8::ScriptOrigin origin = ClassicScriptOrigin(v8::String::Empty(isolate_),
+                                                  /*muted_errors=*/false);
     if (action.code.size() <= static_cast<size_t>(v8::String::kMaxLength) &&
         v8::String::NewFromTwoByte(
             isolate_, reinterpret_cast<const uint16_t*>(action.code.data()),
             v8::NewStringType::kNormal,
             base::checked_cast<int>(action.code.size()))
             .ToLocal(&source) &&
-        v8::Script::Compile(context, source).ToLocal(&script)) {
+        v8::Script::Compile(context, source, &origin).ToLocal(&script)) {
       std::ignore = script->Run(context);
     }
   }

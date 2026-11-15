@@ -300,6 +300,20 @@ _HANDLERS_AS_CHROME = {
         "return signal.dispatchEvent(new Event('abort'));",
         "value: true",
     ),
+    # Blink's CloneAttributesFrom() passes a copy's attributes through AttributeChanged().
+    "a copy's content attribute sets its handler": (
+        "const div = document.createElement('div'); div.setAttribute('onclick', 'window.ran = event.type'); "
+        "const copy = div.cloneNode(); copy.dispatchEvent(new Event('click')); "
+        "return [typeof copy.onclick, window.ran].join();",
+        "value: function,click",
+    ),
+    # Blink's table of HTMLElement's attributes gives ontransitionend's handler the prefixed event.
+    "the ontransitionend content attribute listens for webkitTransitionEnd": (
+        "const div = document.createElement('div'); div.setAttribute('ontransitionend', 'window.heard = event.type'); "
+        "const property = typeof div.ontransitionend; div.dispatchEvent(new Event('transitionend')); "
+        "div.dispatchEvent(new Event('webkitTransitionEnd')); return [property, window.heard].join();",
+        "value: object,webkitTransitionEnd",
+    ),
 }
 
 

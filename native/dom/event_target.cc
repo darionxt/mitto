@@ -16,6 +16,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/permissions_policy.h"
@@ -380,6 +381,7 @@ void EventListenerEntry::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(callback_);
   visitor->Trace(next_);
   visitor->Trace(signal_);
+  visitor->Trace(raw_handler_);
 }
 
 void EventListenerEntry::set_signal(AbortSignal* signal) {
@@ -548,14 +550,36 @@ void EventTarget::RemoveEntry(EventListenerEntry* entry) {
 
 v8::Local<v8::Value> EventTarget::AttributeEventHandler(
     v8::Isolate* isolate,
-    std::u16string_view type) const {
+    std::u16string_view type) {
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
     if (entry->attribute_handler() && entry->type() == type) {
-      return entry->callback(isolate);
+      return HandlerOf(isolate, *entry);
     }
   }
   return v8::Null(isolate);
+}
+
+v8::Local<v8::Value> EventTarget::HandlerOf(v8::Isolate* isolate,
+                                            EventListenerEntry& entry) {
+  // Blink's JSEventHandlerForContentAttribute::GetListenerObject(): a raw
+  // handler is compiled once, and one that failed to stays null.
+  RawEventHandler* const raw_handler = entry.raw_handler();
+  if (!raw_handler) {
+    return entry.callback(isolate);
+  }
+  if (raw_handler->did_compile()) {
+    return v8::Null(isolate);
+  }
+  // Compiling reports a body that does not parse, which runs the window's
+  // error listeners, so the entry stays as long as this does.
+  const cppgc::Persistent<EventListenerEntry> kept(&entry);
+  const cppgc::Persistent<RawEventHandler> kept_handler(raw_handler);
+  const v8::Local<v8::Value> compiled = raw_handler->Compile(isolate, *this);
+  if (compiled->IsFunction() && entry.raw_handler() == raw_handler) {
+    entry.set_callback(isolate, compiled.As<v8::Object>());
+  }
+  return compiled;
 }
 
 void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
@@ -589,6 +613,45 @@ void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
       bindings::MakeGarbageCollected<EventListenerEntry>(
           isolate, type, handler.As<v8::Object>(), /*capture=*/false,
           /*passive=*/false, /*once=*/false, /*attribute_handler=*/true);
+  if (last_listener_) {
+    last_listener_->set_next(entry);
+  } else {
+    first_listener_ = entry;
+  }
+  last_listener_ = entry;
+  ListenersChanged(type);
+}
+
+void EventTarget::SetAttributeEventListener(const std::u16string& type,
+                                            RawEventHandler* handler) {
+  EventListenerEntry* existing = nullptr;
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->attribute_handler() && entry->type() == type) {
+      existing = entry;
+      break;
+    }
+  }
+  if (!handler) {
+    if (existing) {
+      RemoveEntry(existing);
+    }
+    return;
+  }
+  if (existing) {
+    existing->set_raw_handler(handler);
+    return;
+  }
+  if (!AllowsUnloadListener(type)) {
+    return;
+  }
+  has_event_target_data_ = true;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  EventListenerEntry* const entry =
+      bindings::MakeGarbageCollected<EventListenerEntry>(
+          isolate, type, v8::Local<v8::Object>(), /*capture=*/false,
+          /*passive=*/false, /*once=*/false, /*attribute_handler=*/true);
+  entry->set_raw_handler(handler);
   if (last_listener_) {
     last_listener_->set_next(entry);
   } else {
@@ -736,8 +799,11 @@ bool EventTarget::FireEventListeners(Event* event) {
       window->SetCurrentEvent(event);
     }
     if (entry->attribute_handler()) {
-      CallAttributeHandler(isolate, entry->callback(isolate), *this,
-                           current_target, event_wrapper, event);
+      const v8::Local<v8::Value> handler = HandlerOf(isolate, *entry);
+      if (handler->IsObject()) {
+        CallAttributeHandler(isolate, handler.As<v8::Object>(), *this,
+                             current_target, event_wrapper, event);
+      }
     } else {
       CallListener(isolate, entry->callback(isolate), current_target,
                    event_wrapper, event);
