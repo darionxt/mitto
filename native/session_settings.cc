@@ -49,6 +49,7 @@ constexpr std::string_view kAcceptCHViaALPSKey = "accept_ch_via_alps";
 constexpr std::string_view kRefusedConnectsKey = "refused_connects";
 constexpr std::string_view kHttpCacheKey = "http_cache";
 constexpr std::string_view kMemoryCache = "memory";
+constexpr std::string_view kStorageKey = "storage";
 constexpr std::string_view kNetworkQualityKey = "network_quality";
 constexpr std::string_view kHttpRttMsKey = "http_rtt_ms";
 constexpr std::string_view kDownstreamThroughputKbpsKey =
@@ -300,6 +301,19 @@ bool ReadHttpCache(const base::Value& value, SessionSettings& settings) {
   return true;
 }
 
+bool ReadStorage(const base::Value& value, SessionSettings& settings) {
+  if (!value.is_string()) {
+    return false;
+  }
+  const std::string& storage = value.GetString();
+  const base::FilePath directory = base::FilePath::FromUTF8Unsafe(storage);
+  if (storage.find('\0') != std::string::npos || !directory.IsAbsolute()) {
+    return false;
+  }
+  settings.storage_directory = directory;
+  return true;
+}
+
 }  // namespace
 
 SessionSettings::SessionSettings() = default;
@@ -386,6 +400,12 @@ std::optional<SessionSettings> ParseSessionSettings(std::string_view json) {
     }
     if (key == kHttpCacheKey) {
       if (!ReadHttpCache(value, settings)) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (key == kStorageKey) {
+      if (!ReadStorage(value, settings)) {
         return std::nullopt;
       }
       continue;

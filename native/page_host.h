@@ -30,6 +30,7 @@
 #include "mitto/page_messages.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
+#include "mitto/storage/storage_key.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -50,6 +51,8 @@ class PageCacheStorage;
 class PageHost;
 class ReadyRequests;
 class StorageQuota;
+class SessionStorageNamespace;
+class StorageContext;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
 // header lines in their order, and its options, with no Initiator, which the
@@ -154,6 +157,9 @@ class PageNetwork {
   // storage.
   virtual CacheStorageContext& cache_storage() = 0;
   virtual StorageQuota& storage_quota() = 0;
+
+  // The Session's storage, which all its Pages share.
+  virtual StorageContext& storage_context() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -406,6 +412,13 @@ class PageHost final : public PageChannel::Delegate {
   void OnCacheStorage(PageCacheStorageCall call,
                       uint64_t context_id,
                       const GURL& document_url);
+  // What a document's localStorage and sessionStorage ask, as Chrome's
+  // storage service answers a renderer: an area takes its storage key from the
+  // URL that the library loaded the document at that binds it.
+  void OnStorageBind(const PageStorageBind& bind, uint64_t document);
+  void OnStorageGetAll(const PageStorageGetAll& get_all);
+  void OnStorageMutation(PageMessage type, PageStorageMutation mutation);
+  void OnStorageUnbind(uint64_t area);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -473,6 +486,18 @@ class PageHost final : public PageChannel::Delegate {
   // its origin, first party.
   static std::optional<std::string> DocumentCacheStorageKey(
       const GURL& document_url);
+
+  // The storage key of document `id`, as Chrome works it out for a frame with
+  // third-party storage partitioning, which it turns on: the document's
+  // origin, the site of the top-level document and whether a document from
+  // `id` up is of another site. None for a document of an opaque origin, or
+  // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
+  // document under a top-level one of an opaque origin, whose key no other
+  // top-level document ever has.
+  std::optional<StorageKey> DocumentStorageKey(uint64_t id) const;
+
+  // Lets go of every storage area that the Page bound.
+  void ReleaseStorage();
 
   // What navigator.connection gives a document at `url`: what the renderer
   // process of its site gives for its host, as for a subresource to it.
@@ -546,6 +571,19 @@ class PageHost final : public PageChannel::Delegate {
     CookieContext context;
   };
   std::map<uint64_t, CookieStoreListener> cookie_store_listeners_;
+  // The storage areas that the Page has bound, by number, the largest number
+  // it has used, and its sessionStorage, which lasts as long as the Page.
+  class StorageArea;
+  std::map<uint64_t, std::unique_ptr<StorageArea>> storage_areas_;
+  uint64_t last_storage_area_ = 0;
+  uint64_t last_storage_observer_ = 0;
+  std::unique_ptr<SessionStorageNamespace> session_storage_;
+  // The localStorage and sessionStorage of the frames under a top-level
+  // document of an opaque origin, by that document's ID, which stay in memory
+  // for as long as the Page.
+  std::map<std::pair<uint64_t, PageStorageKind>,
+           std::unique_ptr<SessionStorageNamespace>>
+      opaque_top_storage_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
