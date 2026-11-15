@@ -7,6 +7,8 @@ on the same kind of page, headless on macOS (157.0.8103.51), which tests/data/in
 
 import http.server
 import json
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,6 +23,56 @@ from tests.local_server import QuietServer
 _TIMEOUT_SECONDS = 120
 _BLANK = b"<!doctype html><title>i</title><body>"
 _TESTS = Path(__file__).parent
+_SAVED_STORAGE_CLIENT = _TESTS / "saved_storage_client.py"
+
+# Writes a database of two versions, with a store, an index and a key generator, and gives what IndexedDB's part of
+# navigator.storage.estimate() says.
+_WRITE = """
+new Promise((resolve, reject) => {
+  const r = indexedDB.open('kept', 2);
+  r.onupgradeneeded = () => {
+    const s = r.result.createObjectStore('s', {autoIncrement: true});
+    s.createIndex('by_name', 'name');
+  };
+  r.onsuccess = () => {
+    const tx = r.result.transaction('s', 'readwrite');
+    const s = tx.objectStore('s');
+    s.put({name: 'é and 日本', bytes: new Uint8Array([1, 2, 3])});
+    for (let i = 0; i < 100; ++i) s.put({name: `n${i}`, i});
+    tx.oncomplete = async () => {
+      r.result.close();
+      resolve((await navigator.storage.estimate()).usageDetails.indexedDB);
+    };
+    tx.onabort = () => reject(tx.error);
+  };
+  r.onerror = () => reject(r.error);
+})
+"""
+# What a later Session reads of it: what estimate() says before any open, then the database.
+_READ = """
+(async () => {
+  const usage = (await navigator.storage.estimate()).usageDetails.indexedDB;
+  const databases = await indexedDB.databases();
+  const db = await new Promise((resolve, reject) => {
+    const r = indexedDB.open('kept');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+  const read = await new Promise((resolve) => {
+    const s = db.transaction('s').objectStore('s');
+    const first = s.index('by_name').get('é and 日本');
+    const count = s.count();
+    const last = s.get(101);
+    last.onsuccess = () => resolve([count.result, first.result.name, [...first.result.bytes], last.result.i]);
+  });
+  // The key generator goes on from where it was.
+  const next = await new Promise((resolve) => {
+    const put = db.transaction('s', 'readwrite').objectStore('s').put({name: 'next'});
+    put.onsuccess = () => resolve(put.result);
+  });
+  return [usage, databases, db.version, [...db.objectStoreNames], ...read, next];
+})()
+"""
 
 
 @pytest.fixture
@@ -236,3 +288,96 @@ def test_an_open_whose_database_is_too_large_for_a_frame_fails(server_origin: st
 
     too_large = "UnknownError: The result is too large."
     assert outcome == ["complete", too_large, "close", too_large, too_large, [{"name": "meta", "version": 1}]]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_storage_directory_brings_databases_back_in_another_process(server_origin: str, tmp_path: Path) -> None:
+    storage = tmp_path / "storage"
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        usage = page.evaluate(_WRITE, timeout=_TIMEOUT_SECONDS)
+
+    assert (storage / "IndexedDB").is_file()
+    completed = subprocess.run(
+        [sys.executable, str(_SAVED_STORAGE_CLIENT), str(storage), f"{server_origin}/", _READ],
+        capture_output=True,
+        text=True,
+        timeout=_TIMEOUT_SECONDS * 2,
+        check=True,
+    )
+    printed = json.loads(completed.stdout)
+
+    assert usage > 0
+    assert printed["result"] == [
+        usage,
+        [{"name": "kept", "version": 2}],
+        2,
+        ["s"],
+        101,
+        "é and 日本",
+        [1, 2, 3],
+        99,
+        102,
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_commit_just_before_close_is_kept(server_origin: str, tmp_path: Path) -> None:
+    storage = tmp_path / "storage"
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        # The Session closes as soon as the transaction completes, with its connection still open.
+        page.evaluate(
+            "new Promise((resolve) => { const r = indexedDB.open('late', 1);"
+            " r.onupgradeneeded = () => r.result.createObjectStore('s');"
+            " r.onsuccess = () => { const tx = r.result.transaction('s', 'readwrite');"
+            " for (let i = 0; i < 1000; ++i) tx.objectStore('s').put('v'.repeat(i), i);"
+            " tx.oncomplete = () => resolve(); }; })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        outcome = page.evaluate(
+            "new Promise((resolve) => { const r = indexedDB.open('late');"
+            " r.onsuccess = () => { const s = r.result.transaction('s').objectStore('s');"
+            " const count = s.count(); const last = s.get(999);"
+            " last.onsuccess = () => resolve([count.result, last.result.length]); }; })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert outcome == [1000, 999]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_an_aborted_transaction_leaves_nothing_in_the_storage_directory(server_origin: str, tmp_path: Path) -> None:
+    storage = tmp_path / "storage"
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        page.evaluate(
+            "new Promise((resolve) => { const r = indexedDB.open('aborted', 1);"
+            " r.onupgradeneeded = () => r.result.createObjectStore('s').put('kept', 1);"
+            " r.onsuccess = () => { const tx = r.result.transaction('s', 'readwrite');"
+            " tx.objectStore('s').put('gone', 2); tx.objectStore('s').delete(1); tx.abort();"
+            " tx.onabort = () => resolve(); }; })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        outcome = page.evaluate(
+            "new Promise((resolve) => { const r = indexedDB.open('aborted');"
+            " r.onsuccess = () => { const all = r.result.transaction('s').objectStore('s').getAll();"
+            " all.onsuccess = () => resolve(all.result); }; })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert outcome == ["kept"]
