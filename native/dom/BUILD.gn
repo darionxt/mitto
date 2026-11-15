@@ -115,6 +115,8 @@ source_set("dom") {
     "event_counts.h",
     "event_dispatcher.cc",
     "event_dispatcher.h",
+    "event_factory.cc",
+    "event_factory.h",
     "event_handler_attributes.cc",
     "event_handler_attributes.h",
     "event_handlers.cc",

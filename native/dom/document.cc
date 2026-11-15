@@ -17,6 +17,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
 #include "mitto/bindings/v8_window.h"
@@ -35,6 +38,7 @@
 #include "mitto/dom/dom_implementation.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_factory.h"
 #include "mitto/dom/html_all_collection.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
@@ -649,6 +653,25 @@ HTMLHeadElement* Document::Head() const {
 
 Comment* Document::CreateComment(const std::u16string& data) {
   return Comment::Create(*this, data);
+}
+
+Event* Document::CreateEvent(const std::u16string& event_type,
+                             bindings::ExceptionState& exception_state) {
+  Event* const event = CreateEventOfInterfaceName(event_type);
+  // Blink's check for crbug.com/392584: a TouchEvent only where touch events
+  // are exposed.
+  if (event &&
+      (!base::EqualsCaseInsensitiveASCII(event_type, u"TouchEvent") ||
+       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+           ->features()
+           .IsEnabled(bindings::RuntimeFeature::kTouchEventFeatureDetection))) {
+    return event;
+  }
+  exception_state.ThrowDOMException(
+      "NotSupportedError",
+      base::StrCat({"The provided event type ('", base::UTF16ToUTF8(event_type),
+                    "') is invalid."}));
+  return nullptr;
 }
 
 ProcessingInstruction* Document::CreateProcessingInstruction(
