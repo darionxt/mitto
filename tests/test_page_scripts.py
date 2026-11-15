@@ -267,6 +267,19 @@ _CASES["render_blocking_dropped"] = Case(
         "/r.js": _js("log('r ' + current()); setTimeout(() => finish(logged), 100);", hold="go"),
     }
 )
+# One that another document adopts while it is fetched leaves its document's rendering, and never runs.
+_CASES["render_blocking_adopted"] = Case(
+    {
+        "/": _page(
+            "<script>requestAnimationFrame(() => { log('frame'); setTimeout(() => finish(logged), 300); });</script>"
+            "<script id=r src=/r.js blocking=render async></script>"
+            "<script>document.implementation.createHTMLDocument('x').documentElement.append(document.getElementById('r'));"
+            "log('adopted'); setTimeout(() => mark('go'), 100);</script>"
+            "<body><p>text</p>"
+        ),
+        "/r.js": _js("log('r ' + current());", hold="go"),
+    }
+)
 
 # Which types and languages run, nomodule, event and for, and HTMLScriptElement.supports().
 _TYPES = [
@@ -655,6 +668,10 @@ _CHROME: dict[str, list[str]] = {
         "body",
         "r r",
         "pagereveal",
+        "frame",
+    ],
+    "render_blocking_adopted": [
+        "adopted",
         "frame",
     ],
     "render_blocking_dropped": [
