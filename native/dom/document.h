@@ -27,6 +27,7 @@
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/heap_vector.h"
 #include "mitto/dom/html_collection.h"
+#include "mitto/dom/markup_position.h"
 #include "mitto/dom/node.h"
 #include "url/gurl.h"
 #include "v8/include/cppgc/member.h"
@@ -36,6 +37,7 @@ namespace mitto {
 
 class AttachedTraversals;
 class Attr;
+class CDATASection;
 class Comment;
 class CacheStorageHost;
 class CookieJar;
@@ -54,6 +56,7 @@ class HttpRefreshScheduler;
 class Location;
 class NodeIterator;
 class PermissionsPolicy;
+class ProcessingInstruction;
 class Range;
 class Text;
 class TreeWalker;
@@ -217,6 +220,14 @@ class Document : public Node {
                           const std::u16string& qualified_name,
                           bindings::ExceptionState& exception_state);
   Comment* CreateComment(const std::u16string& data);
+  // Blink's checks: a target that is an XML name and data without "?>".
+  ProcessingInstruction* CreateProcessingInstruction(
+      const std::u16string& target,
+      const std::u16string& data,
+      bindings::ExceptionState& exception_state);
+  // Throws for an HTML document, and for data with "]]>".
+  CDATASection* CreateCDATASection(const std::u16string& data,
+                                   bindings::ExceptionState& exception_state);
   DocumentFragment* CreateDocumentFragment();
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);
@@ -381,6 +392,10 @@ class Document : public Node {
   // script-created one of open(), until the document has loaded, and null
   // otherwise.
   DocumentParser* Parser() const { return parser_.Get(); }
+  // ScriptController::EventHandlerPosition(): where the document's parser is,
+  // while it has one, for the handlers that content attributes set, and the
+  // start of the markup otherwise.
+  MarkupPosition EventHandlerPosition() const;
   // Document::OpenForNavigation(): a parser for the document's response,
   // which `client` feeds, with the document loading.
   DocumentParser& OpenForNavigation(DocumentParser::Client& client);
@@ -392,6 +407,11 @@ class Document : public Node {
   // Document::FinishedParsing(), once the parser is done: DOMContentLoaded,
   // a microtask checkpoint, then CheckCompleted() for a document of a window.
   void FinishedParsing();
+  // Document::WillInsertBody(), as the parser inserts the body: a document
+  // with something to show begins rendering, as
+  // BeginLifecycleUpdatesIfRenderingReady() does with no stylesheet to wait
+  // for.
+  void WillInsertBody();
   // Document::CheckCompleted(): complete, and the window's load event, once
   // parsing has finished and nothing holds the load event back.
   void CheckCompleted();
@@ -444,6 +464,25 @@ class Document : public Node {
   // The refresh that the document's response or a meta element asks for,
   // made the first time.
   HttpRefreshScheduler& GetHttpRefreshScheduler();
+
+  // The element that :target matches, which the fragment of the document's
+  // URL indicates, as Blink's CSS target.
+  Element* CssTarget() const { return css_target_.Get(); }
+  // LocalFrameView::ProcessUrlFragment(), as ElementFragmentAnchor::TryCreate()
+  // runs it: the CSS target becomes the element that the fragment of `url`
+  // indicates, or none, once the document has finished parsing and after each
+  // navigation within it.
+  void ProcessUrlFragment(const GURL& url);
+
+  // The language that the response's Content-Language and a content-language
+  // meta give the document, as Blink's Document::SetContentLanguage() keeps
+  // it: the last that was set, which removing the meta leaves.
+  const std::optional<std::u16string>& ContentLanguage() const {
+    return content_language_;
+  }
+  void SetContentLanguage(std::u16string language) {
+    content_language_ = std::move(language);
+  }
 
   // The live ranges and node iterators of the document, which the DOM tells
   // as its trees change, made when one is first attached.
@@ -509,12 +548,14 @@ class Document : public Node {
   std::u16string referrer_;
   bool initial_empty_ = false;
   std::unique_ptr<HttpRefreshScheduler> http_refresh_scheduler_;
+  std::optional<std::u16string> content_language_;
   base::TimeTicks unload_event_start_;
   base::TimeTicks unload_event_end_;
   // The Page program's, which outlives every document.
   raw_ptr<CookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   cppgc::Member<Window> window_;
+  cppgc::Member<Element> css_target_;
   cppgc::Member<HTMLCollection> images_;
   cppgc::Member<HTMLCollection> embeds_;
   cppgc::Member<HTMLCollection> links_;

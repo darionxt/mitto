@@ -60,6 +60,7 @@
 #include "mitto/bindings/v8_html_video_element.h"
 #include "mitto/dom/character_data.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/form_control_attributes.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_parser_idioms.h"
@@ -214,6 +215,11 @@ HTMLFrameSetElement::HTMLFrameSetElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLFrameSetElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLFrameSetElement::kWrapperTypeInfo;
+}
+
+std::u16string_view HTMLFrameSetElement::WindowEventNameForAttributeName(
+    const QualifiedName& name) const {
+  return FrameSetWindowEventNameForAttributeName(name);
 }
 
 // static

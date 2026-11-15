@@ -121,6 +121,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "CDATASection"
+    file = "cdata_section"
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -348,6 +352,8 @@ mitto_bindings_interfaces = [
       "close",
       "write",
       "writeln",
+      "createProcessingInstruction",
+      "createCDATASection",
       "dir",
       "fgColor",
       "bgColor",
@@ -1503,6 +1509,17 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "PageRevealEvent"
+    file = "page_reveal_event"
+    made_by_known_gaps = true
+
+    # A Page has no view transitions: only the Page makes one.
+    missing = [
+      "constructor",
+      "viewTransition",
+    ]
+  },
+  {
     name = "PageTransitionEvent"
     file = "page_transition_event"
   },
@@ -1646,6 +1663,14 @@ mitto_bindings_interfaces = [
     file = "pressure_observer"
     made_by_known_gaps = true
     implemented = [ "knownSources" ]
+  },
+  {
+    name = "ProcessingInstruction"
+    file = "processing_instruction"
+
+    # A processing instruction that is not a style sheet has no sheet, which
+    # the Known Gap's null is.
+    missing = [ "sheet" ]
   },
   {
     name = "PromiseRejectionEvent"
@@ -2645,6 +2670,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Storage"
+    file = "storage"
+  },
+  {
+    name = "StorageEvent"
+    file = "storage_event"
+  },
+  {
     name = "StorageManager"
     file = "storage_manager"
 
@@ -2717,6 +2750,33 @@ mitto_bindings_interfaces = [
       "isScript",
       "isScriptURL",
       "getAttributeType",
+    ]
+  },
+  {
+    name = "URL"
+    file = "url"
+
+    # createObjectURL() and revokeObjectURL(), of the File API's blob URLs, are
+    # Known Gaps.
+    missing = [
+      "createObjectURL",
+      "revokeObjectURL",
+    ]
+  },
+  {
+    name = "URLSearchParams"
+    file = "url_search_params"
+
+    # Iterating over it is a Known Gap until the Runtime has pair iterators.
+    implemented = [
+      "size",
+      "append",
+      "delete",
+      "get",
+      "getAll",
+      "has",
+      "set",
+      "sort",
     ]
   },
   {
@@ -2817,6 +2877,8 @@ mitto_bindings_interfaces = [
       "event",
       "scheduler",
       "cookieStore",
+      "localStorage",
+      "sessionStorage",
       "structuredClone",
       "postMessage",
       "reportError",

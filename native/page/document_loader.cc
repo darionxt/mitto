@@ -5,11 +5,13 @@
 
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
 #include "mitto/dom/http_refresh_scheduler.h"
+#include "mitto/dom/page_reveal_event.h"
 #include "mitto/dom/window.h"
 #include "mitto/encoding/content_type.h"
 #include "mitto/encoding/text_resource_decoder.h"
@@ -126,6 +128,22 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       &DocumentLoader::DidDispatchLoadEvent, weak_factory_.GetWeakPtr()));
   // Document::OpenForNavigation(), with the document loading.
   parser_ = &document_->OpenForNavigation(*this);
+  // DocumentLoader::DidCommitNavigation(): the first language of the
+  // response's Content-Language, without HTML spaces. A header's value is
+  // Latin-1.
+  const std::string content_language =
+      HeaderField(response.headers, "content-language");
+  const std::string_view first_language = base::TrimString(
+      std::string_view(content_language).substr(0, content_language.find(',')),
+      " \t\n\f\r", base::TRIM_ALL);
+  if (!first_language.empty()) {
+    std::u16string latin1;
+    latin1.reserve(first_language.size());
+    for (const char c : first_language) {
+      latin1.push_back(static_cast<unsigned char>(c));
+    }
+    document_->SetContentLanguage(std::move(latin1));
+  }
   // DocumentLoader::CreateParserPostCommit(): the response's Refresh, before
   // anything of the body. A header's value is Latin-1.
   const std::string refresh = HeaderField(response.headers, "refresh");
@@ -138,6 +156,12 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
     document_->GetHttpRefreshScheduler().MaybeHandle(
         latin1, HttpRefreshScheduler::Source::kHeader);
   }
+  // Document::EnqueuePageRevealEvent(): pagereveal at the window, at the
+  // first rendering opportunity, before that frame's callbacks, which comes
+  // once the document is ready to render: as the parser inserts its body.
+  Window& window = *document_->DefaultView();
+  window.DeferLifecycleUpdates();
+  window.EnqueueAnimationFrameEvent(window, *PageRevealEvent::CreateTrusted());
 }
 
 void DocumentLoader::AppendDecoded(std::u16string text) {

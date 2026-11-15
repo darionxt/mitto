@@ -55,6 +55,12 @@ class AnimationFrameController {
   // How many callbacks and events wait for a frame.
   size_t size() const { return callbacks_.size() + events_.size(); }
 
+  // LocalFrameView's lifecycle updates, which a document that a navigation
+  // loads holds back until Document::BeginLifecycleUpdatesIfRenderingReady():
+  // no frame comes before then, so what waits for one waits on.
+  void DeferLifecycleUpdates() { lifecycle_updates_deferred_ = true; }
+  void BeginLifecycleUpdates();
+
  private:
   struct FrameCallback;
   struct QueuedEvent;
@@ -74,6 +80,7 @@ class AnimationFrameController {
   std::vector<std::unique_ptr<QueuedEvent>> events_;
   int32_t last_id_ = 0;
   bool frame_requested_ = false;
+  bool lifecycle_updates_deferred_ = false;
   // The document's animation clock, from its zero, which never goes back.
   base::TimeDelta animation_time_;
   base::WeakPtrFactory<AnimationFrameController> weak_factory_{this};

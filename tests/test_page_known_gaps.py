@@ -250,7 +250,11 @@ def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
             "Failed to execute 'digest' on 'SubtleCrypto'",
             id="subtle crypto",
         ),
-        pytest.param("return document.createCDATASection('x')", "Failed to execute", id="an object of a class"),
+        pytest.param(
+            "return document.createElementNS('http://www.w3.org/2000/svg', 'svg').getElementById('x')",
+            "Failed to execute 'getElementById' on 'SVGSVGElement'",
+            id="an object of a class",
+        ),
     ],
 )
 def test_a_refused_known_gap_keeps_todays_error(program: Path, script: str, message: str) -> None:
@@ -295,6 +299,20 @@ _HANDLERS_AS_CHROME = {
         "const signal = new AbortController().signal; signal.onabort = {}; "
         "return signal.dispatchEvent(new Event('abort'));",
         "value: true",
+    ),
+    # Blink's CloneAttributesFrom() passes a copy's attributes through AttributeChanged().
+    "a copy's content attribute sets its handler": (
+        "const div = document.createElement('div'); div.setAttribute('onclick', 'window.ran = event.type'); "
+        "const copy = div.cloneNode(); copy.dispatchEvent(new Event('click')); "
+        "return [typeof copy.onclick, window.ran].join();",
+        "value: function,click",
+    ),
+    # Blink's table of HTMLElement's attributes gives ontransitionend's handler the prefixed event.
+    "the ontransitionend content attribute listens for webkitTransitionEnd": (
+        "const div = document.createElement('div'); div.setAttribute('ontransitionend', 'window.heard = event.type'); "
+        "const property = typeof div.ontransitionend; div.dispatchEvent(new Event('transitionend')); "
+        "div.dispatchEvent(new Event('webkitTransitionEnd')); return [property, window.heard].join();",
+        "value: object,webkitTransitionEnd",
     ),
 }
 

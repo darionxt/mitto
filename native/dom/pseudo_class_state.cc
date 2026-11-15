@@ -1241,25 +1241,11 @@ bool AutoDirectionIsRightToLeft(const Element& element) {
   return false;
 }
 
-// The language of the document's last content-language meta, or null. A
-// Page does not see the response's Content-Language.
-std::optional<std::u16string> DocumentContentLanguage(
+// The language that the response's Content-Language or a content-language
+// meta gave the document, or null.
+const std::optional<std::u16string>& DocumentContentLanguage(
     const Document& document) {
-  std::optional<std::u16string> language;
-  for (const Node* node = document.FirstChild(); node;
-       node = node->NextInTree(&document)) {
-    if (!IsHTML(node, u"meta")) {
-      continue;
-    }
-    const auto& meta = static_cast<const Element&>(*node);
-    const std::u16string* http_equiv = meta.FindAttribute(u"http-equiv");
-    const std::u16string* content = meta.FindAttribute(u"content");
-    if (http_equiv && content &&
-        base::EqualsCaseInsensitiveASCII(*http_equiv, u"content-language")) {
-      language = *content;
-    }
-  }
-  return language;
+  return document.ContentLanguage();
 }
 
 }  // namespace
@@ -1308,7 +1294,10 @@ bool MatchesDisabled(const Element& element) {
 
 bool IsChecked(const Element& element) {
   if (element.HasHTMLTagName(u"input")) {
-    return IsInputChecked(element, InputType(element));
+    // Blink's SelectorChecker never takes an input as both checked and
+    // indeterminate.
+    return IsInputChecked(element, InputType(element)) &&
+           !IsIndeterminate(element);
   }
   return element.HasHTMLTagName(u"option") && IsOptionSelected(element);
 }

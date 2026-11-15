@@ -40,10 +40,11 @@ v8::Local<v8::Context> NewPageContext(v8::Isolate* isolate,
   // context before its conditional features go in.
   did_create(context);
   bindings::InstallInterfaceObjects(context);
-  // The document of about:blank is what the parser makes of no markup.
+  // The document of about:blank is what the parser makes of no markup, as
+  // the window's document, whose parser has the scripting flag.
   Document* const document = Document::CreateHTML();
-  ParseHtmlDocument(*document, markup);
   window->SetDocument(document);
+  ParseHtmlDocument(*document, markup);
   return context;
 }
 

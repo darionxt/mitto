@@ -886,6 +886,7 @@ Node* Element::CloneWithoutChildren(Document& document) const {
              nonce && !nonce->empty()) {
     copy->nonce_ = *nonce;
   }
+  copy->DidCloneAttributes();
   return copy;
 }
 

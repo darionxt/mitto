@@ -165,6 +165,12 @@ class HTMLFrameSetElement final : public HTMLElement {
   explicit HTMLFrameSetElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+ protected:
+  // HTMLElement's: the window's handlers of Blink's
+  // HTMLFrameSetElement::ParseAttribute().
+  std::u16string_view WindowEventNameForAttributeName(
+      const QualifiedName& name) const override;
 };
 
 class HTMLHRElement final : public HTMLElement {

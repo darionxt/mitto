@@ -7,10 +7,12 @@
 
 #include "mitto/bindings/v8_event_target.h"
 #include "mitto/bindings/v8_html_body_element.h"
+#include "mitto/bindings/v8_html_frame_set_element.h"
 #include "mitto/bindings/v8_message_port.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event_target.h"
 #include "mitto/dom/html_body_element.h"
+#include "mitto/dom/html_elements.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/window.h"
 #include "v8/include/v8-primitive.h"
@@ -68,8 +70,12 @@ bool HandlerTarget(v8::Isolate* isolate,
     return false;
   }
   *target = event_target;
-  HTMLBodyElement* const body =
-      bindings::V8HTMLBodyElement::ToWrappable(isolate, receiver);
+  // A frameset's are its window's too, as Blink's
+  // DEFINE_WINDOW_ATTRIBUTE_EVENT_LISTENER lines of both have them.
+  Element* body = bindings::V8HTMLBodyElement::ToWrappable(isolate, receiver);
+  if (!body) {
+    body = bindings::V8HTMLFrameSetElement::ToWrappable(isolate, receiver);
+  }
   if (body && std::find(std::begin(kWindowEvents), std::end(kWindowEvents),
                         type) != std::end(kWindowEvents)) {
     *target = body->GetDocument().DefaultView();

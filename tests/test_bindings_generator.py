@@ -408,6 +408,30 @@ def test_a_union_with_a_boolean_takes_a_boolean_default() -> None:
     assert types.default_value(union, "false", "a") == "BooleanOrImportNodeOptions(false)"
 
 
+def test_the_cpp_types_of_url_search_params() -> None:
+    # Its constructor's optional (sequence<sequence<USVString>> or record<USVString, USVString> or USVString)
+    # init = "", and getAll()'s sequence<USVString>.
+    string = IdlType(TypeKind.STRING, "USVString")
+    pairs = IdlType(
+        TypeKind.SEQUENCE,
+        "sequence<sequence<USVString>>",
+        members=(IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(string,)),),
+    )
+    record = IdlType(TypeKind.RECORD, "record<USVString, USVString>", members=(string, string))
+    union = IdlType(TypeKind.UNION, "x", members=(pairs, record, string))
+    types = TypeMapper(frozenset(), frozenset(), {})
+
+    assert (
+        types.default_value(union, '""', "a")
+        == 'USVStringSequenceSequenceOrUSVStringUSVStringRecordOrUSVString(std::u16string(u""))'
+    )
+    with pytest.raises(UnhandledError, match="default value"):
+        types.default_value(dataclasses.replace(union, members=(pairs, record)), '""', "b")
+    values = IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(string,))
+    assert types.return_type(values, "c") == "std::vector<std::u16string>"
+    assert types.to_v8(values, "x") == "ToV8StringArray(isolate, x)"
+
+
 def test_a_sequence_takes_an_empty_list_for_its_default() -> None:
     # OTPCredentialRequestOptions' transports.
     types = TypeMapper(frozenset(), frozenset(), {"OTPCredentialTransportType": ("sms",)})
@@ -1363,6 +1387,41 @@ def test_a_named_setter_and_deleter_call_the_class() -> None:
         "    kNamedPropertiesOverrideBuiltIns,\n    &NamedPropertySetter,\n    &NamedPropertyDeleter,\n    nullptr,\n};"
         in source
     )
+
+
+def test_a_named_getter_and_deleter_that_raise_take_an_exception_state() -> None:
+    # Storage's getItem() and removeItem(), which throw for a window that has gone.
+    string = IdlType(TypeKind.STRING, "DOMString")
+    nullable = IdlType(TypeKind.STRING, "DOMString", nullable=True)
+    name = Argument("name", string, False, False, None)
+    raises = _extended("RaisesException")
+    getter = Operation("getItem", (name,), nullable, False, raises, ALWAYS)
+    setter = Operation(
+        "setItem", (name, Argument("value", string, False, False, None)), UNDEFINED, False, raises, ALWAYS
+    )
+    deleter = Operation("removeItem", (name,), UNDEFINED, False, raises, ALWAYS)
+    interface = _interface(
+        special_operations=(
+            SpecialOperation("named getter", getter),
+            SpecialOperation("named setter", setter),
+            SpecialOperation("named deleter", deleter),
+        ),
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert (
+        "  ExceptionState exception_state(isolate);\n"
+        "  const auto result = HolderOf(isolate, holder)->GetItem(name, exception_state);\n"
+        "  if (exception_state.HadException()) {\n"
+        "    return v8::Local<v8::Value>();\n"
+        "  }\n"
+    ) in source
+    assert (
+        "  ExceptionState exception_state(isolate);\n"
+        "  const bool deleted = HolderOf(isolate, holder)->RemoveItem(name, exception_state);\n"
+        "  return deleted && !exception_state.HadException();\n"
+    ) in source
 
 
 def test_the_writer_refuses_what_it_cannot_install_of_named_properties() -> None:

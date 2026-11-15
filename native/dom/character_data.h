@@ -52,6 +52,10 @@ class CharacterData : public Node {
 
  protected:
   CharacterData(Document& document, const std::u16string& data);
+  // Called once a change through the DOM has replaced data, also with the same
+  // data, as Blink's SetDataAndUpdate() tells a processing instruction, but
+  // not for SetDataWithoutUpdate().
+  virtual void DidChangeData() {}
 
  private:
   // The DOM standard's "replace data", with `count` already cut to what the

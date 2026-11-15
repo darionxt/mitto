@@ -253,6 +253,10 @@ class Element : public Node {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+  // Called on a copy once CloneWithoutChildren() has copied the attributes,
+  // which Blink's CloneAttributesFrom() passes through AttributeChanged().
+  // Elements whose event handler content attributes set handlers replay them.
+  virtual void DidCloneAttributes() {}
   // The nodes of its attributes move with it, as Blink's
   // Element::DidMoveToNewDocument() adopts them.
   void DidMoveToNewDocument(Document& old_document) override;
