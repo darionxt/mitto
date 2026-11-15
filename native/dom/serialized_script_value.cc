@@ -113,10 +113,13 @@ std::string IndexText(size_t index) {
 // V8ScriptValueSerializer.
 class Serializer final : public v8::ValueSerializer::Delegate {
  public:
-  Serializer(v8::Isolate* isolate, Transferables* transferables)
+  Serializer(v8::Isolate* isolate,
+             Transferables* transferables,
+             bool for_storage)
       : isolate_(isolate),
         serializer_(isolate, this),
-        transferables_(transferables) {}
+        transferables_(transferables),
+        for_storage_(for_storage) {}
   ~Serializer() override = default;
 
   // V8ScriptValueSerializer::Serialize(): the bytes, the transferred
@@ -263,6 +266,11 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   v8::Maybe<uint32_t> GetSharedArrayBufferId(
       v8::Isolate* isolate,
       v8::Local<v8::SharedArrayBuffer> shared_array_buffer) override {
+    if (for_storage_) {
+      mitto::ThrowDataCloneError(
+          isolate, "A SharedArrayBuffer can not be serialized for storage.");
+      return v8::Nothing<uint32_t>();
+    }
     // Refused once the value is written, as Blink checks the transfer then.
     has_shared_array_buffer_ = true;
     return v8::Just<uint32_t>(0);
@@ -271,6 +279,11 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   v8::Maybe<uint32_t> GetWasmModuleTransferId(
       v8::Isolate* isolate,
       v8::Local<v8::WasmModuleObject> module) override {
+    if (for_storage_) {
+      mitto::ThrowDataCloneError(
+          isolate, "A WebAssembly.Module can not be serialized for storage.");
+      return v8::Nothing<uint32_t>();
+    }
     // Options::kTransfer, as every serialization of the Runtime's has.
     wasm_modules_.push_back(module->GetCompiledModule());
     return v8::Just(base::checked_cast<uint32_t>(wasm_modules_.size() - 1));
@@ -398,6 +411,9 @@ class Serializer final : public v8::ValueSerializer::Delegate {
   const raw_ptr<v8::Isolate> isolate_;
   v8::ValueSerializer serializer_;
   const raw_ptr<Transferables> transferables_;
+  // SerializeOptions::kForStorage, as IndexedDB serializes: what cannot be
+  // stored throws where the serializer meets it.
+  const bool for_storage_;
   std::vector<uint8_t> required_interfaces_;
   std::vector<v8::CompiledWasmModule> wasm_modules_;
   bool has_shared_array_buffer_ = false;
@@ -743,8 +759,24 @@ std::optional<SerializedScriptValue> SerializedScriptValue::Serialize(
     v8::Isolate* isolate,
     v8::Local<v8::Value> value,
     Transferables* transferables) {
+  return SerializeWith(isolate, value, transferables, /*for_storage=*/false);
+}
+
+// static
+std::optional<SerializedScriptValue> SerializedScriptValue::SerializeForStorage(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> value) {
+  return SerializeWith(isolate, value, nullptr, /*for_storage=*/true);
+}
+
+// static
+std::optional<SerializedScriptValue> SerializedScriptValue::SerializeWith(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> value,
+    Transferables* transferables,
+    bool for_storage) {
   SerializedScriptValue serialized;
-  Serializer serializer(isolate, transferables);
+  Serializer serializer(isolate, transferables, for_storage);
   std::vector<v8::CompiledWasmModule> wasm_modules;
   if (!serializer.Serialize(value, serialized.data_, serialized.array_buffers_,
                             wasm_modules)) {
