@@ -121,6 +121,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "CDATASection"
+    file = "cdata_section"
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -348,6 +352,8 @@ mitto_bindings_interfaces = [
       "close",
       "write",
       "writeln",
+      "createProcessingInstruction",
+      "createCDATASection",
     ]
   },
   {
@@ -1593,6 +1599,14 @@ mitto_bindings_interfaces = [
     file = "pressure_observer"
     made_by_known_gaps = true
     implemented = [ "knownSources" ]
+  },
+  {
+    name = "ProcessingInstruction"
+    file = "processing_instruction"
+
+    # A processing instruction that is not a style sheet has no sheet, which
+    # the Known Gap's null is.
+    missing = [ "sheet" ]
   },
   {
     name = "PromiseRejectionEvent"
