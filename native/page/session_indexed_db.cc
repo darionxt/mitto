@@ -32,12 +32,12 @@ PageIndexedDbCallback TooLargeAnswer(const PageIndexedDbCall& call) {
   PageIndexedDbCallback answer;
   answer.call = call.call;
   answer.error = IndexedDbException::kUnknownError;
-  answer.message = base::StrCat(
-      {u"The serialized keys and/or value are too large (size=",
-       base::NumberToString16(EncodeIndexedDbCall(call).size()),
-       u" bytes, max=",
-       base::NumberToString16(kMaxPayloadSize - sizeof(uint64_t)),
-       u" bytes)."});
+  answer.message =
+      base::StrCat({u"The serialized keys and/or value are too large (size=",
+                    base::NumberToString16(EncodeIndexedDbCall(call).size()),
+                    u" bytes, max=",
+                    base::NumberToString16(kMaxPayloadSize - sizeof(uint64_t)),
+                    u" bytes)."});
   switch (call.op) {
     case IndexedDbCallOp::kPut:
       answer.op = IndexedDbCallbackOp::kPutResult;
@@ -93,7 +93,8 @@ uint64_t SessionIndexedDb::NextNumber() {
 
 void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
   // What a collected object of a document before lets go has gone with it.
-  for (const uint64_t number : {call.connection, call.transaction, call.cursor}) {
+  for (const uint64_t number :
+       {call.connection, call.transaction, call.cursor}) {
     if (number != 0 && number <= last_number_before_) {
       return;
     }
@@ -102,6 +103,11 @@ void SessionIndexedDb::Send(const PageIndexedDbCall& call) {
 }
 
 void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
+  if (call.op == IndexedDbCallOp::kOpen) {
+    // The upgrade's transaction, if the open needs one.
+    transaction_connections_.insert_or_assign(call.transaction,
+                                              call.connection);
+  }
   call.call = NextNumber();
   if (!IndexedDbCallFits(call)) {
     EventLoop::Get()
@@ -115,9 +121,26 @@ void SessionIndexedDb::Ask(PageIndexedDbCall call, Answer answer) {
 }
 
 void SessionIndexedDb::Tell(PageIndexedDbCall call) {
-  // Only a put carries a value, and only a call with a number does.
-  CHECK(IndexedDbCallFits(call));
-  Send(call);
+  if (call.op == IndexedDbCallOp::kCreateTransaction) {
+    transaction_connections_.insert_or_assign(call.transaction,
+                                              call.connection);
+  }
+  if (IndexedDbCallFits(call)) {
+    Send(call);
+    return;
+  }
+  // A name, a key path or index keys too large for a frame, which Chrome's
+  // larger Mojo messages hold: the call's transaction aborts instead, as if
+  // the page had aborted it.
+  const auto found = transaction_connections_.find(call.transaction);
+  if (found == transaction_connections_.end()) {
+    return;
+  }
+  PageIndexedDbCall abort;
+  abort.op = IndexedDbCallOp::kAbort;
+  abort.connection = found->second;
+  abort.transaction = call.transaction;
+  Send(abort);
 }
 
 void SessionIndexedDb::ListenToConnection(uint64_t connection,
@@ -133,6 +156,7 @@ void SessionIndexedDb::DocumentCommitted(uint64_t document) {
   document_ = document;
   calls_.clear();
   listeners_.clear();
+  transaction_connections_.clear();
   last_number_before_ = last_number_;
 }
 
@@ -142,6 +166,10 @@ void SessionIndexedDb::OnCallback(PageIndexedDbCallback callback) {
     case IndexedDbCallbackOp::kVersionChange:
     case IndexedDbCallbackOp::kAbort:
     case IndexedDbCallbackOp::kComplete: {
+      if (callback.op == IndexedDbCallbackOp::kAbort ||
+          callback.op == IndexedDbCallbackOp::kComplete) {
+        transaction_connections_.erase(callback.transaction);
+      }
       const auto found = listeners_.find(callback.connection);
       // A connection that the document closed hears nothing more.
       if (found != listeners_.end()) {

@@ -58,6 +58,8 @@ class SessionIndexedDb final : public IndexedDbHost {
   uint64_t last_number_before_ = 0;
   std::map<uint64_t, Answer> calls_;
   std::map<uint64_t, Answer> listeners_;
+  // The connection of each transaction, which an abort names.
+  std::map<uint64_t, uint64_t> transaction_connections_;
 };
 
 }  // namespace mitto

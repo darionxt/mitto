@@ -567,9 +567,21 @@ void PageIndexedDb::SendReply(uint64_t call, PageIndexedDbCallback answer) {
 }
 
 void PageIndexedDb::SendCallback(PageIndexedDbCallback callback) {
+  const bool get_all = callback.op == IndexedDbCallbackOp::kGetAllResult;
+  // A getAll() that failed for its size hears nothing more, though its
+  // records go on coming until the last.
+  if (get_all && failed_get_alls_.contains(callback.call)) {
+    if (callback.done) {
+      failed_get_alls_.erase(callback.call);
+    }
+    return;
+  }
   if (!IndexedDbCallbackFits(callback)) {
     // Only an entry far past what Chrome sends at once gets here: what the
-    // Page hears instead is an error of the call.
+    // Page hears instead is an error of the call, which ends it.
+    if (get_all && !callback.done) {
+      failed_get_alls_.insert(callback.call);
+    }
     PageIndexedDbCallback error;
     error.op = callback.op;
     error.call = callback.call;

@@ -16,9 +16,9 @@
 #include <stdint.h>
 
 #include <map>
-#include <set>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -94,6 +94,9 @@ class PageIndexedDb {
   // The connection of each transaction that has not finished.
   std::map<uint64_t, uint64_t> transactions_;
   std::map<uint64_t, std::unique_ptr<IndexedDbCursor>> cursors_;
+  // The getAll() calls that a chunk too large for a frame ended, whose other
+  // chunks go unsent.
+  std::set<uint64_t> failed_get_alls_;
   base::WeakPtrFactory<PageIndexedDb> weak_factory_{this};
 };
 

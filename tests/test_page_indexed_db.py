@@ -197,3 +197,19 @@ def test_a_call_too_large_for_a_frame_fails_with_blink_s_error(server_origin: st
         ["UnknownError", "The serialized keys and/or value are too large"],
         "UnknownError",
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_name_too_large_for_a_frame_aborts_its_transaction(server_origin: str) -> None:
+    with mitto.Session() as session, session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+        # A store's name of 18 MiB in UTF-16 fits no frame, so the upgrade's transaction aborts and the Page goes on.
+        outcome = page.evaluate(
+            "new Promise((resolve) => { const r = indexedDB.open('named', 1);"
+            " r.onupgradeneeded = () => r.result.createObjectStore('x'.repeat(9 << 20));"
+            " r.onsuccess = () => resolve('success'); r.onerror = () => resolve(r.error.name); })",
+            timeout=_TIMEOUT_SECONDS,
+        )
+        databases = page.evaluate("indexedDB.databases()", timeout=_TIMEOUT_SECONDS)
+
+    assert outcome == "AbortError"
+    assert databases == []
