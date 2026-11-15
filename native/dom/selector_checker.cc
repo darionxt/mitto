@@ -636,13 +636,16 @@ bool SelectorChecker::CheckPseudoClass(const CssSimpleSelector& selector,
     case Pseudo::kHostContext:
       // A Page's tree has no shadow host.
       return false;
+    case Pseudo::kTarget:
+      // The element that the fragment of its document's URL indicates.
+      return &element == element.GetDocument().CssTarget();
     default:
       // What needs input, focus, style, layout, media, a fullscreen element,
-      // a popover shown, a navigation, a view transition, autofill or custom
-      // element state, none of which a Page has: :hover, :active, :focus,
-      // :focus-visible, :focus-within, :target, :autofill, :fullscreen,
-      // :popover-open, :picture-in-picture, :state() and the rest, as Chrome
-      // answers them for a page without them.
+      // a popover shown, a view transition, autofill or custom element state,
+      // none of which a Page has: :hover, :active, :focus, :focus-visible,
+      // :focus-within, :autofill, :fullscreen, :popover-open,
+      // :picture-in-picture, :state() and the rest, as Chrome answers them for
+      // a page without them.
       return false;
   }
 }
