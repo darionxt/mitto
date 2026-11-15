@@ -277,6 +277,21 @@ def test_64_bit_and_nullable_numbers_convert_with_null_for_null_and_undefined() 
     assert "FromV8Integer(isolate, info[0], &value_value)" in converted
 
 
+def test_a_nullable_integer_returns_and_defaults_to_null() -> None:
+    # IDBVersionChangeEvent's newVersion, and IDBVersionChangeEventInit's and IDBObjectStoreParameters' defaults.
+    types = TypeMapper(frozenset({"Event"}), frozenset())
+    nullable_version = IdlType(TypeKind.INTEGER, "unsigned long long", nullable=True)
+    string = IdlType(TypeKind.STRING, "DOMString")
+    strings = IdlType(TypeKind.SEQUENCE, "sequence", members=(string,))
+    key_path = IdlType(TypeKind.UNION, "DOMString or sequence<DOMString>", nullable=True, members=(string, strings))
+
+    assert types.return_type(nullable_version, "x") == "std::optional<uint64_t>"
+    assert types.to_v8(nullable_version, "impl->NewVersion()") == "ToV8NullableInteger(isolate, impl->NewVersion())"
+    assert types.default_value(nullable_version, "null", "x") == "std::nullopt"
+    assert types.default_value(key_path, "null", "x") == "std::nullopt"
+    assert "DOMStringOrDOMStringSequence" in types.used_unions
+
+
 def test_a_class_can_give_null_for_an_interface_without_a_class_whatever_the_idl_says() -> None:
     # Blink's classes give null for a type that the IDL does not make nullable, as Document's rootElement does.
     types = TypeMapper(frozenset({"Event"}), frozenset())

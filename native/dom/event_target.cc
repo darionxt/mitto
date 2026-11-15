@@ -187,11 +187,14 @@ bool FlattenCapture(
 
 // Calls a listener's callback, as Web IDL calls a user object's operation:
 // the callback itself if it is a function, with the current target for
-// `this`, and otherwise its handleEvent(), with the callback for `this`.
+// `this`, and otherwise its handleEvent(), with the callback for `this`. What
+// it throws sets the event's legacy flag, as JSBasedEventListener::Invoke()
+// does.
 void CallListener(v8::Isolate* isolate,
                   v8::Local<v8::Object> callback,
                   v8::Local<v8::Value> current_target,
-                  v8::Local<v8::Value> event) {
+                  v8::Local<v8::Value> event,
+                  Event* event_object) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   // The HTML Standard's clean up after running a callback: the microtasks that
   // a listener queues run once it returns, if no script is running, as
@@ -210,6 +213,9 @@ void CallListener(v8::Isolate* isolate,
              ->Get(context,
                    v8::String::NewFromUtf8Literal(isolate, "handleEvent"))
              .ToLocal(&handle_event)) {
+      if (try_catch.HasCaught()) {
+        event_object->LegacySetDidListenersThrowFlag();
+      }
       if (try_catch.CanContinue()) {
         bindings::ReportException(isolate, try_catch.Exception(),
                                   try_catch.Message());
@@ -225,6 +231,7 @@ void CallListener(v8::Isolate* isolate,
                                "Failed to execute 'handleEvent' on "
                                "'EventListener': The provided callback is not "
                                "callable.");
+      event_object->LegacySetDidListenersThrowFlag();
       return;
     }
     function = handle_event.As<v8::Function>();
@@ -232,11 +239,14 @@ void CallListener(v8::Isolate* isolate,
   }
   v8::Local<v8::Value> arguments[] = {event};
   if (function->Call(context, receiver, 1, arguments).IsEmpty() &&
-      try_catch.HasCaught() && try_catch.CanContinue()) {
-    // Where it was thrown, as Blink's verbose TryCatch hands V8's message of
-    // it to the window's error event.
-    bindings::ReportException(isolate, try_catch.Exception(),
-                              try_catch.Message());
+      try_catch.HasCaught()) {
+    event_object->LegacySetDidListenersThrowFlag();
+    if (try_catch.CanContinue()) {
+      // Where it was thrown, as Blink's verbose TryCatch hands V8's message
+      // of it to the window's error event.
+      bindings::ReportException(isolate, try_catch.Exception(),
+                                try_catch.Message());
+    }
   }
 }
 
@@ -305,6 +315,9 @@ void CallAttributeHandler(v8::Isolate* isolate,
                  .ToLocal(&result);
   }
   if (!called) {
+    if (try_catch.HasCaught()) {
+      event->LegacySetDidListenersThrowFlag();
+    }
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
       bindings::ReportException(isolate, try_catch.Exception(),
                                 try_catch.Message());
@@ -800,7 +813,7 @@ bool EventTarget::FireEventListeners(Event* event) {
       }
     } else {
       CallListener(isolate, entry->callback(isolate), current_target,
-                   event_wrapper);
+                   event_wrapper, event);
     }
     fired = true;
     if (window) {

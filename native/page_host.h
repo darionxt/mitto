@@ -47,7 +47,9 @@ class CookieStore;
 namespace mitto {
 
 class CacheStorageContext;
+class IndexedDbContext;
 class PageCacheStorage;
+class PageIndexedDb;
 class PageHost;
 class ReadyRequests;
 class StorageQuota;
@@ -157,6 +159,8 @@ class PageNetwork {
   // storage.
   virtual CacheStorageContext& cache_storage() = 0;
   virtual StorageQuota& storage_quota() = 0;
+  // The Session's IndexedDB, which its Pages share.
+  virtual IndexedDbContext& indexed_db() = 0;
 
   // The Session's storage, which all its Pages share.
   virtual StorageContext& storage_context() = 0;
@@ -412,6 +416,11 @@ class PageHost final : public PageChannel::Delegate {
   void OnCacheStorage(PageCacheStorageCall call,
                       uint64_t context_id,
                       const GURL& document_url);
+  // What a context's IndexedDB asks, which PageIndexedDb serves, with the
+  // storage key of the context that asks.
+  void OnIndexedDb(PageIndexedDbCall call,
+                   uint64_t context_id,
+                   const GURL& document_url);
   // What a document's localStorage and sessionStorage ask, as Chrome's
   // storage service answers a renderer: an area takes its storage key from the
   // URL that the library loaded the document at that binds it.
@@ -485,6 +494,10 @@ class PageHost final : public PageChannel::Delegate {
   // an HTTP or HTTPS URL in a secure context. A top-level document's key is
   // its origin, first party.
   static std::optional<std::string> DocumentCacheStorageKey(
+      const GURL& document_url);
+  // The storage key of a document at `document_url`, if it may reach
+  // IndexedDB: one of an HTTP or HTTPS URL, whose origin is not opaque.
+  static std::optional<std::string> DocumentIndexedDbStorageKey(
       const GURL& document_url);
 
   // The storage key of document `id`, as Chrome works it out for a frame with
@@ -606,6 +619,8 @@ class PageHost final : public PageChannel::Delegate {
   // The first number that the next document's Cache API gives a cache or a
   // stored body, past those of the documents before.
   uint64_t next_cache_storage_number_ = 1;
+  // The document's IndexedDB, from its first call until the Page goes.
+  std::unique_ptr<PageIndexedDb> indexed_db_;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

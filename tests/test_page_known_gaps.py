@@ -165,7 +165,7 @@ def test_a_known_gap_checks_and_converts_as_chrome_does(program: Path, script: s
         pytest.param("return window.name === ''", "value: true", id="string"),
         pytest.param("return new Highlight().priority", "value: 0", id="integer"),
         pytest.param("return new DOMMatrix().is2D", "value: false", id="boolean"),
-        pytest.param("return indexedDB.open('x').result", "value: undefined", id="any"),
+        pytest.param("return new XMLHttpRequest().response", "value: undefined", id="any"),
         pytest.param("return new Highlight().type", "value: highlight", id="first value of an enumeration"),
         pytest.param("return document.body.childNodes instanceof NodeList", "value: true", id="interface"),
         pytest.param(

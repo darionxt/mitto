@@ -1,12 +1,11 @@
 #include "mitto/cache_storage_messages.h"
 
-#include <array>
 #include <limits>
 #include <utility>
 
 #include "base/containers/span.h"
-#include "base/numerics/byte_conversions.h"
 #include "base/strings/string_util.h"
+#include "mitto/message_coding.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
 
@@ -19,148 +18,6 @@ constexpr size_t kMaxBodyPartSize = 1024 * 1024;
 // blink.mojom.CacheStorageError's largest value, and FetchResponseType's.
 constexpr uint8_t kMaxCacheStorageError = 9;
 constexpr uint8_t kMaxResponseType = 5;
-
-// Little-endian numbers and sized strings, as the other messages write them.
-class Writer {
- public:
-  void Byte(uint8_t value) { out_.push_back(static_cast<char>(value)); }
-  void Bool(bool value) { Byte(value ? 1 : 0); }
-  void U16(uint16_t value) { Append(base::U16ToLittleEndian(value)); }
-  void U32(uint32_t value) { Append(base::U32ToLittleEndian(value)); }
-  void U64(uint64_t value) { Append(base::U64ToLittleEndian(value)); }
-  void I32(int32_t value) { U32(static_cast<uint32_t>(value)); }
-  void I64(int64_t value) { U64(static_cast<uint64_t>(value)); }
-  void Sized(std::string_view text) {
-    U32(static_cast<uint32_t>(text.size()));
-    out_.append(text);
-  }
-  // UTF-16 code units, which may be lone surrogates.
-  void Sized16(std::u16string_view text) {
-    U32(static_cast<uint32_t>(text.size()));
-    for (char16_t unit : text) {
-      U16(unit);
-    }
-  }
-  void Raw(std::string_view bytes) { out_.append(bytes); }
-  std::string Take() { return std::move(out_); }
-
- private:
-  template <size_t N>
-  void Append(const std::array<uint8_t, N>& bytes) {
-    out_.append(base::as_string_view(base::span(bytes)));
-  }
-
-  std::string out_;
-};
-
-class Reader {
- public:
-  explicit Reader(std::string_view payload) : rest_(payload) {}
-
-  bool Byte(uint8_t& value) {
-    if (rest_.empty()) {
-      return false;
-    }
-    value = static_cast<uint8_t>(rest_[0]);
-    rest_.remove_prefix(1);
-    return true;
-  }
-  bool Bool(bool& value) {
-    uint8_t byte = 0;
-    if (!Byte(byte) || byte > 1) {
-      return false;
-    }
-    value = byte == 1;
-    return true;
-  }
-  bool U16(uint16_t& value) {
-    std::string_view bytes;
-    if (!Take(2, bytes)) {
-      return false;
-    }
-    value = base::U16FromLittleEndian(base::as_byte_span(bytes).first<2>());
-    return true;
-  }
-  bool U32(uint32_t& value) {
-    std::string_view bytes;
-    if (!Take(4, bytes)) {
-      return false;
-    }
-    value = base::U32FromLittleEndian(base::as_byte_span(bytes).first<4>());
-    return true;
-  }
-  bool U64(uint64_t& value) {
-    std::string_view bytes;
-    if (!Take(8, bytes)) {
-      return false;
-    }
-    value = base::U64FromLittleEndian(base::as_byte_span(bytes).first<8>());
-    return true;
-  }
-  bool I32(int32_t& value) {
-    uint32_t unsigned_value = 0;
-    if (!U32(unsigned_value)) {
-      return false;
-    }
-    value = static_cast<int32_t>(unsigned_value);
-    return true;
-  }
-  bool I64(int64_t& value) {
-    uint64_t unsigned_value = 0;
-    if (!U64(unsigned_value)) {
-      return false;
-    }
-    value = static_cast<int64_t>(unsigned_value);
-    return true;
-  }
-  bool Sized(std::string& text) {
-    uint32_t size = 0;
-    std::string_view bytes;
-    if (!U32(size) || !Take(size, bytes)) {
-      return false;
-    }
-    text.assign(bytes);
-    return true;
-  }
-  bool Sized16(std::u16string& text) {
-    uint32_t size = 0;
-    if (!U32(size) || size > rest_.size() / 2) {
-      return false;
-    }
-    text.resize(size);
-    for (char16_t& unit : text) {
-      uint16_t value = 0;
-      if (!U16(value)) {
-        return false;
-      }
-      unit = value;
-    }
-    return true;
-  }
-  // A count of items, each at least `least` bytes, so that a count cannot
-  // make the reader reserve more than the payload holds.
-  bool Count(uint32_t& count, size_t least) {
-    return U32(count) && count <= rest_.size() / least;
-  }
-  std::string_view Rest() {
-    std::string_view rest = rest_;
-    rest_ = {};
-    return rest;
-  }
-  bool AtEnd() const { return rest_.empty(); }
-
- private:
-  bool Take(size_t size, std::string_view& bytes) {
-    if (rest_.size() < size) {
-      return false;
-    }
-    bytes = rest_.substr(0, size);
-    rest_.remove_prefix(size);
-    return true;
-  }
-
-  std::string_view rest_;
-};
 
 // A header's name is a token and its value has no line breaks or NUL, as
 // FetchHeaderList holds them.
@@ -186,13 +43,13 @@ bool IsUrl(const std::string& url) {
   return base::IsStringUTF8(url) && GURL(url).is_valid();
 }
 
-void WriteOptions(Writer& writer, const PageCacheQueryOptions& options) {
+void WriteOptions(MessageWriter& writer, const PageCacheQueryOptions& options) {
   writer.Byte(static_cast<uint8_t>((options.ignore_search ? 1 : 0) |
                                    (options.ignore_method ? 2 : 0) |
                                    (options.ignore_vary ? 4 : 0)));
 }
 
-bool ReadOptions(Reader& reader, PageCacheQueryOptions& options) {
+bool ReadOptions(MessageReader& reader, PageCacheQueryOptions& options) {
   uint8_t flags = 0;
   if (!reader.Byte(flags) || flags > 7) {
     return false;
@@ -203,7 +60,7 @@ bool ReadOptions(Reader& reader, PageCacheQueryOptions& options) {
   return true;
 }
 
-void WriteHeaders(Writer& writer,
+void WriteHeaders(MessageWriter& writer,
                   const std::vector<std::pair<std::string, std::string>>& list) {
   writer.U32(static_cast<uint32_t>(list.size()));
   for (const auto& [name, value] : list) {
@@ -212,7 +69,7 @@ void WriteHeaders(Writer& writer,
   }
 }
 
-bool ReadHeaders(Reader& reader,
+bool ReadHeaders(MessageReader& reader,
                  std::vector<std::pair<std::string, std::string>>& list) {
   uint32_t count = 0;
   if (!reader.Count(count, 9)) {
@@ -230,20 +87,20 @@ bool ReadHeaders(Reader& reader,
   return true;
 }
 
-void WriteRequest(Writer& writer, const PageCacheRequest& request) {
+void WriteRequest(MessageWriter& writer, const PageCacheRequest& request) {
   writer.Sized(request.url);
   writer.Sized(request.method);
   WriteHeaders(writer, request.headers);
 }
 
-bool ReadRequest(Reader& reader, PageCacheRequest& request) {
+bool ReadRequest(MessageReader& reader, PageCacheRequest& request) {
   return reader.Sized(request.url) && IsUrl(request.url) &&
          reader.Sized(request.method) &&
          (request.method.empty() || IsHeaderName(request.method)) &&
          ReadHeaders(reader, request.headers);
 }
 
-void WriteResponse(Writer& writer, const PageCacheResponse& response) {
+void WriteResponse(MessageWriter& writer, const PageCacheResponse& response) {
   writer.U32(static_cast<uint32_t>(response.url_list.size()));
   for (const std::string& url : response.url_list) {
     writer.Sized(url);
@@ -261,7 +118,7 @@ void WriteResponse(Writer& writer, const PageCacheResponse& response) {
   writer.U64(response.body);
 }
 
-bool ReadResponse(Reader& reader, PageCacheResponse& response) {
+bool ReadResponse(MessageReader& reader, PageCacheResponse& response) {
   uint32_t urls = 0;
   if (!reader.Count(urls, 4)) {
     return false;
@@ -334,7 +191,7 @@ PageCacheStorageAnswer& PageCacheStorageAnswer::operator=(
 PageCacheStorageAnswer::~PageCacheStorageAnswer() = default;
 
 std::string EncodeCacheStorageCall(const PageCacheStorageCall& call) {
-  Writer writer;
+  MessageWriter writer;
   writer.Byte(static_cast<uint8_t>(call.op));
   switch (call.op) {
     case CacheStorageCallOp::kOpen:
@@ -413,7 +270,7 @@ bool CacheStorageCallFits(const PageCacheStorageCall& call) {
 
 base::expected<PageCacheStorageCall, std::string> ReadCacheStorageCall(
     std::string_view payload) {
-  Reader reader(payload);
+  MessageReader reader(payload);
   PageCacheStorageCall call;
   uint8_t op = 0;
   if (!reader.Byte(op) || op == 0 ||
@@ -495,7 +352,7 @@ base::expected<PageCacheStorageCall, std::string> ReadCacheStorageCall(
 }
 
 std::string EncodeCacheStorageAnswer(const PageCacheStorageAnswer& answer) {
-  Writer writer;
+  MessageWriter writer;
   writer.Byte(static_cast<uint8_t>(answer.op));
   switch (answer.op) {
     case CacheStorageAnswerOp::kOpened:
@@ -568,7 +425,7 @@ bool CacheStorageAnswerFits(const PageCacheStorageAnswer& answer) {
 
 base::expected<PageCacheStorageAnswer, std::string> ReadCacheStorageAnswer(
     std::string_view payload) {
-  Reader reader(payload);
+  MessageReader reader(payload);
   PageCacheStorageAnswer answer;
   uint8_t op = 0;
   if (!reader.Byte(op) || op == 0 ||

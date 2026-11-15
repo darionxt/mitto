@@ -21,6 +21,7 @@
 #include "base/token.h"
 #include "base/types/expected.h"
 #include "mitto/cache_storage_messages.h"
+#include "mitto/indexed_db_messages.h"
 
 namespace base {
 class DictValue;
@@ -31,7 +32,7 @@ namespace mitto {
 // Both ends speak exactly this version and refuse any other, because the Page
 // program ships beside the library, built from the same tree. Increase it with
 // any change to the messages below.
-inline constexpr uint32_t kPageProtocolVersion = 21;
+inline constexpr uint32_t kPageProtocolVersion = 22;
 
 // A frame is the size of its payload and its type, each a 32-bit little-endian
 // number, and then the payload.
@@ -209,6 +210,13 @@ enum class PageMessage : uint32_t {
   // To the Page: what the Session answers the Cache API, as
   // cache_storage_messages.h says.
   kCacheStorageAnswer = 41,
+  // To the Session: what the document's IDBFactory, or one of its
+  // IDBDatabases, IDBTransactions or IDBCursors, asks, as
+  // indexed_db_messages.h says.
+  kIndexedDb = 42,
+  // To the Page: what the Session answers IndexedDB, and what it tells a
+  // connection, as indexed_db_messages.h says.
+  kIndexedDbCallback = 43,
   // To the Session: a document that the Page has made, as
   // PageDocumentCommitted says. It takes the place of the document before it,
   // whose messages all came before this.
@@ -1024,6 +1032,8 @@ struct FrameFromPage {
   PageBroadcast broadcast;
   // kCacheStorage.
   PageCacheStorageCall cache_storage_call;
+  // kIndexedDb.
+  PageIndexedDbCall indexed_db_call;
   // kDocumentCommitted.
   PageDocumentCommitted committed;
   // kWorkerStarted.
@@ -1081,6 +1091,8 @@ struct FrameFromSession {
   PageBroadcast broadcast;
   // kCacheStorageAnswer.
   PageCacheStorageAnswer cache_storage_answer;
+  // kIndexedDbCallback.
+  PageIndexedDbCallback indexed_db_callback;
   // kStorageEntries.
   PageStorageEntries storage_entries;
   // kStorageKeyChanged, kStorageKeyChangeFailed, kStorageKeyDeleted and
@@ -1150,6 +1162,8 @@ std::string EncodeBroadcast(uint64_t document, const PageBroadcast& broadcast);
 // The frame of a call of document `document`'s Cache API.
 std::string EncodeCacheStorage(uint64_t document,
                                const PageCacheStorageCall& call);
+// The frame of a call of document `document`'s IndexedDB.
+std::string EncodeIndexedDb(uint64_t document, const PageIndexedDbCall& call);
 std::string EncodeBroadcastReceived(const PageBroadcast& broadcast);
 std::string EncodeDocumentCommitted(const PageDocumentCommitted& committed);
 std::string EncodeWorkerStarted(const PageWorkerStarted& started);

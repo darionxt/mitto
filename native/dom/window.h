@@ -61,6 +61,7 @@ class DocumentLoadTiming;
 class Fetcher;
 class Event;
 class History;
+class IDBFactory;
 class IdleTaskController;
 class Location;
 class MediaQueryList;
@@ -182,6 +183,10 @@ class Window final : public WindowProperties {
   // time, or null after throwing a SecurityError for a document whose origin
   // may not reach caches.
   mitto::CacheStorage* Caches(bindings::ExceptionState& exception_state);
+  // GlobalIndexedDB::indexedDB(): the window's IDBFactory, made the first
+  // time, which a document whose origin may not reach IndexedDB has too: its
+  // calls throw.
+  IDBFactory* IndexedDB();
   // WindowLocalStorage and WindowSessionStorage, in dom_window_storage.cc.
   mitto::Storage* LocalStorage(bindings::ExceptionState& exception_state);
   mitto::Storage* SessionStorage(bindings::ExceptionState& exception_state);
@@ -349,6 +354,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Scheduler> scheduler_;
   cppgc::Member<mitto::CookieStore> cookie_store_;
   cppgc::Member<mitto::CacheStorage> caches_;
+  cppgc::Member<IDBFactory> indexed_db_;
   cppgc::Member<mitto::Storage> local_storage_;
   cppgc::Member<mitto::Storage> session_storage_;
   cppgc::Member<DocumentLoadTiming> document_load_timing_;

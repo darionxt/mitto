@@ -26,6 +26,7 @@
 #include "mitto/mime_types.h"
 #include "mitto/mitto.h"
 #include "mitto/page_cache_storage.h"
+#include "mitto/page_indexed_db.h"
 #include "mitto/ready_requests.h"
 #include "mitto/sec_header_helpers.h"
 #include "mitto/storage/storage_area_impl.h"
@@ -1066,6 +1067,7 @@ PageHost::PageHost(scoped_refptr<PageEvents> events,
       network_(network) {}
 
 PageHost::~PageHost() {
+  indexed_db_.reset();
   cache_storage_.reset();
   AbandonRequests();
   ReleaseStorage();
@@ -1873,6 +1875,43 @@ void PageHost::OnCacheStorage(PageCacheStorageCall call,
                          DocumentCacheStorageKey(document_url));
 }
 
+void PageHost::OnIndexedDb(PageIndexedDbCall call,
+                           uint64_t context_id,
+                           const GURL& document_url) {
+  if (!indexed_db_) {
+    indexed_db_ = std::make_unique<PageIndexedDb>(
+        network_->indexed_db(),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string frame) {
+              if (host && host->channel_ && !host->refused_by_library_) {
+                host->channel_->Send(std::move(frame));
+              }
+            },
+            weak_factory_.GetWeakPtr()),
+        base::BindRepeating(
+            [](base::WeakPtr<PageHost> host, std::string why) {
+              if (host && !host->refused_by_library_) {
+                host->Refuse(std::move(why));
+              }
+            },
+            weak_factory_.GetWeakPtr()));
+  }
+  indexed_db_->OnCall(std::move(call), context_id,
+                      DocumentIndexedDbStorageKey(document_url));
+}
+
+// static
+std::optional<std::string> PageHost::DocumentIndexedDbStorageKey(
+    const GURL& document_url) {
+  // IDBFactory's check that the origin may reach databases: not an opaque
+  // one, which a Page's documents only have outside HTTP and HTTPS.
+  if (!DocumentHasCookies(document_url)) {
+    return std::nullopt;
+  }
+  // StorageKey::Serialize() of a first-party key: the origin and a slash.
+  return url::Origin::Create(document_url).GetURL().spec();
+}
+
 // static
 std::optional<std::string> PageHost::DocumentCacheStorageKey(
     const GURL& document_url) {
@@ -2093,6 +2132,8 @@ void PageHost::EndWithSession() {
   // A put that waits for the rest of its body from the Page fails, so that
   // its cache, and the Session's storage, may close.
   cache_storage_.reset();
+  // Its databases' connections close before the Session's storage does.
+  indexed_db_.reset();
   End(MITTO_PAGE_ERROR_SESSION_DESTROYED, "the Session was destroyed");
 }
 
@@ -2192,6 +2233,9 @@ void PageHost::OnDocumentCommitted(const PageDocumentCommitted& committed) {
     next_cache_storage_number_ = cache_storage_->NextNumber();
     cache_storage_.reset();
   }
+  // Its IndexedDB's connections close, as a renderer's context closes them
+  // when it goes.
+  indexed_db_.reset();
   // The old document's CookieStore listened over a pipe that went with it.
   cookie_store_listeners_.clear();
   // The navigation's document has taken the place of the Page's, after every
@@ -2281,6 +2325,11 @@ void PageHost::ForgetContexts(const std::set<uint64_t>& ids) {
   // Chrome, so that none holds its cache.
   if (cache_storage_) {
     cache_storage_->ForgetContexts(ids);
+  }
+  // Its IndexedDB connections close, as a renderer closes a context's when
+  // it goes.
+  if (indexed_db_) {
+    indexed_db_->ForgetContexts(ids);
   }
   std::erase_if(frame_navigation_responses_, [&ids](const auto& entry) {
     return ids.contains(entry.second.parent) ||
@@ -2612,6 +2661,10 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kSameDocumentNavigation:
       OnSameDocumentNavigation(frame->document, frame->same_document_url);
       return;
+    case PageMessage::kIndexedDb:
+      OnIndexedDb(std::move(frame->indexed_db_call), frame->document,
+                  document_url);
+      return;
     case PageMessage::kWorkerStarted:
       OnWorkerStarted(frame->worker_started);
       return;
@@ -2649,6 +2702,7 @@ void PageHost::OnFrame(uint32_t type, std::string payload) {
     case PageMessage::kStorageAllDeleted:
     case PageMessage::kStoragePart:
     case PageMessage::kCacheStorageAnswer:
+    case PageMessage::kIndexedDbCallback:
       // ReadFrameFromPage() refuses these.
       NOTREACHED();
   }
@@ -2672,11 +2726,16 @@ void PageHost::Refuse(std::string why) {
 }
 
 void PageHost::WaitForExit() {
-  // A Page that has gone needs nothing more from the network or its storage,
-  // and a put that waits for the rest of its body from it fails. Not at once
-  // for the Cache API: what refuses the Page may be its own call.
+  // A Page that has gone needs nothing more from the network or its storage:
+  // a put that waits for the rest of its body from it fails, and its
+  // databases' connections close, as a renderer's that goes. Not at once for
+  // the Cache API and IndexedDB: what refuses the Page may be their own call.
   AbandonRequests();
   ReleaseStorage();
+  if (indexed_db_) {
+    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(indexed_db_));
+  }
   if (cache_storage_) {
     base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
         FROM_HERE, std::move(cache_storage_));
