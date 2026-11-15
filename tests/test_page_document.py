@@ -302,3 +302,95 @@ def test_a_session_page_takes_no_markup_on_its_command_line(program: Path) -> No
     result = _run(program, "--html=<p>", "--session=3,1")
 
     assert (result.returncode, result.stdout) == (_WRONG_ARGUMENTS, "")
+
+
+def test_a_cdata_section_splits_into_cdata_sections(program: Path) -> None:
+    # Blink's CloneWithData(), which splitText() and cloning use, keeps the node's kind, as Chrome 157 gave.
+    script = """
+        const xml = new Document();
+        const root = xml.appendChild(xml.createElement('r'));
+        const cdata = root.appendChild(xml.createCDATASection('ab'));
+        const split = cdata.splitText(1);
+        [[...root.childNodes].map((node) => node.nodeType).join(), split.nodeName,
+         xml.createCDATASection('cd').splitText(1).nodeType, cdata.cloneNode().nodeType].join(' ')
+    """
+
+    assert _evaluate(program, script) == "4,4 #cdata-section 4 4"
+
+
+def test_a_processing_instruction_reads_its_attributes_again_after_any_change_of_its_data(program: Path) -> None:
+    # Setting an attribute writes the data without reading it again, so "$" stays, as Chrome 157 gave. Setting the
+    # data, to the same value too, reads it again: "$" is no XML name, so the data has no attributes.
+    script = """
+        const pi = document.createProcessingInstruction('t', 'a="1"');
+        pi.setAttribute('$', 'x');
+        const before = [pi.getAttribute('$'), pi.getAttribute('a'), pi.data].join('|');
+        pi.data = pi.data;
+        const after = [pi.getAttribute('$'), pi.getAttribute('a')].join('|');
+        pi.setAttribute('b', '2');
+        [before, after, pi.data].join(' ')
+    """
+
+    assert _evaluate(program, script) == 'x|1|a="1" $="x" | b="2"'
+
+
+def test_a_cdata_section_serializes_as_text_does(program: Path) -> None:
+    # HTML writes a CDATA section by the rules of text: as it is in script, style and the like, and in noscript where
+    # the document has a window, and escaped elsewhere, as Chrome 157 gave.
+    script = """
+        const xml = new Document();
+        const markup = (element) => (element.append(xml.createCDATASection('a<b&c')), element.innerHTML);
+        [...['script', 'style', 'noscript', 'div', 'textarea'].map((tag) => markup(document.createElement(tag))),
+         markup(document.createElementNS('http://www.w3.org/2000/svg', 'script'))].join(' ')
+    """
+
+    assert _evaluate(program, script) == "a<b&c a<b&c a<b&c a&lt;b&amp;c a&lt;b&amp;c a&lt;b&amp;c"
+
+
+def test_a_processing_instruction_with_a_namespace_declared_twice_has_no_attributes(program: Path) -> None:
+    # Declarations are no attributes, but libxml2 reads none from a list that declares a prefix or the default
+    # namespace twice, as Chrome 157 gave.
+    script = """
+        const names = (data) => document.createProcessingInstruction('t', data).getAttributeNames();
+        ['a="1" xmlns:x="urn:a" xmlns:x="urn:b"', 'a="1" xmlns="urn:a" xmlns="urn:b"',
+         'a="1" xmlns:x="urn:a" xmlns:y="urn:b"'].map((data) => JSON.stringify(names(data))).join(' ')
+    """
+
+    assert _evaluate(program, script) == '[] [] ["a"]'
+
+
+def test_a_processing_instruction_escapes_attributes_by_its_documents_markup(program: Path) -> None:
+    # HTML escapes a no-break space and keeps tabs and line breaks, XML writes those as character references and keeps
+    # the no-break space, so that an XML document reads the value back, as Chrome 157 gave.
+    script = """
+        const show = (data) => [...data].map((c) => {
+          const code = c.charCodeAt(0);
+          return code < 32 || code > 126 ? `U+${code.toString(16)}` : c;
+        }).join('');
+        const value = '\\u00a0<>&"\\'\\t\\n\\r x';
+        [document, new Document()].map((doc) => {
+          const pi = doc.createProcessingInstruction('t', '');
+          pi.setAttribute('a', value);
+          const data = show(pi.data);
+          pi.data = pi.data;
+          return `${data} ${pi.getAttribute('a') === value}`;
+        }).join(' | ')
+    """
+
+    assert _evaluate(program, script) == (
+        'a="&nbsp;&lt;&gt;&amp;&quot;\'U+9U+aU+d x" false | a="U+a0&lt;&gt;&amp;&quot;\'&#9;&#10;&#13; x" true'
+    )
+
+
+def test_a_processing_instruction_takes_xmlns_with_no_prefix_as_an_attribute(program: Path) -> None:
+    # "xmlns:" declares nothing to libxml2, so it is an attribute like any other, twice too, as Chrome 157 gave.
+    script = """
+        ['a="1" xmlns:="u"', 'a="1" xmlns:="u" xmlns:="v"'].map((data) => {
+          const pi = document.createProcessingInstruction('t', data);
+          const read = `${JSON.stringify(pi.getAttributeNames())} ${pi.getAttribute('xmlns:')}`;
+          pi.setAttribute('c', '3');
+          return `${read} ${pi.data}`;
+        }).join(' / ')
+    """
+
+    assert _evaluate(program, script) == '["a","xmlns:"] u a="1" xmlns:="u" c="3" / [] null c="3"'

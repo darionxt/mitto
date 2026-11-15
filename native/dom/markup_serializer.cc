@@ -10,6 +10,7 @@
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/processing_instruction.h"
 
 namespace mitto {
 
@@ -160,7 +161,9 @@ void AppendNode(std::u16string& markup, const Node& node) {
     case Node::kElementNode:
       AppendElement(markup, static_cast<const Element&>(node));
       break;
-    case Node::kTextNode: {
+    // HTML writes a CDATA section as text, by the same rules.
+    case Node::kTextNode:
+    case Node::kCdataSectionNode: {
       const std::u16string& data =
           static_cast<const CharacterData&>(node).Data();
       if (HoldsRawText(node)) {
@@ -174,6 +177,15 @@ void AppendNode(std::u16string& markup, const Node& node) {
       markup += u"<!--";
       markup += static_cast<const CharacterData&>(node).Data();
       markup += u"-->";
+      break;
+    // MarkupFormatter::AppendProcessingInstruction() ends one with "?>" in
+    // HTML too.
+    case Node::kProcessingInstructionNode:
+      markup += u"<?";
+      markup += static_cast<const ProcessingInstruction&>(node).Target();
+      markup += u' ';
+      markup += static_cast<const CharacterData&>(node).Data();
+      markup += u"?>";
       break;
     case Node::kDocumentTypeNode:
       markup += u"<!DOCTYPE ";
@@ -207,6 +219,44 @@ std::u16string SerializeNode(const Node& node) {
   std::u16string markup;
   AppendNode(markup, node);
   return markup;
+}
+
+std::u16string EscapeAttributeValue(std::u16string_view value,
+                                    bool for_html) {
+  std::u16string escaped;
+  if (for_html) {
+    AppendEscaped(escaped, value, /*in_attribute=*/true);
+    return escaped;
+  }
+  // Blink's kEntityMaskInAttributeValue.
+  for (const char16_t c : value) {
+    switch (c) {
+      case '&':
+        escaped += u"&amp;";
+        break;
+      case '<':
+        escaped += u"&lt;";
+        break;
+      case '>':
+        escaped += u"&gt;";
+        break;
+      case '"':
+        escaped += u"&quot;";
+        break;
+      case '\t':
+        escaped += u"&#9;";
+        break;
+      case '\n':
+        escaped += u"&#10;";
+        break;
+      case '\r':
+        escaped += u"&#13;";
+        break;
+      default:
+        escaped += c;
+    }
+  }
+  return escaped;
 }
 
 }  // namespace mitto
