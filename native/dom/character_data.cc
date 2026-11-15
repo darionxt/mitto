@@ -108,6 +108,7 @@ void CharacterData::ReplaceDataInternal(uint32_t offset,
   ModifyData([offset, count, &data](std::u16string& current) {
     current.replace(offset, count, data);
   });
+  DidChangeData();
   if (AttachedTraversals* const traversals =
           GetDocument().ExistingTraversals()) {
     traversals->DidReplaceText(*this, offset, count,

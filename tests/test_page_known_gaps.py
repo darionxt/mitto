@@ -250,7 +250,11 @@ def test_a_constructor_gives_an_object_of_its_interface(program: Path) -> None:
             "Failed to execute 'digest' on 'SubtleCrypto'",
             id="subtle crypto",
         ),
-        pytest.param("return document.createCDATASection('x')", "Failed to execute", id="an object of a class"),
+        pytest.param(
+            "return document.createElementNS('http://www.w3.org/2000/svg', 'svg').getElementById('x')",
+            "Failed to execute 'getElementById' on 'SVGSVGElement'",
+            id="an object of a class",
+        ),
     ],
 )
 def test_a_refused_known_gap_keeps_todays_error(program: Path, script: str, message: str) -> None:

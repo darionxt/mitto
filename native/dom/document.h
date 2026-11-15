@@ -36,6 +36,7 @@ namespace mitto {
 
 class AttachedTraversals;
 class Attr;
+class CDATASection;
 class Comment;
 class CacheStorageHost;
 class IndexedDbHost;
@@ -55,6 +56,7 @@ class HttpRefreshScheduler;
 class Location;
 class NodeIterator;
 class PermissionsPolicy;
+class ProcessingInstruction;
 class Range;
 class Text;
 class TreeWalker;
@@ -193,6 +195,14 @@ class Document : public Node {
                           const std::u16string& qualified_name,
                           bindings::ExceptionState& exception_state);
   Comment* CreateComment(const std::u16string& data);
+  // Blink's checks: a target that is an XML name and data without "?>".
+  ProcessingInstruction* CreateProcessingInstruction(
+      const std::u16string& target,
+      const std::u16string& data,
+      bindings::ExceptionState& exception_state);
+  // Throws for an HTML document, and for data with "]]>".
+  CDATASection* CreateCDATASection(const std::u16string& data,
+                                   bindings::ExceptionState& exception_state);
   DocumentFragment* CreateDocumentFragment();
   Element* CreateElementForBinding(const std::u16string& local_name,
                                    bindings::ExceptionState& exception_state);

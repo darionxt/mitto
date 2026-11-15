@@ -40,7 +40,7 @@ Text* Text::SplitText(uint32_t offset,
   // Blink's order: the data goes, which the observers hear of first, the new
   // node goes in after this one, and then the live ranges past the offset
   // move into it, as the DOM standard's "split a Text node" moves them.
-  Text* const next = Create(GetDocument(), Data().substr(offset));
+  Text* const next = CloneWithData(GetDocument(), Data().substr(offset));
   Node* const parent = ParentNode();
   if (!parent) {
     DeleteData(offset, Length() - offset, exception_state);
@@ -74,7 +74,12 @@ std::u16string Text::WholeText() const {
 }
 
 Node* Text::CloneWithoutChildren(Document& document) const {
-  return Create(document, Data());
+  return CloneWithData(document, Data());
+}
+
+Text* Text::CloneWithData(Document& document,
+                          const std::u16string& data) const {
+  return Create(document, data);
 }
 
 uint16_t Text::GetNodeType() const {
