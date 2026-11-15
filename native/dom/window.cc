@@ -692,12 +692,12 @@ void Window::SetDocument(mitto::Document* document) {
   }
   document_ = document;
   document_->SetWindow(this);
-}
-
   // A document that elements gave named items before it was the window's,
   // such as the one the parser makes of a Page's markup, has their
   // properties now.
   AddNamedItemProperties(*document_);
+}
+
 void Window::AssociateWithContext(v8::Isolate* isolate,
                                   v8::Local<v8::Context> context) {
   AssociateWithGlobalProxy(isolate, context->Global());
