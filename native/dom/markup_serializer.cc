@@ -161,7 +161,9 @@ void AppendNode(std::u16string& markup, const Node& node) {
     case Node::kElementNode:
       AppendElement(markup, static_cast<const Element&>(node));
       break;
-    case Node::kTextNode: {
+    // HTML writes a CDATA section as text, by the same rules.
+    case Node::kTextNode:
+    case Node::kCdataSectionNode: {
       const std::u16string& data =
           static_cast<const CharacterData&>(node).Data();
       if (HoldsRawText(node)) {
@@ -184,11 +186,6 @@ void AppendNode(std::u16string& markup, const Node& node) {
       markup += u' ';
       markup += static_cast<const CharacterData&>(node).Data();
       markup += u"?>";
-      break;
-    // HTML serializes one as text.
-    case Node::kCdataSectionNode:
-      AppendEscaped(markup, static_cast<const CharacterData&>(node).Data(),
-                    /*in_attribute=*/false);
       break;
     case Node::kDocumentTypeNode:
       markup += u"<!DOCTYPE ";

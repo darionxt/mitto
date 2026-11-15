@@ -332,3 +332,16 @@ def test_a_processing_instruction_reads_its_attributes_again_after_any_change_of
     """
 
     assert _evaluate(program, script) == 'x|1|a="1" $="x" | b="2"'
+
+
+def test_a_cdata_section_serializes_as_text_does(program: Path) -> None:
+    # HTML writes a CDATA section by the rules of text: as it is in script, style and the like, and in noscript where
+    # the document has a window, and escaped elsewhere, as Chrome 157 gave.
+    script = """
+        const xml = new Document();
+        const markup = (element) => (element.append(xml.createCDATASection('a<b&c')), element.innerHTML);
+        [...['script', 'style', 'noscript', 'div', 'textarea'].map((tag) => markup(document.createElement(tag))),
+         markup(document.createElementNS('http://www.w3.org/2000/svg', 'script'))].join(' ')
+    """
+
+    assert _evaluate(program, script) == "a<b&c a<b&c a<b&c a&lt;b&amp;c a&lt;b&amp;c a&lt;b&amp;c"
