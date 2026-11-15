@@ -98,6 +98,7 @@ class HTMLEmbedElement final : public HTMLElement {
   explicit HTMLEmbedElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  NamedItemType GetNamedItemType() const override;
 
   // The members of the interface beyond its reflected attributes: the URL
   // that src reflects, as Blink's GetURLAttribute() resolves it.
@@ -131,6 +132,7 @@ class HTMLFormElement final : public HTMLElement {
   explicit HTMLFormElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  NamedItemType GetNamedItemType() const override;
   DOMTokenList* RelList() {
     return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
   }
@@ -189,6 +191,9 @@ class HTMLIFrameElement final : public HTMLElement {
   explicit HTMLIFrameElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  // Blink's HTMLIFrameElement adds its name to the document's named items
+  // itself, as it enters and leaves the tree and its name changes.
+  NamedItemType GetNamedItemType() const override;
   int32_t DefaultTabIndex() const override;
   DOMTokenList* Sandbox() {
     return EnsureTokenList(u"sandbox", DOMTokenList::SupportedTokens::kSandbox);
@@ -292,6 +297,7 @@ class HTMLObjectElement final : public HTMLElement {
   explicit HTMLObjectElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+  NamedItemType GetNamedItemType() const override;
   int32_t DefaultTabIndex() const override;
 
   // The members of the interface beyond its reflected attributes: the URLs

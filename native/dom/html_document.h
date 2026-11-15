@@ -1,6 +1,8 @@
 // The HTML Standard's HTMLDocument, the interface of a window's document and of
 // the documents the HTML parser makes. It adds nothing to Document but a
-// named getter for forms and images by name, which is a Known Gap.
+// named getter, which Blink writes without its bindings: a window's
+// document's wrapper has a property of each of the document's named items
+// (document_named_properties.h).
 //
 // Upstream: third_party/blink/renderer/core/html/html_document.h
 // Upstream: third_party/blink/renderer/core/html/html_document.cc

@@ -71,6 +71,8 @@ source_set("dom") {
     "document_fragment.h",
     "document_load_timing.cc",
     "document_load_timing.h",
+    "document_named_properties.cc",
+    "document_named_properties.h",
     "document_parser.cc",
     "document_parser.h",
     "document_script_runner.cc",

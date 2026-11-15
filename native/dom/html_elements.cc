@@ -151,6 +151,10 @@ const bindings::WrapperTypeInfo* HTMLEmbedElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLEmbedElement::kWrapperTypeInfo;
 }
 
+Element::NamedItemType HTMLEmbedElement::GetNamedItemType() const {
+  return NamedItemType::kName;
+}
+
 // static
 HTMLFieldSetElement* HTMLFieldSetElement::Create(Document& document) {
   return bindings::MakeGarbageCollected<HTMLFieldSetElement>(document);
@@ -186,6 +190,10 @@ HTMLFormElement::HTMLFormElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLFormElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLFormElement::kWrapperTypeInfo;
+}
+
+Element::NamedItemType HTMLFormElement::GetNamedItemType() const {
+  return NamedItemType::kName;
 }
 
 // static
@@ -244,6 +252,10 @@ HTMLIFrameElement::HTMLIFrameElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLIFrameElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLIFrameElement::kWrapperTypeInfo;
+}
+
+Element::NamedItemType HTMLIFrameElement::GetNamedItemType() const {
+  return NamedItemType::kName;
 }
 
 int32_t HTMLIFrameElement::DefaultTabIndex() const {
@@ -347,6 +359,10 @@ HTMLObjectElement::HTMLObjectElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLObjectElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLObjectElement::kWrapperTypeInfo;
+}
+
+Element::NamedItemType HTMLObjectElement::GetNamedItemType() const {
+  return NamedItemType::kNameOrId;
 }
 
 int32_t HTMLObjectElement::DefaultTabIndex() const {

@@ -36,7 +36,11 @@ class NodeListsNodeData final
       const std::u16string& local_name);
   HTMLCollection* ClassCollection(Node& root,
                                   const std::u16string& class_names);
-  HTMLCollection* DocumentAllNamedItems(Node& root, const std::u16string& name);
+  // The elements of `name` that a `type` of named items finds:
+  // document.all's, the window's or the document's.
+  HTMLCollection* NamedItems(Node& root,
+                             HTMLCollection::Type type,
+                             const std::u16string& name);
   NodeList* NameNodeList(Node& root, const std::u16string& name);
 
  private:
