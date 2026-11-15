@@ -69,6 +69,10 @@ class HTMLCollection : public bindings::ScriptWrappable {
     kClassCollection,
     // document.all's elements of one name or ID.
     kDocumentAllNamedItems,
+    // The elements of one name or ID that the window's named properties
+    // object finds, and those that document[name] finds.
+    kWindowNamedItems,
+    kDocumentNamedItems,
   };
 
   static HTMLCollection* Create(Node* root, Type type);
@@ -84,10 +88,12 @@ class HTMLCollection : public bindings::ScriptWrappable {
   static HTMLCollection* CreateClassCollection(
       Node* root,
       const std::u16string& class_names);
-  // The elements that document.all names `name`.
-  static HTMLCollection* CreateDocumentAllNamedItems(
-      Node* root,
-      const std::u16string& name);
+  // The elements that document.all, the window or the document names `name`,
+  // for a `type` of kDocumentAllNamedItems, kWindowNamedItems or
+  // kDocumentNamedItems.
+  static HTMLCollection* CreateNamedItems(Node* root,
+                                          Type type,
+                                          const std::u16string& name);
   // An empty one, for a Known Gap that gives one.
   static bindings::ScriptWrappable* CreateForKnownGap(
       const bindings::WrapperTypeInfo& info);

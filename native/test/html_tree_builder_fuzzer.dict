@@ -100,3 +100,7 @@
 "<!--x-->"
 "<?x?>"
 "/>"
+"<?marker name=m>"
+"<?start name=m>"
+"<?end>"
+"<template for=m>"

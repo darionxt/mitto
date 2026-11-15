@@ -40,6 +40,25 @@ void ThrowInvalidAttributeName(const std::u16string& name,
           {"'", base::UTF16ToUTF8(name), "' is not a valid attribute name."}));
 }
 
+// Blink's html_names::kIdAttr and kNameAttr: the attributes of no namespace.
+bool IsIdAttribute(const QualifiedName& name) {
+  return !name.namespace_uri && name.local_name == u"id";
+}
+
+bool IsNameAttribute(const QualifiedName& name) {
+  return !name.namespace_uri && name.local_name == u"name";
+}
+
+// Whether an attribute's value changed, null being none, as Blink compares
+// atoms, of which null and empty differ.
+bool ValueChanged(const std::u16string* old_value,
+                  const std::u16string* new_value) {
+  if (!old_value || !new_value) {
+    return old_value != new_value;
+  }
+  return *old_value != *new_value;
+}
+
 }  // namespace
 
 // static
@@ -136,12 +155,21 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
   if (record) {
     EnqueueAttributeMutation(*this, name, std::nullopt);
   }
+  // It counts a new name before the change, and DidAddAttribute() a new ID
+  // after it.
+  const bool connected = IsConnected();
+  if (connected && IsNameAttribute(name)) {
+    UpdateName(nullptr, &value);
+  }
   IncrementDomTreeVersion();
   attributes_.push_back({name, value});
   // The hook reads the attribute as it is stored.
   const Attribute& added = attributes_.back();
   UpdateNonce(added.name, &added.value);
   AttributeChanged(added.name, nullptr, &added.value);
+  if (connected && IsIdAttribute(added.name)) {
+    UpdateId(nullptr, &attributes_.back().value);
+  }
 }
 
 void Element::SetAttributeValueInternal(size_t index,
@@ -153,9 +181,19 @@ void Element::SetAttributeValueInternal(size_t index,
     EnqueueAttributeMutation(*this, attributes_[index].name,
                              attributes_[index].value);
   }
+  // A name counts before the change, and DidModifyAttribute() an ID after it,
+  // before the hook.
+  const bool connected = IsConnected();
+  if (connected && IsNameAttribute(attributes_[index].name)) {
+    const std::u16string old_name = attributes_[index].value;
+    UpdateName(&old_name, &value);
+  }
   IncrementDomTreeVersion();
   const std::u16string old_value =
       std::exchange(attributes_[index].value, value);
+  if (connected && IsIdAttribute(attributes_[index].name)) {
+    UpdateId(&old_value, &attributes_[index].value);
+  }
   UpdateNonce(attributes_[index].name, &attributes_[index].value);
   AttributeChanged(attributes_[index].name, &old_value,
                    &attributes_[index].value);
@@ -166,6 +204,13 @@ void Element::RemoveAttributeInternal(size_t index, bool record) {
     EnqueueAttributeMutation(*this, attributes_[index].name,
                              attributes_[index].value);
   }
+  // A name goes before the change, and DidRemoveAttribute() takes an ID away
+  // after it, before the hook.
+  const bool connected = IsConnected();
+  if (connected && IsNameAttribute(attributes_[index].name)) {
+    const std::u16string old_name = attributes_[index].value;
+    UpdateName(&old_name, nullptr);
+  }
   IncrementDomTreeVersion();
   // Blink's RemoveAttributeInternal(): the attribute's node keeps the value.
   if (Attr* const attr = AttrIfExists(attributes_[index].name)) {
@@ -174,8 +219,134 @@ void Element::RemoveAttributeInternal(size_t index, bool record) {
   }
   const Attribute removed = std::move(attributes_[index]);
   attributes_.erase(attributes_.begin() + index);
+  if (connected && IsIdAttribute(removed.name)) {
+    UpdateId(&removed.value, nullptr);
+  }
   UpdateNonce(removed.name, nullptr);
   AttributeChanged(removed.name, &removed.value, nullptr);
+}
+
+Element::NamedItemType Element::GetNamedItemType() const {
+  return NamedItemType::kNone;
+}
+
+Node::InsertionNotificationRequest Element::InsertedInto(
+    Node& insertion_point) {
+  Node::InsertedInto(insertion_point);
+  // Blink's Element::InsertedInto(): an element that goes into a document's
+  // tree adds its ID and then its name, copied, as what the document does
+  // with them may change the attributes.
+  if (!insertion_point.IsConnected()) {
+    return InsertionNotificationRequest::kInsertionDone;
+  }
+  if (const std::u16string* found = FindAttribute(u"id")) {
+    const std::u16string id = *found;
+    UpdateId(nullptr, &id);
+  }
+  if (const std::u16string* found = FindAttribute(u"name")) {
+    const std::u16string name = *found;
+    UpdateName(nullptr, &name);
+  }
+  return InsertionNotificationRequest::kInsertionDone;
+}
+
+void Element::RemovedFrom(Node& insertion_point) {
+  Node::RemovedFrom(insertion_point);
+  // Element::RemovedFrom(): one that leaves a document's tree takes them
+  // away from the document it is still in.
+  if (!insertion_point.IsConnected()) {
+    return;
+  }
+  if (const std::u16string* found = FindAttribute(u"id")) {
+    const std::u16string id = *found;
+    UpdateId(&id, nullptr);
+  }
+  if (const std::u16string* found = FindAttribute(u"name")) {
+    const std::u16string name = *found;
+    UpdateName(&name, nullptr);
+  }
+}
+
+void Element::UpdateName(const std::u16string* old_value,
+                         const std::u16string* new_value) {
+  if (!ValueChanged(old_value, new_value)) {
+    return;
+  }
+  const NamedItemType type = GetNamedItemType();
+  if (type != NamedItemType::kNone) {
+    UpdateNamedItemRegistration(type, old_value, new_value);
+  }
+}
+
+void Element::UpdateId(const std::u16string* old_value,
+                       const std::u16string* new_value) {
+  if (!ValueChanged(old_value, new_value)) {
+    return;
+  }
+  // TreeScope's map of IDs, which the document is for the elements of its
+  // tree.
+  Document& document = GetDocument();
+  if (old_value && !old_value->empty()) {
+    document.RemoveElementById(*old_value);
+  }
+  if (new_value && !new_value->empty()) {
+    document.AddElementById(*new_value);
+  }
+  const NamedItemType type = GetNamedItemType();
+  if (type == NamedItemType::kNameOrId ||
+      type == NamedItemType::kNameOrIdWithName) {
+    UpdateIdNamedItemRegistration(type, old_value, new_value);
+  }
+}
+
+void Element::UpdateNamedItemRegistration(NamedItemType type,
+                                          const std::u16string* old_name,
+                                          const std::u16string* new_name) {
+  Document& document = GetDocument();
+  if (!document.IsHTMLDocument()) {
+    return;
+  }
+  const bool had_name = old_name && !old_name->empty();
+  const bool has_name = new_name && !new_name->empty();
+  if (had_name) {
+    document.RemoveNamedItem(*old_name);
+  }
+  if (has_name) {
+    document.AddNamedItem(*new_name);
+  }
+  // An img's ID is a named item only while the img has a name.
+  if (type == NamedItemType::kNameOrIdWithName && had_name != has_name) {
+    const std::u16string* id = FindAttribute(u"id");
+    if (id && !id->empty()) {
+      const std::u16string copy = *id;
+      if (has_name) {
+        document.AddNamedItem(copy);
+      } else {
+        document.RemoveNamedItem(copy);
+      }
+    }
+  }
+}
+
+void Element::UpdateIdNamedItemRegistration(NamedItemType type,
+                                            const std::u16string* old_id,
+                                            const std::u16string* new_id) {
+  Document& document = GetDocument();
+  if (!document.IsHTMLDocument()) {
+    return;
+  }
+  if (type == NamedItemType::kNameOrIdWithName) {
+    const std::u16string* name = FindAttribute(u"name");
+    if (!name || name->empty()) {
+      return;
+    }
+  }
+  if (old_id && !old_id->empty()) {
+    document.RemoveNamedItem(*old_id);
+  }
+  if (new_id && !new_id->empty()) {
+    document.AddNamedItem(*new_id);
+  }
 }
 
 Attr* Element::AttrIfExists(const QualifiedName& name) const {

@@ -1213,6 +1213,39 @@ class _InterfaceWriter:
         self.types.return_type(operation.return_type, f"{where} return type")
         return operation.return_type, f"HolderOf(isolate, holder)->{method}({arguments})"
 
+    def named_properties_object(self) -> bool:
+        """Writes kNamedPropertiesObject, the named getter of Web IDL's named properties object, which Blink calls
+        WindowProperties, and says whether the interface is that one with a getter that the class has. bind_gen puts
+        its interceptors on the prototype template, whose object it is, and asks the window of that object's realm,
+        whose global proxy is the `holder` that the getter gets."""
+        if self.interface.name != "WindowProperties":
+            return False
+        named = self._special_with_behaviour("named getter")
+        if named is None:
+            return False
+        where = f"named getter of {self.interface.name}"
+        return_type, call = self._getter_call(named, "name")
+        if self.types.reduce(return_type).kind is not TypeKind.OBJECT:
+            raise UnhandledError(f"{where}: the C++ writer expects it to return an object")
+        self.callbacks.append(
+            "\n".join(
+                [
+                    f"// `holder` is the global proxy of a window, which is one of {self.interface.name}'s objects.",
+                    f"{self.cls}* HolderOf(v8::Isolate* isolate, v8::Local<v8::Object> holder) {{",
+                    f"  return ToWrappableOf<{self.cls}>(isolate, {self.v8_class}::kWrapperTypeInfo, holder);",
+                    "}",
+                    "",
+                    "v8::Local<v8::Value> NamedPropertyGetter(v8::Isolate* isolate, v8::Local<v8::Object> holder,",
+                    "                                         const std::u16string& name) {",
+                    f"  return {call};",
+                    "}",
+                    "",
+                    "constexpr NamedPropertiesObject kNamedPropertiesObject = {&NamedPropertyGetter};",
+                ]
+            )
+        )
+        return True
+
     def indexed_and_named_properties(self) -> bool:
         """Writes the functions of the interface's IndexedAndNamedProperties, kIndexedAndNamedProperties, which read
         its class, and says whether it has one: when the class has an indexed or a named property getter."""
@@ -1676,7 +1709,9 @@ class _InterfaceWriter:
             )
         template_properties = [property_ for property_ in plan if property_.phase is Phase.TEMPLATE]
         lines += _indent(self._install_properties(template_properties, on_objects=False))
-        if self.indexed_and_named_properties():
+        if self.named_properties_object():
+            lines.append("  InstallNamedPropertiesObject(isolate, prototype_template, kNamedPropertiesObject);")
+        elif self.indexed_and_named_properties():
             lines.append("  InstallIndexedAndNamedProperties(isolate, instance_template, kIndexedAndNamedProperties);")
         if interface.name == "HTMLAllCollection":
             # document.all: undetectable, and calling it calls item(), as a table installs it.

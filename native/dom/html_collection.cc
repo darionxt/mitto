@@ -139,10 +139,12 @@ HTMLCollection* HTMLCollection::CreateClassCollection(
 }
 
 // static
-HTMLCollection* HTMLCollection::CreateDocumentAllNamedItems(
-    Node* root,
-    const std::u16string& name) {
-  HTMLCollection* const collection = Create(root, Type::kDocumentAllNamedItems);
+HTMLCollection* HTMLCollection::CreateNamedItems(Node* root,
+                                                 Type type,
+                                                 const std::u16string& name) {
+  CHECK(type == Type::kDocumentAllNamedItems ||
+        type == Type::kWindowNamedItems || type == Type::kDocumentNamedItems);
+  HTMLCollection* const collection = Create(root, type);
   collection->name_ = name;
   return collection;
 }
@@ -241,6 +243,40 @@ bool HTMLCollection::Matches(const Element& element) const {
       }
       const std::u16string* id = element.FindAttribute(u"id");
       return id && *id == name_;
+    }
+    case Type::kWindowNamedItems: {
+      // WindowNameCollection: images, forms, embeds and objects by name, and
+      // any element by ID.
+      if (element.HasHTMLTagName(u"img") || element.HasHTMLTagName(u"form") ||
+          element.HasHTMLTagName(u"embed") ||
+          element.HasHTMLTagName(u"object")) {
+        const std::u16string* name = element.FindAttribute(u"name");
+        if (name && *name == name_) {
+          return true;
+        }
+      }
+      const std::u16string* id = element.FindAttribute(u"id");
+      return id && *id == name_;
+    }
+    case Type::kDocumentNamedItems: {
+      // DocumentNameCollection, with DocumentNamedPropertiesIgnoreExposedness,
+      // which Chrome ships: forms, iframes and embeds by name, objects by name
+      // or ID, and images by name, or by ID while they have a name.
+      const std::u16string* name = element.FindAttribute(u"name");
+      if (element.HasHTMLTagName(u"form") ||
+          element.HasHTMLTagName(u"iframe") ||
+          element.HasHTMLTagName(u"embed")) {
+        return name && *name == name_;
+      }
+      const std::u16string* id = element.FindAttribute(u"id");
+      if (element.HasHTMLTagName(u"object")) {
+        return (name && *name == name_) || (id && *id == name_);
+      }
+      if (element.HasHTMLTagName(u"img")) {
+        return (name && *name == name_) ||
+               (id && *id == name_ && name && !name->empty());
+      }
+      return false;
     }
   }
 }
