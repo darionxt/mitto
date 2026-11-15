@@ -89,6 +89,12 @@ class Event : public bindings::ScriptWrappable {
   // handler sets.
   virtual bool IsBeforeUnloadEvent() const;
 
+  // Blink's WasInitialized(): false for an event that createEvent() made,
+  // whose type initEvent() has not set, which a page cannot dispatch, as
+  // Blink's Event() constructor leaves it.
+  bool WasInitialized() const { return was_initialized_; }
+  void SetUninitialized() { was_initialized_ = false; }
+
   // What a dispatch reads and sets.
   bool IsBeingDispatched() const { return phase_ != Phase::kNone; }
   bool PropagationStopped() const { return stop_propagation_; }
@@ -152,6 +158,7 @@ class Event : public bindings::ScriptWrappable {
   bool bubbles_;
   bool cancelable_;
   bool composed_;
+  bool was_initialized_ = true;
   bool trusted_ = false;
   bool stop_propagation_ = false;
   bool stop_immediate_propagation_ = false;
