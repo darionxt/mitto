@@ -106,6 +106,12 @@ _URL = {
         " u.search = '?z=4'; return [written, u.href, p.toString(), p.size].join('|')",
         "value: http://a/?x=1&y=2+3|http://a/?z=4|z=4|1",
     ),
+    # Blink's searchParams take the value that search's setter got, where the URL drops a tab or a line break.
+    "searchParams after search with a line break": (
+        "const u = new URL('http://a/'); const p = u.searchParams; u.search = '?a=b\\nc';"
+        " return JSON.stringify([u.href, p.get('a'), p.toString()])",
+        'value: ["http://a/?a=bc","b\\nc","a=b%0Ac"]',
+    ),
     "searchParams is one object": (
         "const u = new URL('http://a/'); return u.searchParams === u.searchParams",
         "value: true",

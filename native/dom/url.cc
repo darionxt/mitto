@@ -112,6 +112,9 @@ void URL::SetHref(const std::u16string& value,
 
 void URL::SetSearch(const std::u16string& value) {
   UrlUtils::SetSearch(value);
+  // Blink's search parameters take the value given, not the query that the
+  // URL keeps, so a tab or a line break that the URL drops stays in them, as
+  // Chrome 157 gives it.
   std::u16string_view query(value);
   if (query.starts_with(u'?')) {
     query.remove_prefix(1);
