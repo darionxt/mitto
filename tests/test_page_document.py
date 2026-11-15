@@ -302,3 +302,33 @@ def test_a_session_page_takes_no_markup_on_its_command_line(program: Path) -> No
     result = _run(program, "--html=<p>", "--session=3,1")
 
     assert (result.returncode, result.stdout) == (_WRONG_ARGUMENTS, "")
+
+
+def test_a_cdata_section_splits_into_cdata_sections(program: Path) -> None:
+    # Blink's CloneWithData(), which splitText() and cloning use, keeps the node's kind, as Chrome 157 gave.
+    script = """
+        const xml = new Document();
+        const root = xml.appendChild(xml.createElement('r'));
+        const cdata = root.appendChild(xml.createCDATASection('ab'));
+        const split = cdata.splitText(1);
+        [[...root.childNodes].map((node) => node.nodeType).join(), split.nodeName,
+         xml.createCDATASection('cd').splitText(1).nodeType, cdata.cloneNode().nodeType].join(' ')
+    """
+
+    assert _evaluate(program, script) == "4,4 #cdata-section 4 4"
+
+
+def test_a_processing_instruction_reads_its_attributes_again_after_any_change_of_its_data(program: Path) -> None:
+    # Setting an attribute writes the data without reading it again, so "$" stays, as Chrome 157 gave. Setting the
+    # data, to the same value too, reads it again: "$" is no XML name, so the data has no attributes.
+    script = """
+        const pi = document.createProcessingInstruction('t', 'a="1"');
+        pi.setAttribute('$', 'x');
+        const before = [pi.getAttribute('$'), pi.getAttribute('a'), pi.data].join('|');
+        pi.data = pi.data;
+        const after = [pi.getAttribute('$'), pi.getAttribute('a')].join('|');
+        pi.setAttribute('b', '2');
+        [before, after, pi.data].join(' ')
+    """
+
+    assert _evaluate(program, script) == 'x|1|a="1" $="x" | b="2"'

@@ -35,6 +35,11 @@ class Text : public CharacterData {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+  // Blink's CloneWithData(): a node of this one's kind with `data`, which
+  // splitText() and cloning make, so that a CDATA section's are CDATA
+  // sections.
+  virtual Text* CloneWithData(Document& document,
+                              const std::u16string& data) const;
 };
 
 }  // namespace mitto

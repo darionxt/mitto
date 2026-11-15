@@ -315,11 +315,15 @@ Node* ProcessingInstruction::CloneWithoutChildren(Document& document) const {
   return Create(document, target_, Data());
 }
 
+void ProcessingInstruction::DidChangeData() {
+  attributes_dirty_ = true;
+}
+
 void ProcessingInstruction::ProcessAttributesIfNeeded() {
-  if (parsed_data_ && *parsed_data_ == Data()) {
+  if (!attributes_dirty_) {
     return;
   }
-  parsed_data_ = Data();
+  attributes_dirty_ = false;
   attributes_ = ParsePseudoAttributes(Data()).value_or(Attributes());
 }
 
@@ -422,7 +426,6 @@ void ProcessingInstruction::UpdateDataFromAttributes() {
     data += u'"';
   }
   SetDataWithoutUpdate(data);
-  parsed_data_ = data;
 }
 
 }  // namespace mitto

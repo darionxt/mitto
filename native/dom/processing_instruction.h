@@ -58,6 +58,9 @@ class ProcessingInstruction final : public CharacterData {
 
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
+  // CharacterData's: Blink's DidChangeData() marks the attributes for reading
+  // again, after any change of the data through the DOM.
+  void DidChangeData() override;
 
  private:
   // Blink's ProcessAttributesIfNeeded(): the data's attributes, read again
@@ -68,8 +71,10 @@ class ProcessingInstruction final : public CharacterData {
 
   const std::u16string target_;
   std::vector<std::pair<std::u16string, std::u16string>> attributes_;
-  // The data that attributes_ was read from.
-  std::optional<std::u16string> parsed_data_;
+  // Whether attributes_ is to be read from the data again, as Blink's
+  // attributes_dirty_ says: from the start, and after a change of the data
+  // through the DOM, but not after one that the attributes made.
+  bool attributes_dirty_ = true;
 };
 
 }  // namespace mitto

@@ -26,8 +26,9 @@ std::u16string CDATASection::NodeName() const {
   return u"#cdata-section";
 }
 
-Node* CDATASection::CloneWithoutChildren(Document& document) const {
-  return Create(document, Data());
+Text* CDATASection::CloneWithData(Document& document,
+                                  const std::u16string& data) const {
+  return Create(document, data);
 }
 
 }  // namespace mitto

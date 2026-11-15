@@ -26,7 +26,8 @@ class CDATASection final : public Text {
   std::u16string NodeName() const override;
 
  protected:
-  Node* CloneWithoutChildren(Document& document) const override;
+  Text* CloneWithData(Document& document,
+                      const std::u16string& data) const override;
 };
 
 }  // namespace mitto
