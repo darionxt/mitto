@@ -7,7 +7,6 @@ and needs a native library with the Page program beside it, as CI's native job i
 
 import contextlib
 import http.server
-import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -20,7 +19,7 @@ import mitto
 from mitto import _native
 from mitto._errors import PageTimeoutError
 from mitto._page import Page
-from tests.local_server import QuietServer
+from tests.local_server import QuietServer, refused_port
 
 pytestmark = pytest.mark.usefixtures("both_apis")
 
@@ -158,10 +157,7 @@ def _open_page(session: mitto.Session, url: str, timeout: float | None = _TIMEOU
 
 def _refused_url() -> str:
     """Return a URL of a local port that nothing listens on."""
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
-    return f"http://127.0.0.1:{port}/"
+    return f"http://127.0.0.1:{refused_port()}/"
 
 
 def test_a_page_loads_its_document_and_runs_its_classic_scripts_in_document_order(

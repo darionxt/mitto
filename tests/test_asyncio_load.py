@@ -2,6 +2,11 @@
 
 The client is tests/asyncio_load_client.py, in a process of its own, and this counts its threads from outside. The limits
 leave room for a slow CI runner. What the code does here today is far below them, and the pull request has the numbers.
+
+How late the loop runs is a time on the wall clock, which grows whenever the operating system has the client wait for a
+CPU, so these tests run alone. Beside the tests of other pytest-xdist workers, the loop ran 0.64 seconds late once on a
+macOS runner. On a Mac with the tests held to its efficiency cores (taskpolicy -b), the loop's thread used at most a
+millisecond of CPU in each of the latest beats, of up to 0.2 seconds: the time went to waiting for a CPU, not to work.
 """
 
 import ctypes
@@ -22,6 +27,8 @@ import pytest
 from mitto._native import find_library
 from tests import event_loops
 from tests.local_server import QuietServer
+
+pytestmark = pytest.mark.alone
 
 _MIB = 1024**2
 _CLIENT = Path(__file__).with_name("asyncio_load_client.py")

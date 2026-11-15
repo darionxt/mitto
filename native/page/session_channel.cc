@@ -31,6 +31,7 @@
 #include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_cookie_jar.h"
+#include "mitto/page/session_storage_backend.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_messages.h"
 #include "v8/include/v8-callbacks.h"
@@ -86,7 +87,8 @@ class SessionLink final : public PageChannel::Delegate
               StartV8Callback start_v8,
               SessionCookieJar& cookie_jar,
               SessionCacheStorage& cache_storage,
-              SessionIndexedDb& indexed_db)
+              SessionIndexedDb& indexed_db,
+              SessionStorageBackend& storage_backend)
       : main_thread_(std::move(main_thread)),
         inspector_(std::move(inspector)),
         networking_(std::move(networking)),
@@ -95,7 +97,8 @@ class SessionLink final : public PageChannel::Delegate
         start_v8_(std::move(start_v8)),
         cookie_jar_(cookie_jar),
         cache_storage_(cache_storage),
-        indexed_db_(indexed_db) {}
+        indexed_db_(indexed_db),
+        storage_backend_(storage_backend) {}
 
   SessionLink(const SessionLink&) = delete;
   SessionLink& operator=(const SessionLink&) = delete;
@@ -128,6 +131,28 @@ class SessionLink final : public PageChannel::Delegate
   void OnFrame(uint32_t type, std::string payload) override {
     if (refused_) {
       return;
+    }
+    // A storage event too large for a frame comes as parts before its own
+    // frame, whose payload follows them.
+    if (hello_received_ &&
+        type == static_cast<uint32_t>(PageMessage::kStoragePart)) {
+      if (payload.size() > kMaxStorageEventSize - storage_part_.size()) {
+        Refuse("parts of a storage event larger than any");
+        return;
+      }
+      storage_part_.append(payload);
+      return;
+    }
+    if (!storage_part_.empty()) {
+      if (type < static_cast<uint32_t>(PageMessage::kStorageKeyChanged) ||
+          type > static_cast<uint32_t>(PageMessage::kStorageAllDeleted)) {
+        Refuse("parts of a storage event before a message that is not one");
+        return;
+      }
+      std::string joined = std::move(storage_part_);
+      storage_part_ = std::string();
+      joined.append(payload);
+      payload = std::move(joined);
     }
     base::expected<FrameFromSession, std::string> frame =
         ReadFrameFromSession(type, std::move(payload));
@@ -226,6 +251,27 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kCookieStoreChange:
         cookie_jar_->CookieStoreChanged(std::move(frame->cookie_store_change));
         return;
+      case PageMessage::kStorageEntries: {
+        // The main thread waits for this, so it is handed over here.
+        const uint64_t area = frame->storage_entries.area;
+        if (!storage_backend_->AnswerEntries(
+                std::move(frame->storage_entries))) {
+          Refuse(base::StrCat({"entries of storage area ",
+                               base::NumberToString(area),
+                               ", which no script waits for"}));
+        }
+        return;
+      }
+      case PageMessage::kStorageKeyChanged:
+      case PageMessage::kStorageKeyChangeFailed:
+      case PageMessage::kStorageKeyDeleted:
+      case PageMessage::kStorageAllDeleted:
+        if (!started_) {
+          Refuse("a storage event came before the start");
+          return;
+        }
+        storage_backend_->OnEvent(frame->type, std::move(frame->storage_event));
+        return;
       case PageMessage::kBroadcastReceived:
         if (!started_) {
           Refuse("a broadcast came before the start");
@@ -281,6 +327,13 @@ class SessionLink final : public PageChannel::Delegate
       case PageMessage::kSameDocumentNavigation:
       case PageMessage::kWorkerStarted:
       case PageMessage::kContextGone:
+      case PageMessage::kStorageBind:
+      case PageMessage::kStorageGetAll:
+      case PageMessage::kStoragePut:
+      case PageMessage::kStorageDelete:
+      case PageMessage::kStorageDeleteAll:
+      case PageMessage::kStorageUnbind:
+      case PageMessage::kStoragePart:
         // Handled above, or refused by ReadFrameFromSession().
         NOTREACHED();
     }
@@ -348,6 +401,9 @@ class SessionLink final : public PageChannel::Delegate
         send));
     cache_storage_->SetSend(send, refuse);
     indexed_db_->SetSend(send, refuse);
+    // What the document's localStorage and sessionStorage ask of the Session.
+    storage_backend_->SetSend(send);
+    StorageBackend::Set(&*storage_backend_);
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     runner_->SetCacheStorageHost(*cache_storage_);
     runner_->SetIndexedDbHost(*indexed_db_);
@@ -447,8 +503,11 @@ class SessionLink final : public PageChannel::Delegate
   const raw_ref<SessionCookieJar> cookie_jar_;
   const raw_ref<SessionCacheStorage> cache_storage_;
   const raw_ref<SessionIndexedDb> indexed_db_;
+  const raw_ref<SessionStorageBackend> storage_backend_;
   std::unique_ptr<PageChannel> channel_;
   bool hello_received_ = false;
+  // The parts of a storage event that its frame has not yet come for.
+  std::string storage_part_;
   bool started_ = false;
   bool refused_ = false;
 #if BUILDFLAG(IS_MAC)
@@ -489,6 +548,7 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
   SessionCookieJar cookie_jar;
   SessionCacheStorage cache_storage;
   SessionIndexedDb indexed_db;
+  SessionStorageBackend storage_backend;
 
   // Reads the channel while a script runs, so that the Page process ends when
   // it closes, even in the middle of a script that never ends.
@@ -508,7 +568,8 @@ void ServeSession(SessionArgument session, StartV8Callback start_v8) {
           event_loop->TaskRunner(TaskType::kNetworking),
           event_loop->TaskRunner(TaskType::kMiscPlatformAPI),
           event_loop->TaskRunner(TaskType::kDatabaseAccess),
-          std::move(start_v8), cookie_jar, cache_storage, indexed_db)
+          std::move(start_v8), cookie_jar, cache_storage, indexed_db,
+          storage_backend)
           .release();
   io_thread.task_runner()->PostTask(
       FROM_HERE, base::BindOnce(&SessionLink::Start, base::Unretained(link),

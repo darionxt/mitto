@@ -2664,6 +2664,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Storage"
+    file = "storage"
+  },
+  {
+    name = "StorageEvent"
+    file = "storage_event"
+  },
+  {
     name = "StorageManager"
     file = "storage_manager"
 
@@ -2736,6 +2744,33 @@ mitto_bindings_interfaces = [
       "isScript",
       "isScriptURL",
       "getAttributeType",
+    ]
+  },
+  {
+    name = "URL"
+    file = "url"
+
+    # createObjectURL() and revokeObjectURL(), of the File API's blob URLs, are
+    # Known Gaps.
+    missing = [
+      "createObjectURL",
+      "revokeObjectURL",
+    ]
+  },
+  {
+    name = "URLSearchParams"
+    file = "url_search_params"
+
+    # Iterating over it is a Known Gap until the Runtime has pair iterators.
+    implemented = [
+      "size",
+      "append",
+      "delete",
+      "get",
+      "getAll",
+      "has",
+      "set",
+      "sort",
     ]
   },
   {
@@ -2837,6 +2872,8 @@ mitto_bindings_interfaces = [
       "event",
       "scheduler",
       "cookieStore",
+      "localStorage",
+      "sessionStorage",
       "structuredClone",
       "postMessage",
       "reportError",

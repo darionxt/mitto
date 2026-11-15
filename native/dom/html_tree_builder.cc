@@ -443,10 +443,12 @@ class HtmlTreeBuilder {
   // For a document. What the builder refers to stays in `references`, which
   // outlives it.
   HtmlTreeBuilder(HtmlTreeBuilderReferences& references,
-                  HtmlTokenizer& tokenizer)
+                  HtmlTokenizer& tokenizer,
+                  const HtmlParserOptions& options)
       : references_(references),
         document_(&references.document()),
-        tokenizer_(tokenizer) {}
+        tokenizer_(tokenizer),
+        scripting_flag_(options.scripting_flag) {}
 
   // For a fragment whose context is `context`, as the standard's fragment
   // parsing algorithm sets the builder up. Blink's root is the fragment
@@ -454,10 +456,12 @@ class HtmlTreeBuilder {
   // fragment ends up with are the same.
   HtmlTreeBuilder(HtmlTreeBuilderReferences& references,
                   Element& context,
-                  HtmlTokenizer& tokenizer)
+                  HtmlTokenizer& tokenizer,
+                  const HtmlParserOptions& options)
       : references_(references),
         document_(&references.document()),
         tokenizer_(tokenizer),
+        scripting_flag_(options.scripting_flag),
         fragment_context_(&context),
         context_entry_{&context, IsHtmlAnnotationXml(context)} {
     references_->Keep(&context);
@@ -470,10 +474,11 @@ class HtmlTreeBuilder {
     // parser reports no errors.
     if (IsHTMLElementNamed(context, {u"title", u"textarea"})) {
       tokenizer_->SetState(HtmlTokenizer::State::kRcdata);
-    } else if (IsHTMLElementNamed(
-                   context,
-                   {u"style", u"xmp", u"iframe", u"noembed", u"noscript",
-                    u"noframes", u"script", u"plaintext"})) {
+    } else if (IsHTMLElementNamed(context,
+                                  {u"style", u"xmp", u"iframe", u"noembed",
+                                   u"noframes", u"script", u"plaintext"}) ||
+               (scripting_flag_ &&
+                IsHTMLElementNamed(context, {u"noscript"}))) {
       tokenizer_->SetState(HtmlTokenizer::State::kPlaintext);
     }
     if (context.HasHTMLTagName(u"template")) {
@@ -522,6 +527,7 @@ class HtmlTreeBuilder {
     kBeforeHtml,
     kBeforeHead,
     kInHead,
+    kInHeadNoscript,
     kAfterHead,
     kInBody,
     kText,
@@ -1322,6 +1328,8 @@ class HtmlTreeBuilder {
 
   void DefaultForInHead() { ProcessEndTag(EndTag(u"head")); }
 
+  void DefaultForInHeadNoscript() { ProcessEndTag(EndTag(u"noscript")); }
+
   void DefaultForAfterHead() {
     HtmlToken body = StartTag(u"body");
     ProcessStartTag(body);
@@ -1365,6 +1373,13 @@ class HtmlTreeBuilder {
     }
     while (!text.empty()) {
       switch (mode_) {
+        case Mode::kInHeadNoscript:
+          InsertText(TakeLeadingWhitespace(text));
+          if (text.empty()) {
+            return;
+          }
+          DefaultForInHeadNoscript();
+          continue;
         case Mode::kInitial:
           TakeLeadingWhitespace(text);
           if (text.empty()) {
@@ -1481,6 +1496,24 @@ class HtmlTreeBuilder {
   void ProcessStartTag(HtmlToken& token) {
     const std::u16string& name = token.name;
     switch (mode_) {
+      case Mode::kInHeadNoscript:
+        if (name == u"html") {
+          ProcessHtmlStartTagInBody(token);
+          return;
+        }
+        if (IsOneOf(name, {u"basefont", u"bgsound", u"link", u"meta",
+                           u"noframes", u"style"})) {
+          ProcessStartTagForInHead(token);
+          return;
+        }
+        // Blink's HTMLParserIgnoreHeadInNoscript, on for stable in the Engine
+        // Release, ignores head here, as the standard ignores noscript.
+        if (name == u"head" || name == u"noscript") {
+          return;
+        }
+        DefaultForInHeadNoscript();
+        ProcessStartTag(token);
+        return;
       case Mode::kInitial:
         DefaultForInitial();
         [[fallthrough]];
@@ -1718,7 +1751,11 @@ class HtmlTreeBuilder {
       ProcessGenericTextStartTag(token, HtmlTokenizer::State::kRcdata);
       return true;
     }
-    // A Page runs scripts, so noscript holds raw text.
+    if (name == u"noscript" && !scripting_flag_) {
+      InsertHTMLElement(token);
+      mode_ = Mode::kInHeadNoscript;
+      return true;
+    }
     if (IsOneOf(name, {u"noscript", u"noframes", u"style"})) {
       ProcessGenericTextStartTag(token, HtmlTokenizer::State::kRawtext);
       return true;
@@ -1990,6 +2027,11 @@ class HtmlTreeBuilder {
       ProcessGenericTextStartTag(token, HtmlTokenizer::State::kRawtext);
       return;
     }
+    if (name == u"noscript" && !scripting_flag_) {
+      ReconstructActiveFormattingElements();
+      InsertHTMLElement(token);
+      return;
+    }
     if (name == u"noembed" || name == u"noscript") {
       ProcessGenericTextStartTag(token, HtmlTokenizer::State::kRawtext);
       return;
@@ -2123,6 +2165,18 @@ class HtmlTreeBuilder {
   void ProcessEndTag(const HtmlToken& token) {
     const std::u16string& name = token.name;
     switch (mode_) {
+      case Mode::kInHeadNoscript:
+        if (name == u"noscript") {
+          Pop();
+          mode_ = Mode::kInHead;
+          return;
+        }
+        if (name != u"br") {
+          return;
+        }
+        DefaultForInHeadNoscript();
+        ProcessEndTag(token);
+        return;
       case Mode::kInitial:
         DefaultForInitial();
         [[fallthrough]];
@@ -2729,6 +2783,10 @@ class HtmlTreeBuilder {
 
   void ProcessEndOfFile() {
     switch (mode_) {
+      case Mode::kInHeadNoscript:
+        DefaultForInHeadNoscript();
+        ProcessEndOfFile();
+        return;
       case Mode::kInitial:
         DefaultForInitial();
         [[fallthrough]];
@@ -2921,6 +2979,7 @@ class HtmlTreeBuilder {
   const raw_ref<HtmlTreeBuilderReferences> references_;
   const raw_ptr<Document> document_;
   const raw_ref<HtmlTokenizer> tokenizer_;
+  const bool scripting_flag_;
   const raw_ptr<Element> fragment_context_;
   // The context element as the adjusted current node of a fragment takes it.
   const OpenElement context_entry_;
@@ -2971,7 +3030,20 @@ void HtmlTreeBuilderReferences::KeepOnly(
       [&kept](Element* element) { return !kept.contains(element); });
 }
 
+HtmlParserOptions HtmlParserOptions::ForDocument(const Document& document) {
+  HtmlParserOptions options;
+  options.scripting_flag = document.DefaultView() != nullptr;
+  return options;
+}
+
 HtmlDocumentParser::HtmlDocumentParser(Document& document,
+                                       HtmlTreeBuilderReferences* references)
+    : HtmlDocumentParser(document,
+                         HtmlParserOptions::ForDocument(document),
+                         references) {}
+
+HtmlDocumentParser::HtmlDocumentParser(Document& document,
+                                       const HtmlParserOptions& options,
                                        HtmlTreeBuilderReferences* references)
     : own_references_(
           references
@@ -2981,7 +3053,8 @@ HtmlDocumentParser::HtmlDocumentParser(Document& document,
       tokenizer_(std::make_unique<HtmlTokenizer>(TokenizerOptions())),
       tree_builder_(std::make_unique<HtmlTreeBuilder>(
           references ? *references : *own_references_,
-          *tokenizer_)) {
+          *tokenizer_,
+          options)) {
   CHECK(!document.HasChildren());
 }
 
@@ -3031,7 +3104,14 @@ const std::vector<std::string>& HtmlDocumentParser::skipped_rules() const {
 
 std::vector<std::string> ParseHtmlDocument(Document& document,
                                            std::u16string_view markup) {
-  HtmlDocumentParser parser(document);
+  return ParseHtmlDocument(document, markup,
+                           HtmlParserOptions::ForDocument(document));
+}
+
+std::vector<std::string> ParseHtmlDocument(Document& document,
+                                           std::u16string_view markup,
+                                           const HtmlParserOptions& options) {
+  HtmlDocumentParser parser(document, options);
   parser.Append(markup);
   parser.Finish();
   while (parser.Pump()) {
@@ -3039,14 +3119,31 @@ std::vector<std::string> ParseHtmlDocument(Document& document,
   return parser.skipped_rules();
 }
 
+HtmlParserOptions FragmentParserOptions(const Element& context) {
+  // ParseHTMLFragmentInternal() makes a template's fragment in the template's
+  // contents' document, which has no window.
+  if (context.HasHTMLTagName(u"template")) {
+    return HtmlParserOptions();
+  }
+  return HtmlParserOptions::ForDocument(context.GetDocument());
+}
+
 NodeVector ParseHtmlFragment(Element& context,
                              std::u16string_view markup,
+                             std::vector<std::string>* skipped_rules) {
+  return ParseHtmlFragment(context, markup, FragmentParserOptions(context),
+                           skipped_rules);
+}
+
+NodeVector ParseHtmlFragment(Element& context,
+                             std::u16string_view markup,
+                             const HtmlParserOptions& options,
                              std::vector<std::string>* skipped_rules) {
   HtmlTokenizer tokenizer(TokenizerOptions());
   const cppgc::Persistent<HtmlTreeBuilderReferences> references =
       bindings::MakeGarbageCollected<HtmlTreeBuilderReferences>(
           context.GetDocument());
-  HtmlTreeBuilder tree_builder(*references, context, tokenizer);
+  HtmlTreeBuilder tree_builder(*references, context, tokenizer, options);
   tokenizer.Append(markup);
   tokenizer.Finish();
   HtmlToken token;

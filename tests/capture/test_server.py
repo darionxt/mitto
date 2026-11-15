@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives import serialization
 from tests.capture import samples
 from tests.capture.clients import Http2Client, client_context, connect, http1_exchange, http1_get
 from tests.capture.http3_client import Http3Client
+from tests.local_server import unused_ports
 from tools.capture import (
     DEFAULT_HOST,
     HTTP1,
@@ -56,15 +57,9 @@ _REPOSITORY = Path(__file__).parents[2]
 _TIMEOUT_SECONDS = 10.0
 
 
-def free_ports(count: int, kind: int = socket.SOCK_STREAM) -> list[int]:
-    """Return ports that are free now. Holding them all at once keeps them different from each other."""
-    sockets = [socket.socket(socket.AF_INET, kind) for _ in range(count)]
-    for sock in sockets:
-        sock.bind(("127.0.0.1", 0))
-    ports = [sock.getsockname()[1] for sock in sockets]
-    for sock in sockets:
-        sock.close()
-    return ports
+def free_ports(count: int, kind: socket.SocketKind = socket.SOCK_STREAM) -> list[int]:
+    """Return different ports that are free now, and stay free for the command line to bind."""
+    return unused_ports(count, kind)
 
 
 def free_ports_for_tcp_and_udp(count: int) -> list[int]:
@@ -74,26 +69,7 @@ def free_ports_for_tcp_and_udp(count: int) -> list[int]:
     two only, such as those that Docker's network reserves. So a number that one of them has free may be refused to the
     other.
     """
-    held: list[socket.socket] = []
-    ports: list[int] = []
-    try:
-        for _ in range(count * 100):
-            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            held.append(tcp)
-            tcp.bind(("127.0.0.1", 0))
-            port = tcp.getsockname()[1]
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
-                try:
-                    udp.bind(("127.0.0.1", port))
-                except OSError:
-                    continue
-            ports.append(port)
-            if len(ports) == count:
-                return ports
-    finally:
-        for sock in held:
-            sock.close()
-    raise AssertionError(f"found only {ports} for both TCP and UDP")
+    return unused_ports(count, socket.SOCK_STREAM, socket.SOCK_DGRAM)
 
 
 def wait_for_ended_connection(server: CaptureServer, protocol: str) -> ConnectionRecord:
@@ -1003,7 +979,7 @@ def test_command_line_stopped_early_names_a_later_case_whose_first_never_came(tm
         process.send_signal(signal.SIGINT)
         _, errors = process.communicate(timeout=_TIMEOUT_SECONDS)
 
-    assert process.returncode == 130
+    assert process.returncode == 130, errors
     assert "Script Fingerprint of a dedicated worker: its record came, but nothing was written for it" in errors
     assert "frame" not in errors
     assert not (tmp_path / "script" / "worker.json").exists()
