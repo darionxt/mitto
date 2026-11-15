@@ -865,6 +865,15 @@ bool IndexedDbBackingStore::Cursor::Take(const std::string& kv_key) {
 
 bool IndexedDbBackingStore::Cursor::Continue(const IDBKey& key,
                                              const IDBKey& primary_key) {
+  if (past_end_ && !key.IsValid()) {
+    return false;
+  }
+  past_end_ = !MoveOn(key, primary_key);
+  return !past_end_;
+}
+
+bool IndexedDbBackingStore::Cursor::MoveOn(const IDBKey& key,
+                                           const IDBKey& primary_key) {
   const size_t prefix_size = IsIndex() ? 1 + 8 + 1 + 8 + 8 : 1 + 8 + 1 + 8;
   const std::string prefix = position_.substr(0, prefix_size);
   if (key.IsValid()) {
@@ -910,6 +919,7 @@ void IndexedDbBackingStore::Cursor::SetPosition(Position position) {
   key_ = std::move(position.key);
   primary_key_ = std::move(position.primary_key);
   value_.clear();
+  past_end_ = false;
 }
 
 bool IndexedDbBackingStore::Cursor::Advance(uint32_t count) {

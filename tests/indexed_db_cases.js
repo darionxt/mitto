@@ -428,6 +428,30 @@
     out.deleteBlocked = [log, await deleting, await remove('none'), await indexedDB.databases()];
   }
 
+  // A cursor whose prefetch went past the last record does not come back for
+  // records put after that in the same transaction.
+  {
+    const opened = await open('prefetch', 1, (db2) => {
+      const s = db2.createObjectStore('s');
+      for (let i = 1; i <= 4; i++) s.put(i, i);
+    });
+    const tx = opened.db.transaction('s', 'readwrite');
+    const done = finished(tx);
+    const store = tx.objectStore('s');
+    const seen = [];
+    const r = store.openCursor();
+    r.onsuccess = () => {
+      const cursor = r.result;
+      if (!cursor) return;
+      seen.push(cursor.key);
+      if (cursor.key === 4) for (let i = 5; i <= 10; i++) store.put(i, i);
+      cursor.continue();
+    };
+    out.prefetchPastEnd = [await done, seen,
+      await request(opened.db.transaction('s').objectStore('s').count())];
+    opened.db.close();
+  }
+
   // Events constructed by a page.
   out.events = [
     sync(() => { const e = new IDBVersionChangeEvent('versionchange', {oldVersion: 2, newVersion: 3});

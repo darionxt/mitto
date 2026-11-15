@@ -1136,6 +1136,19 @@
    }
   ]
  ],
+ "prefetchPastEnd": [
+  "complete",
+  [
+   1,
+   2,
+   3,
+   4
+  ],
+  [
+   "success",
+   10
+  ]
+ ],
  "events": [
   [
    "ok",

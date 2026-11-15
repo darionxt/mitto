@@ -55,6 +55,9 @@ class IndexedDbBackingStore {
 
     // Moves to the next entry, or to the next at or past `key` and
     // `primary_key` when they are valid, and returns whether there is one.
+    // Once it has gone past the last entry, it stays there, as an iterator
+    // of Chrome's on-disk store does, unless it seeks a key: entries that
+    // come after that are not its.
     bool Continue(const IDBKey& key, const IDBKey& primary_key);
     bool Continue() { return Continue(IDBKey(), IDBKey()); }
     // Moves on `count` entries, and returns whether there is one there.
@@ -87,6 +90,7 @@ class IndexedDbBackingStore {
     bool Take(const std::string& kv_key);
     // For prevunique, the first entry of the index key that `kv_key` has.
     std::string FirstOfIndexKey(const std::string& kv_key);
+    bool MoveOn(const IDBKey& key, const IDBKey& primary_key);
 
     const raw_ref<Transaction> transaction_;
     const int64_t object_store_id_;
@@ -99,6 +103,8 @@ class IndexedDbBackingStore {
     IDBKey key_;
     IDBKey primary_key_;
     std::string value_;
+    // Whether it has gone past the last entry.
+    bool past_end_ = false;
   };
 
   class Transaction {
