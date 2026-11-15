@@ -36,6 +36,7 @@ class ExceptionState;
 class AbortSignal;
 class Event;
 class Node;
+class RawEventHandler;
 class Window;
 
 // What a dispatch did with an event, as Blink's DispatchEventResult says.
@@ -87,6 +88,14 @@ class EventListenerEntry final
   // Sets an event handler attribute's handler again, keeping its place.
   void set_callback(v8::Isolate* isolate, v8::Local<v8::Object> callback) {
     callback_.Reset(isolate, callback);
+    raw_handler_ = nullptr;
+  }
+  // The raw uncompiled handler that an event handler content attribute set,
+  // in place of a callback, until it is compiled.
+  RawEventHandler* raw_handler() const { return raw_handler_.Get(); }
+  void set_raw_handler(RawEventHandler* handler) {
+    callback_.Reset();
+    raw_handler_ = handler;
   }
 
   // The next listener of the target, in the order they were added.
@@ -110,6 +119,7 @@ class EventListenerEntry final
   bool removed_ = false;
   cppgc::Member<EventListenerEntry> next_;
   cppgc::Member<AbortSignal> signal_;
+  cppgc::Member<RawEventHandler> raw_handler_;
 };
 
 class EventTarget : public bindings::ScriptWrappable {
@@ -157,15 +167,21 @@ class EventTarget : public bindings::ScriptWrappable {
   static DispatchEventResult GetDispatchEventResult(const Event& event);
 
   // The handler of the event handler attribute for `type`, such as `onload`
-  // for load, or null.
+  // for load, or null. One that a content attribute set is compiled the first
+  // time.
   v8::Local<v8::Value> AttributeEventHandler(v8::Isolate* isolate,
-                                             std::u16string_view type) const;
+                                             std::u16string_view type);
   // Sets it, as the HTML Standard's event handler attributes do: its listener
   // joins the others the first time, keeps its place when it is set again, and
   // goes when it is set to null, for which `handler` is not an object.
   void SetAttributeEventHandler(v8::Isolate* isolate,
                                 const std::u16string& type,
                                 v8::Local<v8::Value> handler);
+  // The same for an event handler content attribute, whose raw handler takes
+  // the place of the handler, and goes when it is null, as Blink's
+  // EventTarget::SetAttributeEventListener() does.
+  void SetAttributeEventListener(const std::u16string& type,
+                                 RawEventHandler* handler);
 
   // Whether a listener of `type` is there, an event handler's among them.
   bool HasEventListeners(std::u16string_view type) const;
@@ -195,6 +211,10 @@ class EventTarget : public bindings::ScriptWrappable {
   // body, whose touch and wheel listeners are passive by default.
   bool IsTopLevelNode();
   void RemoveEntry(EventListenerEntry* entry);
+  // What an event handler attribute's listener calls: its handler, compiling
+  // the raw handler of a content attribute the first time, or null.
+  v8::Local<v8::Value> HandlerOf(v8::Isolate* isolate,
+                                 EventListenerEntry& entry);
 
   // The listeners, in the order they were added, as a list of objects on the
   // C++ heap. V8's collector traces objects on threads of its own while

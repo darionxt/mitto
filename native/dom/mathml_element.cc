@@ -2,6 +2,7 @@
 
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_mathml_element.h"
+#include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/html_names.h"
 
 namespace mitto {
@@ -23,6 +24,28 @@ MathMLElement::~MathMLElement() = default;
 
 const bindings::WrapperTypeInfo* MathMLElement::GetWrapperTypeInfo() const {
   return &bindings::V8MathMLElement::kWrapperTypeInfo;
+}
+
+void MathMLElement::DidCloneAttributes() {
+  for (const Attribute& attribute : attributes()) {
+    if (const std::u16string_view event =
+            EventNameForAttributeName(attribute.name);
+        !event.empty()) {
+      SetElementAttributeEventListenerFromScriptBody(
+          *this, event, attribute.name, &attribute.value);
+    }
+  }
+}
+
+void MathMLElement::AttributeChanged(const QualifiedName& name,
+                                     const std::u16string* old_value,
+                                     const std::u16string* new_value) {
+  Element::AttributeChanged(name, old_value, new_value);
+  if (const std::u16string_view event = EventNameForAttributeName(name);
+      !event.empty()) {
+    SetElementAttributeEventListenerFromScriptBody(*this, event, name,
+                                                   new_value);
+  }
 }
 
 }  // namespace mitto

@@ -1202,6 +1202,10 @@ DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client) {
   return *parser;
 }
 
+MarkupPosition Document::EventHandlerPosition() const {
+  return parser_ ? parser_->TextPosition() : MarkupPosition();
+}
+
 void Document::DetachParser() {
   if (DocumentParser* const parser = parser_.Release()) {
     parser->Detach();

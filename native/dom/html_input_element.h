@@ -97,7 +97,7 @@ class HTMLInputElement final : public HTMLElement {
   void AddToRadioButtonGroup();
   // The form element that it is in, which a radio button group shares.
   // Forms' own rules, such as the form attribute, come with forms.
-  Element* FormOwner() const;
+  Element* FormOwner() const override;
   // Blink's DispatchInputAndChangeEventIfNeeded(): input, then change, at a
   // connected checkbox or a radio button that is checked.
   void DispatchInputAndChangeEventIfNeeded();

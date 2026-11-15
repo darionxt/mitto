@@ -3074,6 +3074,11 @@ bool HtmlDocumentParser::HasSeenEndOfFile() const {
   return tokenizer_->HasSeenEndOfFile();
 }
 
+MarkupPosition HtmlDocumentParser::TextPosition() const {
+  const HtmlTokenizer::ZeroBasedPosition position = tokenizer_->TextPosition();
+  return {position.line, position.column};
+}
+
 void HtmlDocumentParser::PushInsertionPoint() {
   tokenizer_->PushInsertionPoint();
 }
