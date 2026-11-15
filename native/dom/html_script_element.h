@@ -85,6 +85,8 @@ class HTMLScriptElement final : public HTMLElement, public ScriptElementBase {
 
   // Node's.
   InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
+  // A script that leaves its tree no longer blocks its document's rendering.
+  void RemovedFrom(Node& insertion_point) override;
   void DidNotifySubtreeInsertionsToDocument() override;
   void ChildrenChanged(ChildrenChangeType type,
                        Node& child,
