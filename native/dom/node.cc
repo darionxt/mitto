@@ -27,6 +27,7 @@
 #include "mitto/dom/node_list.h"
 #include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/objects_behind.h"
+#include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
@@ -223,7 +224,14 @@ bool AreEqualNodes(const Node& a, const Node& b) {
       }
       break;
     }
+    case Node::kProcessingInstructionNode:
+      if (static_cast<const ProcessingInstruction&>(a).Target() !=
+          static_cast<const ProcessingInstruction&>(b).Target()) {
+        return false;
+      }
+      [[fallthrough]];
     case Node::kTextNode:
+    case Node::kCdataSectionNode:
     case Node::kCommentNode:
       if (static_cast<const CharacterData&>(a).Data() !=
           static_cast<const CharacterData&>(b).Data()) {
@@ -357,8 +365,9 @@ void Node::Normalize() {
   while (Node* const first_child = node->FirstChild()) {
     node = first_child;
   }
+  // A CDATASection is no Text node to normalize, as Blink checks the type.
   while (node && node != this) {
-    if (!node->IsTextNode()) {
+    if (node->GetNodeType() != kTextNode) {
       node = NextInPostOrder(*node);
       continue;
     }
@@ -369,7 +378,7 @@ void Node::Normalize() {
       continue;
     }
     while (Node* const next = text->NextSibling()) {
-      if (!next->IsTextNode()) {
+      if (next->GetNodeType() != kTextNode) {
         break;
       }
       auto* const next_text = static_cast<Text*>(next);
@@ -603,12 +612,22 @@ bool Node::EnsurePreInsertionValidity(
 }
 
 void Node::InsertNodes(const NodeVector& nodes, Node* next) {
+  NodeVector children;
+  NodeVector post_connection;
+  LinkNodes(nodes, next, children, post_connection);
+  DidInsertNodes(children, post_connection, /*by_parser=*/false);
+}
+
+void Node::LinkNodes(const NodeVector& nodes,
+                     Node* next,
+                     NodeVector& children,
+                     NodeVector& post_connection) {
   // Blink's ContainerNode::InsertBefore(): the nodes leave their parents
   // first, each with a record of its own, and a document fragment all its
   // children at once. Then InsertNodeVector(): each goes in, with a record of
-  // all of them for observers, and is told so before the next, and the
-  // children changed and post-connection steps follow once all are in.
-  const NodeVector children = ChildrenOfFragments(nodes);
+  // all of them for observers, which the scope queues when it ends, and is
+  // told so before the next.
+  children = ChildrenOfFragments(nodes);
   for (const cppgc::Persistent<Node>& node : nodes) {
     if (node->IsDocumentFragmentNode()) {
       node->RemoveChildren();
@@ -617,13 +636,11 @@ void Node::InsertNodes(const NodeVector& nodes, Node* next) {
     }
   }
   ChildListMutationScope mutation(*this);
-  NodeVector post_connection;
   for (const cppgc::Persistent<Node>& node : children) {
     LinkChild(*node, next);
     mutation.ChildAdded(*node);
     NotifyNodeInserted(*node, post_connection);
   }
-  DidInsertNodes(children, post_connection, /*by_parser=*/false);
 }
 
 Node* Node::InsertBefore(Node* node,
@@ -682,12 +699,18 @@ Node* Node::ReplaceChild(Node* node,
   if (Node* const parent = node->ParentNode()) {
     parent->ParserRemoveChild(*node);
   }
-  // The child that goes and the node that comes are one record.
-  const ChildListMutationScope mutation(*this);
-  if (child->ParentNode() == this) {
-    ParserRemoveChild(*child);
+  // The child that goes and the node that comes are one record, which goes
+  // to observers before the post-connection steps, as in Blink.
+  NodeVector children;
+  NodeVector post_connection;
+  {
+    const ChildListMutationScope mutation(*this);
+    if (child->ParentNode() == this) {
+      ParserRemoveChild(*child);
+    }
+    LinkNodes(nodes, next, children, post_connection);
   }
-  InsertNodes(nodes, next);
+  DidInsertNodes(children, post_connection, /*by_parser=*/false);
   return child;
 }
 
@@ -941,11 +964,16 @@ void Node::ReplaceWith(const std::vector<bindings::NodeOrDOMString>& nodes,
     }
   }
   const cppgc::Persistent<Node> self(this);
-  const ChildListMutationScope mutation(*parent);
-  if (ParentNode() == parent) {
-    parent->ParserRemoveChild(*this);
+  NodeVector children;
+  NodeVector post_connection;
+  {
+    const ChildListMutationScope mutation(*parent);
+    if (ParentNode() == parent) {
+      parent->ParserRemoveChild(*this);
+    }
+    parent->LinkNodes(converted, next, children, post_connection);
   }
-  parent->InsertNodes(converted, next);
+  parent->DidInsertNodes(children, post_connection, /*by_parser=*/false);
 }
 
 void Node::Remove(bindings::ExceptionState& exception_state) {

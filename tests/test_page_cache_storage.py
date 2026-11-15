@@ -8,6 +8,8 @@ tests/data/cache_storage_cases.json keeps.
 
 import http.server
 import json
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,6 +24,7 @@ from tests.local_server import QuietServer
 _TIMEOUT_SECONDS = 120
 _BLANK = b"<!doctype html><title>c</title><body>"
 _TESTS = Path(__file__).parent
+_SAVED_STORAGE_CLIENT = _TESTS / "saved_storage_client.py"
 
 # What the server answers for /res/<name>: a status, header lines and a body. Any other name gives a 200 of
 # "body <name>".
@@ -183,3 +186,39 @@ def test_the_next_document_reaches_caches_after_a_navigation_in_the_middle_of_a_
         )
 
     assert outcome == ["/next", ["nav"], "small"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_storage_directory_brings_caches_back_in_another_process(server_origin: str, tmp_path: Path) -> None:
+    storage = tmp_path / "storage"
+    with (
+        mitto.Session(_storage=storage) as session,
+        session._open_page(f"{server_origin}/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
+        usage = page.evaluate(
+            "(async () => { const c = await caches.open('kept'); await c.add('/res/a');"
+            " await c.put('/made', new Response('made here', {headers: {'X-M': '2'}}));"
+            " await caches.open('other');"
+            " return (await navigator.storage.estimate()).usageDetails.caches; })()",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert (storage / "CacheStorage").is_dir()
+    script = (
+        "(async () => { const usage = (await navigator.storage.estimate()).usageDetails.caches;"
+        " const names = await caches.keys(); const c = await caches.open('kept');"
+        " const a = await c.match('/res/a'); const made = await c.match('/made');"
+        " return [usage, names, (await c.keys()).map((r) => new URL(r.url).pathname), await a.text(),"
+        " a.headers.get('X-A'), await made.text(), made.headers.get('X-M')]; })()"
+    )
+    completed = subprocess.run(
+        [sys.executable, str(_SAVED_STORAGE_CLIENT), str(storage), f"{server_origin}/", script],
+        capture_output=True,
+        text=True,
+        timeout=_TIMEOUT_SECONDS * 2,
+        check=True,
+    )
+    printed = json.loads(completed.stdout)
+
+    assert usage > 0
+    assert printed["result"] == [usage, ["kept", "other"], ["/res/a", "/made"], "body a", "1", "made here", "2"]

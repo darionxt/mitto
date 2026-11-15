@@ -1,7 +1,7 @@
 // The HTML Standard's BeforeUnloadEvent, which a window fires before a
 // navigation unloads its document, and whose cancellation or returnValue asks
 // the user to stay, which Chrome does only for a page that the user has
-// activated. A page cannot make one.
+// activated. A page can make one only with document.createEvent().
 //
 // Upstream: third_party/blink/renderer/core/events/before_unload_event.h
 
@@ -21,6 +21,9 @@ class BeforeUnloadEvent final : public Event {
   static BeforeUnloadEvent* Create();
 
   BeforeUnloadEvent();
+  // One that is not trusted, as document.createEvent() makes it.
+  BeforeUnloadEvent(const std::u16string& type,
+                    const bindings::EventInit& init);
   ~BeforeUnloadEvent() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;

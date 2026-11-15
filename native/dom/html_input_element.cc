@@ -9,10 +9,13 @@
 
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/known_gap.h"
 #include "mitto/bindings/v8_html_input_element.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_dispatcher.h"
+#include "mitto/dom/form_control_attributes.h"
+#include "mitto/dom/html_parser_idioms.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/cppgc/visitor.h"
@@ -369,6 +372,105 @@ void HTMLInputElement::DispatchInputAndChangeEventIfNeeded() {
   const cppgc::Persistent<HTMLInputElement> self(this);
   FireBubblingEvent(*this, u"input", /*composed=*/true);
   FireBubblingEvent(*this, u"change", /*composed=*/false);
+}
+
+namespace {
+
+constexpr uint32_t kDefaultSize = 20;
+constexpr uint32_t kMaxReflectedUnsigned = 0x7fffffff;
+
+}  // namespace
+
+uint32_t HTMLInputElement::Size() const {
+  const std::u16string* const value = FindAttribute(u"size");
+  const std::optional<uint32_t> size =
+      value ? ParseHTMLNonNegativeInteger(*value) : std::nullopt;
+  return size && *size && *size <= kMaxReflectedUnsigned ? *size : kDefaultSize;
+}
+
+void HTMLInputElement::SetSize(uint32_t size,
+                               bindings::ExceptionState& exception_state) {
+  if (!size) {
+    exception_state.ThrowDOMException(
+        "IndexSizeError", "The value provided is 0, which is an invalid size.");
+    return;
+  }
+  SetReflectedUnsignedIntegerAttribute(
+      u"size", size > kMaxReflectedUnsigned ? kDefaultSize : size);
+}
+
+int32_t HTMLInputElement::MaxLength() const {
+  return TextControlMaxLength(*this);
+}
+
+void HTMLInputElement::SetMaxLength(int32_t length,
+                                    bindings::ExceptionState& exception_state) {
+  SetTextControlMaxLength(*this, length, exception_state);
+}
+
+int32_t HTMLInputElement::MinLength() const {
+  return TextControlMinLength(*this);
+}
+
+void HTMLInputElement::SetMinLength(int32_t length,
+                                    bindings::ExceptionState& exception_state) {
+  SetTextControlMinLength(*this, length, exception_state);
+}
+
+std::u16string HTMLInputElement::FormAction() const {
+  return FormActionOf(*this, u"formaction");
+}
+
+void HTMLInputElement::SetFormAction(const std::u16string& action) {
+  SetAttributeWithoutValidation(u"formaction", action);
+}
+
+std::u16string HTMLInputElement::FormEnctype() const {
+  return FormEnctypeOf(*this);
+}
+
+void HTMLInputElement::SetFormEnctype(const std::u16string& enctype) {
+  SetAttributeWithoutValidation(u"formenctype", enctype);
+}
+
+std::u16string HTMLInputElement::FormMethod() const {
+  return FormMethodOf(*this);
+}
+
+void HTMLInputElement::SetFormMethod(const std::u16string& method) {
+  SetAttributeWithoutValidation(u"formmethod", method);
+}
+
+std::u16string HTMLInputElement::IDLExposedAutofillValue() const {
+  return ExposedAutofillValue(*this, Type() == u"hidden");
+}
+
+void HTMLInputElement::SetIDLExposedAutofillValue(const std::u16string& value) {
+  SetAttributeWithoutValidation(u"autocomplete", value);
+}
+
+uint32_t HTMLInputElement::Width() const {
+  if (Type() != u"image") {
+    return 0;
+  }
+  const std::u16string* const value = FindAttribute(u"width");
+  return value ? ParseHTMLNonNegativeInteger(*value).value_or(0) : 0;
+}
+
+void HTMLInputElement::SetWidth(uint32_t width) {
+  SetReflectedUnsignedIntegerAttribute(u"width", width);
+}
+
+uint32_t HTMLInputElement::Height() const {
+  if (Type() != u"image") {
+    return 0;
+  }
+  const std::u16string* const value = FindAttribute(u"height");
+  return value ? ParseHTMLNonNegativeInteger(*value).value_or(0) : 0;
+}
+
+void HTMLInputElement::SetHeight(uint32_t height) {
+  SetReflectedUnsignedIntegerAttribute(u"height", height);
 }
 
 }  // namespace mitto

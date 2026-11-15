@@ -100,6 +100,10 @@ void DocumentParser::Trace(cppgc::Visitor* visitor) const {
   scripts_after_parsing_.Trace(visitor);
 }
 
+MarkupPosition DocumentParser::TextPosition() const {
+  return tree_->TextPosition();
+}
+
 void DocumentParser::DidReceiveData() {
   // HTMLDocumentParser::Append() and FinishAppend(): the parser takes what
   // came from a task, as Chrome's ProcessHtmlDataImmediately is off.

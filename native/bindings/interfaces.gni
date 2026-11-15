@@ -121,6 +121,10 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "CDATASection"
+    file = "cdata_section"
+  },
+  {
     name = "CharacterData"
     file = "character_data"
     implemented = [
@@ -188,6 +192,12 @@ mitto_bindings_interfaces = [
   {
     name = "CustomEvent"
     file = "custom_event"
+  },
+  {
+    # location.ancestorOrigins, a Known Gap, gives an empty one.
+    name = "DOMStringList"
+    file = "dom_string_list"
+    made_by_known_gaps = true
   },
   {
     name = "DOMStringMap"
@@ -296,6 +306,7 @@ mitto_bindings_interfaces = [
       "createComment",
       "createDocumentFragment",
       "createElement",
+      "createEvent",
       "createElementNS",
       "createTextNode",
       "getElementById",
@@ -348,6 +359,14 @@ mitto_bindings_interfaces = [
       "close",
       "write",
       "writeln",
+      "createProcessingInstruction",
+      "createCDATASection",
+      "dir",
+      "fgColor",
+      "bgColor",
+      "linkColor",
+      "vlinkColor",
+      "alinkColor",
     ]
   },
   {
@@ -562,7 +581,12 @@ mitto_bindings_interfaces = [
     name = "HTMLButtonElement"
     file = "html_button_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "type",
+      "formAction",
+      "formEnctype",
+      "formMethod",
+    ]
   },
   {
     name = "HTMLCameraElement"
@@ -657,13 +681,16 @@ mitto_bindings_interfaces = [
       "click",
       "dataset",
       "hidden",
+      "nonce",
     ]
   },
   {
     name = "HTMLEmbedElement"
     file = "html_embed_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "src",
+    ]
   },
   {
     name = "HTMLFencedFrameElement"
@@ -689,6 +716,10 @@ mitto_bindings_interfaces = [
     header = "html_elements"
     implemented = [
       "relList",
+      "method",
+      "enctype",
+      "encoding",
+      "action",
     ]
   },
   {
@@ -736,6 +767,7 @@ mitto_bindings_interfaces = [
     header = "html_elements"
     implemented = [
       "sandbox",
+      "srcdoc",
     ]
   },
   {
@@ -754,6 +786,15 @@ mitto_bindings_interfaces = [
       "checked",
       "indeterminate",
       "type",
+      "size",
+      "maxLength",
+      "minLength",
+      "formAction",
+      "formEnctype",
+      "formMethod",
+      "autocomplete",
+      "width",
+      "height",
     ]
   },
   {
@@ -804,7 +845,10 @@ mitto_bindings_interfaces = [
     name = "HTMLMarqueeElement"
     file = "html_marquee_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "scrollAmount",
+      "scrollDelay",
+    ]
   },
   {
     name = "HTMLMediaElement"
@@ -844,7 +888,14 @@ mitto_bindings_interfaces = [
     name = "HTMLMeterElement"
     file = "html_meter_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "value",
+      "min",
+      "max",
+      "low",
+      "high",
+      "optimum",
+    ]
   },
   {
     name = "HTMLMicrophoneElement"
@@ -861,13 +912,18 @@ mitto_bindings_interfaces = [
   {
     name = "HTMLOListElement"
     file = "html_olist_element"
-    implemented = []
+    implemented = [
+      "start",
+    ]
   },
   {
     name = "HTMLObjectElement"
     file = "html_object_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "data",
+      "codeBase",
+    ]
   },
   {
     name = "HTMLOptGroupElement"
@@ -879,7 +935,11 @@ mitto_bindings_interfaces = [
     name = "HTMLOptionElement"
     file = "html_option_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "label",
+      "value",
+      "Option",
+    ]
   },
   {
     name = "HTMLOutputElement"
@@ -919,7 +979,11 @@ mitto_bindings_interfaces = [
     name = "HTMLProgressElement"
     file = "html_progress_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "value",
+      "max",
+      "position",
+    ]
   },
   {
     name = "HTMLQuoteElement"
@@ -942,7 +1006,9 @@ mitto_bindings_interfaces = [
     name = "HTMLSelectElement"
     file = "html_select_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "autocomplete",
+    ]
   },
   {
     name = "HTMLSelectedContentElement"
@@ -960,7 +1026,9 @@ mitto_bindings_interfaces = [
     name = "HTMLSourceElement"
     file = "html_source_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "type",
+    ]
   },
   {
     name = "HTMLSpanElement"
@@ -1056,7 +1124,13 @@ mitto_bindings_interfaces = [
     name = "HTMLTextAreaElement"
     file = "html_text_area_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "cols",
+      "rows",
+      "maxLength",
+      "minLength",
+      "autocomplete",
+    ]
   },
   {
     name = "HTMLTimeElement"
@@ -1073,7 +1147,9 @@ mitto_bindings_interfaces = [
     name = "HTMLTrackElement"
     file = "html_track_element"
     header = "html_elements"
-    implemented = []
+    implemented = [
+      "kind",
+    ]
   },
   {
     name = "HTMLUListElement"
@@ -1127,6 +1203,84 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "IDBCursor"
+    file = "idb_cursor"
+  },
+  {
+    name = "IDBCursorWithValue"
+    file = "idb_cursor_with_value"
+  },
+  {
+    # Its event handler attributes run as every event handler attribute does.
+    name = "IDBDatabase"
+    file = "idb_database"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onabort",
+      "onclose",
+      "onerror",
+      "onversionchange",
+    ]
+  },
+  {
+    # StorageBucket's indexedDB, a Known Gap, gives one of no window.
+    name = "IDBFactory"
+    file = "idb_factory"
+    made_by_known_gaps = true
+  },
+  {
+    name = "IDBIndex"
+    file = "idb_index"
+  },
+  {
+    name = "IDBKeyRange"
+    file = "idb_key_range"
+  },
+  {
+    name = "IDBObjectStore"
+    file = "idb_object_store"
+  },
+  {
+    name = "IDBOpenDBRequest"
+    file = "idb_open_db_request"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onblocked",
+      "onupgradeneeded",
+    ]
+  },
+  {
+    name = "IDBRecord"
+    file = "idb_record"
+  },
+  {
+    name = "IDBRequest"
+    file = "idb_request"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onsuccess",
+      "onerror",
+    ]
+  },
+  {
+    name = "IDBTransaction"
+    file = "idb_transaction"
+
+    # The bindings run its event handler attributes.
+    missing = [
+      "onabort",
+      "oncomplete",
+      "onerror",
+    ]
+  },
+  {
+    name = "IDBVersionChangeEvent"
+    file = "idb_version_change_event"
+  },
+  {
     name = "IdleDeadline"
     file = "idle_deadline"
   },
@@ -1175,6 +1329,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "tabIndex",
       "dataset",
+      "nonce",
     ]
   },
   {
@@ -1439,6 +1594,17 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "PageRevealEvent"
+    file = "page_reveal_event"
+    made_by_known_gaps = true
+
+    # A Page has no view transitions: only the Page makes one.
+    missing = [
+      "constructor",
+      "viewTransition",
+    ]
+  },
+  {
     name = "PageTransitionEvent"
     file = "page_transition_event"
   },
@@ -1582,6 +1748,14 @@ mitto_bindings_interfaces = [
     file = "pressure_observer"
     made_by_known_gaps = true
     implemented = [ "knownSources" ]
+  },
+  {
+    name = "ProcessingInstruction"
+    file = "processing_instruction"
+
+    # A processing instruction that is not a style sheet has no sheet, which
+    # the Known Gap's null is.
+    missing = [ "sheet" ]
   },
   {
     name = "PromiseRejectionEvent"
@@ -1790,6 +1964,7 @@ mitto_bindings_interfaces = [
       "tabIndex",
       "dataset",
       "className",
+      "nonce",
     ]
   },
   {
@@ -2580,6 +2755,14 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "Storage"
+    file = "storage"
+  },
+  {
+    name = "StorageEvent"
+    file = "storage_event"
+  },
+  {
     name = "StorageManager"
     file = "storage_manager"
 
@@ -2655,6 +2838,33 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "URL"
+    file = "url"
+
+    # createObjectURL() and revokeObjectURL(), of the File API's blob URLs, are
+    # Known Gaps.
+    missing = [
+      "createObjectURL",
+      "revokeObjectURL",
+    ]
+  },
+  {
+    name = "URLSearchParams"
+    file = "url_search_params"
+
+    # Iterating over it is a Known Gap until the Runtime has pair iterators.
+    implemented = [
+      "size",
+      "append",
+      "delete",
+      "get",
+      "getAll",
+      "has",
+      "set",
+      "sort",
+    ]
+  },
+  {
     name = "UserActivation"
     file = "user_activation"
     made_by_known_gaps = true
@@ -2694,6 +2904,7 @@ mitto_bindings_interfaces = [
     implemented = [
       "window",
       "caches",
+      "indexedDB",
       "webkitRequestFileSystem",
       "self",
       "document",
@@ -2752,6 +2963,8 @@ mitto_bindings_interfaces = [
       "event",
       "scheduler",
       "cookieStore",
+      "localStorage",
+      "sessionStorage",
       "structuredClone",
       "postMessage",
       "reportError",

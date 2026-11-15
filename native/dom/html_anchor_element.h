@@ -4,8 +4,6 @@
 //
 // Upstream: third_party/blink/renderer/core/html/html_anchor_element.h
 // Upstream: third_party/blink/renderer/core/html/html_anchor_element.cc
-// Upstream: third_party/blink/renderer/core/url/url_utils.cc
-// Upstream: third_party/blink/renderer/core/url/url_utils_read_only.cc
 
 #ifndef MITTO_DOM_HTML_ANCHOR_ELEMENT_H_
 #define MITTO_DOM_HTML_ANCHOR_ELEMENT_H_
@@ -13,6 +11,7 @@
 #include <string>
 
 #include "mitto/dom/html_element.h"
+#include "mitto/dom/url_utils.h"
 
 class GURL;
 
@@ -23,34 +22,14 @@ class ResolvedURL;
 // Blink's HTMLAnchorElementBase with its UrlUtils: each part of the URL that
 // href resolves to, and each setter, which changes that part and writes the
 // URL back into href, as Blink's do.
-class HTMLAnchorElementBase : public HTMLElement {
+class HTMLAnchorElementBase : public HTMLElement, public UrlUtils {
  public:
-  // The members of HTMLHyperlinkElementUtils.
-  std::u16string Href() const;
+  // The members of HTMLHyperlinkElementUtils that UrlUtils does not have.
   void SetHref(const std::u16string& value);
   // relList, of the link types that Blink's RelList supports.
   DOMTokenList* RelList() {
     return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
   }
-  std::u16string Origin() const;
-  std::u16string Protocol() const;
-  void SetProtocol(const std::u16string& value);
-  std::u16string Username() const;
-  void SetUsername(const std::u16string& value);
-  std::u16string Password() const;
-  void SetPassword(const std::u16string& value);
-  std::u16string Host() const;
-  void SetHost(const std::u16string& value);
-  std::u16string Hostname() const;
-  void SetHostname(const std::u16string& value);
-  std::u16string Port() const;
-  void SetPort(const std::u16string& value);
-  std::u16string Pathname() const;
-  void SetPathname(const std::u16string& value);
-  std::u16string Search() const;
-  void SetSearch(const std::u16string& value);
-  std::u16string Hash() const;
-  void SetHash(const std::u16string& value);
 
   // HTMLElement's: a link with href is draggable by default, and focusable.
   bool Draggable() const override;
@@ -67,11 +46,12 @@ class HTMLAnchorElementBase : public HTMLElement {
   HTMLAnchorElementBase(Document& document, const std::u16string& local_name);
 
  private:
-  // The URL that href resolves to, null without href or for one that does
-  // not resolve, Blink's Url().
-  ResolvedURL Url() const;
-  // Writes `url` into href, Blink's SetUrl().
-  void SetUrl(const ResolvedURL& url);
+  // UrlUtils's: the URL that href resolves to, null without href or for one
+  // that does not resolve, Blink's Url(); SetUrl() writes a URL into href, and
+  // Input() is the attribute itself.
+  ResolvedURL Url() const override;
+  void SetUrl(const ResolvedURL& url) override;
+  std::u16string Input() const override;
   // HandleClick(): follows the link that a click activated.
   void HandleClick(Event& event);
   // NavigateToHyperlink(): the frame that the link's target names navigates

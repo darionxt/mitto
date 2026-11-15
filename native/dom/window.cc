@@ -33,6 +33,7 @@
 #include "mitto/dom/fetcher.h"
 #include "mitto/dom/headers.h"
 #include "mitto/dom/history.h"
+#include "mitto/dom/idb_factory.h"
 #include "mitto/dom/idle_task_controller.h"
 #include "mitto/dom/location.h"
 #include "mitto/dom/media_query_list.h"
@@ -43,6 +44,7 @@
 #include "mitto/dom/scheduler.h"
 #include "mitto/dom/screen.h"
 #include "mitto/dom/script_values.h"
+#include "mitto/dom/storage.h"
 #include "mitto/dom/style_media.h"
 #include "mitto/dom/viewport.h"
 #include "mitto/dom/visual_viewport.h"
@@ -118,6 +120,9 @@ void Window::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(scheduler_);
   visitor->Trace(cookie_store_);
   visitor->Trace(caches_);
+  visitor->Trace(indexed_db_);
+  visitor->Trace(local_storage_);
+  visitor->Trace(session_storage_);
   visitor->Trace(current_event_);
   visitor->Trace(document_load_timing_);
 }
@@ -170,6 +175,18 @@ void Window::EnqueueAnimationFrameEvent(EventTarget& target,
                                         mitto::Event& event) {
   if (animation_frames_) {
     animation_frames_->EnqueueEvent(target, event);
+  }
+}
+
+void Window::DeferLifecycleUpdates() {
+  if (animation_frames_) {
+    animation_frames_->DeferLifecycleUpdates();
+  }
+}
+
+void Window::BeginLifecycleUpdates() {
+  if (animation_frames_) {
+    animation_frames_->BeginLifecycleUpdates();
   }
 }
 
@@ -304,6 +321,13 @@ mitto::CacheStorage* Window::Caches(
     caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
   }
   return caches_.Get();
+}
+
+IDBFactory* Window::IndexedDB() {
+  if (!indexed_db_) {
+    indexed_db_ = bindings::MakeGarbageCollected<IDBFactory>(this);
+  }
+  return indexed_db_.Get();
 }
 
 // DOMScheduler::scheduler(): the window's supplement.

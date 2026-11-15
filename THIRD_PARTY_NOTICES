@@ -9826,6 +9826,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
+Name: sqlite
+Directory: //third_party/sqlite
+Linked on: Linux x86_64, macOS arm64, Windows x64
+URL: https://github.com/sqlite/sqlite
+Licence: blessing
+
+Licence file: //third_party/sqlite/LICENSE
+
+The author disclaims copyright to this source code.  In place of
+a legal notice, here is a blessing:
+
+   May you do good and not evil.
+   May you find forgiveness for yourself and forgive others.
+   May you share freely, never taking more than you give.
+
+================================================================================
 Name: stable_deref_trait
 Directory: //third_party/rust/stable_deref_trait/v1
 Linked on: Linux x86_64, macOS arm64, Windows x64

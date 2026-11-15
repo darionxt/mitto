@@ -354,7 +354,11 @@ void PendingScript::NotifyFinished(int net_error,
           GetMimeTypeAndCharset(HeaderField(headers, "content-type")).charset);
   source_ = decoder->Decode(base::as_byte_span(body));
   source_ += decoder->Flush();
-  source_url_ = response_url;
+  // ClassicScript::CreateFromResource(): the script is named after the URL
+  // it was fetched from, not one it was redirected to, without a fragment.
+  GURL::Replacements no_fragment;
+  no_fragment.ClearRef();
+  source_url_ = fetch_url_.ReplaceComponents(no_fragment);
   muted_errors_ = opaque;
   AdvanceReadyState(State::kReady);
 }

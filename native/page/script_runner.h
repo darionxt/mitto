@@ -40,6 +40,7 @@ namespace mitto {
 class DOMTimerCoordinator;
 class AnimationFrameController;
 class CacheStorageHost;
+class IndexedDbHost;
 class IdleTaskController;
 class Document;
 class PageFetcher;
@@ -95,6 +96,9 @@ class ScriptRunner final : public base::TaskObserver {
   void SetCacheStorageHost(CacheStorageHost& host) {
     cache_storage_host_ = &host;
   }
+  // Where the documents that the Session loads over HTTP or HTTPS reach its
+  // IndexedDB, which outlives this.
+  void SetIndexedDbHost(IndexedDbHost& host) { indexed_db_host_ = &host; }
 
   void OnResponseStarted(PageResponseStarted response);
   void OnResponseBody(PageResponseBody body);
@@ -134,6 +138,14 @@ class ScriptRunner final : public base::TaskObserver {
   // tasks settled once those reports have gone, so that the Session hears of a
   // task's uncaught errors before its results.
   void EndTask();
+  // V8's callback at the end of every microtask checkpoint, as Blink's
+  // EventLoop::RunEndOfMicrotaskCheckpointTasks() notifies about rejected
+  // promises there: so the checkpoint after each callback of a frame, or of a
+  // listener, queues its report before what the next callback queues.
+  static void OnMicrotasksCompleted(v8::Isolate* isolate, void* data);
+  // Queues a task that reports the promises rejected with no handler since
+  // the last checkpoint, if there are any.
+  void QueueRejectionReport();
   // Reports those of `rejections` that still have no handler.
   void ReportRejections(std::vector<PageReporter::Rejection> rejections);
   // Makes a window's context, whose time origin is `time_origin`, and what
@@ -183,6 +195,7 @@ class ScriptRunner final : public base::TaskObserver {
   std::set<uint64_t> waiting_calls_;
   raw_ptr<SessionCookieJar> cookie_jar_ = nullptr;
   raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
+  raw_ptr<IndexedDbHost> indexed_db_host_ = nullptr;
   std::unique_ptr<PageRequests> requests_;
   // The Page's frame, which loads its documents.
   std::unique_ptr<PageFrame> frame_;

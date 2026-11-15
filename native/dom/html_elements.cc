@@ -1,5 +1,12 @@
 #include "mitto/dom/html_elements.h"
 
+#include <algorithm>
+#include <array>
+#include <optional>
+#include <string_view>
+
+#include "base/strings/string_util.h"
+#include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_button_element.h"
 #include "mitto/bindings/v8_html_camera_element.h"
@@ -51,6 +58,14 @@
 #include "mitto/bindings/v8_html_track_element.h"
 #include "mitto/bindings/v8_html_user_media_element.h"
 #include "mitto/bindings/v8_html_video_element.h"
+#include "mitto/dom/character_data.h"
+#include "mitto/dom/document.h"
+#include "mitto/dom/event_handler_attributes.h"
+#include "mitto/dom/form_control_attributes.h"
+#include "mitto/dom/html_names.h"
+#include "mitto/dom/html_parser_idioms.h"
+#include "mitto/dom/text.h"
+#include "mitto/dom/window.h"
 
 namespace mitto {
 
@@ -200,6 +215,11 @@ HTMLFrameSetElement::HTMLFrameSetElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLFrameSetElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLFrameSetElement::kWrapperTypeInfo;
+}
+
+std::u16string_view HTMLFrameSetElement::WindowEventNameForAttributeName(
+    const QualifiedName& name) const {
+  return FrameSetWindowEventNameForAttributeName(name);
 }
 
 // static
@@ -708,6 +728,450 @@ HTMLUserMediaElement::HTMLUserMediaElement(Document& document)
 const bindings::WrapperTypeInfo* HTMLUserMediaElement::GetWrapperTypeInfo()
     const {
   return &bindings::V8HTMLUserMediaElement::kWrapperTypeInfo;
+}
+
+namespace {
+
+constexpr uint32_t kMaxReflectedUnsigned = 0x7fffffff;
+
+// The content attribute's non-negative integer, as Blink's elements parse
+// theirs, or `fallback` for one that is missing, does not parse, is 0 when
+// `zero_is_default`, or is beyond 2147483647.
+uint32_t UnsignedOr(const Element& element,
+                    std::u16string_view name,
+                    uint32_t fallback,
+                    bool zero_is_default) {
+  const std::u16string* const value = element.FindAttribute(name);
+  const std::optional<uint32_t> number =
+      value ? ParseHTMLNonNegativeInteger(*value) : std::nullopt;
+  if (!number || *number > kMaxReflectedUnsigned ||
+      (zero_is_default && !*number)) {
+    return fallback;
+  }
+  return *number;
+}
+
+// SetUnsignedIntegralAttribute() with a default for a value beyond
+// 2147483647.
+void SetUnsignedOr(Element& element,
+                   std::u16string_view name,
+                   uint32_t value,
+                   uint32_t fallback) {
+  element.SetReflectedUnsignedIntegerAttribute(
+      name, value > kMaxReflectedUnsigned ? fallback : value);
+}
+
+// ParseHTMLFloatingPointNumber() of the content attribute, or `fallback`.
+double NumberOr(const Element& element,
+                std::u16string_view name,
+                double fallback) {
+  const std::u16string* const value = element.FindAttribute(name);
+  return value ? ParseHTMLFloatingPointNumber(*value).value_or(fallback)
+               : fallback;
+}
+
+void SetNumber(Element& element, std::u16string_view name, double value) {
+  element.SetAttributeWithoutValidation(name, SerializeForNumberType(value));
+}
+
+// A button's TypeFromString(): its type in lower case, or nothing.
+std::optional<std::u16string_view> ButtonType(const std::u16string* value) {
+  if (!value) {
+    return std::nullopt;
+  }
+  for (const std::u16string_view type : {u"reset", u"button", u"submit"}) {
+    if (base::EqualsCaseInsensitiveASCII(*value, type)) {
+      return type;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+// HTMLButtonElement.
+
+std::u16string HTMLButtonElement::Type() const {
+  if (const std::optional<std::u16string_view> type =
+          ButtonType(FindAttribute(u"type"))) {
+    return std::u16string(*type);
+  }
+  return command_seen_ || FindAttribute(u"command") ||
+                 FindAttribute(u"commandfor")
+             ? u"button"
+             : u"submit";
+}
+
+void HTMLButtonElement::SetType(const std::u16string& type) {
+  SetAttributeWithoutValidation(u"type", type);
+}
+
+std::u16string HTMLButtonElement::FormAction() const {
+  return FormActionOf(*this, u"formaction");
+}
+
+void HTMLButtonElement::SetFormAction(const std::u16string& action) {
+  SetAttributeWithoutValidation(u"formaction", action);
+}
+
+std::u16string HTMLButtonElement::FormEnctype() const {
+  return FormEnctypeOf(*this);
+}
+
+void HTMLButtonElement::SetFormEnctype(const std::u16string& enctype) {
+  SetAttributeWithoutValidation(u"formenctype", enctype);
+}
+
+std::u16string HTMLButtonElement::FormMethod() const {
+  return FormMethodOf(*this);
+}
+
+void HTMLButtonElement::SetFormMethod(const std::u16string& method) {
+  SetAttributeWithoutValidation(u"formmethod", method);
+}
+
+// A command or commandfor attribute makes a button of no valid type a button,
+// which removing it leaves, until the type attribute changes.
+void HTMLButtonElement::AttributeChanged(const QualifiedName& name,
+                                         const std::u16string* old_value,
+                                         const std::u16string* new_value) {
+  HTMLElement::AttributeChanged(name, old_value, new_value);
+  if (name.namespace_uri) {
+    return;
+  }
+  if (name.local_name == u"type") {
+    command_seen_ = false;
+  } else if ((name.local_name == u"command" ||
+              name.local_name == u"commandfor") &&
+             new_value && !ButtonType(FindAttribute(u"type"))) {
+    command_seen_ = true;
+  }
+}
+
+// HTMLFormElement.
+
+std::u16string HTMLFormElement::Method() const {
+  const std::u16string* const value = FindAttribute(u"method");
+  return std::u16string(ParseFormMethod(value ? *value : u""));
+}
+
+void HTMLFormElement::SetMethod(const std::u16string& method) {
+  SetAttributeWithoutValidation(u"method", method);
+}
+
+std::u16string HTMLFormElement::Enctype() const {
+  const std::u16string* const value = FindAttribute(u"enctype");
+  return std::u16string(ParseFormEncodingType(value ? *value : u""));
+}
+
+void HTMLFormElement::SetEnctype(const std::u16string& enctype) {
+  SetAttributeWithoutValidation(u"enctype", enctype);
+}
+
+std::u16string HTMLFormElement::Action() const {
+  return FormActionOf(*this, u"action");
+}
+
+void HTMLFormElement::SetAction(const std::u16string& action) {
+  SetAttributeWithoutValidation(u"action", action);
+}
+
+// HTMLTextAreaElement.
+
+uint32_t HTMLTextAreaElement::Cols() const {
+  return UnsignedOr(*this, u"cols", 20, /*zero_is_default=*/true);
+}
+
+void HTMLTextAreaElement::SetCols(uint32_t cols) {
+  SetUnsignedOr(*this, u"cols", cols ? cols : 20, 20);
+}
+
+uint32_t HTMLTextAreaElement::Rows() const {
+  return UnsignedOr(*this, u"rows", 2, /*zero_is_default=*/true);
+}
+
+void HTMLTextAreaElement::SetRows(uint32_t rows) {
+  SetUnsignedOr(*this, u"rows", rows ? rows : 2, 2);
+}
+
+int32_t HTMLTextAreaElement::MaxLength() const {
+  return TextControlMaxLength(*this);
+}
+
+void HTMLTextAreaElement::SetMaxLength(
+    int32_t length,
+    bindings::ExceptionState& exception_state) {
+  SetTextControlMaxLength(*this, length, exception_state);
+}
+
+int32_t HTMLTextAreaElement::MinLength() const {
+  return TextControlMinLength(*this);
+}
+
+void HTMLTextAreaElement::SetMinLength(
+    int32_t length,
+    bindings::ExceptionState& exception_state) {
+  SetTextControlMinLength(*this, length, exception_state);
+}
+
+std::u16string HTMLTextAreaElement::IDLExposedAutofillValue() const {
+  return ExposedAutofillValue(*this, /*is_hidden_input=*/false);
+}
+
+void HTMLTextAreaElement::SetIDLExposedAutofillValue(
+    const std::u16string& value) {
+  SetAttributeWithoutValidation(u"autocomplete", value);
+}
+
+// HTMLSelectElement.
+
+std::u16string HTMLSelectElement::IDLExposedAutofillValue() const {
+  return ExposedAutofillValue(*this, /*is_hidden_input=*/false);
+}
+
+void HTMLSelectElement::SetIDLExposedAutofillValue(
+    const std::u16string& value) {
+  SetAttributeWithoutValidation(u"autocomplete", value);
+}
+
+// HTMLOptionElement.
+
+// static
+HTMLOptionElement* HTMLOptionElement::CreateForJSConstructor(
+    const std::u16string& data,
+    const std::optional<std::u16string>& value,
+    bool default_selected,
+    bool selected) {
+  Document& document = Window::Current().GetDocument();
+  HTMLOptionElement* const option = Create(document);
+  // A new option takes a text child without the checks that could throw.
+  if (!data.empty()) {
+    option->ParserAppendChild(document.CreateTextNode(data));
+  }
+  if (value) {
+    option->SetValue(*value);
+  }
+  if (default_selected) {
+    option->SetAttributeWithoutValidation(u"selected", u"");
+  }
+  return option;
+}
+
+// The text of its descendants but those of a script, HTML's or SVG's.
+std::u16string HTMLOptionElement::CollapsedText() const {
+  std::u16string text;
+  const Node* node = FirstChild();
+  while (node) {
+    const Element* const element =
+        node->IsElementNode() ? static_cast<const Element*>(node) : nullptr;
+    const bool is_script =
+        element && element->LocalName() == u"script" &&
+        element->NamespaceURI() &&
+        (*element->NamespaceURI() == html_names::kXhtmlNamespace ||
+         *element->NamespaceURI() == html_names::kSvgNamespace);
+    if (node->IsTextNode()) {
+      text += static_cast<const CharacterData*>(node)->Data();
+    }
+    if (!is_script && node->FirstChild()) {
+      node = node->FirstChild();
+      continue;
+    }
+    while (node && node != this && !node->NextSibling()) {
+      node = node->ParentNode();
+    }
+    node = node && node != this ? node->NextSibling() : nullptr;
+  }
+  std::u16string collapsed;
+  bool space = false;
+  for (const char16_t c : StripHTMLSpaces(text)) {
+    if (IsHTMLSpace(c)) {
+      space = true;
+      continue;
+    }
+    if (space) {
+      collapsed += u' ';
+      space = false;
+    }
+    collapsed += c;
+  }
+  return collapsed;
+}
+
+std::u16string HTMLOptionElement::Label() const {
+  const std::u16string* const label = FindAttribute(u"label");
+  return label ? *label : CollapsedText();
+}
+
+void HTMLOptionElement::SetLabel(const std::u16string& label) {
+  SetAttributeWithoutValidation(u"label", label);
+}
+
+std::u16string HTMLOptionElement::Value() const {
+  const std::u16string* const value = FindAttribute(u"value");
+  return value ? *value : CollapsedText();
+}
+
+void HTMLOptionElement::SetValue(const std::u16string& value) {
+  SetAttributeWithoutValidation(u"value", value);
+}
+
+// HTMLMeterElement.
+
+double HTMLMeterElement::Min() const {
+  return NumberOr(*this, u"min", 0);
+}
+
+void HTMLMeterElement::SetMin(double min) {
+  SetNumber(*this, u"min", min);
+}
+
+double HTMLMeterElement::Max() const {
+  const double min = Min();
+  return std::max(NumberOr(*this, u"max", std::max(1.0, min)), min);
+}
+
+void HTMLMeterElement::SetMax(double max) {
+  SetNumber(*this, u"max", max);
+}
+
+double HTMLMeterElement::Value() const {
+  return std::min(std::max(NumberOr(*this, u"value", 0), Min()), Max());
+}
+
+void HTMLMeterElement::SetValue(double value) {
+  SetNumber(*this, u"value", value);
+}
+
+double HTMLMeterElement::Low() const {
+  const double min = Min();
+  return std::min(std::max(NumberOr(*this, u"low", min), min), Max());
+}
+
+void HTMLMeterElement::SetLow(double low) {
+  SetNumber(*this, u"low", low);
+}
+
+double HTMLMeterElement::High() const {
+  const double max = Max();
+  return std::min(std::max(NumberOr(*this, u"high", max), Low()), max);
+}
+
+void HTMLMeterElement::SetHigh(double high) {
+  SetNumber(*this, u"high", high);
+}
+
+double HTMLMeterElement::Optimum() const {
+  const double min = Min();
+  const double max = Max();
+  return std::min(std::max(NumberOr(*this, u"optimum", (min + max) / 2), min),
+                  max);
+}
+
+void HTMLMeterElement::SetOptimum(double optimum) {
+  SetNumber(*this, u"optimum", optimum);
+}
+
+// HTMLProgressElement.
+
+double HTMLProgressElement::Max() const {
+  const double max = NumberOr(*this, u"max", 1);
+  return max <= 0 ? 1 : max;
+}
+
+void HTMLProgressElement::SetMax(double max) {
+  if (max > 0) {
+    SetNumber(*this, u"max", max);
+  }
+}
+
+double HTMLProgressElement::Value() const {
+  const double value = NumberOr(*this, u"value", 0);
+  return value < 0 ? 0 : std::min(value, Max());
+}
+
+void HTMLProgressElement::SetValue(double value) {
+  SetNumber(*this, u"value", std::max(value, 0.0));
+}
+
+double HTMLProgressElement::Position() const {
+  return FindAttribute(u"value") ? Value() / Max() : -1;
+}
+
+// HTMLTrackElement.
+
+std::u16string HTMLTrackElement::Kind() const {
+  const std::u16string* const kind = FindAttribute(u"kind");
+  if (!kind) {
+    return u"subtitles";
+  }
+  const std::u16string lower = base::ToLowerASCII(*kind);
+  for (const std::u16string_view known :
+       {u"subtitles", u"captions", u"descriptions", u"chapters", u"metadata"}) {
+    if (lower == known) {
+      return lower;
+    }
+  }
+  return u"metadata";
+}
+
+void HTMLTrackElement::SetKind(const std::u16string& kind) {
+  SetAttributeWithoutValidation(u"kind", kind);
+}
+
+// HTMLMarqueeElement.
+
+uint32_t HTMLMarqueeElement::ScrollAmount() const {
+  return UnsignedOr(*this, u"scrollamount", 6, /*zero_is_default=*/false);
+}
+
+void HTMLMarqueeElement::SetScrollAmount(uint32_t amount) {
+  SetUnsignedOr(*this, u"scrollamount", amount, 6);
+}
+
+uint32_t HTMLMarqueeElement::ScrollDelay() const {
+  return UnsignedOr(*this, u"scrolldelay", 85, /*zero_is_default=*/false);
+}
+
+void HTMLMarqueeElement::SetScrollDelay(uint32_t delay) {
+  SetUnsignedOr(*this, u"scrolldelay", delay, 85);
+}
+
+// HTMLEmbedElement, HTMLObjectElement, HTMLIFrameElement and
+// HTMLSourceElement: a Trusted Type would be checked here, which no policy
+// asks for.
+
+void HTMLEmbedElement::SetSrc(const std::u16string& src,
+                              bindings::ExceptionState& exception_state) {
+  SetAttributeWithoutValidation(u"src", src);
+}
+
+void HTMLObjectElement::SetData(const std::u16string& data,
+                                bindings::ExceptionState& exception_state) {
+  SetAttributeWithoutValidation(u"data", data);
+}
+
+void HTMLObjectElement::SetCodeBase(const std::u16string& code_base,
+                                    bindings::ExceptionState& exception_state) {
+  SetAttributeWithoutValidation(u"codebase", code_base);
+}
+
+std::u16string HTMLIFrameElement::Srcdoc() const {
+  const std::u16string* const srcdoc = FindAttribute(u"srcdoc");
+  return srcdoc ? *srcdoc : u"";
+}
+
+void HTMLIFrameElement::SetSrcdoc(const std::u16string& srcdoc,
+                                  bindings::ExceptionState& exception_state) {
+  SetAttributeWithoutValidation(u"srcdoc", srcdoc);
+}
+
+std::u16string HTMLSourceElement::Type() const {
+  const std::u16string* const type = FindAttribute(u"type");
+  return type ? *type : u"";
+}
+
+void HTMLSourceElement::SetType(const std::u16string& type) {
+  SetAttributeWithoutValidation(u"type", type);
 }
 
 }  // namespace mitto

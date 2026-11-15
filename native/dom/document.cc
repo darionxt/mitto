@@ -17,12 +17,16 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
+#include "mitto/bindings/per_isolate_data.h"
+#include "mitto/bindings/runtime_feature_set.h"
+#include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_document.h"
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
 #include "mitto/dom/before_unload_event.h"
+#include "mitto/dom/cdata_section.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
@@ -34,6 +38,7 @@
 #include "mitto/dom/dom_implementation.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_factory.h"
 #include "mitto/dom/html_all_collection.h"
 #include "mitto/dom/html_document.h"
 #include "mitto/dom/html_element.h"
@@ -49,6 +54,7 @@
 #include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/permissions_policy.h"
+#include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/range.h"
 #include "mitto/dom/script_values.h"
@@ -64,6 +70,8 @@
 #include "third_party/icu/source/i18n/unicode/gregocal.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+#include "url/url_canon.h"
+#include "url/url_util.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -170,6 +178,7 @@ const bindings::WrapperTypeInfo* Document::GetWrapperTypeInfo() const {
 void Document::Trace(cppgc::Visitor* visitor) const {
   Node::Trace(visitor);
   visitor->Trace(window_);
+  visitor->Trace(css_target_);
   visitor->Trace(images_);
   visitor->Trace(embeds_);
   visitor->Trace(links_);
@@ -532,6 +541,41 @@ DocumentType* Document::Doctype() const {
   return nullptr;
 }
 
+std::u16string Document::Dir() const {
+  Element* const root = DocumentElement();
+  if (!root || !root->HasHTMLTagName(u"html")) {
+    return u"";
+  }
+  return static_cast<HTMLElement*>(root)->Dir();
+}
+
+void Document::SetDir(const std::u16string& dir) {
+  Element* const root = DocumentElement();
+  if (root && root->HasHTMLTagName(u"html")) {
+    root->SetAttributeWithoutValidation(u"dir", dir);
+  }
+}
+
+std::u16string Document::BodyAttribute(std::u16string_view name) const {
+  const HTMLElement* const body = Body();
+  const std::u16string* const value =
+      body ? body->FindAttribute(name) : nullptr;
+  return value ? *value : u"";
+}
+
+void Document::SetBodyAttribute(std::u16string_view name,
+                                const std::u16string& value) {
+  HTMLElement* const body = Body();
+  if (!body || (IsHTMLDocument() && body->HasHTMLTagName(u"frameset"))) {
+    return;
+  }
+  const std::u16string* const current = body->FindAttribute(name);
+  if (current && *current == value) {
+    return;
+  }
+  body->SetAttributeWithoutValidation(name, value);
+}
+
 std::u16string Document::Title() const {
   // The first title element in the document, in tree order.
   for (const Node* node = FirstChild(); node; node = node->NextInTree(this)) {
@@ -644,6 +688,65 @@ HTMLHeadElement* Document::Head() const {
 
 Comment* Document::CreateComment(const std::u16string& data) {
   return Comment::Create(*this, data);
+}
+
+Event* Document::CreateEvent(const std::u16string& event_type,
+                             bindings::ExceptionState& exception_state) {
+  Event* const event = CreateEventOfInterfaceName(event_type);
+  // Blink's check for crbug.com/392584: a TouchEvent only where touch events
+  // are exposed.
+  if (event &&
+      (!base::EqualsCaseInsensitiveASCII(event_type, u"TouchEvent") ||
+       bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
+           ->features()
+           .IsEnabled(bindings::RuntimeFeature::kTouchEventFeatureDetection))) {
+    return event;
+  }
+  exception_state.ThrowDOMException(
+      "NotSupportedError",
+      base::StrCat({"The provided event type ('", base::UTF16ToUTF8(event_type),
+                    "') is invalid."}));
+  return nullptr;
+}
+
+ProcessingInstruction* Document::CreateProcessingInstruction(
+    const std::u16string& target,
+    const std::u16string& data,
+    bindings::ExceptionState& exception_state) {
+  if (!ProcessingInstruction::IsValidName(target)) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The target provided ('", base::UTF16ToUTF8(target),
+                      "') is not a valid name."}));
+    return nullptr;
+  }
+  if (data.find(u"?>") != std::u16string::npos) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The data provided ('", base::UTF16ToUTF8(data),
+                      "') contains '?>'."}));
+    return nullptr;
+  }
+  return ProcessingInstruction::Create(*this, target, data);
+}
+
+CDATASection* Document::CreateCDATASection(
+    const std::u16string& data,
+    bindings::ExceptionState& exception_state) {
+  if (IsHTMLDocument()) {
+    exception_state.ThrowDOMException(
+        "NotSupportedError",
+        "This operation is not supported for HTML documents.");
+    return nullptr;
+  }
+  if (data.find(u"]]>") != std::u16string::npos) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        "String cannot contain ']]>' since that is the end delimiter of a "
+        "CData section.");
+    return nullptr;
+  }
+  return CDATASection::Create(*this, data);
 }
 
 Text* Document::CreateTextNode(const std::u16string& data) {
@@ -820,6 +923,79 @@ Node* Document::AdoptNode(Node* node,
   }
   node->SetTreeDocument(*this);
   return node;
+}
+
+namespace {
+
+// TreeScope::FindAnchorWithName(): the element of the ID, or else the first
+// link of the name, matched exactly, and in quirks mode in any ASCII case if
+// none matches exactly.
+Element* FindAnchorWithName(const Document& document,
+                            const std::u16string& name) {
+  if (name.empty()) {
+    return nullptr;
+  }
+  if (Element* const element = document.GetElementById(name)) {
+    return element;
+  }
+  for (Node* node = document.FirstChild(); node;
+       node = node->NextInTree(&document)) {
+    if (!node->IsElementNode() ||
+        !static_cast<Element*>(node)->HasHTMLTagName(u"a")) {
+      continue;
+    }
+    auto* const anchor = static_cast<Element*>(node);
+    const std::u16string* const anchor_name = anchor->FindAttribute(u"name");
+    if (!anchor_name) {
+      continue;
+    }
+    if (*anchor_name == name ||
+        (document.InQuirksMode() &&
+         base::EqualsCaseInsensitiveASCII(*anchor_name, name))) {
+      return anchor;
+    }
+  }
+  return nullptr;
+}
+
+// TreeScope::FindAnchor(): the indicated part of the document, for the
+// fragment of its URL as it is and percent-decoded as UTF-8, or the document
+// itself for "" and "top".
+Node* FindAnchor(Document& document, std::string_view fragment) {
+  if (Element* const element =
+          FindAnchorWithName(document, base::UTF8ToUTF16(fragment))) {
+    return element;
+  }
+  url::RawCanonOutputW<1024> decoded;
+  url::DecodeUrlEscapeSequences(fragment, url::DecodeUrlMode::kUtf8, &decoded);
+  const std::u16string name(decoded.view());
+  if (Element* const element = FindAnchorWithName(document, name)) {
+    return element;
+  }
+  if (fragment.empty() || base::EqualsCaseInsensitiveASCII(name, u"top")) {
+    return &document;
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+void Document::ProcessUrlFragment(const GURL& url) {
+  // With no fragment there is nothing to indicate, but a target that a
+  // fragment indicated before goes.
+  if (!url.has_ref() && !css_target_) {
+    return;
+  }
+  // RemoveFragmentDirectives(): what follows ":~:" directs the browser.
+  std::string_view fragment = url.ref();
+  if (const size_t directives = fragment.find(":~:");
+      directives != std::string_view::npos) {
+    fragment = fragment.substr(0, directives);
+  }
+  Node* const anchor = FindAnchor(*this, fragment);
+  css_target_ = anchor && anchor->IsElementNode()
+                    ? static_cast<Element*>(anchor)
+                    : nullptr;
 }
 
 Element* Document::GetElementById(const std::u16string& id) const {
@@ -1061,6 +1237,10 @@ DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client) {
   return *parser;
 }
 
+MarkupPosition Document::EventHandlerPosition() const {
+  return parser_ ? parser_->TextPosition() : MarkupPosition();
+}
+
 void Document::DetachParser() {
   if (DocumentParser* const parser = parser_.Release()) {
     parser->Detach();
@@ -1076,6 +1256,10 @@ void Document::CancelParsing() {
   DetachParser();
   parsing_state_ = ParsingState::kFinishedParsing;
   SetReadiness(Readiness::kComplete);
+  // A document that stops before its body has no more to wait for.
+  if (window_) {
+    window_->BeginLifecycleUpdates();
+  }
   if (http_refresh_scheduler_) {
     http_refresh_scheduler_->Cancel();
   }
@@ -1102,9 +1286,19 @@ void Document::FinishedParsing() {
   }
   parsing_state_ = ParsingState::kFinishedParsing;
   v8::MicrotasksScope::PerformCheckpoint(v8::Isolate::GetCurrent());
-  // FrameLoader::FinishedParsing(), for a document of a window.
+  // FrameLoader::FinishedParsing(), for a document of a window: one that
+  // never had a body renders now, the fragment of its URL indicates its
+  // target, then it may complete.
   if (window_) {
+    window_->BeginLifecycleUpdates();
+    ProcessUrlFragment(GURL(UrlForBinding()));
     CheckCompleted();
+  }
+}
+
+void Document::WillInsertBody() {
+  if (window_) {
+    window_->BeginLifecycleUpdates();
   }
 }
 

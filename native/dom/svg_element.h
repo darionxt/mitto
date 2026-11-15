@@ -60,6 +60,10 @@ class SVGElement : public Element {
                         const std::u16string* new_value) override;
 
  protected:
+  // Element's: the copy's event handler content attributes set handlers, as
+  // Blink's CloneAttributesFrom() runs them through AttributeChanged().
+  void DidCloneAttributes() override;
+
   // The same object for the attribute on every read, made the first time, as
   // Blink makes its own with the element.
   SVGAnimatedString* AnimatedString(std::u16string_view attribute);
