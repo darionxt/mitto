@@ -50,6 +50,7 @@
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
+#include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
@@ -211,6 +212,14 @@ void DumpNode(const Node& node, int depth, std::vector<std::string>& lines) {
            base::UTF16ToUTF8(static_cast<const CharacterData&>(node).Data()),
            " -->"}));
       break;
+    // As html5lib's newer tests write a processing instruction.
+    case Node::kProcessingInstructionNode: {
+      const auto& instruction = static_cast<const ProcessingInstruction&>(node);
+      lines.push_back(
+          base::StrCat({indent, "<?", base::UTF16ToUTF8(instruction.Target()),
+                        " ", base::UTF16ToUTF8(instruction.Data()), "?>"}));
+      break;
+    }
     default:
       break;
   }

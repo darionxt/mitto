@@ -1,0 +1,1 @@
+ÿ<!DOCTYPE html><body><div id=a><?start name=x>old<b>text</b><?end></div><p><?marker name=y>tail</p><template for=x>new <i>content<template for=y>marked</template></i></template><template for=z>unmatched</template><?start name=w>open
