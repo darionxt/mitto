@@ -24,12 +24,14 @@
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "mitto/network_quality.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_launcher.h"
 #include "mitto/page_messages.h"
 #include "mitto/request_client.h"
 #include "mitto/request_options.h"
+#include "mitto/storage/storage_key.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_change_dispatcher.h"
@@ -46,10 +48,14 @@ class CookieStore;
 namespace mitto {
 
 class CacheStorageContext;
+class IndexedDbContext;
 class PageCacheStorage;
+class PageIndexedDb;
 class PageHost;
 class ReadyRequests;
 class StorageQuota;
+class SessionStorageNamespace;
+class StorageContext;
 
 // What a request of one Request Kind sends, as the Session's Persona says: its
 // header lines in their order, and its options, with no Initiator, which the
@@ -154,6 +160,11 @@ class PageNetwork {
   // storage.
   virtual CacheStorageContext& cache_storage() = 0;
   virtual StorageQuota& storage_quota() = 0;
+  // The Session's IndexedDB, which its Pages share.
+  virtual IndexedDbContext& indexed_db() = 0;
+
+  // The Session's storage, which all its Pages share.
+  virtual StorageContext& storage_context() = 0;
 
  protected:
   virtual ~PageNetwork() = default;
@@ -406,6 +417,18 @@ class PageHost final : public PageChannel::Delegate {
   void OnCacheStorage(PageCacheStorageCall call,
                       uint64_t context_id,
                       const GURL& document_url);
+  // What a context's IndexedDB asks, which PageIndexedDb serves, with the
+  // storage key of the context that asks.
+  void OnIndexedDb(PageIndexedDbCall call,
+                   uint64_t context_id,
+                   const GURL& document_url);
+  // What a document's localStorage and sessionStorage ask, as Chrome's
+  // storage service answers a renderer: an area takes its storage key from the
+  // URL that the library loaded the document at that binds it.
+  void OnStorageBind(const PageStorageBind& bind, uint64_t document);
+  void OnStorageGetAll(const PageStorageGetAll& get_all);
+  void OnStorageMutation(PageMessage type, PageStorageMutation mutation);
+  void OnStorageUnbind(uint64_t area);
 
   // What the library checks of a Page's request as it goes, each hop and
   // redirect included.
@@ -467,12 +490,24 @@ class PageHost final : public PageChannel::Delegate {
       const url::Origin& top_frame_origin,
       const url::Origin& frame_origin,
       const net::SiteForCookies& site_for_cookies);
-  // The storage key of a document at `document_url`, as
-  // StorageKey::Serialize() writes it, if it may reach the Cache API: one of
-  // an HTTP or HTTPS URL in a secure context. A top-level document's key is
-  // its origin, first party.
-  static std::optional<std::string> DocumentCacheStorageKey(
-      const GURL& document_url);
+  // The storage key of document `id`, as Chrome works it out for a frame with
+  // third-party storage partitioning, which it turns on: the document's
+  // origin, the site of the top-level document and whether a document from
+  // `id` up is of another site. None for a document of an opaque origin, or
+  // one that is not of an HTTP or HTTPS URL, which have no storage, and for a
+  // document under a top-level one of an opaque origin, whose key no other
+  // top-level document ever has.
+  std::optional<StorageKey> DocumentStorageKey(uint64_t id) const;
+
+  // The storage key of context `id`'s IndexedDB and Cache API, as
+  // StorageKey::Serialize() writes it: DocumentStorageKey()'s, or for a
+  // context under a top-level document of an opaque origin one of that
+  // document's own, which the Session keeps in memory. None for a context of
+  // an opaque origin, or one that is not of an HTTP or HTTPS URL.
+  std::optional<std::string> ContextSerializedStorageKey(uint64_t id);
+
+  // Lets go of every storage area that the Page bound.
+  void ReleaseStorage();
 
   // What navigator.connection gives a document at `url`: what the renderer
   // process of its site gives for its host, as for a subresource to it.
@@ -546,6 +581,22 @@ class PageHost final : public PageChannel::Delegate {
     CookieContext context;
   };
   std::map<uint64_t, CookieStoreListener> cookie_store_listeners_;
+  // The storage areas that the Page has bound, by number, the largest number
+  // it has used, and its sessionStorage, which lasts as long as the Page.
+  class StorageArea;
+  std::map<uint64_t, std::unique_ptr<StorageArea>> storage_areas_;
+  uint64_t last_storage_area_ = 0;
+  uint64_t last_storage_observer_ = 0;
+  std::unique_ptr<SessionStorageNamespace> session_storage_;
+  // The localStorage and sessionStorage of the frames under a top-level
+  // document of an opaque origin, by that document's ID, which stay in memory
+  // for as long as the Page.
+  std::map<std::pair<uint64_t, PageStorageKind>,
+           std::unique_ptr<SessionStorageNamespace>>
+      opaque_top_storage_;
+  // What stands for the opaque origin of each top-level document whose frames
+  // have asked for IndexedDB or the Cache API, by that document's ID.
+  std::map<uint64_t, base::UnguessableToken> opaque_top_nonces_;
   // The requests in progress, by number, and the largest number the Page has
   // used.
   std::map<uint64_t, std::unique_ptr<Request>> requests_;
@@ -568,6 +619,8 @@ class PageHost final : public PageChannel::Delegate {
   // The first number that the next document's Cache API gives a cache or a
   // stored body, past those of the documents before.
   uint64_t next_cache_storage_number_ = 1;
+  // The document's IndexedDB, from its first call until the Page goes.
+  std::unique_ptr<PageIndexedDb> indexed_db_;
   base::WeakPtrFactory<PageHost> weak_factory_{this};
 };
 

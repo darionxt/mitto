@@ -23,6 +23,10 @@ BeforeUnloadEvent::BeforeUnloadEvent()
         return init;
       }()) {}
 
+BeforeUnloadEvent::BeforeUnloadEvent(const std::u16string& type,
+                                     const bindings::EventInit& init)
+    : Event(type, init) {}
+
 BeforeUnloadEvent::~BeforeUnloadEvent() = default;
 
 const bindings::WrapperTypeInfo* BeforeUnloadEvent::GetWrapperTypeInfo() const {

@@ -277,6 +277,21 @@ def test_64_bit_and_nullable_numbers_convert_with_null_for_null_and_undefined() 
     assert "FromV8Integer(isolate, info[0], &value_value)" in converted
 
 
+def test_a_nullable_integer_returns_and_defaults_to_null() -> None:
+    # IDBVersionChangeEvent's newVersion, and IDBVersionChangeEventInit's and IDBObjectStoreParameters' defaults.
+    types = TypeMapper(frozenset({"Event"}), frozenset())
+    nullable_version = IdlType(TypeKind.INTEGER, "unsigned long long", nullable=True)
+    string = IdlType(TypeKind.STRING, "DOMString")
+    strings = IdlType(TypeKind.SEQUENCE, "sequence", members=(string,))
+    key_path = IdlType(TypeKind.UNION, "DOMString or sequence<DOMString>", nullable=True, members=(string, strings))
+
+    assert types.return_type(nullable_version, "x") == "std::optional<uint64_t>"
+    assert types.to_v8(nullable_version, "impl->NewVersion()") == "ToV8NullableInteger(isolate, impl->NewVersion())"
+    assert types.default_value(nullable_version, "null", "x") == "std::nullopt"
+    assert types.default_value(key_path, "null", "x") == "std::nullopt"
+    assert "DOMStringOrDOMStringSequence" in types.used_unions
+
+
 def test_a_class_can_give_null_for_an_interface_without_a_class_whatever_the_idl_says() -> None:
     # Blink's classes give null for a type that the IDL does not make nullable, as Document's rootElement does.
     types = TypeMapper(frozenset({"Event"}), frozenset())
@@ -406,6 +421,30 @@ def test_a_union_with_a_boolean_takes_a_boolean_default() -> None:
     types = TypeMapper(frozenset(), frozenset({"ImportNodeOptions"}), {})
 
     assert types.default_value(union, "false", "a") == "BooleanOrImportNodeOptions(false)"
+
+
+def test_the_cpp_types_of_url_search_params() -> None:
+    # Its constructor's optional (sequence<sequence<USVString>> or record<USVString, USVString> or USVString)
+    # init = "", and getAll()'s sequence<USVString>.
+    string = IdlType(TypeKind.STRING, "USVString")
+    pairs = IdlType(
+        TypeKind.SEQUENCE,
+        "sequence<sequence<USVString>>",
+        members=(IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(string,)),),
+    )
+    record = IdlType(TypeKind.RECORD, "record<USVString, USVString>", members=(string, string))
+    union = IdlType(TypeKind.UNION, "x", members=(pairs, record, string))
+    types = TypeMapper(frozenset(), frozenset(), {})
+
+    assert (
+        types.default_value(union, '""', "a")
+        == 'USVStringSequenceSequenceOrUSVStringUSVStringRecordOrUSVString(std::u16string(u""))'
+    )
+    with pytest.raises(UnhandledError, match="default value"):
+        types.default_value(dataclasses.replace(union, members=(pairs, record)), '""', "b")
+    values = IdlType(TypeKind.SEQUENCE, "sequence<USVString>", members=(string,))
+    assert types.return_type(values, "c") == "std::vector<std::u16string>"
+    assert types.to_v8(values, "x") == "ToV8StringArray(isolate, x)"
 
 
 def test_a_sequence_takes_an_empty_list_for_its_default() -> None:
@@ -1363,6 +1402,41 @@ def test_a_named_setter_and_deleter_call_the_class() -> None:
         "    kNamedPropertiesOverrideBuiltIns,\n    &NamedPropertySetter,\n    &NamedPropertyDeleter,\n    nullptr,\n};"
         in source
     )
+
+
+def test_a_named_getter_and_deleter_that_raise_take_an_exception_state() -> None:
+    # Storage's getItem() and removeItem(), which throw for a window that has gone.
+    string = IdlType(TypeKind.STRING, "DOMString")
+    nullable = IdlType(TypeKind.STRING, "DOMString", nullable=True)
+    name = Argument("name", string, False, False, None)
+    raises = _extended("RaisesException")
+    getter = Operation("getItem", (name,), nullable, False, raises, ALWAYS)
+    setter = Operation(
+        "setItem", (name, Argument("value", string, False, False, None)), UNDEFINED, False, raises, ALWAYS
+    )
+    deleter = Operation("removeItem", (name,), UNDEFINED, False, raises, ALWAYS)
+    interface = _interface(
+        special_operations=(
+            SpecialOperation("named getter", getter),
+            SpecialOperation("named setter", setter),
+            SpecialOperation("named deleter", deleter),
+        ),
+    )
+
+    source = _bindings_of(interface, ImplementedInterface("Thing", "mitto/dom/thing.h"))
+
+    assert (
+        "  ExceptionState exception_state(isolate);\n"
+        "  const auto result = HolderOf(isolate, holder)->GetItem(name, exception_state);\n"
+        "  if (exception_state.HadException()) {\n"
+        "    return v8::Local<v8::Value>();\n"
+        "  }\n"
+    ) in source
+    assert (
+        "  ExceptionState exception_state(isolate);\n"
+        "  const bool deleted = HolderOf(isolate, holder)->RemoveItem(name, exception_state);\n"
+        "  return deleted && !exception_state.HadException();\n"
+    ) in source
 
 
 def test_the_writer_refuses_what_it_cannot_install_of_named_properties() -> None:

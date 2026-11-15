@@ -1,8 +1,9 @@
 // A Session's Cache API: the caches of each storage key, which every Page of
 // the Session shares, as Chrome's CacheStorageManager keeps a profile's. In a
 // directory, each storage key's caches go into CacheStorage/ there, in a
-// directory named after a hash of the key; without one, they are kept in
-// memory until the Session goes.
+// directory named after a hash of the key; without one, and for a frame under
+// a top-level document of an opaque origin, they are kept in memory until the
+// Session goes.
 //
 // Upstream: content/browser/cache_storage/cache_storage_manager.cc
 

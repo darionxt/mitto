@@ -8,6 +8,7 @@
 #define MITTO_DOM_MARKUP_SERIALIZER_H_
 
 #include <string>
+#include <string_view>
 
 namespace mitto {
 
@@ -18,6 +19,10 @@ std::u16string SerializeChildren(const Node& node);
 
 // The markup of `node` and its children.
 std::u16string SerializeNode(const Node& node);
+// An attribute's value as Blink's MarkupFormatter::AppendAttributeValue()
+// escapes it: for HTML, or else for XML, which writes tabs and line breaks as
+// character references and leaves a no-break space as it is.
+std::u16string EscapeAttributeValue(std::u16string_view value, bool for_html);
 
 }  // namespace mitto
 

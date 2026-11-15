@@ -330,6 +330,7 @@ class TypeMapper:
                 TypeKind.STRING,
                 TypeKind.FROZEN_ARRAY,
                 TypeKind.FLOATING_POINT,
+                TypeKind.INTEGER,
                 TypeKind.CALLBACK_INTERFACE,
             )
             or self._is_union_of_classes(idl_type)
@@ -342,7 +343,8 @@ class TypeMapper:
         if kind is TypeKind.BOOLEAN:
             return "bool"
         if kind is TypeKind.INTEGER:
-            return _INTEGERS[idl_type.name]
+            # Empty for null, as IDBVersionChangeEvent's newVersion gives it.
+            return f"std::optional<{_INTEGERS[idl_type.name]}>" if idl_type.nullable else _INTEGERS[idl_type.name]
         if kind is TypeKind.FLOATING_POINT:
             cpp_type = "float" if idl_type.name.endswith("float") else "double"
             return f"std::optional<{cpp_type}>" if idl_type.nullable else cpp_type
@@ -401,7 +403,7 @@ class TypeMapper:
             if element.kind is TypeKind.INTERFACE and element.nullable:
                 # Null or an object, as navigator.getGamepads() gives nulls for a gamepad that is not there.
                 return "std::vector<bindings::ScriptWrappable*>"
-            if element.kind is TypeKind.STRING and element.name == "DOMString" and not element.nullable:
+            if element.kind is TypeKind.STRING and element.name in ("DOMString", "USVString") and not element.nullable:
                 return "std::vector<std::u16string>"
             if element.kind is TypeKind.STRING and element.name == "ByteString" and not element.nullable:
                 return "std::vector<std::string>"
@@ -414,6 +416,8 @@ class TypeMapper:
         if kind is TypeKind.BOOLEAN:
             return f"v8::Boolean::New(isolate, {expression})"
         if kind is TypeKind.INTEGER:
+            if idl_type.nullable:
+                return f"ToV8NullableInteger(isolate, {expression})"
             if idl_type.name in _64_BIT_INTEGERS:
                 # ToV8Traits<IDLLongLong> and ToV8Traits<IDLUnsignedLongLong> give a Number.
                 return f"v8::Number::New(isolate, static_cast<double>({expression}))"
@@ -802,7 +806,15 @@ class TypeMapper:
             return "u" + literal
         if kind is TypeKind.STRING and literal.startswith('"'):
             return literal if idl_type.name == "ByteString" else "u" + literal
-        if kind in (TypeKind.STRING, TypeKind.FLOATING_POINT) and idl_type.nullable and literal == "null":
+        if (
+            kind in (TypeKind.STRING, TypeKind.FLOATING_POINT, TypeKind.INTEGER)
+            and idl_type.nullable
+            and literal == "null"
+        ):
+            return "std::nullopt"
+        if kind is TypeKind.UNION and idl_type.nullable and literal == "null":
+            # No value, as IDBObjectStoreParameters' keyPath has by default.
+            self._register_union(dataclasses.replace(idl_type, nullable=False), where)
             return "std::nullopt"
         if kind is TypeKind.DICTIONARY and literal == "{}":
             return f"{idl_type.name}()"
@@ -824,6 +836,13 @@ class TypeMapper:
             # A boolean default of a union with a boolean member, such as importNode()'s options = false.
             self._register_union(idl_type, where)
             return f"{union_name(idl_type)}({literal})"
+        string = next((member for member in idl_type.members if member.kind is TypeKind.STRING), None)
+        if kind is TypeKind.UNION and literal.startswith('"') and string is not None:
+            # A string default of a union with a string member, such as URLSearchParams' init = "".
+            self._register_union(idl_type, where)
+            if string.name == "ByteString":
+                return f"{union_name(idl_type)}(std::string({literal}))"
+            return f"{union_name(idl_type)}(std::u16string(u{literal}))"
         if kind is TypeKind.ANY and literal == "null":
             return "v8::Null(isolate)"
         if (

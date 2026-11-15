@@ -165,6 +165,7 @@ void Element::AppendAttributeInternal(const QualifiedName& name,
   attributes_.push_back({name, value});
   // The hook reads the attribute as it is stored.
   const Attribute& added = attributes_.back();
+  UpdateNonce(added.name, &added.value);
   AttributeChanged(added.name, nullptr, &added.value);
   if (connected && IsIdAttribute(added.name)) {
     UpdateId(nullptr, &attributes_.back().value);
@@ -193,6 +194,7 @@ void Element::SetAttributeValueInternal(size_t index,
   if (connected && IsIdAttribute(attributes_[index].name)) {
     UpdateId(&old_value, &attributes_[index].value);
   }
+  UpdateNonce(attributes_[index].name, &attributes_[index].value);
   AttributeChanged(attributes_[index].name, &old_value,
                    &attributes_[index].value);
 }
@@ -220,6 +222,7 @@ void Element::RemoveAttributeInternal(size_t index, bool record) {
   if (connected && IsIdAttribute(removed.name)) {
     UpdateId(&removed.value, nullptr);
   }
+  UpdateNonce(removed.name, nullptr);
   AttributeChanged(removed.name, &removed.value, nullptr);
 }
 
@@ -1047,7 +1050,27 @@ Node* Element::CloneWithoutChildren(Document& document) const {
       tag_name_.namespace_uri, tag_name_.prefix, tag_name_.local_name);
   copy->attributes_ = attributes_;
   copy->is_value_ = is_value_;
+  // Element::CloneAttributesFrom() copies a nonce that is set.
+  if (nonce_) {
+    copy->nonce_ = nonce_;
+  } else if (const std::u16string* nonce = FindAttribute(u"nonce");
+             nonce && !nonce->empty()) {
+    copy->nonce_ = *nonce;
+  }
+  copy->DidCloneAttributes();
   return copy;
+}
+
+void Element::UpdateNonce(const QualifiedName& name,
+                          const std::u16string* value) {
+  if (name.namespace_uri || name.local_name != u"nonce") {
+    return;
+  }
+  if (!value) {
+    nonce_.reset();
+  } else if (!value->empty()) {
+    nonce_ = *value;
+  }
 }
 
 void Element::DidMoveToNewDocument(Document& old_document) {

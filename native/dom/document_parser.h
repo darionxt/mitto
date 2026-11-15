@@ -34,6 +34,7 @@
 #include "base/memory/raw_ptr.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/heap_vector.h"
+#include "mitto/dom/markup_position.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
 #include "v8/include/cppgc/visitor.h"
@@ -100,6 +101,8 @@ class DocumentParser final : public cppgc::GarbageCollected<DocumentParser> {
   // until the document has finished parsing, then stopped, and detached once
   // it has let go of its document.
   bool IsParsing() const { return state_ == State::kParsing; }
+  // Where the parser is in the markup (HTMLDocumentParser::GetTextPosition()).
+  MarkupPosition TextPosition() const;
   bool IsStopping() const { return state_ == State::kStopping; }
   bool IsStopped() const { return state_ >= State::kStopped; }
   bool IsDetached() const { return state_ == State::kDetached; }

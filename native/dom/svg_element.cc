@@ -3,6 +3,7 @@
 #include "base/auto_reset.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_svg_element.h"
+#include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/html_names.h"
 
 namespace mitto {
@@ -150,10 +151,29 @@ void SVGElement::SynchronizeAnimatedAttribute(
   }
 }
 
+void SVGElement::DidCloneAttributes() {
+  for (const Attribute& attribute : attributes()) {
+    if (const std::u16string_view event =
+            EventNameForAttributeName(attribute.name);
+        !event.empty()) {
+      SetElementAttributeEventListenerFromScriptBody(
+          *this, event, attribute.name, &attribute.value);
+    }
+  }
+}
+
 void SVGElement::AttributeChanged(const QualifiedName& name,
                                   const std::u16string* old_value,
                                   const std::u16string* new_value) {
   Element::AttributeChanged(name, old_value, new_value);
+  // Blink's SVGElement::ParseAttribute(): the event handler content
+  // attributes of HTML elements.
+  if (const std::u16string_view event = EventNameForAttributeName(name);
+      !event.empty()) {
+    SetElementAttributeEventListenerFromScriptBody(*this, event, name,
+                                                   new_value);
+    return;
+  }
   if (synchronizing_) {
     return;
   }

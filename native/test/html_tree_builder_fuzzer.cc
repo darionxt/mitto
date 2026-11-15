@@ -4,7 +4,9 @@
 // The first byte says how. Its low five bits pick the context element of a
 // fragment, from a list that reaches every insertion mode, or a document for
 // the values past the list. Its high three bits say how big the pieces are
-// that a document's markup comes in. The rest is the markup, in UTF-8. A
+// that a document's markup comes in. The scripting flag is off, as for a
+// document of no window, for a fragment whose byte has the lowest of those set
+// and for a document whose value is even. The rest is the markup, in UTF-8. A
 // document must get the same tree whole as in pieces.
 
 #include "mitto/dom/html_tree_builder.h"
@@ -88,6 +90,7 @@ constexpr auto kContexts = std::to_array<Context>({
     {kHtml, u"script"},
     {kHtml, u"plaintext"},
     {kHtml, u"form"},
+    {kHtml, u"noscript"},
     {mitto::html_names::kSvgNamespace, u"svg"},
     {mitto::html_names::kSvgNamespace, u"foreignObject"},
     {mitto::html_names::kMathMlNamespace, u"math"},
@@ -167,9 +170,11 @@ std::string Dump(const Node& root) {
   return out;
 }
 
-std::string ParseDocument(std::u16string_view markup, size_t piece_size) {
+std::string ParseDocument(std::u16string_view markup,
+                          size_t piece_size,
+                          const mitto::HtmlParserOptions& options) {
   const cppgc::Persistent<Document> document(Document::CreateHTML());
-  mitto::HtmlDocumentParser parser(*document);
+  mitto::HtmlDocumentParser parser(*document, options);
   while (!markup.empty()) {
     const size_t size = std::min(piece_size, markup.size());
     parser.Append(markup.substr(0, size));
@@ -220,7 +225,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const std::u16string markup = base::UTF8ToUTF16(base::as_string_view(bytes));
 
   const size_t context_index = how & 0x1f;
+  mitto::HtmlParserOptions options;
   if (context_index < kContexts.size()) {
+    options.scripting_flag = (how & 0x20) == 0;
     const Context& context = kContexts[context_index];
     const cppgc::Persistent<Document> document(Document::CreateHTML());
     const cppgc::Persistent<Element> element(document->CreateElement(
@@ -233,18 +240,19 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     const cppgc::Persistent<Element> holder(
         document->CreateElement(std::u16string(kHtml), std::nullopt, u"div"));
     for (const cppgc::Persistent<Node>& node :
-         mitto::ParseHtmlFragment(*element, markup)) {
+         mitto::ParseHtmlFragment(*element, markup, options)) {
       CHECK(!node->ParentNode());
       holder->ParserAppendChild(node.Get());
     }
     Dump(*holder);
   } else {
+    options.scripting_flag = (context_index & 1) != 0;
     size_t piece_size = kPieceSizes[how >> 5];
     if (piece_size == 0) {
       piece_size = markup.size() + 1;
     }
-    CHECK_EQ(ParseDocument(markup, markup.size() + 1),
-             ParseDocument(markup, piece_size));
+    CHECK_EQ(ParseDocument(markup, markup.size() + 1, options),
+             ParseDocument(markup, piece_size, options));
   }
 
   // Nothing else collects the documents of earlier inputs, since no script

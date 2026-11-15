@@ -1,7 +1,8 @@
-// The elements of the HTML Standard whose classes have nothing of their own
-// yet beyond their interface: each member of theirs that is not a reflected
-// attribute is a Known Gap. The form controls among them get their behaviour
-// with forms.
+// The elements of the HTML Standard whose classes have little of their own
+// beyond their interface: their reflected attributes, with those that Blink's
+// classes read by hand, such as a form control's formAction and a meter's
+// numbers. Each other member of theirs is a Known Gap. The form controls among
+// them get their behaviour with forms.
 //
 // Upstream: third_party/blink/renderer/core/html/html_tag_names.json5
 
@@ -10,6 +11,7 @@
 
 #include <stdint.h>
 
+#include <optional>
 #include <string>
 
 #include "mitto/dom/html_element.h"
@@ -28,6 +30,29 @@ class HTMLButtonElement final : public HTMLElement {
   // Node's: activation behaviour, as Blink's button has, though it submits
   // no form yet, so that a click inside it leaves a summary alone.
   bool HasActivationBehavior() const override;
+
+  // The members of the interface beyond its reflected attributes.
+  //
+  // submit, reset or button: the type attribute's value in any case, else
+  // button while a command or commandfor attribute came since the type
+  // attribute last changed, as Blink's ParseAttribute() keeps type_, else
+  // submit.
+  std::u16string Type() const;
+  void SetType(const std::u16string& type);
+  std::u16string FormAction() const;
+  void SetFormAction(const std::u16string& action);
+  std::u16string FormEnctype() const;
+  void SetFormEnctype(const std::u16string& enctype);
+  std::u16string FormMethod() const;
+  void SetFormMethod(const std::u16string& method);
+
+  // Element:
+  void AttributeChanged(const QualifiedName& name,
+                        const std::u16string* old_value,
+                        const std::u16string* new_value) override;
+
+ private:
+  bool command_seen_ = false;
 };
 
 class HTMLDListElement final : public HTMLElement {
@@ -74,6 +99,12 @@ class HTMLEmbedElement final : public HTMLElement {
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   NamedItemType GetNamedItemType() const override;
+
+  // The members of the interface beyond its reflected attributes: the URL
+  // that src reflects, as Blink's GetURLAttribute() resolves it.
+  std::u16string Src() const { return ReflectedURLAttribute(u"src"); }
+  void SetSrc(const std::u16string& src,
+              bindings::ExceptionState& exception_state);
 };
 
 class HTMLFieldSetElement final : public HTMLElement {
@@ -105,6 +136,18 @@ class HTMLFormElement final : public HTMLElement {
   DOMTokenList* RelList() {
     return EnsureTokenList(u"rel", DOMTokenList::SupportedTokens::kRel);
   }
+
+  // The members of the interface beyond its reflected attributes, which an
+  // attribute that is missing or that is not one of their values gives as
+  // get, application/x-www-form-urlencoded and the document's URL.
+  std::u16string Method() const;
+  void SetMethod(const std::u16string& method);
+  std::u16string Enctype() const;
+  void SetEnctype(const std::u16string& enctype);
+  std::u16string Encoding() const { return Enctype(); }
+  void SetEncoding(const std::u16string& encoding) { SetEnctype(encoding); }
+  std::u16string Action() const;
+  void SetAction(const std::u16string& action);
 };
 
 class HTMLFrameElement final : public HTMLElement {
@@ -124,6 +167,12 @@ class HTMLFrameSetElement final : public HTMLElement {
   explicit HTMLFrameSetElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+ protected:
+  // HTMLElement's: the window's handlers of Blink's
+  // HTMLFrameSetElement::ParseAttribute().
+  std::u16string_view WindowEventNameForAttributeName(
+      const QualifiedName& name) const override;
 };
 
 class HTMLHRElement final : public HTMLElement {
@@ -149,6 +198,10 @@ class HTMLIFrameElement final : public HTMLElement {
   DOMTokenList* Sandbox() {
     return EnsureTokenList(u"sandbox", DOMTokenList::SupportedTokens::kSandbox);
   }
+
+  std::u16string Srcdoc() const;
+  void SetSrcdoc(const std::u16string& srcdoc,
+                 bindings::ExceptionState& exception_state);
 };
 
 class HTMLLabelElement final : public HTMLElement {
@@ -185,6 +238,12 @@ class HTMLMarqueeElement final : public HTMLElement {
   explicit HTMLMarqueeElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The content attribute's non-negative integer, else 6 and 85.
+  uint32_t ScrollAmount() const;
+  void SetScrollAmount(uint32_t amount);
+  uint32_t ScrollDelay() const;
+  void SetScrollDelay(uint32_t delay);
 };
 
 class HTMLMenuElement final : public HTMLElement {
@@ -203,6 +262,21 @@ class HTMLMeterElement final : public HTMLElement {
   explicit HTMLMeterElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface: each number of its content attribute,
+  // clamped to the others as Blink's meter clamps it.
+  double Min() const;
+  void SetMin(double min);
+  double Max() const;
+  void SetMax(double max);
+  double Value() const;
+  void SetValue(double value);
+  double Low() const;
+  void SetLow(double low);
+  double High() const;
+  void SetHigh(double high);
+  double Optimum() const;
+  void SetOptimum(double optimum);
 };
 
 // The element of each of del, ins.
@@ -225,6 +299,15 @@ class HTMLObjectElement final : public HTMLElement {
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   NamedItemType GetNamedItemType() const override;
   int32_t DefaultTabIndex() const override;
+
+  // The members of the interface beyond its reflected attributes: the URLs
+  // that data and codebase reflect.
+  std::u16string Data() const { return ReflectedURLAttribute(u"data"); }
+  void SetData(const std::u16string& data,
+               bindings::ExceptionState& exception_state);
+  std::u16string CodeBase() const { return ReflectedURLAttribute(u"codebase"); }
+  void SetCodeBase(const std::u16string& code_base,
+                   bindings::ExceptionState& exception_state);
 };
 
 class HTMLOptGroupElement final : public HTMLElement {
@@ -240,9 +323,30 @@ class HTMLOptionElement final : public HTMLElement {
  public:
   static HTMLOptionElement* Create(Document& document);
 
+  // new Option(data, value, defaultSelected, selected), in the current
+  // window's document: a text child of the data, the value and selected
+  // attributes, as Blink's CreateForJSConstructor() makes it. Its
+  // selectedness comes with forms.
+  static HTMLOptionElement* CreateForJSConstructor(
+      const std::u16string& data,
+      const std::optional<std::u16string>& value,
+      bool default_selected,
+      bool selected);
+
   explicit HTMLOptionElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface beyond its reflected attributes: each is
+  // its content attribute, or the option's text while that is missing.
+  std::u16string Label() const;
+  void SetLabel(const std::u16string& label);
+  std::u16string Value() const;
+  void SetValue(const std::u16string& value);
+
+ private:
+  // CollectOptionInnerText() with its HTML spaces stripped and collapsed.
+  std::u16string CollapsedText() const;
 };
 
 class HTMLOutputElement final : public HTMLElement {
@@ -279,6 +383,16 @@ class HTMLProgressElement final : public HTMLElement {
   explicit HTMLProgressElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // The members of the interface: max is the positive number of its content
+  // attribute, else 1, and value the number of its own, at least 0 and at
+  // most max. Setting max to 0 or less does nothing.
+  double Max() const;
+  void SetMax(double max);
+  double Value() const;
+  void SetValue(double value);
+  // value / max, or -1 for a progress of no value attribute.
+  double Position() const;
 };
 
 // The element of each of blockquote, q.
@@ -300,6 +414,9 @@ class HTMLSelectElement final : public HTMLElement {
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   int32_t DefaultTabIndex() const override;
+
+  std::u16string IDLExposedAutofillValue() const;
+  void SetIDLExposedAutofillValue(const std::u16string& value);
 };
 
 class HTMLSelectedContentElement final : public HTMLElement {
@@ -327,6 +444,9 @@ class HTMLSourceElement final : public HTMLElement {
   explicit HTMLSourceElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  std::u16string Type() const;
+  void SetType(const std::u16string& type);
 };
 
 class HTMLTableCaptionElement final : public HTMLElement {
@@ -346,6 +466,20 @@ class HTMLTextAreaElement final : public HTMLElement {
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
   int32_t DefaultTabIndex() const override;
+
+  // The members of the interface beyond its reflected attributes: cols and
+  // rows are the content attribute's positive integer, else 20 and 2, which
+  // setting 0 writes.
+  uint32_t Cols() const;
+  void SetCols(uint32_t cols);
+  uint32_t Rows() const;
+  void SetRows(uint32_t rows);
+  int32_t MaxLength() const;
+  void SetMaxLength(int32_t length, bindings::ExceptionState& exception_state);
+  int32_t MinLength() const;
+  void SetMinLength(int32_t length, bindings::ExceptionState& exception_state);
+  std::u16string IDLExposedAutofillValue() const;
+  void SetIDLExposedAutofillValue(const std::u16string& value);
 };
 
 class HTMLTimeElement final : public HTMLElement {
@@ -364,6 +498,11 @@ class HTMLTrackElement final : public HTMLElement {
   explicit HTMLTrackElement(Document& document);
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
+
+  // subtitles while the kind attribute is missing, one of the five kinds of
+  // text track it names in any case, else metadata.
+  std::u16string Kind() const;
+  void SetKind(const std::u16string& kind);
 };
 
 class HTMLVideoElement final : public HTMLMediaElement {

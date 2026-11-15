@@ -3,12 +3,14 @@
 #include <string_view>
 
 #include "mitto/dom/character_data.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_type.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/html_template_element.h"
 #include "mitto/dom/node.h"
+#include "mitto/dom/processing_instruction.h"
 
 namespace mitto {
 
@@ -31,25 +33,31 @@ bool IsVoidElement(const Element& element) {
   return false;
 }
 
-// Elements whose text the serializer writes as it is. A Page runs scripts, so
-// noscript is one.
-bool HoldsRawText(const Node* parent) {
+// Whether `text` is written as it is, as Blink's
+// MarkupFormatter::EntityMaskForText() has it: in an HTML element of these
+// names, with no prefix, and in noscript where the document has a window,
+// whose scripts a Page always runs. A document of no window, such as a
+// template's contents or one that createHTMLDocument() made, has noscript's
+// text escaped.
+bool HoldsRawText(const Node& text) {
+  const Node* const parent = text.ParentNode();
   if (!parent || !parent->IsElementNode()) {
     return false;
   }
   const auto& element = static_cast<const Element&>(*parent);
-  if (!element.IsHTMLElement()) {
+  if (!element.IsHTMLElement() || element.Prefix().has_value()) {
     return false;
   }
   constexpr std::u16string_view kRawTextElements[] = {
-      u"style",   u"script",   u"xmp",       u"iframe",
-      u"noembed", u"noframes", u"plaintext", u"noscript"};
+      u"style",   u"script",   u"xmp",      u"iframe",
+      u"noembed", u"noframes", u"plaintext"};
   for (const std::u16string_view name : kRawTextElements) {
     if (element.LocalName() == name) {
       return true;
     }
   }
-  return false;
+  return element.LocalName() == u"noscript" &&
+         text.GetDocument().DefaultView() != nullptr;
 }
 
 // Blink's kEntityMaskInHtmlPcdata and kEntityMaskInHtmlAttributeValue.
@@ -153,10 +161,12 @@ void AppendNode(std::u16string& markup, const Node& node) {
     case Node::kElementNode:
       AppendElement(markup, static_cast<const Element&>(node));
       break;
-    case Node::kTextNode: {
+    // HTML writes a CDATA section as text, by the same rules.
+    case Node::kTextNode:
+    case Node::kCdataSectionNode: {
       const std::u16string& data =
           static_cast<const CharacterData&>(node).Data();
-      if (HoldsRawText(node.ParentNode())) {
+      if (HoldsRawText(node)) {
         markup += data;
       } else {
         AppendEscaped(markup, data, /*in_attribute=*/false);
@@ -167,6 +177,15 @@ void AppendNode(std::u16string& markup, const Node& node) {
       markup += u"<!--";
       markup += static_cast<const CharacterData&>(node).Data();
       markup += u"-->";
+      break;
+    // MarkupFormatter::AppendProcessingInstruction() ends one with "?>" in
+    // HTML too.
+    case Node::kProcessingInstructionNode:
+      markup += u"<?";
+      markup += static_cast<const ProcessingInstruction&>(node).Target();
+      markup += u' ';
+      markup += static_cast<const CharacterData&>(node).Data();
+      markup += u"?>";
       break;
     case Node::kDocumentTypeNode:
       markup += u"<!DOCTYPE ";
@@ -185,6 +204,12 @@ void AppendNode(std::u16string& markup, const Node& node) {
 }  // namespace
 
 std::u16string SerializeChildren(const Node& node) {
+  // MarkupAccumulator::SerializeNodesWithNamespaces() writes no children of an
+  // element that has no end tag, whose markup it is too.
+  if (node.IsElementNode() &&
+      IsVoidElement(static_cast<const Element&>(node))) {
+    return std::u16string();
+  }
   std::u16string markup;
   AppendChildren(markup, ChildrenHolder(node));
   return markup;
@@ -194,6 +219,44 @@ std::u16string SerializeNode(const Node& node) {
   std::u16string markup;
   AppendNode(markup, node);
   return markup;
+}
+
+std::u16string EscapeAttributeValue(std::u16string_view value,
+                                    bool for_html) {
+  std::u16string escaped;
+  if (for_html) {
+    AppendEscaped(escaped, value, /*in_attribute=*/true);
+    return escaped;
+  }
+  // Blink's kEntityMaskInAttributeValue.
+  for (const char16_t c : value) {
+    switch (c) {
+      case '&':
+        escaped += u"&amp;";
+        break;
+      case '<':
+        escaped += u"&lt;";
+        break;
+      case '>':
+        escaped += u"&gt;";
+        break;
+      case '"':
+        escaped += u"&quot;";
+        break;
+      case '\t':
+        escaped += u"&#9;";
+        break;
+      case '\n':
+        escaped += u"&#10;";
+        break;
+      case '\r':
+        escaped += u"&#13;";
+        break;
+      default:
+        escaped += c;
+    }
+  }
+  return escaped;
 }
 
 }  // namespace mitto

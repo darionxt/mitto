@@ -9,3 +9,7 @@ native/test/html5lib_tree/*.dat -text
 # The copy of web-platform-tests holds files whose line endings and bytes are what a
 # test checks, such as CRLF in a response that wptserve sends as it is.
 tests/wpt/wpt/** -text
+
+# The copy of web-platform-tests is upstream's tests, not this project's code: leave it out of the
+# repository's language statistics.
+tests/wpt/wpt/** linguist-vendored

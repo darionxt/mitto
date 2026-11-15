@@ -77,6 +77,11 @@ source_set("page_channel") {
   sources = [
     "cache_storage_messages.cc",
     "cache_storage_messages.h",
+    "indexed_db_key.cc",
+    "indexed_db_key.h",
+    "indexed_db_messages.cc",
+    "indexed_db_messages.h",
+    "message_coding.h",
     "page_channel.h",
     "page_messages.cc",
     "page_messages.h",
@@ -125,6 +130,22 @@ shared_library("mitto_core") {
     "http_header_map.h",
     "ignore_errors_cert_verifier.cc",
     "ignore_errors_cert_verifier.h",
+    "indexed_db/backing_store.cc",
+    "indexed_db/backing_store.h",
+    "indexed_db/bucket.cc",
+    "indexed_db/connection.cc",
+    "indexed_db/cursor.cc",
+    "indexed_db/database.cc",
+    "indexed_db/engine.h",
+    "indexed_db/indexed_db_context.cc",
+    "indexed_db/indexed_db_context.h",
+    "indexed_db/indexed_db_file.cc",
+    "indexed_db/indexed_db_file.h",
+    "indexed_db/kv_store.cc",
+    "indexed_db/kv_store.h",
+    "indexed_db/lock_manager.cc",
+    "indexed_db/lock_manager.h",
+    "indexed_db/transaction.cc",
     "mitto_core.cc",
     "network_quality.cc",
     "network_quality.h",
@@ -132,6 +153,8 @@ shared_library("mitto_core") {
     "network_session_configurator.h",
     "page_cache_storage.cc",
     "page_cache_storage.h",
+    "page_indexed_db.cc",
+    "page_indexed_db.h",
     "page_host.cc",
     "page_host.h",
     "page_launcher.cc",
@@ -155,6 +178,14 @@ shared_library("mitto_core") {
     "ssl_config_service_mojo.h",
     "storage_quota.cc",
     "storage_quota.h",
+    "storage/local_storage_database.cc",
+    "storage/local_storage_database.h",
+    "storage/storage_area_impl.cc",
+    "storage/storage_area_impl.h",
+    "storage/storage_context.cc",
+    "storage/storage_context.h",
+    "storage/storage_key.cc",
+    "storage/storage_key.h",
     "stub_resolver_config_reader.cc",
     "stub_resolver_config_reader.h",
   ]
@@ -183,7 +214,11 @@ shared_library("mitto_core") {
     "//base",
     "//crypto",
     "//net",
+    "//sql",
     "//third_party/boringssl",
+    "//third_party/sqlite",
+    "//third_party/zstd:compress",
+    "//third_party/zstd:decompress",
     "//url",
   ]
 
@@ -191,7 +226,7 @@ shared_library("mitto_core") {
   # allocation functions, is exported regardless, and an exported C++ symbol
   # could clash with one in the process that loads the library. On Windows a
   # library exports what this list names and what its code marks dllexport, and
-  # //base marks one function so: see docs/building.md.
+  # //base and SQLite mark one function each so: see docs/building.md.
   if (is_win) {
     inputs = [ "mitto_core.def" ]
     ldflags = [ "/DEF:" + rebase_path(inputs[0], root_build_dir) ]

@@ -16,6 +16,7 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event.h"
+#include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/html_element.h"
 #include "mitto/dom/node.h"
 #include "mitto/dom/permissions_policy.h"
@@ -186,11 +187,14 @@ bool FlattenCapture(
 
 // Calls a listener's callback, as Web IDL calls a user object's operation:
 // the callback itself if it is a function, with the current target for
-// `this`, and otherwise its handleEvent(), with the callback for `this`.
+// `this`, and otherwise its handleEvent(), with the callback for `this`. What
+// it throws sets the event's legacy flag, as JSBasedEventListener::Invoke()
+// does.
 void CallListener(v8::Isolate* isolate,
                   v8::Local<v8::Object> callback,
                   v8::Local<v8::Value> current_target,
-                  v8::Local<v8::Value> event) {
+                  v8::Local<v8::Value> event,
+                  Event* event_object) {
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   // The HTML Standard's clean up after running a callback: the microtasks that
   // a listener queues run once it returns, if no script is running, as
@@ -209,6 +213,9 @@ void CallListener(v8::Isolate* isolate,
              ->Get(context,
                    v8::String::NewFromUtf8Literal(isolate, "handleEvent"))
              .ToLocal(&handle_event)) {
+      if (try_catch.HasCaught()) {
+        event_object->LegacySetDidListenersThrowFlag();
+      }
       if (try_catch.CanContinue()) {
         bindings::ReportException(isolate, try_catch.Exception(),
                                   try_catch.Message());
@@ -216,12 +223,15 @@ void CallListener(v8::Isolate* isolate,
       return;
     }
     if (!handle_event->IsFunction()) {
+      // Blink's CallbackInvokeHelper throws this from C++ into the verbose
+      // TryCatch of JSBasedEventListener::Invoke(), and V8 hands its message
+      // listeners nothing for an exception that no script threw, so the
+      // window gets no error event and the console no error, as in Chrome.
       bindings::ThrowTypeError(isolate,
                                "Failed to execute 'handleEvent' on "
                                "'EventListener': The provided callback is not "
                                "callable.");
-      bindings::ReportException(isolate, try_catch.Exception(),
-                                try_catch.Message());
+      event_object->LegacySetDidListenersThrowFlag();
       return;
     }
     function = handle_event.As<v8::Function>();
@@ -229,11 +239,14 @@ void CallListener(v8::Isolate* isolate,
   }
   v8::Local<v8::Value> arguments[] = {event};
   if (function->Call(context, receiver, 1, arguments).IsEmpty() &&
-      try_catch.HasCaught() && try_catch.CanContinue()) {
-    // Where it was thrown, as Blink's verbose TryCatch hands V8's message of
-    // it to the window's error event.
-    bindings::ReportException(isolate, try_catch.Exception(),
-                              try_catch.Message());
+      try_catch.HasCaught()) {
+    event_object->LegacySetDidListenersThrowFlag();
+    if (try_catch.CanContinue()) {
+      // Where it was thrown, as Blink's verbose TryCatch hands V8's message
+      // of it to the window's error event.
+      bindings::ReportException(isolate, try_catch.Exception(),
+                                try_catch.Message());
+    }
   }
 }
 
@@ -302,6 +315,9 @@ void CallAttributeHandler(v8::Isolate* isolate,
                  .ToLocal(&result);
   }
   if (!called) {
+    if (try_catch.HasCaught()) {
+      event->LegacySetDidListenersThrowFlag();
+    }
     if (try_catch.HasCaught() && try_catch.CanContinue()) {
       bindings::ReportException(isolate, try_catch.Exception(),
                                 try_catch.Message());
@@ -367,6 +383,7 @@ void EventListenerEntry::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(callback_);
   visitor->Trace(next_);
   visitor->Trace(signal_);
+  visitor->Trace(raw_handler_);
 }
 
 void EventListenerEntry::set_signal(AbortSignal* signal) {
@@ -535,14 +552,36 @@ void EventTarget::RemoveEntry(EventListenerEntry* entry) {
 
 v8::Local<v8::Value> EventTarget::AttributeEventHandler(
     v8::Isolate* isolate,
-    std::u16string_view type) const {
+    std::u16string_view type) {
   for (EventListenerEntry* entry = first_listener_.Get(); entry;
        entry = entry->next()) {
     if (entry->attribute_handler() && entry->type() == type) {
-      return entry->callback(isolate);
+      return HandlerOf(isolate, *entry);
     }
   }
   return v8::Null(isolate);
+}
+
+v8::Local<v8::Value> EventTarget::HandlerOf(v8::Isolate* isolate,
+                                            EventListenerEntry& entry) {
+  // Blink's JSEventHandlerForContentAttribute::GetListenerObject(): a raw
+  // handler is compiled once, and one that failed to stays null.
+  RawEventHandler* const raw_handler = entry.raw_handler();
+  if (!raw_handler) {
+    return entry.callback(isolate);
+  }
+  if (raw_handler->did_compile()) {
+    return v8::Null(isolate);
+  }
+  // Compiling reports a body that does not parse, which runs the window's
+  // error listeners, so the entry stays as long as this does.
+  const cppgc::Persistent<EventListenerEntry> kept(&entry);
+  const cppgc::Persistent<RawEventHandler> kept_handler(raw_handler);
+  const v8::Local<v8::Value> compiled = raw_handler->Compile(isolate, *this);
+  if (compiled->IsFunction() && entry.raw_handler() == raw_handler) {
+    entry.set_callback(isolate, compiled.As<v8::Object>());
+  }
+  return compiled;
 }
 
 void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
@@ -585,6 +624,45 @@ void EventTarget::SetAttributeEventHandler(v8::Isolate* isolate,
   ListenersChanged(type);
 }
 
+void EventTarget::SetAttributeEventListener(const std::u16string& type,
+                                            RawEventHandler* handler) {
+  EventListenerEntry* existing = nullptr;
+  for (EventListenerEntry* entry = first_listener_.Get(); entry;
+       entry = entry->next()) {
+    if (entry->attribute_handler() && entry->type() == type) {
+      existing = entry;
+      break;
+    }
+  }
+  if (!handler) {
+    if (existing) {
+      RemoveEntry(existing);
+    }
+    return;
+  }
+  if (existing) {
+    existing->set_raw_handler(handler);
+    return;
+  }
+  if (!AllowsUnloadListener(type)) {
+    return;
+  }
+  has_event_target_data_ = true;
+  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
+  EventListenerEntry* const entry =
+      bindings::MakeGarbageCollected<EventListenerEntry>(
+          isolate, type, v8::Local<v8::Object>(), /*capture=*/false,
+          /*passive=*/false, /*once=*/false, /*attribute_handler=*/true);
+  entry->set_raw_handler(handler);
+  if (last_listener_) {
+    last_listener_->set_next(entry);
+  } else {
+    first_listener_ = entry;
+  }
+  last_listener_ = entry;
+  ListenersChanged(type);
+}
+
 Node* EventTarget::ToNode() {
   return nullptr;
 }
@@ -609,6 +687,11 @@ bool EventTarget::IsTopLevelNode() {
 bool EventTarget::DispatchEventForBindings(
     Event* event,
     bindings::ExceptionState& exception_state) {
+  if (!event->WasInitialized()) {
+    exception_state.ThrowDOMException("InvalidStateError",
+                                      "The event provided is uninitialized.");
+    return false;
+  }
   if (event->IsBeingDispatched()) {
     exception_state.ThrowDOMException("InvalidStateError",
                                       "The event is already being dispatched.");
@@ -723,11 +806,14 @@ bool EventTarget::FireEventListeners(Event* event) {
       window->SetCurrentEvent(event);
     }
     if (entry->attribute_handler()) {
-      CallAttributeHandler(isolate, entry->callback(isolate), *this,
-                           current_target, event_wrapper, event);
+      const v8::Local<v8::Value> handler = HandlerOf(isolate, *entry);
+      if (handler->IsObject()) {
+        CallAttributeHandler(isolate, handler.As<v8::Object>(), *this,
+                             current_target, event_wrapper, event);
+      }
     } else {
       CallListener(isolate, entry->callback(isolate), current_target,
-                   event_wrapper);
+                   event_wrapper, event);
     }
     fired = true;
     if (window) {
