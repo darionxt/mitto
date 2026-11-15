@@ -234,6 +234,10 @@ _LEGACY_PLATFORM_OBJECTS_AS_CHROME = {
         "P.item(2 ** 32).name",
         "gives PDF Viewer",
     ),
+    "a negative string converted to unsigned long, modulo 2 to the 32nd": (
+        "[P.item('-1'), P.item('-4294967295').name].map(String).join()",
+        "gives null,Chrome PDF Viewer",
+    ),
     "names that are not indices": (
         "[P['00'], P['1.0'], P[' 1'], P['-0']].map(String).join()",
         "gives undefined,undefined,undefined,undefined",

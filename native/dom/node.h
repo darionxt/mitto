@@ -165,7 +165,10 @@ class Node : public EventTarget {
   // The node document.
   Document& GetDocument() const { return *document_; }
   bool IsElementNode() const { return GetNodeType() == kElementNode; }
-  bool IsTextNode() const { return GetNodeType() == kTextNode; }
+  // A CDATASection is a Text too, as Blink's IsTextNode() has it.
+  bool IsTextNode() const {
+    return GetNodeType() == kTextNode || GetNodeType() == kCdataSectionNode;
+  }
   bool IsCommentNode() const { return GetNodeType() == kCommentNode; }
   bool IsDocumentNode() const { return GetNodeType() == kDocumentNode; }
   bool IsDocumentTypeNode() const { return GetNodeType() == kDocumentTypeNode; }

@@ -26,6 +26,7 @@
 #include "mitto/dom/attached_traversals.h"
 #include "mitto/dom/attr.h"
 #include "mitto/dom/before_unload_event.h"
+#include "mitto/dom/cdata_section.h"
 #include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/comment.h"
 #include "mitto/dom/cookie_jar.h"
@@ -53,6 +54,7 @@
 #include "mitto/dom/page_transition_event.h"
 #include "mitto/dom/performance_timing_confidence.h"
 #include "mitto/dom/permissions_policy.h"
+#include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/qualified_name.h"
 #include "mitto/dom/range.h"
 #include "mitto/dom/script_values.h"
@@ -670,6 +672,46 @@ Event* Document::CreateEvent(const std::u16string& event_type,
       base::StrCat({"The provided event type ('", base::UTF16ToUTF8(event_type),
                     "') is invalid."}));
   return nullptr;
+}
+
+ProcessingInstruction* Document::CreateProcessingInstruction(
+    const std::u16string& target,
+    const std::u16string& data,
+    bindings::ExceptionState& exception_state) {
+  if (!ProcessingInstruction::IsValidName(target)) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The target provided ('", base::UTF16ToUTF8(target),
+                      "') is not a valid name."}));
+    return nullptr;
+  }
+  if (data.find(u"?>") != std::u16string::npos) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        base::StrCat({"The data provided ('", base::UTF16ToUTF8(data),
+                      "') contains '?>'."}));
+    return nullptr;
+  }
+  return ProcessingInstruction::Create(*this, target, data);
+}
+
+CDATASection* Document::CreateCDATASection(
+    const std::u16string& data,
+    bindings::ExceptionState& exception_state) {
+  if (IsHTMLDocument()) {
+    exception_state.ThrowDOMException(
+        "NotSupportedError",
+        "This operation is not supported for HTML documents.");
+    return nullptr;
+  }
+  if (data.find(u"]]>") != std::u16string::npos) {
+    exception_state.ThrowDOMException(
+        "InvalidCharacterError",
+        "String cannot contain ']]>' since that is the end delimiter of a "
+        "CData section.");
+    return nullptr;
+  }
+  return CDATASection::Create(*this, data);
 }
 
 Text* Document::CreateTextNode(const std::u16string& data) {

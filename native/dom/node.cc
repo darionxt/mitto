@@ -27,6 +27,7 @@
 #include "mitto/dom/node_list.h"
 #include "mitto/dom/node_lists_node_data.h"
 #include "mitto/dom/objects_behind.h"
+#include "mitto/dom/processing_instruction.h"
 #include "mitto/dom/selector_query.h"
 #include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
@@ -223,7 +224,14 @@ bool AreEqualNodes(const Node& a, const Node& b) {
       }
       break;
     }
+    case Node::kProcessingInstructionNode:
+      if (static_cast<const ProcessingInstruction&>(a).Target() !=
+          static_cast<const ProcessingInstruction&>(b).Target()) {
+        return false;
+      }
+      [[fallthrough]];
     case Node::kTextNode:
+    case Node::kCdataSectionNode:
     case Node::kCommentNode:
       if (static_cast<const CharacterData&>(a).Data() !=
           static_cast<const CharacterData&>(b).Data()) {
@@ -357,8 +365,9 @@ void Node::Normalize() {
   while (Node* const first_child = node->FirstChild()) {
     node = first_child;
   }
+  // A CDATASection is no Text node to normalize, as Blink checks the type.
   while (node && node != this) {
-    if (!node->IsTextNode()) {
+    if (node->GetNodeType() != kTextNode) {
       node = NextInPostOrder(*node);
       continue;
     }
@@ -369,7 +378,7 @@ void Node::Normalize() {
       continue;
     }
     while (Node* const next = text->NextSibling()) {
-      if (!next->IsTextNode()) {
+      if (next->GetNodeType() != kTextNode) {
         break;
       }
       auto* const next_text = static_cast<Text*>(next);
