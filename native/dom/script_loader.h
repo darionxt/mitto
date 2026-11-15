@@ -22,7 +22,8 @@
 namespace mitto {
 
 class Document;
-class HTMLScriptElement;
+class Element;
+class ScriptElementBase;
 
 class ScriptLoader final : public cppgc::GarbageCollected<ScriptLoader> {
  public:
@@ -45,7 +46,7 @@ class ScriptLoader final : public cppgc::GarbageCollected<ScriptLoader> {
     kAllow,
   };
 
-  explicit ScriptLoader(HTMLScriptElement& element);
+  explicit ScriptLoader(ScriptElementBase& element);
   ~ScriptLoader();
 
   void Trace(cppgc::Visitor* visitor) const;
@@ -92,7 +93,10 @@ class ScriptLoader final : public cppgc::GarbageCollected<ScriptLoader> {
   bool IsScriptForEventSupported() const;
   PendingScript* TakePendingScript(ScriptSchedulingType type);
 
-  cppgc::Member<HTMLScriptElement> element_;
+  // The script element, which ScriptElement() gives as a ScriptElementBase.
+  ScriptElementBase& ScriptElement() const;
+
+  cppgc::Member<Element> element_;
   // The HTML Standard's parser document, which Blink keeps as a flag beside
   // the document.
   bool parser_inserted_ = false;

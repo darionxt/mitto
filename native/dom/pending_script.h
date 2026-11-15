@@ -26,7 +26,8 @@ namespace mitto {
 
 class Document;
 class FetchController;
-class HTMLScriptElement;
+class Element;
+class ScriptElementBase;
 class Window;
 
 // Blink's ScriptSchedulingType: who runs a script, and when.
@@ -60,7 +61,7 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
   // `source_url`, empty for a script that the parser did not insert, and
   // count lines and columns from `start_line` and `start_column`, where its
   // text starts in the document.
-  static PendingScript* CreateInline(HTMLScriptElement& element,
+  static PendingScript* CreateInline(ScriptElementBase& element,
                                      std::u16string source,
                                      GURL source_url,
                                      int start_line,
@@ -70,19 +71,19 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
   // that `request` has, as a script that blocks rendering if
   // `render_blocking`, checks against `integrity`, and decodes as `encoding`
   // unless its response or a byte order mark names another.
-  static PendingScript* Fetch(HTMLScriptElement& element,
+  static PendingScript* Fetch(ScriptElementBase& element,
                               const GURL& url,
                               FetchRequestData request,
                               IntegrityMetadataSet integrity,
                               std::string encoding,
                               bool render_blocking);
 
-  PendingScript(HTMLScriptElement& element, bool is_external);
+  PendingScript(ScriptElementBase& element, bool is_external);
   ~PendingScript();
 
   void Trace(cppgc::Visitor* visitor) const;
 
-  HTMLScriptElement* element() const { return element_.Get(); }
+  Element* element() const { return element_.Get(); }
   ScriptSchedulingType scheduling_type() const { return scheduling_type_; }
   void set_scheduling_type(ScriptSchedulingType type) {
     scheduling_type_ = type;
@@ -128,7 +129,7 @@ class PendingScript final : public cppgc::GarbageCollected<PendingScript> {
                       std::string body);
   void AdvanceReadyState(State state);
 
-  cppgc::Member<HTMLScriptElement> element_;
+  cppgc::Member<Element> element_;
   // The document and window it was prepared in: it does not run in another.
   cppgc::WeakMember<Document> original_element_document_;
   cppgc::WeakMember<Window> original_window_;
