@@ -2760,7 +2760,7 @@ mitto_bindings_interfaces = [
   {
     name = "WindowProperties"
     file = "window_properties"
-    implemented = []
+    missing = []
   },
   {
     name = "XMLDocument"

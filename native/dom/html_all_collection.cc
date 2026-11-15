@@ -68,8 +68,8 @@ bindings::ScriptWrappable* HTMLAllCollection::NamedGetter(
   if (!document_) {
     return nullptr;
   }
-  HTMLCollection* const items =
-      document_->EnsureNodeLists().DocumentAllNamedItems(*document_, name);
+  HTMLCollection* const items = document_->EnsureNodeLists().NamedItems(
+      *document_, HTMLCollection::Type::kDocumentAllNamedItems, name);
   switch (items->Length()) {
     case 0:
       return nullptr;

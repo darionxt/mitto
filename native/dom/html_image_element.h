@@ -37,6 +37,8 @@ class HTMLImageElement final : public HTMLElement {
   void SetHeight(uint32_t value);
   // HTMLElement's: an image is draggable unless its attribute says "false".
   bool Draggable() const override;
+  // Its ID is a named item of its document only while it has a name.
+  NamedItemType GetNamedItemType() const override;
 };
 
 }  // namespace mitto

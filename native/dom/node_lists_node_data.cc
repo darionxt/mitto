@@ -99,15 +99,14 @@ HTMLCollection* NodeListsNodeData::ClassCollection(
   return collection;
 }
 
-HTMLCollection* NodeListsNodeData::DocumentAllNamedItems(
-    Node& root,
-    const std::u16string& name) {
-  if (HTMLCollection* found = FindCollection(
-          HTMLCollection::Type::kDocumentAllNamedItems, name, std::nullopt)) {
+HTMLCollection* NodeListsNodeData::NamedItems(Node& root,
+                                              HTMLCollection::Type type,
+                                              const std::u16string& name) {
+  if (HTMLCollection* found = FindCollection(type, name, std::nullopt)) {
     return found;
   }
   HTMLCollection* const collection =
-      HTMLCollection::CreateDocumentAllNamedItems(&root, name);
+      HTMLCollection::CreateNamedItems(&root, type, name);
   Add(collection, nullptr);
   return collection;
 }

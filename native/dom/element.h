@@ -245,6 +245,18 @@ class Element : public Node {
                                 const std::u16string* old_value,
                                 const std::u16string* new_value) {}
 
+  // Blink's NamedItemType: which of its name and ID an element of an HTML
+  // document's tree adds to the document's named items, which document[name]
+  // finds: the name, the name or the ID, or the ID only while the element has
+  // a name too.
+  enum class NamedItemType { kNone, kName, kNameOrId, kNameOrIdWithName };
+  virtual NamedItemType GetNamedItemType() const;
+
+  // Node's. An element that enters or leaves a document's tree adds its ID,
+  // and its named items, to the document or removes them.
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
+  void RemovedFrom(Node& insertion_point) override;
+
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
   // The nodes of its attributes move with it, as Blink's
@@ -277,6 +289,22 @@ class Element : public Node {
                                  bool record = true);
   // Detaches the attribute's node too, which keeps its value.
   void RemoveAttributeInternal(size_t index, bool record = true);
+  // Blink's UpdateName() and UpdateId(), for a change of the name or ID
+  // attribute of no namespace from `old_value` to `new_value`, null for none,
+  // of an element in its document's tree, which counts its IDs and named
+  // items. The callers check that it is in the tree, or was, for one that
+  // has just left it.
+  void UpdateName(const std::u16string* old_value,
+                  const std::u16string* new_value);
+  void UpdateId(const std::u16string* old_value,
+                const std::u16string* new_value);
+  // UpdateNamedItemRegistration() and UpdateIdNamedItemRegistration().
+  void UpdateNamedItemRegistration(NamedItemType type,
+                                   const std::u16string* old_name,
+                                   const std::u16string* new_name);
+  void UpdateIdNamedItemRegistration(NamedItemType type,
+                                     const std::u16string* old_id,
+                                     const std::u16string* new_id);
   // The node of the attribute of `name`'s local name and namespace, if any.
   Attr* AttrIfExists(const QualifiedName& name) const;
   // Blink's DetachAttribute(): the node of the attribute at `index`, made if

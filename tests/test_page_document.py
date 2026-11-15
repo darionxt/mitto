@@ -189,6 +189,144 @@ def test_the_windows_other_members_are_known_gaps(program: Path) -> None:
     assert _evaluate(program, script) == "true,7"
 
 
+# Elements that the window's and the document's named properties find, as Chrome 157 found them in the same markup.
+_NAMED = (
+    "<div id=d1></div><img name=im1 id=imid><img id=imonly><form name=f1 id=fid></form><embed name=e1>"
+    "<object name=o1 id=oid></object><div id=dup></div><span id=dup></span><p id=42></p><img name=title>"
+    "<form name=location></form><object name=two></object><object id=two></object><svg><circle id=circ></circle></svg>"
+    "<template><div id=intemplate></div></template><img name=addEventListener>"
+)
+_NAME_OF = """
+    const nameOf = (v) => v === undefined ? 'undefined' : v === null ? 'null'
+        : v.constructor.name + (v instanceof HTMLCollection ? `(${v.length})` : '') + (v.id ? `#${v.id}` : '');
+"""
+
+
+def test_the_window_finds_elements_by_id_and_some_by_name(program: Path) -> None:
+    # Any element by ID, and images, forms, embeds and objects by name, through the named properties object behind
+    # Window.prototype. The window's own properties and those of its prototypes come first.
+    script = (
+        _NAME_OF
+        + """
+        ['d1', 'im1', 'imonly', 'fid', 'e1', 'dup', '42', 'title', 'location', 'two', 'circ', 'intemplate',
+         'addEventListener', 'nothing'].map((name) => `${name}=${nameOf(window[name])}`).join(' ')
+    """
+    )
+
+    assert _evaluate(program, script, _NAMED) == (
+        "d1=HTMLDivElement#d1 im1=HTMLImageElement#imid imonly=HTMLImageElement#imonly fid=HTMLFormElement#fid "
+        "e1=HTMLEmbedElement dup=HTMLCollection(2) 42=HTMLParagraphElement#42 title=HTMLImageElement "
+        "location=Location two=HTMLCollection(2) circ=SVGCircleElement#circ intemplate=undefined "
+        "addEventListener=Function nothing=undefined"
+    )
+
+
+def test_the_named_properties_object_has_them_but_takes_no_change(program: Path) -> None:
+    script = """
+        const object = Object.getPrototypeOf(Window.prototype);
+        const result = [];
+        const run = (f) => { try { result.push(String(f())); } catch (e) { result.push(`${e.name}: ${e.message}`); } };
+        run(() => Object.prototype.toString.call(object));
+        run(() => ['d1' in window, window.hasOwnProperty('d1'), object.hasOwnProperty('d1')].join());
+        run(() => JSON.stringify(Object.getOwnPropertyDescriptor(object, 'd1'), ['writable', 'enumerable']));
+        run(() => Object.getOwnPropertyNames(object).length);
+        run(() => Object.defineProperty(object, 'd1', { value: 1 }));
+        run(() => { 'use strict'; object.x = 1; });
+        run(() => { object.x = 1; return object.x; });
+        run(() => delete object.d1);
+        run(() => { 'use strict'; return delete object.nothing; });
+        run(() => Object.preventExtensions(object));
+        run(() => { window.d1 = 5; const shadowed = d1; delete window.d1; return `${shadowed} ${d1.id}`; });
+        result.join('\\n');
+    """
+
+    assert _evaluate(program, script, _NAMED).split("\n") == [
+        "[object WindowProperties]",
+        "true,false,true",
+        '{"writable":true,"enumerable":false}',
+        "0",
+        "TypeError: Failed to set a named property 'd1' on 'WindowProperties': Named property setter is not supported.",
+        "TypeError: Failed to set a named property 'x' on 'WindowProperties': Named property setter is not supported.",
+        "undefined",
+        "false",
+        "TypeError: Failed to delete a named property 'nothing' from 'WindowProperties': "
+        "Named property deleter is not supported.",
+        "TypeError: Cannot prevent extensions",
+        "5 d1",
+    ]
+
+
+def test_the_documents_named_items_are_own_properties_in_the_order_they_came(program: Path) -> None:
+    # Forms, iframes and embeds by name, objects by name or ID, and images by name, or by ID with a name. An img adds
+    # its ID before its name, and location, which cannot be configured, stays the document's own.
+    script = (
+        _NAME_OF
+        + """
+        [Object.getOwnPropertyNames(document).join(),
+         ['im1', 'imid', 'imonly', 'f1', 'fid', 'oid', 'dup', '42', 'title', 'location', 'two', 'addEventListener']
+             .map((name) => `${name}=${nameOf(document[name])}`).join(' '),
+         JSON.stringify(Object.getOwnPropertyDescriptor(document, 'f1'), ['writable', 'enumerable', 'configurable']),
+         document.two === document.two,
+        ].join('\\n')
+    """
+    )
+
+    assert _evaluate(program, script, _NAMED).split("\n") == [
+        "location,imid,im1,f1,e1,oid,o1,title,two,addEventListener",
+        "im1=HTMLImageElement#imid imid=HTMLImageElement#imid imonly=undefined f1=HTMLFormElement#fid fid=undefined "
+        "oid=HTMLObjectElement#oid dup=undefined 42=undefined title=HTMLImageElement location=Location "
+        "two=HTMLCollection(2) addEventListener=HTMLImageElement",
+        '{"writable":true,"enumerable":true,"configurable":true}',
+        "true",
+    ]
+
+
+def test_the_documents_named_items_follow_the_tree_and_the_attributes(program: Path) -> None:
+    # Setting one keeps the element, deleting one takes the property away until an element adds the name again, and a
+    # name that comes later goes last.
+    script = (
+        _NAME_OF
+        + """
+        const steps = [];
+        const image = document.createElement('img');
+        image.name = 'a';
+        steps.push(nameOf(document.a));
+        document.body.append(image);
+        steps.push(nameOf(document.a), nameOf(window.a));
+        image.id = 'b';
+        steps.push(nameOf(document.b));
+        image.removeAttribute('name');
+        steps.push(nameOf(document.b), nameOf(window.b), 'a' in document);
+        image.remove();
+        steps.push(nameOf(window.b), 'b' in document);
+        document.f1 = 5;
+        steps.push(nameOf(document.f1), delete document.f1, 'f1' in document);
+        const form = document.createElement('form');
+        form.name = 'f1';
+        document.body.prepend(form);
+        steps.push(Object.getOwnPropertyNames(document).slice(-2).join(), nameOf(document.f1));
+        steps.join(' ');
+    """
+    )
+
+    assert _evaluate(program, script, _NAMED) == (
+        "undefined HTMLImageElement HTMLImageElement HTMLImageElement#b undefined HTMLImageElement#b false "
+        "undefined false HTMLFormElement#fid true false addEventListener,f1 HTMLCollection(2)"
+    )
+
+
+def test_a_document_without_a_window_has_no_named_properties(program: Path) -> None:
+    script = """
+        const other = document.implementation.createHTMLDocument('');
+        const form = other.createElement('form');
+        form.name = 'f';
+        other.body.append(form);
+        [String(other.f), Object.getOwnPropertyNames(other).join()].join(' ');
+    """
+
+    assert _evaluate(program, script) == "undefined location"
+
+
 def test_a_member_whose_behaviour_is_missing_gives_its_default(program: Path) -> None:
     # An object of an interface without a class, with nothing behind it, the same one each time.
     script = """

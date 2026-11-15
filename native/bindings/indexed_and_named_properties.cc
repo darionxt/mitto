@@ -341,6 +341,125 @@ v8::Intercepted IndexedDescriptor(
   return v8::Intercepted::kYes;
 }
 
+// The interceptors of a named properties object, which bind_gen writes for
+// WindowProperties: the holder is the object itself, whose realm's window
+// has the named properties. An index is a name, as the object has no indexed
+// properties.
+
+template <typename T>
+const NamedPropertiesObject& NamedPropertiesObjectOf(
+    const v8::PropertyCallbackInfo<T>& info) {
+  return *static_cast<const NamedPropertiesObject*>(
+      info.Data().template As<v8::External>()->Value(
+          kNamedPropertiesObjectTag));
+}
+
+v8::Intercepted NamedPropertiesObjectGetter(
+    v8::Local<v8::Name> name,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  // Web IDL's [[GetOwnProperty]] of a named properties object, step 2: the
+  // named property of the window, if it supports the name and the named
+  // property visibility algorithm says it is visible, which V8 checks for a
+  // non-masking interceptor.
+  v8::Isolate* const isolate = info.GetIsolate();
+  v8::Local<v8::Context> context;
+  if (!info.Holder()->GetCreationContext(isolate).ToLocal(&context)) {
+    return v8::Intercepted::kNo;
+  }
+  const v8::Local<v8::Value> value = NamedPropertiesObjectOf(info).named_getter(
+      isolate, context->Global(), StringOf(isolate, name));
+  if (value.IsEmpty()) {
+    return v8::Intercepted::kNo;
+  }
+  info.GetReturnValue().Set(value);
+  return v8::Intercepted::kYes;
+}
+
+v8::Intercepted NamedPropertiesObjectSetter(
+    v8::Local<v8::Name> name,
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  // [[DefineOwnProperty]]: false, for any name.
+  ThrowIfShouldThrow(info, "Named property setter is not supported.");
+  return v8::Intercepted::kYes;
+}
+
+v8::Intercepted NamedPropertiesObjectDeleter(
+    v8::Local<v8::Name> name,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  // [[Delete]]: false, for any name.
+  info.GetReturnValue().Set(false);
+  ThrowIfShouldThrow(info, "Named property deleter is not supported.");
+  return v8::Intercepted::kYes;
+}
+
+v8::Intercepted NamedPropertiesObjectDefiner(
+    v8::Local<v8::Name> name,
+    const v8::PropertyDescriptor& descriptor,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  ThrowIfShouldThrow(info, "Named property setter is not supported.");
+  return v8::Intercepted::kYes;
+}
+
+v8::Intercepted NamedPropertiesObjectDescriptor(
+    v8::Local<v8::Name> name,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  // [[GetOwnProperty]]: visible unless the prototype chain has a property of
+  // the name, writable and configurable but not enumerable, as Window has
+  // [LegacyUnenumerableNamedProperties].
+  v8::Isolate* const isolate = info.GetIsolate();
+  if (info.Holder()
+          ->GetRealNamedPropertyAttributesInPrototypeChain(
+              isolate->GetCurrentContext(), name)
+          .IsJust()) {
+    return v8::Intercepted::kNo;
+  }
+  if (NamedPropertiesObjectGetter(name, info) == v8::Intercepted::kNo) {
+    return v8::Intercepted::kNo;
+  }
+  info.GetReturnValue().Set(DataPropertyDescriptor(
+      isolate, info.GetReturnValue().Get(), /*writable=*/true,
+      /*enumerable=*/false));
+  return v8::Intercepted::kYes;
+}
+
+v8::Intercepted NamedPropertiesObjectIndexedGetter(
+    uint32_t index,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  return NamedPropertiesObjectGetter(NameOfIndex(info.GetIsolate(), index),
+                                     info);
+}
+
+v8::Intercepted NamedPropertiesObjectIndexedSetter(
+    uint32_t index,
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  return NamedPropertiesObjectSetter(NameOfIndex(info.GetIsolate(), index),
+                                     value, info);
+}
+
+v8::Intercepted NamedPropertiesObjectIndexedDeleter(
+    uint32_t index,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  return NamedPropertiesObjectDeleter(NameOfIndex(info.GetIsolate(), index),
+                                      info);
+}
+
+v8::Intercepted NamedPropertiesObjectIndexedDefiner(
+    uint32_t index,
+    const v8::PropertyDescriptor& descriptor,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
+  return NamedPropertiesObjectDefiner(NameOfIndex(info.GetIsolate(), index),
+                                      descriptor, info);
+}
+
+v8::Intercepted NamedPropertiesObjectIndexedDescriptor(
+    uint32_t index,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  return NamedPropertiesObjectDescriptor(NameOfIndex(info.GetIsolate(), index),
+                                         info);
+}
+
 }  // namespace
 
 void InstallIndexedAndNamedProperties(
@@ -375,6 +494,32 @@ void InstallIndexedAndNamedProperties(
       &IndexedDescriptor, data,
       indexed_has_no_side_effect ? v8::PropertyHandlerFlags::kHasNoSideEffect
                                  : v8::PropertyHandlerFlags::kNone));
+}
+
+void InstallNamedPropertiesObject(
+    v8::Isolate* isolate,
+    v8::Local<v8::ObjectTemplate> prototype_template,
+    const NamedPropertiesObject& properties) {
+  const v8::Local<v8::External> data = v8::External::New(
+      isolate, const_cast<NamedPropertiesObject*>(&properties),
+      kNamedPropertiesObjectTag);
+  // The named getter is [NotEnumerable], so neither a query nor an
+  // enumerator, and has no side effects.
+  prototype_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
+      &NamedPropertiesObjectGetter, &NamedPropertiesObjectSetter,
+      /*query=*/nullptr, &NamedPropertiesObjectDeleter,
+      /*enumerator=*/nullptr, &NamedPropertiesObjectDefiner,
+      &NamedPropertiesObjectDescriptor, data,
+      static_cast<v8::PropertyHandlerFlags>(
+          static_cast<int>(v8::PropertyHandlerFlags::kOnlyInterceptStrings) |
+          static_cast<int>(v8::PropertyHandlerFlags::kNonMasking) |
+          static_cast<int>(v8::PropertyHandlerFlags::kHasNoSideEffect))));
+  prototype_template->SetHandler(v8::IndexedPropertyHandlerConfiguration(
+      &NamedPropertiesObjectIndexedGetter, &NamedPropertiesObjectIndexedSetter,
+      /*query=*/nullptr, &NamedPropertiesObjectIndexedDeleter,
+      /*enumerator=*/nullptr, &NamedPropertiesObjectIndexedDefiner,
+      &NamedPropertiesObjectIndexedDescriptor, data,
+      v8::PropertyHandlerFlags::kNone));
 }
 
 }  // namespace mitto::bindings

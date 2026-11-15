@@ -26,6 +26,7 @@
 #include "mitto/dom/custom_element_registry.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/document_named_properties.h"
 #include "mitto/dom/dom_file_system.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event.h"
@@ -669,6 +670,10 @@ void Window::SetDocument(mitto::Document* document) {
   document_->SetWindow(this);
 }
 
+  // A document that elements gave named items before it was the window's,
+  // such as the one the parser makes of a Page's markup, has their
+  // properties now.
+  AddNamedItemProperties(*document_);
 void Window::AssociateWithContext(v8::Isolate* isolate,
                                   v8::Local<v8::Context> context) {
   AssociateWithGlobalProxy(isolate, context->Global());

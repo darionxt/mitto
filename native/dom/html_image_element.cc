@@ -39,6 +39,10 @@ const bindings::WrapperTypeInfo* HTMLImageElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLImageElement::kWrapperTypeInfo;
 }
 
+Element::NamedItemType HTMLImageElement::GetNamedItemType() const {
+  return NamedItemType::kNameOrIdWithName;
+}
+
 bool HTMLImageElement::Draggable() const {
   const std::u16string* value = FindAttribute(u"draggable");
   return !value || !base::EqualsCaseInsensitiveASCII(*value, u"false");

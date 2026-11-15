@@ -28,6 +28,7 @@
 #include "mitto/dom/cookie_jar.h"
 #include "mitto/dom/document_fragment.h"
 #include "mitto/dom/document_load_timing.h"
+#include "mitto/dom/document_named_properties.h"
 #include "mitto/dom/document_parser.h"
 #include "mitto/dom/document_script_runner.h"
 #include "mitto/dom/document_type.h"
@@ -841,6 +842,66 @@ Element* Document::GetElementById(const std::u16string& id) const {
 
 NodeList* Document::GetElementsByName(const std::u16string& name) {
   return EnsureNodeLists().NameNodeList(*this, name);
+}
+
+void Document::AddNamedItem(const std::u16string& name) {
+  if (name.empty()) {
+    return;
+  }
+  if (named_item_counts_[name]++ == 0) {
+    named_items_.push_back(name);
+  }
+  // As each time an element adds it, which gives the property again if a
+  // page deleted it.
+  NamedItemAdded(*this, name);
+}
+
+void Document::RemoveNamedItem(const std::u16string& name) {
+  if (name.empty()) {
+    return;
+  }
+  const auto found = named_item_counts_.find(name);
+  CHECK(found != named_item_counts_.end());
+  if (--found->second == 0) {
+    named_item_counts_.erase(found);
+    std::erase(named_items_, name);
+  }
+  NamedItemRemoved(*this, name);
+}
+
+bool Document::HasNamedItem(const std::u16string& name) const {
+  return named_item_counts_.contains(name);
+}
+
+void Document::AddElementById(const std::u16string& id) {
+  ++id_counts_[id];
+}
+
+void Document::RemoveElementById(const std::u16string& id) {
+  const auto found = id_counts_.find(id);
+  CHECK(found != id_counts_.end());
+  if (--found->second == 0) {
+    id_counts_.erase(found);
+  }
+}
+
+bool Document::HasElementWithId(const std::u16string& id) const {
+  return id_counts_.contains(id);
+}
+
+bool Document::ContainsMultipleElementsWithId(const std::u16string& id) const {
+  const auto found = id_counts_.find(id);
+  return found != id_counts_.end() && found->second > 1;
+}
+
+HTMLCollection* Document::WindowNamedItems(const std::u16string& name) {
+  return EnsureNodeLists().NamedItems(
+      *this, HTMLCollection::Type::kWindowNamedItems, name);
+}
+
+HTMLCollection* Document::DocumentNamedItems(const std::u16string& name) {
+  return EnsureNodeLists().NamedItems(
+      *this, HTMLCollection::Type::kDocumentNamedItems, name);
 }
 
 Range* Document::CreateRange() {

@@ -14,6 +14,7 @@
 #define MITTO_DOM_DOCUMENT_H_
 
 #include <memory>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -210,6 +211,28 @@ class Document : public Node {
   Text* CreateTextNode(const std::u16string& data);
   Element* GetElementById(const std::u16string& id) const;
   // The HTML Standard's dynamic markup insertion, as Blink's Document runs
+
+  // HTMLDocument's named items, which the elements of an HTML document's tree
+  // add and remove as Blink's AddNamedItem() and RemoveNamedItem() count them:
+  // the names and IDs that document[name] finds. A window's document's
+  // wrapper has a property of each, as Blink's LocalWindowProxy gives it one
+  // when an element adds the name and takes it away when no element has it.
+  void AddNamedItem(const std::u16string& name);
+  void RemoveNamedItem(const std::u16string& name);
+  bool HasNamedItem(const std::u16string& name) const;
+  // The named items, each once, in the order in which they came.
+  const std::vector<std::u16string>& NamedItems() const { return named_items_; }
+  // The IDs of the elements in the document's tree, counted, as Blink's
+  // TreeScope maps them, which the window's named properties object reads.
+  void AddElementById(const std::u16string& id);
+  void RemoveElementById(const std::u16string& id);
+  bool HasElementWithId(const std::u16string& id) const;
+  bool ContainsMultipleElementsWithId(const std::u16string& id) const;
+  // The elements of `name` that the window's named properties object finds,
+  // and that document[name] finds, each the same collection for the same
+  // name, as Blink's WindowNamedItems() and DocumentNamedItems() cache them.
+  HTMLCollection* WindowNamedItems(const std::u16string& name);
+  HTMLCollection* DocumentNamedItems(const std::u16string& name);
   // it: open() with no more than two arguments opens the document anew, with
   // a script-created parser, and returns it, and with three opens a window,
   // as window.open() does. write() and writeln() insert markup at the
@@ -468,6 +491,12 @@ class Document : public Node {
 
   const bool is_html_;
   std::u16string content_type_;
+  // How many times each named item was added and not yet removed, and the
+  // named items in the order in which they came.
+  std::map<std::u16string, int> named_item_counts_;
+  std::vector<std::u16string> named_items_;
+  // How many elements of the tree have each ID.
+  std::map<std::u16string, int> id_counts_;
   const base::TimeTicks start_time_ = base::TimeTicks::Now();
   bool design_mode_ = false;
   CompatibilityMode compat_mode_ = CompatibilityMode::kNoQuirks;
