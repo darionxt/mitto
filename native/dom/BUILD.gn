@@ -133,6 +133,8 @@ source_set("dom") {
     "fetch_loader.h",
     "fetcher.cc",
     "fetcher.h",
+    "form_control_attributes.cc",
+    "form_control_attributes.h",
     "frame_loader.cc",
     "frame_loader.h",
     "geolocation.cc",

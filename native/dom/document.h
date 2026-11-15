@@ -125,6 +125,31 @@ class Document : public Node {
   Element* DocumentElement() const { return FirstElementChild(); }
   std::u16string Title() const;
   void SetTitle(const std::u16string& title);
+  // The html element's dir, "" for a document element that is not one.
+  std::u16string Dir() const;
+  void SetDir(const std::u16string& dir);
+  // The body's text, bgcolor, link, vlink and alink attributes, a frameset's
+  // too, as Blink's legacy color attributes read and write them.
+  std::u16string FgColor() const { return BodyAttribute(u"text"); }
+  void SetFgColor(const std::u16string& color) {
+    SetBodyAttribute(u"text", color);
+  }
+  std::u16string BgColor() const { return BodyAttribute(u"bgcolor"); }
+  void SetBgColor(const std::u16string& color) {
+    SetBodyAttribute(u"bgcolor", color);
+  }
+  std::u16string LinkColor() const { return BodyAttribute(u"link"); }
+  void SetLinkColor(const std::u16string& color) {
+    SetBodyAttribute(u"link", color);
+  }
+  std::u16string VlinkColor() const { return BodyAttribute(u"vlink"); }
+  void SetVlinkColor(const std::u16string& color) {
+    SetBodyAttribute(u"vlink", color);
+  }
+  std::u16string AlinkColor() const { return BodyAttribute(u"alink"); }
+  void SetAlinkColor(const std::u16string& color) {
+    SetBodyAttribute(u"alink", color);
+  }
   HTMLElement* Body() const;
   HTMLHeadElement* Head() const;
   Window* DefaultView() const { return window_.Get(); }
@@ -489,6 +514,10 @@ class Document : public Node {
   }
 
  private:
+  std::u16string BodyAttribute(std::u16string_view name) const;
+  // Blink's SetBodyAttribute(): nothing for a frameset, no body, or the value
+  // it already has.
+  void SetBodyAttribute(std::u16string_view name, const std::u16string& value);
   friend class IgnoreDestructiveWriteCountIncrementer;
   friend class IgnoreOpensDuringUnloadCountIncrementer;
   friend class ThrowOnDynamicMarkupInsertionCountIncrementer;

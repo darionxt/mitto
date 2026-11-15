@@ -541,6 +541,41 @@ DocumentType* Document::Doctype() const {
   return nullptr;
 }
 
+std::u16string Document::Dir() const {
+  Element* const root = DocumentElement();
+  if (!root || !root->HasHTMLTagName(u"html")) {
+    return u"";
+  }
+  return static_cast<HTMLElement*>(root)->Dir();
+}
+
+void Document::SetDir(const std::u16string& dir) {
+  Element* const root = DocumentElement();
+  if (root && root->HasHTMLTagName(u"html")) {
+    root->SetAttributeWithoutValidation(u"dir", dir);
+  }
+}
+
+std::u16string Document::BodyAttribute(std::u16string_view name) const {
+  const HTMLElement* const body = Body();
+  const std::u16string* const value =
+      body ? body->FindAttribute(name) : nullptr;
+  return value ? *value : u"";
+}
+
+void Document::SetBodyAttribute(std::u16string_view name,
+                                const std::u16string& value) {
+  HTMLElement* const body = Body();
+  if (!body || (IsHTMLDocument() && body->HasHTMLTagName(u"frameset"))) {
+    return;
+  }
+  const std::u16string* const current = body->FindAttribute(name);
+  if (current && *current == value) {
+    return;
+  }
+  body->SetAttributeWithoutValidation(name, value);
+}
+
 std::u16string Document::Title() const {
   // The first title element in the document, in tree order.
   for (const Node* node = FirstChild(); node; node = node->NextInTree(this)) {
