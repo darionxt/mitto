@@ -345,3 +345,15 @@ def test_a_cdata_section_serializes_as_text_does(program: Path) -> None:
     """
 
     assert _evaluate(program, script) == "a<b&c a<b&c a<b&c a&lt;b&amp;c a&lt;b&amp;c a&lt;b&amp;c"
+
+
+def test_a_processing_instruction_with_a_namespace_declared_twice_has_no_attributes(program: Path) -> None:
+    # Declarations are no attributes, but libxml2 reads none from a list that declares a prefix or the default
+    # namespace twice, as Chrome 157 gave.
+    script = """
+        const names = (data) => document.createProcessingInstruction('t', data).getAttributeNames();
+        ['a="1" xmlns:x="urn:a" xmlns:x="urn:b"', 'a="1" xmlns="urn:a" xmlns="urn:b"',
+         'a="1" xmlns:x="urn:a" xmlns:y="urn:b"'].map((data) => JSON.stringify(names(data))).join(' ')
+    """
+
+    assert _evaluate(program, script) == '[] [] ["a"]'

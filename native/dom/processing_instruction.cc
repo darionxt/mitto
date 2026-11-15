@@ -1,6 +1,8 @@
 #include "mitto/dom/processing_instruction.h"
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
@@ -161,9 +163,10 @@ std::optional<std::u16string> ParseReference(std::u16string_view data,
 // ParseAttributes(): the attributes of the start tag `<attrs DATA />`, as
 // libxml2's SAX2 handler gets them, or nothing where libxml2 stops before the
 // tag ends. Values have their references read and their spaces made ' ', and
-// namespace declarations are none.
+// namespace declarations are none, though one twice stops libxml2 too.
 std::optional<Attributes> ParsePseudoAttributes(std::u16string_view data) {
   Attributes attributes;
+  std::vector<std::u16string> declarations;
   size_t index = 0;
   // The tag's own space comes before the first attribute.
   bool spaced = true;
@@ -253,6 +256,10 @@ std::optional<Attributes> ParsePseudoAttributes(std::u16string_view data) {
     }
     spaced = false;
     if (name == u"xmlns" || name.starts_with(u"xmlns:")) {
+      if (std::ranges::contains(declarations, name)) {
+        return std::nullopt;
+      }
+      declarations.push_back(name);
       continue;
     }
     if (std::ranges::any_of(
