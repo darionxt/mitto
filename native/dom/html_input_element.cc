@@ -180,7 +180,9 @@ std::u16string HTMLInputElement::Type() const {
       u"search", u"submit",   u"tel",    u"time",  u"url",
       u"week",
   };
-  const std::optional<std::u16string> type = GetAttribute(u"type");
+  // Blink's FastGetAttribute(): the attribute of no namespace, which one of
+  // the same name in a namespace leaves alone.
+  const std::u16string* const type = FindAttribute(u"type");
   if (!type) {
     return u"text";
   }

@@ -292,6 +292,20 @@ def test_a_nullable_integer_returns_and_defaults_to_null() -> None:
     assert "DOMStringOrDOMStringSequence" in types.used_unions
 
 
+def test_a_nullable_frozen_array_of_elements_converts_as_none_for_null_and_undefined() -> None:
+    # The setters of ARIA's relationship attributes, such as ariaControlsElements, as Blink's
+    # IDLNullable<IDLArray<Element>> takes them.
+    types = TypeMapper(frozenset({"Element"}), frozenset())
+    elements = IdlType(
+        TypeKind.FROZEN_ARRAY, "FrozenArray<Element>", nullable=True, members=(IdlType(TypeKind.INTERFACE, "Element"),)
+    )
+
+    assert types.argument_type(elements, "x") == "const std::optional<std::vector<mitto::Element*>>&"
+    converted = "\n".join(types.from_v8(elements, "info[0]", "value", Site(fail="return;"), "x"))
+    assert "if (!info[0]->IsNullOrUndefined()) {" in converted
+    assert "IterateSequence(isolate, info[0], exception_state" in converted
+
+
 def test_a_class_can_give_null_for_an_interface_without_a_class_whatever_the_idl_says() -> None:
     # Blink's classes give null for a type that the IDL does not make nullable, as Document's rootElement does.
     types = TypeMapper(frozenset({"Event"}), frozenset())

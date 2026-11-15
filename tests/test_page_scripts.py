@@ -242,6 +242,45 @@ _CASES["svg_inserted_order"] = Case(
     }
 )
 
+# A script with blocking=render that is fetched before the body holds back the first frame, with pagereveal and the
+# animation frame callbacks, until it has run, unless its blocking attribute stops saying render.
+_CASES["render_blocking"] = Case(
+    {
+        "/": _page(
+            "<script>addEventListener('pagereveal', () => log('pagereveal'));"
+            "requestAnimationFrame(() => { log('frame'); setTimeout(() => finish(logged), 100); });</script>"
+            "<script id=r src=/r.js blocking=render async></script>"
+            "<body><p>text</p><script>log('body'); setTimeout(() => mark('go'), 200);</script>"
+        ),
+        "/r.js": _js("log('r ' + current());", hold="go"),
+    }
+)
+_CASES["render_blocking_dropped"] = Case(
+    {
+        "/": _page(
+            "<script>addEventListener('pagereveal', () => log('pagereveal'));"
+            "requestAnimationFrame(() => { log('frame'); mark('go'); });</script>"
+            "<script id=r src=/r.js blocking=render async></script>"
+            "<script>document.getElementById('r').removeAttribute('blocking');</script>"
+            "<body><p>text</p><script>log('body');</script>"
+        ),
+        "/r.js": _js("log('r ' + current()); setTimeout(() => finish(logged), 100);", hold="go"),
+    }
+)
+# One that another document adopts while it is fetched leaves its document's rendering, and never runs.
+_CASES["render_blocking_adopted"] = Case(
+    {
+        "/": _page(
+            "<script>requestAnimationFrame(() => { log('frame'); setTimeout(() => finish(logged), 300); });</script>"
+            "<script id=r src=/r.js blocking=render async></script>"
+            "<script>document.implementation.createHTMLDocument('x').documentElement.append(document.getElementById('r'));"
+            "log('adopted'); setTimeout(() => mark('go'), 100);</script>"
+            "<body><p>text</p>"
+        ),
+        "/r.js": _js("log('r ' + current());", hold="go"),
+    }
+)
+
 # Which types and languages run, nomodule, event and for, and HTMLScriptElement.supports().
 _TYPES = [
     ("no type", ""),
@@ -624,6 +663,22 @@ _CHROME: dict[str, list[str]] = {
         "o1 load",
         "o2 o2",
         "o2 load",
+    ],
+    "render_blocking": [
+        "body",
+        "r r",
+        "pagereveal",
+        "frame",
+    ],
+    "render_blocking_adopted": [
+        "adopted",
+        "frame",
+    ],
+    "render_blocking_dropped": [
+        "body",
+        "pagereveal",
+        "frame",
+        "r r",
     ],
     "script_types": [
         "no type",

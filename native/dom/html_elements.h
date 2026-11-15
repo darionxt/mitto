@@ -45,6 +45,14 @@ class HTMLButtonElement final : public HTMLElement {
   void SetFormEnctype(const std::u16string& enctype);
   std::u16string FormMethod() const;
   void SetFormMethod(const std::u16string& method);
+  // CommandInvokerElement's: as Blink's HTMLElement::command(), the command
+  // attribute's keyword in lower case, or its value if it starts with "--",
+  // of a button that can invoke commands, else ""; and the commandfor
+  // element, which element reflection gives.
+  std::u16string Command() const;
+  void SetCommand(const std::u16string& command);
+  Element* CommandForElement() const;
+  void SetCommandForElement(Element* element);
 
   // Element:
   void AttributeChanged(const QualifiedName& name,
@@ -52,6 +60,9 @@ class HTMLButtonElement final : public HTMLElement {
                         const std::u16string* new_value) override;
 
  private:
+  // Blink's CanBeCommandInvoker(): not a submit button of a form.
+  bool CanBeCommandInvoker() const;
+
   bool command_seen_ = false;
 };
 

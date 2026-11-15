@@ -4,11 +4,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/bindings/v8_html_anchor_element.h"
+#include "mitto/dom/child_list_mutation_scope.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/frame_loader.h"
 #include "mitto/dom/html_parser_idioms.h"
 #include "mitto/dom/resolved_url.h"
+#include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -172,6 +174,15 @@ HTMLAnchorElement::HTMLAnchorElement(Document& document)
 
 const bindings::WrapperTypeInfo* HTMLAnchorElement::GetWrapperTypeInfo() const {
   return &bindings::V8HTMLAnchorElement::kWrapperTypeInfo;
+}
+
+void HTMLAnchorElement::SetTextContent(const std::u16string& text) {
+  // The DOM standard's "string replace all", one record for observers.
+  const ChildListMutationScope mutation(*this);
+  RemoveChildren();
+  if (!text.empty()) {
+    ParserAppendChild(Text::Create(GetDocument(), text));
+  }
 }
 
 }  // namespace mitto

@@ -83,10 +83,14 @@ bindings::ScriptWrappable* HTMLAllCollection::NamedGetter(
 bindings::ScriptWrappable* HTMLAllCollection::Item(
     const std::optional<v8::Local<v8::Value>>& name_or_index,
     bindings::ExceptionState& exception_state) const {
+  // The HTML Standard's item(): null when nameOrIndex was not given, which an
+  // undefined optional argument is not either.
+  if (!name_or_index || (*name_or_index)->IsUndefined()) {
+    return nullptr;
+  }
   v8::Isolate* const isolate = exception_state.GetIsolate();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  const v8::Local<v8::Value> value =
-      name_or_index ? *name_or_index : v8::Undefined(isolate).As<v8::Value>();
+  const v8::Local<v8::Value> value = *name_or_index;
   v8::Local<v8::Uint32> index;
   if (value->ToArrayIndex(context).ToLocal(&index)) {
     return AnonymousIndexedGetter(index->Value());
