@@ -311,17 +311,9 @@ IDBRequest* IDBObjectStore::DoPut(IndexedDbPutMode put_mode,
   // What fails throws on the isolate, so nothing is sent.
   transaction_->SetActiveDuringSerialization(false);
   std::optional<SerializedScriptValue> serialized =
-      SerializedScriptValue::Serialize(isolate, value);
+      SerializedScriptValue::SerializeForStorage(isolate, value);
   transaction_->SetActiveDuringSerialization(true);
   if (!serialized) {
-    return nullptr;
-  }
-  // Blink's serializer for storage throws this where it meets the module;
-  // here it comes once the rest of the value has been serialized.
-  if (serialized->IsLockedToAgentCluster()) {
-    exception_state.ThrowDOMException(
-        "DataCloneError",
-        "A WebAssembly.Module can not be serialized for storage.");
     return nullptr;
   }
 

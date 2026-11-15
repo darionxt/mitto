@@ -65,6 +65,14 @@ class SerializedScriptValue {
       v8::Local<v8::Value> value,
       Transferables* transferables = nullptr);
 
+  // Serializes `value` as IndexedDB stores it, with Blink's
+  // SerializeOptions::kForStorage: a SharedArrayBuffer or a WebAssembly
+  // module throws a DataCloneError where the serializer meets it, before the
+  // getters after it run.
+  static std::optional<SerializedScriptValue> SerializeForStorage(
+      v8::Isolate* isolate,
+      v8::Local<v8::Value> value);
+
   // A value that came from another process: its bytes alone, as Chrome's
   // CloneableMessage carries them, without the WebAssembly modules, which
   // stay in their agent cluster.
@@ -95,6 +103,12 @@ class SerializedScriptValue {
 
  private:
   SerializedScriptValue();
+
+  static std::optional<SerializedScriptValue> SerializeWith(
+      v8::Isolate* isolate,
+      v8::Local<v8::Value> value,
+      Transferables* transferables,
+      bool for_storage);
 
   std::vector<uint8_t> data_;
   std::vector<std::shared_ptr<v8::BackingStore>> array_buffers_;
