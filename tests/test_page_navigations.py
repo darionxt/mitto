@@ -927,3 +927,52 @@ def test_a_new_document_keeps_the_entries_of_its_origin_with_how_it_came(
         page.evaluate(f"location.href = '{other_origin}'")
         assert _next(page).url == other_origin
         assert page.evaluate(activation) == ["push", True, None, False, [[other_origin, True]], None]
+
+
+def test_a_nonce_hides_in_a_document_whose_response_delivered_a_policy(session: mitto.Session, server: _Server) -> None:
+    # As Chrome 157 gave: with a Content-Security-Policy header, enforced or report-only, the nonce content attribute of
+    # an HTML, SVG or MathML element that goes into the document becomes "" while the element keeps its nonce, but not
+    # for moveBefore(), an element of another document or one that a script sets; an empty header or a meta delivers no
+    # policy.
+    markup = "<div id=parsed nonce=p></div>"
+    script = """
+        const out = [];
+        const parsed = document.getElementById('parsed');
+        out.push(JSON.stringify(parsed.getAttribute('nonce')), parsed.nonce);
+        const div = document.createElement('div');
+        div.setAttribute('nonce', 'a');
+        document.body.append(div);
+        out.push(JSON.stringify(div.getAttribute('nonce')), div.nonce);
+        const moved = document.createElement('div');
+        document.body.append(moved);
+        moved.setAttribute('nonce', 'm');
+        const section = document.body.appendChild(document.createElement('section'));
+        section.moveBefore(moved, null);
+        out.push(moved.getAttribute('nonce'));
+        section.insertBefore(moved, null);
+        out.push(JSON.stringify(moved.getAttribute('nonce')));
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('nonce', 's');
+        document.body.append(svg);
+        const math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'math');
+        math.setAttribute('nonce', 'x');
+        document.body.append(math);
+        out.push(JSON.stringify(svg.getAttribute('nonce')), JSON.stringify(math.getAttribute('nonce')));
+        const other = document.implementation.createHTMLDocument('');
+        const inOther = other.createElement('div');
+        inOther.setAttribute('nonce', 'o');
+        other.body.append(inOther);
+        out.push(JSON.stringify(inOther.getAttribute('nonce')));
+        out.join(' ')
+    """
+    enforced = server.page("/enforced", markup, [("Content-Security-Policy", "img-src 'self'")])
+    report_only = server.page("/report-only", markup, [("Content-Security-Policy-Report-Only", "img-src 'self'")])
+    empty = server.page("/empty", markup, [("Content-Security-Policy", "")])
+    meta = server.page("/meta", "<meta http-equiv=Content-Security-Policy content=\"img-src 'self'\">" + markup)
+
+    for url in (enforced, report_only):
+        with _open_page(session, url) as page:
+            assert page.evaluate(script) == '"" p "" a m "" "" "" "o"'
+    for url in (empty, meta):
+        with _open_page(session, url) as page:
+            assert page.evaluate(script) == '"p" p "a" a m "m" "s" "x" "o"'

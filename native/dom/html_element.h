@@ -56,6 +56,11 @@ class HTMLElement : public Element {
   // says "true", "" or "false", and true for none, as Chrome's default is.
   bool Spellcheck() const;
   void SetSpellcheck(bool value);
+  // The writingsuggestions attribute of this element or the nearest ancestor
+  // that has one: "false" for that keyword in any case, else "true", as
+  // Blink's writingSuggestions() reads it.
+  std::u16string WritingSuggestions() const;
+  void SetWritingSuggestions(const std::u16string& value);
   std::u16string ContentEditable() const;
   void SetContentEditable(const std::u16string& value,
                           bindings::ExceptionState& exception_state);
@@ -132,7 +137,9 @@ class HTMLElement : public Element {
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
 
-  // Node's: a popover that leaves the document hides, with no event.
+  // Node's: the nonce hides as the element goes into a tree, and a popover
+  // that leaves the document hides, with no event.
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
   void RemovedFrom(Node& insertion_point) override;
 
   void Trace(cppgc::Visitor* visitor) const override;

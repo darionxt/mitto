@@ -76,6 +76,7 @@
 #include "mitto/bindings/v8_svg_tspan_element.h"
 #include "mitto/bindings/v8_svg_use_element.h"
 #include "mitto/bindings/v8_svg_view_element.h"
+#include "mitto/dom/document.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/html_names.h"
 #include "mitto/dom/script_loader.h"
@@ -1814,8 +1815,11 @@ void SVGScriptElement::ChildrenChanged(ChildrenChangeType type,
                                        Node& child,
                                        bool by_parser) {
   SVGElement::ChildrenChanged(type, child, by_parser);
-  loader_->ChildrenChanged(type == ChildrenChangeType::kElementInserted ||
-                           type == ChildrenChangeType::kNonElementInserted);
+  // A child that moveBefore() moves in or out prepares nothing.
+  if (!GetDocument().StatePreservingAtomicMoveInProgress()) {
+    loader_->ChildrenChanged(type == ChildrenChangeType::kElementInserted ||
+                             type == ChildrenChangeType::kNonElementInserted);
+  }
 }
 
 void SVGScriptElement::AttributeChanged(const QualifiedName& name,

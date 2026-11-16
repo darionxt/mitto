@@ -316,6 +316,7 @@ mitto_bindings_interfaces = [
       "getElementsByName",
       "getElementsByTagName",
       "getElementsByTagNameNS",
+      "moveBefore",
       "prepend",
       "querySelector",
       "querySelectorAll",
@@ -379,6 +380,7 @@ mitto_bindings_interfaces = [
       "childElementCount",
       "append",
       "getElementById",
+      "moveBefore",
       "prepend",
       "querySelector",
       "querySelectorAll",
@@ -439,6 +441,7 @@ mitto_bindings_interfaces = [
       "insertAdjacentHTML",
       "insertAdjacentText",
       "matches",
+      "moveBefore",
       "prepend",
       "querySelector",
       "querySelectorAll",
@@ -696,6 +699,7 @@ mitto_bindings_interfaces = [
       "togglePopover",
       "showPopover",
       "hidePopover",
+      "writingSuggestions",
     ]
   },
   {
@@ -1979,6 +1983,8 @@ mitto_bindings_interfaces = [
       "dataset",
       "className",
       "nonce",
+      "ownerSVGElement",
+      "viewportElement",
     ]
   },
   {

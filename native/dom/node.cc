@@ -666,6 +666,30 @@ Node* Node::InsertBefore(Node* node,
   return node;
 }
 
+void Node::MoveBefore(Node* node,
+                      Node* child,
+                      bindings::ExceptionState& exception_state) {
+  // A state-preserving atomic move, only if the node and the new parent are
+  // both connected or both not, in one tree, and the node is an element or
+  // character data. The rest of the checks are insertBefore()'s.
+  if (IsConnected() != node->IsConnected() ||
+      &TreeRoot() != &node->TreeRoot() ||
+      !(node->IsElementNode() || node->IsCharacterDataNode())) {
+    exception_state.ThrowDOMException(
+        kHierarchyRequestError,
+        "State-preserving atomic move cannot be performed on nodes "
+        "participating in an invalid hierarchy.");
+    return;
+  }
+  // No script runs during the move, so no move nests in another.
+  Document& document = GetDocument();
+  document.SetStatePreservingAtomicMoveInProgress(true);
+  InsertBefore(node, child, exception_state);
+  document.SetStatePreservingAtomicMoveInProgress(false);
+  // Element::MovedFrom() fixes :focus-within, which needs focus, which a Page
+  // does not have yet.
+}
+
 Node* Node::AppendChild(Node* node, bindings::ExceptionState& exception_state) {
   if (!IsContainerNode()) {
     exception_state.ThrowDOMException(kHierarchyRequestError,
@@ -1193,9 +1217,12 @@ void Node::NotifyNodeInserted(Node& child, NodeVector& post_connection) {
     if (!connected && !node->IsContainerNode()) {
       continue;
     }
+    // A node that moves does not run its post-insertion steps, which can run
+    // a script.
     if (node->InsertedInto(*this) ==
-        InsertionNotificationRequest::
-            kInsertionShouldCallDidNotifySubtreeInsertions) {
+            InsertionNotificationRequest::
+                kInsertionShouldCallDidNotifySubtreeInsertions &&
+        !GetDocument().StatePreservingAtomicMoveInProgress()) {
       post_connection.emplace_back(node);
     }
   }

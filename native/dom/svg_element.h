@@ -24,6 +24,8 @@
 
 namespace mitto {
 
+class SVGSVGElement;
+
 class SVGElement : public Element {
  public:
   static SVGElement* Create(Document& document,
@@ -47,6 +49,11 @@ class SVGElement : public Element {
   // SVGFitToViewBox's, and preserveAspectRatio of image and feImage too.
   SVGAnimatedRect* ViewBox();
   SVGAnimatedPreserveAspectRatio* PreserveAspectRatio();
+  // The nearest svg ancestor, but none for an outermost svg, and the nearest
+  // svg, image or symbol ancestor, as Blink's ownerSVGElement() and
+  // viewportElement() walk up.
+  SVGSVGElement* OwnerSVGElement() const;
+  SVGElement* ViewportElement() const;
 
   // Writes back the value that a page set of an animated value, which the
   // value keeps rather than reading again.
@@ -58,6 +65,8 @@ class SVGElement : public Element {
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+  // Node's: the nonce hides as the element goes into a tree.
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
 
  protected:
   // Element's: the copy's event handler content attributes set handlers, as
