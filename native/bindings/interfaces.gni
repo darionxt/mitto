@@ -693,6 +693,9 @@ mitto_bindings_interfaces = [
       "dataset",
       "hidden",
       "nonce",
+      "togglePopover",
+      "showPopover",
+      "hidePopover",
     ]
   },
   {

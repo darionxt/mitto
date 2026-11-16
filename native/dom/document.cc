@@ -215,6 +215,14 @@ void Document::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(traversals_);
   visitor->Trace(parser_);
   visitor->Trace(load_timing_);
+  popover_auto_stack_.Trace(visitor);
+  popover_hint_stack_.Trace(visitor);
+  visitor->Trace(popover_hint_stack_parent_);
+  visitor->Trace(popover_removal_root_);
+}
+
+void Document::SetPopoverHintStackParent(HTMLElement* parent) {
+  popover_hint_stack_parent_ = parent;
 }
 
 mitto::Location* Document::Location() const {

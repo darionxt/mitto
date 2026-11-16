@@ -1,0 +1,92 @@
+{
+ "errors": [
+  "NotSupportedError: Failed to execute 'showPopover' on 'HTMLElement': Not supported on elements that are not popovers.",
+  "NotSupportedError: Failed to execute 'hidePopover' on 'HTMLElement': Not supported on elements that are not popovers. This might have been the result of the \"beforetoggle\" event handler changing the state of this popover.",
+  "NotSupportedError: Failed to execute 'togglePopover' on 'HTMLElement': Not supported on elements that are not popovers.",
+  "InvalidStateError: Failed to execute 'showPopover' on 'HTMLElement': Invalid on disconnected popover elements.",
+  "undefined",
+  "InvalidStateError: Failed to execute 'togglePopover' on 'HTMLElement': Invalid on disconnected popover elements."
+ ],
+ "toggle": [
+  "undefined",
+  "undefined",
+  "a",
+  "false",
+  "false",
+  "true"
+ ],
+ "toggle_events": [
+  "beforetoggle/a/closed/open/true/true/button",
+  "beforetoggle/a/open/closed/false/false/",
+  "beforetoggle/a/closed/open/true/false/",
+  "toggle/a/closed/open/false/false/"
+ ],
+ "stacks": [
+  "b",
+  "b,c",
+  "b,c,m",
+  "b,c,h,m",
+  "b,c,m,h2",
+  "m,d"
+ ],
+ "stack_events": [
+  "beforetoggle/b/closed/open/true/false/",
+  "beforetoggle/a/open/closed/false/false/",
+  "beforetoggle/c/closed/open/true/false/",
+  "beforetoggle/m/closed/open/true/false/",
+  "beforetoggle/h/closed/open/true/false/",
+  "beforetoggle/h2/closed/open/true/false/",
+  "beforetoggle/h/open/closed/false/false/",
+  "beforetoggle/d/closed/open/true/false/",
+  "beforetoggle/h2/open/closed/false/false/",
+  "beforetoggle/c/open/closed/false/false/",
+  "beforetoggle/b/open/closed/false/false/",
+  "toggle/a/open/closed/false/false/",
+  "toggle/m/closed/open/false/false/",
+  "toggle/h/closed/closed/false/false/",
+  "toggle/h2/closed/closed/false/false/",
+  "toggle/c/closed/closed/false/false/",
+  "toggle/b/closed/closed/false/false/",
+  "toggle/d/closed/open/false/false/"
+ ],
+ "listeners": [
+  "undefined",
+  "m,d",
+  "undefined",
+  "InvalidStateError: Failed to execute 'showPopover' on 'HTMLElement': Invalid to show a popover during another show operation",
+  "m,f",
+  "undefined",
+  "m,f,k"
+ ],
+ "changes": [
+  "k",
+  "null",
+  false,
+  false,
+  "k,p1,p2",
+  false
+ ],
+ "change_events": [
+  "beforetoggle/d/open/closed/false/false/",
+  "beforetoggle/m/open/closed/false/false/",
+  "beforetoggle/n/closed/open/true/false/",
+  "beforetoggle/n/open/closed/false/false/",
+  "beforetoggle/q/closed/open/true/false/",
+  "toggle/d/open/closed/false/false/",
+  "toggle/m/open/closed/false/false/",
+  "toggle/n/closed/closed/false/false/",
+  "toggle/q/closed/open/false/false/"
+ ],
+ "dialog": [
+  "k",
+  "k,s",
+  "InvalidStateError: Failed to execute 'showModal' on 'HTMLDialogElement': The dialog is already open as a Popover, and therefore cannot be opened as a modal dialog.",
+  "InvalidStateError: Failed to execute 'showPopover' on 'HTMLElement': The dialog is already open as a dialog, and therefore cannot be opened as a popover."
+ ],
+ "reentrant": [
+  "null",
+  false,
+  40,
+  "39"
+ ]
+}

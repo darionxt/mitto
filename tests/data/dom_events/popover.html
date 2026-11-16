@@ -1,0 +1,136 @@
+<!doctype html><html><head><title>popover</title></head><body>
+<script>
+function done(result) { window.result = result; fetch('/record', {method: 'POST', body: JSON.stringify(result)}); }
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+const error = f => { try { return String(f()); } catch (e) { return e.name + ': ' + e.message; } };
+const log = [];
+const watch = popover => {
+  for (const type of ['beforetoggle', 'toggle']) {
+    popover.addEventListener(type, e => log.push([e.type, popover.id, e.oldState, e.newState, e.cancelable, e.composed,
+                                                  e.source && e.source.id].join('/')));
+  }
+};
+const make = (id, type, parent = document.body) => {
+  const element = document.createElement('div');
+  element.id = id;
+  if (type !== undefined) element.setAttribute('popover', type);
+  parent.append(element);
+  return element;
+};
+const open = () => [...document.querySelectorAll(':popover-open')].map(e => e.id).join(',');
+(async () => {
+  const r = {};
+  // What throws: no popover attribute, a disconnected popover, and hidePopover() on one that is closed does nothing.
+  const plain = make('plain');
+  const detached = document.createElement('div');
+  detached.popover = 'auto';
+  r.errors = [error(() => plain.showPopover()), error(() => plain.hidePopover()), error(() => plain.togglePopover()),
+              error(() => detached.showPopover()), error(() => detached.hidePopover()),
+              error(() => detached.togglePopover(false))];
+
+  // showPopover() with a source, beforetoggle at once and cancelable on opening, toggle in a task that folds in the
+  // changes before it, and togglePopover()'s forms.
+  const a = make('a', '');
+  const button = make('button');
+  watch(a);
+  r.toggle = [error(() => a.showPopover({source: button})), error(() => a.showPopover()), open(),
+              error(() => a.togglePopover()), error(() => a.togglePopover({force: false})),
+              error(() => a.togglePopover(true))];
+  await tick();
+  r.toggle_events = log.splice(0);
+
+  // The stacks: an auto popover closes the others but its ancestors, a manual one closes none, a hint keeps the auto
+  // popover it opens in until another hint or auto popover shows.
+  const b = make('b', 'auto');
+  const c = make('c', 'auto', b);
+  const m = make('m', 'manual');
+  const h = make('h', 'hint', c);
+  const h2 = make('h2', 'hint');
+  const d = make('d', 'auto');
+  for (const popover of [b, c, m, h, h2, d]) watch(popover);
+  r.stacks = [];
+  for (const popover of [b, c, m, h, h2, d]) {
+    popover.showPopover();
+    r.stacks.push(open());
+  }
+  await tick();
+  r.stack_events = log.splice(0);
+
+  // A beforetoggle listener that cancels the show, one that shows another popover, which throws, and one that changes
+  // the popover's type.
+  const e = make('e', 'auto');
+  e.addEventListener('beforetoggle', event => event.preventDefault(), {once: true});
+  const f = make('f', 'auto');
+  const g = make('g', 'manual');
+  let inner = null;
+  f.addEventListener('beforetoggle', () => { inner = error(() => g.showPopover()); }, {once: true});
+  const k = make('k', 'auto');
+  k.addEventListener('beforetoggle', () => { k.popover = 'manual'; }, {once: true});
+  r.listeners = [error(() => e.showPopover()), open(), error(() => f.showPopover()), inner, open(),
+                 error(() => k.showPopover()), open()];
+
+  // A change of type hides an open popover, and so does removing its attribute; removing it from the document hides
+  // it with no event.
+  m.setAttribute('popover', 'auto');
+  const n = make('n', 'manual');
+  watch(n);
+  n.showPopover();
+  n.removeAttribute('popover');
+  const q = make('q', 'manual');
+  watch(q);
+  q.showPopover();
+  q.remove();
+  const removed = q.matches(':popover-open');
+  document.body.append(q);
+  const p1 = make('p1', 'auto');
+  const p2 = make('p2', 'auto', p1);
+  p1.showPopover();
+  p2.showPopover();
+  const both = open();
+  p1.remove();
+  r.changes = [open(), String(n.popover), removed, q.matches(':popover-open'), both, p2.matches(':popover-open')];
+  await tick();
+  r.change_events = log.splice(0);
+
+  // A dialog that shows closes the popovers but the one it is in; showModal() of a dialog open as a popover throws,
+  // and so does showPopover() of a modal dialog.
+  const s = make('s', 'auto');
+  s.showPopover();
+  const dialog = document.createElement('dialog');
+  document.body.append(dialog);
+  dialog.show();
+  r.dialog = [open()];
+  dialog.close();
+  s.showPopover();
+  const inside = document.createElement('dialog');
+  s.append(inside);
+  inside.show();
+  r.dialog.push(open());
+  inside.close();
+  const popoverDialog = document.createElement('dialog');
+  popoverDialog.popover = 'manual';
+  document.body.append(popoverDialog);
+  popoverDialog.showPopover();
+  r.dialog.push(error(() => popoverDialog.showModal()));
+  popoverDialog.hidePopover();
+  popoverDialog.showModal();
+  r.dialog.push(error(() => popoverDialog.showPopover()));
+  popoverDialog.close();
+
+  // A beforetoggle listener that runs while the type of a dialog that shows as a popover changes may add attributes
+  // and remove the popover attribute before the dialog's own hook reads the change.
+  const changing = document.createElement('dialog');
+  changing.popover = 'manual';
+  document.body.append(changing);
+  changing.showPopover();
+  changing.addEventListener('beforetoggle', () => {
+    for (let i = 0; i < 40; i++) changing.setAttribute('data-x' + i, String(i));
+    changing.removeAttribute('popover');
+  }, {once: true});
+  changing.setAttribute('popover', 'auto');
+  r.reentrant = [String(changing.popover), changing.matches(':popover-open'), changing.attributes.length,
+                 changing.getAttribute('data-x39')];
+  await tick();
+  done(r);
+})();
+</script></body></html>

@@ -539,6 +539,30 @@ class Document : public Node {
   // Null while none was ever attached, so that a change costs nothing then.
   AttachedTraversals* ExistingTraversals() const { return traversals_.Get(); }
 
+  // The open popovers of the auto and hint types, the topmost last, as
+  // Blink's PopoverAutoStack() and PopoverHintStack() keep them, and the
+  // popover that the hint stack opened from, if any.
+  HeapVector<HTMLElement>& PopoverAutoStack() { return popover_auto_stack_; }
+  HeapVector<HTMLElement>& PopoverHintStack() { return popover_hint_stack_; }
+  HTMLElement* PopoverHintStackParent() const {
+    return popover_hint_stack_parent_.Get();
+  }
+  void SetPopoverHintStackParent(HTMLElement* parent);
+  // Whether a popover is being shown, and how many are being hidden, as
+  // Blink's PopoverShowing() and PopoverHidingNestingCount() keep it.
+  bool PopoverShowing() const { return popover_showing_; }
+  void SetPopoverShowing(bool showing) { popover_showing_ = showing; }
+  int PopoverHidingNestingCount() const {
+    return popover_hiding_nesting_count_;
+  }
+  void IncrementPopoverHidingNestingCount() { ++popover_hiding_nesting_count_; }
+  void DecrementPopoverHidingNestingCount() { --popover_hiding_nesting_count_; }
+  // The root of a subtree that left the document while its popovers hide,
+  // whose nodes count as connected meanwhile, as Blink's nodes are until
+  // their own RemovedFrom().
+  Node* PopoverRemovalRoot() const { return popover_removal_root_.Get(); }
+  void SetPopoverRemovalRoot(Node* root) { popover_removal_root_ = root; }
+
  protected:
   Node* CloneWithoutChildren(Document& document) const override;
   // A new document of the same class, which a copy starts from, as Blink's
@@ -658,6 +682,12 @@ class Document : public Node {
   bool write_recursion_is_too_deep_ = false;
   // The HTML Standard's active parser was aborted.
   bool ignore_opens_and_writes_for_abort_ = false;
+  HeapVector<HTMLElement> popover_auto_stack_;
+  HeapVector<HTMLElement> popover_hint_stack_;
+  cppgc::Member<HTMLElement> popover_hint_stack_parent_;
+  bool popover_showing_ = false;
+  int popover_hiding_nesting_count_ = 0;
+  cppgc::Member<Node> popover_removal_root_;
 };
 
 // The HTML Standard's ignore-destructive-writes counter of `document`, which
