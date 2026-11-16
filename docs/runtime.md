@@ -675,6 +675,14 @@ An element of the HTML namespace gets the HTML Standard's interface for its name
 
 `innerHTML` and `outerHTML` write the HTML Standard's serialization, escaping in attributes and text what Chrome escapes.
 
+Known Gaps of these interfaces that need no layout, each with its route:
+
+- `HTMLElement`'s `autocorrect`, which reads the form owner's attribute, comes with forms ([#281](https://github.com/darionxt/mitto/issues/281)).
+- `Document`'s `xmlEncoding`, `xmlVersion` and `xmlStandalone` come with XML documents ([#269](https://github.com/darionxt/mitto/issues/269)).
+- `Element`'s `setHTMLUnsafe()` and `setHTML()`, and the HTML-setting methods of `Element` and `CharacterData`, `afterHTML()`, `beforeHTML()`, `prependHTML()`, `appendHTML()`, `replaceWithHTML()`, their `…Unsafe` forms and their `stream…` forms, with the Sanitizer API that the safe forms need, wait on the owner's decision.
+- `Document`'s `evaluate()` and `createExpression()`, XPath, which no ticket has, wait on the owner's decision.
+- `Document`'s `captureEvents()`, `releaseEvents()` and `clear()` do nothing in Chrome, which their default gives.
+
 ### Selectors
 
 `querySelector()`, `querySelectorAll()`, `matches()`, `closest()` and `webkitMatchesSelector()` parse their selectors with the selector parser in [`native/css`](../native/css), which reads the tokens of the CSS tokenizer there as Blink's `CSSSelectorParser` reads them, and match them with [`selector_checker.cc`](../native/dom/selector_checker.cc), which follows Blink's `SelectorChecker` in its mode for queries. So what parses is what Chrome takes: every pseudo-class and pseudo-element of Blink's tables whose runtime-enabled features the Page has, the forgiving lists of `:is()` and `:where()`, relative selectors in `:has()`, `:nth-child()` and `:nth-last-child()` with `of`, `&` as `:scope`, the namespace prefixes `*` and the empty one but no other, since there is no style sheet, Blink's limits on what may follow a pseudo-element, and its unknown `::-webkit-` pseudo-elements. An empty selector and one that is not valid throw Chrome's `SyntaxError`. A selector with a pseudo-element is valid and matches nothing. The fuzz target `css_selector_fuzzer` feeds the parser any input.
