@@ -21,6 +21,7 @@
 #include "mitto/dom/idb_request.h"
 #include "mitto/dom/idb_transaction.h"
 #include "mitto/dom/indexed_db_host.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
@@ -649,7 +650,7 @@ void IDBCursor::Ask(PageIndexedDbCall call,
                  [](cppgc::Persistent<IDBCursor> cursor,
                     cppgc::WeakPersistent<IDBRequest> request,
                     AnswerTo answer_to, PageIndexedDbCallback answer) {
-                   RunInIDBContext(cursor->transaction_->GetWindow(), [&] {
+                   RunInWindowContext(cursor->transaction_->GetWindow(), [&] {
                      cursor->OnAnswer(request.Get(), answer_to,
                                       std::move(answer));
                    });
