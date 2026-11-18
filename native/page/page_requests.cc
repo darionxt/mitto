@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/performance.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/resource_timing.h"
 #include "v8/include/v8-isolate.h"
@@ -27,9 +28,12 @@ PageRequests::Open& PageRequests::Open::operator=(Open&&) = default;
 PageRequests::Open::~Open() = default;
 
 PageRequests::PageRequests(
-    SendFrame send,
-    base::RepeatingCallback<void(std::string why)> refuse)
-    : send_(std::move(send)), refuse_(std::move(refuse)) {}
+    scoped_refptr<SessionSender> sender,
+    base::RepeatingCallback<void(std::string why)> refuse,
+    SessionSender::ResponseRoute route)
+    : sender_(std::move(sender)),
+      refuse_(std::move(refuse)),
+      route_(std::move(route)) {}
 
 PageRequests::~PageRequests() = default;
 
@@ -50,29 +54,42 @@ uint64_t PageRequests::Start(PageRequestKind kind,
 uint64_t PageRequests::Start(PageRequest request,
                              Client& client,
                              bool render_blocking) {
-  request.number = next_number_++;
-  Open& open = open_[request.number];
-  open.client = &client;
   // ResourceFetcher::RecordResourceTimingInfo(), when the page asks.
-  Timed& timed = open.timed.emplace();
+  Timed timed;
   timed.start_time = base::TimeTicks::Now();
   timed.initiator_type =
       request.kind == PageRequestKind::kScript ? u"script" : u"fetch";
   timed.url = base::UTF8ToUTF16(request.url);
   timed.render_blocking = render_blocking;
-  timed.window = &Window::Current();
+  ExecutionContext& context = ExecutionContext::Current();
+  if (context.IsWindow()) {
+    timed.window = &Window::Current();
+  }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   timed.context.Reset(isolate, isolate->GetCurrentContext());
-  // The Session works out the Initiator from the document that asks.
-  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
-  return request.number;
+  // The Session works out the Initiator from the context that asks.
+  const uint64_t number = Send(context.ContextId(), request);
+  Open& open = open_[number];
+  open.client = &client;
+  open.timed = std::move(timed);
+  return number;
 }
 
 uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
-  request.number = next_number_++;
-  open_[request.number].client = &client;
-  send_.Run(EncodeRequest(Window::Current().DocumentId(), request));
-  return request.number;
+  const uint64_t number = Send(Window::Current().DocumentId(), request);
+  open_[number].client = &client;
+  return number;
+}
+
+uint64_t PageRequests::Send(uint64_t context, PageRequest& request) {
+  // Its response can come only once this thread is done with this task, so
+  // it finds the request open.
+  return sender_->SendRequest(
+      [&](uint64_t number) {
+        request.number = number;
+        return EncodeRequest(context, request);
+      },
+      route_);
 }
 
 void PageRequests::Cancel(uint64_t number) {
@@ -89,7 +106,7 @@ void PageRequests::Cancel(uint64_t number) {
   // It stays open until the Session ends it, so that what the Session sent
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
-  send_.Run(EncodeCancel(number));
+  sender_->Send(EncodeCancel(number));
 }
 
 void PageRequests::LetGo(uint64_t number) {
@@ -143,7 +160,7 @@ void PageRequests::TookBody(uint64_t number, size_t bytes) {
   PageCredit credit;
   credit.number = number;
   credit.bytes = base::checked_cast<uint32_t>(bytes);
-  send_.Run(EncodeCredit(credit));
+  sender_->Send(EncodeCredit(credit));
 }
 
 PageRequests::Open* PageRequests::Find(uint64_t number,

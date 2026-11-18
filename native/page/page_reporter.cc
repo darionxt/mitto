@@ -28,8 +28,10 @@ namespace {
 // Blink gives each frame a context group of its own. A Page has one.
 constexpr int kContextGroupId = 1;
 
-// The one PageReporter, which V8's callback for rejected promises reaches.
-PageReporter* g_reporter = nullptr;
+// The PageReporter that V8's callback for rejected promises reaches: one for
+// each isolate, on the isolate's thread, the main thread's and each dedicated
+// worker's.
+constinit thread_local PageReporter* g_reporter = nullptr;
 
 // Blink's kMaxReportedHandlersPendingResolution: how many reported rejections
 // a handler that comes later still finds.

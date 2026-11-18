@@ -59,8 +59,8 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
     requests_->Cancel(provisional_->number());
     provisional_.reset();
   }
-  provisional_ = std::make_unique<DocumentLoader>(
-      *runner_, *requests_, send_, *this, requests_->NextNumber());
+  provisional_ =
+      std::make_unique<DocumentLoader>(*runner_, *requests_, send_, *this);
   provisional_request_ = request;
   provisional_start_ = now;
   provisional_cookie_writes_ = cookie_jar_->cookie_writes();
@@ -69,9 +69,10 @@ void PageFrame::BeginNavigation(const NavigationRequest& request) {
   page_request.url = request.url.spec();
   page_request.user_activation = request.user_activation;
   page_request.reload = request.reload;
-  const uint64_t number =
-      requests_->StartNavigation(std::move(page_request), *provisional_);
-  CHECK_EQ(number, provisional_->number());
+  // A worker's thread may number a request in between, so the loader learns
+  // its number once the request has it.
+  provisional_->SetNumber(
+      requests_->StartNavigation(std::move(page_request), *provisional_));
 }
 
 void PageFrame::DidNavigateWithinDocument(const GURL& url) {

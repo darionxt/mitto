@@ -47,7 +47,7 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
  public:
   // Starts an inspector on `isolate`, as Blink does for each isolate, and has
   // V8 tell this of each promise that is rejected with no handler, and of each
-  // error that nothing caught. One at a time.
+  // error that nothing caught. One at a time on each thread.
   PageReporter(v8::Isolate* isolate, SendFrame send);
 
   PageReporter(const PageReporter&) = delete;

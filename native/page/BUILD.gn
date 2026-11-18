@@ -85,6 +85,8 @@ executable("mitto_page") {
     "session_cache_storage.h",
     "session_indexed_db.cc",
     "session_indexed_db.h",
+    "session_sender.cc",
+    "session_sender.h",
     "session_channel.cc",
     "session_channel.h",
     "session_cookie_jar.cc",

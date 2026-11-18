@@ -4,7 +4,9 @@ namespace mitto {
 namespace {
 
 // The Page's one event loop, on its main thread.
-EventLoop* g_event_loop = nullptr;
+// Each thread that runs a Page's scripts has its own: the main thread's, and
+// each dedicated worker's.
+constinit thread_local EventLoop* g_event_loop = nullptr;
 
 }  // namespace
 
