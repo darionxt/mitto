@@ -453,69 +453,6 @@ void Window::WebkitRequestFileSystem(uint16_t type,
           origin, static_cast<DOMFileSystem::Type>(type)));
 }
 
-// Upstream: third_party/blink/renderer/core/fetch/global_fetch.cc
-// Upstream: third_party/blink/renderer/core/fetch/fetch_manager.cc
-v8::Local<v8::Promise> Window::Fetch(
-    const bindings::RequestOrUSVString& input,
-    const bindings::RequestInit& init,
-    bindings::ExceptionState& exception_state) {
-  Request* const request = Request::Create(input, init, exception_state);
-  if (!request) {
-    return v8::Local<v8::Promise>();
-  }
-  v8::Isolate* const isolate = v8::Isolate::GetCurrent();
-  const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Local<v8::Promise::Resolver> resolver;
-  if (!v8::Promise::Resolver::New(context).ToLocal(&resolver)) {
-    return v8::Local<v8::Promise>();
-  }
-  // A request whose signal has aborted rejects with its reason, before any
-  // check of where it goes.
-  AbortSignal* const signal = request->Signal();
-  if (signal->Aborted()) {
-    std::ignore = resolver->Reject(context, signal->Reason());
-    return resolver->GetPromise();
-  }
-  const url::Origin document_origin = url::Origin::Create(
-      GURL(base::UTF16ToUTF8(GetDocument().UrlForBinding())));
-  // A cross-origin request of mode same-origin fails before anything goes, as
-  // CorsURLLoader fails it. One that needs a CORS preflight goes to the
-  // Session, which makes the preflight first.
-  const bool cross_origin = !document_origin.IsSameOriginWith(request->url());
-  Fetcher* const fetcher = GetFetcher();
-  if (!fetcher ||
-      (cross_origin && request->mode() == FetchMode::kSameOrigin)) {
-    std::ignore = resolver->Reject(
-        context, v8::Exception::TypeError(v8::String::NewFromUtf8Literal(
-                     isolate, "Failed to fetch")));
-    return resolver->GetPromise();
-  }
-  FetchRequestData data;
-  data.method = request->Method();
-  data.url = request->url().spec();
-  data.headers = request->GetHeaders()->ToLines();
-  data.body = request->body();
-  // A fetch's own are mode cors and credentials same-origin.
-  if (request->mode() != FetchMode::kCors) {
-    data.mode = request->mode();
-  }
-  if (request->credentials() != FetchCredentialsMode::kSameOrigin) {
-    data.credentials = request->credentials();
-  }
-  data.referrer = request->referrer();
-  data.referrer_policy = request->referrer_policy();
-  data.priority = ComputeFetchPriority(/*lazy=*/false, request->priority(),
-                                       /*render_blocking=*/false);
-  data.keepalive = request->keepalive();
-  fetcher->Fetch(std::move(data), std::make_unique<FetchLoader>(
-                                      isolate, context, resolver,
-                                      /*head=*/request->Method() == "HEAD",
-                                      /*credentials=*/request->credentials() ==
-                                          FetchCredentialsMode::kInclude,
-                                      signal));
-  return resolver->GetPromise();
-}
-
 void Window::SetDocument(mitto::Document* document) {
   if (document_) {
     document_->SetWindow(nullptr);

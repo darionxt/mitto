@@ -27,6 +27,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/synchronization/lock.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/threading/platform_thread.h"
@@ -131,6 +132,11 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
   void Terminate();
   // Stops a script that the worker runs, as the forced termination does.
   void TerminateExecution();
+  // Signaled once the worker ends, which stops a synchronous request of its,
+  // as Blink's sync-load abort event does.
+  base::WaitableEvent& abort_synchronous_load() {
+    return abort_synchronous_load_;
+  }
 
   // base::PlatformThread::Delegate:
   void ThreadMain() override;
@@ -151,6 +157,7 @@ class DedicatedWorkerThread final : public base::PlatformThread::Delegate {
   // The worker's isolate while the thread has one, for TerminateExecution().
   raw_ptr<v8::Isolate> isolate_ GUARDED_BY(lock_) = nullptr;
   bool terminating_ GUARDED_BY(lock_) = false;
+  base::WaitableEvent abort_synchronous_load_;
 };
 
 }  // namespace mitto

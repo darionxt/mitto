@@ -1,21 +1,42 @@
 #include "mitto/dom/worker_global_scope.h"
 
+#include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
+#include "mitto/dom/dedicated_worker_messaging.h"
+#include "mitto/dom/error_reporting.h"
 #include "mitto/dom/message_port.h"
+#include "mitto/dom/pending_script.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/serialized_script_value.h"
+#include "mitto/dom/worker_location.h"
+#include "mitto/dom/worker_navigator.h"
+#include "mitto/encoding/content_type.h"
+#include "mitto/encoding/text_resource_decoder.h"
+#include "mitto/encoding/text_resource_decoder_builder.h"
+#include "mitto/header_rules.h"
 #include "v8/include/v8-context.h"
+#include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
+#include "v8/include/v8-script.h"
 
 namespace mitto {
+
+ImportedScript::ImportedScript() = default;
+ImportedScript::ImportedScript(ImportedScript&&) = default;
+ImportedScript& ImportedScript::operator=(ImportedScript&&) = default;
+ImportedScript::~ImportedScript() = default;
 
 WorkerGlobalScope::WorkerGlobalScope() = default;
 WorkerGlobalScope::~WorkerGlobalScope() = default;
@@ -28,6 +49,22 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   EventTarget::Trace(visitor);
   ExecutionContext::Trace(visitor);
   visitor->Trace(performance_);
+  visitor->Trace(location_);
+  visitor->Trace(navigator_);
+}
+
+WorkerNavigator* WorkerGlobalScope::Navigator() {
+  if (!navigator_) {
+    navigator_ = WorkerNavigator::Create(Start(), Connection());
+  }
+  return navigator_.Get();
+}
+
+WorkerLocation* WorkerGlobalScope::Location() {
+  if (!location_) {
+    location_ = WorkerLocation::Create(url_);
+  }
+  return location_.Get();
 }
 
 mitto::Performance* WorkerGlobalScope::Performance() {
@@ -48,6 +85,103 @@ bool WorkerGlobalScope::IsSecureContextForBindings() const {
   // for its isolate when it starts the worker.
   return bindings::PerIsolateData::From(v8::Isolate::GetCurrent())
       ->secure_context();
+}
+
+// WorkerGlobalScope::ImportScriptsInternal().
+void WorkerGlobalScope::ImportScripts(
+    const std::vector<std::u16string>& urls,
+    bindings::ExceptionState& exception_state) {
+  if (module_) {
+    exception_state.ThrowTypeError(
+        "Module scripts don't support importScripts().");
+    return;
+  }
+  if (urls.empty()) {
+    return;
+  }
+  // Every URL parses before any script is fetched.
+  std::vector<GURL> resolved;
+  resolved.reserve(urls.size());
+  for (const std::u16string& url : urls) {
+    GURL complete = CompleteUrl(url);
+    if (!complete.is_valid()) {
+      exception_state.ThrowDOMException(
+          "SyntaxError",
+          base::StrCat({"The URL '", base::UTF16ToUTF8(url), "' is invalid."}));
+      return;
+    }
+    resolved.push_back(std::move(complete));
+  }
+  v8::Isolate* const isolate = exception_state.GetIsolate();
+  for (const GURL& url : resolved) {
+    const std::string failed =
+        base::StrCat({"The script at '", ElidedUrl(url), "' failed to load."});
+    std::optional<ImportedScript> script =
+        imported_script_loader_ ? imported_script_loader_->Load(url)
+                                : std::nullopt;
+    // WorkerClassicScriptLoader::DidReceiveResponse(): a response that is not
+    // 2xx, or not of a JavaScript MIME type, as importScripts() checks it
+    // strictly, fails to load.
+    bool loaded = script && (script->status == 0 ||
+                             (script->status >= 200 && script->status < 300));
+    if (loaded) {
+      if (std::optional<std::string> refused = RefusedAsWorkerScript(
+              script->url, script->headers, /*strict=*/true)) {
+        AddConsoleMessage(ConsoleLevel::kError, *std::move(refused));
+        loaded = false;
+      }
+    }
+    if (!loaded) {
+      exception_state.ThrowDOMException("NetworkError", failed);
+      return;
+    }
+    const std::unique_ptr<TextResourceDecoder> decoder =
+        BuildClassicScriptDecoder(
+            "UTF-8",
+            GetMimeTypeAndCharset(HeaderField(script->headers, "content-type"))
+                .charset);
+    std::u16string source = decoder->Decode(base::as_byte_span(script->body));
+    source += decoder->Flush();
+    // Named after the URL asked for, without its fragment, and its errors
+    // muted if its response was opaque.
+    GURL::Replacements no_fragment;
+    no_fragment.ClearRef();
+    const std::string name = url.ReplaceComponents(no_fragment).spec();
+    const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+    v8::TryCatch try_catch(isolate);
+    v8::Local<v8::String> name_string;
+    v8::Local<v8::String> code;
+    v8::Local<v8::Script> compiled;
+    bool ran = false;
+    if (v8::String::NewFromUtf8(isolate, name.c_str()).ToLocal(&name_string) &&
+        v8::String::NewFromTwoByte(
+            isolate, reinterpret_cast<const uint16_t*>(source.data()),
+            v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
+            .ToLocal(&code)) {
+      v8::ScriptOrigin origin =
+          ClassicScriptOrigin(name_string, /*muted_errors=*/script->opaque);
+      v8::ScriptCompiler::Source script_source(code, origin);
+      ran = v8::ScriptCompiler::Compile(context, &script_source)
+                .ToLocal(&compiled) &&
+            !compiled->Run(context).IsEmpty();
+    }
+    if (ran) {
+      continue;
+    }
+    // RethrowErrorsOption::Rethrow(): what the script threw goes on, as a
+    // NetworkError for a script whose errors are muted, and the scripts
+    // after it are not run.
+    if (!try_catch.HasCaught() || !try_catch.CanContinue()) {
+      return;
+    }
+    if (script->opaque) {
+      try_catch.Reset();
+      exception_state.ThrowDOMException("NetworkError", failed);
+      return;
+    }
+    try_catch.ReThrow();
+    return;
+  }
 }
 
 // As Window::StructuredClone(), in the worker's context.

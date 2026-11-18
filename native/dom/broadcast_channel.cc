@@ -11,28 +11,26 @@
 #include "mitto/dom/message_event.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/serialized_script_value.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 
 namespace mitto {
 
 // static
 BroadcastChannel* BroadcastChannel::Create(const std::u16string& name) {
-  // A worker's channel reaches no other yet: the Page's service runs on its
-  // main thread.
-  Window* const window =
-      ExecutionContext::Current().IsWindow() ? &Window::Current() : nullptr;
-  return bindings::MakeGarbageCollected<BroadcastChannel>(window, name);
+  return bindings::MakeGarbageCollected<BroadcastChannel>(
+      &ExecutionContext::Current(), name);
 }
 
-BroadcastChannel::BroadcastChannel(Window* window, const std::u16string& name)
-    : window_(window), name_(name) {
-  // A channel of a window that has lost its context stays unconnected, and
-  // its postMessage() does nothing, as in a detached frame.
-  if (!window || !window->HasContext()) {
+BroadcastChannel::BroadcastChannel(ExecutionContext* context,
+                                   const std::u16string& name)
+    : context_(context), name_(name) {
+  // A channel of a context that has gone stays unconnected, and its
+  // postMessage() does nothing, as in a detached frame.
+  if (!context || !context->HasContext()) {
     return;
   }
-  connection_ = BroadcastChannelService::Get().Connect(this, *window, name);
-  window->AddContextDestroyedCallback(base::BindOnce(
+  connection_ = BroadcastChannelService::Get().Connect(this, *context, name);
+  context->AddContextDestroyedCallback(base::BindOnce(
       [](cppgc::WeakPersistent<BroadcastChannel> channel) {
         if (channel) {
           channel->CloseInternal();
@@ -51,7 +49,7 @@ const bindings::WrapperTypeInfo* BroadcastChannel::GetWrapperTypeInfo() const {
 
 void BroadcastChannel::Trace(cppgc::Visitor* visitor) const {
   EventTarget::Trace(visitor);
-  visitor->Trace(window_);
+  visitor->Trace(context_);
 }
 
 void BroadcastChannel::PostMessage(v8::Local<v8::Value> message,
@@ -87,20 +85,28 @@ void BroadcastChannel::CloseInternal() {
 void BroadcastChannel::OnMessage(SerializedScriptValue message,
                                  bool locked,
                                  bool same_agent_cluster) {
-  Window* const window = window_.Get();
-  if (!connection_ || !window) {
+  ExecutionContext* const context = context_.Get();
+  if (!connection_ || !context) {
     return;
   }
   // The event's origin is the receiving context's, as the sender's is the
   // same.
   MessageEvent* const event =
       !locked || same_agent_cluster
-          ? MessageEvent::CreateForMessage(std::move(message), window->Origin(),
-                                           /*source=*/nullptr,
-                                           std::vector<MessagePort*>(),
-                                           /*user_activation=*/nullptr)
-          : MessageEvent::CreateError(window->Origin());
+          ? MessageEvent::CreateForMessage(
+                std::move(message), context->Origin(),
+                /*source=*/nullptr, std::vector<MessagePort*>(),
+                /*user_activation=*/nullptr)
+          : MessageEvent::CreateError(context->Origin());
   DispatchEvent(event);
+}
+
+void BroadcastChannel::DeliverInContext(SerializedScriptValue message,
+                                        bool locked,
+                                        bool same_agent_cluster) {
+  RunInContext(context_.Get(), [&] {
+    OnMessage(std::move(message), locked, same_agent_cluster);
+  });
 }
 
 void BroadcastChannel::ListenersChanged(std::u16string_view type) {

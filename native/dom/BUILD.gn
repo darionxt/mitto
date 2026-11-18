@@ -537,6 +537,10 @@ source_set("dom") {
     "worker.h",
     "worker_global_scope.cc",
     "worker_global_scope.h",
+    "worker_location.cc",
+    "worker_location.h",
+    "worker_navigator.cc",
+    "worker_navigator.h",
     "xml_document.cc",
     "xml_document.h",
   ]

@@ -54,6 +54,9 @@ namespace mitto {
 
 namespace {
 
+// A request's priority of 1 and net::HIGHEST, as the messages carry it.
+constexpr uint8_t kHighestPriority = 6;
+
 // The stack of a worker's thread, beyond the 500 KB that V8 may use of it.
 constexpr size_t kWorkerThreadStackSize = 4 * 1024 * 1024;
 
@@ -74,7 +77,8 @@ DedicatedWorkerThread::ScriptResponse::~ScriptResponse() = default;
 
 // What lives on the worker's thread while it runs: its isolate, the context
 // of its global scope, and what the Page gives that context.
-class DedicatedWorkerThread::Scope final : public base::TaskObserver {
+class DedicatedWorkerThread::Scope final : public base::TaskObserver,
+                                           public ImportedScriptLoader {
  public:
   Scope(DedicatedWorkerThread& thread,
         Params params,
@@ -102,6 +106,9 @@ class DedicatedWorkerThread::Scope final : public base::TaskObserver {
   // worker's own workers, and every queue shuts down. Then the thread's loop
   // ends.
   void Shutdown();
+
+  // ImportedScriptLoader:
+  std::optional<ImportedScript> Load(const GURL& url) override;
 
   // base::TaskObserver:
   void WillProcessTask(const base::PendingTask& pending_task,
@@ -166,6 +173,7 @@ void DedicatedWorkerThread::Scope::Start() {
   const SendFrame send =
       base::BindRepeating(&SessionSender::Send, params_.sender);
   reporter_ = std::make_unique<PageReporter>(isolate_, send);
+  reporter_->SetForWorker();
   reporter_->SetUncaughtSink(
       base::BindRepeating(&Scope::ReportUncaught, base::Unretained(this)));
   data_->SetExceptionReporter(base::BindRepeating(
@@ -219,6 +227,8 @@ void DedicatedWorkerThread::Scope::Start() {
       },
       send));
   scope_->SetObjectProxy(params_.object_proxy.get());
+  scope_->SetModule(params_.module);
+  scope_->SetImportedScriptLoader(this);
   // The worker's own workers, whose errors that nothing canceled go on to
   // this worker's Worker.
   DedicatedWorkerMessagingProxy::Creator creator(*requests_);
@@ -286,6 +296,7 @@ void DedicatedWorkerThread::Scope::Shutdown() {
     scope_->SetTasks(nullptr);
     scope_->SetFetcher(nullptr);
     scope_->SetWorkerStarter(nullptr);
+    scope_->SetImportedScriptLoader(nullptr);
   }
   if (requests_) {
     requests_->CancelAll();
@@ -398,6 +409,63 @@ void DedicatedWorkerThread::Scope::OnResponse(FrameFromSession frame) {
     default:
       NOTREACHED();
   }
+}
+
+// What importScripts() hears of one script's request.
+class ImportedScriptClient final : public PageRequests::Client {
+ public:
+  ImportedScriptClient() = default;
+  ImportedScriptClient(const ImportedScriptClient&) = delete;
+  ImportedScriptClient& operator=(const ImportedScriptClient&) = delete;
+  ~ImportedScriptClient() override = default;
+
+  // PageRequests::Client:
+  void OnResponseStarted(const PageResponseStarted& response) override {
+    script_.url = GURL(response.url);
+    script_.status = response.status;
+    script_.headers = response.headers;
+    script_.opaque = response.opaque;
+    started_ = true;
+  }
+  void OnResponseBody(std::string bytes) override { body_ += bytes; }
+  void OnResponseEnded(int net_error) override {
+    net_error_ = net_error;
+    ended_ = true;
+  }
+
+  // The script, once its response has ended with all of its body.
+  std::optional<ImportedScript> Take() {
+    if (!started_ || !ended_ || net_error_ != 0) {
+      return std::nullopt;
+    }
+    script_.body = std::move(body_);
+    return std::move(script_);
+  }
+
+ private:
+  ImportedScript script_;
+  std::string body_;
+  int net_error_ = 0;
+  bool started_ = false;
+  bool ended_ = false;
+};
+
+std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
+    const GURL& url) {
+  if (shut_down_) {
+    return std::nullopt;
+  }
+  // WorkerClassicScriptLoader::LoadSynchronously(): destination script, of
+  // mode no-cors and credentials include, which a script's Request Kind has,
+  // at the highest priority, as Blink gives a synchronous request.
+  PageRequest request;
+  request.kind = PageRequestKind::kScript;
+  request.url = url.spec();
+  request.priority = kHighestPriority;
+  ImportedScriptClient client;
+  requests_->StartSynchronous(std::move(request), client,
+                              thread_->abort_synchronous_load());
+  return client.Take();
 }
 
 void DedicatedWorkerThread::Scope::DidProcessTask(
@@ -522,6 +590,7 @@ void DedicatedWorkerThread::PostMessage(SerializedScriptValue message,
 }
 
 void DedicatedWorkerThread::Terminate() {
+  abort_synchronous_load_.Signal();
   {
     const base::AutoLock lock(lock_);
     if (terminating_) {

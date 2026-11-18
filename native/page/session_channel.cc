@@ -26,7 +26,7 @@
 #include "build/build_config.h"
 #include "mitto/dom/broadcast_channel_service.h"
 #include "mitto/dom/event_loop.h"
-#include "mitto/dom/window.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cache_storage.h"
 #include "mitto/page/session_cookie_jar.h"
@@ -403,8 +403,8 @@ class SessionLink final : public PageChannel::Delegate
           broadcast.locked = locked;
           broadcast.data.assign(data.begin(), data.end());
           if (BroadcastFits(broadcast)) {
-            send.Run(
-                EncodeBroadcast(Window::Current().DocumentId(), broadcast));
+            send.Run(EncodeBroadcast(ExecutionContext::Current().ContextId(),
+                                     broadcast));
           }
         },
         send));

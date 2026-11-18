@@ -63,6 +63,10 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
                                    v8::Local<v8::Value> exception)>;
   void SetUncaughtSink(UncaughtSink sink) { uncaught_sink_ = std::move(sink); }
 
+  // Whether the isolate's contexts are a worker's, whose console has no
+  // memory. Before the first ContextCreated().
+  void SetForWorker() { for_worker_ = true; }
+
   // Has the console of `context` report here.
   void ContextCreated(v8::Local<v8::Context> context);
   // Says that `context` has gone, as Blink does when a frame's document goes.
@@ -131,6 +135,7 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   const raw_ptr<v8::Isolate> isolate_;
   const SendFrame send_;
   UncaughtSink uncaught_sink_;
+  bool for_worker_ = false;
   std::unique_ptr<v8_inspector::V8Inspector> inspector_;
   // The promises rejected with no handler since the last report.
   std::vector<Rejection> rejections_;

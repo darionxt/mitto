@@ -23,6 +23,7 @@
 
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "mitto/bindings/dictionaries.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/page_messages.h"
 #include "url/gurl.h"
@@ -77,6 +78,8 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   // The base URL that an API resolves against in UTF-8, as KURL(base, input)
   // does: the document's, or the worker's URL.
   virtual GURL BaseUrl() const = 0;
+  // WindowOrWorkerGlobalScope's origin, serialized.
+  virtual std::u16string Origin() const = 0;
   // WindowOrWorkerGlobalScope's isSecureContext.
   virtual bool IsSecureContextForBindings() const = 0;
   // WindowOrWorkerGlobalScope's performance, made the first time.
@@ -121,6 +124,9 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
                       bindings::ExceptionState& exception_state);
   std::u16string Atob(const std::u16string& data,
                       bindings::ExceptionState& exception_state);
+  v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
+                               const bindings::RequestInit& init,
+                               bindings::ExceptionState& exception_state);
   // Reports `e` as an error that a script left uncaught: the error event of
   // the context's global object, then the console, as Blink's
   // WindowOrWorkerGlobalScope does.

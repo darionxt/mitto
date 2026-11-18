@@ -27,13 +27,47 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         "text/javascript",
         b"onerror = (message, filename, line, column, error) => true; throw new Error('kept');",
     ),
-    "/closes.js": ("text/javascript", b"postMessage('before'); close(); postMessage('after'); setTimeout(() => postMessage('timer'));"),
+    "/closes.js": (
+        "text/javascript",
+        b"postMessage('before'); close(); postMessage('after'); setTimeout(() => postMessage('timer'));",
+    ),
     "/html.js": ("text/html", b"postMessage('ran as text/html');"),
     "/image.js": ("image/png", b"postMessage('ran as an image');"),
     "/nested.js": (
         "text/javascript",
         b"const inner = new Worker('/echo.js', {name: 'inner'});"
         b"inner.onmessage = (e) => postMessage(['from inner', e.data]); inner.postMessage('ping');",
+    ),
+    "/lib.js": ("text/javascript", b"var fromLib = (fromLib || 0) + 1;"),
+    "/lib.txt": ("text/plain", b"var fromText = true;"),
+    "/lib-throws.js": ("text/javascript", b"throw new TypeError('in lib');"),
+    "/imports.js": (
+        "text/javascript",
+        b"var fromLib; importScripts('/lib.js', 'lib.js'); importScripts();"
+        b"const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return String(e); } };"
+        b"postMessage([fromLib, outcome(() => importScripts('/missing.js')), outcome(() => importScripts('/lib.txt')),"
+        b"outcome(() => importScripts('http://[')), outcome(() => importScripts('/lib-throws.js'))]);",
+    ),
+    "/where.js": (
+        "text/javascript",
+        b"postMessage([location.href, location.pathname, String(location), location.origin, self.origin,"
+        b"isSecureContext, navigator.userAgent, navigator.platform, navigator.language, navigator.hardwareConcurrency,"
+        b"navigator.onLine, Object.prototype.toString.call(navigator), typeof navigator.vendor]);",
+    ),
+    "/fetches.js": (
+        "text/javascript",
+        b"fetch('/data.txt').then((r) => r.text()).then((t) => postMessage([t, performance.now() > 0]));",
+    ),
+    "/data.txt": ("text/plain", b"data from the server"),
+    "/broadcast.js": (
+        "text/javascript",
+        b"const channel = new BroadcastChannel('news');"
+        b"channel.onmessage = (e) => channel.postMessage(['worker heard', e.data, e.origin]);"
+        b"postMessage('listening');",
+    ),
+    "/port.js": (
+        "text/javascript",
+        b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
     ),
 }
 
@@ -55,10 +89,11 @@ def server() -> Iterator[str]:
         protocol_version = "HTTP/1.1"
 
         def do_GET(self) -> None:
-            if self.path in _SCRIPTS:
-                content_type, body = _SCRIPTS[self.path]
+            path = self.path.partition("?")[0]
+            if path in _SCRIPTS:
+                content_type, body = _SCRIPTS[path]
                 status = 200
-            elif self.path == "/":
+            elif path == "/":
                 content_type, body, status = "text/html", _BLANK, 200
             else:
                 content_type, body, status = "text/plain", b"not found", 404
@@ -211,3 +246,71 @@ def test_new_worker_checks_its_url(server: str, url: str, thrown: str) -> None:
     script = f"(() => {{ try {{ new Worker('{url}'); return 'no throw'; }} catch (e) {{ return String(e); }} }})()"
 
     assert _evaluate(server, script) == thrown.replace("ORIGIN", server)
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_scripts_runs_scripts_in_order_and_fails_as_in_chrome(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/imports.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    failed = f"NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '{server}"
+    assert _evaluate(server, script) == [
+        2,
+        f"{failed}/missing.js' failed to load.",
+        # importScripts() holds a script to the strict check of its MIME type.
+        f"{failed}/lib.txt' failed to load.",
+        "SyntaxError: Failed to execute 'importScripts' on 'WorkerGlobalScope': The URL 'http://[' is invalid.",
+        "TypeError: in lib",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_reads_its_location_and_its_creators_navigator(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/where.js?q#f');
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve([e.data, [navigator.userAgent, navigator.platform, navigator.language,
+                                                    navigator.hardwareConcurrency]]);
+    })"""
+
+    worker, window = _evaluate(server, script)
+    assert worker[:6] == [f"{server}/where.js?q#f", "/where.js", f"{server}/where.js?q#f", server, server, True]
+    assert worker[6:10] == window
+    assert worker[10:] == [True, "[object WorkerNavigator]", "undefined"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_fetches_through_the_session(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/fetches.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == ["data from the server", True]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_port_transferred_to_a_worker_carries_messages_both_ways(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/port.js');
+        const channel = new MessageChannel();
+        channel.port1.onmessage = (e) => resolve(e.data);
+        worker.postMessage('port', [channel.port2]);
+        channel.port1.postMessage('across threads');
+    })"""
+
+    assert _evaluate(server, script) == "across threads!"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_broadcast_goes_between_a_window_and_its_worker(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const channel = new BroadcastChannel('news');
+        channel.onmessage = (e) => resolve([e.data, e.origin === location.origin]);
+        const worker = new Worker('/broadcast.js');
+        worker.onmessage = () => channel.postMessage('from the window');
+    })"""
+
+    assert _evaluate(server, script) == [["worker heard", "from the window", server], True]

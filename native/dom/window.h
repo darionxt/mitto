@@ -95,9 +95,6 @@ class Window final : public WindowProperties, public ExecutionContext {
                                int64_t size,
                                v8::Local<v8::Object> success_callback,
                                v8::Local<v8::Object> error_callback);
-  v8::Local<v8::Promise> Fetch(const bindings::RequestOrUSVString& input,
-                               const bindings::RequestInit& init,
-                               bindings::ExceptionState& exception_state);
   mitto::Navigator* Navigator();
   mitto::Navigator* ClientInformation() { return Navigator(); }
   mitto::Screen* Screen();
@@ -119,7 +116,7 @@ class Window final : public WindowProperties, public ExecutionContext {
   v8::Local<v8::Value> OpenerForBindings() const;
   void SetOpenerForBindings(v8::Local<v8::Value> opener,
                             bindings::ExceptionState& exception_state);
-  std::u16string Origin() const;
+  std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
   // Chrome keys agent clusters by origin by default.
   bool OriginAgentCluster() const { return true; }

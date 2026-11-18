@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -60,6 +61,35 @@ class WorkerStarter {
       Worker& worker,
       const GURL& url,
       const WorkerStartOptions& options) = 0;
+};
+
+// A script that importScripts() fetched, as the Session gave it.
+struct ImportedScript {
+  ImportedScript();
+  ImportedScript(ImportedScript&&);
+  ImportedScript& operator=(ImportedScript&&);
+  ~ImportedScript();
+
+  // The URL that it ended at.
+  GURL url;
+  int32_t status = 0;
+  std::string headers;
+  std::string body;
+  // Whether its tainting is opaque, as a script of another origin's is, which
+  // mutes its errors.
+  bool opaque = false;
+};
+
+// What fetches the scripts of a worker's importScripts(), synchronously, on
+// the worker's thread, as WorkerClassicScriptLoader::LoadSynchronously()
+// does. The Page program gives each worker one.
+class ImportedScriptLoader {
+ public:
+  virtual ~ImportedScriptLoader() = default;
+
+  // The script at `url`, or nullopt if its request failed, or the worker is
+  // ending.
+  virtual std::optional<ImportedScript> Load(const GURL& url) = 0;
 };
 
 // What a dedicated worker's global scope tells its Worker object, on the

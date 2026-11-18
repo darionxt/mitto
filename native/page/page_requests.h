@@ -17,6 +17,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/synchronization/waitable_event.h"
 #include "base/time/time.h"
 #include "mitto/page/page_reporter.h"
 #include "mitto/page/session_sender.h"
@@ -85,6 +86,14 @@ class PageRequests {
   // The same, but with no entry in the Performance Timeline, as for a
   // worker's script, which Chrome's browser fetches.
   uint64_t StartUntimed(PageRequest request, Client& client);
+  // The same for a synchronous request, as importScripts() makes one: this
+  // thread waits for each part of its response and hands it to `client`,
+  // which takes each part of the body as it comes, and returns once it has
+  // ended, or once `abort` is signaled, as when the worker ends, which cancels
+  // it.
+  void StartSynchronous(PageRequest request,
+                        Client& client,
+                        base::WaitableEvent& abort);
 
   // Asks the Session for `request`, a navigation that the current window's
   // document starts, whose number this sets, and returns it. Its response is
@@ -152,7 +161,11 @@ class PageRequests {
   // it sent. The navigation that the Session makes when the Page opens is
   // found once the Session sends something of it.
   Open* Find(uint64_t number, std::string_view message);
-  // Numbers `request` and sends it as `context`'s, and returns its number.
+  // Numbers `request` and sends it as `context`'s, with its response going
+  // to `route`, and returns its number.
+  uint64_t Send(uint64_t context,
+                PageRequest& request,
+                const SessionSender::ResponseRoute& route);
   uint64_t Send(uint64_t context, PageRequest& request);
   // Adds the entry of a request that ended at `response_end`, with `ended`'s
   // totals if the Session said them.

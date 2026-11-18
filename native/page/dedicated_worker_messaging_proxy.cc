@@ -145,6 +145,16 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.features = data->features();
   params_.sender = creator_.sender;
   params_.refuse = creator_.refuse;
+  // A worker of a data: or blob: URL is a Known Gap: its script never comes.
+  if (!url.SchemeIsHTTPOrHTTPS()) {
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kInternalLoading)
+        ->PostTask(
+            FROM_HERE,
+            base::BindOnce(&DedicatedWorkerMessagingProxy::DidFailToFetchScript,
+                           weak_factory_.GetWeakPtr()));
+    return;
+  }
   // The browser's WorkerScriptFetcher: destination worker, mode same-origin,
   // the credentials of `new Worker()`'s options, with no entry in the
   // creator's Performance Timeline.

@@ -3017,6 +3017,29 @@ mitto_bindings_interfaces = [
     ]
   },
   {
+    name = "WorkerLocation"
+    file = "worker_location"
+  },
+  {
+    name = "WorkerNavigator"
+    file = "worker_navigator"
+    implemented = [
+      "hardwareConcurrency",
+      "appCodeName",
+      "appName",
+      "appVersion",
+      "platform",
+      "product",
+      "userAgent",
+      "language",
+      "languages",
+      "onLine",
+      "connection",
+      "deviceMemory",
+      "userAgentData",
+    ]
+  },
+  {
     name = "WorkerGlobalScope"
     file = "worker_global_scope"
 
@@ -3024,10 +3047,14 @@ mitto_bindings_interfaces = [
     # attribute does.
     implemented = [
       "self",
+      "location",
+      "navigator",
       "origin",
       "isSecureContext",
       "performance",
       "structuredClone",
+      "importScripts",
+      "fetch",
       "setTimeout",
       "clearTimeout",
       "setInterval",

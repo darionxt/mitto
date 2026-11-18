@@ -1,14 +1,21 @@
 #include "mitto/page/page_requests.h"
 
+#include <deque>
 #include <utility>
 #include <vector>
 
 #include "base/check.h"
 #include "base/check_op.h"
+#include "base/functional/bind.h"
+#include "base/memory/ref_counted.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/synchronization/lock.h"
+#include "base/synchronization/waitable_event.h"
+#include "base/thread_annotations.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
@@ -92,12 +99,93 @@ uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
 uint64_t PageRequests::Send(uint64_t context, PageRequest& request) {
   // Its response can come only once this thread is done with this task, so
   // it finds the request open.
+  return Send(context, request, route_);
+}
+
+uint64_t PageRequests::Send(uint64_t context,
+                            PageRequest& request,
+                            const SessionSender::ResponseRoute& route) {
   return sender_->SendRequest(
       [&](uint64_t number) {
         request.number = number;
         return EncodeRequest(context, request);
       },
-      route_);
+      route);
+}
+
+namespace {
+
+// What the I/O thread hands a synchronous request: each frame of its
+// response, for the thread that waits for them.
+class SynchronousResponse
+    : public base::RefCountedThreadSafe<SynchronousResponse> {
+ public:
+  SynchronousResponse() = default;
+  SynchronousResponse(const SynchronousResponse&) = delete;
+  SynchronousResponse& operator=(const SynchronousResponse&) = delete;
+
+  void Add(FrameFromSession frame) {
+    {
+      const base::AutoLock lock(lock_);
+      frames_.push_back(std::move(frame));
+    }
+    arrived_.Signal();
+  }
+
+  std::deque<FrameFromSession> Take() {
+    const base::AutoLock lock(lock_);
+    std::deque<FrameFromSession> frames;
+    frames.swap(frames_);
+    return frames;
+  }
+
+  base::WaitableEvent& arrived() { return arrived_; }
+
+ private:
+  friend class base::RefCountedThreadSafe<SynchronousResponse>;
+  ~SynchronousResponse() = default;
+
+  base::Lock lock_;
+  std::deque<FrameFromSession> frames_ GUARDED_BY(lock_);
+  base::WaitableEvent arrived_{base::WaitableEvent::ResetPolicy::AUTOMATIC};
+};
+
+}  // namespace
+
+void PageRequests::StartSynchronous(PageRequest request,
+                                    Client& client,
+                                    base::WaitableEvent& abort) {
+  auto response = base::MakeRefCounted<SynchronousResponse>();
+  const uint64_t number =
+      Send(ExecutionContext::Current().ContextId(), request,
+           base::BindRepeating(&SynchronousResponse::Add, response));
+  open_[number].client = &client;
+  while (open_.contains(number)) {
+    base::WaitableEvent* events[] = {&response->arrived(), &abort};
+    if (base::WaitableEvent::WaitMany(events) == 1) {
+      Cancel(number);
+      return;
+    }
+    for (FrameFromSession& frame : response->Take()) {
+      switch (frame.type) {
+        case PageMessage::kResponseStarted:
+          OnResponseStarted(frame.response);
+          break;
+        case PageMessage::kResponseBody: {
+          // The client takes the body as it comes.
+          const size_t size = frame.body.bytes.size();
+          OnResponseBody(std::move(frame.body));
+          TookBody(number, size);
+          break;
+        }
+        case PageMessage::kResponseEnded:
+          OnResponseEnded(frame.ended);
+          break;
+        default:
+          NOTREACHED();
+      }
+    }
+  }
 }
 
 void PageRequests::Cancel(uint64_t number) {

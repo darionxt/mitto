@@ -8,41 +8,42 @@
 #include "base/location.h"
 #include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/dom/broadcast_channel.h"
-#include "mitto/dom/document.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/serialized_script_value.h"
-#include "mitto/dom/window.h"
-#include "mitto/dom/window_task.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace mitto {
 namespace {
 
-// A hop of a message, to the service or from it to a channel, on
-// TaskType::kInternalDefault, where Blink's channel receives.
-void PostServiceTask(base::OnceClosure task) {
+// Where the current thread's channels receive, on TaskType::kInternalDefault,
+// as Blink's channel does.
+scoped_refptr<base::SingleThreadTaskRunner> CurrentRunner() {
   // The Page program always makes one before it runs a script.
   EventLoop* const event_loop = EventLoop::Get();
   CHECK(event_loop);
-  event_loop->TaskRunner(TaskType::kInternalDefault)
-      ->PostTask(FROM_HERE, std::move(task));
+  return event_loop->TaskRunner(TaskType::kInternalDefault);
 }
 
 }  // namespace
 
-BroadcastChannelService::Connection::Connection(uint64_t id,
-                                                std::string key,
-                                                bool opaque,
-                                                Window* window,
-                                                std::string name,
-                                                BroadcastChannel* channel)
+BroadcastChannelService::Connection::Connection(
+    uint64_t id,
+    std::string key,
+    bool opaque,
+    const ExecutionContext* context,
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    std::string name,
+    BroadcastChannel* channel)
     : id(id),
       key(std::move(key)),
       opaque(opaque),
-      window(window),
+      context(context),
+      runner(std::move(runner)),
       name(std::move(name)),
       channel(channel) {}
 BroadcastChannelService::Connection::Connection(Connection&&) = default;
@@ -59,21 +60,32 @@ BroadcastChannelService& BroadcastChannelService::Get() {
 BroadcastChannelService::BroadcastChannelService() = default;
 BroadcastChannelService::~BroadcastChannelService() = default;
 
+void BroadcastChannelService::SetSessionSender(SessionSender sender) {
+  const base::AutoLock lock(lock_);
+  session_sender_ = std::move(sender);
+}
+
 uint64_t BroadcastChannelService::Connect(BroadcastChannel* channel,
-                                          Window& window,
+                                          ExecutionContext& context,
                                           const std::u16string& name) {
-  const url::Origin origin = url::Origin::Create(
-      GURL(base::UTF16ToUTF8(window.GetDocument().UrlForBinding())));
-  // Dispose(): the connections of channels that the collector took.
-  std::erase_if(connections_, [](const Connection& c) { return !c.channel; });
+  const url::Origin origin =
+      url::Origin::Create(GURL(base::UTF16ToUTF8(context.Url())));
+  const scoped_refptr<base::SingleThreadTaskRunner> runner = CurrentRunner();
+  const base::AutoLock lock(lock_);
+  // Dispose(): the connections of this thread's channels that the collector
+  // took. Another thread's channels are that thread's to look at.
+  std::erase_if(connections_, [&runner](const Connection& c) {
+    return c.runner == runner && !c.channel;
+  });
   const uint64_t id = ++next_connection_;
   // Mojo carries the name as UTF-8, with a lone surrogate as U+FFFD.
-  connections_.emplace_back(id, origin.Serialize(), origin.opaque(), &window,
-                            base::UTF16ToUTF8(name), channel);
+  connections_.emplace_back(id, origin.Serialize(), origin.opaque(), &context,
+                            runner, base::UTF16ToUTF8(name), channel);
   return id;
 }
 
 void BroadcastChannelService::Disconnect(uint64_t connection) {
+  const base::AutoLock lock(lock_);
   std::erase_if(connections_, [connection](const Connection& c) {
     return c.id == connection;
   });
@@ -81,74 +93,101 @@ void BroadcastChannelService::Disconnect(uint64_t connection) {
 
 void BroadcastChannelService::Post(uint64_t connection,
                                    const SerializedScriptValue& message) {
-  const auto from = std::find_if(
-      connections_.begin(), connections_.end(),
-      [connection](const Connection& c) { return c.id == connection; });
-  if (from == connections_.end()) {
-    return;
-  }
   const bool locked = message.IsLockedToAgentCluster();
   // The connections that the message finds once it reaches the service, which
   // are those that connected before it was posted.
-  std::vector<uint64_t> recipients;
-  for (const Connection& c : connections_) {
-    if (c.id != from->id && c.channel && c.key == from->key &&
-        c.name == from->name &&
-        (!from->opaque || c.window.Get() == from->window.Get())) {
-      recipients.push_back(c.id);
+  std::vector<std::pair<uint64_t, scoped_refptr<base::SingleThreadTaskRunner>>>
+      recipients;
+  {
+    const base::AutoLock lock(lock_);
+    const auto from = std::find_if(
+        connections_.begin(), connections_.end(),
+        [connection](const Connection& c) { return c.id == connection; });
+    if (from == connections_.end()) {
+      return;
+    }
+    for (const Connection& c : connections_) {
+      if (c.id != from->id && c.key == from->key && c.name == from->name &&
+          (!from->opaque || c.context == from->context)) {
+        recipients.emplace_back(c.id, c.runner);
+      }
+    }
+    if (session_sender_ && !from->opaque) {
+      session_sender_.Run(from->name, locked, message.wire_data());
     }
   }
-  if (session_sender_ && !from->opaque) {
-    session_sender_.Run(from->name, locked, message.wire_data());
-  }
-  PostServiceTask(base::BindOnce(
-      [](BroadcastChannelService* service, std::vector<uint64_t> recipients,
-         bool locked, std::vector<uint8_t> data) {
-        for (const uint64_t recipient : recipients) {
-          service->Deliver(recipient, locked, /*same_agent_cluster=*/true,
-                           data);
-        }
-      },
-      base::Unretained(this), std::move(recipients), locked,
-      message.wire_data()));
+  CurrentRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](BroadcastChannelService* service,
+             std::vector<std::pair<uint64_t,
+                                   scoped_refptr<base::SingleThreadTaskRunner>>>
+                 recipients,
+             bool locked, std::vector<uint8_t> data) {
+            for (auto& [recipient, runner] : recipients) {
+              service->Deliver(recipient, std::move(runner), locked,
+                               /*same_agent_cluster=*/true, data);
+            }
+          },
+          base::Unretained(this), std::move(recipients), locked,
+          message.wire_data()));
 }
 
 void BroadcastChannelService::OnSessionMessage(const std::string& origin,
                                                const std::string& name,
                                                bool locked,
                                                std::vector<uint8_t> data) {
-  for (const Connection& c : connections_) {
-    if (c.channel && !c.opaque && c.key == origin && c.name == name) {
-      Deliver(c.id, locked, /*same_agent_cluster=*/false, data);
+  std::vector<std::pair<uint64_t, scoped_refptr<base::SingleThreadTaskRunner>>>
+      recipients;
+  {
+    const base::AutoLock lock(lock_);
+    for (const Connection& c : connections_) {
+      if (!c.opaque && c.key == origin && c.name == name) {
+        recipients.emplace_back(c.id, c.runner);
+      }
     }
+  }
+  for (auto& [recipient, runner] : recipients) {
+    Deliver(recipient, std::move(runner), locked, /*same_agent_cluster=*/false,
+            data);
   }
 }
 
-void BroadcastChannelService::Deliver(uint64_t connection,
-                                      bool locked,
-                                      bool same_agent_cluster,
-                                      std::vector<uint8_t> data) {
-  PostServiceTask(base::BindOnce(
-      [](BroadcastChannelService* service, uint64_t connection, bool locked,
-         bool same_agent_cluster, std::vector<uint8_t> data) {
-        const auto found = std::find_if(
-            service->connections_.begin(), service->connections_.end(),
-            [connection](const Connection& c) { return c.id == connection; });
-        if (found == service->connections_.end()) {
-          return;
-        }
-        BroadcastChannel* const channel = found->channel.Get();
-        if (!channel) {
-          return;
-        }
-        RunInWindowContext(found->window.Get(), [&] {
-          channel->OnMessage(
-              SerializedScriptValue::FromWireData(std::move(data)), locked,
-              same_agent_cluster);
-        });
-      },
-      base::Unretained(this), connection, locked, same_agent_cluster,
-      std::move(data)));
+void BroadcastChannelService::Deliver(
+    uint64_t connection,
+    scoped_refptr<base::SingleThreadTaskRunner> runner,
+    bool locked,
+    bool same_agent_cluster,
+    std::vector<uint8_t> data) {
+  runner->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](BroadcastChannelService* service, uint64_t connection, bool locked,
+             bool same_agent_cluster, std::vector<uint8_t> data) {
+            cppgc::subtle::WeakCrossThreadPersistent<BroadcastChannel> handle;
+            {
+              const base::AutoLock lock(service->lock_);
+              const auto found = std::find_if(
+                  service->connections_.begin(), service->connections_.end(),
+                  [connection](const Connection& c) {
+                    return c.id == connection;
+                  });
+              if (found == service->connections_.end()) {
+                return;
+              }
+              handle = found->channel;
+            }
+            // This thread's channel, which only it reads.
+            BroadcastChannel* const channel = handle.Get();
+            if (!channel) {
+              return;
+            }
+            channel->DeliverInContext(
+                SerializedScriptValue::FromWireData(std::move(data)), locked,
+                same_agent_cluster);
+          },
+          base::Unretained(this), connection, locked, same_agent_cluster,
+          std::move(data)));
 }
 
 }  // namespace mitto

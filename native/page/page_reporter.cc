@@ -118,8 +118,9 @@ void PageReporter::ContextCreated(v8::Local<v8::Context> context) {
   context_.Reset(isolate_, context);
   v8_inspector::V8ContextInfo info(context, kContextGroupId,
                                    v8_inspector::StringView());
-  // A window's console has memory, as Blink's MainThreadDebugger says.
-  info.hasMemoryOnConsole = true;
+  // A window's console has memory, as Blink's MainThreadDebugger says, and a
+  // worker's has none, as WorkerThreadDebugger says nothing of it.
+  info.hasMemoryOnConsole = !for_worker_;
   inspector_->contextCreated(info);
 }
 
