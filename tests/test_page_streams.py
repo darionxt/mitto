@@ -155,6 +155,13 @@ STREAMS = {
         " const result = await s.cancel('why'); return [log.join(), result].join(' / ')",
         "value: cancel why / ",
     ),
+    # As in Blink, a source's cancel() gets the controller after the reason, in a default and in a byte stream.
+    "cancel gets the controller": (
+        "const args = []; for (const type of [undefined, 'bytes']) { const s = new ReadableStream({ type,"
+        " cancel(...a) { args.push([a.length, a[0], Object.prototype.toString.call(a[1])].join()); } });"
+        " await s.cancel('why'); } return args.join(' / ')",
+        "value: 2,why,[object ReadableStreamDefaultController] / 2,why,[object ReadableByteStreamController]",
+    ),
     "custom size": (
         "let c; new ReadableStream({ start(ctrl) { c = ctrl; } }, { highWaterMark: 10, size(chunk) { return"
         " chunk.length; } }); c.enqueue('abcd'); const after = c.desiredSize; try { c.enqueue({ length: -1 }); }"
