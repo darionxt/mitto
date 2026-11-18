@@ -7,6 +7,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_broadcast_channel.h"
 #include "mitto/dom/broadcast_channel_service.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_event.h"
 #include "mitto/dom/message_port.h"
 #include "mitto/dom/serialized_script_value.h"
@@ -16,8 +17,11 @@ namespace mitto {
 
 // static
 BroadcastChannel* BroadcastChannel::Create(const std::u16string& name) {
-  return bindings::MakeGarbageCollected<BroadcastChannel>(&Window::Current(),
-                                                          name);
+  // A worker's channel reaches no other yet: the Page's service runs on its
+  // main thread.
+  Window* const window =
+      ExecutionContext::Current().IsWindow() ? &Window::Current() : nullptr;
+  return bindings::MakeGarbageCollected<BroadcastChannel>(window, name);
 }
 
 BroadcastChannel::BroadcastChannel(Window* window, const std::u16string& name)

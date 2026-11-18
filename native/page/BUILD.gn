@@ -58,6 +58,10 @@ executable("mitto_page") {
     "begin_frame_source.h",
     "chrome_object.cc",
     "chrome_object.h",
+    "dedicated_worker_messaging_proxy.cc",
+    "dedicated_worker_messaging_proxy.h",
+    "dedicated_worker_thread.cc",
+    "dedicated_worker_thread.h",
     "document_loader.cc",
     "document_loader.h",
     "idle_helper.cc",
@@ -99,6 +103,8 @@ executable("mitto_page") {
     "wall_clock_clamper.h",
     "wasm_response_extensions.cc",
     "wasm_response_extensions.h",
+    "worker_scheduler.cc",
+    "worker_scheduler.h",
   ]
   deps = [
     ":icu_data",

@@ -45,6 +45,7 @@ class IndexedDbHost;
 class IdleTaskController;
 class Document;
 class PageFetcher;
+class PageWorkerStarter;
 class PageFrame;
 class PageRequests;
 class SessionCookieJar;
@@ -187,6 +188,7 @@ class ScriptRunner final : public base::TaskObserver {
   const raw_ptr<v8::Isolate> isolate_;
   scoped_refptr<SessionSender> sender_;
   SendFrame send_;
+  base::RepeatingCallback<void(std::string why)> refuse_;
   std::unique_ptr<PageReporter> reporter_;
   // What the Page started with, which each window reads.
   PageStart start_;
@@ -207,6 +209,7 @@ class ScriptRunner final : public base::TaskObserver {
   std::unique_ptr<AnimationFrameController> animation_frames_;
   std::unique_ptr<PageFetcher> fetcher_;
   std::unique_ptr<WindowTasks> window_tasks_;
+  std::unique_ptr<PageWorkerStarter> worker_starter_;
   // What window.chrome of each window that the Page has made reads, the
   // current one's last. They live as long as the Page, for a callback of a
   // window that has gone.

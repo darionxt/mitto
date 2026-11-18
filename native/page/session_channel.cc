@@ -29,9 +29,9 @@
 #include "mitto/dom/window.h"
 #include "mitto/page/script_runner.h"
 #include "mitto/page/session_cache_storage.h"
+#include "mitto/page/session_cookie_jar.h"
 #include "mitto/page/session_indexed_db.h"
 #include "mitto/page/session_sender.h"
-#include "mitto/page/session_cookie_jar.h"
 #include "mitto/page/session_storage_backend.h"
 #include "mitto/page_channel.h"
 #include "mitto/page_messages.h"
@@ -416,8 +416,8 @@ class SessionLink final : public PageChannel::Delegate
     runner_ = std::make_unique<ScriptRunner>(*isolate);
     runner_->SetCacheStorageHost(*cache_storage_);
     runner_->SetIndexedDbHost(*indexed_db_);
-    if (std::optional<std::string> why = runner_->Start(
-            start, sender_, std::move(refuse), *cookie_jar_)) {
+    if (std::optional<std::string> why =
+            runner_->Start(start, sender_, std::move(refuse), *cookie_jar_)) {
       io_thread->PostTask(FROM_HERE,
                           base::BindOnce(&SessionLink::Refuse,
                                          base::Unretained(this), *why));

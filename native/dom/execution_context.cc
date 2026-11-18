@@ -64,6 +64,9 @@ ExecutionContext* ExecutionContext::From(v8::Isolate* isolate,
 ExecutionContext::ExecutionContext() = default;
 ExecutionContext::~ExecutionContext() = default;
 
+ExecutionContext::ErrorEventState::ErrorEventState() = default;
+ExecutionContext::ErrorEventState::~ErrorEventState() = default;
+
 bool ExecutionContext::IsWindow() const {
   return false;
 }

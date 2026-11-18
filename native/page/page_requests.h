@@ -82,6 +82,10 @@ class PageRequests {
                  Client& client,
                  bool render_blocking = false);
 
+  // The same, but with no entry in the Performance Timeline, as for a
+  // worker's script, which Chrome's browser fetches.
+  uint64_t StartUntimed(PageRequest request, Client& client);
+
   // Asks the Session for `request`, a navigation that the current window's
   // document starts, whose number this sets, and returns it. Its response is
   // a document's, which gets no entry in the Performance Timeline of the
@@ -91,6 +95,8 @@ class PageRequests {
   // Tells the Session that request `number` is no longer wanted. Its client
   // hears nothing more of it.
   void Cancel(uint64_t number);
+  // The same for every request that has a client, as when a worker ends.
+  void CancelAll();
 
   // Lets keepalive request `number` go on without its client, which hears
   // nothing more of it, and without its document, which is going and adds no

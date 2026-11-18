@@ -198,7 +198,11 @@ mitto_bindings_interfaces = [
     file = "dedicated_worker_global_scope"
 
     # onmessage and onmessageerror run as every event handler attribute does.
-    implemented = [ "name" ]
+    implemented = [
+      "name",
+      "postMessage",
+      "close",
+    ]
   },
   {
     # location.ancestorOrigins, a Known Gap, gives an empty one.
@@ -3003,6 +3007,16 @@ mitto_bindings_interfaces = [
     missing = []
   },
   {
+    name = "Worker"
+    file = "worker"
+
+    # onmessage and onerror run as every event handler attribute does.
+    implemented = [
+      "terminate",
+      "postMessage",
+    ]
+  },
+  {
     name = "WorkerGlobalScope"
     file = "worker_global_scope"
 
@@ -3010,6 +3024,10 @@ mitto_bindings_interfaces = [
     # attribute does.
     implemented = [
       "self",
+      "origin",
+      "isSecureContext",
+      "performance",
+      "structuredClone",
       "setTimeout",
       "clearTimeout",
       "setInterval",

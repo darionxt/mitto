@@ -11,8 +11,8 @@
 #include "mitto/bindings/v8_request.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/headers.h"
-#include "mitto/dom/window.h"
 #include "mitto/header_rules.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
@@ -130,7 +130,7 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     // document's encoding, as Blink's KURL(base_url, input) does.
     const std::u16string& input_string = std::get<std::u16string>(input);
     const GURL parsed =
-        Window::Current().GetDocument().BaseUrl().Resolve(input_string);
+        ExecutionContext::Current().BaseUrl().Resolve(input_string);
     if (!parsed.is_valid()) {
       exception_state.ThrowTypeError(base::StrCat(
           {"Failed to parse URL from ", base::UTF16ToUTF8(input_string)}));
@@ -145,7 +145,8 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
     }
     request->url_ = parsed;
   }
-  Document& document = Window::Current().GetDocument();
+  // The document's, or the worker's.
+  ExecutionContext& document = ExecutionContext::Current();
   if (AreAnyMembersPresent(init)) {
     request->referrer_ = kClientReferrer;
     request->referrer_policy_ = FetchReferrerPolicy::kDefault;
@@ -167,7 +168,7 @@ Request* Request::Create(const bindings::RequestOrUSVString& input,
                              parsed.host().empty() &&
                              parsed.path() == "client";
       request->referrer_ =
-          is_client || !url::Origin::Create(GURL(document.UrlForBinding()))
+          is_client || !url::Origin::Create(GURL(document.Url()))
                             .IsSameOriginWith(parsed)
               ? std::string(kClientReferrer)
               : parsed.spec();

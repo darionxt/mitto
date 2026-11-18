@@ -1,6 +1,7 @@
 #include "mitto/page/page_requests.h"
 
 #include <utility>
+#include <vector>
 
 #include "base/check.h"
 #include "base/check_op.h"
@@ -8,8 +9,8 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "mitto/dom/performance.h"
 #include "mitto/dom/execution_context.h"
+#include "mitto/dom/performance.h"
 #include "mitto/dom/window.h"
 #include "mitto/page/resource_timing.h"
 #include "v8/include/v8-isolate.h"
@@ -75,6 +76,13 @@ uint64_t PageRequests::Start(PageRequest request,
   return number;
 }
 
+uint64_t PageRequests::StartUntimed(PageRequest request, Client& client) {
+  const uint64_t number =
+      Send(ExecutionContext::Current().ContextId(), request);
+  open_[number].client = &client;
+  return number;
+}
+
 uint64_t PageRequests::StartNavigation(PageRequest request, Client& client) {
   const uint64_t number = Send(Window::Current().DocumentId(), request);
   open_[number].client = &client;
@@ -107,6 +115,18 @@ void PageRequests::Cancel(uint64_t number) {
   // meanwhile still counts against its credit.
   found->second.client = nullptr;
   sender_->Send(EncodeCancel(number));
+}
+
+void PageRequests::CancelAll() {
+  std::vector<uint64_t> numbers;
+  for (const auto& [number, open] : open_) {
+    if (open.client) {
+      numbers.push_back(number);
+    }
+  }
+  for (const uint64_t number : numbers) {
+    Cancel(number);
+  }
 }
 
 void PageRequests::LetGo(uint64_t number) {

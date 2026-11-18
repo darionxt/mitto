@@ -5,9 +5,9 @@
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/v8_performance_mark.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/performance.h"
 #include "mitto/dom/performance_timing.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
 
@@ -18,7 +18,7 @@ PerformanceMark* PerformanceMark::Create(
     const std::u16string& mark_name,
     const bindings::PerformanceMarkOptions& options,
     bindings::ExceptionState& exception_state) {
-  Performance& performance = *Window::Current().Performance();
+  Performance& performance = *ExecutionContext::Current().Performance();
   double start = 0;
   if (options.start_time) {
     start = *options.start_time;

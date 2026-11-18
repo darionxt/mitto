@@ -234,7 +234,11 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception,
   }
   ReportUncaughtError(
       isolate_, message, exception,
-      [this, context](v8::Local<v8::Value> uncaught) {
+      [this, context, message](v8::Local<v8::Value> uncaught) {
+        if (uncaught_sink_) {
+          uncaught_sink_.Run(message, uncaught);
+          return;
+        }
         send_.Run(EncodeUncaughtError(DescribeUncaught(
             isolate_, context, uncaught, "Uncaught ", kMaxPayloadSize)));
       });

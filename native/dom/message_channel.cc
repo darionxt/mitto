@@ -3,8 +3,8 @@
 #include <utility>
 
 #include "mitto/bindings/v8_message_channel.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/message_port.h"
-#include "mitto/dom/window.h"
 
 namespace mitto {
 
@@ -14,8 +14,10 @@ MessageChannel* MessageChannel::Create() {
 }
 
 MessageChannel::MessageChannel()
-    : port1_(bindings::MakeGarbageCollected<MessagePort>(&Window::Current())),
-      port2_(bindings::MakeGarbageCollected<MessagePort>(&Window::Current())) {
+    : port1_(bindings::MakeGarbageCollected<MessagePort>(
+          &ExecutionContext::Current())),
+      port2_(bindings::MakeGarbageCollected<MessagePort>(
+          &ExecutionContext::Current())) {
   auto [first, second] = MessagePortChannel::CreatePair();
   port1_->Entangle(std::move(first), port2_.Get());
   port2_->Entangle(std::move(second), port1_.Get());

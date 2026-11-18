@@ -7,6 +7,7 @@
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/window.h"
 #include "v8/include/cppgc/persistent.h"
 #include "v8/include/v8-context.h"
@@ -31,14 +32,23 @@ void PostWindowTask(Window* window, TaskType type, base::OnceClosure task) {
 }
 
 bool RunInWindowContext(Window* window, base::FunctionRef<void()> run) {
-  if (!window || !window->HasContext()) {
+  return RunInContext(window, run);
+}
+
+bool RunInContext(ExecutionContext* execution_context,
+                  base::FunctionRef<void()> run) {
+  if (!execution_context || !execution_context->HasContext()) {
     return false;
   }
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::HandleScope handle_scope(isolate);
-  // The window's wrapper is its context's global proxy.
+  // The wrapper of a window or a worker's global scope is its context's
+  // global proxy.
   v8::Local<v8::Context> context;
-  if (!window->ToV8(isolate)->GetCreationContext(isolate).ToLocal(&context)) {
+  if (!execution_context->ErrorEventTarget()
+           ->ToV8(isolate)
+           ->GetCreationContext(isolate)
+           .ToLocal(&context)) {
     return false;
   }
   const v8::Context::Scope context_scope(context);

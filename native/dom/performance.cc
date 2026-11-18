@@ -16,6 +16,7 @@
 #include "mitto/bindings/v8_window.h"
 #include "mitto/dom/event.h"
 #include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/performance_entry.h"
 #include "mitto/dom/performance_mark.h"
@@ -136,6 +137,11 @@ Performance* Performance::Create(base::TimeTicks time_origin,
   return bindings::MakeGarbageCollected<Performance>(time_origin, timing);
 }
 
+// static
+Performance* Performance::CreateForWorker(base::TimeTicks time_origin) {
+  return bindings::MakeGarbageCollected<Performance>(time_origin, nullptr);
+}
+
 Performance::Performance(base::TimeTicks time_origin,
                          DocumentLoadTiming* timing)
     : time_origin_(time_origin),
@@ -145,10 +151,12 @@ Performance::Performance(base::TimeTicks time_origin,
           base::RandIntInclusive(kMinNavigationId, kMaxNavigationIdForReset))),
       resource_timing_buffer_size_limit_(kDefaultResourceTimingBufferSize) {
   // WindowPerformance's AddVisibilityStateEntry() for the page's visibility
-  // when it is made, at no time, which reads as 0.
-  visibility_state_buffer_.push_back(
-      bindings::MakeGarbageCollected<VisibilityStateEntry>(u"visible", 0.0,
-                                                           navigation_id_));
+  // when it is made, at no time, which reads as 0. A worker has none.
+  if (timing) {
+    visibility_state_buffer_.push_back(
+        bindings::MakeGarbageCollected<VisibilityStateEntry>(u"visible", 0.0,
+                                                             navigation_id_));
+  }
 }
 
 Performance::~Performance() = default;
@@ -217,8 +225,8 @@ Performance::EntryList Performance::EntriesOfType(
     const std::optional<std::u16string>& name) {
   const PerformanceEntry::Kind kind = PerformanceEntry::ToKind(entry_type);
   if (!PerformanceEntry::IsValidTimelineEntryKind(kind)) {
-    Window::Current().AddConsoleMessage(ConsoleLevel::kWarning,
-                                        "Deprecated API for given entry type.");
+    ExecutionContext::Current().AddConsoleMessage(
+        ConsoleLevel::kWarning, "Deprecated API for given entry type.");
     return EntryList();
   }
   EntryList entries;
@@ -471,8 +479,11 @@ v8::Local<v8::Object> Performance::ToJSONForBinding() {
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   V8ObjectBuilder builder(isolate);
   builder.AddNumber("timeOrigin", TimeOrigin());
-  builder.Add("timing", bindings::ToV8(isolate, Timing()));
-  builder.Add("navigation", bindings::ToV8(isolate, Navigation()));
+  // Performance::BuildJSONValue() alone, for a worker.
+  if (document_timing_) {
+    builder.Add("timing", bindings::ToV8(isolate, Timing()));
+    builder.Add("navigation", bindings::ToV8(isolate, Navigation()));
+  }
   return builder.Result();
 }
 
@@ -506,10 +517,10 @@ void Performance::AddResourceTiming(ResourceTimingInfo info,
               const v8::Local<v8::Context> context =
                   context_handle.Get(isolate);
               const v8::Context::Scope context_scope(context);
-              // A window that has gone fires nothing.
-              const Window* const window =
-                  bindings::V8Window::ToWrappable(isolate, context->Global());
-              if (!window || !window->HasContext()) {
+              // A context that has gone fires nothing.
+              const ExecutionContext* const execution_context =
+                  ExecutionContext::From(isolate, context);
+              if (!execution_context || !execution_context->HasContext()) {
                 return;
               }
               performance->FireResourceTimingBufferFull();

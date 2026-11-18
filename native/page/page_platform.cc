@@ -86,7 +86,8 @@ void PagePlatform::RegisterIsolate(
     v8::Isolate* isolate,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   const base::AutoLock lock(lock_);
-  workers_[isolate] = std::make_shared<ThreadTaskRunner>(std::move(task_runner));
+  workers_[isolate] =
+      std::make_shared<ThreadTaskRunner>(std::move(task_runner));
 }
 
 void PagePlatform::UnregisterIsolate(v8::Isolate* isolate) {

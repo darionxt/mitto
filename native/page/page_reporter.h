@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -54,6 +55,13 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
   PageReporter& operator=(const PageReporter&) = delete;
 
   ~PageReporter() override;
+
+  // Where an error that no listener canceled goes instead of the Session, as
+  // a dedicated worker's goes to its Worker, with V8's message of it.
+  using UncaughtSink =
+      base::RepeatingCallback<void(v8::Local<v8::Message> message,
+                                   v8::Local<v8::Value> exception)>;
+  void SetUncaughtSink(UncaughtSink sink) { uncaught_sink_ = std::move(sink); }
 
   // Has the console of `context` report here.
   void ContextCreated(v8::Local<v8::Context> context);
@@ -122,6 +130,7 @@ class PageReporter final : public v8_inspector::V8InspectorClient {
 
   const raw_ptr<v8::Isolate> isolate_;
   const SendFrame send_;
+  UncaughtSink uncaught_sink_;
   std::unique_ptr<v8_inspector::V8Inspector> inspector_;
   // The promises rejected with no handler since the last report.
   std::vector<Rejection> rejections_;

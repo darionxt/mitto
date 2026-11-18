@@ -375,6 +375,26 @@ bool Window::IsWindow() const {
   return true;
 }
 
+std::u16string Window::Url() const {
+  return GetDocument().UrlForBinding();
+}
+
+EventTarget* Window::ErrorEventTarget() {
+  return this;
+}
+
+url::Origin Window::GetSecurityOrigin() const {
+  return GetDocument().GetOrigin();
+}
+
+GURL Window::CompleteUrl(std::u16string_view url) const {
+  return GetDocument().CompleteUrl(url);
+}
+
+GURL Window::BaseUrl() const {
+  return GetDocument().BaseUrl();
+}
+
 size_t Window::TimerCount() const {
   return ExecutionContext::TimerCount() +
          (navigator_ ? navigator_->GeolocationTimerCount() : 0);

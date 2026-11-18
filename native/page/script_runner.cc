@@ -20,16 +20,17 @@
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/dom/animation_frame_controller.h"
 #include "mitto/dom/cache_storage_host.h"
-#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/idle_task_controller.h"
+#include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/memory_info.h"
 #include "mitto/dom/page_interfaces.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "mitto/page/chrome_object.h"
+#include "mitto/page/dedicated_worker_messaging_proxy.h"
 #include "mitto/page/page_fetcher.h"
 #include "mitto/page/page_frame.h"
 #include "mitto/page/page_isolate.h"
@@ -140,6 +141,7 @@ std::optional<std::string> ScriptRunner::Start(
   start_ = start;
   cookie_jar_ = &cookie_jar;
   cookie_jar_->SetSend(send_);
+  refuse_ = refuse;
   requests_ = std::make_unique<PageRequests>(sender_, std::move(refuse));
   frame_ = std::make_unique<PageFrame>(*this, *requests_, send_, cookie_jar);
   frame_->ExpectOpeningNavigation();
@@ -233,6 +235,17 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
       std::make_unique<AnimationFrameController>(isolate_, context);
   fetcher_ = std::make_unique<PageFetcher>(*requests_);
   window_tasks_ = std::make_unique<WindowTasks>(isolate_, context);
+  // The window's dedicated workers, whose errors that nothing canceled end
+  // up at the Session, as the window's own do.
+  DedicatedWorkerMessagingProxy::Creator creator(*requests_);
+  creator.sender = sender_;
+  creator.refuse = refuse_;
+  creator.report_uncaught = base::BindRepeating(
+      [](const SendFrame& send, const ErrorMessageInfo& error) {
+        send.Run(EncodeUncaughtError(base::UTF16ToUTF8(error.message)));
+      },
+      send_);
+  worker_starter_ = std::make_unique<PageWorkerStarter>(std::move(creator));
   Window& window = Window::Current();
   window.SetTimers(timers_.get());
   window.SetIdleTasks(idle_tasks_.get());
@@ -240,6 +253,7 @@ void ScriptRunner::AttachWindow(v8::Local<v8::Context> context,
   window.SetFetcher(fetcher_.get());
   window.SetNavigationClient(frame_.get());
   window.SetTasks(window_tasks_.get());
+  window.SetWorkerStarter(worker_starter_.get());
   if (source == PageDocumentSource::kInitialEmpty) {
     window.GetDocument().SetInitialEmptyDocument();
   }
@@ -423,6 +437,7 @@ Document& ScriptRunner::CommitDocument(uint64_t navigation,
   animation_frames_.reset();
   fetcher_.reset();
   window_tasks_.reset();
+  worker_starter_.reset();
   reporter_->ContextDestroyed(context_.Get(isolate_));
   chrome_object_data_.back()->detached = true;
   // What the new document's DOMHighResTimeStamp counts from, as Blink takes

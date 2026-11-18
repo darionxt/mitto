@@ -61,9 +61,8 @@ bool SessionSender::Route(FrameFromSession& frame) {
     if (found == routes_.end()) {
       return false;
     }
-    route = frame.type == PageMessage::kResponseEnded
-                ? std::move(found->second)
-                : found->second;
+    route = frame.type == PageMessage::kResponseEnded ? std::move(found->second)
+                                                      : found->second;
     if (frame.type == PageMessage::kResponseEnded) {
       routes_.erase(found);
     }
