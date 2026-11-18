@@ -22,6 +22,14 @@ MathMLElement::MathMLElement(Document& document,
 
 MathMLElement::~MathMLElement() = default;
 
+Node::InsertionNotificationRequest MathMLElement::InsertedInto(
+    Node& insertion_point) {
+  const InsertionNotificationRequest request =
+      Element::InsertedInto(insertion_point);
+  HideNonce();
+  return request;
+}
+
 const bindings::WrapperTypeInfo* MathMLElement::GetWrapperTypeInfo() const {
   return &bindings::V8MathMLElement::kWrapperTypeInfo;
 }

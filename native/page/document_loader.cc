@@ -1,10 +1,12 @@
 #include "mitto/page/document_loader.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -143,6 +145,18 @@ void DocumentLoader::OnResponseStarted(const PageResponseStarted& response) {
       latin1.push_back(static_cast<unsigned char>(c));
     }
     document_->SetContentLanguage(std::move(latin1));
+  }
+  // Whether the response delivered a Content Security Policy: a policy for
+  // each part of either header between commas that is not empty, as the
+  // network service parses them, which hides nonces.
+  for (const char* const name :
+       {"content-security-policy", "content-security-policy-report-only"}) {
+    const std::string policies = HeaderField(response.headers, name);
+    if (!base::SplitStringPiece(policies, ",", base::TRIM_WHITESPACE,
+                                base::SPLIT_WANT_NONEMPTY)
+             .empty()) {
+      document_->SetHasHeaderDeliveredContentSecurityPolicy(true);
+    }
   }
   // DocumentLoader::CreateParserPostCommit(): the response's Refresh, before
   // anything of the body. A header's value is Latin-1.

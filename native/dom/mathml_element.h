@@ -30,6 +30,8 @@ class MathMLElement : public Element {
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+  // Node's: the nonce hides as the element goes into a tree.
+  InsertionNotificationRequest InsertedInto(Node& insertion_point) override;
 
  protected:
   // Element's: the copy's event handler content attributes set handlers, as

@@ -5,6 +5,7 @@
 #include "mitto/bindings/v8_svg_element.h"
 #include "mitto/dom/event_handler_attributes.h"
 #include "mitto/dom/html_names.h"
+#include "mitto/dom/svg_elements.h"
 
 namespace mitto {
 
@@ -19,6 +20,14 @@ SVGElement::SVGElement(Document& document, const std::u16string& local_name)
 
 SVGElement::~SVGElement() = default;
 
+Node::InsertionNotificationRequest SVGElement::InsertedInto(
+    Node& insertion_point) {
+  const InsertionNotificationRequest request =
+      Element::InsertedInto(insertion_point);
+  HideNonce();
+  return request;
+}
+
 const bindings::WrapperTypeInfo* SVGElement::GetWrapperTypeInfo() const {
   return &bindings::V8SVGElement::kWrapperTypeInfo;
 }
@@ -26,6 +35,54 @@ const bindings::WrapperTypeInfo* SVGElement::GetWrapperTypeInfo() const {
 void SVGElement::Trace(cppgc::Visitor* visitor) const {
   Element::Trace(visitor);
   animated_values_.Trace(visitor);
+}
+
+namespace {
+
+bool IsSVGElement(const Node* node) {
+  return node && node->IsElementNode() &&
+         static_cast<const Element*>(node)->TagQName().namespace_uri ==
+             html_names::kSvgNamespace;
+}
+
+bool IsSVGElementNamed(const Node* node, std::u16string_view local_name) {
+  return IsSVGElement(node) &&
+         static_cast<const Element*>(node)->LocalName() == local_name;
+}
+
+// Blink's IsOutermostSVGSVGElement(), with no use shadow trees: an svg with
+// no parent, or a parent that is a foreignObject or no SVG element.
+bool IsOutermostSVGSVGElement(const SVGElement& element) {
+  if (element.LocalName() != u"svg") {
+    return false;
+  }
+  const Node* const parent = element.ParentNode();
+  return !parent || IsSVGElementNamed(parent, u"foreignObject") ||
+         !IsSVGElement(parent);
+}
+
+}  // namespace
+
+SVGSVGElement* SVGElement::OwnerSVGElement() const {
+  if (IsOutermostSVGSVGElement(*this)) {
+    return nullptr;
+  }
+  for (Node* node = ParentNode(); node; node = node->ParentNode()) {
+    if (IsSVGElementNamed(node, u"svg")) {
+      return static_cast<SVGSVGElement*>(node);
+    }
+  }
+  return nullptr;
+}
+
+SVGElement* SVGElement::ViewportElement() const {
+  for (Node* node = ParentNode(); node; node = node->ParentNode()) {
+    if (IsSVGElementNamed(node, u"svg") || IsSVGElementNamed(node, u"image") ||
+        IsSVGElementNamed(node, u"symbol")) {
+      return static_cast<SVGElement*>(node);
+    }
+  }
+  return nullptr;
 }
 
 SVGAnimatedString* SVGElement::ClassName() {

@@ -228,9 +228,11 @@ Node::InsertionNotificationRequest HTMLScriptElement::InsertedInto(
 void HTMLScriptElement::RemovedFrom(Node& insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
   // Blink's RemovedFrom(), while the element is still its document's, before
-  // another document adopts it. Blink keeps the script blocking through
-  // moveBefore(), which a Page does not have.
-  GetDocument().RemovePendingRenderBlockingScript(*this);
+  // another document adopts it. A script that moveBefore() moves keeps
+  // blocking.
+  if (!GetDocument().StatePreservingAtomicMoveInProgress()) {
+    GetDocument().RemovePendingRenderBlockingScript(*this);
+  }
 }
 
 void HTMLScriptElement::DidNotifySubtreeInsertionsToDocument() {
@@ -241,8 +243,11 @@ void HTMLScriptElement::ChildrenChanged(ChildrenChangeType type,
                                         Node& child,
                                         bool by_parser) {
   HTMLElement::ChildrenChanged(type, child, by_parser);
-  loader_->ChildrenChanged(type == ChildrenChangeType::kElementInserted ||
-                           type == ChildrenChangeType::kNonElementInserted);
+  // A child that moveBefore() moves in or out prepares nothing.
+  if (!GetDocument().StatePreservingAtomicMoveInProgress()) {
+    loader_->ChildrenChanged(type == ChildrenChangeType::kElementInserted ||
+                             type == ChildrenChangeType::kNonElementInserted);
+  }
 }
 
 void HTMLScriptElement::AttributeChanged(const QualifiedName& name,

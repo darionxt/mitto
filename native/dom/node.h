@@ -112,6 +112,14 @@ class Node : public EventTarget {
   Node* InsertBefore(Node* node,
                      Node* child,
                      bindings::ExceptionState& exception_state);
+  // ParentNode's moveBefore(), as Blink's Node::moveBefore(): insertBefore()
+  // as a state-preserving atomic move, of an element or character data in the
+  // same tree, connected or not, which runs no removing or post-insertion
+  // steps that would lose its state or run a script, and else a
+  // HierarchyRequestError.
+  void MoveBefore(Node* node,
+                  Node* child,
+                  bindings::ExceptionState& exception_state);
   Node* AppendChild(Node* node, bindings::ExceptionState& exception_state);
   Node* ReplaceChild(Node* node,
                      Node* child,

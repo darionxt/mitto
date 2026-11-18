@@ -382,6 +382,11 @@ class Element : public Node {
   // The nodes of its attributes move with it, as Blink's
   // Element::DidMoveToNewDocument() adopts them.
   void DidMoveToNewDocument(Document& old_document) override;
+  // Blink's HideNonce(), which an HTML, SVG or MathML element runs as it goes
+  // into a tree: the nonce content attribute becomes "" in a document that
+  // has a window and whose response delivered a Content Security Policy,
+  // while the element keeps its nonce, but for a move.
+  void HideNonce();
 
  private:
   // The DOM standard: an HTML element of an HTML document matches attribute

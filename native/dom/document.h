@@ -561,6 +561,23 @@ class Document : public Node {
   // whose nodes count as connected meanwhile, as Blink's nodes are until
   // their own RemovedFrom().
   Node* PopoverRemovalRoot() const { return popover_removal_root_.Get(); }
+  // Whether the document's response delivered a Content Security Policy in a
+  // header, enforced or report-only, as Blink's HasHeaderDeliveredPolicy()
+  // says; a Page enforces none of it yet.
+  bool HasHeaderDeliveredContentSecurityPolicy() const {
+    return has_header_delivered_content_security_policy_;
+  }
+  void SetHasHeaderDeliveredContentSecurityPolicy(bool value) {
+    has_header_delivered_content_security_policy_ = value;
+  }
+  // Whether moveBefore() is moving a node, whose removal and insertion keep
+  // its state, as Blink's StatePreservingAtomicMoveInProgress() says.
+  bool StatePreservingAtomicMoveInProgress() const {
+    return state_preserving_atomic_move_in_progress_;
+  }
+  void SetStatePreservingAtomicMoveInProgress(bool value) {
+    state_preserving_atomic_move_in_progress_ = value;
+  }
   void SetPopoverRemovalRoot(Node* root) { popover_removal_root_ = root; }
 
  protected:
@@ -688,6 +705,8 @@ class Document : public Node {
   bool popover_showing_ = false;
   int popover_hiding_nesting_count_ = 0;
   cppgc::Member<Node> popover_removal_root_;
+  bool state_preserving_atomic_move_in_progress_ = false;
+  bool has_header_delivered_content_security_policy_ = false;
 };
 
 // The HTML Standard's ignore-destructive-writes counter of `document`, which

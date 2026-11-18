@@ -351,6 +351,25 @@ void HTMLElement::SetSpellcheck(bool value) {
   SetAttributeWithoutValidation(u"spellcheck", value ? u"true" : u"false");
 }
 
+std::u16string HTMLElement::WritingSuggestions() const {
+  for (const Element* element = this; element;
+       element = element->ParentElement()) {
+    const std::u16string* const value =
+        element->FindAttribute(u"writingsuggestions");
+    if (!value) {
+      continue;
+    }
+    // The invalid value default is "true".
+    return base::EqualsCaseInsensitiveASCII(*value, u"false") ? u"false"
+                                                              : u"true";
+  }
+  return u"true";
+}
+
+void HTMLElement::SetWritingSuggestions(const std::u16string& value) {
+  SetAttributeWithoutValidation(u"writingsuggestions", value);
+}
+
 std::u16string HTMLElement::ContentEditable() const {
   return std::u16string(ContentEditableState(*this));
 }
@@ -1010,10 +1029,19 @@ const HTMLElement* HTMLElement::TopLayerElementPopoverAncestor(
                                     /*is_popover=*/false);
 }
 
+Node::InsertionNotificationRequest HTMLElement::InsertedInto(
+    Node& insertion_point) {
+  const InsertionNotificationRequest request =
+      Element::InsertedInto(insertion_point);
+  HideNonce();
+  return request;
+}
+
 void HTMLElement::RemovedFrom(Node& insertion_point) {
   // If a popover is removed from the document, it hides with no events, as
   // Blink does before Element::RemovedFrom().
-  if (IsPopover() && insertion_point.IsConnected()) {
+  if (IsPopover() && insertion_point.IsConnected() &&
+      !GetDocument().StatePreservingAtomicMoveInProgress()) {
     Document& document = GetDocument();
     Node* const previous_root = document.PopoverRemovalRoot();
     document.SetPopoverRemovalRoot(&TreeRoot());

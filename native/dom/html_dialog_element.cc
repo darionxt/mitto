@@ -197,7 +197,9 @@ Node::InsertionNotificationRequest HTMLDialogElement::InsertedInto(
     Node& insertion_point) {
   const InsertionNotificationRequest request =
       HTMLElement::InsertedInto(insertion_point);
-  if (IsOpen() && insertion_point.IsConnected()) {
+  // A dialog that moveBefore() moves keeps its close watcher.
+  if (IsOpen() && insertion_point.IsConnected() &&
+      !GetDocument().StatePreservingAtomicMoveInProgress()) {
     CreateCloseWatcher();
   }
   return request;
@@ -205,7 +207,9 @@ Node::InsertionNotificationRequest HTMLDialogElement::InsertedInto(
 
 void HTMLDialogElement::RemovedFrom(Node& insertion_point) {
   HTMLElement::RemovedFrom(insertion_point);
-  if (!insertion_point.IsConnected()) {
+  // A dialog that moveBefore() moves stays modal, with its close watcher.
+  if (GetDocument().StatePreservingAtomicMoveInProgress() ||
+      !insertion_point.IsConnected()) {
     return;
   }
   is_modal_ = false;

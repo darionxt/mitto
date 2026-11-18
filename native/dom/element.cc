@@ -1304,6 +1304,25 @@ void Element::UpdateNonce(const QualifiedName& name,
   }
 }
 
+void Element::HideNonce() {
+  const std::u16string* const nonce = FindAttribute(u"nonce");
+  if (!nonce || nonce->empty()) {
+    return;
+  }
+  Document& document = GetDocument();
+  if (document.StatePreservingAtomicMoveInProgress()) {
+    return;
+  }
+  // InActiveDocument(), and a policy of its execution context, which a
+  // document without a window does not have its own of.
+  if (!IsConnected() || !document.DefaultView()) {
+    return;
+  }
+  if (document.HasHeaderDeliveredContentSecurityPolicy()) {
+    SetAttributeWithoutValidation(u"nonce", std::u16string());
+  }
+}
+
 void Element::DidMoveToNewDocument(Document& old_document) {
   for (Attr* const attr : attr_nodes_.ToVector()) {
     attr->SetTreeDocument(GetDocument());

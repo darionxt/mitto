@@ -738,3 +738,125 @@ def test_a_buttons_command_gives_only_the_keywords_chrome_enables(program: Path)
     assert _evaluate(program, script, "<!DOCTYPE html><body>") == (
         '"show-modal" "show-modal" "--Foo" "" "" "" "request-close" button,"close",true "",true "",null true'
     )
+
+
+def test_move_before_moves_a_node_as_insert_before_does_keeping_its_state(program: Path) -> None:
+    # As Chrome 157 gave: moveBefore() of an element or character data within one tree, connected or not, with
+    # insertBefore()'s checks and errors and its records and range updates, but no script that runs again, and a
+    # modal dialog or an open popover stays so; nodes in different trees, or of other types, throw.
+    script = """
+        const out = [];
+        const t = (f) => { try { out.push(String(f())); } catch (e) { out.push(e.name + ': ' + e.message); } };
+        const a = document.body.appendChild(document.createElement('div'));
+        const b = document.body.appendChild(document.createElement('div'));
+        a.id = 'a';
+        b.id = 'b';
+        const p = a.appendChild(document.createElement('p'));
+        t(() => [b.moveBefore(p, null), p.parentNode.id].join());
+        t(() => b.moveBefore(document.createElement('span'), null));
+        t(() => document.createElement('div').moveBefore(p, null));
+        t(() => {
+          const root = document.createElement('div');
+          const from = root.appendChild(document.createElement('div'));
+          const to = root.appendChild(document.createElement('div'));
+          const child = from.appendChild(document.createElement('i'));
+          to.moveBefore(child, null);
+          return child.parentNode === to;
+        });
+        t(() => document.body.moveBefore(document.doctype, null));
+        t(() => a.moveBefore(p, document.body.appendChild(document.createElement('div'))));
+        t(() => b.moveBefore(b, null));
+        t(() => document.moveBefore(p, null));
+        t(() => {
+          const observer = new MutationObserver(() => {});
+          observer.observe(document.body, {childList: true, subtree: true});
+          const em = a.appendChild(document.createElement('em'));
+          observer.takeRecords();
+          b.moveBefore(em, null);
+          return observer.takeRecords().map((r) => [r.target.id, r.addedNodes.length, r.removedNodes.length].join(':'))
+              .join(' ');
+        });
+        t(() => {
+          const span = a.appendChild(document.createElement('span'));
+          span.textContent = 'abc';
+          const range = new Range();
+          range.setStart(span.firstChild, 1);
+          range.setEnd(span.firstChild, 2);
+          b.moveBefore(span, null);
+          return [range.startContainer.id, range.startOffset, range.collapsed].join();
+        });
+        t(() => {
+          window.ran = 0;
+          const script = a.appendChild(document.createElement('script'));
+          script.textContent = 'window.ran++';
+          b.moveBefore(script, null);
+          return window.ran;
+        });
+        t(() => {
+          const dialog = a.appendChild(document.createElement('dialog'));
+          dialog.showModal();
+          b.moveBefore(dialog, null);
+          return [dialog.open, dialog.matches(':modal')].join();
+        });
+        t(() => {
+          const popover = a.appendChild(document.createElement('div'));
+          popover.popover = 'auto';
+          popover.showPopover();
+          b.moveBefore(popover, null);
+          return popover.matches(':popover-open');
+        });
+        out.join('\\n')
+    """
+
+    assert _evaluate(program, script, "<!DOCTYPE html><body>").split("\n") == [
+        ",b",
+        "HierarchyRequestError: Failed to execute 'moveBefore' on 'Element': State-preserving atomic move cannot be "
+        "performed on nodes participating in an invalid hierarchy.",
+        "HierarchyRequestError: Failed to execute 'moveBefore' on 'Element': State-preserving atomic move cannot be "
+        "performed on nodes participating in an invalid hierarchy.",
+        "true",
+        "HierarchyRequestError: Failed to execute 'moveBefore' on 'Element': State-preserving atomic move cannot be "
+        "performed on nodes participating in an invalid hierarchy.",
+        "NotFoundError: Failed to execute 'moveBefore' on 'Element': The node before which the new node is to be "
+        "inserted is not a child of this node.",
+        "HierarchyRequestError: Failed to execute 'moveBefore' on 'Element': The new child element contains the parent.",
+        "HierarchyRequestError: Failed to execute 'moveBefore' on 'Document': Only one element on document allowed.",
+        "a:0:1 b:1:0",
+        "a,0,true",
+        "1",
+        "true,true",
+        "true",
+    ]
+
+
+def test_svg_elements_find_their_owner_and_viewport_and_writing_suggestions_inherit(program: Path) -> None:
+    # As Chrome 157 gave: ownerSVGElement is the nearest svg ancestor, none for an outermost svg, such as one in a
+    # foreignObject; viewportElement the nearest svg, image or symbol; writingSuggestions the nearest writingsuggestions
+    # attribute, "false" in any case or else "true".
+    script = """
+        const id = (e) => e === null ? 'null' : e.id;
+        const holder = document.body.appendChild(document.createElement('div'));
+        holder.innerHTML = '<svg id=outer><g id=g><svg id=inner><symbol id=sym><rect id=r1></rect></symbol>'
+            + '<image id=img><title id=tt></title></image></svg><foreignObject id=fo><svg id=fosvg><rect id=r2></rect>'
+            + '</svg></foreignObject></g></svg>';
+        const out = ['outer', 'g', 'inner', 'r1', 'tt', 'fo', 'fosvg', 'r2'].map((name) => {
+          const element = document.getElementById(name);
+          return [id(element.ownerSVGElement), id(element.viewportElement)].join();
+        });
+        const parent = document.createElement('div');
+        const child = parent.appendChild(document.createElement('span'));
+        const suggestions = [child.writingSuggestions];
+        for (const value of ['FALSE', '', 'x']) {
+          parent.setAttribute('writingsuggestions', value);
+          suggestions.push(child.writingSuggestions);
+        }
+        child.writingSuggestions = 'nope';
+        suggestions.push(child.getAttribute('writingsuggestions'), child.writingSuggestions);
+        out.push(suggestions.join());
+        out.join(' ')
+    """
+
+    assert _evaluate(program, script, "<!DOCTYPE html><body>") == (
+        "null,null outer,outer outer,outer inner,sym inner,img outer,outer null,outer fosvg,fosvg "
+        "true,false,true,true,nope,true"
+    )
