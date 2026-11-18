@@ -191,8 +191,9 @@ double Performance::TimeOrigin() const {
 
 PerformanceNavigationTiming* Performance::NavigationTiming() {
   // Blink makes it when the document commits, which a document of a response
-  // does before any of its scripts runs.
-  if (!navigation_timing_ && document_timing_->has_response) {
+  // does before any of its scripts runs. A worker has none.
+  if (!navigation_timing_ && document_timing_ &&
+      document_timing_->has_response) {
     navigation_timing_ =
         bindings::MakeGarbageCollected<PerformanceNavigationTiming>(
             document_timing_.Get(), time_origin_, navigation_id_);
