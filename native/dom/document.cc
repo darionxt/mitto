@@ -184,6 +184,10 @@ Document::Document(bool is_html)
     : Node(nullptr),
       is_html_(is_html),
       content_type_(is_html ? u"text/html" : u"application/xml") {
+  // An HTMLDocument clears its XML version, as Blink's does.
+  if (!is_html) {
+    xml_version_ = u"1.0";
+  }
   SetDocumentToSelf(this);
 }
 
@@ -627,6 +631,24 @@ std::u16string Document::Title() const {
     }
   }
   return std::u16string();
+}
+
+void Document::SetXmlVersion(const std::optional<std::u16string>& version,
+                             bindings::ExceptionState& exception_state) {
+  if (version != u"1.0") {
+    exception_state.ThrowDOMException(
+        "NotSupportedError",
+        base::StrCat({"This document does not support the XML version '",
+                      base::UTF16ToUTF8(version.value_or(u"")), "'."}));
+    return;
+  }
+  xml_version_ = version;
+}
+
+void Document::SetXmlStandalone(bool standalone,
+                                bindings::ExceptionState& exception_state) {
+  xml_standalone_ = standalone ? StandaloneStatus::kStandalone
+                               : StandaloneStatus::kNotStandalone;
 }
 
 std::u16string Document::CharacterSet() const {
@@ -1652,6 +1674,10 @@ void Document::Close(bindings::ExceptionState& exception_state) {
         "Custom Element constructor should not use close().");
     return;
   }
+  Close();
+}
+
+void Document::Close() {
   // Nothing without a script-created parser that is parsing.
   if (!parser_ || !parser_->WasCreatedByScript() || !parser_->IsParsing()) {
     return;
@@ -1663,6 +1689,21 @@ void Document::Close(bindings::ExceptionState& exception_state) {
     SetReadiness(Readiness::kComplete);
   }
   CheckCompleted();
+}
+
+void Document::SetContent(const std::u16string& content) {
+  // Only once the document is ready for it.
+  if (parser_ && parser_->IsParsing() && parser_->IsExecutingScript()) {
+    return;
+  }
+  if (ignore_opens_during_unload_count_) {
+    return;
+  }
+  Open();
+  if (const cppgc::Persistent<DocumentParser> parser = parser_.Get()) {
+    parser->Insert(content);
+  }
+  Close();
 }
 
 void Document::Write(const std::vector<std::u16string>& text,
