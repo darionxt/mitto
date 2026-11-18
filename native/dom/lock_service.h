@@ -1,13 +1,14 @@
-// The Web Locks of the Page's documents, as the browser's LockManager keeps
-// them for each origin's lock group: for each name, a queue of requests whose
-// granted ones come first, shared ones granted together and an exclusive one
-// alone. Chrome keeps one group for an origin across a profile's tabs and
-// workers; the Page keeps one for each origin across its own documents, which
-// are all the clients it has.
+// The Web Locks of the Page's documents and workers, as the browser's
+// LockManager keeps them for each origin's lock group: for each name, a queue
+// of requests whose granted ones come first, shared ones granted together and
+// an exclusive one alone. Chrome keeps one group for an origin across a
+// profile's tabs and workers; the Page keeps one for each origin across its
+// own documents and workers, which are all the clients it has.
 //
 // It stands where the browser does: what a client asks reaches it from a task
-// of its own, and what it tells a client goes back from another, as a message
-// each way over mojo would.
+// of its own, and what it tells a client goes back from another, on the
+// client's thread, as a message each way over mojo would. Its state is held
+// under a lock, as clients on each thread reach it.
 //
 // Upstream: content/browser/locks/lock_manager.h
 
@@ -24,7 +25,11 @@
 #include <vector>
 
 #include "base/functional/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/ref_counted_delete_on_sequence.h"
+#include "base/memory/scoped_refptr.h"
+#include "base/synchronization/lock.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/thread_annotations.h"
 
 namespace mitto {
 
@@ -36,9 +41,15 @@ class LockService {
   enum class WaitMode { kWait, kNoWait, kPreempt };
 
   // A client's end: what the service tells it about each of its requests,
-  // each from a task of its own. A lock is the request's, by its ID.
-  class Client : public base::RefCounted<Client> {
+  // each from a task of its own on `runner`, its thread's queue of Web Locks,
+  // where it is also deleted. A lock is the request's, by its ID.
+  class Client : public base::RefCountedDeleteOnSequence<Client> {
    public:
+    explicit Client(scoped_refptr<base::SequencedTaskRunner> runner);
+
+    // Runs `task` on the client's thread, from a task of its own.
+    void PostToClient(base::OnceClosure task);
+
     // The request now holds its lock.
     virtual void Granted(int64_t lock_id) = 0;
     // The request asked not to wait, and the lock is held.
@@ -47,8 +58,9 @@ class LockService {
     virtual void Broken(int64_t lock_id) = 0;
 
    protected:
-    friend class base::RefCounted<Client>;
-    virtual ~Client() = default;
+    friend class base::RefCountedDeleteOnSequence<Client>;
+    friend class base::DeleteHelper<Client>;
+    virtual ~Client();
   };
 
   // What query() gives of a lock or a request.
@@ -77,6 +89,9 @@ class LockService {
   // The client let go of the request or the lock of `lock_id`, as when its end
   // of the pipe closes.
   void ReleaseLock(std::string origin, int64_t lock_id);
+  // The same at once, for a client whose context goes, whose thread may run no
+  // task again, as a worker's that ends.
+  void ReleaseLockNow(const std::string& origin, int64_t lock_id);
   // The held locks and the waiting requests of the lock group of `origin`, as
   // they stand once the question has reached the service, by name. `answer`
   // gets them from a task of its own.
@@ -111,8 +126,10 @@ class LockService {
   std::pair<std::vector<Info>, std::vector<Info>> Snapshot(
       const std::string& origin) const;
 
-  std::map<std::string, std::unique_ptr<LockGroupState>> lock_groups_;
-  int64_t next_lock_id_ = 0;
+  mutable base::Lock lock_;
+  std::map<std::string, std::unique_ptr<LockGroupState>> lock_groups_
+      GUARDED_BY(lock_);
+  int64_t next_lock_id_ GUARDED_BY(lock_) = 0;
 };
 
 }  // namespace mitto

@@ -3,9 +3,10 @@
 // reach it, and the Session holds the numbers of requests and the IDs of
 // contexts to be larger than those before them, so this takes each such
 // number under one lock with the sending of the frame that carries it, and two
-// threads' frames reach the Session in the order of their numbers. It also
-// keeps where the response of each request of a worker goes, for the I/O
-// thread to hand it to that worker's thread.
+// threads' frames reach the Session in the order of their numbers, the
+// questions of the Cache API among them. It also keeps where the response of
+// each request of a worker goes, and where each answer of the Cache API goes,
+// for the I/O thread to hand it to the thread of the context that asked.
 
 #ifndef MITTO_PAGE_SESSION_SENDER_H_
 #define MITTO_PAGE_SESSION_SENDER_H_
@@ -13,6 +14,7 @@
 #include <stdint.h>
 
 #include <map>
+#include <optional>
 #include <string>
 
 #include "base/functional/callback.h"
@@ -20,6 +22,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "mitto/cache_storage_messages.h"
 #include "mitto/page_messages.h"
 
 namespace mitto {
@@ -29,6 +32,11 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // Takes a frame of the response of a request, a response started, part of
   // a body or the end, on the I/O thread.
   using ResponseRoute = base::RepeatingCallback<void(FrameFromSession frame)>;
+  // Takes an answer of the Cache API to the host numbered `host`, on the I/O
+  // thread, for the host's thread.
+  using CacheStorageRoute =
+      base::RepeatingCallback<void(uint64_t host,
+                                   PageCacheStorageAnswer answer)>;
 
   // `send` hands a frame to the I/O thread, from any thread.
   explicit SessionSender(base::RepeatingCallback<void(std::string)> send);
@@ -55,6 +63,30 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   // has none, whose response goes to the main thread. The I/O thread.
   bool Route(FrameFromSession& frame);
 
+  // The Cache API of a context, whose answers go to `route`: its number. Any
+  // thread, as are the others below but the last.
+  uint64_t AddCacheStorageHost(CacheStorageRoute route);
+  // The host has gone, or its document has: what it asked, held or opened
+  // goes unheard.
+  void RemoveCacheStorageHost(uint64_t host);
+  // Takes the number of the Page's next Cache API question, of `host`, sends
+  // the frame that `encode` makes of it, and returns it.
+  uint64_t SendCacheStorageQuestion(
+      uint64_t host,
+      base::FunctionRef<std::string(uint64_t question)> encode);
+  // The number of a put body of `host`, whose requests for it go to the host
+  // until DropCacheStoragePutBody().
+  uint64_t AddCacheStoragePutBody(uint64_t host);
+  void DropCacheStoragePutBody(uint64_t body);
+  // A stored body that `host` reads, whose parts go to the host until it ends
+  // or DropCacheStorageBody().
+  void AddCacheStorageBody(uint64_t host, uint64_t body);
+  void DropCacheStorageBody(uint64_t body);
+  // Hands `answer` to the route of its host. One for a host that has gone
+  // goes unheard, and one for a question or put body that the Page never
+  // numbered is a refusal, which this returns. The I/O thread.
+  std::optional<std::string> RouteCacheStorage(PageCacheStorageAnswer answer);
+
  private:
   friend class base::RefCountedThreadSafe<SessionSender>;
   ~SessionSender();
@@ -64,6 +96,15 @@ class SessionSender final : public base::RefCountedThreadSafe<SessionSender> {
   uint64_t last_request_ GUARDED_BY(lock_) = 0;
   uint64_t last_context_ GUARDED_BY(lock_) = kNoDocument;
   std::map<uint64_t, ResponseRoute> routes_ GUARDED_BY(lock_);
+  uint64_t last_cache_storage_host_ GUARDED_BY(lock_) = 0;
+  std::map<uint64_t, CacheStorageRoute> cache_storage_hosts_ GUARDED_BY(lock_);
+  uint64_t last_cache_storage_question_ GUARDED_BY(lock_) = 0;
+  uint64_t last_cache_storage_put_body_ GUARDED_BY(lock_) = 0;
+  // The host of each question that waits for its answer, of each put body
+  // that the Session may ask for, and of each stored body being read.
+  std::map<uint64_t, uint64_t> cache_storage_questions_ GUARDED_BY(lock_);
+  std::map<uint64_t, uint64_t> cache_storage_put_bodies_ GUARDED_BY(lock_);
+  std::map<uint64_t, uint64_t> cache_storage_bodies_ GUARDED_BY(lock_);
 };
 
 }  // namespace mitto

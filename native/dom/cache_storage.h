@@ -1,8 +1,8 @@
-// The window's caches: CacheStorage, as Blink's asks Chrome's browser for the
-// caches of the document's storage key, which its Session keeps and every
-// Page of the Session shares. Each promise settles from a task of its own once
-// the Session has answered, and a match with a method other than GET settles
-// without asking, unless it ignores the method.
+// The caches of a window or a worker: CacheStorage, as Blink's asks Chrome's
+// browser for the caches of the context's storage key, which its Session keeps
+// and every Page of the Session shares. Each promise settles from a task of its
+// own once the Session has answered, and a match with a method other than GET
+// settles without asking, unless it ignores the method.
 //
 // Upstream: third_party/blink/renderer/modules/cache_storage/cache_storage.cc
 // Upstream: third_party/blink/renderer/modules/cache_storage/global_cache_storage.cc
@@ -27,11 +27,11 @@ class ExceptionState;
 }  // namespace bindings
 
 class CacheStorageHost;
-class Window;
+class ExecutionContext;
 
 class CacheStorage final : public bindings::ScriptWrappable {
  public:
-  explicit CacheStorage(Window* window);
+  explicit CacheStorage(ExecutionContext* context);
   ~CacheStorage() override;
 
   const bindings::WrapperTypeInfo* GetWrapperTypeInfo() const override;
@@ -50,7 +50,7 @@ class CacheStorage final : public bindings::ScriptWrappable {
   v8::Local<v8::Promise> Keys(bindings::ExceptionState& exception_state);
 
  private:
-  // The document's host, or null once the window's context has gone, when
+  // The context's host, or null once the context has gone, when
   // Blink's remote is unbound and each call rejects.
   CacheStorageHost* Host() const;
   // Asks the Session `call`, and settles the promise of `resolver` with what
@@ -59,14 +59,13 @@ class CacheStorage final : public bindings::ScriptWrappable {
                           v8::Local<v8::Context> context,
                           v8::Local<v8::Promise::Resolver> resolver,
                           CacheStorageHost& host,
-                          Window& window,
                           const PageCacheStorageAnswer& answer);
   // `method` is the call's, whose name a rejection that this makes says.
   v8::Local<v8::Promise> Ask(PageCacheStorageCall call,
                              std::string_view method,
                              Settle settle);
 
-  const cppgc::WeakMember<Window> window_;
+  const cppgc::WeakMember<ExecutionContext> context_;
 };
 
 }  // namespace mitto

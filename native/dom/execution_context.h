@@ -37,6 +37,7 @@
 
 namespace mitto {
 
+class CacheStorageHost;
 class DOMTimerCoordinator;
 class Performance;
 class EventTarget;
@@ -84,6 +85,9 @@ class ExecutionContext : public cppgc::GarbageCollectedMixin {
   virtual bool IsSecureContextForBindings() const = 0;
   // WindowOrWorkerGlobalScope's performance, made the first time.
   virtual mitto::Performance* Performance() = 0;
+  // Where the context's Cache API reaches the Session, or null for a context
+  // whose origin may not reach caches.
+  virtual CacheStorageHost* GetCacheStorageHost() const = 0;
 
   // ExecutionContext's state of its error events (error_reporting.h).
   struct ErrorEventState {

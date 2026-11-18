@@ -13,9 +13,10 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/v8_conversions.h"
 #include "mitto/bindings/v8_lock_manager.h"
-#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/event_loop.h"
+#include "mitto/dom/execution_context.h"
 #include "mitto/dom/lock.h"
 #include "mitto/dom/script_values.h"
 #include "mitto/dom/window.h"
@@ -44,15 +45,20 @@ void Post(base::OnceClosure task) {
                                                               std::move(task));
 }
 
-url::Origin OriginOf(Window& window) {
-  return url::Origin::Create(
-      GURL(base::UTF16ToUTF8(window.GetDocument().UrlForBinding())));
+// A window's document's origin, and a worker's own, which is its creator's
+// or opaque for a data: URL's.
+url::Origin OriginOf(ExecutionContext& context) {
+  if (context.IsWindow()) {
+    return url::Origin::Create(GURL(base::UTF16ToUTF8(
+        static_cast<Window&>(context).GetDocument().UrlForBinding())));
+  }
+  return context.GetSecurityOrigin();
 }
 
-bool WindowHasContext(v8::Isolate* isolate, v8::Local<v8::Context> context) {
-  const Window* const window =
-      bindings::V8Window::ToWrappable(isolate, context->Global());
-  return window && window->HasContext();
+bool ContextIsAlive(v8::Isolate* isolate, v8::Local<v8::Context> context) {
+  const ExecutionContext* const execution_context =
+      ExecutionContext::From(isolate, context);
+  return execution_context && execution_context->HasContext();
 }
 
 v8::Local<v8::Object> LockInfoObject(v8::Isolate* isolate,
@@ -79,15 +85,17 @@ v8::Local<v8::Array> LockInfoArray(
 }  // namespace
 
 // The manager's end of its pipe to the service: it runs what the service says
-// in the window's context, while the manager and the context last, and lets a
-// granted lock go otherwise, as a closed pipe does.
+// in the context of the window or worker, on its thread, while the manager and
+// the context last, and lets a granted lock go otherwise, as a closed pipe
+// does.
 class LockManager::Connection final : public LockService::Client {
  public:
   Connection(v8::Isolate* isolate,
              v8::Local<v8::Context> context,
              LockManager* manager,
              std::string origin)
-      : isolate_(isolate),
+      : LockService::Client(EventLoop::Get()->TaskRunner(TaskType::kWebLocks)),
+        isolate_(isolate),
         context_(isolate, context),
         manager_(manager),
         origin_(std::move(origin)) {}
@@ -106,7 +114,7 @@ class LockManager::Connection final : public LockService::Client {
     }
     const v8::HandleScope handle_scope(isolate_);
     const v8::Local<v8::Context> context = context_.Get(isolate_);
-    if (!WindowHasContext(isolate_, context)) {
+    if (!ContextIsAlive(isolate_, context)) {
       return false;
     }
     const v8::Context::Scope context_scope(context);
@@ -228,16 +236,16 @@ class LockManager::AbortRequest final : public AbortSignal::Algorithm {
   const cppgc::Member<AbortSignal> signal_;
 };
 
-LockManager::LockManager(Window& window)
-    : origin_(OriginOf(window).Serialize()),
+LockManager::LockManager(ExecutionContext& context)
+    : origin_(OriginOf(context).Serialize()),
       client_id_(base::UnguessableToken::Create().ToString()),
       connection_(base::MakeRefCounted<Connection>(
           v8::Isolate::GetCurrent(),
           v8::Isolate::GetCurrent()->GetCurrentContext(),
           this,
           origin_)) {
-  if (window.HasContext()) {
-    window.AddContextDestroyedCallback(base::BindOnce(
+  if (context.HasContext()) {
+    context.AddContextDestroyedCallback(base::BindOnce(
         [](cppgc::WeakPersistent<LockManager> manager) {
           if (manager) {
             manager->ContextDestroyed();
@@ -262,7 +270,7 @@ void LockManager::Trace(cppgc::Visitor* visitor) const {
 }
 
 bool LockManager::CheckAccess(bindings::ExceptionState& exception_state) const {
-  // The observed context goes with the window's.
+  // The observed context goes with the window's or the worker's.
   if (context_destroyed_) {
     exception_state.ThrowDOMException("InvalidStateError",
                                       kInvalidStateErrorMessage);
@@ -485,6 +493,10 @@ void LockManager::Broken(int64_t lock_id) {
 
 void LockManager::OnLockReleased(Lock* lock) {
   held_locks_.EraseIf([lock](Lock* held) { return held == lock; });
+  if (context_destroyed_) {
+    LockService::Get().ReleaseLockNow(origin_, lock->lock_id());
+    return;
+  }
   LockService::Get().ReleaseLock(origin_, lock->lock_id());
 }
 
@@ -533,7 +545,7 @@ v8::Local<v8::Promise> LockManager::Query(
 void LockManager::ContextDestroyed() {
   context_destroyed_ = true;
   for (LockRequest* const request : pending_requests_.ToVector()) {
-    LockService::Get().ReleaseLock(origin_, request->lock_id());
+    LockService::Get().ReleaseLockNow(origin_, request->lock_id());
   }
   pending_requests_.clear();
   for (Lock* const lock : held_locks_.ToVector()) {

@@ -3039,6 +3039,7 @@ mitto_bindings_interfaces = [
       "userAgentData",
       "permissions",
       "storage",
+      "locks",
     ]
   },
   {
@@ -3056,6 +3057,7 @@ mitto_bindings_interfaces = [
       "performance",
       "crypto",
       "scheduler",
+      "caches",
       "structuredClone",
       "importScripts",
       "fetch",

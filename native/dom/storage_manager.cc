@@ -14,7 +14,6 @@
 #include "mitto/dom/document.h"
 #include "mitto/dom/execution_context.h"
 #include "mitto/dom/script_values.h"
-#include "mitto/dom/window.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-object.h"
@@ -60,13 +59,11 @@ const bindings::WrapperTypeInfo* StorageManager::GetWrapperTypeInfo() const {
 v8::Local<v8::Promise> StorageManager::Estimate(
     bindings::ExceptionState& exception_state) {
   v8::Isolate* const isolate = exception_state.GetIsolate();
-  // A document that its Session loaded asks the Session's quota, as Blink asks
-  // the browser's QuotaManagerHost, and its answer comes from a task of its
-  // own. A worker's is a Known Gap.
+  // A document that its Session loaded, or a worker of one, asks the
+  // Session's quota, as Blink asks the browser's QuotaManagerHost, and its
+  // answer comes from a task of its own.
   CacheStorageHost* const host =
-      ExecutionContext::Current().IsWindow()
-          ? Window::Current().GetDocument().GetCacheStorageHost()
-          : nullptr;
+      ExecutionContext::Current().GetCacheStorageHost();
   if (host) {
     const v8::Local<v8::Context> context = isolate->GetCurrentContext();
     v8::Local<v8::Promise::Resolver> resolver;

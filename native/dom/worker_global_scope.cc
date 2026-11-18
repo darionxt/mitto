@@ -13,6 +13,7 @@
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_worker_global_scope.h"
+#include "mitto/dom/cache_storage.h"
 #include "mitto/dom/crypto.h"
 #include "mitto/dom/dedicated_worker_messaging.h"
 #include "mitto/dom/error_reporting.h"
@@ -55,6 +56,7 @@ void WorkerGlobalScope::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(navigator_);
   visitor->Trace(crypto_);
   visitor->Trace(scheduler_);
+  visitor->Trace(caches_);
 }
 
 mitto::Crypto* WorkerGlobalScope::Crypto() {
@@ -69,6 +71,24 @@ mitto::Scheduler* WorkerGlobalScope::Scheduler() {
     scheduler_ = bindings::MakeGarbageCollected<mitto::Scheduler>(this);
   }
   return scheduler_.Get();
+}
+
+mitto::CacheStorage* WorkerGlobalScope::Caches(
+    bindings::ExceptionState& exception_state) {
+  // GlobalCacheStorage::CanCreateCacheStorage(): not for an opaque origin.
+  if (!cache_storage_host_) {
+    exception_state.ThrowDOMException("SecurityError",
+                                      "Access to cache storage is denied.");
+    return nullptr;
+  }
+  if (!caches_) {
+    caches_ = bindings::MakeGarbageCollected<mitto::CacheStorage>(this);
+  }
+  return caches_.Get();
+}
+
+CacheStorageHost* WorkerGlobalScope::GetCacheStorageHost() const {
+  return cache_storage_host_;
 }
 
 WorkerNavigator* WorkerGlobalScope::Navigator() {

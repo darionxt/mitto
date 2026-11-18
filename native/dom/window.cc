@@ -344,6 +344,10 @@ MediaQueryList* Window::MatchMedia(const std::u16string& query) {
   return MediaQueryList::Create(this, query);
 }
 
+CacheStorageHost* Window::GetCacheStorageHost() const {
+  return GetDocument().GetCacheStorageHost();
+}
+
 mitto::Performance* Window::Performance() {
   if (!performance_) {
     performance_ = Performance::Create(

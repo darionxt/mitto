@@ -34,6 +34,8 @@ namespace bindings {
 class ExceptionState;
 }  // namespace bindings
 
+class CacheStorage;
+class CacheStorageHost;
 class Crypto;
 class ImportedScriptLoader;
 class Scheduler;
@@ -56,6 +58,10 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   // Each made the first time.
   mitto::Crypto* Crypto();
   mitto::Scheduler* Scheduler();
+  // GlobalCacheStorage::caches(): the worker's CacheStorage, made the first
+  // time, or null after throwing a SecurityError for a worker whose origin
+  // may not reach caches.
+  mitto::CacheStorage* Caches(bindings::ExceptionState& exception_state);
   // The worker's origin, its creator's, serialized.
   std::u16string Origin() const override;
   bool IsSecureContextForBindings() const override;
@@ -75,8 +81,14 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   url::Origin GetSecurityOrigin() const override;
   GURL CompleteUrl(std::u16string_view url) const override;
   GURL BaseUrl() const override;
+  CacheStorageHost* GetCacheStorageHost() const override;
 
   // What the Page uses.
+  // Where the worker's Cache API reaches the Session: none for a worker of an
+  // opaque origin, or once the worker has ended.
+  void SetCacheStorageHost(CacheStorageHost* host) {
+    cache_storage_host_ = host;
+  }
   // The worker's URL, its script's final one, as InitializeURL() takes it
   // once the script has come, and its origin, its creator's or an opaque one
   // for a data: URL, from when it starts.
@@ -108,9 +120,11 @@ class WorkerGlobalScope : public EventTarget, public ExecutionContext {
   cppgc::Member<WorkerNavigator> navigator_;
   cppgc::Member<mitto::Crypto> crypto_;
   cppgc::Member<mitto::Scheduler> scheduler_;
+  cppgc::Member<mitto::CacheStorage> caches_;
   GURL url_;
   url::Origin origin_;
   raw_ptr<ImportedScriptLoader> imported_script_loader_ = nullptr;
+  raw_ptr<CacheStorageHost> cache_storage_host_ = nullptr;
   bool module_ = false;
   bool closing_ = false;
 };

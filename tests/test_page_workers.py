@@ -93,6 +93,27 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"performance.mark('m'); postMessage([performance.getEntriesByName('m').length,"
         b"performance.getEntriesByType('navigation').length, typeof performance.timing]);",
     ),
+    "/locks.js": (
+        "text/javascript",
+        b"onmessage = async (e) => {"
+        b"  if (e.data === 'try') {"
+        b"    postMessage(await navigator.locks.request('x', {ifAvailable: true}, (lock) => (lock ? 'free' : 'busy')));"
+        b"  } else {"
+        b"    navigator.locks.request('y', () => { postMessage('holding'); return new Promise(() => {}); });"
+        b"  }"
+        b"};",
+    ),
+    "/caches.js": (
+        "text/javascript",
+        b"(async () => {"
+        b"  const cache = await caches.open('shared');"
+        b"  await cache.put('/data.txt', new Response('put by the worker'));"
+        b"  const keys = await caches.keys();"
+        b"  const text = await (await caches.match('/data.txt')).text();"
+        b"  const estimate = await navigator.storage.estimate();"
+        b"  postMessage([keys, text, estimate.usageDetails.caches > 0]);"
+        b"})().catch((e) => postMessage(String(e)));",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -383,6 +404,48 @@ def test_a_port_transferred_to_a_worker_carries_messages_both_ways(server: str) 
     })"""
 
     assert _evaluate(server, script) == "across threads!"
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_window_and_its_worker_share_their_origins_web_locks(server: str) -> None:
+    script = """(async () => {
+        const worker = new Worker('/locks.js');
+        const answer = (message) => new Promise((resolve) => {
+            worker.addEventListener('message', (e) => resolve(e.data), {once: true});
+            worker.postMessage(message);
+        });
+        const out = [];
+        let release;
+        const held = navigator.locks.request('x', () => new Promise((resolve) => { release = resolve; }));
+        await navigator.locks.query();
+        out.push(await answer('try'));
+        release();
+        await held;
+        // Answered once the release has reached the service, from the same queue.
+        await navigator.locks.query();
+        out.push(await answer('try'));
+        out.push(await answer('hold'));
+        out.push((await navigator.locks.query()).held.map((lock) => lock.name));
+        // A worker that ends lets its locks go.
+        worker.terminate();
+        out.push(await navigator.locks.request('y', () => 'granted after terminate()'));
+        return out;
+    })()"""
+
+    assert _evaluate(server, script) == ["busy", "free", "holding", ["y"], "granted after terminate()"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_reaches_the_caches_of_its_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/caches.js');
+        worker.onmessage = async (e) => {
+            const response = await caches.match('/data.txt', {cacheName: 'shared'});
+            resolve([e.data, await response.text()]);
+        };
+    })"""
+
+    assert _evaluate(server, script) == [[["shared"], "put by the worker", True], "put by the worker"]
 
 
 @pytest.mark.usefixtures("page_program")

@@ -1,6 +1,8 @@
 #include "mitto/dom/worker_navigator.h"
 
 #include "mitto/bindings/v8_worker_navigator.h"
+#include "mitto/dom/execution_context.h"
+#include "mitto/dom/lock_manager.h"
 #include "mitto/dom/navigator.h"
 
 namespace mitto {
@@ -24,6 +26,7 @@ const bindings::WrapperTypeInfo* WorkerNavigator::GetWrapperTypeInfo() const {
 void WorkerNavigator::Trace(cppgc::Visitor* visitor) const {
   bindings::ScriptWrappable::Trace(visitor);
   visitor->Trace(navigator_);
+  visitor->Trace(locks_);
 }
 
 uint64_t WorkerNavigator::HardwareConcurrency() const {
@@ -84,6 +87,15 @@ mitto::Permissions* WorkerNavigator::Permissions() {
 
 StorageManager* WorkerNavigator::Storage() {
   return navigator_->Storage();
+}
+
+// LockManager::locks(): the worker's own, made the first time.
+mitto::LockManager* WorkerNavigator::Locks() {
+  if (!locks_) {
+    locks_ = bindings::MakeGarbageCollected<mitto::LockManager>(
+        ExecutionContext::Current());
+  }
+  return locks_.Get();
 }
 
 }  // namespace mitto
