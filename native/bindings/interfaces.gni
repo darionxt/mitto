@@ -233,6 +233,10 @@ mitto_bindings_interfaces = [
     file = "dom_implementation"
   },
   {
+    name = "DOMParser"
+    file = "dom_parser"
+  },
+  {
     name = "DOMRect"
     file = "dom_rect"
     made_by_known_gaps = true
@@ -362,6 +366,9 @@ mitto_bindings_interfaces = [
       "writeln",
       "createProcessingInstruction",
       "createCDATASection",
+      "xmlEncoding",
+      "xmlVersion",
+      "xmlStandalone",
       "dir",
       "fgColor",
       "bgColor",
@@ -679,6 +686,10 @@ mitto_bindings_interfaces = [
 
     # Document's, which each instance has of its own.
     implemented = [ "get location" ]
+  },
+  {
+    name = "XMLSerializer"
+    file = "xml_serializer"
   },
   {
     name = "HTMLElement"
