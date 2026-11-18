@@ -325,6 +325,7 @@ def test_an_svg_image_has_the_natural_size_its_root_gives_and_decode_settles(
         sized = _settled(page, f'Object.assign(new Image(), {{src: "{svg.format("width='60' height='30'")}"}})')
         ratio = _settled(page, f'Object.assign(new Image(), {{src: "{svg.format("viewBox='0 0 10 10'")}"}})')
         unsized = _settled(page, f'Object.assign(new Image(), {{src: "{svg.format("")}"}})')
+        negative = _settled(page, f'Object.assign(new Image(), {{src: "{svg.format("width='-5'")}"}})')
         decoded = page.evaluate(
             f'Object.assign(new Image(), {{src: "{svg.format("")}"}}).decode().then(() => "decoded")',
             timeout=_TIMEOUT_SECONDS,
@@ -339,6 +340,8 @@ def test_an_svg_image_has_the_natural_size_its_root_gives_and_decode_settles(
     # A ratio alone fits the default object size, 300 by 150.
     assert (ratio["naturalWidth"], ratio["naturalHeight"]) == (150, 150)
     assert (unsized["naturalWidth"], unsized["naturalHeight"]) == (300, 150)
+    # A negative length is a natural size of 0, as Chrome clamps it, not none.
+    assert (negative["naturalWidth"], negative["naturalHeight"]) == (0, 150)
     assert decoded == "decoded"
     # An svg root outside SVG's namespace is no image.
     assert refused == "EncodingError: The source image cannot be decoded."

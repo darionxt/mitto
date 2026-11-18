@@ -822,10 +822,10 @@ const std::u16string* FindAttribute(const std::vector<XmlAttribute>& attributes,
   return nullptr;
 }
 
-// SVGSVGElement::IntrinsicWidth(): the length in user units, none for a
-// percentage, or for a value that does not parse or is negative, which
-// leaves the initial 100%. Relative units resolve against the initial font
-// and the default object size, as an image's document has them.
+// SVGSVGElement::IntrinsicWidth(): the length in user units, 0 for a
+// negative one, and none for a percentage or for a value that does not
+// parse, which leaves the initial 100%. Relative units resolve against the
+// initial font and the default object size, as an image's document has them.
 std::optional<float> IntrinsicLength(const std::u16string* attribute) {
   if (!attribute) {
     return std::nullopt;
@@ -841,7 +841,7 @@ std::optional<float> IntrinsicLength(const std::u16string* attribute) {
   if (!length->IsNumeric()) {
     return std::max(0.0f, static_cast<float>(length->ComputeMath(resolver)));
   }
-  if (length->Unit() == CssUnit::kPercentage || length->Number() < 0) {
+  if (length->Unit() == CssUnit::kPercentage) {
     return std::nullopt;
   }
   const CssUnit unit =
