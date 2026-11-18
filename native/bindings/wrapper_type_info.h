@@ -99,6 +99,15 @@ struct WrapperTypeInfo : v8::Object::WrapperTypeInfo {
   CreateForKnownGapFunction create_for_known_gap;
 };
 
+// The tags of the C++ objects that the bindings wrap for themselves and that no
+// interface has, above those of every interface in Blink's database: the
+// holder of a ScriptFunction (script_function.h) and the C++ side of an
+// asynchronous iterator (async_iterable.h).
+inline constexpr v8::CppHeapPointerTag kFunctionHolderTag =
+    static_cast<v8::CppHeapPointerTag>(0x6e00);
+inline constexpr v8::CppHeapPointerTag kAsyncIteratorTag =
+    static_cast<v8::CppHeapPointerTag>(0x6e01);
+
 }  // namespace mitto::bindings
 
 #endif  // MITTO_BINDINGS_WRAPPER_TYPE_INFO_H_
