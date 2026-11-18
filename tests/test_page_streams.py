@@ -616,6 +616,21 @@ BODIES = {
         "method: 'GET' }); } catch (e) { return e.message; }",
         "value: Failed to construct 'Request': Request with GET/HEAD method cannot have body.",
     ),
+    "an empty chunk through a proxy's body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(0)); c.enqueue(new Uint8Array([1, 2])); "
+        "c.close(); } }); const a = new Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); "
+        "const b = new Request(a); const reader = b.body.getReader(); const out = []; for (;;) { const r = await "
+        "reader.read(); if (r.done) { out.push('done'); break; } out.push(r.value.length); } return out.join()",
+        "value: 0,2,done",
+    ),
+    "an empty chunk stops a BYOB read of a proxy's body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(0)); c.enqueue(new Uint8Array([1, 2])); "
+        "c.close(); } }); const a = new Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); "
+        "const b = new Request(a); const reader = b.body.getReader({ mode: 'byob' }); const r = await "
+        "Promise.race([reader.read(new Uint8Array(4)), new Promise((resolve) => setTimeout(() => resolve('pending'), "
+        "500))]); return r === 'pending' ? r : [r.done, Array.from(r.value)].join()",
+        "value: pending",
+    ),
 }
 
 

@@ -6,6 +6,7 @@
 #include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
+#include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/per_isolate_data.h"
@@ -13,12 +14,15 @@
 #include "mitto/bindings/runtime_features.h"
 #include "mitto/bindings/script_promise.h"
 #include "mitto/bindings/script_wrappable.h"
+#include "mitto/bindings/v8_window.h"
 #include "mitto/dom/abort_signal.h"
 #include "mitto/dom/readable_byte_stream_controller.h"
 #include "mitto/dom/readable_stream.h"
 #include "mitto/dom/readable_stream_byob_request.h"
 #include "mitto/dom/readable_stream_bytes_consumer.h"
 #include "mitto/dom/stream_chunks.h"
+#include "mitto/dom/window.h"
+#include "v8/include/v8-context.h"
 #include "v8/include/v8-exception.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-primitive.h"
@@ -208,6 +212,37 @@ void BodyStreamBuffer::StartLoading(FetchDataLoader* loader,
   keep_alive_ = this;
   loader->Start(handle,
                 bindings::MakeGarbageCollected<LoaderClient>(this, client));
+  // A load that waits for more of the body stops when the window's context
+  // goes, as Blink's LoaderClient, an ExecutionContextLifecycleObserver, stops
+  // it, so that it keeps nothing alive across a navigation.
+  if (loader_) {
+    v8::Isolate* const isolate = isolate_.get();
+    if (Window* const window = bindings::V8Window::ToWrappable(
+            isolate, isolate->GetCurrentContext()->Global())) {
+      window->AddContextDestroyedCallback(base::BindOnce(
+          [](cppgc::WeakPersistent<BodyStreamBuffer> buffer) {
+            if (buffer) {
+              buffer->ContextDestroyed();
+            }
+          },
+          cppgc::WeakPersistent<BodyStreamBuffer>(this)));
+    }
+  }
+}
+
+void BodyStreamBuffer::ContextDestroyed() {
+  StopLoading();
+  CancelConsumer();
+  keep_alive_.Clear();
+}
+
+void BodyStreamBuffer::StopLoading() {
+  if (!loader_) {
+    DCHECK(!keep_alive_);
+    return;
+  }
+  loader_->Cancel();
+  EndLoading();
 }
 
 v8::Local<v8::Promise> BodyStreamBuffer::Pull(

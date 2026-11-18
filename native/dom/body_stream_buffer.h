@@ -103,6 +103,10 @@ class BodyStreamBuffer final : public UnderlyingByteSourceBase,
   void CancelConsumer();
   void ProcessData(bindings::ExceptionState& exception_state);
   void EndLoading();
+  // What Blink's ContextDestroyed() of the buffer and of its LoaderClient do:
+  // the load and the consumer stop, and it no longer keeps itself alive.
+  void ContextDestroyed();
+  void StopLoading();
 
   const raw_ptr<v8::Isolate> isolate_;
   cppgc::Member<ReadableStream> stream_;
