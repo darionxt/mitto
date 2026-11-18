@@ -16,10 +16,14 @@
 
 namespace mitto {
 
-// The Fetch Standard's request destination: none for fetch().
+// The Fetch Standard's request destination: none for fetch(), and json, style
+// and text for module scripts of those types.
 enum class FetchDestination {
   kEmpty,
   kScript,
+  kJson,
+  kStyle,
+  kText,
 };
 
 // The Fetch Standard's request mode, of those that a page's requests have.
@@ -88,6 +92,12 @@ FetchPriorityHint FetchPriorityHintFromAttribute(std::u16string_view value);
 // Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
 FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value);
 
+// The referrer policy that a Referrer-Policy header names: the last of its
+// comma-separated tokens that names one, without white space around it, and
+// kDefault where none does.
+// Upstream: third_party/blink/renderer/platform/weborigin/security_policy.cc
+FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value);
+
 // The referrer of a request that is the document's, as Blink's referrer string
 // says it, and of one that has none.
 inline constexpr char kClientReferrer[] = "about:client";
@@ -117,6 +127,9 @@ struct FetchRequestData {
   // Whether it outlives its document.
   bool keepalive = false;
   FetchDestination destination = FetchDestination::kEmpty;
+  // Whether it fetches a module script, or what one imports, which the
+  // Session sends as a module.
+  bool is_module = false;
   // Whether it blocks rendering, which its entry of the Performance Timeline
   // says.
   bool render_blocking = false;

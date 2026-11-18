@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 
 namespace mitto {
 
@@ -61,6 +63,19 @@ FetchReferrerPolicy FetchReferrerPolicyFromString(std::u16string_view value) {
     }
   }
   return FetchReferrerPolicy::kDefault;
+}
+
+FetchReferrerPolicy FetchReferrerPolicyFromHeaderValue(std::string_view value) {
+  FetchReferrerPolicy policy = FetchReferrerPolicy::kDefault;
+  for (const std::string_view token : base::SplitStringPiece(
+           value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+    const FetchReferrerPolicy named =
+        FetchReferrerPolicyFromString(base::UTF8ToUTF16(token));
+    if (named != FetchReferrerPolicy::kDefault) {
+      policy = named;
+    }
+  }
+  return policy;
 }
 
 FetchRequestData::FetchRequestData() = default;

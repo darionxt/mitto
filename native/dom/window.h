@@ -65,6 +65,7 @@ class IDBFactory;
 class IdleTaskController;
 class Location;
 class MediaQueryList;
+class Modulator;
 class Navigation;
 class NavigationClient;
 class Navigator;
@@ -321,6 +322,9 @@ class Window final : public WindowProperties {
   void SetConsoleSink(ConsoleSink sink) { console_sink_ = std::move(sink); }
   // ExecutionContext::AddConsoleMessage().
   void AddConsoleMessage(ConsoleLevel level, std::string text);
+  // The window's module map and the rest of its module machinery, made the
+  // first time, as Blink's Modulator::From() makes the context's.
+  Modulator* GetModulator();
 
  private:
   // Runs a callback that queueMicrotask() queued, from its microtask.
@@ -352,6 +356,7 @@ class Window final : public WindowProperties {
   cppgc::Member<mitto::Viewport> viewport_;
   cppgc::Member<mitto::StyleMedia> style_media_;
   cppgc::Member<mitto::Navigation> navigation_;
+  cppgc::Member<Modulator> modulator_;
   cppgc::Member<CustomElementRegistry> custom_elements_;
   cppgc::Member<mitto::Crypto> crypto_;
   cppgc::Member<mitto::Scheduler> scheduler_;

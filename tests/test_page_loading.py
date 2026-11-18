@@ -370,7 +370,7 @@ def test_a_deferred_script_runs_after_parsing_and_before_domcontentloaded(
         assert page.evaluate("seen") == ["inline", "deferred sees #end: true", "dcl"]
 
 
-def test_scripts_that_are_not_classic_ones_do_not_run(session: mitto.Session, server: _PageServer) -> None:
+def test_a_script_runs_by_its_type_and_a_module_after_parsing(session: mitto.Session, server: _PageServer) -> None:
     url = server.page(
         "/",
         "<script>window.seen = [];</script>"
@@ -382,7 +382,7 @@ def test_scripts_that_are_not_classic_ones_do_not_run(session: mitto.Session, se
     )
 
     with _open_page(session, url) as page:
-        assert page.evaluate("seen") == ["javascript type", "javascript language"]
+        assert page.evaluate("seen") == ["javascript type", "javascript language", "module"]
 
 
 def test_an_error_that_a_script_leaves_uncaught_is_reported_and_the_parser_goes_on(

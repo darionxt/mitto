@@ -191,7 +191,11 @@ void PageFetcher::Fetch(FetchRequestData data,
     keepalive_bytes_ += body_size;
   }
   PageRequest page_request;
-  page_request.kind = data.destination == FetchDestination::kScript
+  // A module script and what one imports go as a module, whatever their
+  // destination: the json, style and text ones send a JavaScript module's
+  // lines, a Known Gap.
+  page_request.kind = data.is_module ? PageRequestKind::kModule
+                      : data.destination == FetchDestination::kScript
                           ? PageRequestKind::kScript
                           : PageRequestKind::kFetch;
   page_request.url = std::move(data.url);
