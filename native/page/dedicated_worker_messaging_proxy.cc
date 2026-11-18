@@ -7,6 +7,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
+#include "mitto/dom/data_url.h"
 #include "mitto/dom/error_event.h"
 #include "mitto/dom/event_loop.h"
 #include "mitto/dom/event_target.h"
@@ -145,7 +146,40 @@ DedicatedWorkerMessagingProxy::DedicatedWorkerMessagingProxy(
   params_.features = data->features();
   params_.sender = creator_.sender;
   params_.refuse = creator_.refuse;
-  // A worker of a data: or blob: URL is a Known Gap: its script never comes.
+  // A data: URL's script never reaches the network, and its worker has an
+  // opaque origin.
+  if (url.SchemeIs(url::kDataScheme)) {
+    params_.origin = url::Origin();
+    std::optional<DataUrlResponse> data_url = ParseDataUrl(url);
+    if (!data_url) {
+      EventLoop::Get()
+          ->TaskRunner(TaskType::kInternalLoading)
+          ->PostTask(FROM_HERE,
+                     base::BindOnce(
+                         &DedicatedWorkerMessagingProxy::DidFailToFetchScript,
+                         weak_factory_.GetWeakPtr()));
+      return;
+    }
+    response_started_ = true;
+    response_.url = url;
+    response_.status = 200;
+    response_.headers = "Content-Type: " + data_url->content_type + "\n";
+    response_.body = std::move(data_url->body);
+    PageWorkerStarted started;
+    started.creator = context.ContextId();
+    started.source = PageWorkerSource::kData;
+    started.module = options_.module;
+    StartThread(std::move(started));
+    // As the browser's loader hands it over, from a task of its own.
+    EventLoop::Get()
+        ->TaskRunner(TaskType::kInternalLoading)
+        ->PostTask(
+            FROM_HERE,
+            base::BindOnce(&DedicatedWorkerMessagingProxy::OnResponseEnded,
+                           weak_factory_.GetWeakPtr(), /*net_error=*/0));
+    return;
+  }
+  // A worker of a blob: URL is a Known Gap: its script never comes.
   if (!url.SchemeIsHTTPOrHTTPS()) {
     EventLoop::Get()
         ->TaskRunner(TaskType::kInternalLoading)
@@ -242,6 +276,10 @@ void DedicatedWorkerMessagingProxy::OnResponseStarted(
   started.source = PageWorkerSource::kScriptResponse;
   started.module = options_.module;
   started.request = script_request_;
+  StartThread(std::move(started));
+}
+
+void DedicatedWorkerMessagingProxy::StartThread(PageWorkerStarted started) {
   params_.id = creator_.sender->SendContext([&started](uint64_t id) {
     started.worker = id;
     return EncodeWorkerStarted(started);

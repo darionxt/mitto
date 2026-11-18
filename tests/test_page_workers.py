@@ -73,6 +73,26 @@ _SCRIPTS: dict[str, tuple[str, bytes]] = {
         b"Promise.resolve(Notification.permission), Promise.resolve(PerformanceObserver.supportedEntryTypes.join())])"
         b".then((values) => postMessage(values));",
     ),
+    "/data-imports.js": (
+        "text/javascript",
+        b"var x = 'a', ran = false; const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return e; } };"
+        b"importScripts('data:text/javascript,x+=\"b\"', 'data:text/javascript,x+=\"c\"');"
+        b"const invalid = String(outcome(() => importScripts('data:text/javascript,ran=true', 'http://[')));"
+        b"const thrown = outcome(() => importScripts('data:text/javascript,throw 2', 'data:text/javascript,x+=\"d\"'));"
+        b"postMessage([x, ran, invalid, thrown]);",
+    ),
+    "/cross-origin-imports.js": (
+        "text/javascript",
+        b"const outcome = (run) => { try { run(); return 'ok'; } catch (e) { return String(e); } };"
+        b"const other = location.origin.replace('127.0.0.1', 'localhost');"
+        b"postMessage([outcome(() => importScripts(other + '/lib-throws.js')), outcome(() => importScripts(other + '/lib.js')),"
+        b"typeof fromLib]);",
+    ),
+    "/timeline.js": (
+        "text/javascript",
+        b"performance.mark('m'); postMessage([performance.getEntriesByName('m').length,"
+        b"performance.getEntriesByType('navigation').length, typeof performance.timing]);",
+    ),
     "/port.js": (
         "text/javascript",
         b"onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => port.postMessage(m.data + '!'); };",
@@ -272,6 +292,59 @@ def test_import_scripts_runs_scripts_in_order_and_fails_as_in_chrome(server: str
         "SyntaxError: Failed to execute 'importScripts' on 'WorkerGlobalScope': The URL 'http://[' is invalid.",
         "TypeError: in lib",
     ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_scripts_runs_data_urls_and_checks_every_url_first(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/data-imports.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    # What a data: URL's script throws is not muted, and the scripts after it do not run.
+    assert _evaluate(server, script) == [
+        "abc",
+        False,
+        "SyntaxError: Failed to execute 'importScripts' on 'WorkerGlobalScope': The URL 'http://[' is invalid.",
+        2,
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_import_scripts_mutes_what_a_script_of_another_origin_throws(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/cross-origin-imports.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    other = server.replace("127.0.0.1", "localhost")
+    assert _evaluate(server, script) == [
+        "NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope': "
+        f"The script at '{other}/lib-throws.js' failed to load.",
+        "ok",
+        "number",
+    ]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_worker_of_a_data_url_has_an_opaque_origin(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('data:text/javascript,postMessage([self.origin, location.href])');
+        worker.onerror = () => resolve('error');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == ["null", "data:text/javascript,postMessage([self.origin, location.href])"]
+
+
+@pytest.mark.usefixtures("page_program")
+def test_a_workers_performance_timeline_has_no_navigation(server: str) -> None:
+    script = """new Promise((resolve) => {
+        const worker = new Worker('/timeline.js');
+        worker.onmessage = (e) => resolve(e.data);
+    })"""
+
+    assert _evaluate(server, script) == [1, 0, "undefined"]
 
 
 @pytest.mark.usefixtures("page_program")

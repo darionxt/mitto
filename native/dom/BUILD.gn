@@ -63,6 +63,8 @@ source_set("dom") {
     "custom_element_registry.h",
     "custom_event.cc",
     "custom_event.h",
+    "data_url.cc",
+    "data_url.h",
     "dedicated_worker_global_scope.cc",
     "dedicated_worker_global_scope.h",
     "dedicated_worker_messaging.h",

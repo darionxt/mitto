@@ -19,6 +19,7 @@
 #include "base/time/time.h"
 #include "mitto/bindings/per_isolate_data.h"
 #include "mitto/bindings/v8_dedicated_worker_global_scope.h"
+#include "mitto/dom/data_url.h"
 #include "mitto/dom/dedicated_worker_global_scope.h"
 #include "mitto/dom/dom_timer.h"
 #include "mitto/dom/error_reporting.h"
@@ -39,6 +40,7 @@
 #include "mitto/page/page_reporter.h"
 #include "mitto/page/page_requests.h"
 #include "mitto/page/worker_scheduler.h"
+#include "url/url_constants.h"
 #include "v8/include/v8-array-buffer.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-cppgc.h"
@@ -453,6 +455,23 @@ class ImportedScriptClient final : public PageRequests::Client {
 std::optional<ImportedScript> DedicatedWorkerThread::Scope::Load(
     const GURL& url) {
   if (shut_down_) {
+    return std::nullopt;
+  }
+  // A data: URL's script never reaches the network.
+  if (url.SchemeIs(url::kDataScheme)) {
+    std::optional<DataUrlResponse> data = ParseDataUrl(url);
+    if (!data) {
+      return std::nullopt;
+    }
+    ImportedScript script;
+    script.url = url;
+    script.status = 200;
+    script.headers = "Content-Type: " + data->content_type + "\n";
+    script.body = std::move(data->body);
+    return script;
+  }
+  // A blob: URL's is a Known Gap.
+  if (!url.SchemeIsHTTPOrHTTPS()) {
     return std::nullopt;
   }
   // WorkerClassicScriptLoader::LoadSynchronously(): destination script, of

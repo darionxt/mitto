@@ -166,38 +166,44 @@ void WorkerGlobalScope::ImportScripts(
     no_fragment.ClearRef();
     const std::string name = url.ReplaceComponents(no_fragment).spec();
     const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-    v8::TryCatch try_catch(isolate);
-    v8::Local<v8::String> name_string;
-    v8::Local<v8::String> code;
-    v8::Local<v8::Script> compiled;
-    bool ran = false;
-    if (v8::String::NewFromUtf8(isolate, name.c_str()).ToLocal(&name_string) &&
-        v8::String::NewFromTwoByte(
-            isolate, reinterpret_cast<const uint16_t*>(source.data()),
-            v8::NewStringType::kNormal, base::checked_cast<int>(source.size()))
-            .ToLocal(&code)) {
-      v8::ScriptOrigin origin =
-          ClassicScriptOrigin(name_string, /*muted_errors=*/script->opaque);
-      v8::ScriptCompiler::Source script_source(code, origin);
-      ran = v8::ScriptCompiler::Compile(context, &script_source)
+    bool muted = false;
+    {
+      v8::TryCatch try_catch(isolate);
+      v8::Local<v8::String> name_string;
+      v8::Local<v8::String> code;
+      v8::Local<v8::Script> compiled;
+      if (v8::String::NewFromUtf8(isolate, name.c_str())
+              .ToLocal(&name_string) &&
+          v8::String::NewFromTwoByte(
+              isolate, reinterpret_cast<const uint16_t*>(source.data()),
+              v8::NewStringType::kNormal,
+              base::checked_cast<int>(source.size()))
+              .ToLocal(&code)) {
+        v8::ScriptOrigin origin =
+            ClassicScriptOrigin(name_string, /*muted_errors=*/script->opaque);
+        v8::ScriptCompiler::Source script_source(code, origin);
+        if (v8::ScriptCompiler::Compile(context, &script_source)
                 .ToLocal(&compiled) &&
-            !compiled->Run(context).IsEmpty();
+            !compiled->Run(context).IsEmpty()) {
+          continue;
+        }
+      }
+      // RethrowErrorsOption::Rethrow(): what the script threw goes on, as a
+      // NetworkError for a script whose errors are muted, and the scripts
+      // after it are not run.
+      if (!try_catch.HasCaught() || !try_catch.CanContinue()) {
+        return;
+      }
+      if (!script->opaque) {
+        try_catch.ReThrow();
+        return;
+      }
+      muted = true;
     }
-    if (ran) {
-      continue;
-    }
-    // RethrowErrorsOption::Rethrow(): what the script threw goes on, as a
-    // NetworkError for a script whose errors are muted, and the scripts
-    // after it are not run.
-    if (!try_catch.HasCaught() || !try_catch.CanContinue()) {
-      return;
-    }
-    if (script->opaque) {
-      try_catch.Reset();
+    // Thrown once the TryCatch has gone, which would otherwise catch it.
+    if (muted) {
       exception_state.ThrowDOMException("NetworkError", failed);
-      return;
     }
-    try_catch.ReThrow();
     return;
   }
 }

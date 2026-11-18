@@ -111,6 +111,9 @@ class DedicatedWorkerMessagingProxy final : public WorkerMessagingProxy,
     std::vector<MessagePortChannel> ports;
   };
 
+  // Tells the Session of the worker, which `started` describes, and starts
+  // its thread.
+  void StartThread(PageWorkerStarted started);
   // Runs `run` in the creator's context, with the Worker, if both remain.
   void RunWithWorker(base::OnceCallback<void(Worker&)> run);
 

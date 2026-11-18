@@ -235,9 +235,14 @@ void PageReporter::ReportException(v8::Local<v8::Value> exception,
   }
   ReportUncaughtError(
       isolate_, message, exception,
-      [this, context, message](v8::Local<v8::Value> uncaught) {
+      [this, context, message, exception](v8::Local<v8::Value> uncaught) {
         if (uncaught_sink_) {
-          uncaught_sink_.Run(message, uncaught);
+          // An error that an error listener threw has a message of its own.
+          uncaught_sink_.Run(
+              uncaught == exception
+                  ? message
+                  : v8::Exception::CreateMessage(isolate_, uncaught),
+              uncaught);
           return;
         }
         send_.Run(EncodeUncaughtError(DescribeUncaught(
