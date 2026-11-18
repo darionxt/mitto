@@ -124,6 +124,24 @@ class Document : public Node {
   // too.
   std::u16string CharacterSet() const;
   std::u16string ContentType() const { return content_type_; }
+  // xmlEncoding, xmlVersion and xmlStandalone, which the XML parser sets from
+  // an XML declaration, as Blink's Document holds them: no encoding, and a
+  // version that is null for an HTML document and "1.0" for any other. Only
+  // "1.0" can be set, as Blink's XMLDocumentParser::SupportsXMLVersion()
+  // says.
+  const std::optional<std::u16string>& XmlEncoding() const {
+    return xml_encoding_;
+  }
+  const std::optional<std::u16string>& XmlVersion() const {
+    return xml_version_;
+  }
+  void SetXmlVersion(const std::optional<std::u16string>& version,
+                     bindings::ExceptionState& exception_state);
+  bool XmlStandalone() const {
+    return xml_standalone_ == StandaloneStatus::kStandalone;
+  }
+  void SetXmlStandalone(bool standalone,
+                        bindings::ExceptionState& exception_state);
   DocumentType* Doctype() const;
   Element* DocumentElement() const { return FirstElementChild(); }
   std::u16string Title() const;
@@ -327,6 +345,33 @@ class Document : public Node {
 
   // What the DOM and the parser use.
   bool IsHTMLDocument() const { return is_html_; }
+  // Whether an XML declaration said standalone, as Blink's StandaloneStatus.
+  enum class StandaloneStatus {
+    kStandaloneUnspecified,
+    kStandalone,
+    kNotStandalone,
+  };
+  StandaloneStatus XmlStandaloneStatus() const { return xml_standalone_; }
+  // Whether the XML parser read an XML declaration, which XMLSerializer
+  // writes again for the document, and what it said.
+  bool HasXMLDeclaration() const { return has_xml_declaration_; }
+  void SetHasXMLDeclaration(bool has) { has_xml_declaration_ = has; }
+  void SetXmlEncoding(const std::optional<std::u16string>& encoding) {
+    xml_encoding_ = encoding;
+  }
+  // Whether the parser attaches the declarative shadow roots of its
+  // templates, which a document that DOMParser makes does not, as Blink's
+  // DeclarativeShadowRootAllowState.
+  bool AllowsDeclarativeShadowRoots() const {
+    return allow_declarative_shadow_roots_;
+  }
+  void SetAllowDeclarativeShadowRoots(bool allow) {
+    allow_declarative_shadow_roots_ = allow;
+  }
+  // Blink's Document::SetContent(): the document opened, `content` parsed
+  // with a script-created parser, and closed, as DOMParser fills an HTML
+  // document.
+  void SetContent(const std::u16string& content);
   CompatibilityMode GetCompatibilityMode() const { return compat_mode_; }
   void SetCompatibilityMode(CompatibilityMode mode) { compat_mode_ = mode; }
   bool InQuirksMode() const {
@@ -614,6 +659,9 @@ class Document : public Node {
   // what they do once the checks have passed, as Blink splits them.
   void Open(Window* entered_window, bindings::ExceptionState& exception_state);
   void Open();
+  // close() once its checks have passed: the end of a script-created parser's
+  // input.
+  void Close();
   // Document::ImplicitOpen(): the document emptied and loading, with a new
   // parser.
   DocumentParser& ImplicitOpen(DocumentParser::Client* client);
@@ -640,6 +688,11 @@ class Document : public Node {
   // The origin it took from the document that made it, if any.
   std::optional<url::Origin> origin_;
   std::u16string content_type_;
+  std::optional<std::u16string> xml_encoding_;
+  std::optional<std::u16string> xml_version_;
+  StandaloneStatus xml_standalone_ = StandaloneStatus::kStandaloneUnspecified;
+  bool has_xml_declaration_ = false;
+  bool allow_declarative_shadow_roots_ = true;
   // How many times each named item was added and not yet removed, and the
   // named items in the order in which they came.
   std::map<std::u16string, int> named_item_counts_;

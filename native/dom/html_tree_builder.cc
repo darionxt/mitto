@@ -454,7 +454,8 @@ class HtmlTreeBuilder {
       : references_(references),
         document_(&references.document()),
         tokenizer_(tokenizer),
-        scripting_flag_(options.scripting_flag) {}
+        scripting_flag_(options.scripting_flag),
+        include_shadow_roots_(options.include_shadow_roots) {}
 
   // For a fragment whose context is `context`, as the standard's fragment
   // parsing algorithm sets the builder up. Blink's root is the fragment
@@ -468,6 +469,7 @@ class HtmlTreeBuilder {
         document_(&references.document()),
         tokenizer_(tokenizer),
         scripting_flag_(options.scripting_flag),
+        include_shadow_roots_(options.include_shadow_roots),
         fragment_context_(&context),
         context_entry_{&context, IsHtmlAnnotationXml(context)} {
     references_->Keep(&context);
@@ -1231,7 +1233,7 @@ class HtmlTreeBuilder {
     const std::u16string* const mode =
         FindTokenAttribute(token, u"shadowrootmode");
     const bool attaches_shadow_root =
-        !IsFragment() && mode &&
+        !IsFragment() && include_shadow_roots_ && mode &&
         (base::EqualsCaseInsensitiveASCII(*mode, u"open") ||
          base::EqualsCaseInsensitiveASCII(*mode, u"closed"));
     if (attaches_shadow_root) {
@@ -3216,6 +3218,7 @@ class HtmlTreeBuilder {
   const raw_ptr<Document> document_;
   const raw_ref<HtmlTokenizer> tokenizer_;
   const bool scripting_flag_;
+  const bool include_shadow_roots_;
   const raw_ptr<Element> fragment_context_;
   // Whether the script elements it makes are the parser's.
   bool scripts_parser_inserted_ = true;
@@ -3271,6 +3274,7 @@ void HtmlTreeBuilderReferences::KeepOnly(const std::vector<Node*>& nodes) {
 HtmlParserOptions HtmlParserOptions::ForDocument(const Document& document) {
   HtmlParserOptions options;
   options.scripting_flag = document.DefaultView() != nullptr;
+  options.include_shadow_roots = document.AllowsDeclarativeShadowRoots();
   return options;
 }
 
