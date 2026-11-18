@@ -1,6 +1,7 @@
 #include "mitto/dom/html_image_element.h"
 
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/strings/string_util.h"
@@ -247,6 +248,22 @@ void HTMLImageElement::AttributeChanged(const QualifiedName& name,
                                         const std::u16string* old_value,
                                         const std::u16string* new_value) {
   HTMLElement::AttributeChanged(name, old_value, new_value);
+  ImageAttributeChanged(name, old_value, new_value);
+}
+
+void HTMLImageElement::DidCloneAttributes() {
+  HTMLElement::DidCloneAttributes();
+  // Element::CloneAttributesFrom(): each copied attribute changes as it would
+  // be set, so a copy selects its source and loads it.
+  const std::vector<Attribute> attributes = this->attributes();
+  for (const Attribute& attribute : attributes) {
+    ImageAttributeChanged(attribute.name, nullptr, &attribute.value);
+  }
+}
+
+void HTMLImageElement::ImageAttributeChanged(const QualifiedName& name,
+                                             const std::u16string* old_value,
+                                             const std::u16string* new_value) {
   if (name.namespace_uri) {
     return;
   }

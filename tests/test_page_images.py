@@ -390,6 +390,19 @@ def test_a_decode_dispatched_for_an_image_rejects_when_its_source_changes(
     assert outcome == "EncodingError"
 
 
+def test_a_copy_of_an_image_loads_its_source(session: mitto.Session, server: _Server) -> None:
+    server.image("/cat.png", _png(5, 4))
+    url = server.page("/", '<img id="cat" src="cat.png">')
+
+    with _open_page(session, url) as page:
+        cloned = _settled(page, "document.getElementById('cat').cloneNode()")
+        imported = _settled(page, "document.importNode(document.getElementById('cat'))")
+
+    # A copy's attributes change as they would be set, so it selects its source and loads it.
+    for settled in (cloned, imported):
+        assert (settled["naturalWidth"], settled["naturalHeight"]) == (5, 4)
+
+
 def test_crossorigin_and_referrerpolicy_change_an_images_request(
     session: mitto.Session, server: _Server, other: _Server
 ) -> None:

@@ -89,8 +89,14 @@ class HTMLImageElement final : public HTMLElement {
   void AttributeChanged(const QualifiedName& name,
                         const std::u16string* old_value,
                         const std::u16string* new_value) override;
+  void DidCloneAttributes() override;
 
  private:
+  // The image's part of AttributeChanged(), which a clone's attributes go
+  // through too.
+  void ImageAttributeChanged(const QualifiedName& name,
+                             const std::u16string* old_value,
+                             const std::u16string* new_value);
   ImageCandidate FindBestFitImageFromPictureParent();
   // What tells srcset's picker that a candidate needs no download.
   SrcsetImageAvailable AvailableImages();
