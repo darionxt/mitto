@@ -1405,15 +1405,18 @@ void Document::SetLoadTiming(DocumentLoadTiming* timing) {
   load_timing_ = timing;
 }
 
-DocumentParser& Document::OpenForNavigation(DocumentParser::Client& client) {
-  return ImplicitOpen(&client);
+DocumentParser& Document::OpenForNavigation(DocumentParser::Client& client,
+                                            DocumentParser::Kind kind) {
+  return ImplicitOpen(&client, kind);
 }
 
-DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client) {
+DocumentParser& Document::ImplicitOpen(DocumentParser::Client* client,
+                                       DocumentParser::Kind kind) {
   RemoveChildren();
   SetCompatibilityMode(CompatibilityMode::kNoQuirks);
   DetachParser();
-  parser_ = bindings::MakeGarbageCollected<DocumentParser>(*this, client);
+  parser_ =
+      bindings::MakeGarbageCollected<DocumentParser>(*this, client, kind);
   // The parser may run scripts before this returns, so it is held here.
   const cppgc::Persistent<DocumentParser> parser = parser_.Get();
   parsing_state_ = ParsingState::kParsing;

@@ -12,12 +12,14 @@
 #include "base/timer/elapsed_timer.h"
 #include "mitto/bindings/script_wrappable.h"
 #include "mitto/dom/document.h"
+#include "mitto/dom/document_kinds.h"
 #include "mitto/dom/document_write_intervention.h"
 #include "mitto/dom/html_script_element.h"
 #include "mitto/dom/html_tree_builder.h"
 #include "mitto/dom/pending_script.h"
 #include "mitto/dom/script_element_base.h"
 #include "mitto/dom/script_loader.h"
+#include "mitto/dom/text.h"
 #include "mitto/dom/window.h"
 #include "mitto/dom/window_tasks.h"
 #include "v8/include/cppgc/persistent.h"
@@ -82,8 +84,9 @@ class DocumentParser::InsertionPointRecord {
   const raw_ref<HtmlDocumentParser> tree_;
 };
 
-DocumentParser::DocumentParser(Document& document, Client* client)
+DocumentParser::DocumentParser(Document& document, Client* client, Kind kind)
     : document_(&document),
+      kind_(kind),
       client_(client),
       created_by_script_(!client),
       references_(
@@ -95,6 +98,7 @@ DocumentParser::~DocumentParser() = default;
 
 void DocumentParser::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(document_);
+  visitor->Trace(json_pre_);
   visitor->Trace(references_);
   visitor->Trace(parser_blocking_script_);
   scripts_after_parsing_.Trace(visitor);
@@ -113,16 +117,68 @@ void DocumentParser::DidReceiveData() {
   SchedulePumpTokenizer();
 }
 
+void DocumentParser::WillAppendBytes() {
+  if (IsDetached() || started_) {
+    return;
+  }
+  if (kind_ == Kind::kText) {
+    started_ = true;
+    tree_->StartTextDocument();
+  } else if (kind_ == Kind::kImage) {
+    started_ = true;
+    BuildImageDocument(*document_);
+  }
+}
+
 void DocumentParser::AppendData(std::u16string_view text) {
-  if (!IsDetached()) {
-    tree_->Append(text);
+  if (IsDetached()) {
+    return;
+  }
+  switch (kind_) {
+    case Kind::kHtml:
+    case Kind::kText:
+      tree_->Append(text);
+      return;
+    case Kind::kJson:
+      // Each piece that decodes to text is a text node of its own, as
+      // insertAdjacentText() adds it.
+      if (!text.empty()) {
+        if (!started_) {
+          started_ = true;
+          json_pre_ = &BuildJsonDocument(*document_);
+        }
+        json_pre_->ParserAppendChild(
+            Text::Create(*document_, std::u16string(text)));
+      }
+      return;
+    case Kind::kImage:
+    case Kind::kMedia:
+      return;
   }
 }
 
 void DocumentParser::FinishData() {
-  if (!IsDetached()) {
-    tree_->Finish();
+  if (IsDetached()) {
+    return;
   }
+  // A media document builds its tree at the end, and an image or JSON
+  // document that has started its tree takes no end of input, which would
+  // make the HTML parser's: an empty JSON body gives what HTML's empty input
+  // gives, and an empty image a document with no children, as in Chrome.
+  if (kind_ == Kind::kMedia) {
+    BuildMediaDocument(*document_);
+    return;
+  }
+  if (kind_ == Kind::kImage) {
+    if (started_) {
+      ImageDocumentLoaded(*document_);
+    }
+    return;
+  }
+  if (kind_ == Kind::kJson && started_) {
+    return;
+  }
+  tree_->Finish();
 }
 
 void DocumentParser::Finish() {

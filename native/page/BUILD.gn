@@ -102,6 +102,7 @@ executable("mitto_page") {
     ":icu_data",
     ":v8_snapshot",
     "//base",
+    "//mitto:mime_types",
     "//mitto:page_channel",
     "//mitto/dom",
     "//mitto/encoding",
