@@ -124,6 +124,9 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   void DispatchDecodeRequestsIfComplete();
   void RejectPendingDecodes(UpdateType update_type = UpdateType::kAsync);
   void ProcessDecodeRequest(uint64_t request);
+  // DecodeRequestFinished(): the decode that `id` dispatched has ended, and
+  // resolves it if it is still among the requests.
+  void DecodeRequestFinished(uint64_t id);
   bool IsDocumentActive() const;
   // LazyImageHelper::StartMonitoring(): a Page has no layout, so each lazy
   // image comes near the viewport at the next rendering opportunity, as the

@@ -364,6 +364,32 @@ def test_an_svg_image_in_utf_16_has_the_natural_size_its_root_gives(session: mit
         assert (settled["event"], settled["naturalWidth"], settled["naturalHeight"]) == ("load", 40, 20)
 
 
+def test_a_decode_dispatched_for_an_image_rejects_when_its_source_changes(
+    session: mitto.Session, server: _Server
+) -> None:
+    server.image("/one.png", _png(2, 2))
+    server.image("/two.png", _png(3, 3))
+    url = server.page("/", "<p>decode</p>")
+
+    with _open_page(session, url) as page:
+        outcome = page.evaluate(
+            """(async () => {
+              const image = new Image();
+              image.src = 'one.png';
+              await image.decode();
+              const decoding = image.decode();
+              // The decode's microtask runs first, and dispatches it for the loaded image.
+              await Promise.resolve();
+              image.src = 'two.png';
+              return decoding.then(() => 'resolved', error => error.name);
+            })()""",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    # As Blink keeps a dispatched request until its decode ends, a source change before then rejects it.
+    assert outcome == "EncodingError"
+
+
 def test_crossorigin_and_referrerpolicy_change_an_images_request(
     session: mitto.Session, server: _Server, other: _Server
 ) -> None:

@@ -729,19 +729,36 @@ void ImageLoader::DispatchDecodeRequestsIfComplete() {
   }
   for (DecodeRequest* request : to_resolve) {
     if (is_svg || !tasks) {
-      request->Settle(/*resolve=*/true);
+      DecodeRequestFinished(request->id());
       continue;
     }
-    tasks->PostTask(TaskType::kInternalDefault,
-                    base::BindOnce(
-                        [](const cppgc::Persistent<DecodeRequest>& request) {
-                          request->Settle(/*resolve=*/true);
-                        },
-                        cppgc::Persistent<DecodeRequest>(request)));
+    // It stays among the requests until the answer comes, so that a source
+    // change before then rejects it.
+    tasks->PostTask(
+        TaskType::kInternalDefault,
+        base::BindOnce(
+            [](const cppgc::WeakPersistent<ImageLoader>& loader, uint64_t id) {
+              if (loader) {
+                loader->DecodeRequestFinished(id);
+              }
+            },
+            cppgc::WeakPersistent<ImageLoader>(this), request->id()));
   }
-  decode_requests_.EraseIf([](DecodeRequest* request) {
-    return request->state() == DecodeRequest::kDispatched;
-  });
+}
+
+void ImageLoader::DecodeRequestFinished(uint64_t id) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
+  for (size_t i = 0; i < decode_requests_.size(); ++i) {
+    DecodeRequest* const request = decode_requests_[i];
+    if (request->id() != id) {
+      continue;
+    }
+    const cppgc::Persistent<DecodeRequest> settled(request);
+    decode_requests_.EraseIf(
+        [id](DecodeRequest* item) { return item->id() == id; });
+    settled->Settle(/*resolve=*/true);
+    return;
+  }
 }
 
 void ImageLoader::RejectPendingDecodes(UpdateType update_type) {
