@@ -33,6 +33,7 @@ class ExceptionState;
 
 class Document;
 class HTMLImageElement;
+class Window;
 
 class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
                           public ResourceClient {
@@ -135,12 +136,16 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   // HasPendingActivity(): the element stays while its image loads, while
   // its update microtask, a load or error event or a decode waits, as
   // Blink's ActiveScriptWrappable keeps it, so that a detached image whose
-  // page holds only its promise or listeners still hears of its end.
+  // page holds only its promise or listeners still hears of its end; but
+  // not once its window's context has gone, which ends what it waits for.
   void UpdateKeepAlive();
+  void ContextDestroyed();
   class ScopedKeepAliveUpdate;
 
   cppgc::Member<HTMLImageElement> element_;
   cppgc::Persistent<HTMLImageElement> keep_alive_;
+  // The window whose context going lets the element go.
+  cppgc::WeakMember<Window> keep_alive_window_;
   cppgc::Member<Resource> image_content_;
   cppgc::Member<Resource> image_content_for_image_document_;
   // The URL whose load failed an access check, which is not loaded again

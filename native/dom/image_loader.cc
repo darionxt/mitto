@@ -171,6 +171,7 @@ ImageLoader::ImageLoader(HTMLImageElement& element) : element_(&element) {}
 ImageLoader::~ImageLoader() = default;
 
 void ImageLoader::Trace(cppgc::Visitor* visitor) const {
+  visitor->Trace(keep_alive_window_);
   visitor->Trace(element_);
   visitor->Trace(image_content_);
   visitor->Trace(image_content_for_image_document_);
@@ -260,16 +261,35 @@ class ImageLoader::ScopedKeepAliveUpdate {
 };
 
 void ImageLoader::UpdateKeepAlive() {
+  // ActiveScriptWrappableBase::IsContextDestroyed(): nothing keeps an element
+  // of a document that is no window's active one with a context, as the old
+  // document of a navigation is.
+  Window* const window = ActiveWindowOf(element_->GetDocument());
   const bool pending =
-      pending_task_ || pending_load_event_ || pending_error_event_ ||
-      !decode_requests_.empty() ||
-      (image_content_ && !image_complete_ &&
-       lazy_image_load_state_ != LazyImageLoadState::kDeferred);
-  if (pending) {
-    keep_alive_ = element_.Get();
-  } else {
+      window && (pending_task_ || pending_load_event_ || pending_error_event_ ||
+                 !decode_requests_.empty() ||
+                 (image_content_ && !image_complete_ &&
+                  lazy_image_load_state_ != LazyImageLoadState::kDeferred));
+  if (!pending) {
     keep_alive_.Clear();
+    return;
   }
+  keep_alive_ = element_.Get();
+  if (keep_alive_window_.Get() != window) {
+    keep_alive_window_ = window;
+    window->AddContextDestroyedCallback(base::BindOnce(
+        [](const cppgc::WeakPersistent<ImageLoader>& loader) {
+          if (loader) {
+            loader->ContextDestroyed();
+          }
+        },
+        cppgc::WeakPersistent<ImageLoader>(this)));
+  }
+}
+
+void ImageLoader::ContextDestroyed() {
+  // A fetch that the navigation cancelled tells the loader nothing more.
+  keep_alive_.Clear();
 }
 
 void ImageLoader::UpdateFromElement(UpdateFromElementBehavior behavior) {
