@@ -231,15 +231,23 @@ def condition_test(condition: Condition, where: str) -> str | None:
             names = other.removeprefix("Exposed with ").split(" or ")
             tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
         elif other.startswith("Exposed="):
-            names = set(other.removeprefix("Exposed=").split(","))
-            in_window = PAGE_GLOBAL_NAME in names
-            in_worker = bool(names & WORKER_GLOBAL_NAMES)
-            if not in_window and not in_worker:
+            # Each global name, with the feature that its exposure needs, as "DedicatedWorker:Feature".
+            entries = [entry.partition(":") for entry in other.removeprefix("Exposed=").split(",")]
+            window = [feature for name, _, feature in entries if name == PAGE_GLOBAL_NAME]
+            worker = [feature for name, _, feature in entries if name in WORKER_GLOBAL_NAMES]
+            window_test, worker_test = _exposure_test(window), _exposure_test(worker)
+            if window_test is None and worker_test is None:
                 return None
-            if not in_worker:
-                tests.append("data->is_window()")
-            elif not in_window:
-                tests.append("!data->is_window()")
+            if window_test == "true" and worker_test == "true":
+                continue
+            parts = []
+            if window_test is not None:
+                parts.append("data->is_window()" if window_test == "true" else f"(data->is_window() && {window_test})")
+            if worker_test is not None:
+                parts.append(
+                    "!data->is_window()" if worker_test == "true" else f"(!data->is_window() && {worker_test})"
+                )
+            tests.append(parts[0] if len(parts) == 1 else "(" + " || ".join(parts) + ")")
         elif other.startswith("CrossOriginIsolatedOrRuntimeEnabled="):
             names = other.removeprefix("CrossOriginIsolatedOrRuntimeEnabled=").split(",")
             tests.append("(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{name})" for name in names) + ")")
@@ -250,6 +258,16 @@ def condition_test(condition: Condition, where: str) -> str | None:
         else:
             raise UnhandledError(f"{where}: the C++ writer does not handle the condition {other}")
     return " && ".join(tests) if tests else "true"
+
+
+def _exposure_test(features: list[str]) -> str | None:
+    """The test of a construct's exposure on one kind of global object, from the feature of each of its global names
+    there, empty for none: None if it is exposed on none of them, "true" if on one with no feature."""
+    if not features:
+        return None
+    if any(not feature for feature in features):
+        return "true"
+    return "(" + " || ".join(f"features.IsEnabled(RuntimeFeature::k{feature})" for feature in features) + ")"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1653,7 +1671,9 @@ class _InterfaceWriter:
         current: str | None = None
         for property_ in properties:
             test = "true"
-            if property_.member is not None:
+            # A stringifier is Blink's own, but has the condition of its declaration, such as DOMMatrixReadOnly's,
+            # which [Exposed] puts on a window alone.
+            if property_.member is not None or not property_.condition.is_always:
                 found = condition_test(property_.condition, self.where(property_.name))
                 if found is None:
                     continue
