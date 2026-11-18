@@ -77,6 +77,9 @@ void Resource::Finish(int net_error) {
   }
   if (net_error) {
     status_ = ResourceStatus::kLoadError;
+    // Nothing reads what came of a load that failed.
+    body_.clear();
+    body_.shrink_to_fit();
   } else {
     switch (type_) {
       case ResourceType::kImage:
