@@ -2,9 +2,9 @@
 
 ReadableStream, WritableStream and TransformStream have Blink's behaviour, ported in native/dom from Blink's core/streams:
 their controllers and readers, byte streams and BYOB readers, queuing strategies, tee(), pipeTo(), pipeThrough() and async
-iteration, and the streams of encodings and compression. Each expected value is what Chrome 157.0.8103.79 gave for the
-same script, in a page of its own. These run where MITTO_PAGE_PROGRAM names the Page program, as
-tests/test_page_program.py does.
+iteration, the streams of encodings and compression, and the bodies of Response and Request. Each expected value is what
+Chrome 157.0.8103.79 gave for the same script, in a page of its own. These run where MITTO_PAGE_PROGRAM names the Page
+program, as tests/test_page_program.py does.
 """
 
 import os
@@ -426,6 +426,198 @@ STREAMS = {
     ),
 }
 
+# Each script on the bodies of Response and Request and what Chrome 157.0.8103.79 gave for it, as _evaluate() writes it.
+# Their URLs are absolute, since the Page program's document is about:blank.
+BODIES = {
+    "a response's body is a byte stream": (
+        "const r = new Response('abc'); const s = r.body; return [Object.prototype.toString.call(s), s === r.body, "
+        "s.locked, r.bodyUsed, Object.prototype.toString.call(s.getReader({ mode: 'byob' }))].join()",
+        "value: [object ReadableStream],true,false,false,[object ReadableStreamBYOBReader]",
+    ),
+    "a null body": (
+        "const r = new Response(); const n = new Response(null, { status: 204 }); return [r.body, n.body, r.bodyUsed, "
+        "await r.text() === '', (await r.arrayBuffer()).byteLength, r.bodyUsed, await settle(r.json())].join(' / ')",
+        "value:  /  / false / true / 0 / false / rejected SyntaxError: Unexpected end of input",
+    ),
+    "reading a body's stream": (
+        "const r = new Response('hello'); const chunks = await readAll(r.body); return [chunks.map((c) => "
+        "Object.prototype.toString.call(c) + Array.from(c)).join(';'), r.bodyUsed, r.body.locked].join(' / ')",
+        "value: [object Uint8Array]104,101,108,108,111 / true / true",
+    ),
+    "an empty body's stream": (
+        "const r = new Response(''); const reader = r.body.getReader(); const first = await reader.read(); return "
+        "[first.done, String(first.value), r.bodyUsed].join()",
+        "value: true,undefined,true",
+    ),
+    "a BYOB read of a body": (
+        "const r = new Response(new Uint8Array([1, 2, 3, 4, 5])); const reader = r.body.getReader({ mode: 'byob' }); "
+        "const a = await reader.read(new Uint8Array(2)); const b = await reader.read(new Uint8Array(8)); const c = "
+        "await reader.read(new Uint8Array(8)); return [Array.from(a.value), Array.from(b.value), c.done, "
+        "c.value.byteLength].join(' / ')",
+        "value: 1,2 / 3,4,5 / true / 0",
+    ),
+    "text() locks and disturbs": (
+        "const r = new Response('abc'); const p = r.text(); return [r.bodyUsed, r.body.locked, await p].join()",
+        "value: true,true,abc",
+    ),
+    "text() twice": (
+        "const r = new Response('abc'); r.text(); try { await r.text(); } catch (e) { return e.constructor.name + ': ' "
+        "+ e.message; }",
+        "value: TypeError: Failed to execute 'text' on 'Response': body stream already read",
+    ),
+    "text() after a reader": (
+        "const r = new Response('abc'); r.body.getReader(); try { r.text(); } catch (e) { return [e.message, "
+        "r.bodyUsed].join(' / '); }",
+        "value: undefined",
+    ),
+    "text() after a read": (
+        "const r = new Response('abc'); const reader = r.body.getReader(); await reader.read(); reader.releaseLock(); "
+        "try { r.json(); } catch (e) { return [e.message, r.bodyUsed, r.body.locked].join(' / '); }",
+        "value: undefined",
+    ),
+    "a read after cancel": (
+        "const r = new Response('abc'); await r.body.cancel('no'); return [r.bodyUsed, await settle(r.text())].join(' "
+        "/ ')",
+        "value: true / rejected TypeError: Failed to execute 'text' on 'Response': body stream already read",
+    ),
+    "text() settles from a later task": (
+        "const r = new Response('abc'); r.text().then(() => log.push('text')); Promise.resolve().then(() => "
+        "log.push('micro')); setTimeout(() => log.push('timeout'), 0); await new Promise((resolve) => "
+        "setTimeout(resolve, 20)); return log.join()",
+        "value: micro,text,timeout",
+    ),
+    "json() parse errors reject at once": (
+        "const r = new Response('{'); r.json().catch((e) => log.push(e.name)); setTimeout(() => log.push('timeout'), "
+        "0); await Promise.resolve(); await Promise.resolve(); log.push('micro'); await new Promise((resolve) => "
+        "setTimeout(resolve, 20)); return log.join()",
+        "value: SyntaxError,micro,timeout",
+    ),
+    "text() decodes UTF-8": (
+        "const bytes = new Uint8Array([0xEF, 0xBB, 0xBF, 0x68, 0xC3, 0xA9, 0xFF, 0x21]); return JSON.stringify(await "
+        "new Response(bytes).text())",
+        'value: "hé�!"',
+    ),
+    "arrayBuffer() of a stream's body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); c.enqueue(new Uint8Array([3])); "
+        "c.close(); } }); const r = new Response(s); return [r.body === s, Array.from(new Uint8Array(await "
+        "r.arrayBuffer())), r.bodyUsed, s.locked].join(' / ')",
+        "value: true / 1,2,3 / true / true",
+    ),
+    "a stream's body of strings": (
+        "const s = new ReadableStream({ start(c) { c.enqueue('abc'); c.close(); } }); return await settle(new "
+        "Response(s).text())",
+        "value: rejected TypeError: Failed to fetch",
+    ),
+    "a stream's body that errors": (
+        "const s = new ReadableStream({ start(c) { c.error(new Error('bad')); } }); return await settle(new "
+        "Response(s).text())",
+        "value: rejected TypeError: Failed to fetch",
+    ),
+    "a locked stream as a body": (
+        "const s = new ReadableStream(); s.getReader(); try { new Response(s); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Response': Response body object should not be disturbed or locked",
+    ),
+    "a disturbed stream as a body": (
+        "const s = new ReadableStream(); await s.cancel(); try { new Response(s); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Response': Response body object should not be disturbed or locked",
+    ),
+    "a stream with a null body status": (
+        "try { new Response(new ReadableStream(), { status: 204 }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Response': Response with null body status cannot have body",
+    ),
+    "a stream body has no Content-Type": (
+        "const r = new Response(new ReadableStream()); const t = new Response('x'); return "
+        "[r.headers.get('content-type'), t.headers.get('content-type')].join(' / ')",
+        "value:  / text/plain;charset=UTF-8",
+    ),
+    "textStream()": (
+        "const r = new Response(new Uint8Array([0xEF, 0xBB, 0xBF, 0x68, 0xC3])); const s = r.textStream(); const "
+        "chunks = await readAll(s); return [Object.prototype.toString.call(s), JSON.stringify(chunks), r.bodyUsed, s "
+        "=== r.body].join(' / ')",
+        'value: [object ReadableStream] / ["h","�"] / true / false',
+    ),
+    "textStream() of a null body": (
+        "const r = new Response(); const s = r.textStream(); const chunks = await readAll(s); return [chunks.length, "
+        "r.bodyUsed, s === r.textStream()].join()",
+        "value: 0,false,false",
+    ),
+    "textStream() of a used body": (
+        "const r = new Response('x'); await r.text(); try { r.textStream(); } catch (e) { return e.message; }",
+        "value: Failed to execute 'textStream' on 'Response': body stream already read",
+    ),
+    "a request's body": (
+        "const q = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); const s = q.body; return "
+        "[Object.prototype.toString.call(s), q.bodyUsed, await q.text(), q.bodyUsed, q.duplex, "
+        "q.headers.get('content-type')].join(' / ')",
+        "value: [object ReadableStream] / false / hi / true / half / text/plain;charset=UTF-8",
+    ),
+    "a request without a body": (
+        "const q = new Request('https://example.com/x'); return [q.body, q.bodyUsed, await q.text() === '', "
+        "q.duplex].join(' / ')",
+        "value:  / false / true / half",
+    ),
+    "a request's stream body needs duplex": (
+        "try { new Request('https://example.com/x', { method: 'POST', body: new ReadableStream() }); } catch (e) { "
+        "return e.message; }",
+        "value: Failed to construct 'Request': The `duplex` member must be specified for a request with a streaming "
+        "body",
+    ),
+    "a request's stream body": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([104, 105])); c.close(); } }); const q = "
+        "new Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); return [q.body === s, "
+        "await q.text(), q.headers.get('content-type')].join(' / ')",
+        "value: true / hi / ",
+    ),
+    "a keepalive request's stream body": (
+        "try { new Request('https://example.com/x', { method: 'POST', body: new ReadableStream(), duplex: 'half', "
+        "keepalive: true }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': Keepalive request cannot have a ReadableStream body.",
+    ),
+    "a no-cors request's stream body": (
+        "try { new Request('https://example.com/x', { method: 'POST', body: new ReadableStream(), duplex: 'half', "
+        "mode: 'no-cors' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': If request is made from ReadableStream, mode should be\"same-origin\" "
+        'or "cors"',
+    ),
+    "a locked stream as a request's body": (
+        "const s = new ReadableStream(); s.getReader(); try { new Request('https://example.com/x', { method: 'POST', "
+        "body: s, duplex: 'half' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': The provided ReadableStream is locked",
+    ),
+    "a disturbed stream as a request's body": (
+        "const s = new ReadableStream(); await s.cancel(); try { new Request('https://example.com/x', { method: "
+        "'POST', body: s, duplex: 'half' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': The provided ReadableStream is disturbed",
+    ),
+    "a request from a request": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); const b = new Request(a); "
+        "return [a.bodyUsed, a.body.locked, b.bodyUsed, await b.text()].join(' / ')",
+        "value: true / true / false / hi",
+    ),
+    "a request from a used request": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); await a.text(); try { new "
+        "Request(a); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': Cannot construct a Request with a Request object that has already been "
+        "used.",
+    ),
+    "a request from a request with a body of its own": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); const b = new Request(a, { "
+        "body: 'other' }); return [a.bodyUsed, await b.text(), await a.text()].join(' / ')",
+        "value: false / other / hi",
+    ),
+    "a request from a stream request": (
+        "const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([104])); c.close(); } }); const a = new "
+        "Request('https://example.com/x', { method: 'POST', body: s, duplex: 'half' }); const b = new Request(a); "
+        "return [a.bodyUsed, s.locked, b.body === s, await b.text()].join(' / ')",
+        "value: true / true / false / h",
+    ),
+    "a GET request from a request with a body": (
+        "const a = new Request('https://example.com/x', { method: 'POST', body: 'hi' }); try { new Request(a, { "
+        "method: 'GET' }); } catch (e) { return e.message; }",
+        "value: Failed to construct 'Request': Request with GET/HEAD method cannot have body.",
+    ),
+}
+
 
 @pytest.fixture(scope="module")
 def program() -> Path:
@@ -455,4 +647,9 @@ def _evaluate(program: Path, script: str) -> str:
 
 @pytest.mark.parametrize(("script", "chrome"), STREAMS.values(), ids=STREAMS.keys())
 def test_streams_do_what_chrome_does(program: Path, script: str, chrome: str) -> None:
+    assert _evaluate(program, script) == chrome
+
+
+@pytest.mark.parametrize(("script", "chrome"), BODIES.values(), ids=BODIES.keys())
+def test_bodies_are_streams_as_in_chrome(program: Path, script: str, chrome: str) -> None:
     assert _evaluate(program, script) == chrome

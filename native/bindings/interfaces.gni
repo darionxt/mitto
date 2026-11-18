@@ -1864,6 +1864,13 @@ mitto_bindings_interfaces = [
       "url",
       "headers",
       "signal",
+      "duplex",
+      "body",
+      "bodyUsed",
+      "arrayBuffer",
+      "json",
+      "text",
+      "textStream",
     ]
   },
   {
@@ -1877,10 +1884,12 @@ mitto_bindings_interfaces = [
       "ok",
       "statusText",
       "headers",
+      "body",
       "bodyUsed",
       "arrayBuffer",
       "json",
       "text",
+      "textStream",
     ]
   },
   {
