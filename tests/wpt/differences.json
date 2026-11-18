@@ -619,8 +619,6 @@
 {"test": "IndexedDB/sharedarraybuffer-key.https.html", "subtest": "A SharedArrayBuffer can be used as an IndexedDB key", "chrome": "PASS", "mitto": "FAIL: SharedArrayBuffer is not defined"},
 {"test": "IndexedDB/sharedarraybuffer-key.https.html", "subtest": "A SharedArrayBuffer in an array can be used as an IndexedDB key", "chrome": "PASS", "mitto": "FAIL: SharedArrayBuffer is not defined"},
 {"test": "IndexedDB/sharedarraybuffer-key.https.html", "subtest": "A SharedArrayBuffer-backed view can be used as an IndexedDB key", "chrome": "PASS", "mitto": "FAIL: SharedArrayBuffer is not defined"},
-{"test": "IndexedDB/storage-buckets.https.any.html", "subtest": "Basic test that buckets create independent databases.", "chrome": "PASS", "mitto": "FAIL: promise_test: Unhandled rejection with value: object \"TypeError: Cannot set properties of null (setting 'onupgradeneeded')\""},
-{"test": "IndexedDB/storage-buckets.https.any.html", "subtest": "Tests trying to use indexedDB in a deleted bucket.", "chrome": "PASS", "mitto": "FAIL: promise_rejects_dom: function \"function() { throw e; }\" threw object \"TypeError: Cannot set properties of null (setting 'onsuccess')\" that is not a DOMException UnknownError: property \"code\" is equal to undefined, expected 0"},
 {"test": "IndexedDB/storage-buckets.https.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "IndexedDB/string-list-ordering.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
 {"test": "IndexedDB/structured-clone-transaction-state.any.worker.html", "subtest": null, "chrome": "OK", "mitto": "TIMEOUT", "owner": "#289"},
