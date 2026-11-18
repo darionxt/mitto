@@ -173,24 +173,18 @@ def test_another_session_has_buckets_of_its_own(server_origin: str) -> None:
 
 
 @pytest.mark.usefixtures("page_program")
-def test_a_document_of_an_opaque_origin_may_not_reach_buckets(server_origin: str) -> None:
-    # The Page's about:blank is a secure context of an opaque origin, where Chrome 157 gives these, as in a sandboxed
-    # frame of a secure page.
-    with mitto.Session() as session, session._open_page("about:blank", timeout=_TIMEOUT_SECONDS) as page:  # pyright: ignore[reportPrivateUsage]
+def test_a_page_that_is_not_a_secure_context_has_no_buckets(server_origin: str) -> None:
+    # http://www.example.test/ through the local server as a proxy, a URL that is not potentially trustworthy.
+    with (
+        mitto.Session(proxy=server_origin) as session,
+        session._open_page("http://www.example.test/", timeout=_TIMEOUT_SECONDS) as page,  # pyright: ignore[reportPrivateUsage]
+    ):
         outcome = page.evaluate(
-            "(async () => { const r = [];"
-            " for (const f of [() => navigator.storageBuckets.open('a'), () => navigator.storageBuckets.keys(),"
-            " () => navigator.storageBuckets.delete('a')]) {"
-            " try { await f(); } catch (e) { r.push(`${e.name}: ${e.message}`); } }"
-            " return r; })()",
+            "[isSecureContext, typeof navigator.storageBuckets, 'StorageBucketManager' in self, 'StorageBucket' in self]",
             timeout=_TIMEOUT_SECONDS,
         )
 
-    assert outcome == [
-        f"SecurityError: Failed to execute '{name}' on 'StorageBucketManager': Access to Storage Buckets API is denied"
-        " in this context."
-        for name in ("open", "keys", "delete")
-    ]
+    assert outcome == [False, "undefined", False, False]
 
 
 @pytest.mark.usefixtures("page_program")
