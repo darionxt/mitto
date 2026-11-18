@@ -4,6 +4,7 @@
 
 #include "base/check.h"
 #include "base/strings/strcat.h"
+#include "base/strings/utf_string_conversions.h"
 #include "mitto/dom/document.h"
 #include "mitto/dom/element.h"
 #include "mitto/dom/script_element_base.h"
@@ -19,6 +20,15 @@ std::string ElidedUrl(const GURL& url) {
   }
   return base::StrCat(
       {spec.substr(0, 511), "...", spec.substr(spec.size() - 510)});
+}
+
+std::string HeaderBytesToUtf8(std::string_view bytes) {
+  std::u16string characters;
+  characters.reserve(bytes.size());
+  for (const char byte : bytes) {
+    characters.push_back(static_cast<unsigned char>(byte));
+  }
+  return base::UTF16ToUTF8(characters);
 }
 
 PendingScript::PendingScript(ScriptElementBase& element)

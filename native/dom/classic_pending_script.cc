@@ -146,7 +146,8 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
   const bool is_javascript = IsJavaScriptMimeType(mime_type);
   if (IsNosniff(headers) && !is_javascript) {
     return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
-                         "' because its MIME type ('", mime_type,
+                         "' because its MIME type ('",
+                         HeaderBytesToUtf8(mime_type),
                          "') is not executable, and strict MIME type "
                          "checking is enabled."});
   }
@@ -158,13 +159,15 @@ std::optional<std::string> RefusedAsScript(const GURL& url,
   for (const std::string_view blocked : {"image/", "audio/", "video/"}) {
     if (mime_type.starts_with(blocked)) {
       return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
-                           "' because its MIME type ('", mime_type,
+                           "' because its MIME type ('",
+                           HeaderBytesToUtf8(mime_type),
                            "') is not executable."});
     }
   }
   if (mime_type.starts_with("text/csv")) {
     return base::StrCat({"Refused to execute script from '", ElidedUrl(url),
-                         "' because its MIME type ('", mime_type,
+                         "' because its MIME type ('",
+                         HeaderBytesToUtf8(mime_type),
                          "') is not executable."});
   }
   return std::nullopt;

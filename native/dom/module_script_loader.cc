@@ -108,7 +108,7 @@ std::optional<ResolvedModuleType> ResolveFetchedModuleType(
       {"Failed to load module script: Expected a ",
        ModuleScriptCreationParams::ModuleTypeToString(expected),
        " module script but the server responded with a MIME type of \"",
-       mime_type,
+       HeaderBytesToUtf8(mime_type),
        "\". Strict MIME type checking is enforced for module scripts per HTML "
        "spec."});
   return std::nullopt;

@@ -11,6 +11,7 @@
 #define MITTO_DOM_PENDING_SCRIPT_H_
 
 #include <string>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "url/gurl.h"
@@ -44,6 +45,10 @@ enum class ScriptSchedulingType {
 
 // KURL::ElidedString(), for a URL in a console message.
 std::string ElidedUrl(const GURL& url);
+
+// The text of a header's bytes in UTF-8, each byte a character, as Blink's
+// String of a header has it, for a console message that quotes it.
+std::string HeaderBytesToUtf8(std::string_view bytes);
 
 class PendingScript : public cppgc::GarbageCollected<PendingScript> {
  public:
