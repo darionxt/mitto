@@ -22,6 +22,7 @@
 #include "mitto/dom/idb_request.h"
 #include "mitto/dom/indexed_db_host.h"
 #include "mitto/dom/window.h"
+#include "mitto/dom/window_task.h"
 #include "v8/include/v8-container.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-isolate.h"
@@ -132,7 +133,7 @@ v8::Local<v8::Promise> IDBFactory::GetDatabaseInfo(
                    v8::Global<v8::Promise::Resolver>* resolver,
                    PageIndexedDbCallback answer) {
                   // Nothing settles once the window's context has gone.
-                  RunInIDBContext(window.Get(), [&] {
+                  RunInWindowContext(window.Get(), [&] {
                     SettleDatabaseInfo(isolate, resolver->Get(isolate), answer);
                   });
                 },

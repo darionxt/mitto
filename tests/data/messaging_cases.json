@@ -1,5 +1,5 @@
 {
- "chrome": "157.0.8103.51",
+ "chrome": "157.0.8103.79",
  "record": {
   "values": {
    "primitives": [
@@ -1173,6 +1173,26 @@
    ],
    "wasmModule": [
     "[object Null]"
+   ]
+  },
+  "listenerMicrotasks": {
+   "window": [
+    "listener 1",
+    "microtask 1",
+    "listener 2",
+    "microtask 2"
+   ],
+   "messagePort": [
+    "listener 1",
+    "microtask 1",
+    "listener 2",
+    "microtask 2"
+   ],
+   "broadcastChannel": [
+    "listener 1",
+    "microtask 1",
+    "listener 2",
+    "microtask 2"
    ]
   }
  }
