@@ -293,7 +293,12 @@ def condition_of(exposure: Any, global_names: list[str]) -> Condition:
         if exposed_features:
             other.append(f"Exposed with {' or '.join(exposed_features)}")
     else:
-        names = [entry.global_name for entry in exposure.global_names_and_features if entry.global_name != "*"]
+        # bind_gen tests each global name in the context, with the feature that it names beside it.
+        names = [
+            f"{entry.global_name}:{entry.feature}" if entry.feature else entry.global_name
+            for entry in exposure.global_names_and_features
+            if entry.global_name != "*"
+        ]
         if names:
             other.append(f"Exposed={','.join(names)}")
     for feature in exposure.runtime_enabled_features:

@@ -268,7 +268,8 @@ class _ShardWriter:
     def member(self, interface: Interface, property_: Property) -> str | None:
         """The MemberInfo of one property, or None for one that the table leaves out or that a Page never installs."""
         condition = "nullptr"
-        if property_.member is not None:
+        # A stringifier is Blink's own, but has the condition of its declaration.
+        if property_.member is not None or not property_.condition.is_always:
             found = self.condition(property_.condition, f"{interface.name}.{property_.name}")
             if found is None:
                 return None

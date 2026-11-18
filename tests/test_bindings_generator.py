@@ -618,6 +618,15 @@ def test_a_nullable_reflected_attribute_reads_its_keywords() -> None:
         (Condition(other=("Exposed=Worker",)), "!data->is_window()"),
         (Condition(other=("Exposed=DedicatedWorker",)), "!data->is_window()"),
         (Condition(other=("Exposed=ServiceWorker,SharedWorker",)), None),
+        # bind_gen's test of a global name whose exposure needs a feature, such as navigator.serviceWorker's.
+        (
+            Condition(other=("Exposed=ServiceWorker,DedicatedWorker:F",)),
+            "(!data->is_window() && (features.IsEnabled(RuntimeFeature::kF)))",
+        ),
+        (
+            Condition(other=("Exposed=Window:F,Worker",)),
+            "((data->is_window() && (features.IsEnabled(RuntimeFeature::kF))) || !data->is_window())",
+        ),
         (Condition(other=("ContextEnabled=X",)), None),
         (Condition(other=("CrossOriginIsolated",)), None),
     ],
@@ -1365,6 +1374,29 @@ def test_a_dedicated_workers_global_object_has_what_workers_expose() -> None:
     assert '"WorkerThing"' in tables(with_workers)
     assert "InstallWorkerInterfaceObjects" not in without["interface_objects.h"]
     assert '"WorkerThing"' not in tables(without)
+
+
+def test_a_stringifier_has_the_condition_of_its_declaration() -> None:
+    # DOMMatrixReadOnly's stringifier is [Exposed=Window], so a worker's DOMMatrixReadOnly has no toString().
+    on_window = Condition(other=("Exposed=Window",), context_dependent=True)
+    thing = _interface(exposure=(("Window", None), ("Worker", None)), stringifier="", stringifier_condition=on_window)
+    window = _interface(
+        name="Window",
+        tag=2,
+        max_subclass_tag=2,
+        extended_attributes=_extended("Global"),
+        exposed_constructs=("Thing", "Window"),
+        exposed=(
+            ExposedConstruct("Thing", "interface", "Thing", ALWAYS),
+            ExposedConstruct("Window", "interface", "Window", ALWAYS),
+        ),
+    )
+    definitions = Definitions({"Thing": thing, "Window": window}, {}, {}, {}, frozenset())
+
+    files = write_bindings(definitions, [], [ImplementedInterface("Window", "mitto/dom/window.h")])
+
+    tables = "".join(content for name, content in files.items() if name.startswith("interfaces_without_class_"))
+    assert "data->is_window()" in tables
 
 
 def test_a_class_declared_in_a_shared_header_is_included_from_it() -> None:
