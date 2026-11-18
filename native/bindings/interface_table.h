@@ -195,6 +195,12 @@ struct InterfaceTable {
   // The constructor's number as a Known Gap.
   uint16_t constructor_number;
   uint8_t flags;
+  // For an iterator, the name that a page sees as its class and @@toStringTag,
+  // such as "ReadableStream AsyncIterator", where its interface name, which
+  // the context of its members' errors names, is its identifier, such as
+  // "AsyncIterator_ReadableStream", as Blink has them. Null for any other.
+  // RAW_PTR_EXCLUSION: #global-scope, as the spans.
+  RAW_PTR_EXCLUSION const char* display_name;
 };
 
 // The data of a member's callbacks: a v8::External of its MemberInfo.
