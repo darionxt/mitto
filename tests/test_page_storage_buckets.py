@@ -2,8 +2,8 @@
 
 It needs a secure context of an origin that is not opaque, and so a Page that a Session opened on 127.0.0.1, with a
 native library and the Page program beside it. The expected values of tests/storage_buckets_cases.js are what Chrome 157
-gave for the same script on the same kind of page, headless on macOS (157.0.8103.79) in a profile of its own, which
-tests/data/storage_buckets_cases.json keeps.
+gave for the same script on the same kind of page, Chrome for Testing 157.0.8103.79 headless on macOS in a profile of
+its own, which tests/data/storage_buckets_cases.json keeps.
 """
 
 import http.server
