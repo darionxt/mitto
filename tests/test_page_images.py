@@ -344,6 +344,23 @@ def test_an_svg_image_has_the_natural_size_its_root_gives_and_decode_settles(
     assert refused == "EncodingError: The source image cannot be decoded."
 
 
+def test_an_svg_image_in_utf_16_has_the_natural_size_its_root_gives(session: mitto.Session, server: _Server) -> None:
+    root = "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='20'></svg>"
+    declared = "<?xml version='1.0' encoding='UTF-16BE'?>" + root
+    svg = [("Content-Type", "image/svg+xml")]
+    server.routes["/le.svg"] = _Route(b"\xff\xfe" + root.encode("utf-16-le"), headers=svg)
+    server.routes["/be.svg"] = _Route(declared.encode("utf-16-be"), headers=svg)
+    url = server.page("/", "<p>svg</p>")
+
+    with _open_page(session, url) as page:
+        marked = _settled(page, "Object.assign(new Image(), {src: 'le.svg'})")
+        declared_only = _settled(page, "Object.assign(new Image(), {src: 'be.svg'})")
+
+    # A byte order mark, or the declaration's first characters, give the encoding away, as libxml finds it.
+    for settled in (marked, declared_only):
+        assert (settled["event"], settled["naturalWidth"], settled["naturalHeight"]) == ("load", 40, 20)
+
+
 def test_crossorigin_and_referrerpolicy_change_an_images_request(
     session: mitto.Session, server: _Server, other: _Server
 ) -> None:

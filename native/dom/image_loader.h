@@ -21,6 +21,7 @@
 #include "url/gurl.h"
 #include "v8/include/cppgc/garbage-collected.h"
 #include "v8/include/cppgc/member.h"
+#include "v8/include/cppgc/persistent.h"
 #include "v8/include/cppgc/visitor.h"
 #include "v8/include/v8-forward.h"
 
@@ -128,8 +129,15 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
   // image comes near the viewport at the next rendering opportunity, as the
   // owner chose (#284).
   void StartMonitoring();
+  // HasPendingActivity(): the element stays while its image loads, while
+  // its update microtask, a load or error event or a decode waits, as
+  // Blink's ActiveScriptWrappable keeps it, so that a detached image whose
+  // page holds only its promise or listeners still hears of its end.
+  void UpdateKeepAlive();
+  class ScopedKeepAliveUpdate;
 
   cppgc::Member<HTMLImageElement> element_;
+  cppgc::Persistent<HTMLImageElement> keep_alive_;
   cppgc::Member<Resource> image_content_;
   cppgc::Member<Resource> image_content_for_image_document_;
   // The URL whose load failed an access check, which is not loaded again

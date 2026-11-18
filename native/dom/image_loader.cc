@@ -7,6 +7,7 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ref.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mitto/bindings/exception_state.h"
 #include "mitto/bindings/script_wrappable.h"
@@ -246,7 +247,33 @@ bool ImageLoader::ImageIsPotentiallyAvailable() const {
          image_still_loading;
 }
 
+// Updates the keep-alive once the entry point that made it returns.
+class ImageLoader::ScopedKeepAliveUpdate {
+ public:
+  explicit ScopedKeepAliveUpdate(ImageLoader& loader) : loader_(loader) {}
+  ScopedKeepAliveUpdate(const ScopedKeepAliveUpdate&) = delete;
+  ScopedKeepAliveUpdate& operator=(const ScopedKeepAliveUpdate&) = delete;
+  ~ScopedKeepAliveUpdate() { loader_->UpdateKeepAlive(); }
+
+ private:
+  const raw_ref<ImageLoader> loader_;
+};
+
+void ImageLoader::UpdateKeepAlive() {
+  const bool pending =
+      pending_task_ || pending_load_event_ || pending_error_event_ ||
+      !decode_requests_.empty() ||
+      (image_content_ && !image_complete_ &&
+       lazy_image_load_state_ != LazyImageLoadState::kDeferred);
+  if (pending) {
+    keep_alive_ = element_.Get();
+  } else {
+    keep_alive_.Clear();
+  }
+}
+
 void ImageLoader::UpdateFromElement(UpdateFromElementBehavior behavior) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   if (!IsDocumentActive()) {
     return;
   }
@@ -309,6 +336,7 @@ void ImageLoader::EnqueueImageLoadingMicroTask(
 
 void ImageLoader::RunMicroTask(uint64_t task,
                                UpdateFromElementBehavior behavior) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   if (task != pending_task_) {
     return;
   }
@@ -414,6 +442,7 @@ void ImageLoader::UpdateImageState(Resource* new_image_content) {
 }
 
 void ImageLoader::DataReceived(Resource& resource) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   // ImageLoader::ImageChanged(): from the first data of a load on, the image
   // holds the document's load event back until it notifies its end, as the
   // fetch does before, unless it is one that lazy loading let go.
@@ -448,6 +477,7 @@ void ImageLoader::ClearImage() {
 }
 
 void ImageLoader::NotifyFinished(Resource& resource) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   if (&resource != image_content_.Get() || image_complete_) {
     return;
   }
@@ -526,6 +556,7 @@ void ImageLoader::CancelPendingErrorEvent() {
 }
 
 void ImageLoader::DispatchPendingEvent(uint64_t event, bool is_load) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   uint64_t& pending = is_load ? pending_load_event_ : pending_error_event_;
   if (!event || event != pending) {
     return;
@@ -567,6 +598,7 @@ void ImageLoader::StartMonitoring() {
 }
 
 void ImageLoader::ElementInserted() {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   if (lazy_image_load_state_ == LazyImageLoadState::kDeferred &&
       element_->IsConnected()) {
     StartMonitoring();
@@ -574,6 +606,7 @@ void ImageLoader::ElementInserted() {
 }
 
 void ImageLoader::LoadDeferredImage() {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   if (lazy_image_load_state_ != LazyImageLoadState::kDeferred) {
     return;
   }
@@ -582,6 +615,7 @@ void ImageLoader::LoadDeferredImage() {
 }
 
 void ImageLoader::ElementDidMoveToNewDocument() {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   Document& document = element_->GetDocument();
   if (delay_until_do_update_from_element_) {
     delay_until_do_update_from_element_->DocumentChanged(document);
@@ -627,6 +661,7 @@ void ImageLoader::DensityCorrectedNaturalSize(float inverse_density,
 
 v8::Local<v8::Promise> ImageLoader::Decode(
     bindings::ExceptionState& exception_state) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   v8::Isolate* const isolate = v8::Isolate::GetCurrent();
   const v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Promise::Resolver> resolver;
@@ -654,6 +689,7 @@ v8::Local<v8::Promise> ImageLoader::Decode(
 }
 
 void ImageLoader::ProcessDecodeRequest(uint64_t id) {
+  const ScopedKeepAliveUpdate keep_alive_update(*this);
   for (size_t i = 0; i < decode_requests_.size(); ++i) {
     DecodeRequest* const request = decode_requests_[i];
     if (request->id() == id) {

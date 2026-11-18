@@ -850,9 +850,39 @@ std::optional<float> IntrinsicLength(const std::u16string* attribute) {
                             resolver.ComputedPixels(length->Number(), unit)));
 }
 
+// The text of an SVG document in UTF-8: decoded from UTF-16 that a byte order
+// mark, or the "<?" of an XML declaration, gives away, as libxml's
+// xmlDetectCharEncoding() finds it, and otherwise as it came, since the other
+// encodings that libxml takes write the root element's ASCII as ASCII.
+std::string SvgTextAsUtf8(std::string_view body) {
+  bool big_endian = false;
+  size_t start = 0;
+  if (body.starts_with("\xFF\xFE")) {
+    start = 2;
+  } else if (body.starts_with("\xFE\xFF")) {
+    big_endian = true;
+    start = 2;
+  } else if (body.starts_with(std::string_view("<\0?\0", 4))) {
+  } else if (body.starts_with(std::string_view("\0<\0?", 4))) {
+    big_endian = true;
+  } else {
+    return std::string(body);
+  }
+  std::u16string utf16;
+  utf16.reserve((body.size() - start) / 2);
+  for (size_t i = start; i + 1 < body.size(); i += 2) {
+    const auto first = static_cast<uint8_t>(body[i]);
+    const auto second = static_cast<uint8_t>(body[i + 1]);
+    utf16.push_back(static_cast<char16_t>(big_endian ? (first << 8) | second
+                                                     : (second << 8) | first));
+  }
+  return base::UTF16ToUTF8(utf16);
+}
+
 std::optional<ImageHeader> ReadSvg(std::string_view body) {
+  const std::string text = SvgTextAsUtf8(body);
   const std::optional<std::pair<std::string, std::vector<XmlAttribute>>> root =
-      ReadXmlRootElement(body);
+      ReadXmlRootElement(text);
   if (!root) {
     return std::nullopt;
   }
