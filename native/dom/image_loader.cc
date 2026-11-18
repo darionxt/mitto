@@ -172,6 +172,7 @@ ImageLoader::~ImageLoader() = default;
 void ImageLoader::Trace(cppgc::Visitor* visitor) const {
   visitor->Trace(element_);
   visitor->Trace(image_content_);
+  visitor->Trace(image_content_for_image_document_);
   visitor->Trace(decode_requests_);
 }
 
@@ -255,6 +256,13 @@ void ImageLoader::UpdateFromElement(UpdateFromElementBehavior behavior) {
     failed_load_url_.clear();
   }
   if (!failed_load_url_.empty() && source == failed_load_url_) {
+    return;
+  }
+  // An image document's img takes the document's own response, as Blink's
+  // ImageDocumentParser feeds it, and fetches nothing.
+  if (Resource* const content = image_content_for_image_document_.Get()) {
+    image_content_for_image_document_ = nullptr;
+    SetImageWithoutConsideringPendingLoadEvent(content);
     return;
   }
   // A microtask that waits is dropped: the image loads now, or the microtask
@@ -363,6 +371,10 @@ void ImageLoader::DoUpdateFromElement(UpdateFromElementBehavior behavior,
     }
     params.referrer_policy = element_->ReferrerPolicyForFetch();
     params.priority_hint = element_->GetFetchPriorityHint();
+    // A once-deferred lazy image does not hold the load event back, as
+    // FetchParameters::SetLazyImageNonBlocking() lets it go.
+    params.load_blocking =
+        lazy_image_load_state_ != LazyImageLoadState::kFullImage;
     new_image_content = document.Fetcher().RequestResource(params);
     failed_load_url_.clear();
   } else {
@@ -399,12 +411,19 @@ void ImageLoader::UpdateImageState(Resource* new_image_content) {
     lazy_image_load_state_ = LazyImageLoadState::kNone;
   }
   delay_until_image_notify_finished_.reset();
-  // The fetch holds the load event back until it ends, as its loader holds
-  // Blink's.
-  if (new_image_content && new_image_content->IsLoading()) {
-    delay_until_image_notify_finished_ =
-        std::make_unique<LoadEventDelay>(element_->GetDocument());
+}
+
+void ImageLoader::DataReceived(Resource& resource) {
+  // ImageLoader::ImageChanged(): from the first data of a load on, the image
+  // holds the document's load event back until it notifies its end, as the
+  // fetch does before, unless it is one that lazy loading let go.
+  if (&resource != image_content_.Get() || image_complete_ ||
+      !resource.IsLoading() || delay_until_image_notify_finished_ ||
+      !IsDocumentActive()) {
+    return;
   }
+  delay_until_image_notify_finished_ =
+      std::make_unique<LoadEventDelay>(element_->GetDocument());
 }
 
 void ImageLoader::SetImageWithoutConsideringPendingLoadEvent(

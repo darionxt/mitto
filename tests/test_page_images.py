@@ -397,3 +397,46 @@ def test_a_lazy_image_loads_at_the_next_rendering_opportunity_once_in_the_docume
 
     assert result == [[False, ""], True, 2, False]
     assert "/away.png" not in server.paths()
+
+
+def test_decode_of_an_image_that_its_document_has_settles_after_it_goes_into_a_picture(
+    session: mitto.Session, server: _Server
+) -> None:
+    # The img takes the document's resource again when it goes into the picture, and hears of its end once, as Blink's
+    # counted observers do.
+    server.image("/cached.png", _png(1, 1))
+    url = server.page("/", "<picture id='picture'></picture>")
+
+    with _open_page(session, url) as page:
+        outcome = page.evaluate(
+            """(async () => {
+              await new Promise(resolve => { Object.assign(new Image(), {onload: resolve, src: 'cached.png'}); });
+              const image = Object.assign(new Image(), {src: 'cached.png'});
+              const decoded = image.decode().then(() => 'resolved', error => error.name);
+              document.getElementById('picture').append(image);
+              return decoded;
+            })()""",
+            timeout=_TIMEOUT_SECONDS,
+        )
+
+    assert outcome == "resolved"
+
+
+def test_a_lazy_image_does_not_hold_the_window_load_event_back(session: mitto.Session, server: _Server) -> None:
+    hold = threading.Event()
+    server.image("/later.png", _png(1, 1))
+    server.routes["/later.png"].hold = hold
+    url = server.page("/", "<img id='later' loading='lazy' src='later.png'>")
+
+    try:
+        # Opening the Page waits for its load event, which the lazy image's fetch does not hold back.
+        with _open_page(session, url) as page:
+            assert server.wait_for_path("/later.png")
+            waiting = page.evaluate("document.getElementById('later').complete", timeout=_TIMEOUT_SECONDS)
+            hold.set()
+            settled = _settled(page, "document.getElementById('later')")
+    finally:
+        hold.set()
+
+    assert waiting is False
+    assert settled["naturalWidth"] == 1

@@ -77,8 +77,16 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
                                    uint32_t& height) const;
   v8::Local<v8::Promise> Decode(bindings::ExceptionState& exception_state);
 
+  // HTMLImageElement::StartLoadingImageDocument(): the next update takes
+  // `content`, which an image document's loader feeds from its own response,
+  // in place of a fetch.
+  void SetImageForImageDocument(Resource& content) {
+    image_content_for_image_document_ = &content;
+  }
+
   // ResourceClient:
   void NotifyFinished(Resource& resource) override;
+  void DataReceived(Resource& resource) override;
 
  private:
   class LoadEventDelay;
@@ -123,6 +131,7 @@ class ImageLoader final : public cppgc::GarbageCollected<ImageLoader>,
 
   cppgc::Member<HTMLImageElement> element_;
   cppgc::Member<Resource> image_content_;
+  cppgc::Member<Resource> image_content_for_image_document_;
   // The URL whose load failed an access check, which is not loaded again
   // until src changes.
   std::u16string failed_load_url_;

@@ -76,6 +76,10 @@ class HTMLImageElement final : public HTMLElement {
   // Picks the source anew, and loads it unless the viewport's change gave
   // the same URL.
   void SelectSourceURL(ImageLoader::UpdateFromElementBehavior behavior);
+  // Blink's StartLoadingImageDocument(): an image document's img, whose
+  // image is `content`, the document's own response, which its loader feeds,
+  // and whose src is then the document's URL, which fetches nothing.
+  void StartLoadingImageDocument(Resource& content);
 
   // Node:
   InsertionNotificationRequest InsertedInto(Node& insertion_point) override;

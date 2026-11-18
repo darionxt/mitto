@@ -408,6 +408,12 @@ void HTMLImageElement::SetBestFitURLAndDPRFromImageCandidate(
   }
 }
 
+void HTMLImageElement::StartLoadingImageDocument(Resource& content) {
+  image_loader_->SetImageForImageDocument(content);
+  SetAttributeWithoutValidation(u"src",
+                                base::UTF8ToUTF16(content.Url().spec()));
+}
+
 void HTMLImageElement::SelectSourceURL(
     ImageLoader::UpdateFromElementBehavior behavior) {
   Window* const window = ActiveWindowOf(GetDocument());

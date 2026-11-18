@@ -41,6 +41,9 @@ class ResourceClient : public cppgc::GarbageCollectedMixin {
   // Once the resource has all of its body, or failed, and at once for one
   // added after that.
   virtual void NotifyFinished(Resource& resource) = 0;
+  // Each time more of its body has come, as ImageResourceContent tells its
+  // observers that the image changed.
+  virtual void DataReceived(Resource& resource) {}
 };
 
 class Resource : public cppgc::GarbageCollected<Resource> {

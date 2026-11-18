@@ -56,6 +56,10 @@ struct FetchParameters {
       SpeculativePreloadType::kNotSpeculative;
   bool is_link_preload = false;
   bool render_blocking = false;
+  // Whether its fetch holds the document's load event back, as one of a
+  // load-blocking type does in Blink, but for an image that was lazy, which
+  // FetchParameters::SetLazyImageNonBlocking() lets go.
+  bool load_blocking = true;
 };
 
 class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
@@ -81,10 +85,14 @@ class ResourceFetcher final : public cppgc::GarbageCollected<ResourceFetcher> {
   FetchPriority ComputeLoadPriority(const FetchParameters& params);
 
  private:
+  class ResourceLoader;
+
   // Whether Blink's DetermineRevalidationPolicy() uses `existing` for
   // `params`.
   bool CanUse(const Resource& existing, const FetchParameters& params) const;
   void StartLoad(Resource& resource, const FetchParameters& params);
+  // A fetch that held the load event back has ended.
+  void BlockingLoadFinished();
 
   cppgc::WeakMember<Document> document_;
   // The document's resources, Blink's cached_resources_map_, newest last.

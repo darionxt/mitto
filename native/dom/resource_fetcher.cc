@@ -73,10 +73,14 @@ FetchDestination DestinationOf(ResourceType type) {
   }
 }
 
-// What a resource's fetch hears, which keeps the resource until it ends.
-class ResourceLoader final : public FetchClient {
+}  // namespace
+
+// What a resource's fetch hears, which keeps the resource until it ends, and
+// the document's load event back while it blocks it, as Blink's loaders_ do.
+class ResourceFetcher::ResourceLoader final : public FetchClient {
  public:
-  explicit ResourceLoader(Resource& resource) : resource_(&resource) {}
+  ResourceLoader(Resource& resource, ResourceFetcher* blocking)
+      : resource_(&resource), blocking_(blocking) {}
 
   ResourceLoader(const ResourceLoader&) = delete;
   ResourceLoader& operator=(const ResourceLoader&) = delete;
@@ -98,14 +102,19 @@ class ResourceLoader final : public FetchClient {
     // A resource's body is taken as it comes.
     controller_->TookBody(bytes.size());
   }
-  void OnResponseEnded(int net_error) override { resource_->Finish(net_error); }
+  void OnResponseEnded(int net_error) override {
+    resource_->Finish(net_error);
+    if (ResourceFetcher* const fetcher = blocking_.Get()) {
+      blocking_ = nullptr;
+      fetcher->BlockingLoadFinished();
+    }
+  }
 
  private:
   const cppgc::Persistent<Resource> resource_;
+  cppgc::WeakPersistent<ResourceFetcher> blocking_;
   raw_ptr<FetchController> controller_ = nullptr;
 };
-
-}  // namespace
 
 FetchParameters::FetchParameters() = default;
 FetchParameters::FetchParameters(const FetchParameters&) = default;
@@ -211,8 +220,21 @@ void ResourceFetcher::StartLoad(Resource& resource,
     request.priority = priority;
   }
   request.render_blocking = params.render_blocking;
-  fetcher->Fetch(std::move(request),
-                 std::make_unique<ResourceLoader>(resource));
+  // Resource::IsLoadEventBlockingResourceType(), for a fetch that is no link
+  // preload and that nothing lets go.
+  const bool blocks_load = params.load_blocking && !params.is_link_preload;
+  if (blocks_load) {
+    document_->IncrementLoadEventDelayCount();
+  }
+  fetcher->Fetch(
+      std::move(request),
+      std::make_unique<ResourceLoader>(resource, blocks_load ? this : nullptr));
+}
+
+void ResourceFetcher::BlockingLoadFinished() {
+  if (Document* const document = document_.Get()) {
+    document->DecrementLoadEventDelayCount();
+  }
 }
 
 FetchPriority ResourceFetcher::ComputeLoadPriority(

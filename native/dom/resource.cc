@@ -32,7 +32,16 @@ void Resource::AddClient(ResourceClient* client) {
 }
 
 void Resource::RemoveClient(ResourceClient* client) {
-  clients_.EraseIf([client](ResourceClient* item) { return item == client; });
+  // One of a client added more than once, as Blink's counted set of clients
+  // keeps one for each add.
+  bool removed = false;
+  clients_.EraseIf([client, &removed](ResourceClient* item) {
+    if (removed || item != client) {
+      return false;
+    }
+    removed = true;
+    return true;
+  });
 }
 
 void Resource::ResponseReceived(int status, std::string mime_type) {
@@ -42,6 +51,11 @@ void Resource::ResponseReceived(int status, std::string mime_type) {
 
 void Resource::AppendData(const std::string& bytes) {
   body_ += bytes;
+  for (ResourceClient* client : clients_.ToVector()) {
+    if (client) {
+      client->DataReceived(*this);
+    }
+  }
 }
 
 void Resource::Finish(int net_error) {
